@@ -749,10 +749,21 @@ the last saved seed without workspace restoration. A replacement generation
 does not. The registry never overwrites a saved tab's or other existing view's
 explicit alias, even if both views attach to the same native session. Reset
 removes only the current logical view's override and its associated seed; other
-view aliases remain unchanged. All windows' pending edits
-and optional workspace metadata use one atomic configuration replacement;
-failure leaves the last saved document unchanged and produces a visible notice
-that the current name is not saved.
+view aliases remain unchanged. All windows' pending edits and optional
+workspace metadata use one configuration replacement. An error returned by
+`Configuration::save_to_path` leaves the local naming change visible but has
+an indeterminate disk outcome; the application warns and blocks further saves
+until manual reconciliation and full restart. Missing paths, directory-creation
+failures, session-name validation failures, and busy refusals occur before that
+call and do not themselves latch the gate. Validation errors returned by
+`save_to_path` still latch. A request refused by a previously latched gate
+did not install its candidate, but the earlier unresolved save may still have
+changed the file. Distinct session-name warnings are queued in bounded,
+content-free categories and each gets a visible interval on first render.
+Pre-write and busy warnings describe only that attempt and do not offer retry
+instructions. While each is displayed, a nonblocking current gate check is
+shown alongside it, including in-progress or reconciliation-required states;
+live-only naming guidance uses the same check.
 
 **Qualification:** focused regressions and the Windows local CI-equivalent
 suite passed on 2026-10-02. Required remote platform checks and the
@@ -2062,16 +2073,32 @@ warnings while valid settings load, and invalid profiles or workspace entries
 are quarantined individually with their exact reason rather than invalidating
 unrelated configuration. fesTerm never guesses how to reinterpret an invalid
 security-, transport-, or identity-relevant value. The next startup and any
-explicit save/retry follow the same complete-candidate validation and update
-disk state atomically only on success.
+explicit save/retry follow the same complete-candidate validation and attempt
+a complete replacement. An error from an attempted write does not establish
+which document is on disk, even when the replacement mechanism is atomic.
 
-A save failure leaves the user's in-memory reversible change visible but marks
-it clearly **Not saved**, retains the last successfully persisted configuration
-as the disk truth, and offers Retry plus bounded details. Later changes do not
-silently erase that state. Closing the application with unsaved configuration
-uses a focused consequence prompt; it never claims settings will survive the
-next launch. Successful retry clears the warning only after an atomic write has
-completed.
+The broader recovery target preserves reversible in-memory changes, displays
+bounded details, and offers **Retry** only when non-installation of that
+candidate is safely established and no earlier save is unresolved. A request
+refused before writing did not install that candidate; the last successfully
+committed document is still only last-known state, not proof of current disk
+contents. Closing with unsaved configuration should give a focused consequence
+prompt, without claiming settings will survive the next launch. A successful
+admitted retry clears the warning only after the save completes.
+
+In the present app-side containment layer, every error returned by
+`Configuration::save_to_path` has an indeterminate outcome. Missing paths,
+directory-creation failures, session-name validation failures, and busy refusals
+occur before that call and do not themselves latch the gate; validation errors
+returned by `save_to_path` still do. A prior latched or poisoned
+gate refuses a later candidate before writing, but still requires
+reconciliation. After an indeterminate outcome, further in-process saves are
+blocked; potentially referenced resources are retained and windows show
+reconciliation warnings. Do not offer blind Retry or label the last in-memory
+document as disk truth. Manually reconcile the configuration and affected
+resources, then restart the entire application; restart alone does not prove
+reconciliation. Filesystem namespace/alias safety, external writers, stale
+cross-window saves, and durable recovery remain unresolved.
 
 ## Windows
 

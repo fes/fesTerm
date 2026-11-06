@@ -8193,3 +8193,23 @@ exceed the 128 MiB address-space ceiling. Reliability review also caught wait
 settlement blocking on the global admission lock; it now retries contention
 without stalling the UI. MCP-invoked workflows, remote/persistent targets and
 native containment qualification remain open.
+## Unresolved configuration saves: application containment
+
+The application serializes in-process save attempts through a shared fail-closed
+gate. Any error returned by `save_to_path` latches an unknown outcome;
+subsequent saves are rejected before writing, and possibly referenced candidate
+resources are retained. Cleanup failures and uncertainty are presented across
+live windows. Focused regressions model post-install and earlier errors, blocked
+and busy saves, resource retention, unwind, and window notice delivery; native
+fault and presentation evidence remains pending.
+New windows consult the shared latch, and bounded, resource-specific warnings
+survive closure of the initiating window; import cleanup failure is distinct
+from ordinary import failure.
+Distinct session-name warnings now queue in bounded categories instead of
+overwriting one another before a delayed window can render them; each starts
+its visible interval on first display.
+
+This is not a configuration-generation or preference owner. It does not
+establish filesystem namespace/alias safety, external-writer coordination,
+durable restart recovery, or safe retirement of previous credentials after
+successful saves, and does not authorize session creation.

@@ -1,6 +1,7 @@
 //! Public setup metadata only. Parsing/preview never performs authentication or I/O.
 use std::{fmt, fs, io::Write, path::Path};
 
+use crate::configuration_startup::ConfigurationLoadFailure;
 use festerm_config::{Configuration, Profile};
 use festerm_tunnel_bridge::{
     files::PathStyle,
@@ -13,6 +14,19 @@ pub(crate) const MAX_IMPORT_BYTES: usize = 64 * 1024;
 const INVALID: &str = "Invalid public setup JSON. Use version 1 public metadata only (at most 64 KiB); credentials and unknown fields are forbidden.";
 const SAVE_FAILED: &str =
     "The imported profile could not be saved. No profile or credential was changed.";
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum ImportSaveError {
+    Failed(&'static str),
+    CleanupFailed,
+    OutcomeUnknown,
+    Blocked(ConfigurationLoadFailure),
+}
+
+impl From<&'static str> for ImportSaveError {
+    fn from(message: &'static str) -> Self {
+        Self::Failed(message)
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -156,10 +170,22 @@ impl PublicProfileImport {
         &self,
         configuration: &Configuration,
         directory: &Path,
-        persist: impl FnOnce(&Configuration) -> bool,
-    ) -> Result<Configuration, &'static str> {
+        persist: impl FnOnce(&Configuration) -> Result<(), ConfigurationLoadFailure>,
+    ) -> Result<Configuration, ImportSaveError> {
+        self.save_with_cleanup(configuration, directory, persist, |path| {
+            fs::remove_file(path)
+        })
+    }
+
+    fn save_with_cleanup(
+        &self,
+        configuration: &Configuration,
+        directory: &Path,
+        persist: impl FnOnce(&Configuration) -> Result<(), ConfigurationLoadFailure>,
+        remove: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Result<Configuration, ImportSaveError> {
         if configuration.profile(&self.name).is_some() {
-            return Err("A profile with this name already exists. Import never replaces a profile; change the public profile name and preview again.");
+            return Err("A profile with this name already exists. Import never replaces a profile; change the public profile name and preview again.".into());
         }
         fs::create_dir_all(directory).map_err(|_| SAVE_FAILED)?;
         if fs::symlink_metadata(directory)
@@ -167,7 +193,7 @@ impl PublicProfileImport {
             .file_type()
             .is_symlink()
         {
-            return Err(SAVE_FAILED);
+            return Err(SAVE_FAILED.into());
         }
         let mut nonce = [0; 16];
         getrandom::fill(&mut nonce).map_err(|_| SAVE_FAILED)?;
@@ -184,17 +210,39 @@ impl PublicProfileImport {
             .create_new(true)
             .open(&path)
             .map_err(|_| SAVE_FAILED)?;
-        let saved = file
+        let written = file
             .write_all(&bytes)
             .and_then(|()| file.sync_all())
-            .is_ok()
-            && persist(&replacement);
-        if !saved {
-            drop(file);
-            let _ = fs::remove_file(&path);
-            return Err(SAVE_FAILED);
+            .is_ok();
+        let result = if written {
+            persist(&replacement)
+        } else {
+            Err(ConfigurationLoadFailure::Unreadable)
+        };
+        match result {
+            Ok(()) => Ok(replacement),
+            Err(ConfigurationLoadFailure::OutcomeUnknown) => Err(ImportSaveError::OutcomeUnknown),
+            Err(
+                failure @ (ConfigurationLoadFailure::ReconciliationRequired
+                | ConfigurationLoadFailure::SaveBusy),
+            ) => Err(ImportSaveError::Blocked(failure)),
+            Err(_) => {
+                drop(file);
+                remove(&path).map_err(|_| ImportSaveError::CleanupFailed)?;
+                Err(SAVE_FAILED.into())
+            }
         }
-        Ok(replacement)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn save_with_cleanup_for_test(
+        &self,
+        configuration: &Configuration,
+        directory: &Path,
+        persist: impl FnOnce(&Configuration) -> Result<(), ConfigurationLoadFailure>,
+        remove: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Result<Configuration, ImportSaveError> {
+        self.save_with_cleanup(configuration, directory, persist, remove)
     }
 }
 
@@ -393,7 +441,7 @@ mod tests {
             .save(
                 &configuration,
                 &reloader.tunnel_import_directory().unwrap(),
-                |replacement| reloader.save_configuration(replacement).is_ok(),
+                |replacement| reloader.save_configuration(replacement).map(|_| ()),
             )
             .unwrap();
         let restarted = Configuration::parse(&fs::read_to_string(&config_path).unwrap()).unwrap();
@@ -447,9 +495,36 @@ mod tests {
             .tempdir_in(std::env::current_dir().unwrap())
             .unwrap();
         let import = PublicProfileImport::parse(&fixture_json().to_string()).unwrap();
-        assert!(import
-            .save(&Configuration::empty(), root.path(), |_| false)
-            .is_err());
+        let result = import.save(&Configuration::empty(), root.path(), |_| {
+            Err(ConfigurationLoadFailure::Unreadable)
+        });
+        assert!(matches!(result, Err(ImportSaveError::Failed(_))));
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn persistence_outcome_tunnel_import_retains_destination_when_unknown() {
+        let root = tempfile::Builder::new()
+            .prefix("tunnel-import-unknown-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let path = root.path().join("config.toml");
+        let destination_dir = root.path().join("destinations");
+        let reloader = ConfigurationReloader::from_path_for_test(path.clone())
+            .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+        let import = PublicProfileImport::parse(&fixture_json().to_string()).unwrap();
+        let result = import.save(&Configuration::empty(), &destination_dir, |replacement| {
+            reloader.save_configuration(replacement).map(|_| ())
+        });
+        assert_eq!(result.unwrap_err(), ImportSaveError::OutcomeUnknown);
+        let config = Configuration::load_from_path(&path).unwrap();
+        let destination = config
+            .profile("server-one")
+            .unwrap()
+            .as_dev_tunnel()
+            .unwrap()
+            .destination_file();
+        assert!(Path::new(destination).is_file());
+        assert_eq!(fs::read_dir(&destination_dir).unwrap().count(), 1);
     }
 }

@@ -3493,15 +3493,43 @@
       "automated_tests": [
         "invalid_workspace_reload_retains_the_previous_workspace",
         "failed_workspace_save_is_content_free",
-        "ambiguous_replacement_does_not_restore_over_installed_configuration"
+        "ambiguous_replacement_does_not_restore_over_installed_configuration",
+        "unresolved_save_blocks_sibling_and_inflight_save_without_writing",
+        "any_filesystem_save_error_latches_even_before_replacement",
+        "unresolved_save_blocks_same_frame_update_and_retains_later_credentials",
+        "unresolved_save_blocks_import_and_retains_later_destination",
+        "busy_save_retains_import_destination_and_reports_reconciliation",
+        "ssh_panic_after_install_retains_candidate_and_poison_blocks_saves",
+        "late_secondary_cleanup_failures_wake_all_windows_with_context",
+        "late_cleanup_failure_reaches_window_opened_in_same_settle_pass",
+        "secondary_unknown_save_reaches_all_windows_including_new_window",
+        "new_window_save_gate_probe_is_nonblocking_and_truthful",
+        "new_windows_inherit_latched_or_poisoned_save_gate_after_notice_drained",
+        "closing_import_window_broadcasts_retention_and_cleanup_failure",
+        "persistence_outcome_credential_save_retains_or_cleans_new_secret",
+        "tunnel_blocked_save_never_deletes_shared_or_fresh_candidate_references",
+        "blocked_account_save_retains_a_shared_reference",
+        "repeated_configuration_notice_renews_visible_lifetime_without_duplication",
+        "repeated_shared_notice_renews_after_originating_window_closes",
+        "delayed_secondary_session_name_notice_gets_full_visible_lifetime",
+        "queued_prewrite_and_busy_notices_remain_truthful_after_unknown_save",
+        "delayed_session_save_notices_track_unrelated_gate_changes_after_banner_expiry",
+        "same_pass_live_only_and_rejected_names_survive_delayed_render",
+        "session_name_notice_queue_coalesces_repeats_without_starving_other_kinds",
+        "tunnel_connect_token_cancel_cleanup_notice_is_type_neutral",
+        "tunnel_connect_token_cleanup_failure_notices_are_type_neutral",
+        "blocked_tunnel_connect_token_retention_notice_is_type_neutral",
+        "postpass_profile_usage_unknown_and_blocked_wake_idle_viewport"
       ],
       "manual_scenarios": [
-        "CP-01"
+        "CP-01",
+        "CP-20"
       ],
       "status": "partial",
       "prerequisites": [
         "full recovery and unsaved-close surfaces",
-        "temporary-path aliases, indeterminate save outcomes and credential reconciliation remain unqualified"
+        "temporary-path and filesystem namespace alias safety, durable reconciliation, and safe retirement of old resources",
+        "cross-window stale-generation and live-preference coordination; native fault and notice qualification"
       ]
     },
     {

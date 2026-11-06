@@ -524,7 +524,11 @@ impl FesTermApplication {
         self.move_requested_tabs(context);
         self.open_requested_windows(context);
         self.close_finished_windows(context);
+        // The shared signal survives window teardown. Drain only after opens
+        // and closes so newly opened windows receive all pending warnings too.
+        self.broadcast_shared_cleanup_failures(context);
         self.save_workspace_if_requested(context, name_changes);
+        self.broadcast_shared_cleanup_failures(context);
         self.broadcast_committed_configuration();
         for (id, failure) in name_failures {
             if let Some(index) = self.window_index(id) {
@@ -534,6 +538,17 @@ impl FesTermApplication {
             }
         }
         self.publish_window_footprints(context);
+    }
+
+    fn broadcast_shared_cleanup_failures(&mut self, context: &egui::Context) {
+        let notices = self.windows[0].app.take_shared_cleanup_failures();
+        if notices == 0 {
+            return;
+        }
+        for window in &mut self.windows {
+            window.app.report_shared_cleanup_failures(notices);
+            context.request_repaint_of(window.id.viewport_id());
+        }
     }
 
     /// Publishes every open window's screen footprint, so the *next* pass can
@@ -726,6 +741,17 @@ impl FesTermApplication {
                         &mut next_identifier,
                         include_workspace,
                     ));
+            let status = self.windows[0].app.shared_application_services().1;
+            let failure = if needs_save && !capacity_exceeded {
+                match status {
+                    crate::configuration_startup::ConfigurationStartupStatus::SessionNamesSaveFailure(failure) => Some(failure),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let reconciliation_required =
+                needs_save && !capacity_exceeded && status.save_reconciliation_required();
             let committed = self.windows[0].app.shared_application_services().0;
             for window in &mut self.windows {
                 window.app.settle_session_name_save(saved, &committed);
@@ -735,7 +761,17 @@ impl FesTermApplication {
                     window.app.show_session_name_persistence_notice(
                         context,
                         saved && persistence_unavailable,
+                        failure,
                     );
+                    context.request_repaint_of(window.id.viewport_id());
+                }
+            }
+            if reconciliation_required {
+                for window in &mut self.windows {
+                    window.app.report_configuration_notice(
+                        crate::configuration_startup::RECONCILE_SAVE_MESSAGE,
+                    );
+                    context.request_repaint_of(window.id.viewport_id());
                 }
             }
         } else {
@@ -747,6 +783,21 @@ impl FesTermApplication {
                 window
                     .app
                     .settle_session_name_save(status.was_saved(), &committed);
+                if status.save_reconciliation_required() {
+                    window
+                        .app
+                        .report_configuration_notice(if status.save_outcome_unknown() {
+                            crate::configuration_startup::UNKNOWN_SAVE_MESSAGE
+                        } else {
+                            crate::configuration_startup::BLOCKED_SAVE_MESSAGE
+                        });
+                    context.request_repaint_of(window.id.viewport_id());
+                } else if status.save_was_busy() {
+                    window.app.report_configuration_notice(
+                        crate::configuration_startup::SAVE_BUSY_MESSAGE,
+                    );
+                    context.request_repaint_of(window.id.viewport_id());
+                }
             }
         }
     }
@@ -815,6 +866,7 @@ impl FesTermApplication {
             app,
             placement: None,
         });
+        context.request_repaint_of(id.viewport_id());
         self.windows.len() - 1
     }
 
@@ -1942,6 +1994,74 @@ mod tests {
         }
     }
 
+    fn settle_repaint_requests(application: &FesTermApplication, context: &egui::Context) {
+        for _ in 0..4 {
+            context
+                .run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+        }
+        for window in &application.windows {
+            assert!(!context.has_requested_repaint_for(&window.id.viewport_id()));
+        }
+    }
+
+    #[test]
+    fn postpass_workspace_unknown_wakes_and_displays_in_both_windows() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        let context = egui::Context::default();
+        let fixture = SessionNameConfigurationFixture::new();
+        let configuration = Configuration::empty()
+            .with_interface_settings(InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                false,
+                false,
+                true,
+            ))
+            .unwrap();
+        configuration.save_to_path(&fixture.path).unwrap();
+        let mut primary = FesTermApp::for_test_with_configuration(configuration);
+        primary.set_reloader_for_test(
+            ConfigurationReloader::from_path_for_test(fixture.path.clone())
+                .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown),
+        );
+        let mut application = FesTermApplication::new(primary);
+        application.open_window(&context, None);
+        let secondary_id = application.windows[1].id.viewport_id();
+        for _ in 0..4 {
+            context
+                .run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+        }
+        assert!(!context.has_requested_repaint_for(&egui::ViewportId::ROOT));
+        assert!(!context.has_requested_repaint_for(&secondary_id));
+        application.window_mut(1).request_workspace_save_for_test();
+        application.save_workspace_if_requested(&context, vec![]);
+        assert!(context.has_requested_repaint_for(&egui::ViewportId::ROOT));
+        assert!(context.has_requested_repaint_for(&secondary_id));
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        for window in &mut application.windows {
+            let mut output = egui::FullOutput::default();
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| {
+                    window.app.show_transient_notice(ui.ctx())
+                });
+                output.textures_delta.clear();
+            }
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("save outcome is unknown")
+            )), "window {:?}", window.id);
+        }
+    }
+
     #[test]
     fn automation_reset_from_stale_default_window_saves_or_warns() {
         let off = Values {
@@ -2737,6 +2857,106 @@ mod tests {
     }
 
     #[test]
+    fn late_secondary_cleanup_failures_wake_all_windows_with_context() {
+        use festerm_secret_store::{
+            MemorySecretStore, SecretBytes, SecretReference, SecretStore, SecretStoreError,
+        };
+        struct FailingDelete(MemorySecretStore);
+        impl SecretStore for FailingDelete {
+            fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
+                self.0.put(secret)
+            }
+            fn get(&self, reference: &SecretReference) -> Result<SecretBytes, SecretStoreError> {
+                self.0.get(reference)
+            }
+            fn update(
+                &self,
+                reference: &SecretReference,
+                secret: &SecretBytes,
+            ) -> Result<(), SecretStoreError> {
+                self.0.update(reference, secret)
+            }
+            fn delete(&self, _: &SecretReference) -> Result<bool, SecretStoreError> {
+                Err(SecretStoreError::BackendFailure)
+            }
+        }
+        let setup = egui::Context::default();
+        let (primary, tab, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+        let mut application = FesTermApplication::new(primary);
+        application.open_window(&setup, None);
+        let secondary_id = application.windows[1].id.viewport_id();
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::MoveTabToWindow {
+                moved: tab,
+                target: Some(secondary_id),
+                before: None,
+                screen_position: egui::pos2(900.0, 40.0),
+            },
+            &setup,
+        );
+        application.settle_windows(&setup);
+        assert_eq!(application.window_mut(1).active_tab_id_for_test(), tab);
+        let context = egui::Context::default();
+        for _ in 0..4 {
+            context
+                .run_ui(egui::RawInput::default(), |_| {})
+                .drop_without_applying_deltas();
+        }
+        assert!(!context.has_requested_repaint_for(&egui::ViewportId::ROOT));
+        assert!(!context.has_requested_repaint_for(&secondary_id));
+        let store: Arc<dyn SecretStore> = Arc::new(FailingDelete(MemorySecretStore::new()));
+        let flag = application
+            .window_mut(1)
+            .shared_application_services()
+            .2
+            .secret_cleanup_failure();
+        for notice in [
+            crate::configuration_startup::SecretCleanupNotice::ProfilePending,
+            crate::configuration_startup::SecretCleanupNotice::BrowserPending,
+        ] {
+            let reference = store
+                .put(&SecretBytes::copy_from_slice(b"fixture"))
+                .unwrap();
+            let secret = crate::overlay_state::PendingSecret::new(
+                reference.duplicate_for_transport(),
+                Arc::clone(&store),
+                Arc::clone(&flag),
+                notice,
+                context.clone(),
+            );
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            drop(receiver);
+            assert!(sender.send(secret).is_err());
+            assert!(store.get(&reference).is_ok());
+        }
+        assert!(context.has_requested_repaint_for(&egui::ViewportId::ROOT));
+        application.broadcast_shared_cleanup_failures(&context);
+        assert!(context.has_requested_repaint_for(&secondary_id));
+        for window in &mut application.windows {
+            let viewport = window.id.viewport_id();
+            let mut input = egui::RawInput {
+                viewport_id: viewport,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            input.viewports.entry(viewport).or_default();
+            let mut output = egui::FullOutput::default();
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| {
+                    window.app.show_transient_notice(ui.ctx())
+                });
+                output.textures_delta.clear();
+            }
+            for message in ["profile credential", "Dev Tunnel account credential"] {
+                assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(message))), "window {:?}: {message}", window.id);
+            }
+        }
+    }
+
+    #[test]
     fn presentation_workspace_revision_tracks_all_window_selection_and_topology_changes() {
         let (mut application, context) = application();
         let initial_tab = application.primary_mut().active_tab_id_for_test();
@@ -2756,6 +2976,308 @@ mod tests {
             .app
             .dispatch_for_test(AppCommand::OpenSettings, &context);
         assert!(application.presentation_workspace.current().unwrap() > opened);
+    }
+
+    #[test]
+    fn late_cleanup_failure_reaches_window_opened_in_same_settle_pass() {
+        use festerm_secret_store::{
+            MemorySecretStore, SecretBytes, SecretReference, SecretStore, SecretStoreError,
+        };
+        struct FailingDelete(MemorySecretStore);
+        impl SecretStore for FailingDelete {
+            fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
+                self.0.put(secret)
+            }
+            fn get(&self, reference: &SecretReference) -> Result<SecretBytes, SecretStoreError> {
+                self.0.get(reference)
+            }
+            fn update(
+                &self,
+                reference: &SecretReference,
+                secret: &SecretBytes,
+            ) -> Result<(), SecretStoreError> {
+                self.0.update(reference, secret)
+            }
+            fn delete(&self, _: &SecretReference) -> Result<bool, SecretStoreError> {
+                Err(SecretStoreError::BackendFailure)
+            }
+        }
+
+        let (mut application, context) = application();
+        let store: Arc<dyn SecretStore> = Arc::new(FailingDelete(MemorySecretStore::new()));
+        let reference = store
+            .put(&SecretBytes::copy_from_slice(b"fixture"))
+            .unwrap();
+        let flag = application
+            .window_mut(0)
+            .shared_application_services()
+            .2
+            .secret_cleanup_failure();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        let secret = crate::overlay_state::PendingSecret::new(
+            reference.duplicate_for_transport(),
+            Arc::clone(&store),
+            flag,
+            crate::configuration_startup::SecretCleanupNotice::ProfilePending,
+            context.clone(),
+        );
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        drop(receiver);
+        assert!(sender.send(secret).is_err());
+        assert!(store.get(&reference).is_ok());
+
+        application.settle_windows(&context);
+        assert_eq!(application.window_count(), 2);
+        for window in &application.windows {
+            assert!(context.has_requested_repaint_for(&window.id.viewport_id()));
+        }
+        for window in &mut application.windows {
+            let viewport = window.id.viewport_id();
+            let mut input = egui::RawInput {
+                viewport_id: viewport,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            input.viewports.entry(viewport).or_default();
+            let mut output = egui::FullOutput::default();
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| {
+                    window.app.show_transient_notice(ui.ctx())
+                });
+                output.textures_delta.clear();
+            }
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("profile credential")
+            )), "window {:?}", window.id);
+        }
+    }
+
+    #[test]
+    fn secondary_unknown_save_reaches_all_windows_including_new_window() {
+        let (mut application, setup) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &setup);
+        application.settle_windows(&setup);
+        let context = egui::Context::default();
+        settle_repaint_requests(&application, &context);
+        application
+            .window_mut(1)
+            .report_unknown_configuration_save(true);
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+
+        assert_eq!(application.window_count(), 3);
+        for window in &application.windows {
+            assert!(context.has_requested_repaint_for(&window.id.viewport_id()));
+        }
+        for window in &mut application.windows {
+            let viewport = window.id.viewport_id();
+            let mut input = egui::RawInput {
+                viewport_id: viewport,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            input.viewports.entry(viewport).or_default();
+            let mut output = egui::FullOutput::default();
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| {
+                    window.app.show_transient_notice(ui.ctx())
+                });
+                output.textures_delta.clear();
+            }
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape, egui::Shape::Text(text)
+                        if text.galley.job.text.contains("retained")
+                            && text.galley.job.text.contains("reconcile")
+                )),
+                "window {:?}",
+                window.id
+            );
+        }
+    }
+
+    #[test]
+    fn new_windows_inherit_latched_or_poisoned_save_gate_after_notice_drained() {
+        use crate::configuration_startup::{
+            ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        for poisoned in [false, true] {
+            let fixture = SessionNameConfigurationFixture::new();
+            let configuration = Configuration::empty();
+            configuration.save_to_path(&fixture.path).unwrap();
+            let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+            if poisoned {
+                let failing = reloader.clone().with_panic_after_installation_for_test();
+                assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = failing.save_configuration(&configuration);
+                }))
+                .is_err());
+            } else {
+                let failing = reloader
+                    .clone()
+                    .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+                assert_eq!(
+                    failing.save_configuration(&configuration),
+                    Err(ConfigurationLoadFailure::OutcomeUnknown)
+                );
+            }
+            let context = egui::Context::default();
+            let mut primary = FesTermApp::for_test_with_configuration(configuration.clone());
+            primary.set_reloader_for_test(reloader);
+            let mut application = FesTermApplication::new(primary);
+            application
+                .window_mut(0)
+                .report_unknown_configuration_save(false);
+            application.broadcast_shared_cleanup_failures(&context);
+            assert_eq!(application.window_mut(0).take_shared_cleanup_failures(), 0);
+
+            application
+                .window_mut(0)
+                .dispatch_for_test(AppCommand::OpenWindow, &context);
+            application.settle_windows(&context);
+            assert_eq!(application.window_count(), 2);
+            let window = &mut application.windows[1];
+            assert!(context.has_requested_repaint_for(&window.id.viewport_id()));
+            let mut input = egui::RawInput {
+                viewport_id: window.id.viewport_id(),
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            input.viewports.entry(input.viewport_id).or_default();
+            let mut output = egui::FullOutput::default();
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| {
+                    window.app.show_transient_notice(ui.ctx())
+                });
+                output.textures_delta.clear();
+            }
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape, egui::Shape::Text(text)
+                        if text.galley.job.text.contains("Further saves are disabled")
+                            && text.galley.job.text.contains("reconcile")
+                )),
+                "poisoned: {poisoned}"
+            );
+            assert_eq!(
+                Configuration::load_from_path(&fixture.path).unwrap(),
+                configuration
+            );
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn closing_import_window_broadcasts_retention_and_cleanup_failure() {
+        use crate::configuration_startup::{ConfigurationLoadFailure, ConfigurationReloader};
+        use crate::tunnel_profile_import::{fixture_json, ImportSaveError, PublicProfileImport};
+
+        for scenario in ["latched", "busy", "cleanup"] {
+            let root = tempfile::Builder::new()
+                .prefix("import-warning-")
+                .tempdir_in(std::env::current_dir().unwrap())
+                .unwrap();
+            let path = root.path().join("config.toml");
+            let configuration = Configuration::empty();
+            configuration.save_to_path(&path).unwrap();
+            let reloader = ConfigurationReloader::from_path_for_test(path.clone());
+            if scenario == "latched" {
+                let first = reloader
+                    .clone()
+                    .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+                assert_eq!(
+                    first.save_configuration(&configuration),
+                    Err(ConfigurationLoadFailure::OutcomeUnknown)
+                );
+            }
+            let reloader = if scenario == "busy" {
+                reloader.with_save_failure_for_test(ConfigurationLoadFailure::SaveBusy)
+            } else {
+                reloader
+            };
+            let mut primary = FesTermApp::for_test_with_configuration(configuration.clone());
+            primary.set_reloader_for_test(reloader);
+            let setup = egui::Context::default();
+            let mut application = FesTermApplication::new(primary);
+            application.open_window(&setup, None);
+            application.open_window(&setup, None);
+            let context = egui::Context::default();
+            settle_repaint_requests(&application, &context);
+            let import = PublicProfileImport::parse(&fixture_json().to_string()).unwrap();
+            if scenario == "cleanup" {
+                let destination_dir = root.path().join("tunnel-profiles");
+                let result = import.save_with_cleanup_for_test(
+                    &configuration,
+                    &destination_dir,
+                    |_| Err(ConfigurationLoadFailure::Unreadable),
+                    |_| Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+                );
+                assert!(matches!(&result, Err(ImportSaveError::CleanupFailed)));
+                application
+                    .window_mut(1)
+                    .finish_public_tunnel_import(result);
+            } else {
+                application
+                    .window_mut(1)
+                    .import_public_tunnel_profile(import);
+            }
+            assert_eq!(Configuration::load_from_path(&path).unwrap(), configuration);
+            assert_eq!(
+                std::fs::read_dir(root.path().join("tunnel-profiles"))
+                    .unwrap()
+                    .count(),
+                1
+            );
+            application.window_mut(1).accept_window_close_for_test();
+            application.settle_windows(&context);
+            assert_eq!(application.window_count(), 2);
+            for window in &application.windows {
+                assert!(context.has_requested_repaint_for(&window.id.viewport_id()));
+            }
+            let expected = if scenario == "cleanup" {
+                "could not be removed"
+            } else {
+                "candidate destination file"
+            };
+            for window in &mut application.windows {
+                let viewport = window.id.viewport_id();
+                let mut input = egui::RawInput {
+                    viewport_id: viewport,
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 700.0),
+                    )),
+                    ..Default::default()
+                };
+                input.viewports.entry(viewport).or_default();
+                let mut output = egui::FullOutput::default();
+                for _ in 0..3 {
+                    output = context.run_ui(input.clone(), |ui| {
+                        window.app.show_transient_notice(ui.ctx())
+                    });
+                    output.textures_delta.clear();
+                }
+                assert!(output.shapes.iter().any(|shape| matches!(
+                    &shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(expected)
+                        && text.galley.job.text.contains("reconcile")
+                )), "{scenario}: {:?}", window.id);
+            }
+        }
     }
 
     #[test]
@@ -3273,6 +3795,98 @@ mod tests {
     }
 
     #[test]
+    fn same_pass_live_only_and_rejected_names_survive_delayed_render() {
+        use std::time::{Duration, Instant};
+
+        let context = egui::Context::default();
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        let profile =
+            Profile::ssh("remote", "ssh.example.test", 22, "deploy", "xterm", 80, 24).unwrap();
+        let configuration = Configuration::new(vec![profile])
+            .unwrap()
+            .with_interface_settings(InterfaceSettings::new(
+                festerm_config::ChipLayoutPreference::SingleRowScroll,
+                true,
+                false,
+                false,
+                false,
+            ))
+            .unwrap();
+        let (mut app, tab, transport) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.adopt_broadcast_configuration(configuration.clone());
+        app.set_session_metadata_for_test(tab, Some("remote"), None);
+        app.set_reloader_for_test(
+            crate::configuration_startup::ConfigurationReloader::from_path_for_test(
+                fixture.path.clone(),
+            ),
+        );
+        let mut application = FesTermApplication::new(app);
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::RenameTab(tab, "Only this view".into()),
+            &context,
+        );
+        application.window_mut(0).dispatch_for_test(
+            AppCommand::RenameTab(tab, "-----BEGIN PRIVATE KEY-----".into()),
+            &context,
+        );
+        application.settle_windows(&context);
+        assert_eq!(
+            application.window_mut(0).session_label_for_test(tab),
+            "Only this view"
+        );
+        assert_eq!(
+            application.window_mut(0).shared_application_services().0,
+            configuration
+        );
+        assert!(!fixture.path.exists());
+        assert!(transport.sent().is_empty() && transport.operations().is_empty());
+
+        let first_render = Instant::now() + Duration::from_secs(30);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        for (elapsed, expected, absent) in [
+            (0, Some("open tab only"), "secret-like"),
+            (8, Some("secret-like"), "open tab only"),
+            (16, None, "secret-like"),
+        ] {
+            let mut output = egui::FullOutput::default();
+            for _ in 0..3 {
+                output = context.run_ui(input.clone(), |ui| {
+                    application.window_mut(0).show_transient_notice_at_for_test(
+                        ui.ctx(),
+                        first_render + Duration::from_secs(elapsed),
+                    )
+                });
+                output.textures_delta.clear();
+            }
+            if let Some(expected) = expected {
+                assert!(output.shapes.iter().any(|shape| matches!(
+                    &shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(expected)
+                )), "{elapsed}s");
+            }
+            assert!(
+                !output.shapes.iter().any(|shape| matches!(
+                    &shape.shape, egui::Shape::Text(text)
+                        if text.galley.job.text.contains(absent)
+                            || text.galley.job.text.contains("-----BEGIN PRIVATE KEY-----")
+                )),
+                "{elapsed}s"
+            );
+            if expected.is_none() {
+                assert!(!output.shapes.iter().any(|shape| matches!(
+                    &shape.shape, egui::Shape::Text(text)
+                        if text.galley.job.text.contains("open tab only")
+                )));
+            }
+        }
+    }
+
+    #[test]
     fn session_alias_actual_save_failure_is_visible_and_never_broadcasts_unsaved_metadata() {
         let context = egui::Context::default();
         let configuration = Configuration::new(vec![Profile::ssh(
@@ -3316,12 +3930,28 @@ mod tests {
                 .app
                 .session_name_notice_for_test()
                 .unwrap()
-                .contains("could not be saved"));
+                .contains("whether it was saved is unknown"));
         }
-        assert!(matches!(
+        assert_eq!(
             application.window_mut(0).shared_application_services().1,
-            crate::configuration_startup::ConfigurationStartupStatus::SessionNamesSaveFailure(_)
-        ));
+            crate::configuration_startup::ConfigurationStartupStatus::SessionNamesSaveFailure(
+                crate::configuration_startup::ConfigurationLoadFailure::OutcomeUnknown
+            )
+        );
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::RenameTab(tab, "Applies now".into()), &context);
+        application.settle_windows(&context);
+        for window in &mut application.windows {
+            assert_eq!(window.app.shared_application_services().0, configuration);
+            assert!(window.app.take_configuration_broadcast().is_none());
+            assert!(window
+                .app
+                .session_name_notice_for_test()
+                .unwrap()
+                .contains("blocked before writing"));
+        }
+        // Simulate a fresh gate after reconciliation; this does not exercise restart.
         let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
         application.window_mut(0).set_reloader_for_test(
             crate::configuration_startup::ConfigurationReloader::from_path_for_test(
@@ -3590,14 +4220,24 @@ mod tests {
                 .window_mut(0)
                 .session_name_notice_for_test()
                 .unwrap()
-                .contains("could not be saved"));
+                .contains("whether it was saved is unknown"));
             assert_eq!(Configuration::load_from_path(&fixture.path).unwrap(), saved);
             assert_eq!(
                 application.window_mut(0).shared_application_services().0,
                 saved
             );
+            application
+                .window_mut(0)
+                .dispatch_for_test(AppCommand::UseDefaultSessionName(tab), &context);
             application.settle_windows(&context);
             assert!(application.window_mut(0).can_use_default_name_for_test(tab));
+            assert!(application
+                .window_mut(0)
+                .session_name_notice_for_test()
+                .unwrap()
+                .contains("blocked before writing"));
+            assert_eq!(Configuration::load_from_path(&fixture.path).unwrap(), saved);
+            // Simulate a fresh gate after reconciliation; this does not exercise restart.
             application.window_mut(0).set_reloader_for_test(
                 crate::configuration_startup::ConfigurationReloader::from_path_for_test(
                     fixture.path.clone(),

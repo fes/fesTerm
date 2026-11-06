@@ -10,7 +10,7 @@
 //! they reach into session/tab state that this module intentionally does
 //! not own (see `docs/adr` ownership boundaries referenced from `app.rs`).
 
-use std::{path::PathBuf, sync::mpsc, time::Instant};
+use std::{collections::VecDeque, path::PathBuf, sync::mpsc, time::Instant};
 
 use festerm_document::DocumentId;
 use festerm_secret_store::{SecretReference, SecretStore, SecretStoreError};
@@ -209,9 +209,56 @@ impl PendingQuitConfirmation {
     }
 }
 
+pub(crate) struct PendingSecret {
+    reference: Option<SecretReference>,
+    store: std::sync::Arc<dyn SecretStore>,
+    cleanup_failure: std::sync::Arc<std::sync::atomic::AtomicU16>,
+    cleanup_notice: crate::configuration_startup::SecretCleanupNotice,
+    context: eframe::egui::Context,
+}
+
+impl PendingSecret {
+    pub(crate) fn new(
+        reference: SecretReference,
+        store: std::sync::Arc<dyn SecretStore>,
+        cleanup_failure: std::sync::Arc<std::sync::atomic::AtomicU16>,
+        cleanup_notice: crate::configuration_startup::SecretCleanupNotice,
+        context: eframe::egui::Context,
+    ) -> Self {
+        Self {
+            reference: Some(reference),
+            store,
+            cleanup_failure,
+            cleanup_notice,
+            context,
+        }
+    }
+
+    pub(crate) fn release(mut self) -> SecretReference {
+        self.reference
+            .take()
+            .expect("pending secret has not been released")
+    }
+}
+
+impl Drop for PendingSecret {
+    fn drop(&mut self) {
+        if let Some(reference) = self.reference.take() {
+            if self.store.delete(&reference).is_err() {
+                self.cleanup_failure.fetch_or(
+                    self.cleanup_notice.bit(),
+                    std::sync::atomic::Ordering::Release,
+                );
+                self.context
+                    .request_repaint_of(eframe::egui::ViewportId::ROOT);
+            }
+        }
+    }
+}
+
 pub(crate) struct PendingPasswordStore {
     pub(crate) expected_profile: festerm_config::Profile,
-    pub(crate) receiver: mpsc::Receiver<Result<SecretReference, SecretStoreError>>,
+    pub(crate) receiver: mpsc::Receiver<Result<PendingSecret, SecretStoreError>>,
     pub(crate) profile_id: String,
     pub(crate) store: std::sync::Arc<dyn SecretStore>,
     /// Whether the profile should auto-launch once the credential finishes
@@ -244,6 +291,36 @@ impl OpenRefusalNotice {
     pub(crate) fn requires_acknowledgement(&self) -> bool {
         self.acknowledgement_path.is_some()
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionNameNoticeKind {
+    OutcomeUnknown,
+    ReconciliationRequired,
+    SaveBusy,
+    LiveOnly,
+    SaveFailed,
+    SecretLike,
+    Invalid,
+}
+
+impl SessionNameNoticeKind {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::OutcomeUnknown => "This session naming change applies now, but whether it was saved is unknown. Configuration may have changed on disk; further saves are disabled; reconcile manually and restart all windows.",
+            Self::ReconciliationRequired => "This session naming change applies now, but this save was blocked before writing. An earlier save may have changed configuration on disk; reconcile manually and restart all windows.",
+            Self::SaveBusy => "This session naming change applied locally, but this save was blocked before writing because another save was in progress.",
+            Self::LiveOnly => "This naming change applied to this open tab only at the time. To retain it after restart, enable Restore workspace and use a saved profile, or reattach the same verified native session.",
+            Self::SaveFailed => crate::configuration_startup::SESSION_NAMES_PRE_WRITE_FAILURE_MESSAGE,
+            Self::SecretLike => "Session name was not changed because it contains secret-like values. Choose a different display name.",
+            Self::Invalid => "Session name was not changed because it is invalid. Choose a different display name.",
+        }
+    }
+}
+
+pub(crate) struct SessionNameNotice {
+    pub(crate) kind: SessionNameNoticeKind,
+    pub(crate) visible_until: Option<Instant>,
 }
 
 /// The confirmation prompts, in-flight secure-storage lookup, and transient
@@ -292,6 +369,9 @@ pub(crate) struct OverlayState {
     /// dialog when opening several files from the same folder.
     pub(crate) markdown_file_picker_directory: Option<PathBuf>,
     pub(crate) transient_notice: Option<(String, Instant)>,
+    pub(crate) session_name_notices: VecDeque<SessionNameNotice>,
+    pub(crate) configuration_notice: Option<(String, Instant)>,
+    pub(crate) configuration_notice_rendered: bool,
     /// The About modal is open. Like the confirmation prompts above (and
     /// unlike the transient notice/password-store lookup), it is a
     /// full-backdrop modal that must intercept terminal input.
@@ -303,6 +383,21 @@ pub(crate) struct OverlayState {
 }
 
 impl OverlayState {
+    pub(crate) fn queue_session_name_notice(&mut self, kind: SessionNameNoticeKind) {
+        if let Some(position) = self
+            .session_name_notices
+            .iter()
+            .position(|notice| notice.kind == kind)
+        {
+            self.session_name_notices.remove(position);
+        }
+        // Each finite notice kind occupies at most one slot.
+        self.session_name_notices.push_back(SessionNameNotice {
+            kind,
+            visible_until: None,
+        });
+    }
+
     /// True while a destructive confirmation dialog or the About modal is
     /// open and must intercept terminal keyboard/pointer input, native menu
     /// commands, and most application shortcuts. Replaces the repeated
@@ -311,9 +406,8 @@ impl OverlayState {
     /// previously duplicated at several call sites in `app.rs`.
     ///
     /// Deliberately excludes `pending_password_store` and
-    /// `transient_notice`: the secure-storage lookup runs in the
-    /// background without a modal backdrop, and the transient notice is a
-    /// passive banner, so neither blocks terminal input.
+    /// the notice fields: the secure-storage lookup runs in the background,
+    /// and notices are passive banners, so neither blocks terminal input.
     pub(crate) fn blocks_terminal_input(&self) -> bool {
         self.pending_paste.is_some() || self.blocks_terminal_input_except_paste()
     }
@@ -364,9 +458,58 @@ mod tests {
         // confirmation dialog does.
         let overlays = OverlayState {
             transient_notice: Some(("notice".to_owned(), Instant::now())),
+            session_name_notices: VecDeque::from([SessionNameNotice {
+                kind: SessionNameNoticeKind::LiveOnly,
+                visible_until: None,
+            }]),
             ..OverlayState::default()
         };
         assert!(!overlays.blocks_terminal_input());
+    }
+
+    #[test]
+    fn session_name_notice_queue_coalesces_repeats_without_starving_other_kinds() {
+        let mut overlays = OverlayState::default();
+        overlays.queue_session_name_notice(SessionNameNoticeKind::LiveOnly);
+        overlays
+            .session_name_notices
+            .front_mut()
+            .unwrap()
+            .visible_until = Some(Instant::now());
+        overlays.queue_session_name_notice(SessionNameNoticeKind::SecretLike);
+        for _ in 0..1_000 {
+            overlays.queue_session_name_notice(SessionNameNoticeKind::LiveOnly);
+        }
+        assert_eq!(overlays.session_name_notices.len(), 2);
+        assert_eq!(
+            overlays.session_name_notices.front().unwrap().kind,
+            SessionNameNoticeKind::SecretLike
+        );
+        let repeated = overlays.session_name_notices.back().unwrap();
+        assert_eq!(repeated.kind, SessionNameNoticeKind::LiveOnly);
+        assert!(repeated.visible_until.is_none());
+
+        let kinds = [
+            SessionNameNoticeKind::OutcomeUnknown,
+            SessionNameNoticeKind::ReconciliationRequired,
+            SessionNameNoticeKind::SaveBusy,
+            SessionNameNoticeKind::LiveOnly,
+            SessionNameNoticeKind::SaveFailed,
+            SessionNameNoticeKind::SecretLike,
+            SessionNameNoticeKind::Invalid,
+        ];
+        for _ in 0..100 {
+            for kind in kinds {
+                overlays.queue_session_name_notice(kind);
+            }
+        }
+        assert_eq!(overlays.session_name_notices.len(), kinds.len());
+        for kind in kinds {
+            assert!(overlays
+                .session_name_notices
+                .iter()
+                .any(|entry| entry.kind == kind));
+        }
     }
 
     #[test]

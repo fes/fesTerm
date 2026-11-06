@@ -2,6 +2,491 @@ use super::*;
 use festerm_config::{Configuration, DevTunnelAccount};
 use festerm_secret_store::MemorySecretStore;
 
+struct DeleteFailingStore(MemorySecretStore);
+
+impl SecretStore for DeleteFailingStore {
+    fn put(
+        &self,
+        secret: &SecretBytes,
+    ) -> Result<SecretReference, festerm_secret_store::SecretStoreError> {
+        self.0.put(secret)
+    }
+
+    fn get(
+        &self,
+        reference: &SecretReference,
+    ) -> Result<SecretBytes, festerm_secret_store::SecretStoreError> {
+        self.0.get(reference)
+    }
+
+    fn update(
+        &self,
+        reference: &SecretReference,
+        secret: &SecretBytes,
+    ) -> Result<(), festerm_secret_store::SecretStoreError> {
+        self.0.update(reference, secret)
+    }
+
+    fn delete(
+        &self,
+        _reference: &SecretReference,
+    ) -> Result<bool, festerm_secret_store::SecretStoreError> {
+        Err(festerm_secret_store::SecretStoreError::BackendFailure)
+    }
+}
+
+#[test]
+fn failed_tunnel_secret_cleanup_is_visible_on_terminal_and_automatic_reconnect() {
+    for automatic in [false, true] {
+        let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+        let store: Arc<dyn SecretStore> = Arc::new(DeleteFailingStore(MemorySecretStore::new()));
+        let reference = store
+            .put(&SecretBytes::copy_from_slice(b"fixture"))
+            .unwrap();
+        let account_reference = store
+            .put(&SecretBytes::copy_from_slice(b"account"))
+            .unwrap();
+        let account = DevTunnelAccount::new(
+            "account",
+            AccountProvider::Github,
+            42,
+            "user",
+            account_reference.duplicate_for_transport(),
+        )
+        .unwrap();
+        let mut ready = prepared(
+            &profile,
+            Arc::clone(&store),
+            reference.duplicate_for_transport(),
+        );
+        ready.stored.references.push(account_reference);
+        ready.binding = Some(Binding {
+            account: Some(account),
+            connect: reference.duplicate_for_transport(),
+            host: DevTunnelHost {
+                tunnel_id: "owned".into(),
+                cluster: "usw3".into(),
+                host_id: "host".into(),
+                public_key: "pin".into(),
+                port: 47461,
+            },
+        });
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let mut pending = workflow(profile.clone(), receiver);
+        pending.ready = Some(Box::new(ready));
+        pending.automatic = automatic.then(Instant::now);
+        let (mut app, _, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.state
+            .replace_configuration(Configuration::new(vec![profile]).unwrap());
+        app.native_tunnel = Some(pending);
+        app.overlays.native_tunnel = true;
+        let context = egui::Context::default();
+        app.finish_native_tunnel(&context);
+        assert!(!app.overlays.native_tunnel);
+        assert!(store.get(&reference).is_ok());
+        app.report_configuration_notice(crate::configuration_startup::BLOCKED_SAVE_MESSAGE);
+        app.overlays.transient_notice = Some((
+            "Unrelated terminal notice".into(),
+            Instant::now() + Duration::from_secs(5),
+        ));
+        let text = &app.overlays.configuration_notice.as_ref().unwrap().0;
+        assert!(text.contains("could not be removed"));
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = egui::FullOutput::default();
+        for _ in 0..3 {
+            output = context.run_ui(input.clone(), |ui| app.show_transient_notice(ui.ctx()));
+            output.textures_delta.clear();
+        }
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("could not be removed")
+        )));
+    }
+}
+
+#[test]
+fn tunnel_cancel_timeout_and_late_completion_report_cleanup_failure() {
+    for mode in [
+        "profile-change",
+        "timeout",
+        "cancel-queued",
+        "cancel-late",
+        "queue-full",
+    ] {
+        let context = egui::Context::default();
+        let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+        let (mut app, _, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+        app.state
+            .replace_configuration(Configuration::new(vec![profile.clone()]).unwrap());
+        let store: Arc<dyn SecretStore> = Arc::new(DeleteFailingStore(MemorySecretStore::new()));
+        let reference = store
+            .put(&SecretBytes::copy_from_slice(b"fixture"))
+            .unwrap();
+        let mut ready = prepared(
+            &profile,
+            Arc::clone(&store),
+            reference.duplicate_for_transport(),
+        );
+        ready.stored.cleanup_reporter = CleanupReporter {
+            failed: app.configuration_reloader.secret_cleanup_failure(),
+            context: context.clone(),
+        };
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut pending = workflow(profile, receiver);
+        if mode == "timeout" {
+            pending.automatic = Some(Instant::now() - Duration::from_secs(1));
+        }
+        app.native_tunnel = Some(pending);
+        if mode == "cancel-late" {
+            app.cancel_native_tunnel();
+            assert!(sender
+                .try_send(Event::Complete(Ok(Box::new(ready))))
+                .is_err());
+        } else if mode == "queue-full" {
+            assert!(sender
+                .try_send(Event::Complete(Err(Error::Network)))
+                .is_ok());
+            assert!(sender
+                .try_send(Event::Complete(Ok(Box::new(ready))))
+                .is_err());
+            app.cancel_native_tunnel();
+        } else {
+            assert!(sender
+                .try_send(Event::Complete(Ok(Box::new(ready))))
+                .is_ok());
+            if mode == "profile-change" {
+                app.state.replace_configuration(Configuration::empty());
+            }
+            if mode == "cancel-queued" {
+                app.cancel_native_tunnel();
+            } else {
+                app.poll_native_tunnel(&context);
+                assert!(app.native_tunnel.is_none(), "{mode}");
+            }
+        }
+        assert!(store.get(&reference).is_ok(), "{mode}");
+        app.frame_logic(&context);
+        let notice = app.overlays.configuration_notice.as_ref().unwrap();
+        assert!(notice.0.contains("could not be removed"), "{mode}");
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 700.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = egui::FullOutput::default();
+        for _ in 0..3 {
+            output = context.run_ui(input.clone(), |ui| app.show_transient_notice(ui.ctx()));
+            output.textures_delta.clear();
+        }
+        assert!(output.shapes.iter().any(|shape| matches!(
+            &shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains("could not be removed")
+        )), "{mode}");
+    }
+}
+
+#[test]
+fn tunnel_cleanup_after_secondary_close_wakes_primary() {
+    let context = egui::Context::default();
+    let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+    let mut primary =
+        FesTermApp::for_test_with_configuration(Configuration::new(vec![profile.clone()]).unwrap());
+    let (configuration, status, reloader, secret_store, documents) =
+        primary.shared_application_services();
+    let mut secondary = FesTermApp::secondary_window(
+        &context,
+        configuration,
+        status,
+        reloader,
+        secret_store,
+        documents,
+    );
+    let store: Arc<dyn SecretStore> = Arc::new(DeleteFailingStore(MemorySecretStore::new()));
+    let reference = store
+        .put(&SecretBytes::copy_from_slice(b"fixture"))
+        .unwrap();
+    let mut ready = prepared(
+        &profile,
+        Arc::clone(&store),
+        reference.duplicate_for_transport(),
+    );
+    ready.stored.cleanup_reporter = CleanupReporter {
+        failed: secondary.configuration_reloader.secret_cleanup_failure(),
+        context: context.clone(),
+    };
+    let (sender, receiver) = mpsc::sync_channel(1);
+    secondary.native_tunnel = Some(workflow(profile, receiver));
+    drop(secondary);
+    for _ in 0..4 {
+        context
+            .run_ui(egui::RawInput::default(), |_| {})
+            .drop_without_applying_deltas();
+    }
+    assert!(!context.has_requested_repaint_for(&egui::ViewportId::ROOT));
+    assert!(sender
+        .try_send(Event::Complete(Ok(Box::new(ready))))
+        .is_err());
+    assert!(context.has_requested_repaint_for(&egui::ViewportId::ROOT));
+    primary.frame_logic(&context);
+    assert!(primary
+        .overlays
+        .configuration_notice
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("could not be removed"));
+    assert!(store.get(&reference).is_ok());
+}
+
+#[test]
+fn tunnel_cleanup_in_closing_secondary_is_not_consumed_before_primary() {
+    let context = egui::Context::default();
+    let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+    let mut primary =
+        FesTermApp::for_test_with_configuration(Configuration::new(vec![profile.clone()]).unwrap());
+    let (configuration, status, reloader, secret_store, documents) =
+        primary.shared_application_services();
+    let mut secondary = FesTermApp::secondary_window(
+        &context,
+        configuration,
+        status,
+        reloader,
+        secret_store,
+        documents,
+    );
+    let store: Arc<dyn SecretStore> = Arc::new(DeleteFailingStore(MemorySecretStore::new()));
+    let reference = store
+        .put(&SecretBytes::copy_from_slice(b"fixture"))
+        .unwrap();
+    let mut ready = prepared(&profile, store, reference);
+    ready.stored.cleanup_reporter = CleanupReporter {
+        failed: secondary.configuration_reloader.secret_cleanup_failure(),
+        context: context.clone(),
+    };
+    let (sender, receiver) = mpsc::sync_channel(1);
+    secondary.native_tunnel = Some(workflow(profile, receiver));
+    assert!(sender
+        .try_send(Event::Complete(Ok(Box::new(ready))))
+        .is_ok());
+    secondary.cancel_native_tunnel();
+    secondary.frame_logic(&context);
+    drop(secondary);
+    primary.frame_logic(&context);
+    assert!(primary
+        .overlays
+        .configuration_notice
+        .as_ref()
+        .unwrap()
+        .0
+        .contains("could not be removed"));
+}
+
+#[test]
+fn tunnel_cancel_cleans_queued_secret_without_failure_notice() {
+    let context = egui::Context::default();
+    let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+    let mut app =
+        FesTermApp::for_test_with_configuration(Configuration::new(vec![profile.clone()]).unwrap());
+    let store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let reference = store
+        .put(&SecretBytes::copy_from_slice(b"fixture"))
+        .unwrap();
+    let mut ready = prepared(
+        &profile,
+        Arc::clone(&store),
+        reference.duplicate_for_transport(),
+    );
+    ready.stored.cleanup_reporter = CleanupReporter {
+        failed: app.configuration_reloader.secret_cleanup_failure(),
+        context: context.clone(),
+    };
+    let (sender, receiver) = mpsc::sync_channel(1);
+    app.native_tunnel = Some(workflow(profile, receiver));
+    assert!(sender
+        .try_send(Event::Complete(Ok(Box::new(ready))))
+        .is_ok());
+    app.cancel_native_tunnel();
+    app.frame_logic(&context);
+    assert!(store.get(&reference).is_err());
+    assert!(app.overlays.configuration_notice.is_none());
+}
+
+#[test]
+fn tunnel_panic_after_install_retains_new_secrets_and_poison_blocks_other_saves() {
+    use crate::configuration_startup::{
+        ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+    };
+    let fixture = SessionNameConfigurationFixture::new();
+    let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+    let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+    configuration.save_to_path(&fixture.path).unwrap();
+    let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+    let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+    app.configuration_reloader = reloader.clone().with_panic_after_installation_for_test();
+    let store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+    let connect = store
+        .put(&SecretBytes::copy_from_slice(b"connect"))
+        .unwrap();
+    let identity = store
+        .put(&SecretBytes::copy_from_slice(b"identity"))
+        .unwrap();
+    let account = DevTunnelAccount::new(
+        "owner",
+        AccountProvider::Github,
+        42,
+        "user",
+        identity.duplicate_for_transport(),
+    )
+    .unwrap();
+    let mut ready = prepared(
+        &profile,
+        Arc::clone(&store),
+        connect.duplicate_for_transport(),
+    );
+    ready
+        .stored
+        .references
+        .push(identity.duplicate_for_transport());
+    ready.binding = Some(Binding {
+        account: Some(account),
+        connect: connect.duplicate_for_transport(),
+        host: DevTunnelHost {
+            tunnel_id: "owned".into(),
+            cluster: "usw3".into(),
+            host_id: "host".into(),
+            public_key: "pin".into(),
+            port: 47461,
+        },
+    });
+    let (_sender, receiver) = mpsc::sync_channel(1);
+    let mut pending = workflow(profile, receiver);
+    pending.ready = Some(Box::new(ready));
+    app.native_tunnel = Some(pending);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        app.finish_native_tunnel(&egui::Context::default());
+    }));
+    assert!(result.is_err());
+    let installed = Configuration::load_from_path(&fixture.path).unwrap();
+    assert!(installed.profile("owned").unwrap().credential_reference() == Some(&connect));
+    assert!(installed.account("owner").unwrap().credential_reference() == &identity);
+    assert!(store.get(&connect).is_ok() && store.get(&identity).is_ok());
+    assert_eq!(
+        reloader.save_configuration(&configuration),
+        Err(ConfigurationLoadFailure::ReconciliationRequired)
+    );
+    assert_eq!(
+        Configuration::load_from_path(&fixture.path).unwrap(),
+        installed
+    );
+}
+
+#[test]
+fn tunnel_blocked_save_never_deletes_shared_or_fresh_candidate_references() {
+    use crate::configuration_startup::{
+        ConfigurationLoadFailure, ConfigurationReloader, SessionNameConfigurationFixture,
+    };
+    for busy in [false, true] {
+        let fixture = SessionNameConfigurationFixture::new();
+        let profile = Profile::named_dev_tunnel("owned", "owned.usw3").unwrap();
+        let store: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
+        let shared = store.put(&SecretBytes::copy_from_slice(b"shared")).unwrap();
+        let fresh = store.put(&SecretBytes::copy_from_slice(b"fresh")).unwrap();
+        let account = DevTunnelAccount::new(
+            "owner",
+            AccountProvider::Github,
+            42,
+            "user",
+            shared.duplicate_for_transport(),
+        )
+        .unwrap();
+        let configuration = Configuration::new(vec![profile.clone()])
+            .unwrap()
+            .with_account(account.clone())
+            .unwrap()
+            .0;
+        configuration.save_to_path(&fixture.path).unwrap();
+        let reloader = ConfigurationReloader::from_path_for_test(fixture.path.clone());
+        let reloader = if busy {
+            reloader.with_save_failure_for_test(ConfigurationLoadFailure::SaveBusy)
+        } else {
+            let first = reloader
+                .clone()
+                .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+            assert_eq!(
+                first.save_configuration(&configuration),
+                Err(ConfigurationLoadFailure::OutcomeUnknown)
+            );
+            reloader
+        };
+        let context = egui::Context::default();
+        let mut primary = FesTermApp::for_test_with_configuration(configuration.clone());
+        primary.configuration_reloader = reloader;
+        let (config, status, reloader, secret_store, documents) =
+            primary.shared_application_services();
+        let mut app = FesTermApp::secondary_window(
+            &context,
+            config,
+            status,
+            reloader,
+            secret_store,
+            documents,
+        );
+        let mut ready = prepared(
+            &profile,
+            Arc::clone(&store),
+            fresh.duplicate_for_transport(),
+        );
+        ready
+            .stored
+            .references
+            .push(shared.duplicate_for_transport());
+        ready.binding = Some(Binding {
+            account: None,
+            connect: fresh.duplicate_for_transport(),
+            host: DevTunnelHost {
+                tunnel_id: "owned".into(),
+                cluster: "usw3".into(),
+                host_id: "host".into(),
+                public_key: "pin".into(),
+                port: 47461,
+            },
+        });
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let mut pending = workflow(profile, receiver);
+        pending.account = Some(account);
+        pending.ready = Some(Box::new(ready));
+        app.native_tunnel = Some(pending);
+        app.finish_native_tunnel(&context);
+        assert!(store.get(&shared).is_ok() && store.get(&fresh).is_ok());
+        assert_eq!(
+            Configuration::load_from_path(&fixture.path).unwrap(),
+            configuration
+        );
+        assert!(app
+            .overlays
+            .configuration_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("retained"));
+        drop(app);
+        primary.frame_logic(&context);
+        assert!(primary
+            .overlays
+            .configuration_notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("candidate Dev Tunnel workflow credentials"));
+    }
+}
+
 #[test]
 fn native_auth_dialog_keeps_instructions_on_one_line_and_within_the_viewport() {
     for (width, error) in [
@@ -207,6 +692,10 @@ fn prepared(
         stored: Stored {
             store,
             references: vec![reference],
+            cleanup_reporter: CleanupReporter {
+                failed: Arc::default(),
+                context: egui::Context::default(),
+            },
         },
     }
 }
