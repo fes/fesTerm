@@ -760,6 +760,35 @@ close, and keeping a moved editor registered when its empty source window ends.
 This automates ownership bookkeeping, not native close-dialog delivery,
 cross-window pointer behavior, caret/focus, or usability acceptance.
 
+## Android shared mobile port (ADR 0073)
+
+The owner-requested Android host reuses the implemented iOS application.
+The existing MOB action IDs apply to both hosts; **iOS evidence never qualifies
+Android**. Build/setup instructions and intentional differences are in
+`app/festerm-android/README.md`. Store release, physical-device acceptance and
+provider in-place editing are not claimed.
+
+| IDs | Automated/emulator evidence | Remaining native/usability prerequisites |
+| --- | --- | --- |
+| MOB-01, MOB-04 | ARM64 and x86_64 development APK cross-builds; shared renderer/layout/gesture tests. Android 35 ARM64 Pixel 7 emulator renders the actual app with measured system-bar and keyboard insets, in portrait, landscape and a tablet-sized display override. | Physical phone/tablet, multi-window, GPU vendors, touch selection/pinch, font scale and TalkBack. A phone emulator with display overrides is not tablet-hardware evidence. Compare captures with the iOS mobile design, treating Android system keyboard/bars as intentional differences. |
+| MOB-02 | JNI instrumentation checks Unicode selection/commit, composition replacement, code-point deletion, masked secure context, stale acknowledgments, and stale field/hidden-connection refusal. Actual Gboard typing saved the SSH profile's username; hardware text input and native Return also worked. On a live loopback shell, Gboard typed and submitted `ls`; the accessory keyboard toggle hid/showed Gboard; Hold symbols and Shell row typed commands with the system IME hidden, and the Shell row emitted `_` and `-` correctly. | Complex multilingual IMEs, hardware modifiers, selection/trackpad, FieldCustom source/draft keyboard on-device, sound preferences and prolonged fast typing on physical devices. |
+| MOB-03 | Native lifecycle adapter, shared suspension/recovery regressions and secure-window flag instrumentation. Emulator background/resume preserved the open document. App lock was enabled with a synthetic screen PIN; cold launch showed the system credential prompt, cancel left the app locked, retry followed by device-passcode authentication unlocked it, and device-lock plus “Immediately” app-switch policies relocked it. Home retired the old prompt and relaunch produced one fresh prompt. Turning protection off required authentication; cancelling preserved protection, and PIN authentication disabled it. The synthetic credential was cleared afterward. | Physical biometrics, physical-device credential cancellation/failure, grace expiry, process-death and repeated lifecycle races, app-switcher privacy snapshots and rotation during authentication. The protected authentication screenshot was intentionally black, not a rendering failure. |
+| MOB-05, MOB-06 | Shared SSH/SFTP/tunnel regression suites; Android Keystore encrypt/read/update/delete and ciphertext-tamper tests. A profile and device-local Ed25519 key were created through the Android UI, survived restart, authenticated to an isolated OpenSSH peer after fingerprint review, and completed a shell `printf` round trip. SFTP listed the owned fixture directory and downloaded Markdown byte-for-byte. The GitHub device-code request completed over Android TLS without account authorization. | Native SFTP upload/conflict/cancel, real-service Dev Tunnel account authorization/discovery/relay/recovery, offline/revoked credentials, hardware-backed key invalidation and physical-device lifecycle qualification. Device-code initiation does not qualify authenticated tunnel connections; packaged verifier/Kotlin class checks alone are not TLS service evidence. |
+| MOB-07 | Shared bounded dictation/review/cancellation tests; Android 12+ on-device-only service adapter, with no network fallback. On the emulator, denying RECORD_AUDIO produced the Failed panel (“Dictation unavailable”), stated that on-device speech was unavailable/interrupted and that no cloud fallback was used, and did not crash. | A physical device with a downloaded local speech model, airplane-mode speech, permission grant, Stop/final-result timeout, interruption/lock/background and actual reviewed insertion. The denied-permission path does not qualify audio capture; the on-device recognizer and level meter were not exercised. The final “Edit text manually” control was clipped by the keyboard in the Failed panel. A host probe with Android-like safe-area insets reproduced the shared fixed-height panel overflow, but not the terminal-background overlap seen on-device; the latter remains unresolved. |
+| MOB-08 | Private import/publication tests cover Unicode, stale-save refusal, size/root limits, symlink replacement, bounded events and shared writer admission. JNI instrumentation rejects ungranted file-URI results. The real Android picker imported byte-exact owned Markdown with its sanitized name/type; edits saved to the private copy, the provider original remained byte-identical, and the saved copy reopened after cold launch with its edits and rendered preview. Cancelling the native source chooser allowed a subsequent import. | System-picker cancellation/provider errors, local SFTP exclusion, storage exhaustion and dirty-close/focus/IME on physical devices. Imported copies never overwrite provider originals; native selection must supply a content-provider URI, not an ungranted filesystem path. |
+| MOB-09 | Emulator app-lock flow covered cold-launch credential UI, cancel/retry, device-passcode-only unlock, device-lock relock, “Immediately” app-switch relock, Home prompt retirement, one fresh relaunch prompt, and authenticated disable/cancel behavior. Host regressions cover request-token-bound stale replies and cancellation. | Physical biometrics, API 29 credential behavior, rapid lifecycle races, physical app-switcher snapshots/compositor timing, and lock behavior with active/parked tunnel identity remain unqualified. |
+
+Development evidence is retained under `target/android/`, `target/android-smoke/`
+and the local `target/android-*.png` captures; these are not committed release
+artifacts. The APK receipt identifies its source revision and dirty status.
+The separate test APK contains no production test entry points and refuses
+personal devices. Run it only with an explicitly selected isolated emulator:
+`python3 scripts/smoke-android.py --serial <serial>`.
+The optional POSIX runner aggregates it when
+`FESTERM_ANDROID_EMULATOR_SERIAL` is set. Android CI cross-builds both ABIs and
+publishes development APKs; emulator execution and owner visual acceptance
+remain separate gates. Required desktop CI is unchanged.
+
 ## iOS Phase 1 feasibility (ADR 0042)
 
 The isolated spike is implemented for review. The following evidence is

@@ -15,7 +15,7 @@ pub fn dictation_permission_prompt_in_flight() -> bool {
     PERMISSION_PROMPT.load(Ordering::SeqCst)
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 pub(crate) fn set_permission_prompt(in_flight: bool) {
     PERMISSION_PROMPT.store(in_flight, Ordering::SeqCst);
 }
@@ -37,7 +37,9 @@ pub enum DictationPhase {
 pub struct DictationText {
     pub text: String,
     pub phase: DictationPhase,
-    /// RMS microphone level in a -60..0 dBFS display range, not recognition.
+    /// Normalized 0..1 microphone level for display, not recognition. iOS
+    /// measures PCM in a -60..0 dBFS range; Android reports its recognizer's
+    /// own RMS estimate.
     pub audio_level: Option<f32>,
     prefix: String,
     pub(crate) generation: u64,
@@ -88,7 +90,7 @@ impl DictationText {
         self.permission_pending = false;
     }
 
-    #[cfg(any(target_os = "ios", test))]
+    #[cfg(any(target_os = "ios", target_os = "android", test))]
     pub(crate) fn capture_failed(&mut self, message: &'static str) {
         let reviewed = zeroize::Zeroizing::new(self.prefix.clone());
         self.cancel();
@@ -107,7 +109,7 @@ impl DictationText {
     }
 
     /// The final result did not arrive in time; review the latest text.
-    #[cfg(any(target_os = "ios", test))]
+    #[cfg(any(target_os = "ios", target_os = "android", test))]
     pub(crate) fn finish_timed_out(&mut self, generation: u64) {
         if self.generation == generation && self.phase == DictationPhase::Finishing {
             self.phase = DictationPhase::Review;
@@ -116,7 +118,7 @@ impl DictationText {
 
     /// After audio ends, a recognizer error (e.g. no speech) completes the
     /// review with the latest text instead of discarding it.
-    #[cfg(any(target_os = "ios", test))]
+    #[cfg(any(target_os = "ios", target_os = "android", test))]
     pub(crate) fn recognition_failed(&mut self, generation: u64) {
         if self.generation != generation {
             return;
@@ -132,7 +134,7 @@ impl DictationText {
         }
     }
 
-    #[cfg(any(target_os = "ios", test))]
+    #[cfg(any(target_os = "ios", target_os = "android", test))]
     pub(crate) fn accepts_results(&self, generation: u64) -> bool {
         self.generation == generation
             && matches!(
@@ -141,7 +143,7 @@ impl DictationText {
             )
     }
 
-    #[cfg(any(target_os = "ios", test))]
+    #[cfg(any(target_os = "ios", target_os = "android", test))]
     pub(crate) fn recognize(&mut self, generation: u64, text: &str, final_result: bool) {
         if !self.accepts_results(generation) {
             return;
@@ -182,23 +184,32 @@ pub(crate) fn microphone_level(samples: &[f32]) -> Option<f32> {
     Some(((10.0 * power.max(1e-6).log10() + 60.0) / 60.0).clamp(0.0, 1.0) as f32)
 }
 
+/// Android's recognizer reports about -2 dB (silence) to 10 dB (loud), never
+/// samples; the meter only needs a bounded, monotonic level.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn recognizer_level(rms_db: f32) -> Option<f32> {
+    rms_db
+        .is_finite()
+        .then(|| ((rms_db + 2.0) / 12.0).clamp(0.0, 1.0))
+}
+
 /// Native capture lives at this FFI boundary; insertion policy stays in the app.
 pub struct Dictation {
     shared: Shared,
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     native: Option<crate::speech::Speech>,
 }
 
 impl Dictation {
     pub fn new(repaint: impl Fn() + Send + Sync + 'static) -> Self {
         let shared = Shared::default();
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         let native = crate::speech::Speech::new(shared.clone(), Arc::new(repaint));
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         let _ = repaint;
         Self {
             shared,
-            #[cfg(target_os = "ios")]
+            #[cfg(any(target_os = "ios", target_os = "android"))]
             native,
         }
     }
@@ -232,7 +243,7 @@ impl Dictation {
             }
             draft.phase = DictationPhase::Authorizing;
         });
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         if let Some(native) = &mut self.native {
             native.poll();
             return;
@@ -244,7 +255,7 @@ impl Dictation {
     }
 
     pub fn poll(&mut self) {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         if let Some(native) = &mut self.native {
             native.poll();
         }
@@ -253,7 +264,7 @@ impl Dictation {
     /// Ends audio capture. Native recognition keeps its task alive in
     /// `Finishing` until the final result, an error, or a short grace timeout.
     pub fn stop(&mut self) {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         if let Some(native) = &self.native {
             let (finishing, phase) = {
                 let mut draft = self.shared.lock().expect("dictation state poisoned");
@@ -275,7 +286,7 @@ impl Dictation {
 
     pub fn cancel(&mut self) {
         self.with_text(DictationText::cancel);
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         if let Some(native) = &mut self.native {
             native.stop();
         }
@@ -302,6 +313,16 @@ mod tests {
         let louder = microphone_level(&[0.1; 16]).unwrap();
         assert!(quiet > 0.3 && quiet < 0.34);
         assert!(louder > quiet && louder < 1.0);
+    }
+
+    #[test]
+    fn recognizer_meter_scales_its_reported_range_and_rejects_invalid_levels() {
+        assert_eq!(recognizer_level(-2.0), Some(0.0));
+        assert_eq!(recognizer_level(-40.0), Some(0.0));
+        assert_eq!(recognizer_level(4.0), Some(0.5));
+        assert_eq!(recognizer_level(30.0), Some(1.0));
+        assert_eq!(recognizer_level(f32::NAN), None);
+        assert_eq!(recognizer_level(f32::INFINITY), None);
     }
 
     #[test]

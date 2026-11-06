@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#0B1220" android:pathData="M0,0h108v108h-108z" />
+    <group android:translateX="18" android:translateY="18" android:scaleX="3" android:scaleY="3">
+        <path android:strokeColor="#60A5FA" android:strokeWidth="1.75"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M4,18V6h7M4,11h5M13,8l3,3l-3,3M17.5,16H21" />
+    </group>
+</vector>

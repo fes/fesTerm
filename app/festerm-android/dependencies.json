@@ -1,0 +1,17 @@
+{
+  "rustls_android_version": "0.2.0",
+  "artifacts": [
+    {
+      "name": "rustls-platform-verifier-0.2.0.aar",
+      "url": "https://raw.githubusercontent.com/rustls/rustls-platform-verifier/maven-archive/android-release-support/maven/org/rustls/rustls-platform-verifier/0.2.0/rustls-platform-verifier-0.2.0.aar",
+      "sha256": "aa021794230fbc2f0be355999e2cf67398dd563de066a2e17001ffbd0b69101b",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "kotlin-stdlib-2.0.21.jar",
+      "url": "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.0.21/kotlin-stdlib-2.0.21.jar",
+      "sha256": "f31cc53f105a7e48c093683bbd5437561d1233920513774b470805641bedbc09",
+      "license": "Apache-2.0"
+    }
+  ]
+}

@@ -715,10 +715,18 @@ impl DocumentHost {
         }
         let Some(view) = self.active else {
             widgets::screen_title(ui, "Documents", "Local text and Markdown");
+            // Android imports editable private copies instead of editing in place.
+            if cfg!(target_os = "android") {
+                widgets::footnote(
+                    ui,
+                    "Reopen a saved copy, or import an editable local copy through Files. \
+                     The original is not changed.",
+                );
+            }
             if widgets::button(
                 ui,
                 ButtonKind::Primary,
-                "Browse in Files",
+                super::platform_text("Browse in Files", "Open or import"),
                 self.opening.is_none(),
             )
             .clicked()

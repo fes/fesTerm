@@ -679,7 +679,14 @@ pub(crate) fn show(ui: &mut Ui, session: &mut FilesSession) -> FilesOutcome {
             }
             transfer_buttons(ui, session);
             if let Some(pane) = session.local.as_mut() {
-                open_local = pane_card(ui, pane, "This iPhone", "Documents", pane_height, &ctx);
+                open_local = pane_card(
+                    ui,
+                    pane,
+                    super::platform_text("This iPhone", "This device"),
+                    "Documents",
+                    pane_height,
+                    &ctx,
+                );
             }
         }
         if open_remote {
@@ -1052,8 +1059,11 @@ pub(crate) fn conflict_sheet_content(
     } else if view.likely_identical {
         "These look identical (same size and time).".to_owned()
     } else if incoming_remote {
-        "Choose what to do with this download. Replacing the iPhone file cannot be undone."
-            .to_owned()
+        super::platform_text(
+            "Choose what to do with this download. Replacing the iPhone file cannot be undone.",
+            "Choose what to do with this download. Replacing the local file cannot be undone.",
+        )
+        .to_owned()
     } else {
         "Choose what to do with this upload. Replacing the remote file cannot be undone.".to_owned()
     };
@@ -1120,7 +1130,7 @@ pub(crate) fn conflict_sheet_content(
         ui,
         ButtonKind::Destructive,
         if incoming_remote {
-            "Replace iPhone file"
+            super::platform_text("Replace iPhone file", "Replace local file")
         } else {
             "Replace remote file"
         },
@@ -1143,7 +1153,7 @@ pub(crate) fn conflict_sheet(ctx: &egui::Context, bounds: Rect, session: &mut Fi
     };
     let location = match row.direction {
         Direction::Upload => format!("Remote · {}", row.target),
-        Direction::Download => "On this iPhone".to_owned(),
+        Direction::Download => super::platform_text("On this iPhone", "On this device").to_owned(),
     };
     let mut remember = session.remember;
     let mut choice = None;

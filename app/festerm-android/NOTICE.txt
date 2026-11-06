@@ -1,0 +1,19 @@
+fesTerm Android development build
+
+This host reuses the fesTerm Rust application and bundled fonts. Component and
+font provenance is maintained in the source repository:
+https://github.com/fes/fesTerm
+
+Additional Android JVM components (Apache License 2.0, included alongside this
+notice in assets/licenses/Apache-2.0.txt):
+
+rustls-platform-verifier Android 0.2.0
+Copyright rustls-platform-verifier contributors
+https://github.com/rustls/rustls-platform-verifier
+
+Kotlin standard library 2.0.21
+Copyright JetBrains s.r.o. and Kotlin Programming Language contributors
+https://github.com/JetBrains/kotlin
+
+Build inputs and integrity hashes: app/festerm-android/dependencies.json.
+This development-signed package is not a store distribution.

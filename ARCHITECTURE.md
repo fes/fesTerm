@@ -1,10 +1,18 @@
 # fesTerm Architecture
 
+The Android host in `app/festerm-android` now shares the mobile application,
+including its live SSH/SFTP/Dev Tunnels composition. The
+`festerm-android-platform` JNI boundary supplies native services through the
+existing window, lock and secret-store facades, selected only on Android.
+[ADR 0073](docs/adr/0073-android-shared-mobile-host.md) records this additive
+boundary, GLES/IME ownership and the explicit private-document-import policy.
+No platform FFI enters the terminal core or renderer.
+
 The additive experimental iOS composition root in `app/festerm-mobile` reuses
 `festerm-core` and `festerm-ui-egui` through eframe/winit, without depending on
 the desktop application. [ADR 0042](docs/adr/0042-ios-rendering-spike-host.md)
-defines its Phase 1 ownership and validation boundary; it has no session
-backend or credential/persistence path yet.
+defines its initial Phase 1 ownership and validation boundary. Later mobile
+ADRs add the shared session, credential, profile and document capabilities.
 
 The phased iOS editor extension in [ADR 0069](docs/adr/0069-ios-authorized-shared-documents.md)
 adds `festerm-mobile-docs -> festerm-document` for a UI-/I/O-free registry over

@@ -60,7 +60,7 @@ pub fn try_local_file_mutation(
     WRITERS.acquire(false, repaint)
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 pub(crate) fn try_document_save(
     repaint: Arc<dyn Fn() + Send + Sync>,
 ) -> Result<DocumentWritePermit, DocumentFileError> {

@@ -30,10 +30,15 @@ mod ios;
 #[cfg(target_os = "ios")]
 pub use ios::{LaContextLocker, LockBridge};
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::{AndroidLocker, LockBridge};
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub struct LockBridge;
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 impl LockBridge {
     pub fn new(_window: raw_window_handle::WindowHandle<'_>, _lock: AppLock) -> Option<Self> {
         None
