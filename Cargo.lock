@@ -28,6 +28,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "accesskit_android"
+version = "0.7.4"
+dependencies = [
+ "accesskit",
+ "accesskit_consumer 0.37.0",
+ "jni 0.21.1",
+ "log",
+]
+
+[[package]]
 name = "accesskit_atspi_common"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -63,12 +73,36 @@ dependencies = [
 
 [[package]]
 name = "accesskit_consumer"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f950720ce064757a1b629caad3a408e8d2c63bb01f29b8a3ff8daa331053ffeb"
+dependencies = [
+ "accesskit",
+ "hashbrown 0.16.1",
+]
+
+[[package]]
+name = "accesskit_consumer"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d10a236f96f87d70732e44520046785431ef01d5bcd6b041317bfadd2f88245"
 dependencies = [
  "accesskit",
  "hashbrown 0.16.1",
+]
+
+[[package]]
+name = "accesskit_ios"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02ecb52198c7cf5f8d3e9ffc03d2ca0a5c7201926befd96721437829da4c5c6a"
+dependencies = [
+ "accesskit",
+ "accesskit_consumer 0.37.0",
+ "hashbrown 0.16.1",
+ "objc2 0.5.2",
+ "objc2-foundation 0.2.2",
+ "objc2-ui-kit 0.2.2",
 ]
 
 [[package]]
@@ -2337,6 +2371,8 @@ dependencies = [
 name = "festerm-android-platform"
 version = "0.15.0"
 dependencies = [
+ "accesskit",
+ "accesskit_android",
  "jni 0.21.1",
  "jni 0.22.4",
  "ndk-context",
@@ -2477,6 +2513,8 @@ dependencies = [
 name = "festerm-ios-window"
 version = "0.15.0"
 dependencies = [
+ "accesskit",
+ "accesskit_ios",
  "block2 0.6.2",
  "festerm-android-platform",
  "libc",

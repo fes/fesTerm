@@ -308,6 +308,27 @@ retry or relaxed deadlines, device ownership, UI/liveness or capture checks.
 Restore an explicit runtime merge gate through review when mobile product
 support is accepted; passing screenshots alone do not accept that support.
 
+## Accessibility and UI flows (ADR 0075)
+
+The app publishes its controls to VoiceOver and TalkBack once a platform client
+asks for the tree. Visible terminal rows are included unless app protection
+hides content. The Maestro flows in `maestro/` drive both platforms only
+through that tree:
+
+```sh
+# Fresh test-owned iPhone Simulator, deleted afterwards:
+python3 scripts/run-mobile-ui-flows.py --platform ios --build
+# Isolated Android emulator, with a downloaded or local APK:
+python3 scripts/run-mobile-ui-flows.py --platform android --device emulator-5554 --apk fesTerm.apk
+```
+
+The runner needs [Maestro](https://maestro.dev) and Java 17. It reinstalls the
+app so that each flow starts with no saved profiles, and writes a JUnit report
+to `target/maestro/`. Without Maestro, it reports the suite as skipped and exits
+with status 3. Optional validation runs the iOS flows on macOS, and the Android
+flows when `FESTERM_ANDROID_EMULATOR_SERIAL` is set. Passing flows do not
+qualify VoiceOver or TalkBack usability; see `MOB-10`.
+
 ## Portable checks and desktop harness
 
 ```sh

@@ -63,6 +63,13 @@ impl LockHost {
         }
     }
 
+    /// Privacy mode (App Lock with a hidden preview) keeps terminal text out
+    /// of the accessibility tree (ADR 0075).
+    pub fn hides_terminal_text(&self) -> bool {
+        let settings = self.lock.settings();
+        settings.enabled && settings.hide_app_switcher_preview
+    }
+
     pub fn view(&self) -> LockView {
         LockView {
             error: self

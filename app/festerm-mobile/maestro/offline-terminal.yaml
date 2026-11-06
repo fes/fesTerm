@@ -1,0 +1,14 @@
+appId: ${APP_ID}
+name: Offline demo terminal exposes rows and accepts typing
+---
+- launchApp:
+    stopApp: true
+- tapOn: "Open offline demo"
+- assertVisible: "Input is counted and discarded.*"
+- tapOn: "More"
+- assertVisible: "Input bytes: 0"
+- tapOn: "More"
+- tapOn: "Terminal viewport"
+- inputText: "abc"
+- tapOn: "More"
+- assertVisible: "Input bytes: 3"

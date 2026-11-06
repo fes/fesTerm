@@ -4428,6 +4428,29 @@
       ]
     },
     {
+      "id": "mobile-accessibility-tree",
+      "edges": ["MOB-10"],
+      "requirements": [
+        "docs/adr/0075-mobile-accessibility-tree.md#decision"
+      ],
+      "decisions": ["ADR-0075", "ADR-0073", "ADR-0058"],
+      "automated_tests": [
+        "tree_generation_waits_for_a_platform_client_and_stops_on_deactivation",
+        "platform_actions_reach_widgets_only_while_active_and_stay_bounded",
+        "content_under_actionable_widgets_is_lifted_so_ios_does_not_hide_it",
+        "privacy_mode_keeps_terminal_text_out_of_the_accessibility_tree",
+        "password_field_is_named_for_assistive_technology_without_exposing_the_secret",
+        "terminal_rows_reach_accessibility_only_when_the_application_opts_in"
+      ],
+      "manual_scenarios": ["MOB-10"],
+      "status": "partial",
+      "prerequisites": [
+        "Shared Maestro flows (scripts/run-mobile-ui-flows.py; scripts/tests/test_mobile_ui_flows.py) pass on an iOS Simulator and an Android emulator; they are optional validation, not a merge gate",
+        "VoiceOver and TalkBack navigation, activation, typing and privacy-mode concealment on physical iPhone/iPad and Android devices remain manual evidence",
+        "Android explore-by-touch hover is delivered to NativeActivity's input queue and does not yet reach the accessibility host view"
+      ]
+    },
+    {
       "id": "ios-rendering-spike",
       "edges": [
         "MOB-01",

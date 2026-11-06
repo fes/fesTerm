@@ -5,7 +5,10 @@ adds native input, secure storage, device lock, document import and on-device
 speech adapters (ADR 0073). Development APK/emulator evidence is not
 physical-device or live-service certification. Provider documents are imported
 as private copies rather than edited in place; see the
-[Android qualification matrix](docs/manual-validation.md#android-shared-mobile-port-adr-0073). Plan
+[Android qualification matrix](docs/manual-validation.md#android-shared-mobile-port-adr-0073).
+Both mobile hosts expose their controls to VoiceOver/TalkBack and UI automation
+(ADR 0075). Shared Maestro flows run on a Simulator and an emulator; physical
+assistive-technology use remains manual `MOB-10` evidence. Plan
 
 **Status:** Draft
 
