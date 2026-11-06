@@ -340,6 +340,19 @@ Observed shell exit (even nonzero), operator termination and normal shutdown
 stay stopped. Legacy/missing/corrupt lifecycle evidence also refuses; a bridge
 upgrade cannot retrofit diagnostics into an already-running old daemon.
 
+If a legacy host is already dead, upgrade alone refuses rather than replacing
+its shell. Explicit `--repair-session` (`-RepairSession` on Windows), combined
+with upgrade when desired, authorizes a **new default shell** while preserving
+the existing tunnel, account, host key and grants (ADR 0071). This does not
+restore programs/state or enable automatic recovery. The daemon beside the
+selected `--devtunnel` CLI is used. A live target refuses; pending repairs adopt
+only their journaled generation and never retry an uncertain launch. Rerun
+with the repair flag to reconcile interruption; ordinary setup refuses while
+its journal remains. Apply grant/restart-policy changes separately. Refresh
+generation-pinned connection JSON and explicitly reconnect afterward.
+With repair plus upgrade, the setup/worker bundle beside that CLI is selected.
+This also upgrades legacy Windows installations that lack a windowless worker.
+
 The worker checks daemon liveness every second independently of relay health,
 stops advertising a dead target and, when opted in, retries after 15 seconds.
 New daemons retain a private `lifecycle/<session-name>.json` under their original
@@ -385,6 +398,160 @@ bridge process group without terminating the independently started daemon.
 An interrupted cache lock requires explicit inspection/removal; it is never
 stolen by a second installer. New releases do not silently replace a running
 installation's helper paths or daemon generation.
+
+### List and remove script-created hosts without stopping the shell
+
+Use the **saved, trusted installer script** (or the installed setup helper)
+from a release that includes management support. These are one-line commands,
+not the normal provisioning one-liner:
+
+```powershell
+.\install-dev-tunnel.ps1 -Manage list -Json
+.\install-dev-tunnel.ps1 -Manage delete -InstallationId 'INSTALLATION-UUID-FROM-LIST' -Yes
+.\install-dev-tunnel.ps1 -Manage delete-all -Yes
+.\install-dev-tunnel.ps1 -Manage archive -InstallationId 'COMPLETED-INSTALLATION-UUID' -Yes
+```
+
+```bash
+bash install-dev-tunnel.sh --manage list --json
+bash install-dev-tunnel.sh --manage delete INSTALLATION-UUID-FROM-LIST --yes
+bash install-dev-tunnel.sh --manage delete-all --yes
+bash install-dev-tunnel.sh --manage archive COMPLETED-INSTALLATION-UUID --yes
+```
+
+The equivalent installed-helper interface is
+`festerm-tunnel-setup --manage list --json`,
+`festerm-tunnel-setup --manage delete INSTALLATION-UUID --yes`, or
+`festerm-tunnel-setup --manage delete-all --yes` (append `.exe` on Windows).
+`--json` / `-Json` also works for deletion; omit it for human-readable feedback.
+Both destructive operations require confirmation; there is no implicit
+interactive default. Setup/upgrade/grant flags cannot be combined with management.
+
+An older installed helper may not support management. Bootstrap **tools only**,
+without trying to repair/upgrade its daemon or host:
+
+```powershell
+.\install-dev-tunnel.ps1 -Manage list -InstallManagementTools -Json
+```
+
+```bash
+bash install-dev-tunnel.sh --manage list --install-management-tools --json
+```
+
+This explicit opt-in reuses the ordinary authenticated-download, exact checksum,
+archive allowlist, native signature and pinned-CLI verification pipeline. It
+stages only an immutable versioned tool cache, verifies management support and
+dispatches `--manage`, never `--managed`. It does not sign in, create a key,
+session or tunnel, install/restart a service, change the old installation's
+`executable`/`cli` paths, or copy a connection profile. Existing cache collisions
+and interrupted locks still refuse; an older release without management support
+cannot fall through into setup. Add the same tools-only switch to a confirmed
+delete/archive command if needed. Ordinary list remains non-mutating when this
+switch is absent.
+
+Management bootstrap verifies the CLI's bytes/signature but does not execute its
+runtime-version preflight. Missing .NET/libicu must not prevent the management
+helper from stopping exact local exposure before reporting cloud cleanup pending.
+
+This initial standalone interface covers **only the verified current-user script
+namespace** (`fesTerm-tunnels/state`, installation schema 1). The installer has
+one such state directory, so its bounded inventory contains at most one host;
+unknown neighboring files do not become inventory. Missing root/state means no
+installation; existing state with missing, malformed, unreadable, foreign or
+substituted ownership evidence reports **inventory unknown/unverified**, with
+a JSON `error` and nonzero exit status for list and delete-all. It is never
+silently treated as an empty successful cleanup. Desktop schema-2 profile hosts
+are intentionally excluded:
+**uncheck and Save, delete the profile, or use fesTerm's cleanup UI** to revoke
+their protected nonce. Standalone commands never bypass desktop consent.
+
+List is read-only: no directory creation, login, helper download, service query
+or provisioning. The scripts use an already-installed private helper, with
+native signature verification where applicable; unavailable/old helpers refuse
+with upgrade guidance rather than running setup. `delete-all` snapshots verified
+local inventory and revalidates each exact installation under the setup/upgrade
+lock. It is not an account-wide or name-prefix cloud sweep.
+
+Deletion first journals disabled intent and stops only the exact owned native
+service/relay, accepting the previously journaled images of an interrupted
+upgrade. It never signals the independent daemon shell, removes its registry,
+deletes a saved profile or helper release directory, or clears global CLI login.
+Cloud deletion then requires the recorded GitHub account, host key, qualified
+identity, ownership label and recorded incarnation (when supplied by the
+service). New script installs reserve a random ownership label **before** the
+create request. Submitted-but-uncertain creation is reconciled only against
+that reservation, never retried as a fresh creation.
+
+Offline, changed-account, unavailable-helper or uncertain-ownership cleanup
+reports **Exposure stopped; cloud cleanup pending** only after confirmed local
+stop. A failed/unverified stop reports **Still exposed / stopping failed** and
+never attempts cloud deletion. Nonzero exit status means pending/refused cleanup;
+private journals and keys remain for retrying the same exact deletion.
+Completed deletion is idempotent and keeps its receipt; normal setup/upgrade
+cannot resurrect the revoked installation.
+
+#### Explicit removal of an existing 0.15 script host
+
+The original 0.15 installer derived the cloud name from the installation's
+128-bit UUID (`festerm-` plus its 32 hexadecimal digits) and journaled the
+qualified ID, numeric GitHub account and host-key fingerprint, but no ownership
+label. Automatic/delete-all cleanup deliberately does not relax its label
+requirement for those records. An ordinary exact deletion stops only the verified
+local service and prints the recorded account, qualified ID and this explicit
+confirmation command:
+
+```powershell
+.\install-dev-tunnel.ps1 -Manage delete -InstallationId 'INSTALLATION-UUID' -Yes -ConfirmLegacyCloudId 'EXACT-QUALIFIED-ID-FROM-LIST'
+```
+
+```bash
+bash install-dev-tunnel.sh --manage delete INSTALLATION-UUID --yes --confirm-legacy-cloud-id EXACT-QUALIFIED-ID-FROM-LIST
+```
+
+The installed helper accepts the same `--confirm-legacy-cloud-id` flag.
+The typed full ID must equal the protected record and UUID-derived cloud name;
+bare IDs, prefixes, missing tunnel identity and mismatched confirmations cannot
+trigger a cloud lookup or deletion. The extra flag is forbidden for list,
+archive and delete-all, and cannot bypass a new host's ownership label or a
+malformed ownership record.
+
+After proven local stop, the backend retains the installer/account leases,
+verifies the recorded key/account, looks up only that exact cloud ID and verifies
+the account again. Before deletion it journals `legacy-confirmed` deletion-only
+provenance, the qualified ID and any available creation incarnation. The pinned
+0.15 CLI's real `show` omits creation time: its receipt explicitly records
+`incarnation: null` and `incarnation_available: false`. Every attempt/retry still
+requires the full-ID flag; it authorizes the current exact qualified resource,
+not inferred continuity with an uncertain prior attempt. Pending and completed
+feedback warns that this path relies on the typed ID, random installation name
+and recorded account, not an incarnation pin. A later optional timestamp cannot
+retroactively pin such a receipt. Once a timestamp was pinned, a missing or
+changed timestamp refuses. An exact qualified not-found response for the known
+record can complete cleanup. No
+hosting grant, ownership label or cloud resource is adopted or changed.
+Offline/sign-in failures retain the journal; retry the same command after
+restoring the recorded account. A newly staged pinned CLI may be used if the
+old CLI is unavailable, without rewriting the installation record.
+
+The existing Windows 0.15 metadata field shape was inspected read-only and its
+supplied CLI SHA-256 matches the current reviewed Windows pin. A sanitized
+fixture covers that original schema, configured phase and release layout.
+Read-only noninteractive account/exact-show checks confirmed the missing creation
+fields, emitting only field-presence booleans. This does not attest the live
+service/key or qualify other platforms; no login, host-management helper,
+private-key inspection or service mutation occurred.
+
+#### Keep completed evidence and deliberately start fresh
+
+Only after deletion has a stopped-service receipt **and** proven cloud cleanup,
+`--manage archive INSTALLATION-UUID --yes` (`-Manage archive -InstallationId UUID
+-Yes`) moves the private `state` directory to `state-deleted-UUID`. It holds the
+installer lock and performs a no-replace rename: an existing archive target
+refuses, all keys/journals remain private and the persistent shell is untouched.
+Pending/uncertain creation or cleanup can never be archived. List ignores these
+completed archives, not unresolved ownership evidence. Run ordinary explicit
+setup afterward to create a fresh installation/host identity, not to resurrect
+the deleted host. Helper-release garbage collection remains deferred to #619.
 
 On Linux/macOS, first setup checks existing service-directory ancestors before
 sign-in, cloud provisioning or daemon startup. Linux uses

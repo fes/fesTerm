@@ -17,6 +17,7 @@ pub enum Glyph {
     Arrow(Key),
     Backspace,
     Shift,
+    Tab { reverse: bool },
     Icon(Icon),
     Grid,
 }
@@ -283,6 +284,28 @@ pub(super) fn paint_glyph(
         Glyph::Arrow(key) => paint_arrow(painter, center, *key, tint, scale),
         Glyph::Backspace => paint_backspace(painter, center, tint, scale),
         Glyph::Shift => paint_shift(painter, center, tint, scale),
+        Glyph::Tab { reverse } => {
+            let direction = if *reverse { -1.0 } else { 1.0 };
+            paint_arrow(
+                painter,
+                center - egui::vec2(direction * scale, 0.0),
+                if *reverse {
+                    Key::ArrowLeft
+                } else {
+                    Key::ArrowRight
+                },
+                tint,
+                scale * 0.72,
+            );
+            let edge = center.x + direction * 7.0 * scale;
+            painter.line_segment(
+                [
+                    egui::pos2(edge, center.y - 5.0 * scale),
+                    egui::pos2(edge, center.y + 5.0 * scale),
+                ],
+                Stroke::new(1.6 * scale.sqrt(), tint),
+            );
+        }
         Glyph::Icon(icon) => icon::paint(painter, *icon, icon_rect(*icon, center, scale), tint),
         Glyph::Grid => paint_grid(
             painter,

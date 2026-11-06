@@ -237,6 +237,8 @@ fn char_range(text: &str, utf16: NSRange) -> Range<usize> {
 
 struct FieldResponderIvars {
     target: Weak<UIView>,
+    empty_input: Retained<TerminalInputView>,
+    custom_input: Cell<bool>,
     model: RefCell<FieldModel>,
     delegate: RefCell<Option<Weak<ProtocolObject<dyn UITextInputDelegate>>>>,
     tokenizer: OnceCell<Retained<UITextInputStringTokenizer>>,
@@ -258,6 +260,13 @@ define_class!(
     impl FieldResponder {
         #[unsafe(method(canBecomeFirstResponder))]
         fn can_become_first_responder(&self) -> bool { true }
+
+        #[unsafe(method_id(inputView))]
+        fn input_view(&self) -> Option<Retained<UIView>> {
+            self.ivars().custom_input.get().then(|| {
+                Retained::into_super(self.ivars().empty_input.clone())
+            })
+        }
 
         #[unsafe(method(beginFloatingCursorAtPoint:))]
         fn begin_floating_cursor(&self, point: CGPoint) {
@@ -691,6 +700,8 @@ impl KeyboardBridge {
         let repaint: Repaint = Arc::new(repaint);
         let field = FieldResponder::alloc(main_thread).set_ivars(FieldResponderIvars {
             target: Weak::from_retained(&view),
+            empty_input: terminal_responder.ivars().empty_input.clone(),
+            custom_input: Cell::new(false),
             model: RefCell::default(),
             delegate: RefCell::default(),
             tokenizer: OnceCell::new(),
@@ -749,7 +760,8 @@ impl KeyboardBridge {
     }
 
     pub fn set_keyboard_mode(&self, mode: KeyboardMode) -> Result<(), &'static str> {
-        if mode != KeyboardMode::Field
+        let field_mode = matches!(mode, KeyboardMode::Field | KeyboardMode::FieldCustom);
+        if !field_mode
             && self.field_responder.isFirstResponder()
             && !self.field_responder.resignFirstResponder()
         {
@@ -769,11 +781,20 @@ impl KeyboardBridge {
                     self.terminal_responder.reloadInputViews();
                 }
             }
-            KeyboardMode::Field => {
+            KeyboardMode::Field | KeyboardMode::FieldCustom => {
+                let changed = self
+                    .field_responder
+                    .ivars()
+                    .custom_input
+                    .replace(mode == KeyboardMode::FieldCustom)
+                    != (mode == KeyboardMode::FieldCustom);
                 if !self.field_responder.isFirstResponder()
                     && !self.field_responder.becomeFirstResponder()
                 {
                     return Err("The built-in keyboard is unavailable");
+                }
+                if changed {
+                    self.field_responder.reloadInputViews();
                 }
             }
             KeyboardMode::System | KeyboardMode::Hidden => {
@@ -805,7 +826,10 @@ impl KeyboardBridge {
     }
 
     pub fn play_input_click(&self) {
-        if self.terminal_responder.isFirstResponder() {
+        if self.terminal_responder.isFirstResponder()
+            || (self.field_responder.isFirstResponder()
+                && self.field_responder.ivars().custom_input.get())
+        {
             UIDevice::currentDevice(MainThreadMarker::from(&*self.terminal_responder))
                 .playInputClick();
         }

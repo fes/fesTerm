@@ -35,6 +35,65 @@
   ],
   "coverage": [
     {
+      "id": "installed-profile-dev-tunnel-hosting",
+      "edges": ["TUNNEL-15", "TUNNEL-16"],
+      "requirements": [
+        "docs/adr/0072-installed-profile-tunnel-hosting.md#decision",
+        "docs/gui-design.md#profile-editing",
+        "docs/application-command-model.md"
+      ],
+      "decisions": ["ADR-0072"],
+      "automated_tests": [
+        "detached_matching_attached_reuse_is_non_admitting_and_request_bound",
+        "detached_absent_start_reserves_before_launch_and_starts_once",
+        "detached_crash_after_reservation_never_relaunches",
+        "detached_uncertain_launch_adopts_only_reserved_generation",
+        "detached_native_start_once_preserves_local_attachment",
+        "detached_fingerprint_preserves_argv_cwd_and_effective_path",
+        "local_tunnel_hosting_is_explicit_and_requires_native_persistence",
+        "local_tunnel_hosting_rejects_noncanonical_identity_and_shared_installations",
+        "prepared_consent_cannot_host_and_a_different_or_revoked_consent_cannot_resume",
+        "late_cloud_creation_is_retained_for_cleanup_but_never_published_after_revocation",
+        "a_crash_before_submission_can_be_cancelled_but_an_uncertain_create_cannot",
+        "fresh_shell_approval_preserves_cloud_identity_and_pins_the_initial_name",
+        "cancelled_preparation_and_completed_revocation_need_fresh_explicit_consent",
+        "cached_cli_verification_opens_a_mapped_executable_read_only",
+        "pinned_archive_accepts_only_the_expected_flat_executable_and_both_hashes",
+        "staged_helpers_publish_executable_bytes_and_recover_interrupted_mode",
+        "verified_cli_repairs_interrupted_mode_only_after_pin_verification",
+        "standalone_repair_refuses_desktop_records_before_any_mutation",
+        "service_missing_registration_directory_preserves_unknown_and_unsafe_refusals",
+        "packaged_executable_ancestors_accept_the_native_applications_directory",
+        "foreground_consent_read_refuses_a_busy_transaction_without_waiting",
+        "a_status_poll_cannot_swallow_explicit_hosting_work",
+        "queued_removal_cannot_be_replaced_by_ensure_or_login_for_hosting",
+        "unverifiable_consent_blocks_profile_removal_instead_of_skipping_revocation",
+        "an_unreferenced_host_cannot_be_removed_after_its_profile_reappears",
+        "uncertain_creation_remains_visible_without_a_transient_failure_code",
+        "cloud_browser_removal_requires_a_qualified_reserved_candidate",
+        "unknown_inventory_cannot_fall_back_to_unmanaged_cloud_deletion",
+        "local_host_checkbox_requires_explicit_save_and_dispatches_hosting_intent",
+        "failed_local_host_save_retains_the_draft_and_ignores_stale_replies",
+        "local_draft_preserves_ordered_argument_boundaries_when_only_renamed",
+        "edited_profile_rename_updates_all_windows_and_usage_without_overwriting_another_profile",
+        "hosted_profile_rename_updates_live_and_sibling_workspace_metadata_only",
+        "management_inventory_distinguishes_absence_from_unknown_and_bulk_delete_refuses",
+        "management_legacy_missing_or_mismatched_confirmation_never_reaches_cli",
+        "management_legacy_optional_incarnation_requires_reconfirmation_and_never_retroactively_pins",
+        "management_archive_requires_complete_cleanup_preserves_receipts_and_allows_fresh_setup",
+        "management_exact_delete_preserves_shell_and_offline_evidence_then_retries",
+        "management_delete_all_snapshot_revalidates_ownership_and_keeps_uncertain_creation",
+        "private_directory_archive_refuses_open_children_and_existing_target"
+      ],
+      "manual_scenarios": ["DT-08"],
+      "status": "partial",
+      "prerequisites": [
+        "Signed desktop provisioning, browser sign-in/account binding and native service/helper updates on Windows, macOS and Linux remain DT-08",
+        "Real-service interrupted creation, offline authenticated cleanup and physical-client reconnect remain unqualified",
+        "Reference-aware old helper-cache collection is deferred to #619; retain unknown and referenced versions"
+      ]
+    },
+    {
       "id": "mcp-javascript-automation-proposal",
       "edges": [
         "AUT-03",
@@ -778,17 +837,22 @@
       "requirements": [
         "docs/adr/0053-separate-dev-tunnels-session-bridge.md#decision",
         "docs/adr/0066-opt-in-managed-daemon-recovery.md#decision",
+        "docs/adr/0071-explicit-managed-session-repair.md#decision",
         "docs/adr/0067-rooted-dev-tunnel-host-filesystem.md#decision"
       ],
       "decisions": [
         "ADR-0053",
         "ADR-0066",
         "ADR-0067",
-        "ADR-0070"
+        "ADR-0070",
+        "ADR-0071"
       ],
       "automated_tests": [
         "managed_observation_consent_is_independent_bounded_and_transactional",
         "managed_daemon_recovery_cannot_overwrite_concurrent_policy_revocation",
+        "managed_session_repair_is_explicit_and_cannot_change_policy",
+        "managed_session_repair_journals_one_fresh_generation_without_changing_grants",
+        "managed_session_repair_validates_the_selected_helper_bundle",
         "observation_native_callback_overflow_is_latched_not_silently_dropped",
         "observation_large_offsets_eof_and_changes_never_return_old_offset_bytes",
         "observation_consent_bounds_and_same_handle_native_pages",
@@ -4242,6 +4306,40 @@
       ]
     },
     {
+      "id": "ios-app-lock-recovery",
+      "edges": ["MOB-09"],
+      "requirements": [
+        "docs/mobile-layout-design.md#recoverable-app-unlocking",
+        "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#app-lock-festerm-ios-lock",
+        "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#amendment-recoverable-foreground-authentication"
+      ],
+      "decisions": ["ADR-0058", "ADR-0061"],
+      "automated_tests": [
+        "stale_unlock_success_after_device_lock_cannot_complete_a_new_attempt",
+        "automatic_unlock_rearms_after_background_but_not_its_own_cancelled_dialog",
+        "missing_completion_can_be_retired_by_explicit_passcode_retry",
+        "stale_failure_after_lock_now_cannot_end_a_replacement_attempt",
+        "backgrounding_cancels_unlock_without_waiting_for_a_callback",
+        "backgrounding_cancels_disable_and_late_success_cannot_turn_protection_off",
+        "changed_settings_retire_an_old_disable_request",
+        "dropping_the_last_lock_owner_cancels_the_platform_request",
+        "synchronous_cancellation_reply_can_reenter_without_deadlocking",
+        "failed_authenticated_settings_write_is_visible_and_keeps_protection",
+        "shield_requests_the_remaining_resume_frame_without_user_input",
+        "unlock_buttons_receive_pointer_input_after_cancelled_automatic_authentication",
+        "unlock_errors_wrap_without_covering_retry_controls",
+        "shield_warmup_counts_frames_not_repeated_egui_passes",
+        "app_lock_dialog_preserves_active_and_parked_ssh_but_real_background_still_stops",
+        "lifecycle_resume_checks_transport_while_lock_keeps_content_hidden"
+      ],
+      "manual_scenarios": ["MOB-09", "MOB-06"],
+      "status": "partial",
+      "prerequisites": [
+        "Provisioned physical iPhone: automatic Face ID success/failure/cancellation, explicit system passcode, unavailable biometrics, repeated rapid app switches, phone lock/unlock and return from system prompts without stuck controls or stale authorization",
+        "Native compositor/opaque-cover removal and app-switcher snapshots, complete narrow-width recovery errors, VoiceOver/touch and healthy active/parked tunnel identity remain manual evidence; portable tests, headless widget captures and Apple-target compilation do not establish device acceptance; no deployment authorized"
+      ]
+    },
+    {
       "id": "ios-rendering-spike",
       "edges": [
         "MOB-01",
@@ -4444,7 +4542,7 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "ADR-0058 app lock (festerm-ios-lock) and document viewer (festerm-mobile-docs) are unwired platform crates: enrolled Face ID match, resume-after-grace lock, app-switcher snapshot and the UI integration remain unproven on Simulator/device",
+        "ADR-0058 app lock is wired through ADR-0061; portable request/cancellation and pointer recovery are covered under MOB-09, but enrolled Face ID, explicit system passcode, resume-after-grace, compositor/snapshot timing and rapid physical-device switches remain unqualified",
         "Owner-provided iOS mock-ups guide mobile-only navy/blue visuals, actual-host identity, labelled Host/Port fields and Esc/Tab/Ctrl/Alt order; profiles, full tabs, Dev Tunnel identity and app lock are deferred, with deliberate differences in docs/mobile-layout-design.md; native Dynamic Type/VoiceOver and touch comparison remain required. Owned test-only loopback SSH peer proves host-side actual-form trust/auth retry, core input/replies, resize and disconnect without external credentials or OS shell execution; bounded runtime cleanup and socket-free synthetic trust/auth gallery remain distinct from native iOS/OpenSSH/TUI/device acceptance. scripts/capture-mobile-ui.py and ignored capture_mobile_ui_gallery produce actual-widget phone/tablet terminal/connect-form/held-navigation PNGs with source/hash attribution for owner review; CI publishes the non-native headless artifact separately; simulated keyboard reservation has no native keyboard pixels; native rendering/input/live-SSH/device and Termius usability acceptance remain required under MOB-01–06",
         "scripts/tests/test_ios_device_build.py covers explicit --live-ssh preflight/build graph selection, local-network metadata, minimal entitlements and mode-labeled private receipts including signing failures; default packaging remains offline; actual Apple signing, manual installation and MOB-06 controlled-host/physical-device acceptance still require a provisioned Mac and iPhone/iPad",
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",
@@ -4487,7 +4585,8 @@
         "document_last_dirty_close_prompts_without_background_keyboard_edits",
         "fresh_file_authority_preserves_dirty_text_and_observes_conflict",
         "late_open_and_failed_native_save_keep_canonical_content",
-        "document_launcher_keeps_existing_global_navigation",
+        "documents_browse_belongs_to_sessions_not_profiles",
+        "locked_document_clears_field_keyboard_and_never_replays_local_input",
         "document_hardware_tab_indents_locally_without_changing_focus",
         "linear_field_geometry_preserves_wrapped_unicode_and_newline_carets",
         "maximum_document_field_geometry_is_complete_and_cached_between_frames",
@@ -4495,7 +4594,17 @@
         "conflict_keep_requires_review_and_leaves_save_explicit_and_version_bound",
         "conflict_reload_discards_only_after_explicit_review_and_refuses_stale_decisions",
         "document_chip_close_from_terminal_uses_dirty_guard_and_blocks_background_input",
-        "short_document_view_moves_touch_sized_actions_into_more",
+        "document_toolbar_is_one_row_of_touch_sized_icons_at_phone_and_tablet_widths",
+        "shared_custom_keyboard_edits_source_and_dictation_replaces_unicode_as_one_undo",
+        "document_dictation_cannot_replay_into_a_revised_or_invalidated_source",
+        "preview_soft_newlines_flow_but_explicit_breaks_and_blocks_remain",
+        "preview_wide_tables_scroll_independently_without_expanding_the_viewport",
+        "preview_touch_menu_selects_and_copies_all_rendered_text_without_markdown",
+        "preview_partial_selection_survives_touch_copy_but_not_projection_replacement",
+        "preview_code_blocks_scroll_independently_inside_the_viewport",
+        "dirty_close_requires_the_matching_successful_save_receipt_and_cancel_clears_intent",
+        "mic_transition_commits_same_frame_native_text_before_binding_or_resuming",
+        "document_dictation_insert_hands_off_ime_without_replaying_draft_events",
         "conflict_actions_stay_above_keyboard_occlusion_at_short_and_narrow_sizes",
         "mobile_preview_keeps_one_worker_and_rejects_cancelled_old_revisions",
         "mobile_preview_releases_closed_document_cache_without_adopting_late_results",
@@ -4510,7 +4619,7 @@
       "manual_scenarios": ["MOB-08"],
       "status": "partial",
       "prerequisites": [
-        "Issue #570: draft #575 provides shared/native I/O foundations; draft #579 wires Documents/Browse in Files, registry-backed source surfaces, shared undo/redo, guarded conflict decisions and dirty-close handling. The dependent Markdown slice adds current-revision Edit/Preview, shared cancellable projections and view/revision-bound Contents with no resource loading. Actual-widget tests/captures do not qualify picker grants or multiline UIKit/IME behavior. Source syntax/line numbers, Find/Replace, local copy/Save As and shared keyboard-region dictation remain subsequent slices.",
+        "Issue #570: shared/native I/O and registry-backed source surfaces provide shared undo/redo, guarded conflict decisions and dirty-close handling. Markdown adds current-revision Edit/Preview, shared cancellable projections and view/revision-bound Contents with no resource loading. The P1–P4 follow-up moves Browse to Sessions, shares source/draft keyboard-region dictation, adds exact save-close receipts, compact icon controls and touch Preview Copy/Select All. Actual-widget tests/captures do not qualify picker grants or multiline UIKit/IME behavior. Source syntax/line numbers, Find/Replace and local copy/Save As remain subsequent slices.",
         "Simulator fixture smoke passed actual native publication, 0600 permissions, stale overwrite refusal, refresh, failed-revert closed-instance refusal, fresh-instance recovery/save, superseded pending failures, unopened/in-flight-drop lease release and close/cleanup; production recovery requires fresh Files authority rather than reopening the failed instance. Portable and real OpenSSH tests cover app-owned writer exclusion. Picker grants/reacquisition, iCloud/third-party provider coordination, revocation/move/delete, file-protection metadata, storage failures, actual keyboard/safe-area/IME, physical iPhone/iPad accessibility and Claude-based real-capture visual review remain MOB-08 qualification; no Edit/Preview split panes at any viewport size.",
         "On-device speech availability and privacy remain the separate MOB-07/#564 gate; online recognition remains deferred in #567."
       ]
@@ -4534,7 +4643,12 @@
         "dictation_host_stop_without_native_recognizer_reviews_immediately",
         "dictation_editor_bounds_unicode_bytes_without_splitting_characters",
         "dictation_failed_and_manual_review_sheets_render_without_terminal_input",
-        "terminal_keyboards_offer_dictation_as_one_non_repeating_action"
+        "terminal_keyboards_offer_dictation_as_one_non_repeating_action",
+        "microphone_meter_measures_samples_not_transcription",
+        "resumed_partials_replace_only_the_new_segment_and_keep_utf8_bounds",
+        "dictation_refuses_a_replacement_transport_in_the_same_tab",
+        "dictation_close_frame_never_replays_queued_local_text_into_terminal",
+        "dictation_review_text_has_consistent_inset_padding_at_compact_and_phone_sizes"
       ],
       "manual_scenarios": ["MOB-07"],
       "status": "partial",

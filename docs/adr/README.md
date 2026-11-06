@@ -51,6 +51,9 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0072: Installed-Profile Dev Tunnel Hosting](0072-installed-profile-tunnel-hosting.md) - explicit profile Save activation, non-attaching native ensure, protected host consent, staged helper updates and shared revocation/teardown
+- [ADR 0071: Explicit Managed Session Repair](0071-explicit-managed-session-repair.md) - explicit fresh-shell repair of a dead legacy host, preserved tunnel/key/grants and generation-journaled interruption safety
+
 - [ADR 0070: Read-Only Remote Observation](0070-read-only-remote-observation.md) - independent host roots, revision-checked reads, bounded native watches, daemon generation correlation and separately authorized exact-tab/root MCP exposure
 - [ADR 0073: Persistent MCP Client Identity and Capability Grants](0073-persistent-mcp-client-permissions.md) - host-defined permission groups, authenticated reconnect, durable read-only status and separately scoped controller input policy
 - [ADR 0066: Opt-in Managed Daemon Recovery](0066-opt-in-managed-daemon-recovery.md) - bounded private lifecycle evidence, explicit unexpected-daemon replacement consent and unchanged client generation pins

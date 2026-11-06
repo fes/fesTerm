@@ -1,5 +1,120 @@
 # Milestone Progress Narrative
 
+## Keeping interrupted host provisioning retryable
+
+Independent merge review found two first-install interruption traps: cleanup
+assumed the native service-registration directory already existed, and a
+downloaded CLI could be published before its executable mode was durable.
+Cleanup now tolerates a genuinely absent directory only through the existing
+exact native-service checks, while unsafe paths and uncertain ownership still
+refuse. Helpers receive executable permissions before atomic publication;
+retry repairs an old private CLI's mode only after verifying its pinned bytes.
+Real permission/handle regressions cover these paths without operating a live
+service. This does not promote DT-08 native qualification.
+The repair/hosting integration review also caught a misplaced desktop-origin
+guard. Standalone setup, upgrade and repair now reject desktop records before
+mutation, preserving the profile coordinator's fresh-shell consent. The
+regression failed before the guard and checks unchanged installation bytes and
+absence of a repair journal in both repair modes.
+Windows CI then exposed the detached native fixture's unsafe assumption that
+checkout ancestors satisfy private-storage policy. It now chooses a verified
+private fixture using the existing candidate-parent pattern; production ACL
+and ancestor checks are unchanged.
+
+## Hosting an installed persistent profile without a second shell
+
+The standalone Dev Tunnel installer remains useful for headless hosts, but it
+was the wrong owner for publishing an already configured desktop daemon profile.
+Issue #618 adds an explicit Local-profile checkbox whose Save can start that
+exact command without attaching a hidden frontend. A native one-shot launch
+reservation and private host-local consent distinguish saved intent from
+authority; rename keeps ownership, while copies do not inherit it.
+
+Disabling or deleting journals revocation before the config write, stops only
+the exact owned relay and retains the persistent shell. Pending cloud cleanup
+survives profile deletion. Signed desktop helper payloads are staged into
+versioned private copies so package updates need not replace running images;
+old-cache collection remains #619. Deterministic fixtures are not signed
+servicing or physical-client acceptance: those remain DT-08.
+
+## Repairing an already-dead legacy tunnel host
+
+A 0.15.0 helper upgrade encountered a dead 0.14.1 daemon. The refusal was
+correct for generation-preserving upgrade, but neither upgrade nor conservative
+automatic recovery offered an explicit operator recovery path for missing
+legacy lifecycle evidence. ADR 0071 adds separately authorized fresh-shell
+repair, keeping the tunnel, host key and grants. One generation is journaled
+before launch; interruption reconciles that exact shell or refuses without
+creating another. Live sessions remain untouched and clients reconnect
+explicitly. Signed/native cross-platform qualification remains DT-05 work.
+
+Review caught a standalone Windows repair utility unnecessarily requiring its
+own adjacent worker. Repair now validates the selected stored/release worker
+before checkpointing or stopping anything; ordinary setup/upgrade still
+requires the utility's bundle. Deterministic bundle-selection and worker refusal
+regressions cover that distinction without bypassing account verification.
+
+## Sharing iOS input and separating saved profiles from active work
+
+The P1–P4 follow-up above draft #621 reuses the custom keyboard and native local
+text client instead of routing editor keys through a terminal. Dictation has
+one bounded composer above the preferred keyboard, real PCM-derived level,
+resumable same-panel review, exact transport binding and one-undo document
+acceptance. Pointer regressions caught an unstable composer height after phase
+changes and selection collapse when the underlying source became inactive;
+fixed geometry and retained view-local selection keep Insert both reachable
+and bound to the reviewed target. Frame ownership prevents a local edit from
+becoming terminal input after the panel closes, and lock clears local IME.
+
+Profiles now contains only saved definitions; Sessions owns work and Browse.
+All chip types use a long-press menu before any close policy. Dirty close waits
+for an exact successful save receipt or an explicit discard. The document
+toolbar is one row of 44-point first-party icons. The generic mobile Markdown
+soft-break issue was reproduced: plain-text projection treated soft and hard
+breaks alike. Display now distinguishes them without changing canonical spans,
+and table/code blocks own independent horizontal scrolling. The specific
+reported DQ-Agent source is unavailable. Actual-widget tests/captures do not
+qualify native microphone, selection handles, pasteboard, touch scrolling,
+VoiceOver or physical-device keyboard behavior; those remain MOB-02/06/07/08.
+
+Independent review also caught same-frame Mic/native edit ordering, a native
+keyboard handoff gap, missing touch Copy/Select All and stale projection
+selection. Those paths now have direct regressions. Visual review found
+illegible accessory labels and detached overflow cues: first-party keyboard
+glyphs retain accessible names, cues use actual visible block bounds, narrow
+Contents keeps its full touch target, and long drafts expose a scroll rail.
+Frame ownership is tied to egui's frame number rather than a layout pass.
+Issue #624 tracks this stacked workflow slice; native qualification remains
+separate from its host-side implementation and synthetic gallery.
+The affected library/vendor run passed 573 tests, with 111 passing in the
+separate offline mobile configuration. Strict host/Simulator Clippy,
+physical-target compilation and build-only Simulator packaging passed.
+Independent security, reliability, scope and actual-widget aesthetic reviews
+accepted the corrected implementation; none substitutes for the native gates.
+
+## Recovering iOS unlock without retiring the session
+
+The November 5 P0 handoff exposed two portable defects: the lock screen's
+full-screen input barrier intercepted both buttons, and an old authentication
+success could consume a replacement request after device lock. Actual pointer
+and deferred-callback regressions failed before the fix. Controls now remain
+usable, request IDs fence both unlock and disable, and cancellation owns the
+native context without a reply/owner cycle. System passcode uses an ephemeral
+access control, not an app field or stored credential. Dialog inactivity,
+genuine background and automatic foreground prompting are tracked separately.
+Distinct-frame shield wakeups and visible settings-write failure complete this
+slice without changing transport ownership. Portable tests and Apple-target
+compilation do not qualify physical Face ID/passcode, compositor/snapshot
+timing or rapid switching; those remain MOB-09/MOB-06 acceptance gates.
+Keyboard/dictation, navigation and Markdown UX priorities remain separate.
+The focused implementation and physical acceptance boundary are tracked in
+[#620](https://github.com/fes/fesTerm/issues/620).
+Review also caught authentication-induced plain-SSH shutdown: the existing
+system-prompt exemption now covers owner authentication, including replies
+before winit's callback. Actual background keeps its existing shutdown policy.
+Short-height captures exposed hidden title/error text behind the controls;
+compact spacing and scrolling keep both actions reachable without smaller targets.
+
 ## Opening the desktop MCP beta
 
 The owner accepted a desktop MCP beta. macOS now has a privacy monitor that
@@ -7953,3 +8068,25 @@ established peer instead of waiting for socket activity or the bootstrap
 deadline. Synthetic tests cover both states. This does not serialize owner
 destruction with effects already in flight, qualify other lifecycle cuts or
 open a production endpoint.
+
+## Removing installer hosts without removing their shells
+
+The standalone Dev Tunnel installer now has explicit list, exact-installation
+delete and confirmed delete-all entry points that branch before provisioning.
+They inspect only protected local script inventory and share the hardened
+native-service teardown authority; desktop hosts stay behind GUI consent
+revocation. New script creates reserve a random cloud ownership label before
+submission. Deletion journals disabled intent, stops only verified hosting
+workers, and retains exact ownership/cleanup evidence when cloud access or
+identity is unavailable. Repeated deletion cannot restart hosting or terminate
+the independent shell. Original 0.15 script hosts gain an explicit typed
+qualified-ID deletion confirmation with a deletion-only receipt: available
+creation time stays pinned; the real thin CLI's absent time stays explicitly
+unavailable and requires renewed confirmation, not inferred continuity or
+automatic ownership adoption. Tools-only bootstrap can stage verified
+management helpers without repairing or restarting the old host. Only completed
+stopped/cloud-gone evidence can be explicitly archived before a separately
+requested fresh setup; uncertain records remain visible and blocked. Helper
+garbage collection remains deferred to #619. Isolated fixtures cover forwarding,
+refusal, interruption and retry; native signed/live-service teardown remains a
+manual qualification gate.

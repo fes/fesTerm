@@ -1,6 +1,8 @@
 use crate::{
     clock::MonotonicClock,
-    locker::{AuthFailure, AuthOutcome, Availability, BiometryKind, Locker},
+    locker::{
+        AuthFailure, AuthMethod, AuthOutcome, Authentication, Availability, BiometryKind, Locker,
+    },
     policy::{LifecycleEvent, LockPolicy, LockSettings, LockState},
     store::{LoadStatus, SettingsStore},
 };
@@ -24,14 +26,25 @@ enum Pending {
     Disable(LockSettings),
 }
 
+struct Request {
+    id: u64,
+    purpose: Pending,
+    authentication: Option<Authentication>,
+}
+
 struct Inner {
     policy: LockPolicy,
     store: Option<SettingsStore>,
     load_status: LoadStatus,
     active: bool,
     shield_frames: u8,
-    pending: Option<Pending>,
+    pending: Option<Request>,
+    next_request: u64,
+    automatic_unlock: bool,
+    dialog_inactive: bool,
+    backgrounded: bool,
     last_failure: Option<AuthFailure>,
+    settings_error: Option<&'static str>,
 }
 
 struct Shared {
@@ -60,6 +73,7 @@ impl AppLock {
             .as_ref()
             .map_or((LockSettings::default(), LoadStatus::Missing), |s| s.load());
         let policy = LockPolicy::launch(settings);
+        let automatic_unlock = policy.state() == LockState::Locked;
         let shield_frames = if settings.enabled {
             SHIELD_FRAMES_AFTER_RESUME
         } else {
@@ -74,7 +88,12 @@ impl AppLock {
                     active: true,
                     shield_frames,
                     pending: None,
+                    next_request: 0,
+                    automatic_unlock,
+                    dialog_inactive: false,
+                    backgrounded: false,
                     last_failure: None,
+                    settings_error: None,
                 }),
                 locker,
                 clock,
@@ -109,6 +128,16 @@ impl AppLock {
         self.inner().last_failure
     }
 
+    pub fn settings_error(&self) -> Option<&'static str> {
+        self.inner().settings_error
+    }
+
+    /// Includes a dialog's inactivity interval even if its reply arrived first.
+    pub fn authentication_prompt_in_flight(&self) -> bool {
+        let inner = self.inner();
+        inner.pending.is_some() || inner.dialog_inactive
+    }
+
     pub fn availability(&self) -> Availability {
         self.shared.locker.availability()
     }
@@ -135,85 +164,176 @@ impl AppLock {
 
     /// Call once per presented frame (after honouring `should_draw_content`).
     pub fn note_frame_presented(&self) {
-        let mut inner = self.inner();
-        inner.shield_frames = inner.shield_frames.saturating_sub(1);
+        let more = {
+            let mut inner = self.inner();
+            inner.shield_frames = inner.shield_frames.saturating_sub(1);
+            inner.shield_frames > 0
+        };
+        if more {
+            (self.shared.repaint)();
+        }
     }
 
     /// Lifecycle input; the state is updated synchronously so a lock engages
     /// before the next frame.
     pub fn handle_lifecycle(&self, event: LifecycleEvent) {
         let now = self.shared.clock.now();
-        {
+        let retired = {
             let mut inner = self.inner();
             match event {
-                LifecycleEvent::WillResignActive => inner.active = false,
+                LifecycleEvent::WillResignActive => {
+                    inner.active = false;
+                    inner.dialog_inactive |= inner.pending.is_some();
+                    if !inner.dialog_inactive {
+                        inner.policy.handle(event, now);
+                    }
+                    None
+                }
+                LifecycleEvent::DidEnterBackground | LifecycleEvent::DeviceLocked => {
+                    inner.active = false;
+                    inner.backgrounded = true;
+                    inner.dialog_inactive = false;
+                    inner.automatic_unlock = false;
+                    let retired = inner.retire();
+                    inner.policy.handle(event, now);
+                    retired
+                }
                 LifecycleEvent::DidBecomeActive => {
+                    let resumed = !inner.active || inner.backgrounded;
+                    let from_dialog = inner.dialog_inactive && !inner.backgrounded;
                     inner.active = true;
+                    inner.dialog_inactive = false;
+                    inner.backgrounded = false;
                     if inner.policy.settings().enabled {
                         inner.shield_frames = SHIELD_FRAMES_AFTER_RESUME;
                     }
+                    if !from_dialog {
+                        inner.policy.handle(event, now);
+                        if resumed && inner.policy.state() == LockState::Locked {
+                            inner.automatic_unlock = true;
+                            inner.last_failure = None;
+                        }
+                    }
+                    None
                 }
-                _ => {}
             }
-            // An authentication dialog we started deactivates the app; that
-            // must not restart or consume the grace timer.
-            let from_dialog =
-                inner.pending.is_some() && !matches!(event, LifecycleEvent::DeviceLocked);
-            if !from_dialog {
-                inner.policy.handle(event, now);
-            }
-        }
+        };
+        // Native invalidation may reply synchronously; never hold the policy mutex.
+        drop(retired);
         (self.shared.repaint)();
     }
 
     pub fn lock_now(&self) {
-        self.inner().policy.lock_now();
+        let retired = {
+            let mut inner = self.inner();
+            let retired = inner.retire();
+            inner.policy.lock_now();
+            inner.automatic_unlock = inner.policy.state() == LockState::Locked;
+            retired
+        };
+        drop(retired);
         (self.shared.repaint)();
     }
 
-    /// "Use Face ID" / "Use device passcode": both run the owner-authentication
-    /// policy, which falls back to the passcode.
+    /// Starts once per cold launch or genuine foreground lock interval.
+    pub fn begin_automatic_unlock(&self) {
+        self.start_unlock(AuthMethod::OwnerAuthentication, false, true);
+    }
+
+    /// Starts an unlock only when another request is not already pending.
     pub fn begin_unlock(&self) {
-        {
+        self.start_unlock(AuthMethod::OwnerAuthentication, false, false);
+    }
+
+    /// Explicit retries can retire a request even when its native reply was lost.
+    pub fn retry_unlock(&self) {
+        self.start_unlock(AuthMethod::OwnerAuthentication, true, false);
+    }
+
+    pub fn begin_passcode_unlock(&self) {
+        self.start_unlock(AuthMethod::DevicePasscode, true, false);
+    }
+
+    fn start_unlock(&self, method: AuthMethod, replace: bool, automatic: bool) {
+        let (id, retired) = {
             let mut inner = self.inner();
-            if !inner.policy.begin_unlock() {
+            if !inner.active
+                || inner.policy.state() == LockState::Unlocked
+                || (automatic && !inner.automatic_unlock)
+                || (!replace && inner.pending.is_some())
+            {
                 return;
             }
-            inner.pending = Some(Pending::Unlock);
+            let Some(id) = inner.next_request.checked_add(1) else {
+                inner.last_failure = Some(AuthFailure::Unavailable);
+                inner.automatic_unlock = false;
+                return;
+            };
+            let retired = inner.retire();
+            inner.policy.begin_unlock();
+            inner.next_request = id;
+            inner.pending = Some(Request {
+                id,
+                purpose: Pending::Unlock,
+                authentication: None,
+            });
+            inner.automatic_unlock = false;
             inner.last_failure = None;
-        }
-        self.authenticate("Unlock fesTerm");
+            (id, retired)
+        };
+        drop(retired);
+        self.authenticate(id, method, "Unlock fesTerm");
     }
 
-    fn authenticate(&self, reason: &str) {
-        let shared = self.shared.clone();
+    fn authenticate(&self, id: u64, method: AuthMethod, reason: &str) {
+        let shared = Arc::downgrade(&self.shared);
         // The mutex is not held here: a locker may complete synchronously.
-        self.shared.locker.authenticate(
+        let mut authentication = Some(self.shared.locker.authenticate(
+            method,
             reason,
-            Box::new(move |outcome| AppLock { shared }.finish(outcome)),
-        );
-    }
-
-    fn finish(&self, outcome: AuthOutcome) {
+            Box::new(move |outcome| {
+                if let Some(shared) = shared.upgrade() {
+                    AppLock { shared }.finish(id, outcome);
+                }
+            }),
+        ));
         {
             let mut inner = self.inner();
-            let pending = inner.pending.take();
-            match (outcome, pending) {
-                (Ok(()), Some(Pending::Unlock)) => {
+            if let Some(pending) = inner.pending.as_mut().filter(|pending| pending.id == id) {
+                pending.authentication = authentication.take();
+            }
+        }
+        drop(authentication);
+        (self.shared.repaint)();
+    }
+
+    fn finish(&self, id: u64, outcome: AuthOutcome) {
+        let completed = {
+            let mut inner = self.inner();
+            if inner
+                .pending
+                .as_ref()
+                .is_none_or(|pending| pending.id != id)
+            {
+                return;
+            }
+            let request = inner.pending.take().expect("matching authentication");
+            match (outcome, request.purpose) {
+                (Ok(()), Pending::Unlock) => {
                     inner.policy.authentication_succeeded();
                 }
-                (Ok(()), Some(Pending::Disable(next))) => {
-                    if inner.persist(&next).is_ok() {
-                        inner.policy.set_settings(next);
-                    }
-                }
+                (Ok(()), Pending::Disable(next)) => match inner.persist(&next) {
+                    Ok(()) => inner.policy.set_settings(next),
+                    Err(_) => inner.settings_error = Some("Could not save the lock settings."),
+                },
                 (Err(failure), _) => {
                     inner.policy.authentication_ended_without_success();
                     inner.last_failure = Some(failure);
                 }
-                (Ok(()), None) => {}
             }
-        }
+            request.authentication
+        };
+        drop(completed);
         (self.shared.repaint)();
     }
 
@@ -222,40 +342,62 @@ impl AppLock {
     /// authenticate (`AuthenticationStarted`; poll `settings()` afterwards).
     /// Other changes apply at once. Nothing changes if persisting fails.
     pub fn apply_settings(&self, next: LockSettings) -> Result<(), SettingsError> {
-        let current = self.settings();
-        if next.enabled && !current.enabled {
-            let availability = self.availability();
-            if !matches!(availability, Availability::Available(_)) {
-                return Err(SettingsError::CannotAuthenticate(availability));
-            }
+        let availability = self.availability();
+        let mut inner = self.inner();
+        let current = inner.policy.settings();
+        if next.enabled && !current.enabled && !matches!(availability, Availability::Available(_)) {
+            return Err(SettingsError::CannotAuthenticate(availability));
         }
+        inner.settings_error = None;
         if !next.enabled && current.enabled {
             // Without a device passcode the OS cannot authenticate anyone, and
             // anyone holding the device already has full access.
-            if self.availability() != Availability::PasscodeNotSet {
-                {
-                    let mut inner = self.inner();
-                    if inner.pending.is_some() {
-                        return Ok(());
-                    }
-                    inner.pending = Some(Pending::Disable(next));
+            if availability != Availability::PasscodeNotSet {
+                if inner.pending.is_some() {
+                    return Err(SettingsError::AuthenticationStarted);
                 }
-                self.authenticate("Turn off fesTerm app lock");
+                let id = inner
+                    .next_request
+                    .checked_add(1)
+                    .ok_or(SettingsError::CannotAuthenticate(Availability::Unavailable))?;
+                inner.next_request = id;
+                inner.pending = Some(Request {
+                    id,
+                    purpose: Pending::Disable(next),
+                    authentication: None,
+                });
+                inner.last_failure = None;
+                drop(inner);
+                self.authenticate(
+                    id,
+                    AuthMethod::OwnerAuthentication,
+                    "Turn off fesTerm app lock",
+                );
                 return Err(SettingsError::AuthenticationStarted);
             }
         }
-        let mut inner = self.inner();
         inner
             .persist(&next)
             .map_err(|e| SettingsError::Persist(e.to_string()))?;
         inner.policy.set_settings(next);
+        let retired = inner.retire();
+        if !next.enabled {
+            inner.automatic_unlock = false;
+        }
         drop(inner);
+        drop(retired);
         (self.shared.repaint)();
         Ok(())
     }
 }
 
 impl Inner {
+    fn retire(&mut self) -> Option<Authentication> {
+        let request = self.pending.take()?;
+        self.policy.authentication_ended_without_success();
+        request.authentication
+    }
+
     fn persist(&self, settings: &LockSettings) -> std::io::Result<()> {
         match &self.store {
             Some(store) => store.save(settings),

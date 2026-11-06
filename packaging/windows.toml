@@ -13,6 +13,9 @@ binaries = [
 ]
 resources = [
   { src = "../target/release/festerm-sessiond-0.15.0.exe", target = "festerm-sessiond-0.15.0.exe" },
+  { src = "../target/release/festerm-tunnel-setup.exe", target = "festerm-tunnel-setup.exe" },
+  { src = "../target/release/festerm-tunnel-bridge.exe", target = "festerm-tunnel-bridge.exe" },
+  { src = "../target/release/festerm-tunnel-worker.exe", target = "festerm-tunnel-worker.exe" },
   { src = "../target/release/runtime/conpty", target = "runtime/conpty" },
 ]
 

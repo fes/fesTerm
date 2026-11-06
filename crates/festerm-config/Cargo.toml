@@ -15,6 +15,7 @@ festerm-ssh = { path = "../festerm-ssh" }
 festerm-serial = { path = "../festerm-serial" }
 serde = { version = "1", features = ["derive"] }
 toml = "1.1.4"
+uuid = "1"
 
 [lints]
 workspace = true

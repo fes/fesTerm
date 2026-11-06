@@ -17,6 +17,8 @@ icons = [
 binaries = [
   { path = "festerm", main = true },
   { path = "festerm-sessiond", main = false },
+  { path = "festerm-tunnel-setup", main = false },
+  { path = "festerm-tunnel-bridge", main = false },
 ]
 
 [macos]

@@ -1,0 +1,45 @@
+{
+  "reviewed": "2026-10-30",
+  "pins": [
+    {
+      "platform": "windows",
+      "architecture": "x86_64",
+      "download": "https://aka.ms/TunnelsCliDownload/win-x64",
+      "format": "executable",
+      "archive_sha256": "f11c797e90397a0a8e9bee711d500473632be27839deeb4fb3d0f5dbc6ffd2dc",
+      "executable_sha256": "f11c797e90397a0a8e9bee711d500473632be27839deeb4fb3d0f5dbc6ffd2dc"
+    },
+    {
+      "platform": "linux",
+      "architecture": "x86_64",
+      "download": "https://aka.ms/TunnelsCliDownload/linux-x64",
+      "format": "executable",
+      "archive_sha256": "723d6aebdc226064aef321258fb17c8a2770c9cc2bd05004c0fb83e72b302c3f",
+      "executable_sha256": "723d6aebdc226064aef321258fb17c8a2770c9cc2bd05004c0fb83e72b302c3f"
+    },
+    {
+      "platform": "linux",
+      "architecture": "aarch64",
+      "download": "https://aka.ms/TunnelsCliDownload/linux-arm64",
+      "format": "executable",
+      "archive_sha256": "b537f270a55d57f23b7621cec0b09806aa9ada119713b33e9255284179b76bde",
+      "executable_sha256": "b537f270a55d57f23b7621cec0b09806aa9ada119713b33e9255284179b76bde"
+    },
+    {
+      "platform": "macos",
+      "architecture": "x86_64",
+      "download": "https://aka.ms/TunnelsCliDownload/osx-x64-zip",
+      "format": "zip",
+      "archive_sha256": "e4a430bf2e8963fb6aec53be4a36a1dff40154369acb05906b822c47e439cae4",
+      "executable_sha256": "39e5cbfbb5b21a94f14bfa1500d7e531dc90ae047bfe96146c4e05ab5ae4a18c"
+    },
+    {
+      "platform": "macos",
+      "architecture": "aarch64",
+      "download": "https://aka.ms/TunnelsCliDownload/osx-arm64-zip",
+      "format": "zip",
+      "archive_sha256": "f2fd04e1746345c7a009c17d6091b85b80b2633e0565623f851a8a298e8b56eb",
+      "executable_sha256": "7cac9a23cbb5e7c17b33d38b9921c8b0c108337533980bdb24d56c0c6e4b54fe"
+    }
+  ]
+}

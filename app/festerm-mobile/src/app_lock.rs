@@ -44,12 +44,12 @@ pub enum LockAction {
     LockNow,
 }
 
-/// Owns the lock handle and the one-shot automatic unlock prompt.
+/// Owns lock presentation; authentication lifetime belongs to the lock handle.
 pub struct LockHost {
     lock: AppLock,
     #[allow(dead_code)] // keeps the native shield and observers alive on iOS
     bridge: Option<festerm_ios_lock::LockBridge>,
-    auto_prompted: bool,
+    last_frame: Option<u64>,
     pub error: Option<String>,
 }
 
@@ -58,14 +58,17 @@ impl LockHost {
         Self {
             lock,
             bridge,
-            auto_prompted: false,
+            last_frame: None,
             error: None,
         }
     }
 
     pub fn view(&self) -> LockView {
         LockView {
-            error: self.error.clone(),
+            error: self
+                .error
+                .clone()
+                .or_else(|| self.lock.settings_error().map(str::to_owned)),
             ..LockView::of(&self.lock)
         }
     }
@@ -90,8 +93,12 @@ impl LockHost {
     }
 
     /// Per-frame bookkeeping after the frame's content decision.
-    pub fn frame_presented(&self) {
-        self.lock.note_frame_presented();
+    pub fn frame_presented(&mut self, ctx: &egui::Context) {
+        let frame = ctx.cumulative_frame_nr();
+        if self.last_frame != Some(frame) {
+            self.last_frame = Some(frame);
+            self.lock.note_frame_presented();
+        }
         if let Some(bridge) = &self.bridge {
             bridge.sync();
         }
@@ -101,22 +108,26 @@ impl LockHost {
     /// it drew (and so content must not).
     pub fn gate(&mut self, ui: &mut Ui, active: bool) -> bool {
         if self.lock.should_draw_content() {
-            self.auto_prompted = false;
             return false;
         }
-        if active
-            && !self.auto_prompted
-            && self.lock.state() == LockState::Locked
-            && self.lock.last_failure().is_none()
-        {
-            self.auto_prompted = true;
-            self.lock.begin_unlock();
+        if active {
+            self.lock.begin_automatic_unlock();
         }
-        let screen = UnlockScreen::new(self.lock.biometry(), self.lock.last_failure());
+        let biometry = self.lock.biometry();
+        let mut screen = UnlockScreen::new(biometry, self.lock.last_failure());
         let unlocking = self.lock.state() == LockState::Unlocking;
-        match unlock_screen(ui, &screen, unlocking, self.lock.last_failure()) {
+        if unlocking {
+            screen.primary_button = biometry.retry_button_label();
+        }
+        let action = ui
+            .add_enabled_ui(active, |ui| {
+                unlock_screen(ui, &screen, unlocking, self.lock.last_failure())
+            })
+            .inner;
+        match action {
             UnlockAction::None => {}
-            UnlockAction::Unlock => self.lock.begin_unlock(),
+            UnlockAction::Unlock => self.lock.retry_unlock(),
+            UnlockAction::Passcode => self.lock.begin_passcode_unlock(),
         }
         true
     }
@@ -126,6 +137,7 @@ impl LockHost {
 pub enum UnlockAction {
     None,
     Unlock,
+    Passcode,
 }
 
 /// Mock-up 14. Nothing sensitive is drawn here.
@@ -135,25 +147,48 @@ pub fn unlock_screen(
     unlocking: bool,
     failure: Option<AuthFailure>,
 ) -> UnlockAction {
-    let mut action = UnlockAction::None;
     let rect = ui.max_rect();
     ui.painter().rect_filled(rect, 0.0, color::BG);
+    // Register the backdrop before controls so it cannot cover their hit targets.
+    ui.interact(rect, ui.id().with("lock-backdrop"), Sense::click());
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let size = egui::vec2(ui.available_width(), rect.height().max(330.0));
+            let (content, _) = ui.allocate_exact_size(size, Sense::hover());
+            unlock_contents(ui, content, screen, unlocking, failure)
+        })
+        .inner
+}
+
+fn unlock_contents(
+    ui: &mut Ui,
+    rect: egui::Rect,
+    screen: &UnlockScreen,
+    unlocking: bool,
+    failure: Option<AuthFailure>,
+) -> UnlockAction {
+    let mut action = UnlockAction::None;
+    let compact = rect.height() < 540.0;
     let center_x = rect.center().x;
     let tile = egui::Rect::from_center_size(
-        egui::pos2(center_x, rect.top() + rect.height() * 0.30),
-        egui::vec2(88.0, 88.0),
+        egui::pos2(
+            center_x,
+            rect.top() + if compact { 64.0 } else { rect.height() * 0.30 },
+        ),
+        egui::Vec2::splat(if compact { 64.0 } else { 88.0 }),
     );
     ui.painter()
         .rect_filled(tile, CornerRadius::same(radius::CARD + 8), color::ICON_TILE);
     festerm_ui_egui::icon::paint(
         ui.painter(),
         Icon::AppMark,
-        tile.shrink(22.0),
+        tile.shrink(if compact { 16.0 } else { 22.0 }),
         color::ACCENT_TEXT,
     );
     super::widgets::paint_fit(
         ui.painter(),
-        egui::pos2(center_x, tile.bottom() + 36.0),
+        egui::pos2(center_x, tile.bottom() + if compact { 24.0 } else { 36.0 }),
         Align2::CENTER_CENTER,
         screen.title,
         type_scale::font(type_scale::LARGE_TITLE),
@@ -162,48 +197,50 @@ pub fn unlock_screen(
     );
     super::widgets::paint_fit(
         ui.painter(),
-        egui::pos2(center_x, tile.bottom() + 66.0),
+        egui::pos2(center_x, tile.bottom() + if compact { 52.0 } else { 66.0 }),
         Align2::CENTER_CENTER,
-        "Sessions keep running while fesTerm is locked.",
+        if unlocking {
+            "Waiting for iOS authentication"
+        } else {
+            "Sessions keep running while fesTerm is locked."
+        },
         type_scale::font(type_scale::CAPTION),
         color::TEXT_MUTED,
         rect.width() - 48.0,
     );
     let error = screen.error.or_else(|| failure.and_then(failure_message));
     if let Some(error) = error {
-        super::widgets::paint_fit(
-            ui.painter(),
-            egui::pos2(center_x, tile.bottom() + 100.0),
-            Align2::CENTER_CENTER,
-            error,
-            type_scale::font(type_scale::CAPTION),
-            color::WARNING,
-            rect.width() - 48.0,
+        ui.put(
+            egui::Rect::from_center_size(
+                egui::pos2(center_x, tile.bottom() + if compact { 76.0 } else { 100.0 }),
+                egui::vec2(rect.width() - 48.0, 40.0),
+            ),
+            egui::Label::new(
+                egui::RichText::new(error)
+                    .font(type_scale::font(type_scale::CAPTION))
+                    .color(color::WARNING),
+            )
+            .wrap()
+            .halign(egui::Align::Center),
         );
     }
     let width = (rect.width() - 48.0).min(420.0);
     let buttons = egui::Rect::from_min_size(
-        egui::pos2(center_x - width / 2.0, rect.bottom() - 200.0),
+        egui::pos2(
+            center_x - width / 2.0,
+            rect.bottom() - if compact { 132.0 } else { 200.0 },
+        ),
         egui::vec2(width, 2.0 * space::BUTTON_HEIGHT + space::MD),
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(buttons), |ui| {
         ui.spacing_mut().item_spacing.y = space::MD;
-        if button(ui, ButtonKind::Primary, screen.primary_button, !unlocking).clicked() {
+        if button(ui, ButtonKind::Primary, screen.primary_button, true).clicked() {
             action = UnlockAction::Unlock;
         }
-        if button(
-            ui,
-            ButtonKind::Secondary,
-            screen.passcode_button,
-            !unlocking,
-        )
-        .clicked()
-        {
-            action = UnlockAction::Unlock;
+        if button(ui, ButtonKind::Secondary, screen.passcode_button, true).clicked() {
+            action = UnlockAction::Passcode;
         }
     });
-    // Pointer events must not fall through to hidden content.
-    ui.allocate_rect(rect, Sense::click());
     action
 }
 
@@ -312,6 +349,7 @@ pub fn settings_section(ui: &mut Ui, view: &LockView) -> Vec<LockAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
     use festerm_ios_lock::{Availability, BiometryKind, FakeLocker, ManualClock};
     use std::sync::Arc;
 
@@ -358,5 +396,132 @@ mod tests {
         }));
         assert!(host.error.is_some());
         assert!(!host.view().settings.enabled);
+    }
+
+    #[test]
+    fn unlock_buttons_receive_pointer_input_after_cancelled_automatic_authentication() {
+        for size in [
+            egui::vec2(390.0, 844.0),
+            egui::vec2(320.0, 568.0),
+            egui::vec2(844.0, 390.0),
+            egui::vec2(390.0, 240.0),
+        ] {
+            let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+            locker.set_deferred(true);
+            let lock = AppLock::new(None, locker.clone(), Arc::new(ManualClock::new()), || {});
+            lock.apply_settings(LockSettings {
+                enabled: true,
+                ..LockSettings::default()
+            })
+            .unwrap();
+            lock.lock_now();
+            let mut harness = Harness::builder().with_size(size).build_ui_state(
+                |ui, host: &mut LockHost| {
+                    assert!(host.gate(ui, true));
+                },
+                LockHost::new(lock, None),
+            );
+            harness.run();
+            assert_eq!(locker.pending_count(), 1);
+            locker.complete_pending(Err(AuthFailure::Cancelled));
+            harness.run();
+            if size.y < 330.0 {
+                harness.event(egui::Event::PointerMoved(egui::pos2(
+                    size.x / 2.0,
+                    size.y / 2.0,
+                )));
+                harness.event(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -180.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run();
+            }
+            for label in [
+                "Try Face ID Again",
+                festerm_ios_lock::ui_model::USE_PASSCODE_LABEL,
+            ] {
+                let rect = harness.get_by_label(label).rect();
+                assert!(rect.width() >= 44.0 && rect.height() >= 44.0);
+                assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
+            }
+            harness.get_by_label("Try Face ID Again").click();
+            harness.run();
+            assert_eq!(
+                locker.pending_count(),
+                1,
+                "retry button must not be covered by the lock-screen input shield"
+            );
+            harness
+                .get_by_label(festerm_ios_lock::ui_model::USE_PASSCODE_LABEL)
+                .click();
+            harness.run();
+            assert_eq!(locker.cancellation_count(), 1);
+            assert_eq!(
+                locker.prompt_methods().last(),
+                Some(&festerm_ios_lock::AuthMethod::DevicePasscode)
+            );
+        }
+    }
+
+    #[test]
+    fn unlock_errors_wrap_without_covering_retry_controls() {
+        for size in [egui::vec2(320.0, 568.0), egui::vec2(320.0, 330.0)] {
+            for failure in [
+                AuthFailure::NotRecognized,
+                AuthFailure::BiometryLockedOut,
+                AuthFailure::PasscodeNotSet,
+                AuthFailure::Unavailable,
+            ] {
+                let mut harness = Harness::builder().with_size(size).build_ui(move |ui| {
+                    unlock_screen(
+                        ui,
+                        &UnlockScreen::new(BiometryKind::FaceId, Some(failure)),
+                        false,
+                        Some(failure),
+                    );
+                });
+                harness.run();
+                let error = harness
+                    .get_by_label(failure_message(failure).unwrap())
+                    .rect();
+                let button = harness.get_by_label("Try Face ID Again").rect();
+                assert!(error.bottom() < button.top(), "{failure:?} at {size:?}");
+                assert!(error.width() <= size.x - 48.0);
+                assert!(error.height() <= 40.0);
+            }
+        }
+    }
+
+    #[test]
+    fn shield_warmup_counts_frames_not_repeated_egui_passes() {
+        let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+        let lock = AppLock::new(None, locker, Arc::new(ManualClock::new()), || {});
+        lock.apply_settings(LockSettings {
+            enabled: true,
+            ..LockSettings::default()
+        })
+        .unwrap();
+        lock.handle_lifecycle(festerm_ios_lock::LifecycleEvent::DidBecomeActive);
+        let mut host = LockHost::new(lock.clone(), None);
+        let ctx = egui::Context::default();
+        let passes = ctx.cumulative_pass_nr();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            host.frame_presented(ui.ctx());
+            host.frame_presented(ui.ctx());
+            if ui.ctx().current_pass_index() == 0 {
+                ui.ctx()
+                    .request_discard("exercise actual shield layout retry");
+            }
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(ctx.cumulative_pass_nr() - passes, 2);
+        assert!(lock.shield_should_cover());
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            host.frame_presented(ui.ctx())
+        })
+        .drop_without_applying_deltas();
+        assert!(!lock.shield_should_cover());
     }
 }
