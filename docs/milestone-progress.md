@@ -27,6 +27,25 @@ cancelling the form.
 VoiceOver/TalkBack usability on physical devices, and Android
 explore-by-touch, remain open (`MOB-10`).
 
+## Reserving ordered SSH input without retargeting
+
+Interactive SSH now reserves an inert position in its existing bounded command
+queue using the same authority-free, expiring slot as the local PTY, bound to
+the host controller and SSH's own attachment generation. Human input cannot
+overtake the slot; refusal, cancellation or expiration release no bytes.
+Pending or committed slots tied to a replaced attachment are discarded rather
+than sent to the new connection. A slow SSH write preserves subsequent queued
+input while remaining interruptible by shutdown; one poll discards only a
+bounded number of cancelled slots. A busy shared admission lock refuses a new
+SSH reservation without blocking the transport, and an expired unresolved slot
+can release later input even while it is busy.
+
+Component tests and a controlled OpenSSH fixture exercise ordering and
+cancellation. The desktop workflow beta still targets local terminals only:
+native handoff, leases, human takeover and broker integration for SSH targets
+and real-target lifecycle evidence remain open. Text-mode SFTP, sessiond,
+tunnels and serial still refuse automation reservations.
+
 ## Proposed automation authoring, application hooks and debugging
 
 Beyond the shipped desktop JavaScript workflow beta, which runs one bundle
@@ -814,8 +833,8 @@ conservatively and never replay it automatically.
 
 Component and controlled-PTY tests cover ordering, refusal and stalled
 commitment. This is not a control adapter or a lease: native handoff, human
-takeover, privacy and broker integration remain open, as do reservations for
-SSH, persistent, tunnel and serial backends.
+takeover, privacy and broker integration remain open, as did reservations for
+SSH, persistent, tunnel and serial backends at this stage.
 
 ## Separating shared automation and MCP lifetimes
 

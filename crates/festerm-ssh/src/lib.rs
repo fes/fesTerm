@@ -23,10 +23,12 @@ use std::{
 
 use festerm_secret_store::{SecretBytes, SecretReference, SecretStore, SecretStoreError};
 use festerm_session::{
-    noop_session_event_notifier, AutomationEpoch, FlowDirection, Session, SessionError,
-    SessionErrorKind, SessionEvent, SessionEventNotifier, SessionId, SessionLifecycle,
-    SessionMetrics, SessionOperation, SessionSendError, SessionTryReceiveError, ShutdownError,
-    ShutdownResult, SshPortForwardDirection, SshPortForwardSource, TerminalSize,
+    automation_input_slot, noop_session_event_notifier, try_automation_admission_lock,
+    AutomationAdmissionTryError, AutomationEpoch, AutomationInputStatus, FlowDirection,
+    PendingAutomationInput, ReserveAutomationInputError, ReservedAutomationInput, Session,
+    SessionError, SessionErrorKind, SessionEvent, SessionEventNotifier, SessionId,
+    SessionLifecycle, SessionMetrics, SessionOperation, SessionSendError, SessionTryReceiveError,
+    ShutdownError, ShutdownResult, SshPortForwardDirection, SshPortForwardSource, TerminalSize,
     DEFAULT_COMMAND_QUEUE_CAPACITY, DEFAULT_EVENT_QUEUE_CAPACITY, MAX_IO_CHUNK_BYTES,
 };
 use ssh_key::Certificate as OpenSshCertificate;
@@ -1776,6 +1778,7 @@ impl PasswordDecisionWaiter {
 
 enum WorkerCommand {
     Input(Vec<u8>),
+    AutomationInput(PendingAutomationInput),
     Resize(TerminalSize),
     ReadRemoteFile {
         path: String,
@@ -1791,14 +1794,69 @@ enum WorkerCommand {
     Shutdown,
 }
 
+const MAX_DISCARDED_AUTOMATION_INPUTS_PER_POLL: usize = 32;
+
 /// Private receiver handed to the dedicated SSH worker.
 struct WorkerCommandReceiver {
     receiver: Receiver<WorkerCommand>,
+    pending_input: Mutex<Option<PendingAutomationInput>>,
+    shared: Arc<WorkerShared>,
 }
 
 impl WorkerCommandReceiver {
+    fn new(receiver: Receiver<WorkerCommand>, shared: Arc<WorkerShared>) -> Self {
+        Self {
+            receiver,
+            pending_input: Mutex::new(None),
+            shared,
+        }
+    }
+
     fn try_recv(&self) -> Result<WorkerCommand, TryRecvError> {
-        self.receiver.try_recv()
+        let mut pending_input = self
+            .pending_input
+            .lock()
+            .expect("SSH pending input lock is not poisoned");
+        let mut discarded = 0;
+        loop {
+            if let Some(pending) = pending_input.as_mut() {
+                if pending.is_cancelled() {
+                    *pending_input = None;
+                } else {
+                    let status = match try_automation_admission_lock() {
+                        Ok(guard) if pending.attachment_is_current(&guard) => Some(pending.poll()),
+                        Ok(_) | Err(AutomationAdmissionTryError::Poisoned) => None,
+                        Err(AutomationAdmissionTryError::Busy) => return Err(TryRecvError::Empty),
+                    };
+                    match status {
+                        Some(AutomationInputStatus::Pending) => return Err(TryRecvError::Empty),
+                        Some(AutomationInputStatus::Ready(bytes)) => {
+                            *pending_input = None;
+                            return Ok(WorkerCommand::Input(bytes.to_vec()));
+                        }
+                        Some(AutomationInputStatus::Cancelled) => *pending_input = None,
+                        None => {
+                            *pending_input = None;
+                            let _ = self.shared.try_emit(SessionEvent::Error(SessionError::new(
+                                SessionErrorKind::Input,
+                                "SSH automation input was canceled because its attachment or admission is no longer valid",
+                            )));
+                        }
+                    }
+                }
+                discarded += 1;
+                if discarded == MAX_DISCARDED_AUTOMATION_INPUTS_PER_POLL {
+                    return Err(TryRecvError::Empty);
+                }
+                continue;
+            }
+            match self.receiver.try_recv()? {
+                WorkerCommand::AutomationInput(pending) => {
+                    *pending_input = Some(pending);
+                }
+                command => return Ok(command),
+            }
+        }
     }
 }
 
@@ -2151,16 +2209,14 @@ impl SshWorkerFoundation {
             Self {
                 #[cfg(test)]
                 profile,
-                shared,
+                shared: Arc::clone(&shared),
                 command_sender,
                 command_capacity,
                 event_receiver: Mutex::new(event_receiver),
                 host_key_gate: Arc::clone(&host_key_gate),
                 password_gate: Arc::clone(&password_gate),
             },
-            WorkerCommandReceiver {
-                receiver: command_receiver,
-            },
+            WorkerCommandReceiver::new(command_receiver, Arc::clone(&shared)),
             HostKeyDecisionResolver {
                 gate: host_key_gate,
             },
@@ -2226,6 +2282,31 @@ impl SshWorkerFoundation {
             WorkerCommand::Input(bytes.to_vec()),
             SessionOperation::Input,
         )
+    }
+
+    fn reserve_automation_input(
+        &self,
+        controller_instance: u64,
+        bytes: &[u8],
+    ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
+        let (reservation, pending) = automation_input_slot(
+            bytes,
+            controller_instance,
+            Arc::clone(&self.shared.automation_epoch),
+        )?;
+        if self.shared.is_reconnecting() {
+            return Err(ReserveAutomationInputError::Rejected(
+                SessionSendError::Closed {
+                    operation: SessionOperation::Input,
+                },
+            ));
+        }
+        self.try_send_command(
+            WorkerCommand::AutomationInput(pending),
+            SessionOperation::Input,
+        )
+        .map_err(ReserveAutomationInputError::Rejected)?;
+        Ok(reservation)
     }
 
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
@@ -3305,6 +3386,15 @@ impl Session for SshSession {
         self.foundation.try_send_input(bytes)
     }
 
+    fn reserve_automation_input(
+        &self,
+        controller_instance: u64,
+        bytes: &[u8],
+    ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
+        self.foundation
+            .reserve_automation_input(controller_instance, bytes)
+    }
+
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
         self.foundation.try_resize(size)
     }
@@ -3677,7 +3767,7 @@ pub async fn connect_gui_sftp_session(
     });
     let host_key_gate = Arc::new(HostKeyDecisionGate::new());
     let password_gate = Arc::new(PasswordDecisionGate::new());
-    let command_receiver = WorkerCommandReceiver { receiver };
+    let command_receiver = WorkerCommandReceiver::new(receiver, Arc::clone(&shared));
     let authentication = authentication.into_worker_authentication();
     let resolver = HostKeyDecisionResolver {
         gate: Arc::clone(&host_key_gate),
@@ -3875,7 +3965,7 @@ pub async fn probe_remote_persistence_provider(
     });
     let host_key_gate = Arc::new(HostKeyDecisionGate::new());
     let password_gate = Arc::new(PasswordDecisionGate::new());
-    let command_receiver = WorkerCommandReceiver { receiver };
+    let command_receiver = WorkerCommandReceiver::new(receiver, Arc::clone(&shared));
     let authentication = authentication.into_worker_authentication();
 
     let handle = match establish_authenticated_handle(
@@ -5609,6 +5699,9 @@ async fn sftp_worker(
                     return Ok(result);
                 }
             }
+            Ok(WorkerCommand::AutomationInput(_)) => {
+                unreachable!("the command receiver resolves automation input")
+            }
             Ok(WorkerCommand::Resize(size)) => shared.record_running_resize(size),
             Ok(WorkerCommand::ReadRemoteFile {
                 path,
@@ -5672,6 +5765,28 @@ where
                     return WorkerWait::Shutdown;
                 }
             }
+        }
+    }
+}
+
+async fn wait_for_running_ssh_operation<T, F>(
+    operation: F,
+    shared: &WorkerShared,
+    host_key_gate: &HostKeyDecisionGate,
+) -> WorkerWait<T>
+where
+    F: std::future::Future<Output = Result<T, russh::Error>>,
+{
+    tokio::pin!(operation);
+    loop {
+        if shared.shutdown_requested() {
+            host_key_gate.reject_pending();
+            shared.set_lifecycle(SessionLifecycle::Stopping);
+            return WorkerWait::Shutdown;
+        }
+        tokio::select! {
+            result = &mut operation => return WorkerWait::Completed(result),
+            _ = tokio::time::sleep(COMMAND_POLL_INTERVAL) => {}
         }
     }
 }
@@ -6052,9 +6167,8 @@ async fn process_authenticated_commands(
         match command {
             Ok(WorkerCommand::Input(bytes)) => {
                 let byte_count = bytes.len();
-                match wait_for_ssh_operation(
+                match wait_for_running_ssh_operation(
                     channel.data_bytes(bytes),
-                    command_receiver,
                     shared,
                     host_key_gate,
                 )
@@ -6071,11 +6185,13 @@ async fn process_authenticated_commands(
                     WorkerWait::Shutdown => return Ok(AuthenticatedCommandOutcome::Shutdown),
                 }
             }
+            Ok(WorkerCommand::AutomationInput(_)) => {
+                unreachable!("the command receiver resolves automation input")
+            }
             Ok(WorkerCommand::Resize(size)) => {
                 let dimensions = ssh_terminal_dimensions(size);
-                match wait_for_ssh_operation(
+                match wait_for_running_ssh_operation(
                     channel.window_change(dimensions.0, dimensions.1, dimensions.2, dimensions.3),
-                    command_receiver,
                     shared,
                     host_key_gate,
                 )
@@ -6191,6 +6307,9 @@ async fn wait_for_manual_recovery(
                 let _ = bytes.len();
                 report_unsupported(shared, "SSH input is not available");
             }
+            Ok(WorkerCommand::AutomationInput(_)) => {
+                unreachable!("the command receiver resolves automation input")
+            }
             Ok(WorkerCommand::Resize(size)) => {
                 let _ = size.columns();
                 report_unsupported(shared, "SSH resize is not available");
@@ -6236,6 +6355,9 @@ fn process_commands_before_running(
             Ok(WorkerCommand::Input(bytes)) => {
                 let _ = bytes.len();
                 report_unsupported(shared, "SSH input is not available");
+            }
+            Ok(WorkerCommand::AutomationInput(_)) => {
+                unreachable!("the command receiver resolves automation input")
             }
             Ok(WorkerCommand::Resize(size)) => {
                 shared.retain_pre_running_resize(size);
@@ -7911,6 +8033,348 @@ mod tests {
             })
         ));
         assert_eq!(worker.metrics().backpressure_count, 1);
+    }
+
+    fn reserve_when_admission_available(
+        worker: &SshWorkerFoundation,
+        bytes: &[u8],
+    ) -> Result<ReservedAutomationInput, ReserveAutomationInputError> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match worker.reserve_automation_input(1, bytes) {
+                Err(ReserveAutomationInputError::Busy) if Instant::now() < deadline => {
+                    thread::yield_now();
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn receive_when_available(
+        commands: &WorkerCommandReceiver,
+    ) -> Result<WorkerCommand, TryRecvError> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match commands.try_recv() {
+                Err(TryRecvError::Empty) if Instant::now() < deadline => thread::yield_now(),
+                result => return result,
+            }
+        }
+    }
+
+    #[test]
+    fn ssh_automation_reservation_preserves_input_order_and_releases_cancelled_slots() {
+        let (worker, commands, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            4,
+            8,
+            noop_session_event_notifier(),
+        );
+        worker.shared.begin_transport();
+        worker.set_running();
+
+        worker.try_send_input(b"before").unwrap();
+        let reservation = reserve_when_admission_available(&worker, b"automated").unwrap();
+        worker.try_send_input(b"after").unwrap();
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"before"
+        ));
+        assert!(matches!(commands.try_recv(), Err(TryRecvError::Empty)));
+        reservation
+            .commit_with(|bytes| {
+                assert_eq!(bytes, b"automated");
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        assert!(matches!(
+            receive_when_available(&commands),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"automated"
+        ));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"after"
+        ));
+
+        let cancelled = reserve_when_admission_available(&worker, b"cancelled").unwrap();
+        worker.try_send_input(b"after cancellation").unwrap();
+        assert!(matches!(commands.try_recv(), Err(TryRecvError::Empty)));
+        drop(cancelled);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"after cancellation"
+        ));
+
+        let expired = reserve_when_admission_available(&worker, b"expired").unwrap();
+        worker.try_send_input(b"after expiry").unwrap();
+        assert!(matches!(commands.try_recv(), Err(TryRecvError::Empty)));
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"after expiry"
+        ));
+        assert!(matches!(
+            expired.commit_with(|_| Ok::<_, ()>(())),
+            Err(festerm_session::CommitAutomationInputError::ClosedOrExpired)
+        ));
+    }
+
+    #[test]
+    fn ssh_automation_reservation_never_crosses_attachment_replacement() {
+        let (worker, commands, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            4,
+            16,
+            noop_session_event_notifier(),
+        );
+        worker.shared.begin_transport();
+        worker.set_running();
+
+        let pending = reserve_when_admission_available(&worker, b"old pending").unwrap();
+        assert!(matches!(commands.try_recv(), Err(TryRecvError::Empty)));
+        worker.shared.begin_transport();
+        worker.set_running();
+        worker.try_send_input(b"new human input").unwrap();
+        assert!(matches!(
+            receive_when_available(&commands),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"new human input"
+        ));
+        let called = std::cell::Cell::new(false);
+        assert!(matches!(
+            pending.commit_with(|_| {
+                called.set(true);
+                Ok::<_, ()>(())
+            }),
+            Err(festerm_session::CommitAutomationInputError::ClosedOrExpired)
+        ));
+        assert!(!called.get());
+
+        let committed = reserve_when_admission_available(&worker, b"old committed").unwrap();
+        committed.commit_with(|_| Ok::<_, ()>(())).unwrap();
+        worker.shared.begin_transport();
+        worker.set_running();
+        worker.try_send_input(b"replacement input").unwrap();
+        assert!(matches!(
+            receive_when_available(&commands),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"replacement input"
+        ));
+        assert!(matches!(commands.try_recv(), Err(TryRecvError::Empty)));
+        let errors = std::iter::from_fn(|| worker.try_recv_event().ok())
+            .filter(|event| matches!(
+                event,
+                SessionEvent::Error(error)
+                    if error.message() == "SSH automation input was canceled because its attachment or admission is no longer valid"
+            ))
+            .count();
+        assert_eq!(errors, 2);
+    }
+
+    #[test]
+    fn ssh_automation_reservation_refuses_unavailable_or_full_queues() {
+        let (worker, commands, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            1,
+            8,
+            noop_session_event_notifier(),
+        );
+        assert!(matches!(
+            worker.reserve_automation_input(1, b""),
+            Err(ReserveAutomationInputError::Empty)
+        ));
+        assert!(matches!(
+            reserve_when_admission_available(&worker, b"not running"),
+            Err(ReserveAutomationInputError::Unavailable)
+        ));
+        worker.shared.begin_transport();
+        worker.set_running();
+        assert!(matches!(
+            worker.reserve_automation_input(1, &vec![0; MAX_IO_CHUNK_BYTES + 1]),
+            Err(ReserveAutomationInputError::Rejected(
+                SessionSendError::TooLarge {
+                    operation: SessionOperation::Input,
+                    ..
+                }
+            ))
+        ));
+        worker.shared.set_reconnecting(true);
+        assert!(matches!(
+            reserve_when_admission_available(&worker, b"reconnecting"),
+            Err(ReserveAutomationInputError::Rejected(
+                SessionSendError::Closed {
+                    operation: SessionOperation::Input
+                }
+            ))
+        ));
+        worker.shared.set_reconnecting(false);
+        worker.try_send_input(b"full").unwrap();
+        assert!(matches!(
+            reserve_when_admission_available(&worker, b"not queued"),
+            Err(ReserveAutomationInputError::Rejected(
+                SessionSendError::Full {
+                    operation: SessionOperation::Input,
+                    capacity: 1
+                }
+            ))
+        ));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"full"
+        ));
+        let lost = reserve_when_admission_available(&worker, b"receiver gone").unwrap();
+        drop(commands);
+        assert!(matches!(
+            lost.commit_with(|_| Ok::<_, ()>(())),
+            Err(festerm_session::CommitAutomationInputError::ClosedOrExpired)
+        ));
+    }
+
+    #[test]
+    fn ssh_automation_receiver_yields_after_bounded_cancelled_slots() {
+        let (worker, commands, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            MAX_DISCARDED_AUTOMATION_INPUTS_PER_POLL + 1,
+            8,
+            noop_session_event_notifier(),
+        );
+        worker.shared.begin_transport();
+        worker.set_running();
+        for _ in 0..MAX_DISCARDED_AUTOMATION_INPUTS_PER_POLL {
+            drop(reserve_when_admission_available(&worker, b"cancelled").unwrap());
+        }
+        worker.try_send_input(b"after").unwrap();
+
+        assert!(matches!(commands.try_recv(), Err(TryRecvError::Empty)));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"after"
+        ));
+    }
+
+    #[test]
+    fn ssh_automation_receiver_stays_responsive_during_busy_admission() {
+        const CHILD: &str = "FESTERM_SSH_AUTOMATION_BUSY_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::ssh_automation_receiver_stays_responsive_during_busy_admission",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated busy-admission test failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let (worker, commands, _, _) = SshWorkerFoundation::new_with_capacities(
+            profile(),
+            4,
+            8,
+            noop_session_event_notifier(),
+        );
+        worker.shared.begin_transport();
+        worker.set_running();
+        let committed = worker.reserve_automation_input(1, b"committed").unwrap();
+        committed.commit_with(|_| Ok::<_, ()>(())).unwrap();
+        let expired = worker.reserve_automation_input(1, b"expired").unwrap();
+        worker.try_send_input(b"human").unwrap();
+
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let thread = thread::spawn(move || {
+            let busy = matches!(
+                worker.reserve_automation_input(1, b"busy"),
+                Err(ReserveAutomationInputError::Busy)
+            );
+            let waiting = matches!(commands.try_recv(), Err(TryRecvError::Empty));
+            sender.send((busy, waiting, commands)).unwrap();
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(2));
+        drop(guard);
+        thread.join().unwrap();
+        let (busy, waiting, commands) = result.expect("SSH admission blocked the worker");
+        assert!(busy && waiting);
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(WorkerCommand::Input(bytes)) if bytes == b"committed"
+        ));
+
+        let guard = festerm_session::automation_admission_lock().unwrap();
+        thread::sleep(Duration::from_millis(300));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let thread = thread::spawn(move || {
+            let human = matches!(
+                commands.try_recv(),
+                Ok(WorkerCommand::Input(bytes)) if bytes == b"human"
+            );
+            sender.send(human).unwrap();
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(2));
+        drop(guard);
+        thread.join().unwrap();
+        assert_eq!(result, Ok(true));
+        assert!(matches!(
+            expired.commit_with(|_| Ok::<_, ()>(())),
+            Err(festerm_session::CommitAutomationInputError::ClosedOrExpired)
+        ));
+    }
+
+    #[test]
+    fn slow_ssh_writes_preserve_queued_input_and_remain_interruptible() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (worker, commands, _, _) = SshWorkerFoundation::new_with_capacities(
+                profile(),
+                4,
+                8,
+                noop_session_event_notifier(),
+            );
+            worker.shared.begin_transport();
+            worker.set_running();
+            let reservation = reserve_when_admission_available(&worker, b"automation").unwrap();
+            reservation.commit_with(|_| Ok::<_, ()>(())).unwrap();
+            worker.try_send_input(b"human").unwrap();
+
+            let slow_write = async {
+                tokio::time::sleep(COMMAND_POLL_INTERVAL * 3).await;
+                Ok::<_, russh::Error>(())
+            };
+            assert!(matches!(
+                wait_for_running_ssh_operation(slow_write, &worker.shared, &worker.host_key_gate)
+                    .await,
+                WorkerWait::Completed(Ok(()))
+            ));
+            assert!(matches!(
+                receive_when_available(&commands),
+                Ok(WorkerCommand::Input(bytes)) if bytes == b"automation"
+            ));
+            assert!(matches!(
+                commands.try_recv(),
+                Ok(WorkerCommand::Input(bytes)) if bytes == b"human"
+            ));
+
+            let shutdown = async {
+                tokio::time::sleep(COMMAND_POLL_INTERVAL * 2).await;
+                worker.try_shutdown().unwrap();
+            };
+            let (outcome, ()) = tokio::join!(
+                wait_for_running_ssh_operation(
+                    std::future::pending::<Result<(), russh::Error>>(),
+                    &worker.shared,
+                    &worker.host_key_gate,
+                ),
+                shutdown,
+            );
+            assert!(matches!(outcome, WorkerWait::Shutdown));
+        });
     }
 
     #[test]

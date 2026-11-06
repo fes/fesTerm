@@ -282,6 +282,15 @@
         "reservation_enforces_input_bounds_and_expiry_before_authority",
         "automation_reservation_preserves_order_and_releases_cancelled_slots",
         "local_pty_automation_reservation_cannot_send_cancelled_bytes",
+        "cancellation_probe_preserves_a_timely_committed_slot",
+        "pending_input_detects_a_replaced_attachment",
+        "ssh_automation_reservation_preserves_input_order_and_releases_cancelled_slots",
+        "ssh_automation_reservation_never_crosses_attachment_replacement",
+        "ssh_automation_reservation_refuses_unavailable_or_full_queues",
+        "ssh_automation_receiver_yields_after_bounded_cancelled_slots",
+        "ssh_automation_receiver_stays_responsive_during_busy_admission",
+        "slow_ssh_writes_preserve_queued_input_and_remain_interruptible",
+        "controlled_openssh_automation_reservations_preserve_order_and_cancellation",
         "worker_argument_with_extra_arguments_refuses_before_gui_startup",
         "application_worker_reports_qualification_before_receiving_source",
         "macos_worker_environment_allows_only_corefoundation_encoding",
@@ -297,7 +306,7 @@
       "prerequisites": [
         "Installed helper provenance and native sandbox qualification remain required per supported platform",
         "Desktop beta integrates native approval, broker-admitted reads/waits, per-input human approval and lifecycle cancellation for local PTY targets; macOS and Windows containment is owner-accepted beta risk (macOS memory ceiling is a polled watchdog; Windows evidence is CI-only)",
-        "SSH, persistent, tunnel and serial transports do not yet support reservations"
+        "Interactive SSH supports ordered reservations but is not yet an application control target; text-mode SFTP, persistent, tunnel and serial transports do not yet support reservations"
       ]
     },
     {
