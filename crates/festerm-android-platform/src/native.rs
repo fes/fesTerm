@@ -501,6 +501,11 @@ pub fn secret_write(reference: &str, bytes: &[u8], replace: bool) -> Result<bool
                 ],
             )
             .and_then(|value| value.z());
+        if result.is_err() {
+            // Further JNI calls with a pending exception abort the process
+            // (for example, a Keystore ProviderException); `call` reports it.
+            let _ = env.exception_clear();
+        }
         // Java also wipes in finally, including encryption failures.
         let _ = env.set_byte_array_region(&array, 0, &vec![0_i8; bytes.len()]);
         result
