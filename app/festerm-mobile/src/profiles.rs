@@ -125,6 +125,7 @@ pub enum KeyImportFailure {
 
 const TEXT_SIZE_FILE: &str = "terminal-text-size";
 const KEYBOARD_FILE: &str = "default-keyboard";
+const SPLIT_KEYBOARD_FILE: &str = "split-keyboard";
 
 pub struct Profiles {
     store: Arc<Mutex<ProfileStore>>,
@@ -195,6 +196,22 @@ impl Profiles {
     ) -> Result<(), String> {
         std::fs::write(self.directory.join(KEYBOARD_FILE), kind.key())
             .map_err(|_| "The default keyboard could not be saved".to_owned())
+    }
+
+    /// The saved split-keyboard mode; unset or unreadable means Auto.
+    pub fn split_keyboard(&self) -> super::terminal_keyboard::SplitMode {
+        std::fs::read_to_string(self.directory.join(SPLIT_KEYBOARD_FILE))
+            .ok()
+            .and_then(|key| super::terminal_keyboard::SplitMode::from_key(&key))
+            .unwrap_or_default()
+    }
+
+    pub fn save_split_keyboard(
+        &self,
+        mode: super::terminal_keyboard::SplitMode,
+    ) -> Result<(), String> {
+        std::fs::write(self.directory.join(SPLIT_KEYBOARD_FILE), mode.key())
+            .map_err(|_| "The split keyboard setting could not be saved".to_owned())
     }
 
     fn store(&self) -> MutexGuard<'_, ProfileStore> {

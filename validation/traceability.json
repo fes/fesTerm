@@ -640,7 +640,7 @@
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/automation-design.md#mcp-surface-and-connection-contract"
       ],
-      "decisions": ["ADR-0065", "ADR-0073"],
+      "decisions": ["ADR-0065", "ADR-0074"],
       "automated_tests": [
         "identity_proof_is_bound_to_a_fresh_versioned_challenge",
         "identity_proof_refuses_tampering_and_noncanonical_seeds",
@@ -4498,6 +4498,14 @@
         "terminal_keyboard_puts_globe_beside_symbols_and_extended_keys_in_utility_row",
         "terminal_keyboard_symbol_page_reaches_every_ascii_symbol",
         "terminal_keyboard_holding_period_types_question_mark",
+        "split_halves_follow_width_orientation_hinge_and_preference",
+        "split_keyboard_puts_every_key_in_one_half_and_types_from_both",
+        "split_keyboard_keeps_keys_off_a_reported_hinge_and_full_mode_overrides_it",
+        "split_keyboard_keeps_every_key_of_both_layers_once_and_off_the_centre",
+        "split_keyboard_hold_alternates_follow_each_half",
+        "split_keyboard_setting_applies_now_and_is_restored_at_startup",
+        "settings_split_control_changes_only_the_split_mode",
+        "hinge_spans_outside_the_window_or_reversed_are_ignored",
         "globe_glyph_is_centered_on_its_key",
         "long_pressing_a_session_chip_asks_before_closing_it",
         "swiping_a_session_row_left_reveals_close",

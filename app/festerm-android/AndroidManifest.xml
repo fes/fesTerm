@@ -19,6 +19,8 @@
         android:usesCleartextTraffic="false" android:extractNativeLibs="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.Material.NoActionBar">
+        <!-- Optional OEM library that reports folds and hinges (split keyboard). -->
+        <uses-library android:name="androidx.window.extensions" android:required="false" />
         <activity android:name=".FestermActivity" android:exported="true"
             android:launchMode="singleTask" android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|fontScale"
