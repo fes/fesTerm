@@ -134,10 +134,31 @@ impl AuthRequests {
     }
 }
 
+/// Validates a vertical hinge reported as fractions of the window width.
+/// Anything else, including the activity's "no hinge" sentinel, is `None`.
+pub fn hinge_span(left: f32, right: f32) -> Option<(f32, f32)> {
+    (left.is_finite() && right.is_finite() && 0.0 <= left && left <= right && right <= 1.0)
+        .then_some((left, right))
+}
+
 #[cfg(target_os = "android")]
 mod native;
 #[cfg(target_os = "android")]
 pub use native::*;
+
+#[cfg(test)]
+mod hinge_tests {
+    use super::hinge_span;
+
+    #[test]
+    fn hinge_spans_outside_the_window_or_reversed_are_ignored() {
+        assert_eq!(hinge_span(0.49, 0.51), Some((0.49, 0.51)));
+        assert_eq!(hinge_span(0.5, 0.5), Some((0.5, 0.5)));
+        for (left, right) in [(-1.0, -1.0), (0.6, 0.4), (0.5, 1.2), (f32::NAN, 0.5)] {
+            assert_eq!(hinge_span(left, right), None);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

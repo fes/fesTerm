@@ -38,6 +38,13 @@ keyboard and form fields. For the app-owned keyboards (`Terminal` and
 input still work, but the system keyboard is hidden rather than layered over
 the app's own keys.
 
+The shared terminal keyboards split around a vertical fold or hinge. The
+activity reads `FoldingFeature` bounds through the optional platform
+`androidx.window.extensions` library by reflection, adding no AndroidX
+dependency, and reports them to Rust as window-width fractions. A missing
+library, failed reflection or invalid span means no hinge; the width rule
+still applies. Horizontal folds are ignored.
+
 Secrets remain behind `festerm-secret-store`. Android uses a non-exportable
 Android Keystore AES-GCM key, per-reference authenticated encryption and atomic
 private ciphertext files excluded from backup. Missing, locked or invalidated
@@ -92,6 +99,6 @@ distinct from compilation, host tests and emulator evidence.
   conflict/publication, packaging/dependency policy, cross-compilation and APK
   install/launch evidence.
 - **Native/manual evidence required:** phone/tablet layout, keyboard and
-  rotation, background/relaunch, device authentication, on-device recognition,
+  rotation, split keyboard across a real fold/hinge, background/relaunch, device authentication, on-device recognition,
   selected-document import, owned SSH/SFTP and Dev Tunnel flows.
 - **Coverage superseded:** None; iOS evidence is not Android evidence.

@@ -37,6 +37,7 @@ struct Bridge {
     input_epoch: AtomicU64,
     input_sequence: AtomicU64,
     insets: Mutex<Insets>,
+    hinge: Mutex<Option<(f32, f32)>>,
     lifecycle: Mutex<Option<LifecycleCallback>>,
     authentication: Mutex<AuthRequests>,
     speech: Mutex<Option<SpeechCallback>>,
@@ -137,6 +138,7 @@ pub fn initialize(
         input_epoch: AtomicU64::new(0),
         input_sequence: AtomicU64::new(0),
         insets: Mutex::new(Insets::default()),
+        hinge: Mutex::new(None),
         lifecycle: Mutex::new(None),
         authentication: Mutex::new(AuthRequests::default()),
         speech: Mutex::new(None),
@@ -229,6 +231,14 @@ pub fn insets() -> Insets {
         .ok()
         .and_then(|bridge| bridge.insets.lock().ok().map(|v| *v))
         .unwrap_or_default()
+}
+
+/// The vertical fold or hinge crossing the window, as `(left, right)`
+/// fractions of the window width.
+pub fn hinge() -> Option<(f32, f32)> {
+    bridge()
+        .ok()
+        .and_then(|bridge| bridge.hinge.lock().ok().and_then(|v| *v))
 }
 
 pub fn occlusion() -> f32 {
@@ -574,6 +584,27 @@ extern "system" fn Java_io_github_fes_festerm_FestermActivity_nativeInsets(
         };
         let changed = {
             let mut current = bridge.insets.lock().expect("inset state poisoned");
+            let changed = *current != next;
+            *current = next;
+            changed
+        };
+        if changed {
+            bridge.wake();
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "system" fn Java_io_github_fes_festerm_FestermActivity_nativeHinge(
+    _env: JNIEnv,
+    _activity: JObject,
+    left: jfloat,
+    right: jfloat,
+) {
+    if let Ok(bridge) = bridge() {
+        let next = crate::hinge_span(left, right);
+        let changed = {
+            let mut current = bridge.hinge.lock().expect("hinge state poisoned");
             let changed = *current != next;
             *current = next;
             changed
