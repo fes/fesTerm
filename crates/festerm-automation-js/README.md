@@ -223,7 +223,7 @@ profile disabled. Process and signal probes target the worker itself. A native
 mmap probe must fail with `ENOMEM` beyond the hard ceiling. Probes do not
 modify files, contact services, or spawn grandchildren.
 
-Limits: 64 MiB QuickJS heap, 1 MiB JS stack, 128 MiB process address space;
+Limits: 64 MiB QuickJS heap, 1 MiB JS stack (512 KiB on Windows), 128 MiB process address space;
 5s cumulative process CPU, at most 5 minutes/run. Engine interrupt callbacks
 also check process CPU and wall deadlines. The native ceiling/watchdog covers
 uncooperative regex/native calls. Frames are big-endian u32 length plus JSON,

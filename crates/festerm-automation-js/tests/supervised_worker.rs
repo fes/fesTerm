@@ -372,7 +372,7 @@ fn runaway_jobs_unsettled_calls_and_private_errors_are_contained() {
                 outcome: Outcome::ResourceLimit {} | Outcome::ScriptFailed {},
             } if !unsettled => {}
             Event::Failed(Error::Deadline) if !unsettled => {}
-            event => panic!("unexpected hostile script outcome: {event:?}"),
+            event => panic!("unexpected hostile script outcome for {source}: {event:?}"),
         }
         worker.shutdown().unwrap();
     }

@@ -1777,7 +1777,7 @@ caps so many clients/runs cannot multiply a per-run allowance without bound.
 | Observation | 32 KiB per page, 1 MiB total released per run; explicit truncation/gap metadata. No infinite stream. |
 | Run duration | 5 minutes wall time; waits at most 30 seconds each, within the run deadline. Initial runs never survive restart/suspension. |
 | CPU/interpreter | 5 seconds cumulative execution budget per run and bounded job/microtask slices; a supervisor wall watchdog terminates unresponsive workers. Exact accounting mechanism must be proven by the engine spike. |
-| Worker memory | 64 MiB JS heap, 1 MiB JS stack, 128 MiB process ceiling; platform enforcement failure disables execution. Native/IPC buffers are also bounded. |
+| Worker memory | 64 MiB JS heap, 1 MiB JS stack (512 KiB on Windows, inside its 1 MiB main-thread stack), 128 MiB process ceiling; platform enforcement failure disables execution. Native/IPC buffers are also bounded. |
 | Host operations | 16 outstanding calls, 256 total effects/requests per run, 4 observation subscriptions, 2 child levels; explicit quota errors. |
 | Application concurrency | 4 running workers globally, 2 per principal, 16 pending approvals globally and 2 per principal; reject rather than accumulate. |
 | Results/receipts | 1 MiB aggregate retained result content globally; bounded 128 metadata receipts, at most 10 minutes, pruned by expiry/revocation. Admission reserves completion/result capacity. |

@@ -366,6 +366,12 @@ pub(crate) struct Child {
 
 impl Child {
     pub(crate) fn spawn(program: &Path) -> Result<Self, Error> {
+        // Concurrent profile creation and image ACL updates race inside
+        // userenv; serialize setup through process creation.
+        static SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let setup = SETUP
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let container = ContainerSid::get()?;
         grant_image_access(program, &container);
         let job = create_job()?;
@@ -453,6 +459,7 @@ impl Child {
         {
             return Err(api_error("CreateProcessW"));
         }
+        drop(setup);
         drop(list);
         let process = owned(info.hProcess).ok_or_else(last_error)?;
         let thread = owned(info.hThread).ok_or_else(last_error)?;

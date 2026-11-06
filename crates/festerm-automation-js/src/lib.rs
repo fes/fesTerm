@@ -47,7 +47,12 @@ mod ios_tests {
 }
 
 pub const HEAP_BYTES: usize = 64 * 1024 * 1024;
+/// QuickJS stack ceiling. Windows main threads reserve only 1 MiB, so keep
+/// the engine's own check well inside it rather than overflowing natively.
+#[cfg(not(windows))]
 pub const STACK_BYTES: usize = 1024 * 1024;
+#[cfg(windows)]
+pub const STACK_BYTES: usize = 512 * 1024;
 pub const PROCESS_BYTES: u64 = 128 * 1024 * 1024;
 pub const CPU_SECONDS: u64 = 5;
 pub const MAX_RUN_MS: u64 = 300_000;
