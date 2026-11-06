@@ -7,8 +7,11 @@
 //! opaque references, rather than secret values, in ordinary configuration.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+#[cfg(not(target_os = "android"))]
+use std::sync::Arc;
+use std::sync::Mutex;
 
+#[cfg(not(target_os = "android"))]
 use keyring_core::{CredentialStore, Entry};
 use uuid::Uuid;
 use zeroize::Zeroize;
@@ -261,12 +264,14 @@ impl SecretReference {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 struct NativeSecretStore {
     store: Arc<CredentialStore>,
     modifiers: HashMap<&'static str, &'static str>,
     operation_lock: Mutex<()>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl NativeSecretStore {
     fn new(store: Arc<CredentialStore>, modifiers: HashMap<&'static str, &'static str>) -> Self {
         Self {
@@ -288,6 +293,7 @@ impl NativeSecretStore {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 impl SecretStore for NativeSecretStore {
     fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
         check_size(secret)?;
@@ -343,6 +349,7 @@ impl SecretStore for NativeSecretStore {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn map_keyring_error(error: keyring_core::Error) -> SecretStoreError {
     match error {
         keyring_core::Error::NoEntry => SecretStoreError::Missing,
@@ -387,7 +394,7 @@ fn map_platform_failure(error: &keyring_core::error::PlatformError) -> SecretSto
     }
 }
 
-#[cfg(not(target_vendor = "apple"))]
+#[cfg(not(any(target_vendor = "apple", target_os = "android")))]
 fn map_platform_failure(_: &keyring_core::error::PlatformError) -> SecretStoreError {
     SecretStoreError::BackendFailure
 }
@@ -447,7 +454,14 @@ mod native {
     }
 }
 
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios"))))]
+#[cfg(target_os = "android")]
+#[path = "android.rs"]
+mod native;
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
 mod native {
     use super::*;
 

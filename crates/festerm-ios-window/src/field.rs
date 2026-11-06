@@ -28,8 +28,23 @@ pub struct FieldDocument {
 }
 
 /// A keyboard edit for egui to apply to the focused field, in order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FieldKey {
+    Tab,
+    Escape,
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    Delete,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FieldInput {
+    Key(FieldKey),
+    Unavailable(&'static str),
     Select(Range<usize>),
     Insert(String),
     DeleteBackward,

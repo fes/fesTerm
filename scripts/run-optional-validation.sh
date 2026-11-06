@@ -25,6 +25,17 @@ printf 'suite=six-session-aging status=skipped reason=windows-x64-required\n' >>
 printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-tunnel-task-xml status=skipped reason=windows-required\n' >>"$result_path"
+if [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ]; then
+    if python3 scripts/build-android.py --install --serial "$FESTERM_ANDROID_EMULATOR_SERIAL" &&
+        python3 scripts/smoke-android.py --serial "$FESTERM_ANDROID_EMULATOR_SERIAL"; then
+        printf 'suite=android-native status=pass\n' >>"$result_path"
+    else
+        printf 'suite=android-native status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=android-native status=skipped reason=explicit-isolated-emulator-required\n' >>"$result_path"
+fi
 if [ "$(uname -s)" = Darwin ]; then
     if python3 scripts/smoke-ios-simulator.py --run --build; then
         printf 'suite=ios-simulator status=pass\n' >>"$result_path"

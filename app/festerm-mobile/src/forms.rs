@@ -526,9 +526,15 @@ fn ssh_fields(
         footnote(
             ui,
             if state.durable_credentials {
-                "Credentials are kept in Keychain, not in profiles."
+                super::platform_text(
+                    "Credentials are kept in Keychain, not in profiles.",
+                    "Credentials are encrypted with Android Keystore, not kept in profiles.",
+                )
             } else {
-                "Keychain is unavailable: credentials last only until fesTerm closes."
+                super::platform_text(
+                    "Keychain is unavailable: credentials last only until fesTerm closes.",
+                    "Android Keystore is unavailable: credentials last only until fesTerm closes.",
+                )
             },
         );
     });
@@ -639,9 +645,13 @@ pub fn authentication_sheet(
                 footnote(
                     ui,
                     if state.durable_credentials {
-                        "Saved in Keychain on this iPhone, never in the profile."
+                        super::platform_text(
+                            "Saved in Keychain on this iPhone, never in the profile.",
+                            "Encrypted with Android Keystore, never saved in the profile.",
+                        )
                     } else {
-                        "Keychain is unavailable; this lasts only until fesTerm closes."
+                        super::platform_text("Keychain is unavailable; this lasts only until fesTerm closes.",
+                            "Android Keystore is unavailable; this lasts only until fesTerm closes.")
                     },
                 );
             }
@@ -1030,7 +1040,10 @@ pub fn host_verification_sheet(
             if changed {
                 "Connections to a host whose key changed are always refused. If you expect the change, remove the saved key in Settings > Trusted hosts."
             } else {
-                "Trusting saves this key on this iPhone. A changed key is refused later."
+                super::platform_text(
+                    "Trusting saves this key on this iPhone. A changed key is refused later.",
+                    "Trusting saves this key on this device. A changed key is refused later.",
+                )
             },
         );
         if !changed && button(ui, ButtonKind::Primary, "Trust & Connect", true).clicked() {

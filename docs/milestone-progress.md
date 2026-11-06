@@ -1,5 +1,34 @@
 # Milestone Progress Narrative
 
+## Bringing the shared mobile application to Android
+
+The Android port reuses the iOS application rather than recreating its screens
+or protocols. A NativeActivity/JNI boundary adds Android's input connection,
+Keystore encryption, device authentication, document selection and local speech.
+GLES avoids emulator Vulkan startup stalls; one native IME owner prevents
+competing winit show/hide requests. Measured insets preserve the same terminal,
+toolbar and keyboard layout without drawing under Android system bars.
+
+The SDK-only packager verifies its native/JVM dependency boundary and produces
+development APKs with provenance receipts. Document imports are intentionally
+private copies: Android providers cannot offer the atomic publication contract
+required for safe in-place saves. Shared regressions and native smoke complement,
+but do not replace, the physical-device, speech and live-service gates in
+`docs/manual-validation.md`. ADR 0073 records the new platform boundary.
+
+On the emulator, all three terminal keyboard modes were exercised against a
+live loopback shell: Gboard remained the native mode, while both app-owned
+keyboards hid the system IME and submitted shell input. App lock was exercised
+through cold launch, cancellation/retry, passcode-only authentication,
+device-lock and immediate app-switch relock, prompt retirement and authenticated
+disable. Denied microphone permission reached the on-device recognizer's
+explicit Failed state without network fallback or a crash. Audio capture,
+physical-device biometrics and the terminal-background overlap observed above
+the failed dictation panel, but not reproduced by the host probe, remain
+unqualified. The shared failed composer's fixed height also clips its final
+action with the Shell-row keyboard; that layout defect is recorded rather than
+folded into this platform port.
+
 ## Keeping interrupted host provisioning retryable
 
 Independent merge review found two first-install interruption traps: cleanup

@@ -80,8 +80,11 @@ impl LockHost {
                 self.error = match self.lock.apply_settings(settings) {
                     Ok(()) | Err(SettingsError::AuthenticationStarted) => None,
                     Err(SettingsError::CannotAuthenticate(_)) => Some(
-                        "Set a device passcode in iOS Settings before turning app lock on."
-                            .to_owned(),
+                        super::platform_text(
+                            "Set a device passcode in iOS Settings before turning app lock on.",
+                            "Set a screen lock in Android Settings before turning app lock on.",
+                        )
+                        .to_owned(),
                     ),
                     Err(SettingsError::Persist(_)) => {
                         Some("Could not save the lock settings.".to_owned())
@@ -247,9 +250,10 @@ fn unlock_contents(
 fn availability_note(availability: Availability) -> Option<&'static str> {
     match availability {
         Availability::Available(_) => None,
-        Availability::PasscodeNotSet => {
-            Some("Set a device passcode in iOS Settings before turning app lock on.")
-        }
+        Availability::PasscodeNotSet => Some(super::platform_text(
+            "Set a device passcode in iOS Settings before turning app lock on.",
+            "Set a screen lock in Android Settings before turning app lock on.",
+        )),
         Availability::Unavailable => Some("This device cannot authenticate the owner."),
     }
 }

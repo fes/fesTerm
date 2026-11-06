@@ -4308,8 +4308,10 @@
         "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#app-lock-festerm-ios-lock",
         "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#amendment-recoverable-foreground-authentication"
       ],
-      "decisions": ["ADR-0058", "ADR-0061"],
+      "decisions": ["ADR-0058", "ADR-0061", "ADR-0073"],
       "automated_tests": [
+        "authentication_replies_and_cancellations_affect_only_their_request",
+        "unknown_authentication_codes_fail_closed",
         "stale_unlock_success_after_device_lock_cannot_complete_a_new_attempt",
         "automatic_unlock_rearms_after_background_but_not_its_own_cancelled_dialog",
         "missing_completion_can_be_retired_by_explicit_passcode_retry",
@@ -4331,6 +4333,7 @@
       "status": "partial",
       "prerequisites": [
         "Provisioned physical iPhone: automatic Face ID success/failure/cancellation, explicit system passcode, unavailable biometrics, repeated rapid app switches, phone lock/unlock and return from system prompts without stuck controls or stale authorization",
+        "Android emulator app-lock flow covered cold launch, cancel/retry, device-passcode authentication, device-lock and immediate app-switch relock, prompt retirement and authenticated disable; physical biometrics, API 29 credential behavior, compositor/snapshot timing, rapid lifecycle races and active/parked tunnel identity remain unqualified",
         "Native compositor/opaque-cover removal and app-switcher snapshots, complete narrow-width recovery errors, VoiceOver/touch and healthy active/parked tunnel identity remain manual evidence; portable tests, headless widget captures and Apple-target compilation do not establish device acceptance; no deployment authorized"
       ]
     },
@@ -4345,6 +4348,7 @@
         "MOB-06"
       ],
       "requirements": [
+        "docs/adr/0073-android-shared-mobile-host.md",
         "docs/adr/0042-ios-rendering-spike-host.md",
         "docs/adr/0054-ios-keychain-and-mobile-profile-store.md",
         "docs/adr/0057-portable-dev-tunnels-client-for-ios.md#decision",
@@ -4355,6 +4359,7 @@
         "docs/adr/0063-ios-dev-tunnel-host-setup-sheet.md#decision"
       ],
       "decisions": [
+        "ADR-0073",
         "ADR-0031",
         "ADR-0042",
         "ADR-0054",
@@ -4367,6 +4372,8 @@
         "ADR-0063"
       ],
       "automated_tests": [
+        "overflow_rejects_the_whole_batch_and_reports_failure",
+        "selection_starts_its_own_ordered_batch",
         "choosing_another_tunnel_account_clears_discovery_and_preserves_saved_binding",
         "choosing_the_same_tunnel_account_keeps_the_draft_target",
         "an_unbound_saved_tunnel_does_not_choose_another_account",
@@ -4538,6 +4545,7 @@
       "status": "partial",
       "prerequisites": [
         "ADR-0058 app lock is wired through ADR-0061; portable request/cancellation and pointer recovery are covered under MOB-09, but enrolled Face ID, explicit system passcode, resume-after-grace, compositor/snapshot timing and rapid physical-device switches remain unqualified",
+        "Android ADR-0073 qualification is separate from iOS: see docs/manual-validation.md Android shared mobile port. Both development APK ABIs cross-build; isolated Android 35 ARM64 runtime evidence covers rendering/safe areas, portrait/landscape/tablet-sized viewports, native typing, profile/key persistence, owned OpenSSH shell I/O, byte-exact SFTP download, document background/resume and device-PIN cold unlock/authenticated disable. GitHub device-code initiation completed over Android TLS without account authorization. scripts/tests/test_android_build.py checks dependency/version/cache integrity policy; scripts/smoke-android.py checks native Keystore/tamper, clipboard, secure-window flags, document URI refusal, Unicode/composition/stale acknowledgment and field input, and JVM verifier packaging. Authenticated Dev Tunnel discovery/relay/recovery, physical phone/tablet, complex IMEs, extended lock/lifecycle races, speech and full visual/accessibility acceptance remain native gates; no local PTY or store publication.",
         "Owner-provided iOS mock-ups guide mobile-only navy/blue visuals, actual-host identity, labelled Host/Port fields and Esc/Tab/Ctrl/Alt order; profiles, full tabs, Dev Tunnel identity and app lock are deferred, with deliberate differences in docs/mobile-layout-design.md; native Dynamic Type/VoiceOver and touch comparison remain required. Owned test-only loopback SSH peer proves host-side actual-form trust/auth retry, core input/replies, resize and disconnect without external credentials or OS shell execution; bounded runtime cleanup and socket-free synthetic trust/auth gallery remain distinct from native iOS/OpenSSH/TUI/device acceptance. scripts/capture-mobile-ui.py and ignored capture_mobile_ui_gallery produce actual-widget phone/tablet terminal/connect-form/held-navigation PNGs with source/hash attribution for owner review; CI publishes the non-native headless artifact separately; simulated keyboard reservation has no native keyboard pixels; native rendering/input/live-SSH/device and Termius usability acceptance remain required under MOB-01–06",
         "scripts/tests/test_ios_device_build.py covers explicit --live-ssh preflight/build graph selection, local-network metadata, minimal entitlements and mode-labeled private receipts including signing failures; default packaging remains offline; actual Apple signing, manual installation and MOB-06 controlled-host/physical-device acceptance still require a provisioned Mac and iPhone/iPad",
         "MOB-06 opt-in live-ssh composition received independent architectural approval on 2026-10-30, not native/product acceptance; controlled real SSH/physical-device evidence remains required; fake-session/headless tests cover hidden-workspace output/replies, per-frame budgets and native suspension without a UI frame, including reset binding; compilation/Simulator linking do not establish native usability; credentials and pins remain transient, changed pins reject, suspension requires explicit reconnection; Termius-inspired usability and #425 paste/native handles remain pending",
@@ -4549,8 +4557,12 @@
       "id": "ios-shared-documents",
       "edges": ["MOB-08"],
       "requirements": ["docs/mobile-layout-design.md#shared-ios-document-editor", "docs/text-editor-design.md"],
-      "decisions": ["ADR-0069", "ADR-0034", "ADR-0058"],
+      "decisions": ["ADR-0069", "ADR-0034", "ADR-0058", "ADR-0073"],
       "automated_tests": [
+        "android_import_save_preserves_unicode_and_rejects_stale_content",
+        "android_import_rejects_outside_authority_and_oversized_sources",
+        "android_import_refuses_symlink_replacement_without_touching_target",
+        "android_document_events_are_bounded_and_save_is_observable",
         "mobile_document_identity_and_undo_are_shared_without_shared_selection",
         "mobile_document_multiline_replacement_is_one_exact_encoded_undo",
         "mobile_document_rejects_stale_revision_selection_and_replayed_transactions",
@@ -4615,6 +4627,7 @@
       "status": "partial",
       "prerequisites": [
         "Issue #570: shared/native I/O and registry-backed source surfaces provide shared undo/redo, guarded conflict decisions and dirty-close handling. Markdown adds current-revision Edit/Preview, shared cancellable projections and view/revision-bound Contents with no resource loading. The P1–P4 follow-up moves Browse to Sessions, shares source/draft keyboard-region dictation, adds exact save-close receipts, compact icon controls and touch Preview Copy/Select All. Actual-widget tests/captures do not qualify picker grants or multiline UIKit/IME behavior. Source syntax/line numbers, Find/Replace and local copy/Save As remain subsequent slices.",
+        "Android ADR-0073 uses explicitly labelled private copies, not provider in-place writes. Native emulator evidence covers content-provider import with sanitized name/type, source-chooser cancellation, editing/saving without changing the provider original and saved-copy reopening after cold launch. JNI smoke rejects ungranted file URIs. Physical-device provider errors, storage exhaustion, dirty-close/focus/IME, accessibility and full visual acceptance remain separate from portable publication tests and emulator evidence; see docs/manual-validation.md Android shared mobile port.",
         "Simulator fixture smoke passed actual native publication, 0600 permissions, stale overwrite refusal, refresh, failed-revert closed-instance refusal, fresh-instance recovery/save, superseded pending failures, unopened/in-flight-drop lease release and close/cleanup; production recovery requires fresh Files authority rather than reopening the failed instance. Portable and real OpenSSH tests cover app-owned writer exclusion. Picker grants/reacquisition, iCloud/third-party provider coordination, revocation/move/delete, file-protection metadata, storage failures, actual keyboard/safe-area/IME, physical iPhone/iPad accessibility and Claude-based real-capture visual review remain MOB-08 qualification; no Edit/Preview split panes at any viewport size.",
         "On-device speech availability and privacy remain the separate MOB-07/#564 gate; online recognition remains deferred in #567."
       ]
@@ -4623,7 +4636,7 @@
       "id": "ios-on-device-dictation",
       "edges": ["MOB-07"],
       "requirements": ["docs/mobile-layout-design.md#on-device-dictation"],
-      "decisions": ["ADR-0068"],
+      "decisions": ["ADR-0068", "ADR-0073"],
       "automated_tests": [
         "dictation_requires_review_and_single_line_bounded_text",
         "dictation_revisions_replace_and_stale_callbacks_cannot_restore_cancelled_text",

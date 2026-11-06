@@ -282,6 +282,13 @@ review an explicit runtime merge gate when mobile product support is accepted.
 The mobile device descriptor requests downlevel GPU limits to accommodate the
 observed Simulator Metal limit; issue #261 remains the native startup gate.
 
+The Android host applies these same `MOB-01` through `MOB-09` actions under
+ADR 0073, using Android-native input, device security and on-device speech.
+For `MOB-08`, picker selection explicitly imports a private editable copy;
+Save cannot overwrite the provider original. Native evidence is tracked
+separately from iOS in `docs/manual-validation.md`; shared code is not platform
+qualification.
+
 `MOB-08` also covers current-revision Markdown Edit/Preview and Contents.
 
 **November 5 workflow amendment (supersedes terminal-only dictation, review-sheet,

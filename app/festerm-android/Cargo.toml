@@ -1,0 +1,21 @@
+[package]
+name = "festerm-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["live-ssh"]
+live-ssh = ["festerm-mobile/live-ssh"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+festerm-mobile = { path = "../festerm-mobile" }
+festerm-android-platform = { path = "../../crates/festerm-android-platform" }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "android-native-activity"] }
+
+[lints.clippy]
+all = "warn"

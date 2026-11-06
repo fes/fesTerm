@@ -167,7 +167,9 @@ impl Transfers for ManagerTransfers {
                     direction: info.direction,
                     target: match info.direction {
                         Direction::Upload => info.destination_dir,
-                        Direction::Download => "This iPhone".to_owned(),
+                        Direction::Download => {
+                            super::platform_text("This iPhone", "This device").to_owned()
+                        }
                     },
                     state,
                     done: info.progress.bytes_done,
@@ -673,10 +675,13 @@ impl FilesSession {
     }
 
     fn read_local(&self, relative: &str) -> Result<String, String> {
-        let root = self
-            .local_root
-            .as_ref()
-            .ok_or_else(|| "This iPhone storage is unavailable".to_owned())?;
+        let root = self.local_root.as_ref().ok_or_else(|| {
+            super::platform_text(
+                "This iPhone storage is unavailable",
+                "Local app storage is unavailable",
+            )
+            .to_owned()
+        })?;
         let path = root.join(relative);
         let size = std::fs::metadata(&path)
             .map_err(|_| "Could not read the document".to_owned())?
@@ -730,7 +735,10 @@ impl FilesSession {
             match self.read_local(&path) {
                 Ok(text) => Some(FilesEvent::OpenMarkdown {
                     name: entry.name.clone(),
-                    location: format!("This iPhone · {path}"),
+                    location: format!(
+                        "{} · {path}",
+                        super::platform_text("This iPhone", "This device")
+                    ),
                     text,
                 }),
                 Err(message) => {

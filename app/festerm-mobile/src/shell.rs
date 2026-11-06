@@ -193,7 +193,16 @@ fn profiles_screen(
     actions: &mut Vec<ShellAction>,
 ) {
     ui.horizontal(|ui| {
-        ui.vertical(|ui| screen_title(ui, "Profiles", "Your connections, on this iPhone"));
+        ui.vertical(|ui| {
+            screen_title(
+                ui,
+                "Profiles",
+                super::platform_text(
+                    "Your connections, on this iPhone",
+                    "Your connections, on this device",
+                ),
+            )
+        });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (rect, response) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), Sense::CLICK);
             widgets::paint_plus(ui.painter(), rect.center(), 10.0, color::TEXT);
@@ -459,7 +468,11 @@ fn sessions_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
 }
 
 fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAction>) {
-    screen_title(ui, "Settings", "fesTerm on this iPhone");
+    screen_title(
+        ui,
+        "Settings",
+        super::platform_text("fesTerm on this iPhone", "fesTerm on Android"),
+    );
     if true {
         section_header(ui, "Demo", None, false);
         card(ui, |ui| {

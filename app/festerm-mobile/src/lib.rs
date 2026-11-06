@@ -22,6 +22,8 @@ mod local_input;
 mod model;
 mod password_buffer;
 mod profiles;
+mod runtime;
+pub use runtime::run_native;
 #[cfg(test)]
 mod session_close_tests;
 #[cfg(feature = "live-ssh")]
@@ -84,11 +86,23 @@ fn mobile_device_descriptor(
 
 pub fn mobile_wgpu_configuration() -> eframe::egui_wgpu::WgpuConfiguration {
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    #[cfg(target_os = "android")]
+    {
+        setup.instance_descriptor.backends = eframe::wgpu::Backends::GL;
+    }
     setup.device_descriptor =
         std::sync::Arc::new(|adapter| mobile_device_descriptor(adapter.limits()));
     eframe::egui_wgpu::WgpuConfiguration {
         wgpu_setup: setup.into(),
         ..Default::default()
+    }
+}
+
+fn platform_text(ios: &'static str, android: &'static str) -> &'static str {
+    if cfg!(target_os = "android") {
+        android
+    } else {
+        ios
     }
 }
 
@@ -635,6 +649,13 @@ impl MobileApp {
                 .rect_filled(safe_rect, 0.0, ui.visuals().panel_fill);
             if let Some(keyboard) = &self.keyboard {
                 let inputs = keyboard.take_field_input();
+                for input in &inputs {
+                    if let festerm_ios_window::FieldInput::Unavailable(error) = input {
+                        self.input_notice = Some(error);
+                        #[cfg(feature = "live-ssh")]
+                        self.sink.live.suspend();
+                    }
+                }
                 if !self.dictation_open()
                     || self.dictation.as_ref().is_some_and(|speech| {
                         speech.phase() == festerm_ios_window::DictationPhase::Review
@@ -1597,7 +1618,7 @@ impl MobileApp {
             self.editor.auth_notice = Some("Saved profiles are unavailable".to_owned());
             return;
         };
-        match store.generate_key("fesTerm iPhone") {
+        match store.generate_key(platform_text("fesTerm iPhone", "fesTerm Android")) {
             Ok(auth) => {
                 self.editor.auth_notice = Some(
                     "Key generated. Copy the public key into the server's authorized_keys."
@@ -2242,6 +2263,16 @@ impl MobileApp {
 
 impl eframe::App for MobileApp {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        #[cfg(target_os = "android")]
+        if let Some(rect) = raw_input.screen_rect {
+            let insets = festerm_android_platform::insets();
+            raw_input.safe_area_insets = Some(egui::SafeAreaInsets(egui::epaint::MarginF32 {
+                top: rect.height() * insets.top,
+                left: rect.width() * insets.left,
+                bottom: rect.height() * insets.bottom,
+                right: rect.width() * insets.right,
+            }));
+        }
         for key in self.keys.drain() {
             for pressed in [true, false] {
                 raw_input.events.push(egui::Event::Key {
@@ -2262,12 +2293,12 @@ impl eframe::App for MobileApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         ui.ctx().output_mut(|output| {
             output.commands.retain(|command| {
                 if let egui::OutputCommand::CopyText(text) = command {
                     if !festerm_ios_window::set_clipboard_text(text) {
-                        log::error!("iOS pasteboard copy failed");
+                        log::error!("Native clipboard copy failed");
                         self.input_notice = Some("Copy is unavailable here");
                     }
                     false
@@ -3700,6 +3731,21 @@ fn apply_field_input(ctx: &egui::Context, inputs: Vec<festerm_ios_window::FieldI
     let mut events = Vec::new();
     for input in inputs {
         match input {
+            FieldInput::Unavailable(_) => {}
+            FieldInput::Key(native) => {
+                use festerm_ios_window::FieldKey;
+                events.extend(key(match native {
+                    FieldKey::Tab => egui::Key::Tab,
+                    FieldKey::Escape => egui::Key::Escape,
+                    FieldKey::Left => egui::Key::ArrowLeft,
+                    FieldKey::Right => egui::Key::ArrowRight,
+                    FieldKey::Up => egui::Key::ArrowUp,
+                    FieldKey::Down => egui::Key::ArrowDown,
+                    FieldKey::Home => egui::Key::Home,
+                    FieldKey::End => egui::Key::End,
+                    FieldKey::Delete => egui::Key::Delete,
+                }));
+            }
             FieldInput::Select(range) => {
                 let mut state = egui::TextEdit::load_state(ctx, field).unwrap_or_default();
                 state

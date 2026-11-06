@@ -75,8 +75,10 @@ class TestFlightTests(unittest.TestCase):
         source = (SCRIPT.parents[1] / "crates/festerm-ios-window/src/ios.rs").read_text()
         self.assertIn(f'#[name = "{name}"]', source)
         self.assertIn("scene:willConnectToSession:options:", source)
+        runtime = (SCRIPT.parents[1] / "app/festerm-mobile/src/runtime.rs").read_text()
+        self.assertIn("register_scene_delegate()", runtime)
         main = (SCRIPT.parents[1] / "app/festerm-mobile/src/main.rs").read_text()
-        self.assertIn("register_scene_delegate()", main)
+        self.assertIn("festerm_mobile::run_native()", main)
 
     def test_icon_source_is_marketing_size(self):
         tf.check_icon()

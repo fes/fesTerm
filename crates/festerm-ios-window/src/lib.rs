@@ -12,7 +12,7 @@ pub enum KeyboardMode {
 }
 
 mod field;
-pub use field::{FieldDocument, FieldInput, FieldModel, FieldSync};
+pub use field::{FieldDocument, FieldInput, FieldKey, FieldModel, FieldSync};
 mod dictation;
 pub use dictation::{
     dictation_permission_prompt_in_flight, Dictation, DictationPhase, DictationText,
@@ -36,6 +36,9 @@ pub use document_writer::{
 
 #[cfg(target_os = "ios")]
 mod speech;
+#[cfg(target_os = "android")]
+#[path = "speech_android.rs"]
+mod speech;
 
 #[cfg(target_os = "ios")]
 mod ios;
@@ -45,10 +48,15 @@ pub use ios::{
     KeyboardBridge, SCENE_DELEGATE_CLASS,
 };
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::{clipboard_text, open_url, set_clipboard_text, KeyboardBridge};
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub struct KeyboardBridge;
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 impl KeyboardBridge {
     pub fn new(
         _window: raw_window_handle::WindowHandle<'_>,
@@ -91,19 +99,19 @@ pub fn register_scene_delegate() -> bool {
 /// The system pasteboard text; always `None` off iOS. Reading may prompt the
 /// user ("Allow Paste") on recent iOS versions, so call it only from an
 /// explicit paste action.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn clipboard_text() -> Option<String> {
     None
 }
 
 /// Replaces the system pasteboard text; returns whether it was written.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn set_clipboard_text(_text: &str) -> bool {
     false
 }
 
 /// Opens an `https://` URL in the system browser; always `false` off iOS.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn open_url(_url: &str) -> bool {
     false
 }

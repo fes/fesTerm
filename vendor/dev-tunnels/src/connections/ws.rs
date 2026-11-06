@@ -259,7 +259,7 @@ fn relay_tls_connector(
 }
 
 /// iOS exposes no readable root store; use the system trust evaluator.
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 fn relay_verification(
     builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
 ) -> Result<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>, io::Error>
@@ -268,7 +268,7 @@ fn relay_verification(
     builder.with_platform_verifier().map_err(io::Error::other)
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 fn relay_verification(
     builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
 ) -> Result<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>, io::Error>

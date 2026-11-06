@@ -90,6 +90,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0065: MCP and JavaScript Automation Through One Authority Broker](0065-mcp-and-javascript-automation.md) — Proposed; selected language, deferred broker/runtime/security design, no implementation or enablement
 
+- [ADR 0073: Android Host for the Shared Mobile Application](0073-android-shared-mobile-host.md) - Proposed; shared iOS UI/protocols with an Android native-service boundary, private document imports and development APK packaging
+
 ## Status Values
 
 - **Proposed:** under discussion and not yet binding.

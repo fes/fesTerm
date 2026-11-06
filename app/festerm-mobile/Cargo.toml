@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Experimental iOS rendering and lifecycle host for fesTerm."
+description = "Shared iOS and Android mobile host for fesTerm."
 publish = false
 
 [features]
@@ -48,6 +48,11 @@ sha2 = "0.11"
 # to an iOS package. The production desktop composition root is not imported.
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "=0.36.1", default-features = false, features = ["x11", "wayland"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "android-native-activity"] }
+egui-winit = { version = "=0.36.1", default-features = false, features = ["external-ime"] }
+festerm-android-platform = { path = "../../crates/festerm-android-platform" }
 
 [lints]
 workspace = true

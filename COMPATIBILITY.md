@@ -1,5 +1,12 @@
 # fesTerm Compatibility Plan
 
+The experimental Android port shares the iOS mobile UI/protocol stack and
+adds native input, secure storage, device lock, document import and on-device
+speech adapters (ADR 0073). Development APK/emulator evidence is not
+physical-device or live-service certification. Provider documents are imported
+as private copies rather than edited in place; see the
+[Android qualification matrix](docs/manual-validation.md#android-shared-mobile-port-adr-0073). Plan
+
 **Status:** Draft
 
 fesTerm measures compatibility in terms of observable application behavior. Recognizing an escape sequence is not sufficient if screen state, input reporting, cursor behavior, shaping, resize, or restoration semantics are wrong.

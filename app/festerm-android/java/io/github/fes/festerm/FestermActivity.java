@@ -1,0 +1,849 @@
+package io.github.fes.festerm;
+
+import android.Manifest;
+import android.app.KeyguardManager;
+import android.app.NativeActivity;
+import android.app.AlertDialog;
+import android.content.*;
+import android.content.ClipboardManager;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.graphics.Color;
+import android.graphics.Insets;
+import android.graphics.Rect;
+import android.hardware.biometrics.BiometricManager;
+import android.hardware.biometrics.BiometricPrompt;
+import android.net.Uri;
+import android.os.*;
+import android.provider.OpenableColumns;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.speech.*;
+import android.text.*;
+import android.util.AtomicFile;
+import android.view.*;
+import android.view.inputmethod.*;
+import android.widget.FrameLayout;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.security.*;
+import java.util.*;
+import java.util.concurrent.*;
+import javax.crypto.*;
+import javax.crypto.spec.GCMParameterSpec;
+
+/** Native services only. Rust owns the entire application UI and session policy. */
+public final class FestermActivity extends NativeActivity {
+    static { System.loadLibrary("festerm_android"); }
+
+    private static final int BACKGROUND = Color.rgb(15, 20, 28);
+    private static final int PICK_DOCUMENT = 40, MICROPHONE = 41;
+    private static final int AUTH_OK = 0, AUTH_CANCELLED = 1, AUTH_LOCKED_OUT = 2,
+        AUTH_NO_CREDENTIAL = 3, AUTH_UNAVAILABLE = 4;
+    private static final int MAX_DOCUMENT = 1024 * 1024, MAX_SECRET = 64 * 1024;
+    private static final String KEY_ALIAS = "io.github.fes.festerm.secrets.v1";
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final ExecutorService files = Executors.newSingleThreadExecutor();
+    private InputView input;
+    private View shield;
+    private boolean ready, destroyed, resumed;
+    private volatile boolean protect, cover = true, hidePreview = true;
+    private boolean picking, authPending;
+    private long authToken;
+    private CancellationSignal authentication;
+    private SpeechRecognizer recognizer;
+    private long speechGeneration;
+    private boolean speechPermission, finishing;
+    private Runnable speechDeadline, finishDeadline;
+    private final BroadcastReceiver screenOff = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction()) && ready) {
+                cancelSpeech();
+                nativeLifecycle(3);
+                if (protect) shield.setVisibility(View.VISIBLE);
+            }
+        }
+    };
+
+    private native void nativeInput(long target, long sequence, int kind, String text, int start, int end);
+    private native void nativeInsets(float fraction, float top, float left, float bottom, float right);
+    private native void nativeLifecycle(int event);
+    private native void nativeAuthenticated(long token, int result);
+    private native void nativePicked(String path);
+    private native void nativeSpeech(long generation, int status, String text);
+    private native void nativeSpeechLevel(long generation, float rmsDb);
+
+    @Override public void onCreate(Bundle state) {
+        super.onCreate(state);
+        getWindow().setStatusBarColor(BACKGROUND);
+        getWindow().setNavigationBarColor(BACKGROUND);
+        if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(true);
+        input = new InputView();
+        addContentView(input, new FrameLayout.LayoutParams(1, 1));
+        shield = new View(this);
+        shield.setBackgroundColor(BACKGROUND);
+        shield.setClickable(true);
+        addContentView(shield, new FrameLayout.LayoutParams(-1, -1));
+        getWindow().getDecorView().getViewTreeObserver().addOnGlobalLayoutListener(this::reportInsets);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(screenOff, new IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(screenOff, new IntentFilter(Intent.ACTION_SCREEN_OFF));
+        }
+    }
+
+    public String privateDirectory() throws IOException {
+        File directory = new File(getFilesDir(), "festerm");
+        if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Storage unavailable");
+        return directory.getCanonicalPath();
+    }
+
+    private void reportInsets() {
+        if (!ready || input == null) return;
+        View root = getWindow().getDecorView();
+        WindowInsets insets = root.getRootWindowInsets();
+        float height = root.getHeight();
+        float width = root.getWidth();
+        int keyboard = 0, top = 0, left = 0, bottom = 0, right = 0;
+        if (height > 0 && insets != null) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                keyboard = insets.isVisible(WindowInsets.Type.ime()) ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
+                top = bars.top; left = bars.left; bottom = bars.bottom; right = bars.right;
+            } else {
+                Rect visible = new Rect();
+                root.getWindowVisibleDisplayFrame(visible);
+                keyboard = Math.max(0, root.getHeight() - visible.bottom);
+                top = insets.getStableInsetTop(); left = insets.getStableInsetLeft();
+                bottom = insets.getStableInsetBottom(); right = insets.getStableInsetRight();
+            }
+        }
+        nativeInsets(height > 0 ? keyboard / height : 0,
+            height > 0 ? top / height : 0, width > 0 ? left / width : 0,
+            height > 0 ? bottom / height : 0, width > 0 ? right / width : 0);
+    }
+
+    public void keyboardMode(int mode) {
+        runOnUiThread(() -> {
+            if (destroyed || (!resumed && mode != 0) || input.keyboardMode == mode) return;
+            ready = true;
+            input.mode(mode);
+            reportInsets();
+        });
+    }
+
+    public void fieldDocument(long id, String text, int start, int end, boolean secure, boolean multiline) {
+        runOnUiThread(() -> {
+            if (!destroyed) input.document(id, text, start, end, secure, multiline);
+        });
+    }
+
+    public void inputConsumed(long sequence) {
+        runOnUiThread(() -> {
+            if (!destroyed && input.sequence == sequence) input.pending = false;
+        });
+    }
+
+    public void inputClick() {
+        runOnUiThread(() -> { if (!destroyed) input.playSoundEffect(SoundEffectConstants.CLICK); });
+    }
+
+    public String clipboardText() {
+        ClipboardManager manager = getSystemService(ClipboardManager.class);
+        ClipData clip = manager.getPrimaryClip();
+        if (clip == null || clip.getItemCount() == 0) return null;
+        CharSequence text = clip.getItemAt(0).getText();
+        if (text == null || text.length() > MAX_SECRET) return null;
+        return text.toString();
+    }
+
+    public void copyText(String text) {
+        if (text.length() > MAX_DOCUMENT) throw new IllegalArgumentException("Clipboard limit exceeded");
+        getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("fesTerm", text));
+    }
+
+    public void openBrowser(String url) {
+        Uri uri = Uri.parse(url);
+        if (!"https".equals(uri.getScheme()) || uri.getHost() == null) {
+            throw new IllegalArgumentException("HTTPS link required");
+        }
+        // startActivity is safe from the native loop thread; failures return through JNI.
+        startActivity(new Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE));
+    }
+
+    public boolean canAuthenticate() {
+        return getSystemService(KeyguardManager.class).isDeviceSecure();
+    }
+
+    public void authenticateOwner(long token, boolean passcodeOnly, String reason) {
+        runOnUiThread(() -> {
+            if (destroyed) {
+                nativeAuthenticated(token, AUTH_CANCELLED);
+                return;
+            }
+            if (!canAuthenticate()) {
+                nativeAuthenticated(token, AUTH_NO_CREDENTIAL);
+                return;
+            }
+            // The newest request wins; the older prompt's reply is ignored by token.
+            retireAuthentication();
+            authPending = true;
+            authToken = token;
+            CancellationSignal signal = new CancellationSignal();
+            authentication = signal;
+            try {
+                BiometricPrompt.Builder prompt = new BiometricPrompt.Builder(this)
+                    .setTitle(reason == null || reason.isEmpty() ? "Unlock fesTerm" : reason)
+                    .setSubtitle("Use your device security to continue");
+                if (passcodeOnly && Build.VERSION.SDK_INT >= 30) {
+                    prompt.setAllowedAuthenticators(BiometricManager.Authenticators.DEVICE_CREDENTIAL);
+                } else {
+                    prompt.setDeviceCredentialAllowed(true);
+                }
+                prompt.build().authenticate(signal, getMainExecutor(), new BiometricPrompt.AuthenticationCallback() {
+                    private void finish(int result) {
+                        if (!authPending || authToken != token) return;
+                        authPending = false;
+                        authentication = null;
+                        nativeAuthenticated(token, result);
+                    }
+                    @Override public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                        finish(AUTH_OK);
+                    }
+                    @Override public void onAuthenticationError(int error, CharSequence message) {
+                        finish(authResult(error));
+                    }
+                });
+            } catch (RuntimeException error) {
+                if (authPending && authToken == token) {
+                    retireAuthentication();
+                    nativeAuthenticated(token, AUTH_UNAVAILABLE);
+                }
+            }
+        });
+    }
+
+    /** Retires exactly one request; a token that already completed or was replaced is ignored. */
+    public void cancelAuthentication(long token) {
+        runOnUiThread(() -> {
+            if (authPending && authToken == token) retireAuthentication();
+        });
+    }
+
+    private void retireAuthentication() {
+        authPending = false;
+        if (authentication != null) {
+            authentication.cancel();
+            authentication = null;
+        }
+    }
+
+    private static int authResult(int error) {
+        switch (error) {
+            case BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED:
+            case BiometricPrompt.BIOMETRIC_ERROR_CANCELED:
+            case BiometricPrompt.BIOMETRIC_ERROR_TIMEOUT:
+                return AUTH_CANCELLED;
+            case BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT:
+            case BiometricPrompt.BIOMETRIC_ERROR_LOCKOUT_PERMANENT:
+                return AUTH_LOCKED_OUT;
+            case BiometricPrompt.BIOMETRIC_ERROR_NO_DEVICE_CREDENTIAL:
+                return AUTH_NO_CREDENTIAL;
+            default:
+                return AUTH_UNAVAILABLE;
+        }
+    }
+
+    public void privacy(boolean enabled, boolean covered, boolean hide) {
+        if (ready && protect == enabled && cover == covered && hidePreview == hide) return;
+        protect = enabled;
+        cover = covered;
+        hidePreview = hide;
+        runOnUiThread(() -> {
+            if (destroyed) return;
+            ready = true;
+            if (enabled && (hide || covered)) {
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            } else {
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            }
+            shield.setVisibility(covered || (!resumed && enabled && hide) ? View.VISIBLE : View.GONE);
+        });
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        resumed = true;
+        if (ready) {
+            if (getSystemService(KeyguardManager.class).isDeviceLocked()) nativeLifecycle(3);
+            nativeLifecycle(1);
+        }
+    }
+
+    @Override protected void onPause() {
+        resumed = false;
+        if (protect && (hidePreview || cover)) shield.setVisibility(View.VISIBLE);
+        if (ready) {
+            input.mode(0);
+            if (!speechPermission) cancelSpeech();
+            nativeLifecycle(0);
+        }
+        super.onPause();
+    }
+
+    @Override protected void onStop() {
+        if (ready) {
+            cancelSpeech();
+            nativeLifecycle(2);
+        }
+        super.onStop();
+    }
+
+    @Override protected void onDestroy() {
+        destroyed = true;
+        cancelSpeech();
+        if (authPending) {
+            long token = authToken;
+            retireAuthentication();
+            nativeAuthenticated(token, AUTH_CANCELLED);
+        }
+        unregisterReceiver(screenOff);
+        files.shutdown();
+        main.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+
+    @Override public void onBackPressed() {
+        // Never silently close a terminal or discard a dirty editor.
+        if (input != null && input.keyboardMode != 0) {
+            input.emit(6, "", KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_ESCAPE);
+        } else {
+            moveTaskToBack(true);
+        }
+    }
+
+    /** A picker grants only a read for an explicit import, never provider overwrite authority. */
+    public void pickDocument() {
+        runOnUiThread(() -> {
+            if (destroyed || picking) { nativePicked(null); return; }
+            picking = true;
+            new AlertDialog.Builder(this).setTitle("Open a document")
+                .setItems(new String[]{"Import from Files", "Open saved copy"}, (dialog, choice) -> {
+                    if (choice == 0) importDocument(); else openSavedCopy();
+                })
+                .setOnCancelListener(dialog -> { picking = false; nativePicked(""); })
+                .show();
+        });
+    }
+
+    private void openSavedCopy() {
+        files.execute(() -> {
+            ArrayList<File> copies = new ArrayList<>();
+            try {
+                File root = new File(privateDirectory(), "Documents/Imports");
+                if (root.isDirectory()) {
+                    try (DirectoryStream<Path> entries = Files.newDirectoryStream(root.toPath())) {
+                        int scanned = 0;
+                        for (Path path : entries) {
+                            if (++scanned > 200) throw new IOException("Saved copy list exceeds its bound");
+                            if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                                    && !path.getFileName().toString().startsWith(".")) copies.add(path.toFile());
+                        }
+                    }
+                }
+                copies.sort(Comparator.comparing(File::getName));
+            } catch (IOException | DirectoryIteratorException | SecurityException error) {
+                main.post(() -> { picking = false; if (!destroyed) nativePicked(null); });
+                return;
+            }
+            main.post(() -> {
+                if (destroyed) return;
+                String[] names = copies.stream().map(File::getName).toArray(String[]::new);
+                AlertDialog.Builder dialog = new AlertDialog.Builder(this)
+                    .setTitle("Saved local copies")
+                    .setOnCancelListener(ignored -> { picking = false; nativePicked(""); });
+                if (copies.isEmpty()) {
+                    dialog.setMessage("No saved copies. Import a document from Files first.")
+                        .setPositiveButton("OK", (ignored, button) -> { picking = false; nativePicked(""); });
+                } else {
+                    dialog.setItems(names, (ignored, index) -> {
+                        picking = false;
+                        nativePicked(copies.get(index).getAbsolutePath());
+                    });
+                }
+                dialog.show();
+            });
+        });
+    }
+
+    private void importDocument() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .setType("text/*").addCategory(Intent.CATEGORY_OPENABLE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, PICK_DOCUMENT);
+        } catch (ActivityNotFoundException error) {
+            picking = false;
+            nativePicked(null);
+        }
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != PICK_DOCUMENT) return;
+        if (result != RESULT_OK) {
+            picking = false;
+            nativePicked("");
+            return;
+        }
+        Uri uri = data == null ? null : data.getData();
+        if (uri == null || !"content".equals(uri.getScheme())) {
+            picking = false;
+            nativePicked(null);
+            return;
+        }
+        files.execute(() -> {
+            String imported = null;
+            File destination = null;
+            try {
+                File directory = new File(privateDirectory(), "Documents/Imports");
+                if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Import unavailable");
+                String extension = ".txt";
+                String prefix = "Imported-";
+                try (Cursor metadata = getContentResolver().query(uri,
+                        new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                    if (metadata != null && metadata.moveToFirst()) {
+                        String name = metadata.getString(0);
+                        if (name != null && name.length() <= 256) {
+                            int dot = name.lastIndexOf('.');
+                            if (dot > 0 && name.substring(dot).matches("\\.[a-zA-Z0-9]{1,12}")) {
+                                extension = name.substring(dot).toLowerCase(Locale.ROOT);
+                                name = name.substring(0, dot);
+                            }
+                            String safe = name.replaceAll("[^\\p{L}\\p{N}_ -]", "_").trim();
+                            if (!safe.isEmpty()) {
+                                int end = safe.offsetByCodePoints(0, Math.min(40, safe.codePointCount(0, safe.length())));
+                                prefix = "Copy-" + safe.substring(0, end) + "-";
+                            }
+                        }
+                    }
+                }
+                destination = File.createTempFile(prefix, extension, directory);
+                try (InputStream source = getContentResolver().openInputStream(uri);
+                     FileOutputStream output = new FileOutputStream(destination)) {
+                    if (source == null) throw new IOException("Read unavailable");
+                    byte[] buffer = new byte[8192];
+                    int total = 0, count;
+                    while ((count = source.read(buffer)) != -1) {
+                        total += count;
+                        if (total > MAX_DOCUMENT) throw new IOException("Import limit exceeded");
+                        output.write(buffer, 0, count);
+                    }
+                    Arrays.fill(buffer, (byte) 0);
+                    output.getFD().sync();
+                    imported = destination.getCanonicalPath();
+                }
+            } catch (IOException | SecurityException error) {
+                if (destination != null && !destination.delete()) {
+                    android.util.Log.w("fesTerm", "Failed import cleanup");
+                }
+            }
+            final String path = imported;
+            main.post(() -> {
+                picking = false;
+                if (!destroyed) nativePicked(path);
+            });
+        });
+    }
+
+    private synchronized SecretKey secretKey() throws GeneralSecurityException, IOException {
+        KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+        store.load(null);
+        if (store.containsAlias(KEY_ALIAS)) return (SecretKey) store.getKey(KEY_ALIAS, null);
+        File[] entries = secretDirectory().listFiles();
+        if (entries == null || entries.length != 0) throw new KeyStoreException("Secret key unavailable");
+        KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        generator.init(new KeyGenParameterSpec.Builder(KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256).setRandomizedEncryptionRequired(true)
+            .setUnlockedDeviceRequired(true).build());
+        return generator.generateKey();
+    }
+
+    private File secretDirectory() throws IOException {
+        File directory = new File(getNoBackupFilesDir(), "secrets");
+        if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Secret storage unavailable");
+        return directory;
+    }
+
+    private File secretFile(String reference) throws IOException {
+        if (!reference.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")) {
+            throw new IllegalArgumentException("Invalid secret reference");
+        }
+        return new File(secretDirectory(), reference);
+    }
+
+    public synchronized byte[] secretRead(String reference) throws GeneralSecurityException, IOException {
+        File file = secretFile(reference);
+        AtomicFile atomic = new AtomicFile(file);
+        if (!file.exists() && !new File(file + ".bak").exists()) return null;
+        byte[] envelope;
+        try (InputStream source = atomic.openRead()) {
+            ByteArrayOutputStream bounded = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = source.read(buffer, 0, Math.min(buffer.length, MAX_SECRET + 30 - bounded.size()))) > 0) {
+                bounded.write(buffer, 0, count);
+            }
+            envelope = bounded.toByteArray();
+            if (source.read() != -1 || envelope.length < 29 || envelope[0] != 1) {
+                throw new IOException("Invalid secret envelope");
+            }
+        }
+        try {
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, secretKey(), new GCMParameterSpec(128, envelope, 1, 12));
+            cipher.updateAAD((KEY_ALIAS + "/" + reference).getBytes(StandardCharsets.US_ASCII));
+            return cipher.doFinal(envelope, 13, envelope.length - 13);
+        } finally {
+            Arrays.fill(envelope, (byte) 0);
+        }
+    }
+
+    public synchronized boolean secretWrite(String reference, byte[] bytes, boolean replace)
+            throws GeneralSecurityException, IOException {
+        try {
+            if (bytes.length > MAX_SECRET) throw new IllegalArgumentException("Secret limit exceeded");
+            File file = secretFile(reference);
+            if (file.exists() != replace) return false;
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey());
+            cipher.updateAAD((KEY_ALIAS + "/" + reference).getBytes(StandardCharsets.US_ASCII));
+            byte[] encrypted = cipher.doFinal(bytes);
+            AtomicFile atomic = new AtomicFile(file);
+            FileOutputStream output = null;
+            try {
+                output = atomic.startWrite();
+                output.write(1);
+                output.write(cipher.getIV());
+                output.write(encrypted);
+                atomic.finishWrite(output);
+                return true;
+            } catch (IOException error) {
+                if (output != null) atomic.failWrite(output);
+                throw error;
+            } finally {
+                Arrays.fill(encrypted, (byte) 0);
+            }
+        } finally {
+            Arrays.fill(bytes, (byte) 0);
+        }
+    }
+
+    public synchronized boolean secretDelete(String reference) throws IOException {
+        File file = secretFile(reference);
+        boolean present = file.exists() || new File(file + ".bak").exists();
+        new AtomicFile(file).delete();
+        if (file.exists() || new File(file + ".bak").exists()) throw new IOException("Secret deletion failed");
+        return present;
+    }
+
+    public void speechCommand(long generation, int command) {
+        runOnUiThread(() -> {
+            if (destroyed) return;
+            if (command == 0) {
+                cancelSpeech();
+                speechGeneration = generation;
+                if (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+                    nativeSpeech(generation, -1, "");
+                } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    speechPermission = true;
+                    requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MICROPHONE);
+                } else {
+                    startSpeech(generation);
+                }
+            } else if (command == 2 && generation >= speechGeneration) {
+                cancelSpeech();
+            } else if (generation == speechGeneration) {
+                if (command == 1) finishSpeech(); else cancelSpeech();
+            }
+        });
+    }
+
+    @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(request, permissions, results);
+        if (request != MICROPHONE) return;
+        boolean pending = speechPermission;
+        speechPermission = false;
+        if (!pending || destroyed) return;
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+            startSpeech(speechGeneration);
+        } else {
+            nativeSpeech(speechGeneration, -1, "");
+        }
+    }
+
+    private void startSpeech(long generation) {
+        if (Build.VERSION.SDK_INT < 31) { nativeSpeech(generation, -1, ""); return; }
+        recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this);
+        recognizer.setRecognitionListener(new RecognitionListener() {
+            private long lastLevel;
+            private boolean current() { return !destroyed && generation == speechGeneration && recognizer != null; }
+            private void result(Bundle bundle, boolean last) {
+                if (!current()) return;
+                ArrayList<String> texts = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                String text = texts == null || texts.isEmpty() ? "" : texts.get(0);
+                if (text.getBytes(StandardCharsets.UTF_8).length > 4096) {
+                    nativeSpeech(generation, -1, "");
+                    cancelSpeech();
+                    return;
+                }
+                nativeSpeech(generation, last ? 3 : 2, text);
+                if (last) cancelSpeech();
+            }
+            @Override public void onReadyForSpeech(Bundle parameters) { if (current()) nativeSpeech(generation, 1, ""); }
+            @Override public void onBeginningOfSpeech() {}
+            @Override public void onRmsChanged(float rms) {
+                long now = SystemClock.uptimeMillis();
+                if (!current() || now - lastLevel < 80) return;
+                lastLevel = now;
+                nativeSpeechLevel(generation, rms);
+            }
+            @Override public void onBufferReceived(byte[] buffer) {}
+            @Override public void onEndOfSpeech() { if (current()) finishSpeech(); }
+            @Override public void onError(int error) {
+                if (!current()) return;
+                nativeSpeech(generation, finishing ? 4 : -1, "");
+                cancelSpeech();
+            }
+            @Override public void onResults(Bundle results) { result(results, true); }
+            @Override public void onPartialResults(Bundle results) { result(results, false); }
+            @Override public void onEvent(int event, Bundle parameters) {}
+        });
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        try {
+            recognizer.startListening(intent);
+            speechDeadline = this::finishSpeech;
+            main.postDelayed(speechDeadline, 45_000);
+        } catch (SecurityException | IllegalStateException error) {
+            nativeSpeech(generation, -1, "");
+            cancelSpeech();
+        }
+    }
+
+    private void finishSpeech() {
+        if (recognizer == null || finishing) return;
+        finishing = true;
+        nativeSpeech(speechGeneration, 5, "");
+        recognizer.stopListening();
+        finishDeadline = () -> {
+            nativeSpeech(speechGeneration, 4, "");
+            cancelSpeech();
+        };
+        main.postDelayed(finishDeadline, 1500);
+    }
+
+    private void cancelSpeech() {
+        speechPermission = false;
+        finishing = false;
+        if (speechDeadline != null) main.removeCallbacks(speechDeadline);
+        if (finishDeadline != null) main.removeCallbacks(finishDeadline);
+        if (recognizer != null) {
+            recognizer.cancel();
+            recognizer.destroy();
+            recognizer = null;
+        }
+    }
+
+    private final class InputView extends View {
+        private final Editable text = new SpannableStringBuilder();
+        private int keyboardMode;
+        private long field;
+        private long sequence;
+        private boolean secure, multiline, pending;
+        private InputConnection connection;
+
+        /** Modes 3 and 4 edit the published form field; 4 has the app-owned keyboard on screen. */
+        private boolean editsField(int mode) { return mode == 3 || mode == 4; }
+
+        /** The app-owned keyboards draw their own keys: modes 2 (terminal) and 4 (field). */
+        private boolean appOwnedKeyboard(int mode) { return mode == 2 || mode == 4; }
+
+        InputView() {
+            super(FestermActivity.this);
+            setFocusable(true);
+            setFocusableInTouchMode(true);
+            setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        }
+
+        void emit(int kind, String value, int start, int end) {
+            if (!ready || !resumed || keyboardMode == 0 || (protect && cover)) return;
+            pending = true;
+            nativeInput(editsField(keyboardMode) ? field : 0, ++sequence, kind, value, start, end);
+        }
+
+        void clear() {
+            text.clear();
+            Selection.setSelection(text, 0);
+            pending = false;
+            field = 0;
+        }
+
+        void mode(int mode) {
+            if (keyboardMode == mode) return;
+            keyboardMode = mode;
+            InputMethodManager manager = getSystemService(InputMethodManager.class);
+            if (mode == 0) {
+                clear();
+                secure = false;
+                multiline = false;
+                manager.hideSoftInputFromWindow(getWindowToken(), 0);
+                clearFocus();
+            } else {
+                if (!editsField(mode)) { clear(); secure = false; multiline = false; }
+                requestFocus();
+                manager.restartInput(this);
+                if (appOwnedKeyboard(mode)) {
+                    manager.hideSoftInputFromWindow(getWindowToken(), 0);
+                } else {
+                    manager.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT);
+                }
+            }
+        }
+
+        void document(long id, String value, int start, int end, boolean secret, boolean multiple) {
+            if (field == id && pending) return;
+            boolean restart = field != id || secure != secret || multiline != multiple;
+            field = id;
+            secure = secret;
+            multiline = multiple;
+            if (!text.toString().equals(value)) text.replace(0, text.length(), value);
+            int chars = Character.codePointCount(text, 0, text.length());
+            Selection.setSelection(text, Character.offsetByCodePoints(text, 0, Math.min(start, chars)),
+                Character.offsetByCodePoints(text, 0, Math.min(end, chars)));
+            InputMethodManager manager = getSystemService(InputMethodManager.class);
+            if (restart && editsField(keyboardMode)) manager.restartInput(this);
+            manager.updateSelection(this, Selection.getSelectionStart(text), Selection.getSelectionEnd(text), -1, -1);
+        }
+
+        @Override public boolean onCheckIsTextEditor() { return true; }
+
+        @Override public InputConnection onCreateInputConnection(EditorInfo info) {
+            boolean terminal = !editsField(keyboardMode);
+            int ownerMode = keyboardMode;
+            long ownerField = field;
+            info.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+            if (secure || terminal) info.inputType |= InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD;
+            if (secure) info.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD;
+            if (multiline || terminal) info.inputType |= InputType.TYPE_TEXT_FLAG_MULTI_LINE;
+            info.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+                | (multiline || terminal ? EditorInfo.IME_ACTION_NONE : EditorInfo.IME_ACTION_NEXT);
+            info.initialSelStart = Math.max(0, Selection.getSelectionStart(text));
+            info.initialSelEnd = Math.max(0, Selection.getSelectionEnd(text));
+            connection = new BaseInputConnection(this, true) {
+                private boolean composing;
+                private String composition = "";
+                private boolean active() {
+                    return connection == this && keyboardMode == ownerMode
+                        && keyboardMode != 0 && (terminal || field == ownerField);
+                }
+                private boolean bounded(CharSequence value) {
+                    if (value == null || value.length() > MAX_SECRET) {
+                        emit(-1, "", 0, 0);
+                        return false;
+                    }
+                    return true;
+                }
+                @Override public Editable getEditable() { return active() ? text : null; }
+                @Override public void closeConnection() {
+                    composing = false;
+                    composition = "";
+                    super.closeConnection();
+                }
+                private CharSequence display(CharSequence value) {
+                    if (!secure) return value;
+                    char[] masked = new char[Character.codePointCount(value, 0, value.length())];
+                    Arrays.fill(masked, '\u2022');
+                    return new String(masked);
+                }
+                @Override public boolean commitText(CharSequence value, int cursor) {
+                    if (!active() || !bounded(value)) return false;
+                    if (!composing && value.length() == 0
+                            && Selection.getSelectionStart(text) != Selection.getSelectionEnd(text)) {
+                        emit(2, "", 0, 0);
+                    } else {
+                        emit(composing ? 5 : 1, value.toString(), 0, 0);
+                    }
+                    composing = false;
+                    composition = "";
+                    boolean result = super.commitText(display(value), cursor);
+                    if (terminal) clear();
+                    return result;
+                }
+                @Override public boolean setComposingText(CharSequence value, int cursor) {
+                    if (!active() || !bounded(value)) return false;
+                    int count = Character.codePointCount(value, 0, value.length());
+                    emit(4, value.toString(), count, count);
+                    composing = true;
+                    composition = value.toString();
+                    return super.setComposingText(display(value), cursor);
+                }
+                @Override public boolean finishComposingText() {
+                    if (!active()) return false;
+                    if (composing) {
+                        emit(5, composition, 0, 0);
+                    }
+                    composing = false;
+                    composition = "";
+                    return super.finishComposingText();
+                }
+                @Override public boolean deleteSurroundingText(int before, int after) {
+                    if (!active() || before < 0 || before > 256 || after != 0) return false;
+                    int cursor = Math.max(0, Selection.getSelectionStart(text));
+                    int count = Character.codePointCount(text, Math.max(0, cursor - before), cursor);
+                    boolean selected = Selection.getSelectionStart(text) != Selection.getSelectionEnd(text);
+                    for (int i = 0; i < (terminal || selected ? Math.max(1, count) : count); i++) emit(2, "", 0, 0);
+                    return super.deleteSurroundingText(before, after);
+                }
+                @Override public boolean deleteSurroundingTextInCodePoints(int before, int after) {
+                    if (!active() || before < 0 || before > 256 || after != 0) return false;
+                    int cursor = Math.max(0, Selection.getSelectionStart(text));
+                    int count = terminal ? before : Math.min(before, Character.codePointCount(text, 0, cursor));
+                    for (int i = 0; i < count; i++) emit(2, "", 0, 0);
+                    return super.deleteSurroundingTextInCodePoints(before, after);
+                }
+                @Override public boolean setSelection(int start, int end) {
+                    if (!active() || start < 0 || end < start || end > text.length()) return false;
+                    if (!terminal) emit(3, "", Character.codePointCount(text, 0, start), Character.codePointCount(text, 0, end));
+                    return super.setSelection(start, end);
+                }
+                @Override public boolean sendKeyEvent(KeyEvent event) {
+                    if (!active()) return false;
+                    if (event.getAction() != KeyEvent.ACTION_DOWN) return true;
+                    if (event.getKeyCode() == KeyEvent.KEYCODE_DEL) emit(2, "", 0, 0);
+                    else if (event.getKeyCode() == KeyEvent.KEYCODE_ENTER) emit(1, "\n", 0, 0);
+                    else {
+                        int code = event.getUnicodeChar();
+                        if (code != 0) emit(1, new String(Character.toChars(code)), 0, 0);
+                        else emit(6, "", event.getKeyCode(), event.getKeyCode());
+                    }
+                    return true;
+                }
+                @Override public boolean performEditorAction(int action) {
+                    if (!active()) return false;
+                    emit(6, "", KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_TAB);
+                    return true;
+                }
+            };
+            return connection;
+        }
+    }
+}
