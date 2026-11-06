@@ -600,8 +600,29 @@ mod macos {
         Ok(())
     }
 
+    /// CoreFoundation's initializer sets `__CF_USER_TEXT_ENCODING` in any
+    /// binary linking it, before `main`, even after the supervisor's
+    /// `env_clear`. Allow only that key with its `0xH:0xH:0xH` value shape.
+    pub(super) fn cleared_environment(
+        mut vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    ) -> bool {
+        vars.all(|(key, value)| {
+            key == "__CF_USER_TEXT_ENCODING"
+                && value.to_str().is_some_and(|value| {
+                    let parts: Vec<_> = value.split(':').collect();
+                    parts.len() == 3
+                        && parts.iter().all(|part| {
+                            part.strip_prefix("0x").is_some_and(|hex| {
+                                (1..=8).contains(&hex.len())
+                                    && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                            })
+                        })
+                })
+        })
+    }
+
     pub(super) fn confine() -> Result<(), Error> {
-        if std::env::vars_os().next().is_some() {
+        if !cleared_environment(std::env::vars_os()) {
             return Err(Error::Unavailable(
                 "worker environment was not cleared by its supervisor",
             ));
@@ -727,6 +748,32 @@ mod macos {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_worker_environment_allows_only_corefoundation_encoding() {
+        let vars = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(key, value)| ((*key).into(), (*value).into()))
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        assert!(macos::cleared_environment(vars(&[])));
+        assert!(macos::cleared_environment(vars(&[(
+            "__CF_USER_TEXT_ENCODING",
+            "0x1F5:0x0:0x0"
+        )])));
+        assert!(!macos::cleared_environment(vars(&[(
+            "__CF_USER_TEXT_ENCODING",
+            "0x1F5:0x0:0x0;rm"
+        )])));
+        assert!(!macos::cleared_environment(vars(&[("HOME", "/tmp")])));
+        assert!(!macos::cleared_environment(vars(&[
+            ("__CF_USER_TEXT_ENCODING", "0x1F5:0x0:0x0"),
+            ("DYLD_INSERT_LIBRARIES", "/tmp/x.dylib"),
+        ])));
+    }
 
     #[test]
     fn unsupported_platforms_are_explicitly_unavailable() {

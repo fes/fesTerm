@@ -1,0 +1,29 @@
+{
+  "manifest": {
+    "version": 1,
+    "apiVersion": 1,
+    "name": "hello-terminal",
+    "entry": "main.js",
+    "modules": [
+      "main.js"
+    ],
+    "parameters": {
+      "greeting": {
+        "type": "text",
+        "maxBytes": 64
+      },
+      "terminal": {
+        "type": "target"
+      }
+    },
+    "capabilities": [
+      "readScreen",
+      "sendKeys",
+      "sendText",
+      "waitForChange"
+    ]
+  },
+  "modules": {
+    "main.js": "export async function main({ fesTerm, params }) {\n  const terminal = params.terminal;\n  const before = await fesTerm.readScreen({ target: terminal, maxBytes: 4096 });\n  await fesTerm.sendText({ target: terminal, text: \"echo \" + params.greeting });\n  await fesTerm.sendKeys({ target: terminal, keys: [\"Enter\"] });\n  const change = await fesTerm.waitForChange({\n    target: terminal,\n    afterRevision: before.revision,\n    timeoutMs: 5000,\n  });\n  const after = await fesTerm.readScreen({ target: terminal, maxBytes: 4096 });\n  return change.changed && after.text.includes(params.greeting);\n}\n"
+  }
+}

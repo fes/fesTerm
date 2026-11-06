@@ -484,6 +484,9 @@ impl Supervisor {
                 admission.cancel();
                 let result = join.join().map_err(|_| Error::Cleanup)?;
                 result?;
+                if let Ok(Event::Failed(error)) = events.try_recv() {
+                    return Err(error);
+                }
                 Err(Error::Unavailable(
                     "worker did not qualify before its startup deadline",
                 ))

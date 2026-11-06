@@ -1,5 +1,6 @@
 mod controller;
 mod ipc;
+pub(crate) mod javascript;
 mod observation;
 pub(crate) mod preferences;
 pub(crate) mod presentation;
@@ -163,6 +164,21 @@ pub(crate) enum NativeCommand {
     },
     CaptureWorkflow(SelectedWorkflow),
     ClearWorkflow,
+    StartWorkflowMonitoring,
+    StartWorkflowRun {
+        digest: String,
+        target: Option<TargetRef>,
+        parameters: festerm_automation_js::snapshot::Parameters,
+    },
+    CancelWorkflowRun {
+        token: u64,
+    },
+    ApproveWorkflowInput {
+        token: u64,
+    },
+    DenyWorkflowInput {
+        token: u64,
+    },
 }
 
 impl std::fmt::Debug for NativeCommand {
@@ -195,8 +211,31 @@ impl NativeCommand {
                 .take(2)
                 .count()
                 == 2
+            // Collection order must never choose between native workflow approvals.
+            || commands
+                .clone()
+                .filter(|command| {
+                    matches!(
+                        command,
+                        Self::StartWorkflowRun { .. } | Self::ApproveWorkflowInput { .. }
+                    )
+                })
+                .take(2)
+                .count()
+                == 2
             // Collection order must never choose between native enrollment actions.
             || commands.filter(|command| command.is_controller()).take(2).count() == 2
+    }
+
+    fn is_javascript(&self) -> bool {
+        matches!(
+            self,
+            Self::StartWorkflowMonitoring
+                | Self::StartWorkflowRun { .. }
+                | Self::CancelWorkflowRun { .. }
+                | Self::ApproveWorkflowInput { .. }
+                | Self::DenyWorkflowInput { .. }
+        )
     }
 
     fn is_confirmation(&self) -> bool {
@@ -212,6 +251,8 @@ impl NativeCommand {
                 | Self::ConfirmControllerMetadata { .. }
                 | Self::ReviewControllerInput { .. }
                 | Self::ConfirmControllerInput { .. }
+                | Self::StartWorkflowRun { .. }
+                | Self::ApproveWorkflowInput { .. }
         )
     }
 
@@ -229,6 +270,8 @@ impl NativeCommand {
                 | Self::CancelControllerInput { .. }
                 | Self::DisarmControllerInput { .. }
                 | Self::ClearWorkflow
+                | Self::CancelWorkflowRun { .. }
+                | Self::DenyWorkflowInput { .. }
         )
     }
 
@@ -433,6 +476,7 @@ pub(crate) struct SettingsSnapshot {
     pub controller_opt_in_available: bool,
     pub controller_opted_in: bool,
     pub workflow: WorkflowView,
+    pub javascript: javascript::View,
     stop: Arc<AtomicBool>,
 }
 
@@ -449,6 +493,7 @@ impl Default for SettingsSnapshot {
             controller_opt_in_available: false,
             controller_opted_in: false,
             workflow: WorkflowView::default(),
+            javascript: javascript::View::default(),
             stop: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -484,6 +529,7 @@ impl SettingsSnapshot {
                         && left.control == right.control
                 })
             && self.workflow.same_presentation(&other.workflow)
+            && self.javascript == other.javascript
             && self.channels.len() == other.channels.len()
             && self
                 .channels
@@ -1137,6 +1183,7 @@ enum ReconcileError {
 pub(crate) struct Coordinator {
     workflow: workflow_selection::Selection,
     javascript_enabled: bool,
+    javascript: javascript::State,
     presentation_workspace: Option<WorkspaceRevision>,
     control_handoffs: BTreeMap<ConnectionId, presentation::BoundControlHandoff>,
     pending_control_reviews:
@@ -1198,6 +1245,7 @@ impl Default for Coordinator {
         Self {
             workflow: workflow_selection::Selection::default(),
             javascript_enabled: false,
+            javascript: javascript::State::default(),
             presentation_workspace: None,
             control_handoffs: BTreeMap::new(),
             pending_control_reviews: BTreeMap::new(),
@@ -1458,6 +1506,7 @@ impl Coordinator {
         self.controller_opted_in = false;
         self.javascript_enabled = false;
         self.workflow.disarm();
+        self.javascript_unwind();
         controller::disarm_metadata_reviews(&self.peers);
         self.workflow_unwind_stopped = true;
         self.workflow_unwind_disabled_seen = false;
@@ -1618,6 +1667,7 @@ impl Coordinator {
     }
 
     fn shutdown(&mut self) {
+        self.cancel_javascript("Workflow stopped because automation shut down.");
         self.want_shared_start = false;
         self.close_shared_admission();
         self.stop_mcp();
@@ -2029,6 +2079,7 @@ impl Coordinator {
             !apps.is_empty() && apps.iter().all(|app| app.automation_javascript_enabled());
         if self.javascript_enabled && !javascript_enabled {
             self.workflow.cancel();
+            self.cancel_javascript("Workflow stopped because JavaScript workflows were disabled.");
         }
         self.javascript_enabled = javascript_enabled;
         self.workflow.poll(context);
@@ -2623,6 +2674,13 @@ impl Coordinator {
                 }
             }
             NativeCommand::ClearWorkflow => self.workflow.cancel(),
+            NativeCommand::StartWorkflowMonitoring
+            | NativeCommand::StartWorkflowRun { .. }
+            | NativeCommand::CancelWorkflowRun { .. }
+            | NativeCommand::ApproveWorkflowInput { .. }
+            | NativeCommand::DenyWorkflowInput { .. } => {
+                self.javascript_command(command, context, &[]);
+            }
             NativeCommand::EnableControllerEnrollment
             | NativeCommand::ChooseController { .. }
             | NativeCommand::SelectControllerTarget { .. }
@@ -2656,6 +2714,7 @@ impl Coordinator {
         self.workflow_unwind_disabled_seen = false;
         self.stop_mcp();
         self.workflow.cancel();
+        self.cancel_javascript("Workflow stopped after conflicting or excessive actions.");
         self.status = "Automation actions overflowed or conflicted; channels and pending selections were closed and workflow previews cancelled. Settings changes may not have been applied; check toggles or reset and restart MCP explicitly.";
     }
 
@@ -2688,6 +2747,7 @@ impl Coordinator {
         self.close_overflow_admission_inner();
         self.verification.revoke();
         self.workflow.cancel();
+        self.cancel_javascript("Workflow stopped after conflicting or excessive actions.");
     }
 
     #[cfg(test)]
@@ -2816,6 +2876,9 @@ impl Coordinator {
                     }
                 }
                 context.request_repaint();
+            } else if command.is_javascript() {
+                let guard = CoordinatorUnwind { coordinator: self };
+                guard.coordinator.javascript_command(command, context, apps);
             } else {
                 self.command(command, context);
             }
@@ -3123,49 +3186,7 @@ impl Coordinator {
             .targets
             .values()
             .filter(|_| mcp_open && (self.server.is_some() || !self.peers.is_empty()))
-            .filter_map(|target| {
-                apps.iter().enumerate().find_map(|(window, app)| {
-                    let session =
-                        app.automation_session(TabId::from_chip_id(target.reference.session()))?;
-                    let name = approval_label(&session.label);
-                    let detail = match &session.inspector_transport {
-                        crate::tabs::InspectorTransport::Local { .. } => "local shell".to_owned(),
-                        crate::tabs::InspectorTransport::Ssh {
-                            username,
-                            host,
-                            port,
-                            ..
-                        }
-                        | crate::tabs::InspectorTransport::Sftp {
-                            username,
-                            host,
-                            port,
-                        } => format!(
-                            "{}@{}:{}",
-                            approval_label(username),
-                            approval_label(host),
-                            port,
-                        ),
-                        crate::tabs::InspectorTransport::Serial { device, .. } => {
-                            format!("serial {}", approval_label(device))
-                        }
-                        crate::tabs::InspectorTransport::DevTunnel { host, port, .. } => {
-                            format!("tunnel {}:{}", approval_label(host), port)
-                        }
-                    };
-                    Some((
-                        target.reference,
-                        format!(
-                            "Window {}: {} - {} (tab {}, attachment {})",
-                            window + 1,
-                            name,
-                            detail,
-                            target.reference.session(),
-                            target.reference.generation(),
-                        ),
-                    ))
-                })
-            })
+            .filter_map(|target| Some((target.reference, target_label(apps, target.reference)?)))
             .collect();
         let (controllers, controller_targets, controller_targets_incomplete) =
             controller::settings(self, apps, mcp_open);
@@ -3186,9 +3207,50 @@ impl Coordinator {
                 && self.controller_qualified(),
             controller_opted_in: mcp_open && self.controller_opted_in,
             workflow,
+            javascript: self.javascript_view(apps),
             stop: self.stop.clone(),
         }
     }
+}
+
+fn target_label(apps: &[&FesTermApp], reference: TargetRef) -> Option<String> {
+    apps.iter().enumerate().find_map(|(window, app)| {
+        let session = app.automation_session(TabId::from_chip_id(reference.session()))?;
+        let name = approval_label(&session.label);
+        let detail = match &session.inspector_transport {
+            crate::tabs::InspectorTransport::Local { .. } => "local shell".to_owned(),
+            crate::tabs::InspectorTransport::Ssh {
+                username,
+                host,
+                port,
+                ..
+            }
+            | crate::tabs::InspectorTransport::Sftp {
+                username,
+                host,
+                port,
+            } => format!(
+                "{}@{}:{}",
+                approval_label(username),
+                approval_label(host),
+                port,
+            ),
+            crate::tabs::InspectorTransport::Serial { device, .. } => {
+                format!("serial {}", approval_label(device))
+            }
+            crate::tabs::InspectorTransport::DevTunnel { host, port, .. } => {
+                format!("tunnel {}:{}", approval_label(host), port)
+            }
+        };
+        Some(format!(
+            "Window {}: {} - {} (tab {}, attachment {})",
+            window + 1,
+            name,
+            detail,
+            reference.session(),
+            reference.generation(),
+        ))
+    })
 }
 
 impl Drop for Coordinator {

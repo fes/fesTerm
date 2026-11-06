@@ -989,7 +989,13 @@ impl FesTermApplication {
         }
         if !conflicted {
             self.automation.stage_reusable_direct_inputs(&apps, context);
+            self.automation.drive_javascript(&apps, context);
         }
+        let javascript_input = if conflicted {
+            None
+        } else {
+            self.automation.javascript_input_target()
+        };
         let preparations = if conflicted {
             Vec::new()
         } else {
@@ -1021,7 +1027,28 @@ impl FesTermApplication {
                     .missing_direct_input_target(preparation, context);
             }
         }
+        if let Some(target) = javascript_input {
+            let tab = self.windows.iter_mut().find_map(|window| {
+                window
+                    .app
+                    .automation_control_session_mut(crate::tabs::TabId::from_chip_id(
+                        target.session(),
+                    ))
+            });
+            if let Some(tab) = tab {
+                self.automation.prepare_javascript_input(tab, context);
+            } else {
+                self.automation.missing_javascript_input_target(context);
+            }
+        }
         let apps: Vec<_> = self.windows.iter().map(|window| &window.app).collect();
+        if let Some(target) = javascript_input {
+            if let Some(tab) = apps.iter().find_map(|app| {
+                app.automation_session(crate::tabs::TabId::from_chip_id(target.session()))
+            }) {
+                self.automation.dispatch_javascript_input(tab, context);
+            }
+        }
         for dispatch in dispatches {
             let tab = self
                 .windows

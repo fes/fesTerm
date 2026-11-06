@@ -357,7 +357,12 @@ impl FesTermApp {
             | NativeCommand::ReviewControllerInput { .. }
             | NativeCommand::ConfirmControllerInput { .. }
             | NativeCommand::DisarmControllerInput { .. }
-            | NativeCommand::CaptureWorkflow(_) => {}
+            | NativeCommand::CaptureWorkflow(_)
+            | NativeCommand::StartWorkflowMonitoring
+            | NativeCommand::StartWorkflowRun { .. }
+            | NativeCommand::CancelWorkflowRun { .. }
+            | NativeCommand::ApproveWorkflowInput { .. }
+            | NativeCommand::DenyWorkflowInput { .. } => {}
         }
         if self.automation_command_overflow {
             return;
