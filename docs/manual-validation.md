@@ -2916,7 +2916,34 @@ and bounded observation (`AUT-05`–`AUT-07`). The owner-accepted desktop beta
 activates it on macOS, Linux and Windows behind **Enable local MCP (Beta)**,
 with native lock/sleep monitors that fail closed. Deterministic tests are not
 native pairing, settings usability, containment or input-ordering evidence.
-JavaScript remains unavailable.
+A separate owner-accepted desktop beta runs JavaScript workflows behind
+**Enable JavaScript workflows (Beta)**; see the checks below.
+
+### Desktop JavaScript workflow beta checks
+
+Use a disposable configuration as for MCP, with `javascript_enabled = true`
+instead, a disposable local shell, and
+[`docs/examples/hello-terminal-workflow.json`](examples/hello-terminal-workflow.json).
+
+1. In Settings choose the bundle and review its source. Expect "Start privacy
+   monitoring"; start it and expect the Run form with only local terminals.
+2. Pick the terminal, enter `hi`, tick the review checkbox and click Run.
+   Expect an input review showing `echo hi`, then `Keys: Enter`. Approve both;
+   expect exactly `echo hi` to run once and "Workflow completed".
+3. Run again and choose Deny for the first input; expect no write and the run
+   to end. Run again and click Stop while an input is pending; expect no write.
+4. While a run waits for approval, type into the terminal, switch tabs, close
+   the tab, disable JavaScript, and lock the screen (separate runs). Expect
+   refusal or cancellation and no write after each.
+5. Kill the contained worker process (`festerm-automation-js-worker` on Linux,
+   otherwise `festerm --automation-worker`) during a run;
+   expect a visible failure and no further access.
+
+*Automated (macOS, 2026-11-05):* a real-worker end-to-end test runs the example
+through the contained worker, approving both inputs, and observes exactly
+`echo hi` and Enter on a test PTY. Linux uses its separately packaged helper;
+macOS and Windows use the app's early worker branch. Not yet run: steps 1–5
+natively on any platform.
 
 ### Desktop MCP beta checks
 

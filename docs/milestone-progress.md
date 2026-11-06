@@ -8119,3 +8119,36 @@ requested fresh setup; uncertain records remain visible and blocked. Helper
 garbage collection remains deferred to #619. Isolated fixtures cover forwarding,
 refusal, interruption and retry; native signed/live-service teardown remains a
 manual qualification gate.
+
+## Running a reviewed JavaScript workflow on the desktop (Beta)
+
+The isolated worker, frozen bundles and broker existed separately; nothing let
+a person actually run a workflow. Settings now does, behind a default-off beta
+toggle on macOS, Linux and Windows. The user starts privacy monitoring, picks
+one local terminal and parameters, ticks a review box and clicks Run; that
+click is the native approval of the exact snapshot digest, parameters, target
+generation and manifest scopes for at most five minutes. The app starts the
+contained worker (the separately packaged helper on Linux, where the full app
+can exceed the address-space ceiling), then brokers each read through privacy
+admission, a live-attachment check and a size reservation before disclosure.
+Every `sendText`/`sendKeys` waits in Settings with an escaped preview; an
+approved input takes the writer lease and a fresh input fence, and commits only
+if the bytes, privacy, attachment and terminal modes still match. Stop,
+disable, privacy loss, overflow, unwind and shutdown cut the broker before the
+worker is reaped.
+
+The first real-worker run was refused as "unavailable" on macOS: the app binary
+links CoreFoundation, which sets `__CF_USER_TEXT_ENCODING` before `main`, so the
+worker's cleared-environment check failed. The check now tolerates only that
+key with its well-formed value. The supervisor also hid the real startup error
+behind a generic message; it now reports the worker's actual failure, which
+showed that the first launch of a freshly linked image can exceed the old
+2-second qualification window while the OS scans it. That window is now 10
+seconds; no source is sent before Ready. An
+end-to-end test runs `docs/examples/hello-terminal-workflow.json` through the
+real worker and observes exactly the two approved writes. Linux uses its
+already-packaged standalone helper because the full app's initial mappings
+exceed the 128 MiB address-space ceiling. Reliability review also caught wait
+settlement blocking on the global admission lock; it now retries contention
+without stalling the UI. MCP-invoked workflows, remote/persistent targets and
+native containment qualification remain open.

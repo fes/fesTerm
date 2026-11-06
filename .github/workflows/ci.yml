@@ -206,6 +206,19 @@ jobs:
         run: .\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace')
         env:
           FESTERM_REQUIRE_WINDOWS_SYMLINKS: '1'
+      - name: Run the example JavaScript workflow through the contained worker
+        shell: bash
+        run: |
+          cargo build -p festerm --bin festerm
+          worker="$GITHUB_WORKSPACE/target/debug/festerm"
+          if [ "$RUNNER_OS" = Linux ]; then
+            cargo build -p festerm-automation-js --bin festerm-automation-js-worker
+            worker="$GITHUB_WORKSPACE/target/debug/festerm-automation-js-worker"
+          fi
+          if [ "$RUNNER_OS" = Windows ]; then worker="$worker.exe"; fi
+          FESTERM_TEST_JS_WORKER="$worker" cargo test -p festerm --bin festerm \
+            automation::javascript::tests::example_workflow_reads_and_sends_only_approved_input_through_a_real_worker \
+            -- --exact --ignored --nocapture
       - name: Check retained composition invariants in the vendored renderer
         if: matrix.os != 'windows-latest'
         run: cargo test -p egui-wgpu --lib retained::tests

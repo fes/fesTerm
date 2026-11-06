@@ -16,6 +16,7 @@ use std::{
 /// This function establishes native confinement before reading source or
 /// constructing an interpreter. Unsupported platforms return Unavailable.
 pub fn worker_entry(input: impl Read, output: impl Write) -> Result<(), Error> {
+    let profile = platform::availability()?;
     platform::confine()?;
     let mut pipe = Pipe {
         input,
@@ -23,7 +24,7 @@ pub fn worker_entry(input: impl Read, output: impl Write) -> Result<(), Error> {
         decoder: Decoder::default(),
     };
     pipe.write(&WorkerMessage::Ready {
-        profile: platform::LINUX_PROFILE.into(),
+        profile: profile.into(),
     })?;
     let load_deadline = Instant::now() + Duration::from_secs(2);
     let begin = pipe.wait(load_deadline)?;

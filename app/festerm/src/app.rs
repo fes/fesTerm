@@ -9624,7 +9624,10 @@ mod tests {
         assert!(settings.interface_settings().mcp_enabled());
         assert!(!settings.interface_settings().javascript_enabled());
         harness
-            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable JavaScript workflows")
+            .get_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Enable JavaScript workflows (Beta)",
+            )
             .click();
         harness.run();
         let settings = Configuration::load_from_path(&file.path).unwrap();

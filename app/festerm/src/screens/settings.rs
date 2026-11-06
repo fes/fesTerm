@@ -397,10 +397,10 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                             if ui.push_id(("javascript_preference", viewport, javascript_enabled, automation_javascript_ui_revision), |ui| {
                                 settings_toggle_row(
                                     ui,
-                                    "Enable JavaScript workflows",
-                                    "Allow explicitly approved workflows only where isolated execution \
-                                     is qualified. This does not grant terminal access or shell control. \
-                                     Off by default.",
+                                    "Enable JavaScript workflows (Beta)",
+                                    "Run a selected workflow in an isolated, resource-limited worker \
+                                     after you approve it for one local terminal. Every input it sends \
+                                     needs a separate approval. Off by default.",
                                     javascript_enabled,
                                 )
                             }).inner {
@@ -949,8 +949,10 @@ fn workflow_settings(
 
     ssh_paragraph(
         ui,
-        "JavaScript execution is not yet available. Selecting a workflow captures a \
-         preview only; it grants no access and cannot run the workflow.",
+        "Beta: selecting a workflow captures a frozen preview and grants no access. Running \
+         it lets the script read the one terminal you choose for up to 5 minutes; terminal \
+         output can contain secrets. Each text or key input is shown here and waits for \
+         your approval. Access stops when the screen locks or the computer sleeps.",
     );
     if !enabled {
         return None;
@@ -1038,7 +1040,13 @@ fn workflow_settings(
                     }
                 });
                 workflow_source_review(ui, bundle);
+                workflow_run_settings(ui, snapshot, bundle, &mut command);
             }
+        }
+    }
+    if snapshot.workflow.current_bundle().is_none() {
+        if let Some(run) = &snapshot.javascript.run {
+            workflow_run_status(ui, run, &mut command);
         }
     }
     if (snapshot.workflow.busy() || snapshot.workflow.current_bundle().is_some())
@@ -1047,6 +1055,205 @@ fn workflow_settings(
         command.record(AppCommand::Automation(NativeCommand::ClearWorkflow));
     }
     command.resolve(None)
+}
+
+#[derive(Clone, Default)]
+struct WorkflowRunForm {
+    target: Option<festerm_automation::TargetRef>,
+    text: std::collections::BTreeMap<String, String>,
+    booleans: std::collections::BTreeMap<String, bool>,
+    reviewed: bool,
+}
+
+fn workflow_run_settings(
+    ui: &mut Ui,
+    snapshot: &crate::automation::SettingsSnapshot,
+    bundle: &festerm_automation_js::snapshot::ApprovedBundle,
+    command: &mut SettingsAutomationCommands,
+) {
+    use crate::automation::{javascript::Monitoring, NativeCommand};
+    use festerm_automation_js::snapshot::{ParameterType, ParameterValue};
+
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new("Run workflow").strong());
+    let view = &snapshot.javascript;
+    if let Some(run) = &view.run {
+        workflow_run_status(ui, run, command);
+        return;
+    }
+    if let Some(outcome) = &view.outcome {
+        ui.label(outcome);
+    }
+    match view.monitoring {
+        Monitoring::Off => {
+            ssh_paragraph(
+                ui,
+                "Workflows run only while privacy monitoring is active. Starting monitoring \
+                 grants no terminal access.",
+            );
+            if ui.button("Start privacy monitoring").clicked() {
+                command.record(AppCommand::Automation(
+                    NativeCommand::StartWorkflowMonitoring,
+                ));
+            }
+            return;
+        }
+        Monitoring::Starting => {
+            ssh_paragraph(ui, "Starting privacy monitoring.");
+            return;
+        }
+        Monitoring::Ready => {}
+    }
+    let manifest = bundle.manifest();
+    let id = egui::Id::new(("workflow-run-form", bundle.digest()));
+    let mut form: WorkflowRunForm = ui.data_mut(|data| data.get_temp(id)).unwrap_or_default();
+    if form
+        .target
+        .is_some_and(|target| !view.targets.iter().any(|(item, _)| *item == target))
+    {
+        form.target = None;
+        form.reviewed = false;
+    }
+    let selected = form
+        .target
+        .and_then(|target| view.targets.iter().find(|(item, _)| *item == target))
+        .map_or("Choose a local terminal", |(_, label)| label.as_str());
+    egui::ComboBox::from_id_salt(("workflow-run-target", bundle.digest()))
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for (target, label) in &view.targets {
+                if ui
+                    .selectable_label(form.target == Some(*target), label)
+                    .clicked()
+                {
+                    form.target = Some(*target);
+                    form.reviewed = false;
+                }
+            }
+        });
+    if view.targets.is_empty() {
+        ssh_paragraph(ui, "No local shell terminal is open.");
+    }
+    let mut parameters = festerm_automation_js::snapshot::Parameters::new();
+    let mut valid = true;
+    for (name, kind) in &manifest.parameters {
+        ui.horizontal(|ui| {
+            ui.label(format!("{name}:"));
+            match kind {
+                ParameterType::Text { max_bytes } => {
+                    let value = form.text.entry(name.clone()).or_default();
+                    if ui.text_edit_singleline(value).changed() {
+                        form.reviewed = false;
+                    }
+                    if value.len() > *max_bytes as usize {
+                        valid = false;
+                        ui.colored_label(theme::STATUS_ERROR, "too long");
+                    }
+                    parameters.insert(name.clone(), ParameterValue::Text(value.clone()));
+                }
+                ParameterType::Integer { min, max } => {
+                    let value = form
+                        .text
+                        .entry(name.clone())
+                        .or_insert_with(|| min.to_string());
+                    if ui.text_edit_singleline(value).changed() {
+                        form.reviewed = false;
+                    }
+                    match value.trim().parse::<i64>() {
+                        Ok(number) if (*min..=*max).contains(&number) => {
+                            parameters.insert(name.clone(), ParameterValue::Integer(number));
+                        }
+                        _ => {
+                            valid = false;
+                            ui.colored_label(theme::STATUS_ERROR, format!("{min} to {max}"));
+                        }
+                    }
+                }
+                ParameterType::Boolean {} => {
+                    let value = form.booleans.entry(name.clone()).or_default();
+                    if ui.checkbox(value, "").changed() {
+                        form.reviewed = false;
+                    }
+                    parameters.insert(name.clone(), ParameterValue::Boolean(*value));
+                }
+                ParameterType::Target {} => {
+                    ui.label("the selected terminal");
+                    parameters.insert(
+                        name.clone(),
+                        ParameterValue::Target(crate::automation::javascript::TARGET_ID.into()),
+                    );
+                }
+            }
+        });
+    }
+    ui.checkbox(
+        &mut form.reviewed,
+        "I reviewed this snapshot, its capabilities and parameters for the selected terminal",
+    );
+    let ready = valid && form.reviewed && form.target.is_some();
+    if ui
+        .add_enabled(ready, egui::Button::new("Run workflow"))
+        .clicked()
+    {
+        command.record(AppCommand::Automation(NativeCommand::StartWorkflowRun {
+            digest: bundle.digest().to_owned(),
+            target: form.target,
+            parameters,
+        }));
+        form.reviewed = false;
+    }
+    ui.data_mut(|data| data.insert_temp(id, form));
+}
+
+fn workflow_run_status(
+    ui: &mut Ui,
+    run: &crate::automation::javascript::RunView,
+    command: &mut SettingsAutomationCommands,
+) {
+    use crate::automation::NativeCommand;
+
+    ui.label(format!("Running: {}", run.name));
+    ui.label(format!("Terminal: {}", run.target));
+    if run.starting {
+        ssh_paragraph(ui, "Starting the isolated worker.");
+    }
+    if let Some(notice) = &run.notice {
+        ui.colored_label(ui.visuals().warn_fg_color, notice);
+    }
+    if let Some(input) = &run.input {
+        ui.group(|ui| {
+            ui.label(egui::RichText::new("Workflow input review").strong());
+            ui.label(format!("Send to {}:", input.target));
+            ui.label(egui::RichText::new(&input.description).monospace());
+            ui.label(format!("{} bytes", input.bytes));
+            if run.queued_inputs > 1 {
+                ui.label(format!("{} more inputs waiting", run.queued_inputs - 1));
+            }
+            if input.approved {
+                ssh_paragraph(ui, "Sending when the terminal is idle.");
+            } else {
+                ui.horizontal(|ui| {
+                    ui.push_id(("workflow-input", input.token), |ui| {
+                        if ui.button("Send this input").clicked() {
+                            command.record(AppCommand::Automation(
+                                NativeCommand::ApproveWorkflowInput { token: input.token },
+                            ));
+                        }
+                        if ui.button("Deny").clicked() {
+                            command.record(AppCommand::Automation(
+                                NativeCommand::DenyWorkflowInput { token: input.token },
+                            ));
+                        }
+                    });
+                });
+            }
+        });
+    }
+    if ui.button("Stop workflow").clicked() {
+        command.record(AppCommand::Automation(NativeCommand::CancelWorkflowRun {
+            token: run.token,
+        }));
+    }
 }
 
 // Settings emits one AppCommand per frame, so conflicts must not discard a stop.
@@ -2246,7 +2453,10 @@ mod tests {
         ));
         harness.state_mut().command = None;
         harness
-            .get_by_role_and_label(accesskit::Role::CheckBox, "Enable JavaScript workflows")
+            .get_by_role_and_label(
+                accesskit::Role::CheckBox,
+                "Enable JavaScript workflows (Beta)",
+            )
             .click();
         harness.step();
         assert!(matches!(
@@ -2372,7 +2582,10 @@ mod tests {
         assert!(harness
             .query_by_label_contains("export default 1;")
             .is_some());
-        assert!(harness.query_by_label("Run workflow").is_none());
+        assert!(harness
+            .query_by_role_and_label(accesskit::Role::Button, "Run workflow")
+            .is_none());
+        assert!(harness.query_by_label("Start privacy monitoring").is_some());
 
         harness
             .get_by_role_and_label(accesskit::Role::ComboBox, "Source module")
@@ -3336,7 +3549,10 @@ mod tests {
 
     #[test]
     fn automation_toggle_release_cannot_reenable_a_changed_preference() {
-        for label in ["Enable local MCP (Beta)", "Enable JavaScript workflows"] {
+        for label in [
+            "Enable local MCP (Beta)",
+            "Enable JavaScript workflows (Beta)",
+        ] {
             let mut harness = settings_harness();
             harness.state_mut().mcp_enabled = true;
             harness.state_mut().javascript_enabled = true;
@@ -3378,7 +3594,7 @@ mod tests {
                     "Enable local MCP (Beta)"
                 ) | (
                     Some(AppCommand::ToggleJavascriptEnabled),
-                    "Enable JavaScript workflows"
+                    "Enable JavaScript workflows (Beta)"
                 )
             ));
         }
@@ -3390,7 +3606,7 @@ mod tests {
 
         for (label, feature) in [
             ("Enable local MCP (Beta)", Feature::Mcp),
-            ("Enable JavaScript workflows", Feature::Javascript),
+            ("Enable JavaScript workflows (Beta)", Feature::Javascript),
         ] {
             let preferences = Shared::new(Values {
                 mcp: false,

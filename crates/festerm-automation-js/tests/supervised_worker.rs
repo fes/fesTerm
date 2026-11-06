@@ -130,6 +130,31 @@ fn worker_events_wake_a_consumer_without_polling() {
 }
 
 #[test]
+fn worker_survives_spawn_caller_thread_exit() {
+    if platform::availability().is_err() {
+        return;
+    }
+    let worker = std::thread::spawn(|| {
+        Supervisor::spawn(
+            &program(),
+            &bundle("export async function main() { return 7; }"),
+            Parameters::new(),
+            Limits::default(),
+        )
+    })
+    .join()
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        terminal(&worker, false),
+        Event::Finished {
+            outcome: Outcome::Completed { value }
+        } if value == 7
+    ));
+    worker.shutdown().unwrap();
+}
+
+#[test]
 fn undrained_wake_does_not_block_worker_deadline_or_cleanup() {
     if platform::availability().is_err() {
         return;
@@ -347,7 +372,7 @@ fn runaway_jobs_unsettled_calls_and_private_errors_are_contained() {
                 outcome: Outcome::ResourceLimit {} | Outcome::ScriptFailed {},
             } if !unsettled => {}
             Event::Failed(Error::Deadline) if !unsettled => {}
-            event => panic!("unexpected hostile script outcome: {event:?}"),
+            event => panic!("unexpected hostile script outcome for {source}: {event:?}"),
         }
         worker.shutdown().unwrap();
     }

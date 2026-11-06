@@ -10,6 +10,8 @@ pub mod protocol;
 pub mod snapshot;
 mod stdio;
 mod supervisor;
+#[cfg(windows)]
+mod windows;
 #[cfg(not(target_os = "ios"))]
 mod worker;
 
@@ -45,7 +47,12 @@ mod ios_tests {
 }
 
 pub const HEAP_BYTES: usize = 64 * 1024 * 1024;
+/// QuickJS stack ceiling. Windows main threads reserve only 1 MiB, so keep
+/// the engine's own check well inside it rather than overflowing natively.
+#[cfg(not(windows))]
 pub const STACK_BYTES: usize = 1024 * 1024;
+#[cfg(windows)]
+pub const STACK_BYTES: usize = 512 * 1024;
 pub const PROCESS_BYTES: u64 = 128 * 1024 * 1024;
 pub const CPU_SECONDS: u64 = 5;
 pub const MAX_RUN_MS: u64 = 300_000;
@@ -61,6 +68,8 @@ pub enum Error {
     Protocol,
     #[error("automation worker I/O failure")]
     Io(#[from] std::io::Error),
+    #[error("automation worker exited unexpectedly: {0}")]
+    WorkerExited(String),
     #[error("automation worker deadline exceeded")]
     Deadline,
     #[error("automation disclosure is no longer authorized")]
