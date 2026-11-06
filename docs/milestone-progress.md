@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Avoiding destructive Windows configuration recovery
+
+The configuration writer no longer moves an existing Windows target aside
+and then restores it after a failed replacement. An error may arrive after a
+replacement was installed, so a second rename could overwrite the new file or
+an unrelated backup. All platforms now use one standard replacement attempt;
+an error remains an error without another write to the target. Deterministic
+tests cover errors before and after a simulated installation.
+
+This does not yet distinguish definitely uninstalled saves from unknown
+outcomes, resolve temporary-path aliases, or reconcile credentials and
+configuration after an ambiguous error.
+
 ## Checking worker process-escape syscall variants
 
 The Linux worker now checks additional process-creation, exec, death-signal and

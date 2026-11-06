@@ -3219,6 +3219,36 @@ schema_version = 99
     }
 
     #[test]
+    fn ambiguous_replacement_does_not_restore_over_installed_configuration() {
+        for install_before_error in [false, true] {
+            let directory = TestDirectory::new();
+            let target = directory.path().join("profiles.toml");
+            let temporary = directory.path().join("replacement.tmp");
+            fs::write(&target, b"old configuration").unwrap();
+            fs::write(&temporary, b"new configuration").unwrap();
+
+            let error = file_io::replace_file_with(&temporary, &target, |source, destination| {
+                if install_before_error {
+                    fs::rename(source, destination)?;
+                }
+                Err(std::io::Error::other("injected replacement error"))
+            })
+            .unwrap_err();
+
+            assert_eq!(error.kind(), ConfigurationFileErrorKind::Replace);
+            assert_eq!(
+                fs::read(&target).unwrap(),
+                if install_before_error {
+                    b"new configuration".as_slice()
+                } else {
+                    b"old configuration".as_slice()
+                }
+            );
+            assert_eq!(temporary.exists(), !install_before_error);
+        }
+    }
+
+    #[test]
     fn missing_file_is_classified_without_echoing_its_path() {
         let directory = TestDirectory::new();
         let path = directory
