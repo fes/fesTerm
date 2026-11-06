@@ -1,5 +1,42 @@
 # Milestone Progress Narrative
 
+## Keeping interrupted host provisioning retryable
+
+Independent merge review found two first-install interruption traps: cleanup
+assumed the native service-registration directory already existed, and a
+downloaded CLI could be published before its executable mode was durable.
+Cleanup now tolerates a genuinely absent directory only through the existing
+exact native-service checks, while unsafe paths and uncertain ownership still
+refuse. Helpers receive executable permissions before atomic publication;
+retry repairs an old private CLI's mode only after verifying its pinned bytes.
+Real permission/handle regressions cover these paths without operating a live
+service. This does not promote DT-08 native qualification.
+The repair/hosting integration review also caught a misplaced desktop-origin
+guard. Standalone setup, upgrade and repair now reject desktop records before
+mutation, preserving the profile coordinator's fresh-shell consent. The
+regression failed before the guard and checks unchanged installation bytes and
+absence of a repair journal in both repair modes.
+Windows CI then exposed the detached native fixture's unsafe assumption that
+checkout ancestors satisfy private-storage policy. It now chooses a verified
+private fixture using the existing candidate-parent pattern; production ACL
+and ancestor checks are unchanged.
+
+## Hosting an installed persistent profile without a second shell
+
+The standalone Dev Tunnel installer remains useful for headless hosts, but it
+was the wrong owner for publishing an already configured desktop daemon profile.
+Issue #618 adds an explicit Local-profile checkbox whose Save can start that
+exact command without attaching a hidden frontend. A native one-shot launch
+reservation and private host-local consent distinguish saved intent from
+authority; rename keeps ownership, while copies do not inherit it.
+
+Disabling or deleting journals revocation before the config write, stops only
+the exact owned relay and retains the persistent shell. Pending cloud cleanup
+survives profile deletion. Signed desktop helper payloads are staged into
+versioned private copies so package updates need not replace running images;
+old-cache collection remains #619. Deterministic fixtures are not signed
+servicing or physical-client acceptance: those remain DT-08.
+
 ## Repairing an already-dead legacy tunnel host
 
 A 0.15.0 helper upgrade encountered a dead 0.14.1 daemon. The refusal was
@@ -8031,3 +8068,25 @@ established peer instead of waiting for socket activity or the bootstrap
 deadline. Synthetic tests cover both states. This does not serialize owner
 destruction with effects already in flight, qualify other lifecycle cuts or
 open a production endpoint.
+
+## Removing installer hosts without removing their shells
+
+The standalone Dev Tunnel installer now has explicit list, exact-installation
+delete and confirmed delete-all entry points that branch before provisioning.
+They inspect only protected local script inventory and share the hardened
+native-service teardown authority; desktop hosts stay behind GUI consent
+revocation. New script creates reserve a random cloud ownership label before
+submission. Deletion journals disabled intent, stops only verified hosting
+workers, and retains exact ownership/cleanup evidence when cloud access or
+identity is unavailable. Repeated deletion cannot restart hosting or terminate
+the independent shell. Original 0.15 script hosts gain an explicit typed
+qualified-ID deletion confirmation with a deletion-only receipt: available
+creation time stays pinned; the real thin CLI's absent time stays explicitly
+unavailable and requires renewed confirmation, not inferred continuity or
+automatic ownership adoption. Tools-only bootstrap can stage verified
+management helpers without repairing or restarting the old host. Only completed
+stopped/cloud-gone evidence can be explicitly archived before a separately
+requested fresh setup; uncertain records remain visible and blocked. Helper
+garbage collection remains deferred to #619. Isolated fixtures cover forwarding,
+refusal, interruption and retry; native signed/live-service teardown remains a
+manual qualification gate.

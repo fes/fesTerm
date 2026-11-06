@@ -33,7 +33,7 @@ pub use file_io::ConfigurationState;
 pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
 pub use profiles::{
     AccountProvider, CredentialKind, DevTunnelAccount, DevTunnelHost,
-    DevTunnelProfileConfiguration, KnownHostEntry, LocalProfileConfiguration,
+    DevTunnelProfileConfiguration, KnownHostEntry, LocalProfileConfiguration, LocalTunnelHosting,
     PersistenceConfiguration, PersistenceProviderKind, Profile, ProfileUsageEntry,
     RemoteProfileKind, SerialDataBits, SerialFlowControl, SerialParity, SerialProfileConfiguration,
     SerialStopBits, SshPortForwardConfiguration, SshPortForwardDirection, SshProfileConfiguration,
@@ -261,6 +261,39 @@ impl Configuration {
             .profiles
             .retain(|existing| existing.identifier() != profile.identifier());
         replacement.profiles.push(profile);
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Commits an editor rename together with all workspace references.
+    pub fn with_edited_profile(
+        &self,
+        original: Option<&str>,
+        profile: Profile,
+    ) -> Result<Self, ConfigError> {
+        let Some(original) = original.filter(|id| *id != profile.identifier()) else {
+            return self.with_profile(profile);
+        };
+        if self.profile(profile.identifier()).is_some() {
+            return Err(ConfigError::new(
+                ConfigErrorKind::DuplicateProfileIdentifier,
+            ));
+        }
+        let mut replacement = self.clone();
+        let existing = replacement
+            .profiles
+            .iter_mut()
+            .find(|candidate| candidate.identifier() == original)
+            .ok_or_else(|| ConfigError::new(ConfigErrorKind::UnknownProfileReference))?;
+        if let Some(workspace) = &mut replacement.workspace {
+            workspace.rename_profile(original, profile.identifier());
+        }
+        for usage in &mut replacement.profile_usage {
+            if usage.profile == original {
+                usage.profile = profile.identifier().to_owned();
+            }
+        }
+        *existing = profile;
         replacement.validate()?;
         Ok(replacement)
     }
@@ -729,6 +762,7 @@ impl Configuration {
         }
 
         let mut identifiers = HashSet::with_capacity(self.profiles.len());
+        let mut host_installations = HashSet::new();
         let mut credential_users = std::collections::HashMap::new();
         let mut tunnel_references = HashSet::new();
         let mut account_keys = HashSet::with_capacity(self.accounts.len());
@@ -749,6 +783,11 @@ impl Configuration {
                 ));
             }
             profile.validate()?;
+            if let Some(hosting) = profile.as_local().and_then(|local| local.tunnel_hosting()) {
+                if !host_installations.insert(hosting.installation()) {
+                    return Err(ConfigError::new(ConfigErrorKind::InvalidLocalTunnelHosting));
+                }
+            }
             if profile
                 .as_dev_tunnel()
                 .and_then(|profile| profile.account())
@@ -1703,6 +1742,48 @@ sha256_fingerprint = "{fingerprint}"
         ))
         .unwrap_err();
         assert_eq!(duplicate.kind(), ConfigErrorKind::DuplicateKnownHost);
+    }
+
+    #[test]
+    fn edited_profile_rename_updates_all_windows_and_usage_without_overwriting_another_profile() {
+        let original = Profile::local("original", "shell", Vec::new(), None).unwrap();
+        let renamed = Profile::local("renamed", "shell", Vec::new(), None).unwrap();
+        let occupied = Profile::local("occupied", "shell", Vec::new(), None).unwrap();
+        let workspace = WorkspaceConfiguration::with_windows(
+            vec![WorkspaceTab::local_session("primary", "original").unwrap()],
+            Some("primary".into()),
+            vec![WorkspaceWindow::new(
+                vec![WorkspaceTab::local_session("secondary", "original").unwrap()],
+                Some("secondary".into()),
+                None,
+            )],
+        )
+        .unwrap();
+        let configuration =
+            Configuration::new_with_workspace(vec![original, occupied.clone()], workspace)
+                .unwrap()
+                .with_profile_last_used("original", 42)
+                .unwrap();
+        assert!(configuration
+            .with_edited_profile(Some("original"), occupied)
+            .is_err());
+        assert!(configuration.profile("original").is_some());
+        let replacement = configuration
+            .with_edited_profile(Some("original"), renamed)
+            .unwrap();
+        assert!(replacement.profile("original").is_none());
+        assert_eq!(replacement.profile_last_used("renamed"), Some(42));
+        let workspace = replacement.workspace().unwrap();
+        assert_eq!(workspace.tabs()[0].profile_id(), Some("renamed"));
+        assert_eq!(
+            workspace.windows()[0].tabs()[0].profile_id(),
+            Some("renamed")
+        );
+        assert_eq!(workspace.focused_tab_id(), Some("primary"));
+        assert_eq!(
+            Configuration::parse(&replacement.to_toml().unwrap()).unwrap(),
+            replacement
+        );
     }
 
     #[test]

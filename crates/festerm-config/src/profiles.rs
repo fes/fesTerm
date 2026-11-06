@@ -418,6 +418,7 @@ impl Profile {
             arguments,
             working_directory,
             persistence: None,
+            tunnel_hosting: None,
         });
         profile.validate()?;
         Ok(profile)
@@ -581,6 +582,18 @@ impl Profile {
         Ok(self)
     }
 
+    pub fn with_local_tunnel_hosting(
+        mut self,
+        hosting: Option<LocalTunnelHosting>,
+    ) -> Result<Self, ConfigError> {
+        let Self::Local(profile) = &mut self else {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidLocalTunnelHosting));
+        };
+        profile.tunnel_hosting = hosting;
+        self.validate()?;
+        Ok(self)
+    }
+
     /// Returns this profile's stable reusable identifier.
     pub fn identifier(&self) -> &str {
         match self {
@@ -732,6 +745,57 @@ pub struct LocalProfileConfiguration {
     working_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     persistence: Option<PersistenceConfiguration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tunnel_hosting: Option<LocalTunnelHosting>,
+}
+
+/// Desired metadata only. A matching protected host-local grant is required
+/// before these identifiers can authorize exposure (ADR 0072).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalTunnelHosting {
+    installation: String,
+    consent: String,
+    enabled: bool,
+}
+
+impl LocalTunnelHosting {
+    pub fn new(
+        installation: impl Into<String>,
+        consent: impl Into<String>,
+        enabled: bool,
+    ) -> Result<Self, ConfigError> {
+        let hosting = Self {
+            installation: installation.into(),
+            consent: consent.into(),
+            enabled,
+        };
+        hosting.validate()?;
+        Ok(hosting)
+    }
+
+    pub fn installation(&self) -> &str {
+        &self.installation
+    }
+
+    pub fn consent(&self) -> &str {
+        &self.consent
+    }
+
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        for value in [&self.installation, &self.consent] {
+            let id = uuid::Uuid::parse_str(value)
+                .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidLocalTunnelHosting))?;
+            if id.get_version_num() != 4 || id.to_string() != *value {
+                return Err(ConfigError::new(ConfigErrorKind::InvalidLocalTunnelHosting));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl LocalProfileConfiguration {
@@ -758,6 +822,10 @@ impl LocalProfileConfiguration {
     /// Returns the explicitly configured durable local-session provider/name.
     pub fn persistence(&self) -> Option<&PersistenceConfiguration> {
         self.persistence.as_ref()
+    }
+
+    pub fn tunnel_hosting(&self) -> Option<&LocalTunnelHosting> {
+        self.tunnel_hosting.as_ref()
     }
 
     /// Converts safe launch metadata into the PTY backend's launch profile.
@@ -806,6 +874,14 @@ impl LocalProfileConfiguration {
         }
         if let Some(persistence) = &self.persistence {
             persistence.validate_session_name()?;
+        }
+        if let Some(hosting) = &self.tunnel_hosting {
+            hosting.validate()?;
+            if !self.persistence.as_ref().is_some_and(|persistence| {
+                persistence.provider() == PersistenceProviderKind::FestermSessiond
+            }) {
+                return Err(ConfigError::new(ConfigErrorKind::InvalidLocalTunnelHosting));
+            }
         }
         Ok(())
     }
@@ -1487,6 +1563,75 @@ mod tests {
     use festerm_ssh::{PersistenceProvider, PersistentSessionName, SessionStrategy};
 
     const CREDENTIAL_REFERENCE: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    #[test]
+    fn local_tunnel_hosting_is_explicit_and_requires_native_persistence() {
+        let local = Profile::local("local", "sh", Vec::new(), None).unwrap();
+        assert!(local.as_local().unwrap().tunnel_hosting().is_none());
+        assert!(!toml::to_string(&local).unwrap().contains("tunnel_hosting"));
+        let hosting = LocalTunnelHosting::new(
+            "550e8400-e29b-41d4-a716-446655440000",
+            "550e8400-e29b-41d4-a716-446655440001",
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            local
+                .clone()
+                .with_local_tunnel_hosting(Some(hosting.clone()))
+                .unwrap_err()
+                .kind(),
+            ConfigErrorKind::InvalidLocalTunnelHosting
+        );
+        assert!(local
+            .clone()
+            .with_persistence(PersistenceProviderKind::Tmux, "local")
+            .unwrap()
+            .with_local_tunnel_hosting(Some(hosting.clone()))
+            .is_err());
+        let hosted = local
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "local")
+            .unwrap()
+            .with_local_tunnel_hosting(Some(hosting))
+            .unwrap();
+        let serialized = toml::to_string(&hosted).unwrap();
+        let restored: Profile = toml::from_str(&serialized).unwrap();
+        restored.validate().unwrap();
+        assert_eq!(hosted, restored);
+    }
+
+    #[test]
+    fn local_tunnel_hosting_rejects_noncanonical_identity_and_shared_installations() {
+        for id in [
+            "not-an-id",
+            "550E8400-E29B-41D4-A716-446655440000",
+            "00000000-0000-0000-0000-000000000000",
+            "550e8400-e29b-11d4-a716-446655440000",
+        ] {
+            assert!(LocalTunnelHosting::new(id, CREDENTIAL_REFERENCE, true).is_err());
+            assert!(LocalTunnelHosting::new(CREDENTIAL_REFERENCE, id, true).is_err());
+        }
+        let hosting = LocalTunnelHosting::new(
+            CREDENTIAL_REFERENCE,
+            "550e8400-e29b-41d4-a716-446655440001",
+            true,
+        )
+        .unwrap();
+        let hosted = |name| {
+            Profile::local(name, "sh", Vec::new(), None)
+                .unwrap()
+                .with_persistence(PersistenceProviderKind::FestermSessiond, name)
+                .unwrap()
+                .with_local_tunnel_hosting(Some(hosting.clone()))
+                .unwrap()
+        };
+        assert_eq!(
+            crate::Configuration::new(vec![hosted("one"), hosted("two")])
+                .unwrap_err()
+                .kind(),
+            ConfigErrorKind::InvalidLocalTunnelHosting
+        );
+    }
 
     fn ssh_port_forward(
         direction: SshPortForwardDirection,

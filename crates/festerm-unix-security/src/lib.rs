@@ -324,6 +324,26 @@ mod imp {
         secure_staging_parent(directory).map(|_| ())
     }
 
+    /// Validates executable-source ancestors, including macOS's root:admin
+    /// Applications directory. Private destinations still require private ACLs.
+    pub fn trusted_packaged_executable_ancestor(directory: &File) -> io::Result<()> {
+        let metadata = directory.metadata()?;
+        if !metadata.is_dir()
+            || (metadata.uid() != 0 && metadata.uid() != nix::unistd::Uid::effective().as_raw())
+        {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        #[cfg(target_os = "macos")]
+        if metadata.uid() == 0
+            && matches!(metadata.gid(), 0 | 80)
+            && metadata.mode() & 0o1002 == 0
+            && !macos_acl_has_allow_entry(directory)?
+        {
+            return Ok(());
+        }
+        secure_staging_parent(directory).map(|_| ())
+    }
+
     /// Creates only one directory relative to a retained safe parent.
     pub fn create_private_directory(directory: &File, name: &Path) -> io::Result<File> {
         require_private_security_support()?;
@@ -955,12 +975,19 @@ pub use imp::{
     open_directory_search_nofollow, open_file_nofollow, open_private_file,
     preserve_security_metadata, remove_private_staging_file, rename_noreplace,
     reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
-    security_metadata_matches, staging_parent_matches, trusted_private_storage_ancestor,
-    writable_directory, SecurityMetadata, StagingParentSecurity,
+    security_metadata_matches, staging_parent_matches, trusted_packaged_executable_ancestor,
+    trusted_private_storage_ancestor, writable_directory, SecurityMetadata, StagingParentSecurity,
 };
 
 #[cfg(all(test, unix))]
 mod tests {
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn packaged_executable_ancestors_accept_the_native_applications_directory() {
+        let applications = std::fs::File::open("/Applications").unwrap();
+        super::trusted_packaged_executable_ancestor(&applications).unwrap();
+    }
+
     use super::*;
     use std::{
         fs::{self, File, OpenOptions},

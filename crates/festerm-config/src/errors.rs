@@ -37,6 +37,7 @@ pub enum ConfigErrorKind {
     /// A recorded profile launch names a profile the document does not define.
     UnknownProfileReference,
     InvalidLocalProfile,
+    InvalidLocalTunnelHosting,
     InvalidSshProfile,
     InvalidDevTunnelProfile,
     InvalidSshPortForwardConfiguration,
@@ -124,6 +125,9 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::InvalidLocalProfile => formatter.write_str(
                 "local profile metadata must use non-empty, control-character-free executable, arguments, and working_directory values without secret-bearing options",
+            ),
+            ConfigErrorKind::InvalidLocalTunnelHosting => formatter.write_str(
+                "local tunnel hosting requires a native persistent Local profile and unique canonical installation/consent UUID-v4 metadata",
             ),
             ConfigErrorKind::InvalidDevTunnelProfile => formatter.write_str("Dev Tunnel profile has an invalid destination or credential binding"),
             ConfigErrorKind::InvalidSshProfile => formatter.write_str(

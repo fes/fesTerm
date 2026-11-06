@@ -72,6 +72,16 @@ time/endpoint; the bounded helper revalidates that exact, still-unattached
 generation under the registry lock before destructive work. Widgets only
 dispatch intent; cancellation does not start a helper or remove a profile.
 
+Installed Local-profile hosting uses `SaveLocalProfile` for explicit
+enable/disable intent and its identified persistence result. The composition
+root prepares private consent, saves config and commits the request before
+background work; revocation precedes any disabling/deleting write and is not
+rolled back on failure. `LocalTunnelHost` and `LocalTunnelCleanup` converge on
+the same bounded coordinator and protected removal operation, including cleanup
+after the profile is deleted. Widgets never launch the CLI, start a daemon or
+delete cloud resources. Separate composition-owned confirmations distinguish a
+fresh shell from recreation of a definitively missing cloud tunnel (ADR 0072).
+
 Explicit terminal clipboard reads carry request identity, originating tab,
 transport generation and input-ownership epoch; cancellation/supersession
 cannot retarget a late callback. Already supplied native-key payloads are used

@@ -2630,6 +2630,24 @@ pub enum AppCommand {
     SaveProfile {
         profile: festerm_config::Profile,
     },
+    SaveLocalProfile {
+        tab_id: TabId,
+        request: egui::Id,
+        original_id: Option<String>,
+        profile: festerm_config::Profile,
+        expose: bool,
+        explicit_enable: bool,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    LocalTunnelHost {
+        profile_id: String,
+        action: LocalHostAction,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    LocalTunnelCleanup {
+        installation: String,
+        action: LocalHostAction,
+    },
     /// Persists a native Dev Tunnel profile edited in the Profiles surface and
     /// reports the committed/failed outcome back to the editor
     /// (`screens::profiles::report_dev_tunnel_save_outcome`) so it closes to
@@ -2663,6 +2681,17 @@ pub enum AppCommand {
         moved: String,
         before: Option<String>,
     },
+}
+
+#[cfg(feature = "experimental-dev-tunnels")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalHostAction {
+    Retry,
+    SignIn,
+    CancelSignIn,
+    RecreateMissing,
+    NewShell,
+    RevokeUnreferenced,
 }
 
 impl AppCommand {
@@ -3299,6 +3328,33 @@ impl AppState {
     /// Launcher choices. Existing session tabs retain their live transports
     /// and are never stopped or reconfigured.
     pub fn replace_configuration(&mut self, configuration: Configuration) {
+        for tab in &mut self.tabs {
+            let TabContent::Session(session) = &mut tab.content else {
+                continue;
+            };
+            let Some(identifier) = &mut session.profile_identifier else {
+                continue;
+            };
+            if configuration.profile(identifier).is_some() {
+                continue;
+            }
+            let Some(previous) = self
+                .configuration
+                .profile(identifier)
+                .and_then(|profile| profile.as_local())
+                .and_then(|profile| profile.tunnel_hosting())
+            else {
+                continue;
+            };
+            if let Some(renamed) = configuration.profiles().iter().find(|profile| {
+                profile
+                    .as_local()
+                    .and_then(|profile| profile.tunnel_hosting())
+                    .is_some_and(|binding| binding.installation() == previous.installation())
+            }) {
+                *identifier = renamed.identifier().to_owned();
+            }
+        }
         self.configuration = configuration;
     }
 
@@ -3343,7 +3399,7 @@ impl AppState {
         self.default_sftp_local_directory = settings
             .default_sftp_local_directory()
             .map(Path::to_path_buf);
-        self.configuration = configuration;
+        self.replace_configuration(configuration);
     }
 
     /// Captures only restorable workspace metadata in current display order.
@@ -4312,10 +4368,15 @@ impl AppState {
             // `StoreSshPassword`); they never reach this match with real
             // work to do here.
             AppCommand::SaveProfile { .. }
+            | AppCommand::SaveLocalProfile { .. }
             | AppCommand::SaveDevTunnelProfile { .. }
             | AppCommand::SaveProfileWithCredential { .. }
             | AppCommand::DeleteProfile { .. }
             | AppCommand::ReorderProfiles { .. } => {}
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::LocalTunnelHost { .. } => {}
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::LocalTunnelCleanup { .. } => {}
         }
         // The Inspector follows session chips, but it is not a global panel
         // for Launcher, Settings, or authentication forms.
@@ -6659,6 +6720,53 @@ mod tests {
         assert!(tab.live_remote_file_requestor().is_none());
         assert!(!tab.close_requires_confirmation());
         assert_eq!(tab.system_label(), "Remote · Experimental Dev Tunnel");
+    }
+
+    #[test]
+    fn hosted_profile_rename_updates_live_and_sibling_workspace_metadata_only() {
+        let binding = festerm_config::LocalTunnelHosting::new(
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            true,
+        )
+        .unwrap();
+        let profile = |name| {
+            festerm_config::Profile::local(name, "shell", Vec::new(), None)
+                .unwrap()
+                .with_persistence(PersistenceProviderKind::FestermSessiond, "stable-shell")
+                .unwrap()
+                .with_local_tunnel_hosting(Some(binding.clone()))
+                .unwrap()
+        };
+        for sibling in [false, true] {
+            let before = Configuration::new(vec![profile("original")]).unwrap();
+            let after = before
+                .with_edited_profile(Some("original"), profile("renamed"))
+                .unwrap();
+            let mut state = AppState::for_test();
+            state.replace_configuration(before);
+            let (session, _) = alias_test_session(Some("original"));
+            let label = session.label.clone();
+            state.place_session(session);
+            let source = state.active();
+            let dirty = state.workspace_dirty;
+            if sibling {
+                state.adopt_configuration(after);
+            } else {
+                state.replace_configuration(after);
+            }
+            let session = state.session_tab(source).unwrap();
+            assert_eq!(session.profile_identifier.as_deref(), Some("renamed"));
+            assert_eq!(session.label, label);
+            assert_eq!(state.active(), source);
+            assert_eq!(state.workspace_dirty, dirty);
+            let mut identifier = 0;
+            let (tabs, _) = state
+                .capture_window_workspace_tabs(&mut identifier)
+                .unwrap();
+            assert!(tabs.iter().any(|tab| tab.profile_id() == Some("renamed")));
+            assert!(!tabs.iter().any(|tab| tab.profile_id() == Some("original")));
+        }
     }
 
     fn remote_file_fixture(

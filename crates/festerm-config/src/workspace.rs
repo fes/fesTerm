@@ -116,6 +116,27 @@ impl WorkspaceConfiguration {
             .chain(self.windows.iter().flat_map(|window| window.tabs.iter()))
     }
 
+    pub(crate) fn rename_profile(&mut self, original: &str, replacement: &str) {
+        for tab in self.tabs.iter_mut().chain(
+            self.windows
+                .iter_mut()
+                .flat_map(|window| window.tabs.iter_mut()),
+        ) {
+            match tab {
+                WorkspaceTab::LocalSession(tab)
+                | WorkspaceTab::SshSession(tab)
+                | WorkspaceTab::SftpSession(tab)
+                | WorkspaceTab::SftpFileManager(tab)
+                | WorkspaceTab::SerialSession(tab)
+                    if tab.profile_id == original =>
+                {
+                    tab.profile_id = replacement.to_owned();
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn validate_structure(&self) -> Result<(), ConfigError> {
         // An additional window with no tabs would restore as an empty window,
         // which no application state can represent (ADR 0033: a window that
