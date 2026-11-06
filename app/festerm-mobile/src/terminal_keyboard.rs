@@ -55,6 +55,9 @@ const SHELL_ROW: &str = "/\\-_'\"|&$~";
 const SYMBOLS: [&str; 3] = ["[]{}()<>=+", "-/\\|_~`'\"", ";:?!&*$"];
 /// Where each letter/symbol row splits: `qwert|yuiop`, `asdfg|hjkl`, `zxcv|bnm`.
 const SPLIT_AT: [usize; 3] = [5, 5, 4];
+/// The right half's middle row gains a fifth key so it ends flush with `p`,
+/// as on a hardware keyboard: `'` (hold `"`) on letters, `^` on symbols.
+const SPLIT_MIDDLE_EXTRA: (char, char, char) = ('\'', '"', '^');
 /// Auto splits keyboards at least this wide on landscape screens (iPad
 /// landscape, unfolded foldables, spanned dual screens).
 const AUTO_SPLIT_WIDTH: f32 = 900.0;
@@ -140,7 +143,8 @@ pub(crate) fn split_halves(
             )
         })
         .filter(|&(left, right)| left < area.right() && right > area.left());
-    let wide = area.width() >= AUTO_SPLIT_WIDTH && screen.width() > screen.height();
+    // Auto measures the window, not the inset keyboard area.
+    let wide = screen.width() >= AUTO_SPLIT_WIDTH && screen.width() > screen.height();
     if mode == SplitMode::Auto && fold.is_none() && !wide {
         return None;
     }
@@ -498,15 +502,41 @@ impl TerminalKeyboard {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
+                    // Halves share one key width across every character row:
+                    // five keys plus the stagger inset fill a half.
+                    let unit = (ui.available_width() - inset - gap * 4.0) / 5.0;
+                    let half_row = |this: &mut Self,
+                                    ui: &mut Ui,
+                                    lead: f32,
+                                    characters: &str,
+                                    alternate: Option<&str>,
+                                    output: &mut KeyRowOutput| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(lead);
+                            this.characters(ui, characters, alternate, unit, height, output);
+                        });
+                    };
+                    // Outer rows hug the outer edge; the left middle row is
+                    // inset from it, the right middle row from the inner edge.
+                    let outer_lead = if part == Part::Right { inset } else { 0.0 };
                     if shell {
-                        self.character_row(ui, part.slice(SHELL_ROW, 5), None, height, output);
+                        let row = part.slice(SHELL_ROW, 5);
+                        if part == Part::Full {
+                            self.character_row(ui, row, None, height, output);
+                        } else {
+                            half_row(self, ui, outer_lead, row, None, output);
+                        }
                     }
                     let digits = if state.shift {
                         "!@#$%^&*()"
                     } else {
                         "1234567890"
                     };
-                    self.character_row(ui, part.slice(digits, 5), None, height, output);
+                    if part == Part::Full {
+                        self.character_row(ui, digits, None, height, output);
+                    } else {
+                        half_row(self, ui, outer_lead, part.slice(digits, 5), None, output);
+                    }
                     for row in 0..3 {
                         let characters = if self.symbols {
                             SYMBOLS[row]
@@ -518,20 +548,27 @@ impl TerminalKeyboard {
                         } else {
                             characters.to_owned()
                         };
-                        let letters = part.slice(&letters, SPLIT_AT[row]);
-                        let alternate = (kind == KeyboardKind::HoldSymbols && !self.symbols)
-                            .then(|| part.slice(ALTERNATES[row], SPLIT_AT[row]));
+                        let mut letters = part.slice(&letters, SPLIT_AT[row]).to_owned();
+                        let holds = kind == KeyboardKind::HoldSymbols && !self.symbols;
+                        let mut alternate =
+                            holds.then(|| part.slice(ALTERNATES[row], SPLIT_AT[row]).to_owned());
+                        if row == 1 && part == Part::Right {
+                            let (quote, held, symbol) = SPLIT_MIDDLE_EXTRA;
+                            letters.push(if self.symbols { symbol } else { quote });
+                            if let Some(alternate) = &mut alternate {
+                                alternate.push(held);
+                            }
+                        }
+                        let (letters, alternate) = (letters.as_str(), alternate.as_deref());
                         ui.push_id(row, |ui| {
                             if row == 2 {
-                                self.lower_row(ui, part, letters, alternate, height, state, output);
-                            } else if row == 1 && part != Part::Full {
-                                // The stagger keeps half-board keys the width of a
-                                // five-key left half, so `hjkl` sits under `yuiop`.
-                                ui.horizontal(|ui| {
-                                    let unit = (ui.available_width() - inset - gap * 4.0) / 5.0;
-                                    ui.add_space(inset);
-                                    self.characters(ui, letters, alternate, unit, height, output);
-                                });
+                                self.lower_row(
+                                    ui, part, letters, alternate, unit, inset, height, state,
+                                    output,
+                                );
+                            } else if part != Part::Full {
+                                let lead = if row == 1 { inset } else { outer_lead };
+                                half_row(self, ui, lead, letters, alternate, output);
                             } else {
                                 let inset = if row == 1 { inset } else { 0.0 };
                                 egui::Frame::new()
@@ -562,23 +599,33 @@ impl TerminalKeyboard {
         part: Part,
         letters: &str,
         alternate: Option<&str>,
+        half_unit: f32,
+        inset: f32,
         height: f32,
         state: &KeyRowState,
         output: &mut KeyRowOutput,
     ) {
         ui.horizontal(|ui| {
             let gap = ui.spacing().item_spacing.x;
-            // Full: Shift + 7 letters + Backspace. Halves share one unit so the
-            // left's Shift + `zxcv` and the right's `bnm` + Backspace line up.
+            // Full: Shift + 7 letters + Backspace. Halves use the shared
+            // character width; Shift and Backspace take what remains.
             let unit = if part == Part::Full {
                 (ui.available_width() - gap * 8.0) / 9.8
             } else {
-                (ui.available_width() - gap * 4.0) / 5.4
+                half_unit
             };
+            if part == Part::Right {
+                ui.add_space(inset);
+            }
             if part != Part::Right {
+                let shift = if part == Part::Full {
+                    unit * 1.4
+                } else {
+                    ui.available_width() - (unit + gap) * 4.0
+                };
                 let response = draw_key(
                     ui,
-                    unit * 1.4,
+                    shift,
                     height,
                     "Typing-row Shift",
                     None,
@@ -639,22 +686,24 @@ impl TerminalKeyboard {
                     ]
                 }
                 // Each half gets its own Space bar at the inner edge, iPad style.
-                Part::Left => {
+                // Both Space bars match; small keys share one width.
+                Part::Left | Part::Right => {
                     let unit = (available - gap * 5.0) / 6.0;
-                    vec![
-                        (Bottom::Globe, unit),
-                        (Bottom::Layer, unit),
-                        (Bottom::Comma, unit * 0.8),
-                        (Bottom::Space, available - unit * 2.8 - gap * 3.0),
-                    ]
-                }
-                Part::Right => {
-                    let unit = (available - gap * 5.0) / 6.0;
-                    vec![
-                        (Bottom::Space, available - unit * 2.4 - gap * 2.0),
-                        (Bottom::Period, unit * 0.8),
-                        (Bottom::Return, unit * 1.6),
-                    ]
+                    let space = available - unit * 3.0 - gap * 3.0;
+                    if part == Part::Left {
+                        vec![
+                            (Bottom::Globe, unit),
+                            (Bottom::Layer, unit),
+                            (Bottom::Comma, unit),
+                            (Bottom::Space, space),
+                        ]
+                    } else {
+                        vec![
+                            (Bottom::Space, space),
+                            (Bottom::Period, unit),
+                            (Bottom::Return, available - space - unit - gap * 2.0),
+                        ]
+                    }
                 }
             };
             let holds = kind == KeyboardKind::HoldSymbols && !self.symbols;

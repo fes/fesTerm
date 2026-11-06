@@ -431,6 +431,12 @@ fn split_halves_follow_width_orientation_hinge_and_preference() {
             None
         );
     }
+    // The 900 pt threshold is the window width, not the inset keyboard area.
+    assert!(split_halves(area(900.0), screen(900.0, 700.0), None, SplitMode::Auto).is_some());
+    assert_eq!(
+        split_halves(area(899.0), screen(899.0, 700.0), None, SplitMode::Auto),
+        None
+    );
     let [left, right] =
         split_halves(area(1180.0), screen(1180.0, 820.0), None, SplitMode::Auto).unwrap();
     assert_eq!((left.left(), right.right()), (7.0, 1173.0));
@@ -558,20 +564,45 @@ fn split_keyboard_puts_every_key_in_one_half_and_types_from_both() {
         ] {
             assert!(!half(label), "{kind:?}: {label} belongs on the right half");
         }
-        let spaces = harness.get_all_by_label("Space").collect::<Vec<_>>();
+        let spaces = harness
+            .get_all_by_label("Space")
+            .map(|node| node.rect().width())
+            .collect::<Vec<_>>();
         assert_eq!(spaces.len(), 2, "{kind:?}: each half has its own Space");
-        // Rows in each half keep keys the same width as their neighbours above.
-        assert!(
-            (harness.get_by_label("h").rect().width() - harness.get_by_label("a").rect().width())
-                .abs()
-                < 0.5
-        );
-        assert!(
-            (harness.get_by_label("b").rect().width() - harness.get_by_label("z").rect().width())
-                .abs()
-                < 0.5
-        );
+        assert!((spaces[0] - spaces[1]).abs() < 0.5, "{kind:?}: {spaces:?}");
+        // Every character key in both halves shares one width.
+        let width = harness.get_by_label("q").rect().width();
+        for label in [
+            "1", "0", "t", "y", "p", "a", "g", "h", "l", "z", "v", "b", "m",
+        ] {
+            let other = harness.get_by_label(label).rect().width();
+            assert!(
+                (other - width).abs() < 0.5,
+                "{kind:?}: {label} {other} vs {width}"
+            );
+        }
+        let small = harness.get_by_label("Switch keyboard").rect().width();
+        for label in ["#+=", ",", "."] {
+            let other = harness.get_by_label(label).rect().width();
+            assert!(
+                (other - small).abs() < 0.5,
+                "{kind:?}: {label} {other} vs {small}"
+            );
+        }
     }
+    // The right middle row ends flush with `p` instead of leaving a hole after `l`.
+    let mut harness = split_harness(size, KeyboardKind::HoldSymbols, SplitMode::Auto, None);
+    harness.run();
+    let quote = harness.get_by_label("'").rect();
+    let p_key = harness.get_by_label("p").rect();
+    assert!(
+        (quote.right() - p_key.right()).abs() < 0.5,
+        "{quote:?} {p_key:?}"
+    );
+    assert!(quote.left() > harness.get_by_label("l").rect().right());
+    harness.get_by_label("'").click();
+    harness.run();
+    assert_eq!(harness.state().1, [KeyRowAction::Key(Key::Character('\''))]);
     let mut harness = split_harness(size, KeyboardKind::HoldSymbols, SplitMode::Auto, None);
     harness.run();
     for label in ["t", "y"] {
@@ -634,4 +665,114 @@ fn split_keyboard_keeps_keys_off_a_reported_hinge_and_full_mode_overrides_it() {
     let mut harness = split_harness(size, KeyboardKind::ShellRow, SplitMode::Never, Some(hinge));
     harness.run();
     assert_eq!(harness.get_all_by_label("Space").count(), 1);
+}
+
+#[test]
+fn split_keyboard_keeps_every_key_of_both_layers_once_and_off_the_centre() {
+    let size = egui::vec2(1180.0, 820.0);
+    let mut labels = vec![
+        "Esc",
+        "Tab",
+        "Ctrl",
+        "Alt",
+        "Shift",
+        "Mic",
+        "Left",
+        "Up",
+        "Down",
+        "Right",
+        "Extended keys",
+        "Hide keyboard",
+        "Typing-row Shift",
+        "Backspace",
+        "Switch keyboard",
+        "#+=",
+        "ABC",
+        "Space",
+        "Return",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    for row in [SHELL_ROW, "1234567890,.^"]
+        .into_iter()
+        .chain(LETTERS)
+        .chain(SYMBOLS)
+    {
+        labels.extend(row.chars().map(String::from));
+    }
+    labels.sort();
+    labels.dedup();
+    for kind in [KeyboardKind::HoldSymbols, KeyboardKind::ShellRow] {
+        for symbols in [false, true] {
+            let counts = |split: SplitMode| {
+                let mut harness = split_harness(size, kind, split, None);
+                harness.state_mut().0.symbols = symbols;
+                harness.run();
+                labels
+                    .iter()
+                    .map(|label| {
+                        let rects = harness
+                            .query_all_by_label(label)
+                            .map(|node| node.rect())
+                            .collect::<Vec<_>>();
+                        for rect in &rects {
+                            let centre = size.x / 2.0;
+                            assert!(
+                                split == SplitMode::Never
+                                    || rect.right() < centre - MIN_CENTER_GAP / 2.0 + 0.5
+                                    || rect.left() > centre + MIN_CENTER_GAP / 2.0 - 0.5,
+                                "{kind:?} symbols={symbols}: {label} crosses the centre"
+                            );
+                        }
+                        rects.len()
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let (full, split) = (counts(SplitMode::Never), counts(SplitMode::Always));
+            assert!(full.iter().filter(|&&count| count > 0).count() > 40);
+            let extra = if symbols { "^" } else { "'" };
+            for ((label, full), split) in labels.iter().zip(full).zip(split) {
+                let added = usize::from(label == "Space" || label == extra);
+                assert_eq!(
+                    split,
+                    full + added,
+                    "{kind:?} symbols={symbols}: {label} appears {split} times, full board {full}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn split_keyboard_hold_alternates_follow_each_half() {
+    let mut harness = split_harness(
+        egui::vec2(1180.0, 820.0),
+        KeyboardKind::HoldSymbols,
+        SplitMode::Always,
+        None,
+    );
+    harness.run();
+    for label in ["y", "'", ".", ","] {
+        let key = harness.get_by_label(label).rect().center();
+        let now = harness.ctx.input(|input| input.time);
+        for (elapsed, events) in [
+            (
+                0.01,
+                vec![egui::Event::PointerMoved(key), pointer(true, key)],
+            ),
+            (0.8, vec![]),
+            (0.9, vec![pointer(false, key)]),
+        ] {
+            harness.input_mut().time = Some(now + elapsed);
+            for event in events {
+                harness.event(event);
+            }
+            harness.step();
+        }
+    }
+    assert_eq!(
+        harness.state().1,
+        [']', '"', '?', '`'].map(|c| KeyRowAction::Key(Key::Character(c)))
+    );
 }

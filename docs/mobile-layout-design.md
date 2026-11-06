@@ -273,8 +273,11 @@ hinge's left and right edges, so no key straddles the fold.
 The left half holds Esc, Tab, Ctrl, Alt, Shift and the microphone; the left
 symbol/number columns; `q`–`t`, `a`–`g`, Shift with `z`–`v`; and the globe,
 symbols/letters, comma and Space. The right half holds the arrows, Extended
-keys and Hide; the right columns; `y`–`p`, `h`–`l`, `b`–`m` with Backspace; and
-Space, period and Return. Both Space keys type a space. Every key appears in
+keys and Hide; the right columns; `y`–`p`, `h`–`l` plus `'` (hold for `"`;
+`^` on the symbols layer) so the row ends flush, `b`–`m` with Backspace; and
+Space, period and Return. Every character key in both halves shares one width;
+the left middle row is inset from the outer edge, the right rows from the
+inner edge. Both Space bars match and type a space. Every key appears in
 exactly one half, and modifiers, hold alternates, repeats and callouts behave
 as on the full board. Built-in (native) keyboards are not split by fesTerm;
 the OS owns their presentation.
