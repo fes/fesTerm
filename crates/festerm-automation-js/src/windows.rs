@@ -95,6 +95,17 @@ fn last_error() -> Error {
     Error::Io(io::Error::last_os_error())
 }
 
+fn api_error(api: &str) -> Error {
+    let error = io::Error::last_os_error();
+    Error::Io(io::Error::new(
+        error.kind(),
+        format!(
+            "{api} failed (OS error {}): {error}",
+            error.raw_os_error().unwrap_or(0)
+        ),
+    ))
+}
+
 fn unavailable(reason: &'static str) -> Error {
     Error::Unavailable(reason)
 }
@@ -439,7 +450,7 @@ impl Child {
             )
         } == 0
         {
-            return Err(Error::Io(io::Error::last_os_error()));
+            return Err(api_error("CreateProcessW"));
         }
         drop(list);
         let process = owned(info.hProcess).ok_or_else(last_error)?;
@@ -482,7 +493,7 @@ impl Child {
         };
         // SAFETY: resumes the suspended primary thread of the owned process.
         if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
-            return Err(kill(last_error()));
+            return Err(kill(api_error("ResumeThread")));
         }
         Ok(Self {
             process,

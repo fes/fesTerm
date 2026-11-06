@@ -1842,11 +1842,16 @@ mod tests {
         assert!(!NativeCommand::batch_requires_safety_stop([approve].iter()));
     }
 
-    /// Runs the example bundle in a real contained worker. Build the app first,
-    /// then run with FESTERM_TEST_JS_WORKER=<absolute path to target/debug/festerm>.
+    /// Runs the example bundle in a real contained worker. Set
+    /// FESTERM_TEST_JS_WORKER to the absolute platform worker executable.
     #[test]
     #[ignore = "needs FESTERM_TEST_JS_WORKER pointing at a built festerm binary"]
     fn example_workflow_reads_and_sends_only_approved_input_through_a_real_worker() {
+        tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::WARN)
+            .try_init()
+            .expect("install test tracing subscriber");
         let (mut coordinator, mut app, id, fake, target, context) = run_fixture();
         let digest = example_bundle().digest().to_owned();
         coordinator.start_javascript_run(digest, Some(target), parameters(true), &[&app], &context);
