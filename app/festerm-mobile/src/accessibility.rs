@@ -157,13 +157,32 @@ impl egui::Plugin for Plugin {
             .extend(actions.drain(..).map(egui::Event::AccessKitActionRequest));
     }
 
-    fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
+    fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
         if let Some(update) = output.platform_output.accesskit_update.take() {
             if self.enabled {
                 let mut update = update;
+                bound_root(&mut update, ctx.viewport_rect());
                 hoist_from_leaves(&mut update);
                 (self.publish)(update);
             }
+        }
+    }
+}
+
+/// egui leaves the root without bounds; Android then reports the host node
+/// as off-screen and automation clients skip the whole tree.
+fn bound_root(update: &mut TreeUpdate, viewport: egui::Rect) {
+    let Some(root) = update.tree.as_ref().map(|tree| tree.root) else {
+        return;
+    };
+    if let Some((_, node)) = update.nodes.iter_mut().find(|(id, _)| *id == root) {
+        if node.bounds().is_none() {
+            node.set_bounds(egui::accesskit::Rect {
+                x0: viewport.min.x.into(),
+                y0: viewport.min.y.into(),
+                x1: viewport.max.x.into(),
+                y1: viewport.max.y.into(),
+            });
         }
     }
 }
