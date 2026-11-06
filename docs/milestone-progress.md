@@ -1,5 +1,30 @@
 # Milestone Progress Narrative
 
+## Mobile accessibility tree and UI automation
+
+VoiceOver and TalkBack could not see any fesTerm mobile control, and no tool
+could drive the app by name. ADR 0075 publishes egui's AccessKit tree through
+`accesskit_ios` and `accesskit_android`. A plugin activates the tree only when
+a platform client asks for it and injects bounded actions as egui input.
+Simulator and emulator runs exposed four platform-specific defects, each now
+covered by a regression:
+
+- iOS hides the subtree of any actionable node, which hid terminal rows and
+  popup menus. Terminal rows are now siblings of the viewport, and the plugin
+  lifts content out of actionable nodes.
+- Uppercase field captions shadowed the fields themselves. Fields are now named
+  and their captions hidden.
+- Android skipped the whole tree because the root had no bounds.
+- Android offset every node by the status-bar inset. The host view now sits at
+  the window origin.
+
+Visible terminal rows are published unless app protection hides content, and
+secret fields expose only their names. A shared Maestro suite now passes on an
+iPhone Simulator: navigation, profile-form typing, and the terminal menu and
+typing.
+VoiceOver/TalkBack usability on physical devices, and Android
+explore-by-touch, remain open (`MOB-10`).
+
 ## Proposed automation authoring, application hooks and debugging
 
 Beyond the shipped desktop JavaScript workflow beta, which runs one bundle

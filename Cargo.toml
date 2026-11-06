@@ -46,6 +46,7 @@ resolver = "2"
 exclude = ["vendor/dev-tunnels", "vendor/egui", "vendor/egui-winit", "vendor/egui-wgpu", "vendor/epaint", "vendor/russh", "vendor/russh-sftp", "fuzz"]
 
 [patch.crates-io]
+accesskit_android = { path = "vendor/accesskit_android" }
 egui = { path = "vendor/egui" }
 egui-winit = { path = "vendor/egui-winit" }
 egui-wgpu = { path = "vendor/egui-wgpu" }
