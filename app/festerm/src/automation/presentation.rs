@@ -2301,6 +2301,7 @@ impl Coordinator {
                 principal,
                 machine: Machine::new(),
                 code: VerificationCode::new("0123456789abcdef").unwrap(),
+                identity: None,
                 grant: None,
                 waits: Vec::new(),
                 pending_completion: None,

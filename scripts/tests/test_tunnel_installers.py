@@ -20,7 +20,7 @@ POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell.exe") if os.name 
 @unittest.skipIf(os.name == "nt", "Unix installer uses native Unix tools")
 class UnixInstallerTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="festerm-installer-test-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="festerm-installer-test-", dir=ROOT)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.home = self.root / "home"
@@ -41,7 +41,17 @@ class UnixInstallerTests(unittest.TestCase):
         self.script = self.root / "installer.sh"
         self.script.write_text(source)
         self.write_tool("uname", 'case "$1" in -s) echo Linux;; -m) echo x86_64;; esac')
-        self.write_tool("id", "echo 1000")
+        self.write_tool("id", f"echo {os.getuid()}")
+        # The Linux fixture must read real permissions on BSD hosts too.
+        stat = self.bin / "stat"
+        stat.write_text(
+            f"#!{shutil.which('python3') or shutil.which('python')}\n"
+            "import os, stat, sys\n"
+            "assert sys.argv[1:3] == ['-c', '%u %a']\n"
+            "metadata = os.stat(sys.argv[-1])\n"
+            "print(metadata.st_uid, format(stat.S_IMODE(metadata.st_mode), 'o'))\n"
+        )
+        stat.chmod(0o700)
         self.write_tool("getconf", "echo 'glibc 2.39'")
         self.write_tool("sudo", "echo UNEXPECTED-SUDO >&2; exit 99")
         curl = self.bin / "curl"
@@ -65,14 +75,25 @@ class UnixInstallerTests(unittest.TestCase):
         tool.write_text("#!/bin/sh\nset -eu\n" + body + "\n")
         tool.chmod(0o700)
 
-    def make_archive(self, extra=None, duplicate=False, link=False, version=VERSION, release=VERSION):
+    def make_archive(self, extra=None, duplicate=False, link=False, version=VERSION, release=VERSION, management=True):
+        helper = (
+            "#!/bin/sh\n"
+            "if [ \"$1\" = --help ]; then echo '" +
+            ("--manage {list" if management else "old helper help") + "'; exit 0; fi\n"
+        )
+        if management:
+            helper += (
+                "if [ \"$1\" = --manage ]; then printf 'FIXTURE-MANAGEMENT\\n'; "
+                "printf '%s\\n' \"$@\"; exit 0; fi\n"
+            )
+        helper += "printf 'FIXTURE-SETUP-EXECUTED\\n'; printf '%s\\n' \"$@\"\nwhile [ $# -gt 0 ]; do [ \"$1\" = --state-dir ] && mkdir -p \"$2\" && printf '{\"fixture\":true}\\n' > \"$2/festerm-profile.json\"; shift; done\n"
         files = {
             "VERSION": version + "\n",
             "LICENSE": "fixture",
             "THIRD_PARTY_NOTICES.txt": "fixture",
             "festerm-sessiond": "#!/bin/sh\nexit 0\n",
             "festerm-tunnel-bridge": "#!/bin/sh\nexit 0\n",
-            "festerm-tunnel-setup": "#!/bin/sh\nprintf 'FIXTURE-SETUP-EXECUTED\\n'; printf '%s\\n' \"$@\"\nwhile [ $# -gt 0 ]; do [ \"$1\" = --state-dir ] && mkdir -p \"$2\" && printf '{\"fixture\":true}\\n' > \"$2/festerm-profile.json\"; shift; done\n",
+            "festerm-tunnel-setup": helper,
         }
         with tarfile.open(self.archive, "w:gz") as archive:
             for name, value in files.items():
@@ -137,6 +158,129 @@ class UnixInstallerTests(unittest.TestCase):
         self.assertEqual(root.stat().st_mode & 0o777, 0o700)
         installation = root / "releases"
         self.assertEqual(installation.stat().st_mode & 0o777, 0o700)
+
+    def management_cache(self):
+        root = self.home / ".local/share/festerm-tunnels"
+        release = root / "releases/123.4.5-linux-x86_64"
+        release.mkdir(parents=True)
+        for path in (root, root / "releases", release):
+            path.chmod(0o700)
+        helper = release / "festerm-tunnel-setup"
+        helper.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = --help ]; then echo '--manage {list'; exit 0; fi\n"
+            "printf 'FIXTURE-MANAGEMENT\\n'; printf '%s\\n' \"$@\"\n"
+        )
+        helper.chmod(0o700)
+        self.write_tool("curl", "echo UNEXPECTED-DOWNLOAD >&2; exit 99")
+        return root
+
+    def test_management_forwards_only_explicit_operation_without_setup_or_download(self):
+        root = self.management_cache()
+        installation = "12345678-1234-4234-8234-123456789abc"
+        for args in [
+            ("--manage", "list", "--json"),
+            ("--manage", "delete", installation, "--yes"),
+            ("--manage", "delete-all", "--yes", "--json"),
+            ("--manage", "archive", installation, "--yes"),
+            ("--manage", "delete", installation, "--yes", "--confirm-legacy-cloud-id", "fixture.usw3"),
+        ]:
+            with self.subTest(args=args):
+                result = self.run_installer(*args, include_version=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("FIXTURE-MANAGEMENT\n--manage\n", result.stdout)
+                self.assertNotIn("--managed\n", result.stdout)
+                self.assertNotIn("UNEXPECTED-DOWNLOAD", result.stderr)
+                self.assertEqual(sorted(path.name for path in root.iterdir()), ["releases"])
+
+    def test_management_inaccessible_ancestor_is_unknown_not_empty_inventory(self):
+        self.home.chmod(0)
+        try:
+            for operation in (("--manage", "list", "--json"),
+                              ("--manage", "delete-all", "--yes")):
+                result = self.run_installer(*operation, include_version=False)
+                self.assert_refused(result, "inventory is unknown")
+                self.assertNotIn('"hosts":[]', result.stdout)
+        finally:
+            self.home.chmod(0o700)
+
+    def test_management_bootstrap_only_stages_verified_tools_and_preserves_old_host_state(self):
+        root = self.home / ".local/share/festerm-tunnels"
+        state = root / "state"
+        state.mkdir(parents=True)
+        root.chmod(0o700)
+        state.chmod(0o700)
+        record = state / "installation.json"
+        original = b'{"fixture":"old-host-record-paths-must-not-change"}'
+        record.write_bytes(original)
+        result = self.run_installer("--manage", "list", "--install-management-tools")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("FIXTURE-MANAGEMENT\n--manage\nlist\n", result.stdout)
+        self.assertNotIn("FIXTURE-SETUP-EXECUTED", result.stdout)
+        self.assertNotIn("--managed\n", result.stdout)
+        self.assertEqual(record.read_bytes(), original)
+        self.assertEqual(sorted(path.name for path in state.iterdir()), ["installation.json"])
+        self.assertTrue((root / "releases" / f"{VERSION}-linux-x86_64").is_dir())
+
+    def test_management_bootstrap_verifies_bytes_and_refuses_old_release_without_setup(self):
+        self.archive.write_bytes(self.archive.read_bytes() + b"tampered")
+        self.assert_refused(
+            self.run_installer("--manage", "list", "--install-management-tools"),
+            "SHA-256 mismatch",
+        )
+        self.make_archive(management=False)
+        self.assert_refused(
+            self.run_installer("--manage", "list", "--install-management-tools"),
+            "lacks management support",
+        )
+        self.assertFalse((self.home / ".local/share/festerm-tunnels/state").exists())
+
+    def test_management_bootstrap_never_executes_cli_runtime_preflight(self):
+        old_digest = hashlib.sha256(self.cli.read_bytes()).hexdigest()
+        self.cli.write_text("#!/bin/sh\necho UNEXPECTED-CLI-RUNTIME >&2\nexit 99\n")
+        self.script.write_text(self.script.read_text().replace(
+            old_digest, hashlib.sha256(self.cli.read_bytes()).hexdigest()
+        ))
+        result = self.run_installer("--manage", "list", "--install-management-tools")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("FIXTURE-MANAGEMENT\n--manage\nlist\n", result.stdout)
+        self.assertNotIn("UNEXPECTED-CLI-RUNTIME", result.stdout + result.stderr)
+        self.assertNotIn("--managed\n", result.stdout)
+        self.assertNotIn("FIXTURE-SETUP-EXECUTED", result.stdout)
+        normal = self.run_installer()
+        self.assert_refused(normal, "UNEXPECTED-CLI-RUNTIME")
+
+    def test_management_refuses_invalid_combinations_before_any_provisioning(self):
+        for args in [
+            ("--manage", "delete-all"),
+            ("--manage", "delete", "../state", "--yes"),
+            ("--manage", "list", "--yes"),
+            ("--manage", "list", "--upgrade"),
+            ("--manage", "list", "--repair-session"),
+            ("--manage", "list", "--install-dependencies"),
+            ("--yes",),
+            ("--install-management-tools",),
+            ("--manage", "list", "--install-management-tools", "--upgrade"),
+            ("--manage", "delete-all", "--yes", "--confirm-legacy-cloud-id", "fixture.usw3"),
+        ]:
+            with self.subTest(args=args):
+                result = self.run_installer(*args, include_version=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("FIXTURE-SETUP-EXECUTED", result.stdout)
+                self.assertFalse((self.home / ".local/share/festerm-tunnels").exists())
+
+    def test_management_missing_cache_list_is_non_mutating_and_symlink_cache_refuses(self):
+        result = self.run_installer("--manage", "list", "--json", include_version=False)
+        self.assertEqual(json.loads(result.stdout)["hosts"], [])
+        self.assertFalse((self.home / ".local/share/festerm-tunnels").exists())
+        root = self.management_cache()
+        releases = root / "releases"
+        releases.rename(root / "foreign")
+        releases.symlink_to(root / "foreign", target_is_directory=True)
+        result = self.run_installer("--manage", "delete-all", "--yes", include_version=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("symbolic link", result.stderr)
+        self.assertNotIn("FIXTURE-MANAGEMENT", result.stdout)
 
     def test_bad_hash_executes_nothing(self):
         self.archive.write_bytes(self.archive.read_bytes() + b"tampered")
@@ -317,7 +461,7 @@ class WindowsInstallerTests(unittest.TestCase):
         )
         if identity.stdout.strip() != "False":
             self.skipTest("Positive native installer checks require an unelevated ordinary user")
-        self.temporary = tempfile.TemporaryDirectory(prefix="festerm-windows-installer-test-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="festerm-windows-installer-test-", dir=ROOT)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.local = self.root / "profile"
@@ -336,10 +480,10 @@ class WindowsInstallerTests(unittest.TestCase):
         self.script = self.root / "installer.ps1"
         self.script.write_text(source, encoding="utf-8-sig")
 
-    def run_installer(self):
+    def run_installer(self, *args):
         return subprocess.run(
             [POWERSHELL, "-NoProfile", "-NonInteractive", "-File", str(self.script),
-             "-Version", VERSION],
+             "-Version", VERSION, *args],
             capture_output=True, text=True, timeout=30,
         )
 
@@ -370,6 +514,150 @@ class WindowsInstallerTests(unittest.TestCase):
     def test_powershell_download_failure_preserves_error_and_cleans_empty_stage(self):
         self.curl.write_text("@echo off\nexit /b 22\n")
         self.assert_clean_refusal(self.run_installer(), "Authenticated HTTPS download failed")
+
+    def test_management_missing_cache_lists_without_setup_download_or_directory_creation(self):
+        self.curl.write_text("@echo off\necho UNEXPECTED-DOWNLOAD\nexit /b 99\n")
+        result = self.run_installer("-Manage", "list", "-Json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["hosts"], [])
+        self.assertFalse((self.local / "fesTerm-tunnels").exists())
+
+    def test_management_confirmation_and_option_conflicts_refuse_before_setup(self):
+        for args in [
+            ("-Manage", "delete-all"),
+            ("-Manage", "delete", "-InstallationId", "../state", "-Yes"),
+            ("-Manage", "list", "-Upgrade"),
+            ("-Manage", "list", "-RepairSession"),
+            ("-Manage", "list", "-Yes"),
+            ("-Json",),
+            ("-InstallManagementTools",),
+            ("-Manage", "list", "-InstallManagementTools", "-Upgrade"),
+            ("-Manage", "delete-all", "-Yes", "-ConfirmLegacyCloudId", "fixture.usw3"),
+        ]:
+            with self.subTest(args=args):
+                result = self.run_installer(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.local / "fesTerm-tunnels").exists())
+
+    def test_management_forwards_to_private_verified_helper_without_provisioning(self):
+        root = self.local / "fesTerm-tunnels"
+        release = root / "releases" / f"{VERSION}-windows-x86_64"
+        source = self.script.read_text(encoding="utf-8-sig")
+        # A harmless script fixture replaces the signed executable. Keep actual
+        # path, owner, ACL and argument checks; only signature execution is faked.
+        source = source.replace(
+            "'festerm-tunnel-setup.exe'", "'fixture-management.ps1'"
+        ).replace(
+            "(Get-AuthenticodeSignature -LiteralPath $helper).Status",
+            "([pscustomobject]@{Status='Valid'}).Status",
+        )
+        self.script.write_text(source, encoding="utf-8-sig")
+        private_function = source[
+            source.index("function New-PrivateDirectory"):
+            source.index("function Assert-PrivateDirectory")
+        ]
+        directories = (root, root / "releases", release)
+        commands = "; ".join(
+            "New-PrivateDirectory '" + str(path).replace("'", "''") + "' | Out-Null"
+            for path in directories
+        )
+        subprocess.run(
+            [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command",
+             "$ErrorActionPreference='Stop'; " + private_function + "\n" + commands],
+            check=True, capture_output=True, text=True, timeout=30,
+        )
+        (release / "fixture-management.ps1").write_text(
+            "if($args.Count -eq 1 -and $args[0] -eq '--help'){"
+            "Write-Output '--manage {list';exit 0};"
+            "Write-Output 'FIXTURE-MANAGEMENT';"
+            "$args | ForEach-Object { Write-Output $_ };exit 0",
+            encoding="utf-8-sig",
+        )
+        self.curl.write_text("@echo off\necho UNEXPECTED-DOWNLOAD\nexit /b 99\n")
+        installation = "12345678-1234-4234-8234-123456789abc"
+        for args in [
+            ("-Manage", "list", "-Json"),
+            ("-Manage", "delete", "-InstallationId", installation, "-Yes"),
+            ("-Manage", "delete-all", "-Yes", "-Json"),
+            ("-Manage", "archive", "-InstallationId", installation, "-Yes"),
+            ("-Manage", "delete", "-InstallationId", installation, "-Yes",
+             "-ConfirmLegacyCloudId", "fixture.usw3"),
+        ]:
+            with self.subTest(args=args):
+                result = self.run_installer(*args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("FIXTURE-MANAGEMENT\n--manage\n", result.stdout)
+                self.assertNotIn("--managed\n", result.stdout)
+                self.assertNotIn("UNEXPECTED-DOWNLOAD", result.stdout + result.stderr)
+                self.assertEqual(sorted(path.name for path in root.iterdir()), ["releases"])
+
+    def test_management_bootstrap_download_failure_never_falls_through_to_setup(self):
+        self.curl.write_text("@echo off\nexit /b 22\n")
+        result = self.run_installer("-Manage", "list", "-InstallManagementTools")
+        self.assert_clean_refusal(result, "Authenticated HTTPS download failed")
+        self.assertFalse((self.local / "fesTerm-tunnels/state").exists())
+
+    def test_management_bootstrap_verified_stage_dispatch_returns_before_provisioning(self):
+        source = WINDOWS_INSTALLER.read_text()
+        start = source.index("    if ($Manage) {\n        $helper = Join-Path $cached")
+        end = source.index('    Write-Host "Installed private helpers: $cached"', start)
+        dispatch = source[start:end].replace(
+            "'festerm-tunnel-setup.exe'", "'fixture-management.ps1'"
+        )
+        preflight_start = source.index("    if (-not $Manage) {\n        & $cli --version")
+        preflight_end = source.index("    if (Test-Path -LiteralPath $cached)", preflight_start)
+        preflight = source[preflight_start:preflight_end]
+        helper = self.root / "fixture-management.ps1"
+        cli = self.root / "fixture-unavailable-cli.ps1"
+        cli.write_text(
+            "Write-Output 'UNEXPECTED-CLI-RUNTIME';exit 99",
+            encoding="utf-8-sig",
+        )
+        script = self.root / "verified-stage-dispatch.ps1"
+        script.write_text(
+            "$ErrorActionPreference='Stop';$Manage='list';"
+            "$cached='" + str(self.root).replace("'", "''") + "';"
+            "$cli='" + str(cli).replace("'", "''") + "';"
+            "$managementArguments=@('--manage','list','--json');\n" +
+            preflight + dispatch + "\nthrow 'UNEXPECTED-PROVISIONING';\n",
+            encoding="utf-8-sig",
+        )
+        for supported in (True, False):
+            helper.write_text(
+                "if($args[0] -eq '--help'){Write-Output '" +
+                ("--manage {list" if supported else "old helper help") +
+                "';exit 0};"
+                "if($args[0] -ne '--manage'){throw 'UNEXPECTED-SETUP'};"
+                "Write-Output 'FIXTURE-MANAGEMENT';exit 0",
+                encoding="utf-8-sig",
+            )
+            result = subprocess.run(
+                [POWERSHELL, "-NoProfile", "-NonInteractive", "-File", str(script)],
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertNotIn("UNEXPECTED-PROVISIONING", result.stdout + result.stderr)
+            self.assertNotIn("UNEXPECTED-SETUP", result.stdout + result.stderr)
+            self.assertNotIn("UNEXPECTED-CLI-RUNTIME", result.stdout + result.stderr)
+            if supported:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("FIXTURE-MANAGEMENT", result.stdout)
+            else:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("lacks management support", result.stderr)
+                self.assertNotIn("FIXTURE-MANAGEMENT", result.stdout)
+        script.write_text(
+            script.read_text(encoding="utf-8-sig").replace("$Manage='list';", "$Manage='';"),
+            encoding="utf-8-sig",
+        )
+        normal = subprocess.run(
+            [POWERSHELL, "-NoProfile", "-NonInteractive", "-File", str(script)],
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertNotEqual(normal.returncode, 0)
+        self.assertIn("UNEXPECTED-CLI-RUNTIME", normal.stdout)
+        self.assertIn("runtime prerequisites are unavailable", normal.stderr)
+        self.assertNotIn("FIXTURE-MANAGEMENT", normal.stdout)
+        self.assertNotIn("UNEXPECTED-PROVISIONING", normal.stderr)
 
     def test_powershell_invalid_checksum_executes_nothing_and_cleans_stage(self):
         self.curl.write_text(

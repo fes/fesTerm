@@ -1,6 +1,8 @@
 use crate::{
     applock::AppLock,
-    locker::{AuthFailure, AuthOutcome, Availability, BiometryKind, Locker},
+    locker::{
+        AuthFailure, AuthMethod, AuthOutcome, Authentication, Availability, BiometryKind, Locker,
+    },
     policy::LifecycleEvent,
 };
 use block2::RcBlock;
@@ -8,25 +10,56 @@ use objc2::{
     rc::Retained,
     runtime::{Bool, ProtocolObject},
 };
+use objc2_core_foundation::CFRetained;
 use objc2_foundation::{
     MainThreadMarker, NSError, NSNotification, NSNotificationCenter, NSObjectProtocol, NSString,
 };
-use objc2_local_authentication::{LABiometryType, LAContext, LAError, LAPolicy};
+use objc2_local_authentication::{
+    LAAccessControlOperation, LABiometryType, LAContext, LAError, LAPolicy,
+};
+use objc2_security::{
+    kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, SecAccessControl, SecAccessControlCreateFlags,
+};
 use objc2_ui_kit::{
     UIApplicationDidBecomeActiveNotification, UIApplicationDidEnterBackgroundNotification,
     UIApplicationProtectedDataWillBecomeUnavailable, UIApplicationWillResignActiveNotification,
     UIColor, UIView, UIViewAutoresizing,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
-use std::{cell::RefCell, ptr::NonNull, rc::Rc, sync::Mutex};
+use std::{
+    cell::RefCell,
+    ptr::NonNull,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
 
 const POLICY: LAPolicy = LAPolicy::DeviceOwnerAuthentication;
 
-/// `LAContext` with `deviceOwnerAuthentication`: Face ID / Touch ID with the
-/// device passcode as fallback, so a lockout or missing enrollment never
-/// strands the owner.
+/// Fresh cancellable system authentication; no passcode enters the application.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LaContextLocker;
+
+struct NativeAuthentication {
+    context: Retained<LAContext>,
+    access: Option<CFRetained<SecAccessControl>>,
+    completed: Arc<AtomicBool>,
+}
+
+// SAFETY: LAContext supports cross-thread evaluation/invalidation. The immutable
+// access-control object is only retained here, never mutated or stored.
+unsafe impl Send for NativeAuthentication {}
+
+impl NativeAuthentication {
+    fn cancel(self) {
+        if !self.completed.load(Ordering::SeqCst) {
+            // SAFETY: this is the request's retained context; invalidation is idempotent.
+            unsafe { self.context.invalidate() };
+        }
+    }
+}
 
 fn map_error(code: isize) -> AuthFailure {
     match LAError(code) {
@@ -46,6 +79,10 @@ impl Locker for LaContextLocker {
         // SAFETY: a fresh, thread-safe LAContext used only for this preflight.
         unsafe {
             let context = LAContext::new();
+            // This preflight populates biometryType even when biometrics cannot
+            // run. Owner authentication below remains the availability authority.
+            let _ =
+                context.canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometrics);
             match context.canEvaluatePolicy_error(POLICY) {
                 Ok(()) => Availability::Available(match context.biometryType() {
                     LABiometryType::FaceID => BiometryKind::FaceId,
@@ -61,16 +98,40 @@ impl Locker for LaContextLocker {
         }
     }
 
-    fn authenticate(&self, reason: &str, done: Box<dyn FnOnce(AuthOutcome) + Send>) {
-        let done = Mutex::new(Some(done));
-        // SAFETY: the context is retained by the reply block for the duration
-        // of the evaluation, as the API requires, and LAContext is thread-safe.
-        // The reply captures only a Send closure behind a mutex.
+    fn authenticate(
+        &self,
+        method: AuthMethod,
+        reason: &str,
+        done: Box<dyn FnOnce(AuthOutcome) + Send>,
+    ) -> Authentication {
+        // SAFETY: fresh contexts and immutable access controls stay alive in the
+        // cancellation handle. The reply contains only Send state, not the context.
         unsafe {
             let context = LAContext::new();
-            let keep_alive = context.clone();
+            if let Err(error) = context.canEvaluatePolicy_error(POLICY) {
+                done(Err(map_error(error.code())));
+                return Authentication::new(|| {});
+            }
+            let access = match method {
+                AuthMethod::OwnerAuthentication => None,
+                AuthMethod::DevicePasscode => {
+                    let Some(access) = SecAccessControl::with_flags(
+                        None,
+                        kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+                        SecAccessControlCreateFlags::DevicePasscode,
+                        std::ptr::null_mut(),
+                    ) else {
+                        done(Err(AuthFailure::Unavailable));
+                        return Authentication::new(|| {});
+                    };
+                    Some(access)
+                }
+            };
+            let completed = Arc::new(AtomicBool::new(false));
+            let completion = completed.clone();
+            let done = Mutex::new(Some(done));
             let reply = RcBlock::new(move |success: Bool, error: *mut NSError| {
-                let _keep = &keep_alive;
+                completion.store(true, Ordering::SeqCst);
                 let outcome = if success.as_bool() {
                     Ok(())
                 } else {
@@ -78,15 +139,33 @@ impl Locker for LaContextLocker {
                     Err(NonNull::new(error)
                         .map_or(AuthFailure::Unavailable, |e| map_error(e.as_ref().code())))
                 };
-                if let Some(done) = done.lock().ok().and_then(|mut d| d.take()) {
+                let done = done.lock().unwrap_or_else(|e| e.into_inner()).take();
+                if let Some(done) = done {
                     done(outcome);
                 }
             });
-            context.evaluatePolicy_localizedReason_reply(
-                POLICY,
-                &NSString::from_str(reason),
-                &reply,
-            );
+            let request = NativeAuthentication {
+                context,
+                access,
+                completed,
+            };
+            if let Some(access) = &request.access {
+                request
+                    .context
+                    .evaluateAccessControl_operation_localizedReason_reply(
+                        access,
+                        LAAccessControlOperation::UseItem,
+                        &NSString::from_str(reason),
+                        &reply,
+                    );
+            } else {
+                request.context.evaluatePolicy_localizedReason_reply(
+                    POLICY,
+                    &NSString::from_str(reason),
+                    &reply,
+                );
+            }
+            Authentication::new(move || request.cancel())
         }
     }
 }

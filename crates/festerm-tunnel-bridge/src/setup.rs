@@ -97,30 +97,58 @@ fn split_created_id(value: &str, expected: &str) -> io::Result<(String, String)>
 }
 
 async fn cli(path: &Path, args: &[&str], stage: &'static str) -> io::Result<Zeroizing<Vec<u8>>> {
+    let response = cli_captured(path, args, stage).await?;
+    drop(response.stderr);
+    if response.code != Some(0) {
+        return Err(refused(stage));
+    }
+    Ok(response.stdout)
+}
+
+struct CliCaptured {
+    code: Option<i32>,
+    stdout: Zeroizing<Vec<u8>>,
+    stderr: Zeroizing<Vec<u8>>,
+}
+
+async fn bounded_cli_output(
+    stream: impl tokio::io::AsyncRead + Unpin,
+    stage: &'static str,
+) -> io::Result<Zeroizing<Vec<u8>>> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    stream
+        .take(MAX_RESPONSE + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| refused(stage))?;
+    if bytes.len() as u64 > MAX_RESPONSE {
+        return Err(refused(stage));
+    }
+    Ok(bytes)
+}
+
+async fn cli_captured(path: &Path, args: &[&str], stage: &'static str) -> io::Result<CliCaptured> {
     let mut child = background_command(path)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|_| refused(stage))?;
-    let mut stdout = child.stdout.take().ok_or_else(|| refused(stage))?;
+    let stdout = child.stdout.take().ok_or_else(|| refused(stage))?;
+    let stderr = child.stderr.take().ok_or_else(|| refused(stage))?;
     let result = timeout(CLI_TIMEOUT, async {
-        let mut bytes = Zeroizing::new(Vec::new());
-        (&mut stdout)
-            .take(MAX_RESPONSE + 1)
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|_| refused(stage))?;
-        if bytes.len() as u64 > MAX_RESPONSE {
-            return Err(refused(stage));
-        }
-        let status = child.wait().await.map_err(|_| refused(stage))?;
-        if !status.success() {
-            return Err(refused(stage));
-        }
-        Ok(bytes)
+        let (stdout, stderr, status) = tokio::try_join!(
+            bounded_cli_output(stdout, stage),
+            bounded_cli_output(stderr, stage),
+            async { child.wait().await.map_err(|_| refused(stage)) },
+        )?;
+        Ok::<_, io::Error>(CliCaptured {
+            code: status.code(),
+            stdout,
+            stderr,
+        })
     })
     .await
     .map_err(|_| refused(stage))??;
@@ -419,14 +447,24 @@ fn main() {
     if args == ["--help"] {
         println!(concat!(
             "festerm-tunnel-setup [--managed] --devtunnel ABSOLUTE_CLI_PATH --state-dir ABSOLUTE_PRIVATE_DIRECTORY ",
-            "[--no-takeover] [--upgrade] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] ",
+            "[--no-takeover] [--upgrade] [--repair-session] [--friendly-name NAME] [--restart-unexpected|--no-restart-unexpected] ",
             "[--file-root ABSOLUTE_DIRECTORY [--allow-file-write] | --disable-files]\n",
             "Default: new foreground-only setup in a new directory.\n",
+            "--manage {{list | delete INSTALLATION_ID --yes [--confirm-legacy-cloud-id QUALIFIED_ID] | delete-all --yes | archive INSTALLATION_ID --yes}} [--json]: ",
+            "manage only verified local script installations, without setup, login or downloads. ",
+            "Desktop hosts must be removed through fesTerm's consent-aware GUI. ",
+            "Deletion preserves the persistent shell and retains pending cloud-cleanup evidence.\n",
+            "Legacy confirmation applies only to exact-ID deletion of a verified script installation, never delete-all. ",
+            "Archive retains only completed, locally stopped and cloud-gone state; normal explicit setup can then create a fresh installation.\n",
             "--managed: explicit per-user service setup; healthy reruns reuse the original private tunnel, ",
             "host identity and exact shell generation, printing public profile JSON without credentials. ",
             "By default stale/partial/foreign state refuses, never creates a replacement. ",
             "Add --upgrade to switch an existing installation's service to this release's helpers, ",
             "keeping its tunnel, host key and running daemon session. ",
+            "--repair-session explicitly replaces a DEAD session with a NEW default shell, even without legacy lifecycle evidence. ",
+            "It preserves the tunnel, host key and grants; programs/state are lost. Uses the daemon beside --devtunnel. ",
+            "Combine with --upgrade to switch helpers; interrupted repair adopts only its journaled generation and never blindly creates again. ",
+            "Repair cannot change policy; apply grant/restart options separately.\n",
             "Add --friendly-name NAME on first setup to name the tunnel's user-visible description.\n",
             "--restart-unexpected: explicitly allow a NEW default shell after instrumented unexpected daemon loss, ",
             "at most three starts per ten minutes; never after observed shell exit or operator stop. ",
@@ -462,6 +500,8 @@ fn main() {
         .and_then(|runtime| {
             runtime.block_on(async {
                 match args.first().and_then(|arg| arg.to_str()) {
+                    Some("--profile-host") => managed_setup::profile_request_file(&args[1..]).await,
+                    Some("--manage") => managed_setup::manage(&args[1..]).await,
                     Some("--managed") => managed_setup::install(&args[1..]).await,
                     Some("--serve") => managed_setup::serve(&args[1..]).await,
                     _ => run().await,
@@ -469,7 +509,11 @@ fn main() {
             })
         });
     if let Err(error) = result {
-        eprintln!("Experimental tunnel setup refused/stopped: {error}. Any explicitly reported new tunnel/session remains; existing resources were not removed.");
+        if args.first().is_some_and(|arg| arg == "--manage") {
+            eprintln!("Tunnel management refused or incomplete: {error}. Follow per-host results; private cleanup evidence is retained. The persistent shell was not targeted.");
+        } else {
+            eprintln!("Experimental tunnel setup refused/stopped: {error}. Any explicitly reported new tunnel/session remains; existing resources were not removed.");
+        }
         let serving = args.first().is_some_and(|arg| arg == "--serve");
         std::process::exit(if serving && managed_setup::is_permanent_refusal(&error) {
             service_install::PERMANENT_REFUSAL_EXIT

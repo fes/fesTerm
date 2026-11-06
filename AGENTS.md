@@ -23,6 +23,10 @@ Read `README.md`, then use the document that matches the task:
 
 ## Current Structure
 
+- `app/festerm-android`: Android NativeActivity host for the shared mobile app;
+  SDK/NDK development packaging and emulator smoke (ADR 0073).
+- `crates/festerm-android-platform`: JNI-only Android service boundary; selected
+  by the existing mobile window, lock and secret-store facades.
 - `app/festerm-mobile`: experimental iOS Phase 1 rendering/lifecycle host;
   offline fixture by default, with an opt-in transient `live-ssh` prototype
   governed by ADR 0042 and `MOB-01`–`06` native/live-service gates.

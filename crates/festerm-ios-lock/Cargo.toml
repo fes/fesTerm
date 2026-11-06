@@ -13,6 +13,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 raw-window-handle = "0.6"
 
+[target.'cfg(target_os = "android")'.dependencies]
+festerm-android-platform = { path = "../festerm-android-platform" }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
@@ -21,7 +24,9 @@ objc2 = "0.6.4"
 block2 = "0.6"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSThread", "NSNotification", "NSOperation", "NSString", "NSError", "NSTimer", "NSDictionary", "NSObject", "NSRunLoop", "NSDate", "block2"] }
 objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "UIApplication", "UIView", "UIResponder", "UIGeometry", "UIColor", "UIWindow", "UIScreen", "UIViewController", "UILabel", "NSText", "NSParagraphStyle"] }
-objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "block2", "LAContext", "LAError", "LABiometryType", "LABase"] }
+objc2-local-authentication = { version = "0.3.2", default-features = false, features = ["std", "block2", "LAContext", "LAError", "LABiometryType", "LABase", "objc2-security"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFString"] }
+objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecAccessControl", "SecItem"] }
 
 [dev-dependencies]
 tempfile = "3"

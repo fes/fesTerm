@@ -1,7 +1,14 @@
 //! Client backend for fesTerm's native local session persistence daemon.
 
+mod detached;
 pub mod lifecycle;
 pub mod private_storage;
+pub use detached::{
+    ensure_detached, ensure_detached_in, spawn_fingerprint, verify_spawn_fingerprint_in,
+    DetachedSessionRequest,
+};
+#[doc(hidden)]
+pub use detached::{lock_native_start_in, normalize_spawn_profile, prepare_native_runtime};
 
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -194,6 +201,10 @@ type Reconnector =
 
 #[derive(Clone, Debug, Deserialize)]
 struct SessionRecord {
+    #[serde(default)]
+    spawn_fingerprint: Option<String>,
+    #[serde(default)]
+    launch_request: Option<String>,
     #[serde(default)]
     correlation_id: Option<String>,
     #[serde(default)]
@@ -2474,6 +2485,12 @@ fn unreadable_record_error(name: &str, declared: Option<u16>) -> PersistentSessi
 }
 
 fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
+    daemon_executable_for_root(None)
+}
+
+fn daemon_executable_for_root(
+    explicit_root: Option<&std::path::Path>,
+) -> Result<PathBuf, PersistentSessionError> {
     let current = std::env::current_exe().map_err(|error| {
         PersistentSessionError::new(format!("could not locate fesTerm executable: {error}"))
     })?;
@@ -2493,13 +2510,19 @@ fn daemon_executable() -> Result<PathBuf, PersistentSessionError> {
 
     #[cfg(windows)]
     {
-        let root = runtime_root()?;
+        let root = explicit_root
+            .map(Path::to_path_buf)
+            .map(Ok)
+            .unwrap_or_else(runtime_root)?;
         let staged = stage_windows_daemon(&packaged, &root)?;
-        prune_packaged_windows_daemons(directory, &packaged, &root)?;
+        if explicit_root.is_none() {
+            prune_packaged_windows_daemons(directory, &packaged, &root)?;
+        }
         Ok(staged)
     }
     #[cfg(not(windows))]
     {
+        let _ = explicit_root;
         Ok(packaged)
     }
 }
@@ -2982,6 +3005,14 @@ fn read_registry(path: &PathBuf) -> Result<SessionRegistry, PersistentSessionErr
 }
 
 pub fn runtime_root() -> Result<PathBuf, PersistentSessionError> {
+    // Per-child override used by isolated providers and fixture-owned helpers.
+    if let Some(root) = std::env::var_os("FESTERM_SESSIOND_RUNTIME_ROOT") {
+        let root = PathBuf::from(root);
+        if !root.is_absolute() {
+            return Err(PersistentSessionError::new("invalid native runtime root"));
+        }
+        return Ok(root);
+    }
     #[cfg(unix)]
     {
         if let Some(root) = std::env::var_os("XDG_STATE_HOME") {
@@ -3836,6 +3867,8 @@ mod client_worker_tests {
     fn native_session_identity_copies_existing_registry_facts_without_changing_provider_record() {
         let record = SessionRecord {
             name: "same-name".into(),
+            spawn_fingerprint: None,
+            launch_request: None,
             correlation_id: None,
             pid: 42,
             socket: "owned-native-42-100".into(),
@@ -5528,6 +5561,8 @@ mod registry_filtering_tests {
     fn unattached_session_carries_expected_metadata() {
         let record = SessionRecord {
             name: "demo".to_owned(),
+            spawn_fingerprint: None,
+            launch_request: None,
             correlation_id: None,
             pid: 1,
             socket: "demo.sock".to_owned(),
@@ -5574,6 +5609,8 @@ mod registry_filtering_tests {
             "attached-demo".to_owned(),
             SessionRecord {
                 name: "attached-demo".to_owned(),
+                spawn_fingerprint: None,
+                launch_request: None,
                 correlation_id: None,
                 pid: 1,
                 socket: "demo.sock".to_owned(),
@@ -5603,6 +5640,8 @@ mod registry_filtering_tests {
     fn incompatible_registry_record_is_rejected_before_connecting() {
         let record = SessionRecord {
             name: "future".to_owned(),
+            spawn_fingerprint: None,
+            launch_request: None,
             correlation_id: None,
             pid: 1,
             socket: "future.sock".to_owned(),
@@ -5635,6 +5674,8 @@ mod registry_filtering_tests {
     fn unsupported_snapshot_schema_is_rejected_before_connecting() {
         let record = SessionRecord {
             name: "schema-future".to_owned(),
+            spawn_fingerprint: None,
+            launch_request: None,
             correlation_id: None,
             pid: 1,
             socket: "future.sock".to_owned(),

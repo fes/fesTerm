@@ -21,17 +21,17 @@ use super::model::{HostDecision, HostVerification};
 
 const MAX_PASSWORD_ATTEMPTS: usize = 3;
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 struct NativeWriteAdmission(egui::Context);
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 impl std::fmt::Debug for NativeWriteAdmission {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("NativeWriteAdmission")
     }
 }
 
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 impl festerm_sftp::LocalWriteAdmission for NativeWriteAdmission {
     fn acquire(&self) -> festerm_sftp::Result<Box<dyn Send>> {
         let wake = self.0.clone();
@@ -64,6 +64,9 @@ pub(crate) struct SftpConnector {
 
 /// The app sandbox's Documents directory, which the Files app can show.
 pub(crate) fn documents_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "android")]
+    let directory = super::Profiles::default_directory()?.join("Documents");
+    #[cfg(not(target_os = "android"))]
     let directory = PathBuf::from(std::env::var_os("HOME")?).join("Documents");
     std::fs::create_dir_all(&directory).ok()?;
     Some(directory)
@@ -240,7 +243,7 @@ fn run(
     )
     .map_err(|error| super::files::describe_error(&error))?;
     let local = LocalFs::new(&local_root).map_err(|error| super::files::describe_error(&error))?;
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     let local = local.with_write_admission(Arc::new(NativeWriteAdmission(wake.clone())));
     let manager = TransferManager::new(client.clone(), local.clone(), TransferConfig::default());
     let wake_transfers = wake.clone();

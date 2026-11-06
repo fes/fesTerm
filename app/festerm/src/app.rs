@@ -1,6 +1,9 @@
 mod automation;
 mod confirmations;
 #[cfg(feature = "experimental-dev-tunnels")]
+#[path = "profile_hosting.rs"]
+mod profile_hosting;
+#[cfg(feature = "experimental-dev-tunnels")]
 #[path = "running_tunnels.rs"]
 mod running_tunnels;
 #[cfg(feature = "experimental-dev-tunnels")]
@@ -441,6 +444,8 @@ pub struct FesTermApp {
     tunnel_browser: Option<tunnel_browser::Browser>,
     #[cfg(feature = "experimental-dev-tunnels")]
     running_tunnels: running_tunnels::RunningTunnels,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    local_hosting: profile_hosting::Controller,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
@@ -929,6 +934,8 @@ impl FesTermApp {
             tunnel_browser: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             running_tunnels: Default::default(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            local_hosting: profile_hosting::Controller::native(),
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -1454,6 +1461,38 @@ impl FesTermApp {
                 return false;
             }
         };
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if let Err(message) = self
+            .local_hosting
+            .fence_changes(self.state.configuration(), &replacement)
+        {
+            self.secure_storage_feedback = Some(message);
+            self.configuration_status =
+                on_invalid(crate::configuration_startup::ConfigurationLoadFailure::Invalid);
+            return false;
+        }
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        if self
+            .state
+            .configuration()
+            .profiles()
+            .iter()
+            .filter_map(|profile| profile.as_local().and_then(|local| local.tunnel_hosting()))
+            .any(|old| {
+                !replacement
+                    .profiles()
+                    .iter()
+                    .filter_map(|profile| {
+                        profile.as_local().and_then(|local| local.tunnel_hosting())
+                    })
+                    .any(|new| new == old)
+            })
+        {
+            self.secure_storage_feedback = Some("Use a Dev Tunnel hosting-capable build to revoke this profile's exposure before changing or deleting its binding.");
+            self.configuration_status =
+                on_invalid(crate::configuration_startup::ConfigurationLoadFailure::Invalid);
+            return false;
+        }
         let status = save(&self.configuration_reloader, &replacement);
         let was_saved = status.was_saved();
         if was_saved {
@@ -5927,6 +5966,7 @@ impl FesTermApp {
         {
             self.poll_native_tunnel(context);
             self.poll_tunnel_browser(context);
+            self.poll_local_hosts(context);
             self.drive_tunnel_reconnects(context);
         }
         if context.input(|i| i.viewport().close_requested()) {
@@ -6278,7 +6318,10 @@ impl FesTermApp {
                             extend_dev_tunnel_lifetime: self.state.extend_dev_tunnel_lifetime(),
                             show_running_dev_tunnels: self.state.show_running_dev_tunnels(),
                             dev_tunnel_extension_days: self.state.dev_tunnel_extension_days(),
+                            #[cfg(feature = "experimental-dev-tunnels")]
                             dev_tunnel_accounts: self.dev_tunnel_account_rows(),
+                            #[cfg(not(feature = "experimental-dev-tunnels"))]
+                            dev_tunnel_accounts: Vec::new(),
                             customize_local_shell: self.state.customize_local_shell(),
                             restore_workspace: self.state.restore_workspace(),
                             terminal_font: self.state.terminal_font(),
@@ -6774,6 +6817,44 @@ impl FesTermApp {
                 ),
                 AppCommand::SaveProfile { profile } => {
                     self.save_profile(profile);
+                }
+                AppCommand::SaveLocalProfile {
+                    tab_id,
+                    request,
+                    original_id,
+                    profile,
+                    expose,
+                    explicit_enable,
+                } => {
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    self.save_local_hosted_profile(
+                        tab_id,
+                        request,
+                        profile_hosting::LocalProfileEdit {
+                            original_id,
+                            profile,
+                            expose,
+                            explicit_enable,
+                        },
+                        ui.ctx(),
+                    );
+                    #[cfg(not(feature = "experimental-dev-tunnels"))]
+                    {
+                        let _ = (original_id, profile, expose, explicit_enable);
+                        screens::report_local_profile_save_outcome(ui.ctx(), tab_id, request,
+                            Err("Use a Dev Tunnel hosting-capable build to change this profile's exposure.".into()));
+                    }
+                }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::LocalTunnelHost { profile_id, action } => {
+                    self.local_host_action(&profile_id, action);
+                }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::LocalTunnelCleanup {
+                    installation,
+                    action,
+                } => {
+                    self.local_host_cleanup_action(&installation, action);
                 }
                 AppCommand::SaveDevTunnelProfile {
                     tab_id,
@@ -7452,6 +7533,8 @@ impl FesTermApp {
             tunnel_browser: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             running_tunnels: Default::default(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            local_hosting: Default::default(),
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,

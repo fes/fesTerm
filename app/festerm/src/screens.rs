@@ -44,8 +44,11 @@ mod profiles;
 use destination::{DestinationFields, DestinationPane, FieldOptions, FieldStyle, DEFAULT_SSH_PORT};
 use path_autocomplete::{local_executable_field, local_working_directory_field};
 pub(crate) use profiles::report_dev_tunnel_save_outcome;
+pub(crate) use profiles::report_local_profile_save_outcome;
 pub(crate) use profiles::show_profiles;
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use profiles::{set_local_host_views, LocalHostView};
 mod settings;
 use settings::toggle_switch;
 pub(crate) use settings::{show_settings, SettingsViewModel};
@@ -2235,9 +2238,11 @@ fn show_dev_tunnel_form(
             .map(|account| account.identifier().to_owned());
     }
     let focus_tunnel = std::mem::take(&mut form.focus_tunnel);
+    #[cfg(feature = "experimental-dev-tunnels")]
     if let Some(account) = crate::app::tunnel_browser::take_signed_in_account(ui.ctx()) {
         form.account = Some(account);
     }
+    #[cfg(feature = "experimental-dev-tunnels")]
     if let Some(picked) = crate::app::tunnel_browser::take_picked_tunnel(ui.ctx()) {
         picked.seed_profile_name(&mut form.name);
         form.tunnel = picked.locator;

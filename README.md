@@ -31,6 +31,12 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 ## Status
 
+An [Android port](app/festerm-android/README.md) now hosts the existing iOS
+mobile application, with native input, Keystore credentials, document imports,
+device authentication and on-device speech adapters. Development APKs build
+with the Android SDK/NDK; physical-device and live-service qualification remain
+separate from shared tests and emulator evidence (ADR 0073).
+
 The iOS port has started with an isolated [rendering/lifecycle
 spike](app/festerm-mobile/README.md), reusing the terminal core and renderer.
 The first input surface uses the same terminal-above-persistent-keyboard

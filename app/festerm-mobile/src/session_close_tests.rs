@@ -65,7 +65,8 @@ fn long_pressing_a_session_chip_asks_before_closing_it() {
         harness.step();
     }
     harness.run();
-    assert_eq!(app.borrow().confirm_close, Some(background));
+    assert_eq!(app.borrow().tab_menu, Some(background));
+    assert_eq!(app.borrow().confirm_close, None);
     assert_eq!(
         app.borrow().active_tab,
         active,
@@ -74,7 +75,7 @@ fn long_pressing_a_session_chip_asks_before_closing_it() {
 
     harness.get_by_label("Cancel").click();
     harness.run();
-    assert_eq!(app.borrow().confirm_close, None);
+    assert_eq!(app.borrow().tab_menu, None);
     assert_eq!(app.borrow().tabs.len(), 2);
 
     app.borrow_mut().confirm_close = Some(background);
@@ -115,6 +116,9 @@ fn swiping_a_session_row_left_reveals_close() {
     harness.event(egui::Event::PointerMoved(close.center()));
     harness.event(pointer(true, close.center()));
     harness.event(pointer(false, close.center()));
+    harness.run();
+    assert_eq!(app.borrow().confirm_close, Some(background));
+    harness.get_by_label("Close session").click();
     harness.run();
     assert!(app.borrow().tabs.iter().all(|tab| tab.id != background));
 }

@@ -1187,7 +1187,7 @@ impl State {
 
         let allow_ime = ime.is_some();
         let is_toggling_ime = self.allow_ime != allow_ime;
-        if is_toggling_ime {
+        if is_toggling_ime && !cfg!(feature = "external-ime") {
             self.allow_ime = allow_ime;
             #[cfg(target_os = "windows")]
             if !self.allow_ime {
@@ -1203,7 +1203,7 @@ impl State {
             window.set_ime_allowed(allow_ime);
         }
 
-        if let Some(ime) = ime {
+        if let Some(ime) = ime.filter(|_| !cfg!(feature = "external-ime")) {
             if !is_toggling_ime && ime.should_interrupt_composition {
                 // TODO(umajho): use a more proper way to interrupt composition
                 // if `winit` provides one in the future.
@@ -1932,6 +1932,8 @@ fn process_viewport_command(
             let winit_icon = icon.and_then(|icon| to_winit_icon(&icon));
             window.set_window_icon(winit_icon);
         }
+        ViewportCommand::IMERect(_) | ViewportCommand::IMEAllowed(_) | ViewportCommand::IMEPurpose(_)
+            if cfg!(feature = "external-ime") => {}
         ViewportCommand::IMERect(rect) => {
             window.set_ime_cursor_area(
                 PhysicalPosition::new(pixels_per_point * rect.min.x, pixels_per_point * rect.min.y),

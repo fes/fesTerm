@@ -29,7 +29,7 @@ hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 
 # iOS exposes no readable root store; verify relay TLS with the system trust
 # evaluator instead.
-[target.'cfg(target_os = "ios")'.dependencies]
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
 rustls-platform-verifier = "0.7"
 
 [target.'cfg(windows)'.dependencies]

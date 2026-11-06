@@ -147,6 +147,26 @@ fn main() -> eframe::Result<()> {
         }
         return Ok(());
     }
+    if args
+        .first()
+        .is_some_and(|argument| argument == "--mcp-keygen")
+    {
+        if args.len() != 1 {
+            eprintln!("fesTerm --mcp-keygen accepts no additional arguments");
+            std::process::exit(2);
+        }
+        match festerm_automation_mcp::identity::ClientIdentity::generate_seed_hex() {
+            Ok(mut seed) => {
+                println!("{seed}");
+                zeroize::Zeroize::zeroize(&mut seed);
+            }
+            Err(_) => {
+                eprintln!("fesTerm could not generate an MCP client identity key.");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
     if args.first().is_some_and(|argument| argument == "--mcp") {
         if args.len() != 1 {
             eprintln!("fesTerm --mcp accepts no additional arguments");

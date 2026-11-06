@@ -15,6 +15,17 @@ native-document-smoke = []
 raw-window-handle = "0.6"
 zeroize = "1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+festerm-android-platform = { path = "../festerm-android-platform" }
+sha2 = "0.11"
+
+[dev-dependencies]
+sha2 = "0.11"
+tempfile = "3"
+
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSThread", "NSTimer", "NSRunLoop", "NSArray", "NSNotification", "NSOperation", "NSString", "NSURL", "NSDictionary", "NSObject", "NSObjCRuntime", "NSRange", "NSData", "NSError", "NSFileCoordinator", "NSFilePresenter", "NSUndoManager", "block2"] }

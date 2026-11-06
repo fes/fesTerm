@@ -312,6 +312,7 @@ pub(crate) struct NativeWindowCommand {
 pub(crate) struct ChannelRow {
     pub channel: u64,
     pub verification_code: String,
+    pub identity_fingerprint: Option<String>,
     pub approved: bool,
     pub approved_targets: Vec<TargetRef>,
     closed: Arc<AtomicBool>,
@@ -538,6 +539,7 @@ impl SettingsSnapshot {
                 .all(|(left, right)| {
                     left.channel == right.channel
                         && left.verification_code == right.verification_code
+                        && left.identity_fingerprint == right.identity_fingerprint
                         && left.approved == right.approved
                         && left.approved_targets == right.approved_targets
                 })
@@ -658,6 +660,7 @@ impl SettingsSnapshot {
             channels: vec![ChannelRow {
                 channel,
                 verification_code: "0123456789abcdef".into(),
+                identity_fingerprint: None,
                 approved: false,
                 approved_targets: Vec::new(),
                 closed: Arc::new(AtomicBool::new(false)),
@@ -700,6 +703,7 @@ impl SettingsSnapshot {
                 channels: vec![ChannelRow {
                     channel: 7,
                     verification_code: "0123456789abcdef".into(),
+                    identity_fingerprint: None,
                     approved: false,
                     approved_targets: Vec::new(),
                     closed: Arc::new(AtomicBool::new(false)),
@@ -787,6 +791,7 @@ struct Peer {
     principal: ConnectionId,
     machine: Machine,
     code: VerificationCode,
+    identity: Option<festerm_automation_mcp::identity::VerifiedClientIdentity>,
     grant: Option<Grant>,
     waits: Vec<Wait>,
     pending_completion: Option<PendingCompletion>,
@@ -2245,7 +2250,10 @@ impl Coordinator {
                 break;
             };
             match event {
-                ipc::Event::Connected(connection) => {
+                ipc::Event::Connected {
+                    connection,
+                    identity,
+                } => {
                     if connection.is_closed() || self.stop.load(Ordering::Acquire) {
                         connection.close();
                         continue;
@@ -2269,6 +2277,7 @@ impl Coordinator {
                                     principal,
                                     machine,
                                     code,
+                                    identity,
                                     grant: None,
                                     waits: Vec::new(),
                                     pending_completion: None,
@@ -3173,6 +3182,10 @@ impl Coordinator {
             .map(|(key, peer)| ChannelRow {
                 channel: *key,
                 verification_code: peer.code.as_str().to_owned(),
+                identity_fingerprint: peer
+                    .identity
+                    .as_ref()
+                    .map(festerm_automation_mcp::identity::VerifiedClientIdentity::fingerprint),
                 approved: peer.grant.is_some(),
                 approved_targets: peer
                     .grant

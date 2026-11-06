@@ -11,6 +11,12 @@ The roadmap is foundation-first. Early milestones may produce little visible UI 
 
 ## Milestone Issue Review
 
+The owner also requested Android functional/visual parity with the implemented
+iOS app. ADR 0073 adds a thin Android host around that shared application,
+native services and development APK packaging. This is active port work, not
+acceptance of mobile product support or a change to desktop release gates.
+Android-specific qualification is recorded in `docs/manual-validation.md`.
+
 The owner requested the iOS port on 2026-09-26. Its active scope is the
 isolated Phase 1 rendering/lifecycle experiment in ADR 0042, an architectural
 enabler. Native `MOB-01`–`04` evidence and an explicit go/no-go decision are
@@ -578,7 +584,8 @@ The following tracks remain intentionally outside the initial critical path. Arc
   sessions and mandatory cloud sync, and requires store-mediated
   distribution instead of ADR 0021's desktop updater. The iOS Phase 1 host is
   now implemented for review under ADR 0042, with native feasibility pending.
-  Android and later iOS phases remain deferred. Phase 1 is a go/no-go gate before
+  The owner-requested Android shared host is implemented under ADR 0073;
+  native product acceptance and later phases remain gated. Phase 1 is a go/no-go gate before
   further phases, and each concrete crate/dependency change still requires
   its own ADR under the 0.1 Architecture-Stability Period.
 

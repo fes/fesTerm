@@ -46,6 +46,35 @@ and parked tunnels survive inactivity; an attachment-owned asynchronous host
 probe gates input on foreground return, with bounded safe recovery on failure.
 No native/device evidence is claimed; MOB-03/MOB-06 retain those checks.
 
+## Amendment: recoverable foreground authentication
+
+The P0 iOS UX handoff isolates unlock recovery from keyboard/document/navigation
+work. The lock-screen input barrier is registered behind its buttons, not over
+their hit targets. Both retry and system passcode actions remain available
+while a prior native completion is missing. Request ownership, generation
+checks and foreground/dialog policy live in `AppLock`, not UI-local flags
+([ADR 0058](0058-ios-app-lock-and-mobile-document-viewer.md#app-lock-festerm-ios-lock)).
+The native cover countdown advances once per egui frame and wakes the next
+frame without a touch. Authentication errors and settings-write failure are
+actionable without revealing secret content.
+Owner-authentication resign-active follows the existing system-permission
+exemption in `NativeLifecycle`: it does not shut down active or parked plain
+SSH merely to show the system prompt. The tracked dialog interval includes a
+reply arriving before winit's suspension callback. Actual background still
+applies the deferred suspension and retains the existing plain-SSH shutdown
+policy; indefinite background execution is not promised.
+
+Validation impact: `MOB-09`, `MOB-06`, ADR-0058/ADR-0061; actual-widget
+`unlock_buttons_receive_pointer_input_after_cancelled_automatic_authentication`
+and `shield_warmup_counts_frames_not_repeated_egui_passes`, portable request/
+lifecycle/cancellation regressions,
+`lifecycle_resume_checks_transport_while_lock_keeps_content_hidden` and
+`app_lock_dialog_preserves_active_and_parked_ssh_but_real_background_still_stops`.
+The lock owns no transport and does not bypass the independent host-health/input gate.
+Physical iPhone automatic Face ID, explicit passcode, system-prompt ordering,
+rapid switches, native compositor/snapshots and active/parked tunnel identity
+remain manual checks; compile success and headless captures do not pass them.
+
 ## Amendment: multiple GitHub accounts
 
 The iOS Dev Tunnel editor lists stored GitHub accounts and offers **Add GitHub

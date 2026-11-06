@@ -649,6 +649,8 @@ if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
     Write-OptionalResult "`nsuite=interactive-surface-profile status=skipped reason=explicit-opt-in"
 }
 
+Write-OptionalResult "`nsuite=android-native status=skipped reason=use-posix-runner-with-selected-emulator"
+
 if ($IsMacOS) {
     Invoke-NativeCommand { python3 "$PSScriptRoot/smoke-ios-simulator.py" --run --build }
     if ($LASTEXITCODE -eq 0) {

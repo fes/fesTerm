@@ -26,7 +26,7 @@ fn git_fact(arguments: &[&str]) -> String {
         .to_owned()
 }
 
-const STATES: [&str; 32] = [
+const STATES: [&str; 36] = [
     "profiles",
     "profiles-empty",
     "terminal",
@@ -53,6 +53,10 @@ const STATES: [&str; 32] = [
     "files-transfers",
     "files-conflict",
     "unlock",
+    "unlock-waiting",
+    "unlock-failure",
+    "unlock-unavailable",
+    "unlock-passcode",
     "settings-lock",
     "signin",
     "taken-over",
@@ -282,19 +286,30 @@ fn configure(app: &mut MobileApp, state: &str) {
             app.surface = Surface::Tabs;
             app.shell.tab = shell::Tab::Settings;
         }
-        "unlock" | "settings-lock" => {
+        "unlock" | "unlock-waiting" | "unlock-failure" | "unlock-unavailable"
+        | "unlock-passcode" | "settings-lock" => {
             use festerm_ios_lock::{
-                AppLock, Availability, BiometryKind, FakeLocker, LockSettings, ManualClock,
+                AppLock, AuthFailure, Availability, BiometryKind, FakeLocker, LockSettings,
+                ManualClock,
             };
             let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
-            let lock = AppLock::new(None, locker, Arc::new(ManualClock::new()), || {});
+            let lock = AppLock::new(None, locker.clone(), Arc::new(ManualClock::new()), || {});
             lock.apply_settings(LockSettings {
                 enabled: true,
                 ..LockSettings::default()
             })
             .expect("fake locker can authenticate");
-            if state == "unlock" {
+            if state.starts_with("unlock") {
                 lock.lock_now();
+                match state {
+                    "unlock-waiting" | "unlock-passcode" => locker.set_deferred(true),
+                    "unlock-failure" => locker.push_outcome(Err(AuthFailure::NotRecognized)),
+                    "unlock-unavailable" => locker.push_outcome(Err(AuthFailure::Unavailable)),
+                    _ => {}
+                }
+                if state == "unlock-passcode" {
+                    lock.begin_passcode_unlock();
+                }
             } else {
                 app.surface = Surface::Tabs;
                 app.shell.tab = shell::Tab::Settings;
@@ -451,6 +466,36 @@ fn configure(app: &mut MobileApp, state: &str) {
 #[test]
 #[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
 fn capture_mobile_ui_gallery() {
+    capture_gallery(
+        &STATES,
+        &[
+            ("phone", 390.0, 844.0, 0.35),
+            ("tablet", 834.0, 1194.0, 0.30),
+        ],
+    );
+}
+
+#[test]
+#[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
+fn capture_unlock_ui_gallery() {
+    capture_gallery(
+        &[
+            "unlock",
+            "unlock-waiting",
+            "unlock-failure",
+            "unlock-unavailable",
+            "unlock-passcode",
+        ],
+        &[
+            ("phone", 390.0, 844.0, 0.0),
+            ("phone-narrow", 320.0, 568.0, 0.0),
+            ("phone-short", 844.0, 390.0, 0.0),
+            ("tablet", 834.0, 1194.0, 0.0),
+        ],
+    );
+}
+
+fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
     let output = PathBuf::from(
         std::env::var_os("FESTERM_MOBILE_UI_OUT")
             .expect("use scripts/capture-mobile-ui.py for fresh attributed output"),
@@ -460,37 +505,35 @@ fn capture_mobile_ui_gallery() {
     let source = git_fact(&["rev-parse", "HEAD"]);
     let dirty = !git_fact(&["status", "--porcelain", "--untracked-files=normal"]).is_empty();
     let mut images = Vec::new();
-    for (family, width, height, occlusion) in [
-        ("phone", 390.0, 844.0, 0.35),
-        ("tablet", 834.0, 1194.0, 0.30),
-    ] {
-        for state in STATES {
-            let state_occlusion = if matches!(
-                state,
-                "disconnected"
-                    | "profiles"
-                    | "profiles-empty"
-                    | "settings"
-                    | "sessions-sheet"
-                    | "editor-new"
-                    | "editor-devtunnel"
-                    | "host-trust"
-                    | "changed-host"
-                    | "editor-edit"
-                    | "auth-key"
-                    | "files"
-                    | "files-transfers"
-                    | "files-conflict"
-                    | "unlock"
-                    | "settings-lock"
-                    | "host-setup"
-                    | "host-setup-linux"
-                    | "host-script"
-                    | "keyboard-hold"
-                    | "keyboard-shell"
-                    | "keyboard-symbols"
-                    | "keyboard-preview"
-            ) {
+    for &(family, width, height, occlusion) in viewports {
+        for &state in states {
+            let state_occlusion = if state.starts_with("unlock")
+                || matches!(
+                    state,
+                    "disconnected"
+                        | "profiles"
+                        | "profiles-empty"
+                        | "settings"
+                        | "sessions-sheet"
+                        | "editor-new"
+                        | "editor-devtunnel"
+                        | "host-trust"
+                        | "changed-host"
+                        | "editor-edit"
+                        | "auth-key"
+                        | "files"
+                        | "files-transfers"
+                        | "files-conflict"
+                        | "unlock"
+                        | "settings-lock"
+                        | "host-setup"
+                        | "host-setup-linux"
+                        | "host-script"
+                        | "keyboard-hold"
+                        | "keyboard-shell"
+                        | "keyboard-symbols"
+                        | "keyboard-preview"
+                ) {
                 0.0
             } else {
                 occlusion

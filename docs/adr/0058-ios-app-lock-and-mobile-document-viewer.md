@@ -27,14 +27,22 @@ crates with no egui dependency.
    `Unlocked` and is evaluated at `DidBecomeActive`. Deactivations while
    `Unlocking`, or while an app-started authentication dialog (including
    "turn off") is open, are ignored: **authentication dialogs do not restart
-   the timer.** Time comes from an injected monotonic clock;
+   the timer.** This exemption covers dialog inactivity, not actual background
+   or device-lock notifications, which cancel outstanding authentication.
+   Time comes from an injected monotonic clock;
    `SystemClock` uses `CLOCK_MONOTONIC`, which keeps counting through device
    sleep (`std::time::Instant` does not on Darwin). A clock that moved backwards
    locks (fail closed). Wall-clock time is never used.
 3. **Authentication.** `Locker` trait; `LaContextLocker` uses
    `LAContext` with `deviceOwnerAuthentication`, so a lockout or missing
-   enrollment falls back to the device passcode. Both "Use Face ID" and "Use
-   device passcode" run this policy; iOS offers no API to start at the passcode.
+   enrollment falls back to the device passcode. The explicit passcode action
+   evaluates an ephemeral `SecAccessControl` with `DevicePasscode` and
+   `kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly` through
+   `LAContext.evaluateAccessControl(..., UseItem, ...)`. It creates no keychain
+   item and no application-owned passcode field; only iOS sees the passcode.
+   This supersedes the original claim that both buttons must start with
+   biometric-first owner authentication. Real passcode presentation still
+   requires physical-device qualification.
    `NSFaceIDUsageDescription` is added to the Info.plist produced by
    `scripts/build-ios-spike.py` (and so `build-ios-device.py`).
 4. **Gate and shield.** `AppLock` is a thread-safe handle. Lifecycle events
@@ -42,9 +50,11 @@ crates with no egui dependency.
    `LockBridge` (iOS) observes UIKit notifications and, in
    `willResignActive`, synchronously installs an opaque native view over the
    window, before iOS snapshots the app. After resume or launch it stays until
-   two frames have been presented under the new state, so a stale terminal
-   frame is never exposed. Locked content is always covered, even if "hide
-   preview" is off.
+   two distinct egui frames have advanced under the new state, so a stale terminal
+   frame is never exposed. Additional layout passes cannot drain this countdown;
+   the countdown requests its remaining repaint. Native compositor/snapshot
+   behavior remains a device acceptance gate. Locked content is always covered,
+   even if "hide preview" is off.
 5. **Settings.** Versioned JSON at an injected path (atomic, 0600, 4 KiB
    cap). A missing file means lock off; an unreadable, oversized or newer file
    **fails closed** (enabled, always lock). Enabling requires that the device
@@ -54,7 +64,17 @@ crates with no egui dependency.
    SSH/Dev Tunnel sessions. `ui_model::NOT_SESSION_RECOVERY_NOTE` carries the
    required copy.
 7. Like `festerm-ios-window`, the crate is an FFI boundary and does not forbid
-   `unsafe` (monotonic clock, UIKit and LocalAuthentication only).
+   `unsafe` (monotonic clock, UIKit, LocalAuthentication and Security only).
+8. **Request ownership and recovery.** Every unlock/disable callback is bound
+   to an exact request ID. Background, device lock, Lock now, replacement and
+   accepted settings changes retire the old request; late success cannot
+   authorize another request. A request-owned handle invalidates its fresh
+   native context outside the policy mutex. The reply holds only a weak
+   application owner, never the context. Explicit retry/passcode remain usable
+   during a missing completion. Automatic authentication starts once per
+   appropriate foreground lock interval, not repeatedly after a cancelled
+   system dialog. Authenticated settings-write failure remains visible and
+   leaves protection enabled.
 
 ### Document viewer (`festerm-mobile-docs`)
 
@@ -90,8 +110,9 @@ crates with no egui dependency.
 
 The integrator wires `AppLock`/`LockBridge` and draws the screens
 (`ui_model` provides copy). Real Face ID matching needs an enrolled
-Simulator/device; see "Simulator verification" below. The "Use device
-passcode" button still shows Face ID first on enrolled devices.
+Simulator/device; see "Simulator verification" below. The explicit passcode
+path compiles for both Apple targets but its system prompt and success are
+not established by portable fakes or compilation.
 
 ### Simulator verification
 
@@ -113,10 +134,13 @@ device/Simulator and are tracked under `MOB-*`.
   engages before drawing on launch/resume; dialogs never restart the timer;
   untrusted lock settings fail closed; viewer never fetches network resources
   and never reads outside its source root/caps.
-- **GUI/action edges affected:** None; no GUI wiring in this ADR (`MOB-*`
-  native evidence is the pending integration).
+- **GUI/action edges affected:** `MOB-09` (app-lock recovery), `MOB-06`
+  (sensitive content/input gate); the viewer's later integration is separate.
 - **Automated tests required:** `festerm-ios-lock` `tests/lock.rs`,
-  `festerm-mobile-docs` `tests/viewer.rs`, `test_ios_ssh_dependencies.py`.
+  `festerm-mobile-docs` `tests/viewer.rs`, `test_ios_ssh_dependencies.py`;
+  mobile pointer/retry, distinct-frame shield and retained-tunnel regressions.
 - **Native/manual evidence required:** enrolled-Face-ID match, resume lock and
-  app-switcher snapshot on Simulator/device.
+  app-switcher snapshot on Simulator/device; physical iPhone passcode fallback,
+  failure/cancellation, repeated rapid switches and phone lock/unlock without
+  content exposure or transport replacement attributable only to app lock.
 - **Coverage superseded:** None.

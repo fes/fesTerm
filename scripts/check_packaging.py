@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import plistlib
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -28,7 +29,15 @@ EXPECTED_MACOS_ICONS = [
 EXPECTED_BINARIES = [
     {"path": "festerm", "main": True},
     {"path": "festerm-sessiond", "main": False},
+    {"path": "festerm-tunnel-setup", "main": False},
+    {"path": "festerm-tunnel-bridge", "main": False},
 ]
+TUNNEL_HELPERS = ("festerm-tunnel-setup", "festerm-tunnel-bridge")
+WINDOWS_TUNNEL_HELPERS = (*TUNNEL_HELPERS, "festerm-tunnel-worker")
+TUNNEL_BUILD_COMMAND = (
+    "cargo build --locked --release -p festerm-tunnel-bridge "
+    "--no-default-features --features relay --bins"
+)
 EXPECTED_LINUX_BINARIES = [
     *EXPECTED_BINARIES,
     {"path": "festerm-automation-js-worker", "main": False},
@@ -158,6 +167,136 @@ def verify_nsis_template_against_upstream_if_available(
         )
 
 
+def workflow_step(workflow: str, name: str) -> str:
+    marker = f"      - name: {name}\n"
+    if marker not in workflow:
+        return ""
+    return re.split(r"\n      - ", workflow.split(marker, 1)[1], maxsplit=1)[0]
+
+
+def verify_desktop_helper_workflows(
+    package_smoke: str, release: str, errors: list[str]
+) -> None:
+    for workflow, label, names in (
+        (
+            package_smoke,
+            "package smoke",
+            (
+                "Build unsigned macOS package",
+                "Build unsigned Windows package with verified ConPTY sidecar",
+                "Build unsigned Linux AppImage",
+                "Rebuild package-managed Linux binary and Debian package",
+            ),
+        ),
+        (
+            release,
+            "release",
+            (
+                "Build, sign, and notarize",
+                "Build and stage verified ARM64 ConPTY runtime",
+                "Build and stage verified x86_64 ConPTY runtime",
+                "Build AppImage updater artifact",
+                "Build package-managed Debian artifact",
+            ),
+        ),
+    ):
+        for name in names:
+            if TUNNEL_BUILD_COMMAND not in workflow_step(workflow, name):
+                errors.append(f"{label} step {name!r} must build relay-enabled tunnel helpers")
+
+    signing = workflow_step(release, "Sign application binary")
+    architecture = workflow_step(
+        release, "Verify package input architecture and ConPTY signatures"
+    )
+    publisher = workflow_step(release, "Stage immutable Windows session daemon")
+    arm_input = release.split("\n  windows:\n", 1)[0].split(
+        "\n  windows-arm-build:\n", 1
+    )[-1]
+    for helper in WINDOWS_TUNNEL_HELPERS:
+        if f"\\target\\release\\{helper}.exe" not in signing:
+            errors.append(f"Windows release must Authenticode-sign {helper}")
+        if f"'target/release/{helper}.exe'" not in architecture:
+            errors.append(f"Windows release must check the architecture of {helper}")
+        if f"            target/release/{helper}.exe\n" not in arm_input:
+            errors.append(f"Windows ARM64 package input must include {helper}")
+        if f"'{helper}'" not in publisher:
+            errors.append(f"Windows release must verify the publisher of {helper}")
+    if (
+        "$signature.Status -ne 'Valid'" not in publisher
+        or "$signature.SignerCertificate.Subject -ne "
+        "$applicationSignature.SignerCertificate.Subject" not in publisher
+    ):
+        errors.append("Windows release must require valid helpers with the application publisher")
+
+    notarize = workflow_step(release, "Build, sign, and notarize")
+    for helper in TUNNEL_HELPERS:
+        if helper not in notarize:
+            errors.append(f"macOS release must verify the bundled signature of {helper}")
+    for snippet in (
+        "codesign --verify --strict -R='anchor apple generic' --verbose=2 \"$binary\"",
+        '"target/release/fesTerm.app/Contents/MacOS/$helper"',
+        'test "$(printf \'%s\\n\' "$helper_signature" | sed -n \'s/^TeamIdentifier=//p\')" = "$app_team"',
+        "grep -q 'flags=.*runtime'",
+        "xcrun stapler validate target/release/fesTerm.app",
+    ):
+        if snippet not in notarize:
+            errors.append("macOS release must verify signed, same-team, hardened helpers in the notarized app")
+            break
+    cli_smoke = workflow_step(
+        package_smoke, "Smoke reviewed macOS CLI signature prerequisites"
+    )
+    for snippet in (
+        "if: matrix.platform == 'macos'",
+        "timeout-minutes: 6",
+        "crates/festerm-tunnel-bridge/devtunnel-cli-pins.json",
+        '["aarch64", "x86_64"]',
+        'hashlib.sha256(archive.read_bytes()).hexdigest() != pin["archive_sha256"]',
+        'hashlib.sha256(executable_bytes).hexdigest() != pin["executable_sha256"]',
+        "len(entries) != 1",
+        'entry.filename != "devtunnel"',
+        "stat.S_ISLNK(entry.external_attr >> 16)",
+        'tempfile.TemporaryDirectory(prefix=".macos-cli-smoke-", dir=Path.cwd())',
+        '"--connect-timeout", "15", "--max-time", "90"',
+        '["/usr/bin/codesign", "-dv", str(executable)]',
+        '"/usr/bin/codesign", "--verify", "--strict",\n'
+        '                          "-R=anchor apple generic", str(executable)',
+    ):
+        if snippet not in cli_smoke:
+            errors.append(
+                "macOS package smoke must verify both pinned CLI archives and "
+                f"their runtime signature prerequisite: missing {snippet}"
+            )
+
+    macos_smoke = workflow_step(package_smoke, "Build unsigned macOS package")
+    appimage_smoke = workflow_step(package_smoke, "Build unsigned Linux AppImage")
+    deb_smoke = workflow_step(
+        package_smoke, "Rebuild package-managed Linux binary and Debian package"
+    )
+    windows_smoke = workflow_step(
+        package_smoke, "Build unsigned Windows package with verified ConPTY sidecar"
+    )
+    for helper in TUNNEL_HELPERS:
+        for script, snippet in (
+            (macos_smoke, f"test -x target/release/fesTerm.app/Contents/MacOS/{helper}"),
+            (appimage_smoke, f"test -x squashfs-root/usr/bin/{helper}"),
+            (deb_smoke, f"grep -q 'usr/bin/{helper}$'"),
+            (deb_smoke, f"test -x /usr/bin/{helper}"),
+            (deb_smoke, f"test ! -e /usr/bin/{helper}"),
+        ):
+            if snippet not in script:
+                errors.append(f"package smoke must check tunnel helper payload: {snippet}")
+    for helper in WINDOWS_TUNNEL_HELPERS:
+        if f"'{helper}.exe'" not in windows_smoke:
+            errors.append(f"Windows package smoke must check installed {helper}")
+    for snippet in (
+        "foreach ($helper in $installedTunnelHelpers)",
+        "Test-Path $helper -PathType Leaf",
+        "NSIS uninstall left tunnel helper installed",
+    ):
+        if snippet not in windows_smoke:
+            errors.append("Windows package smoke must check tunnel helper install/uninstall")
+
+
 def verify() -> None:
     version = workspace_version()
     errors: list[str] = []
@@ -193,6 +332,10 @@ def verify() -> None:
             errors.append(
                 f"{path.relative_to(ROOT)} has unexpected packaged binaries"
             )
+        if platform != "windows" and config.get("resources"):
+            errors.append(f"{path.relative_to(ROOT)} has unexpected packaged resources")
+        if config.get("external-binaries"):
+            errors.append(f"{path.relative_to(ROOT)} has unexpected external binaries")
 
     macos = load_toml(CONFIGS["macos"])
     if macos.get("icons") != EXPECTED_MACOS_ICONS:
@@ -308,6 +451,19 @@ def verify() -> None:
     }
     if expected_runtime not in resources:
         errors.append("Windows packaging does not own the required ConPTY sidecar")
+    expected_resources = [
+        expected_sessiond,
+        *(
+            {"src": f"../target/release/{helper}.exe", "target": f"{helper}.exe"}
+            for helper in WINDOWS_TUNNEL_HELPERS
+        ),
+        expected_runtime,
+    ]
+    if resources != expected_resources:
+        errors.append(
+            "Windows packaging must contain exactly the versioned daemon, sibling "
+            "tunnel helpers, and ConPTY resources (not the downloaded CLI)"
+        )
 
     linux = load_toml(CONFIGS["linux"])
     if linux.get("file-associations") != [EXPECTED_MARKDOWN_ASSOCIATION]:
@@ -342,6 +498,7 @@ def verify() -> None:
         errors.append("Windows package smoke does not stage the immutable session daemon")
     if staging_command not in release_workflow:
         errors.append("Windows release packaging does not stage the immutable session daemon")
+    verify_desktop_helper_workflows(package_smoke, release_workflow, errors)
 
     if errors:
         raise PackagingError("\n".join(errors))

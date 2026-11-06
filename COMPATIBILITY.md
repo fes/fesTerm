@@ -1,5 +1,12 @@
 # fesTerm Compatibility Plan
 
+The experimental Android port shares the iOS mobile UI/protocol stack and
+adds native input, secure storage, device lock, document import and on-device
+speech adapters (ADR 0073). Development APK/emulator evidence is not
+physical-device or live-service certification. Provider documents are imported
+as private copies rather than edited in place; see the
+[Android qualification matrix](docs/manual-validation.md#android-shared-mobile-port-adr-0073). Plan
+
 **Status:** Draft
 
 fesTerm measures compatibility in terms of observable application behavior. Recognizing an escape sequence is not sufficient if screen state, input reporting, cursor behavior, shaping, resize, or restoration semantics are wrong.
@@ -33,7 +40,12 @@ identity/revision-checked offset reads, bounded watch/rescan semantics and
 daemon generation correlation. Separate exact-caller/tab/root MCP consent is
 implemented in a dependent broker slice; native DT/AUTO qualification is still
 open, and unsupported SSH combinations remain unavailable.
-Inventory/create/takeover/terminate remain unavailable. Native GitHub device
+Installed desktop Local profiles can explicitly request native-daemon tunnel
+hosting on Save (ADR 0072), with host-local consent, non-attaching one-shot
+launch, verified helper staging and shell-preserving revocation/cleanup.
+Signed native provisioning, servicing and physical-client acceptance remain
+open under DT-08; no file/observation grant is implied. This is separate from
+remote session inventory/create/terminate, which remain unavailable. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
 coverage, not live qualification: the project-owned public client is registered
 and included in default builds; actual service acceptance remains pending

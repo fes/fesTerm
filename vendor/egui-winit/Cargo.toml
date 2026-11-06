@@ -55,6 +55,7 @@ ignored = ["wayland-cursor"]
 accesskit = ["dep:accesskit_winit"]
 android-game-activity = ["winit/android-game-activity"]
 android-native-activity = ["winit/android-native-activity"]
+external-ime = []
 bytemuck = [
     "egui/bytemuck",
     "dep:bytemuck",

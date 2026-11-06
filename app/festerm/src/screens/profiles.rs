@@ -34,6 +34,76 @@ struct ProfilesScreenState {
     profile_search: String,
 }
 
+#[derive(Clone, Default)]
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) struct LocalHostView {
+    pub enabled: bool,
+    pub message: String,
+    pub share: Option<String>,
+    pub busy: bool,
+    pub login_busy: bool,
+    pub sign_in: bool,
+    pub recreate: bool,
+    pub new_shell: bool,
+    pub unreferenced: bool,
+}
+
+#[derive(Clone, Default)]
+#[cfg(not(feature = "experimental-dev-tunnels"))]
+struct LocalHostView {
+    enabled: bool,
+}
+
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) fn set_local_host_views(
+    context: &egui::Context,
+    views: std::collections::BTreeMap<String, LocalHostView>,
+    cleanup: std::collections::BTreeMap<String, LocalHostView>,
+) {
+    context.data_mut(|data| {
+        data.insert_temp(egui::Id::new("local_host_views"), views);
+        data.insert_temp(egui::Id::new("local_host_cleanup"), cleanup);
+    });
+}
+
+fn local_host_view(context: &egui::Context, identifier: &str) -> LocalHostView {
+    context
+        .data(|data| {
+            data.get_temp::<std::collections::BTreeMap<String, LocalHostView>>(egui::Id::new(
+                "local_host_views",
+            ))
+        })
+        .and_then(|views| views.get(identifier).cloned())
+        .unwrap_or_default()
+}
+
+pub(crate) fn report_local_profile_save_outcome(
+    context: &egui::Context,
+    tab_id: TabId,
+    request: egui::Id,
+    outcome: Result<(), String>,
+) {
+    context.data_mut(|data| {
+        let id = profiles_state_id(tab_id);
+        let Some(mut state) = data.get_temp::<ProfilesScreenState>(id) else {
+            return;
+        };
+        let ProfilesScreenMode::EditLocal(draft) = &mut state.mode else {
+            return;
+        };
+        if draft.pending_save != Some(request) {
+            return;
+        }
+        draft.pending_save = None;
+        match outcome {
+            Ok(()) => state.mode = ProfilesScreenMode::List,
+            Err(error) => draft.error = Some(error),
+        }
+        data.insert_temp(id, state);
+    });
+    context.request_repaint();
+}
+
 /// Applies a persistence result only to the editor that submitted that save.
 pub(crate) fn report_dev_tunnel_save_outcome(
     context: &egui::Context,
@@ -256,8 +326,14 @@ struct LocalProfileDraft {
     name: String,
     executable: String,
     arguments: String,
+    original_arguments: Option<(String, Vec<String>)>,
     working_directory: String,
     durable_session: DurableSessionDraft,
+    original_hosting: Option<festerm_config::LocalTunnelHosting>,
+    hosting_initialized: bool,
+    expose: bool,
+    explicit_enable: bool,
+    pending_save: Option<egui::Id>,
     error: Option<String>,
 }
 
@@ -286,12 +362,18 @@ impl LocalProfileDraft {
                 .map(|profile| profile.executable().display().to_string())
                 .unwrap_or_default(),
             arguments: String::new(),
+            original_arguments: None,
             working_directory: String::new(),
             durable_session: DurableSessionDraft {
                 local_default_provider,
                 ..DurableSessionDraft::default()
             },
             error: None,
+            original_hosting: None,
+            hosting_initialized: true,
+            expose: false,
+            explicit_enable: false,
+            pending_save: None,
         }
     }
 
@@ -301,21 +383,30 @@ impl LocalProfileDraft {
             name: local.identifier().to_owned(),
             executable: local.executable().to_owned(),
             arguments: local.arguments().join(" "),
+            original_arguments: Some((local.arguments().join(" "), local.arguments().to_vec())),
             working_directory: local
                 .working_directory()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
             durable_session: DurableSessionDraft::from_persistence(local.persistence()),
             error: None,
+            original_hosting: local.tunnel_hosting().cloned(),
+            hosting_initialized: false,
+            expose: false,
+            explicit_enable: false,
+            pending_save: None,
         }
     }
 
     fn build(&self) -> Result<Profile, String> {
-        let arguments = self
-            .arguments
-            .split_whitespace()
-            .map(str::to_owned)
-            .collect();
+        let arguments = match &self.original_arguments {
+            Some((displayed, arguments)) if displayed == &self.arguments => arguments.clone(),
+            _ => self
+                .arguments
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect(),
+        };
         let working_directory = (!self.working_directory.trim().is_empty())
             .then(|| self.working_directory.trim().to_owned());
         let profile = Profile::local(
@@ -1097,9 +1188,11 @@ pub(crate) fn show_profiles(
                 draft.credential = profile.credential_reference()
                     .map(|reference| Arc::new(reference.duplicate_for_transport()));
             }
+            #[cfg(feature = "experimental-dev-tunnels")]
             if let Some(account) = crate::app::tunnel_browser::take_signed_in_account(ui.ctx()) {
                 draft.account = Some(account);
             }
+            #[cfg(feature = "experimental-dev-tunnels")]
             if let Some(picked) = crate::app::tunnel_browser::take_picked_tunnel(ui.ctx()) {
                 picked.seed_profile_name(&mut draft.name);
                 draft.tunnel = picked.locator;
@@ -1231,6 +1324,33 @@ pub(crate) fn show_profiles(
                 ui.add_space(24.0);
                 ui.heading("Profiles");
                 ui.label("Reusable local, SSH, SFTP, and serial launch definitions.");
+                #[cfg(feature = "experimental-dev-tunnels")]
+                if let Some(cleanup) = ui.ctx().data(|data| {
+                    data.get_temp::<std::collections::BTreeMap<String, LocalHostView>>(
+                        egui::Id::new("local_host_cleanup"))
+                }).filter(|rows| !rows.is_empty()) {
+                    egui::CollapsingHeader::new("Local Dev Tunnel cleanup and unreferenced hosts")
+                        .default_open(true).show(ui, |ui| {
+                            ui.label("These locally owned records survive profile deletion. Cleanup never terminates the persistent shell.");
+                            for (installation, view) in cleanup {
+                                ui.group(|ui| {
+                                    ui.label(format!("{installation}: {}", view.message));
+                                    ui.horizontal_wrapped(|ui| {
+                                        for (label, action, visible) in [
+                                            ("Retry cleanup", crate::tabs::LocalHostAction::Retry, !view.busy && !view.unreferenced),
+                                            ("Sign in in browser", crate::tabs::LocalHostAction::SignIn, view.sign_in && !view.busy),
+                                            ("Cancel sign-in", crate::tabs::LocalHostAction::CancelSignIn, view.login_busy),
+                                            ("Revoke local exposure...", crate::tabs::LocalHostAction::RevokeUnreferenced, view.unreferenced && !view.busy),
+                                        ] {
+                                            if visible && ui.button(label).clicked() {
+                                                command = Some(AppCommand::LocalTunnelCleanup { installation: installation.clone(), action });
+                                            }
+                                        }
+                                    });
+                                });
+                            }
+                        });
+                }
                 ui.add_space(42.0);
                 // The table below sits inside a bounded scroll, which holds
                 // back a lane for its scrollbar. This row is outside that
@@ -1379,6 +1499,8 @@ pub(crate) fn show_profiles(
                                                 let mut draft = LocalProfileDraft::from_profile(local);
                                                 draft.original_id = None;
                                                 draft.name = duplicate_name;
+                                                draft.original_hosting = None;
+                                                draft.hosting_initialized = true;
                                                 ProfilesScreenMode::EditLocal(draft)
                                             }
                                             Profile::Ssh(ssh) => {
@@ -1446,6 +1568,15 @@ pub(crate) fn show_profiles(
             });
         }
         ProfilesScreenMode::EditLocal(draft) => {
+            let hosting = draft
+                .original_id
+                .as_deref()
+                .map(|id| local_host_view(ui.ctx(), id))
+                .unwrap_or_default();
+            if !draft.hosting_initialized {
+                draft.expose = hosting.enabled;
+                draft.hosting_initialized = true;
+            }
             show_bounded_content_scroll(ui, (tab_id, "edit_local_profile_scroll"), |ui| {
                 ui.vertical(|ui| {
                     ui.add_space(24.0);
@@ -1466,6 +1597,7 @@ pub(crate) fn show_profiles(
                         ui.set_width(340.0);
                         ssh_section_heading(ui, "Profile");
                         if profile_text_edit(ui, tab_id, "name", "Name", &mut draft.name).changed()
+                            && draft.original_hosting.is_none()
                         {
                             draft
                                 .durable_session
@@ -1502,17 +1634,74 @@ pub(crate) fn show_profiles(
                             ui,
                             "Available only on saved Local profiles. The built-in Local Shell always starts a fresh plain shell.",
                         );
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        {
+                            let eligible = draft.durable_session.persistence().ok().flatten()
+                                .is_some_and(|persistence| persistence.provider() == PersistenceProviderKind::FestermSessiond);
+                            if eligible || draft.original_hosting.is_some() {
+                                ui.add_space(10.0);
+                                ssh_section_heading(ui, "Dev Tunnel hosting");
+                                if ui.add_enabled(eligible, egui::Checkbox::new(&mut draft.expose, "Expose via Dev Tunnel")).changed() {
+                                    draft.explicit_enable = draft.expose;
+                                }
+                                if !eligible {
+                                    draft.expose = false;
+                                }
+                                ssh_paragraph(ui, "Save can start the configured persistent command and authorize remote terminal access. Remote takeover is enabled and can displace a local tab. Closing fesTerm does not stop exposure; disable and Save to remove the tunnel, not the shell. File and observation access remain off.");
+                                if !hosting.message.is_empty() {
+                                    ssh_paragraph(ui, &hosting.message);
+                                }
+                                if let Some(share) = &hosting.share {
+                                    if ui.button("Copy connection details").clicked() {
+                                        ui.ctx().copy_text(share.clone());
+                                    }
+                                }
+                                if let Some(profile_id) = &draft.original_id {
+                                    ui.horizontal_wrapped(|ui| {
+                                        use crate::tabs::LocalHostAction;
+                                        for (label, action, visible) in [
+                                            ("Sign in in browser", LocalHostAction::SignIn, hosting.sign_in && !hosting.busy),
+                                            ("Cancel sign-in", LocalHostAction::CancelSignIn, hosting.login_busy),
+                                            ("Retry hosting / cleanup", LocalHostAction::Retry, !hosting.busy && draft.original_hosting.is_some()),
+                                            ("Recreate missing tunnel", LocalHostAction::RecreateMissing, hosting.recreate),
+                                            ("Start a new persistent shell and expose it", LocalHostAction::NewShell, hosting.new_shell),
+                                        ] {
+                                            if visible && ui.button(label).clicked() {
+                                                command = Some(AppCommand::LocalTunnelHost {
+                                                    profile_id: profile_id.clone(),
+                                                    action,
+                                                });
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        }
                         if let Some(error) = &draft.error {
                             ui.add_space(6.0);
                             ui.colored_label(theme::STATUS_ERROR, error);
                         }
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
-                            if ui.button("Save").clicked() {
+                            if ui.add_enabled(draft.pending_save.is_none(), egui::Button::new("Save")).clicked() {
                                 match draft.build() {
                                     Ok(profile) => {
-                                        command = Some(AppCommand::SaveProfile { profile });
-                                        next_mode = Some(ProfilesScreenMode::List);
+                                        if draft.expose || draft.original_hosting.is_some() {
+                                            let request = egui::Id::new(("save_local_hosting", tab_id))
+                                                .with(ui.ctx().cumulative_frame_nr());
+                                            draft.pending_save = Some(request);
+                                            command = Some(AppCommand::SaveLocalProfile {
+                                                tab_id,
+                                                request,
+                                                original_id: draft.original_id.clone(),
+                                                profile,
+                                                expose: draft.expose,
+                                                explicit_enable: draft.explicit_enable,
+                                            });
+                                        } else {
+                                            command = Some(AppCommand::SaveProfile { profile });
+                                            next_mode = Some(ProfilesScreenMode::List);
+                                        }
                                     }
                                     Err(_) => {
                                         draft.error = Some(
@@ -1950,6 +2139,88 @@ mod tests {
         tab_id: TabId,
         configuration: festerm_config::Configuration,
         command: Option<AppCommand>,
+    }
+
+    #[test]
+    fn local_draft_preserves_ordered_argument_boundaries_when_only_renamed() {
+        let arguments = vec![
+            "-Command".into(),
+            "echo 'one two'".into(),
+            "two  spaces".into(),
+        ];
+        let profile = Profile::local("original", "shell", arguments.clone(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "stable-shell")
+            .unwrap();
+        let mut draft = LocalProfileDraft::from_profile(profile.as_local().unwrap());
+        draft.name = "renamed".into();
+        let rebuilt = draft.build().unwrap();
+        let local = rebuilt.as_local().unwrap();
+        assert_eq!(local.arguments(), arguments);
+        assert_eq!(local.persistence().unwrap().session_name(), "stable-shell");
+    }
+
+    #[test]
+    fn failed_local_host_save_retains_the_draft_and_ignores_stale_replies() {
+        let context = egui::Context::default();
+        let tab = AppState::for_test().active();
+        let request = egui::Id::new("current-save");
+        let draft = LocalProfileDraft {
+            name: "unsaved-edit".into(),
+            expose: true,
+            explicit_enable: true,
+            pending_save: Some(request),
+            ..Default::default()
+        };
+        context.data_mut(|data| {
+            data.insert_temp(
+                profiles_state_id(tab),
+                ProfilesScreenState {
+                    mode: ProfilesScreenMode::EditLocal(draft),
+                    ..Default::default()
+                },
+            )
+        });
+        report_local_profile_save_outcome(&context, tab, egui::Id::new("stale-save"), Ok(()));
+        report_local_profile_save_outcome(&context, tab, request, Err("save refused".into()));
+        let state = context
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))
+            .unwrap();
+        let ProfilesScreenMode::EditLocal(draft) = state.mode else {
+            panic!("failed save must retain editor")
+        };
+        assert_eq!(draft.name, "unsaved-edit");
+        assert!(draft.expose && draft.explicit_enable);
+        assert_eq!(draft.pending_save, None);
+        assert_eq!(draft.error.as_deref(), Some("save refused"));
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn local_host_checkbox_requires_explicit_save_and_dispatches_hosting_intent() {
+        let mut harness = profiles_harness(festerm_config::Configuration::empty());
+        harness.run_ok();
+        open_new_profile(&mut harness, "Local");
+        harness.get_by_label("Name").focus();
+        harness.get_by_label("Name").type_text("hosted-shell");
+        harness.run_ok();
+        harness.get_by_label("Use a durable local session").click();
+        harness.run_ok();
+        harness.get_by_label("Expose via Dev Tunnel").click();
+        harness.run_ok();
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run_ok();
+        harness.get_by_label("Save").click();
+        harness.run_ok();
+        assert!(matches!(
+            harness.state().command.as_ref(),
+            Some(AppCommand::SaveLocalProfile {
+                expose: true,
+                explicit_enable: true,
+                ..
+            })
+        ));
     }
 
     #[test]

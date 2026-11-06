@@ -21,7 +21,7 @@ pub enum DocumentFileError {
 impl DocumentFileError {
     pub fn message(self) -> &'static str {
         match self {
-            Self::Unsupported => "Browse in Files is available only in the iOS app.",
+            Self::Unsupported => "Browse in Files is available only in the mobile app.",
             Self::Busy => "Another file operation is active. Finish or cancel it and try again.",
             Self::Cancelled => "The file operation was cancelled.",
             Self::Unavailable => "Access to this file is unavailable. Reopen it through Files.",
@@ -67,10 +67,16 @@ pub use native::DocumentSmoke;
 #[cfg(target_os = "ios")]
 pub use native::{DocumentFile, DocumentPicker};
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(any(target_os = "android", test))]
+#[path = "document_android.rs"]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::{DocumentFile, DocumentPicker};
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub struct DocumentPicker;
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 impl DocumentPicker {
     pub fn open(&self) -> Result<(), DocumentFileError> {
         Err(DocumentFileError::Unsupported)
@@ -81,10 +87,10 @@ impl DocumentPicker {
     }
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub struct DocumentFile;
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 impl DocumentFile {
     pub fn open(&self) -> Result<(), DocumentFileError> {
         Err(DocumentFileError::Unsupported)

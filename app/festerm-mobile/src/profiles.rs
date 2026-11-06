@@ -211,13 +211,26 @@ impl Profiles {
     /// The sandbox directory profiles live in: `$HOME/Library/Application
     /// Support/festerm`, which is inside the app container on iOS.
     pub fn default_directory() -> Option<PathBuf> {
-        let home = std::env::var_os("HOME")?;
-        Some(
-            PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("festerm"),
-        )
+        #[cfg(target_os = "android")]
+        {
+            match festerm_android_platform::storage_directory() {
+                Ok(directory) => Some(directory),
+                Err(error) => {
+                    eprintln!("fesTerm: {error}");
+                    None
+                }
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let home = std::env::var_os("HOME")?;
+            Some(
+                PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("festerm"),
+            )
+        }
     }
 
     /// Opens the production store with the platform secret store (the iOS
