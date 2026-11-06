@@ -10,6 +10,8 @@ pub mod protocol;
 pub mod snapshot;
 mod stdio;
 mod supervisor;
+#[cfg(windows)]
+mod windows;
 #[cfg(not(target_os = "ios"))]
 mod worker;
 

@@ -4,6 +4,14 @@
 use crate::Error;
 
 pub const LINUX_PROFILE: &str = "linux-seccomp-stdio-rlimit-v1";
+/// Seatbelt deny-default sandbox, CPU/core/file rlimits, and a supervisor
+/// physical-footprint kill at [`crate::PROCESS_BYTES`]. macOS has no
+/// enforceable per-process address-space rlimit, so the memory ceiling is a
+/// supervisor kill (polled), backed by QuickJS's own heap limit.
+pub const MACOS_PROFILE: &str = "macos-seatbelt-footprint-watchdog-v1";
+/// Zero-capability AppContainer in a kill-on-close Job Object with hard
+/// commit, process-count, and CPU-time limits; no inherited handles.
+pub const WINDOWS_PROFILE: &str = "windows-appcontainer-job-v1";
 
 pub fn availability() -> Result<&'static str, Error> {
     if cfg!(all(
@@ -14,17 +22,16 @@ pub fn availability() -> Result<&'static str, Error> {
         // before Ready; this is only an architecture support check.
         Ok(LINUX_PROFILE)
     } else if cfg!(target_os = "macos") {
-        Err(Error::Unavailable(
-            "macOS has no qualified hard 128MiB process ceiling",
-        ))
+        Ok(MACOS_PROFILE)
     } else if cfg!(target_os = "ios") {
         Err(Error::Unavailable(
             "iOS has no qualified separate helper/stdio transport",
         ))
-    } else if cfg!(target_os = "windows") {
-        Err(Error::Unavailable(
-            "Windows AppContainer policy has not been qualified",
-        ))
+    } else if cfg!(all(
+        target_os = "windows",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    )) {
+        Ok(WINDOWS_PROFILE)
     } else {
         Err(Error::Unavailable(
             "no qualified native confinement implementation",
@@ -39,6 +46,10 @@ pub(crate) fn confine() -> Result<(), Error> {
         any(target_arch = "aarch64", target_arch = "x86_64")
     ))]
     return linux::confine();
+    #[cfg(target_os = "macos")]
+    return macos::confine();
+    #[cfg(windows)]
+    return crate::windows::confine();
     #[allow(unreachable_code)]
     Err(Error::Unavailable("native confinement unavailable"))
 }
@@ -71,6 +82,11 @@ pub(crate) fn cpu_time() -> Option<std::time::Duration> {
             ));
         }
     }
+    #[cfg(windows)]
+    {
+        return crate::windows::cpu_time();
+    }
+    #[allow(unreachable_code)]
     None
 }
 
@@ -464,20 +480,268 @@ mod linux {
     }
 }
 
+/// Supervisor-side memory ceiling for platforms whose kernel cannot enforce
+/// one inside the worker. `Err` means the child could not be measured.
+#[cfg(target_os = "macos")]
+pub(crate) fn footprint_exceeded(pid: u32) -> Result<bool, Error> {
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::zeroed();
+    // SAFETY: info is a correctly sized, writable rusage_info_v2 buffer for
+    // the RUSAGE_INFO_V2 flavor; pid is this supervisor's own child.
+    let status = unsafe {
+        libc::proc_pid_rusage(
+            pid as libc::c_int,
+            libc::RUSAGE_INFO_V2,
+            info.as_mut_ptr().cast(),
+        )
+    };
+    if status != 0 {
+        return Err(Error::Unavailable("worker memory footprint unavailable"));
+    }
+    // SAFETY: proc_pid_rusage initialized the buffer on success.
+    let info = unsafe { info.assume_init() };
+    Ok(info.ri_phys_footprint > crate::PROCESS_BYTES
+        || info.ri_resident_size > crate::PROCESS_BYTES)
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::*;
+    use crate::CPU_SECONDS;
+
+    // Deny everything, including file, network, IPC, Mach service lookup,
+    // signals, sysctl, fork, and exec. Reads and writes on the already-open
+    // inherited pipes are not mediated by Seatbelt.
+    const POLICY: &std::ffi::CStr = c"(version 1)\n(deny default)\n";
+
+    extern "C" {
+        fn sandbox_init(
+            profile: *const libc::c_char,
+            flags: u64,
+            errorbuf: *mut *mut libc::c_char,
+        ) -> libc::c_int;
+        fn sandbox_free_error(errorbuf: *mut libc::c_char);
+    }
+
+    fn limit(resource: libc::c_int, value: u64) -> Result<(), Error> {
+        let r = libc::rlimit {
+            rlim_cur: value,
+            rlim_max: value,
+        };
+        // SAFETY: r points to an initialized rlimit; affects this child only.
+        if unsafe { libc::setrlimit(resource, &r) } != 0 {
+            return Err(Error::Unavailable(
+                "required native hard resource limit failed",
+            ));
+        }
+        let mut actual = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: actual is a valid output pointer.
+        if unsafe { libc::getrlimit(resource, &mut actual) } != 0
+            || actual.rlim_cur != value
+            || actual.rlim_max != value
+        {
+            return Err(Error::Unavailable(
+                "required native hard resource limit not active",
+            ));
+        }
+        Ok(())
+    }
+
+    fn close_inherited_descriptors() -> Result<(), Error> {
+        const ENTRY: usize = std::mem::size_of::<libc::proc_fdinfo>();
+        let mut entries = vec![
+            libc::proc_fdinfo {
+                proc_fd: 0,
+                proc_fdtype: 0,
+            };
+            4096
+        ];
+        // SAFETY: getpid has no arguments.
+        let pid = unsafe { libc::getpid() };
+        // SAFETY: entries is a writable buffer of the stated byte length.
+        let bytes = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDLISTFDS,
+                0,
+                entries.as_mut_ptr().cast(),
+                (entries.len() * ENTRY) as libc::c_int,
+            )
+        };
+        if bytes <= 0 || bytes as usize >= entries.len() * ENTRY {
+            return Err(Error::Unavailable(
+                "native descriptor/parent isolation failed",
+            ));
+        }
+        for entry in &entries[..bytes as usize / ENTRY] {
+            if entry.proc_fd > 1 {
+                // SAFETY: closes an inherited descriptor this fresh worker
+                // has not wrapped in any owned Rust handle.
+                unsafe { libc::close(entry.proc_fd) };
+            }
+        }
+        // SAFETY: as above; verifies only stdin/stdout remain.
+        let bytes = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDLISTFDS,
+                0,
+                entries.as_mut_ptr().cast(),
+                (entries.len() * ENTRY) as libc::c_int,
+            )
+        };
+        if bytes as usize != 2 * ENTRY || entries[..2].iter().any(|entry| entry.proc_fd > 1) {
+            return Err(Error::Unavailable(
+                "native descriptor/parent isolation failed",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn confine() -> Result<(), Error> {
+        if std::env::vars_os().next().is_some() {
+            return Err(Error::Unavailable(
+                "worker environment was not cleared by its supervisor",
+            ));
+        }
+        for fd in [0, 1] {
+            let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+            // SAFETY: fstat initializes stat on success; fd is inherited stdio.
+            if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+                return Err(Error::Unavailable("worker stdio is not an inherited pipe"));
+            }
+            // SAFETY: successful fstat above initialized every field.
+            if unsafe { stat.assume_init() }.st_mode & libc::S_IFMT != libc::S_IFIFO {
+                return Err(Error::Unavailable("worker stdio is not an inherited pipe"));
+            }
+        }
+        // SAFETY: scalar process queries; no borrowed memory escapes.
+        if unsafe { libc::getppid() } <= 1 {
+            return Err(Error::Unavailable(
+                "native descriptor/parent isolation failed",
+            ));
+        }
+        close_inherited_descriptors()?;
+        // SAFETY: denies debugger attachment to this worker; scalar arguments.
+        if unsafe { libc::ptrace(libc::PT_DENY_ATTACH, 0, std::ptr::null_mut(), 0) } != 0 {
+            return Err(Error::Unavailable(
+                "native descriptor/parent isolation failed",
+            ));
+        }
+        limit(libc::RLIMIT_CPU, CPU_SECONDS)?;
+        limit(libc::RLIMIT_CORE, 0)?;
+        limit(libc::RLIMIT_FSIZE, 0)?;
+        nonblocking(0)?;
+        nonblocking(1)?;
+        let mut error = std::ptr::null_mut();
+        // SAFETY: POLICY is a NUL-terminated SBPL string; error is a valid
+        // out pointer, freed with the matching sandbox_free_error.
+        if unsafe { sandbox_init(POLICY.as_ptr(), 0, &mut error) } != 0 {
+            if !error.is_null() {
+                // SAFETY: allocated by sandbox_init above.
+                unsafe { sandbox_free_error(error) };
+            }
+            return Err(Error::Unavailable("Seatbelt sandbox policy unavailable"));
+        }
+        native_probes()?;
+        // After the probes, which need descriptor slots to reach the policy.
+        limit(libc::RLIMIT_NOFILE, 2)?;
+        Ok(())
+    }
+
+    fn denied(result: libc::c_int) -> bool {
+        result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    /// Run before Ready; each operation must be refused by the active policy.
+    fn native_probes() -> Result<(), Error> {
+        let mut failed = false;
+        for (path, flags) in [
+            (c"/etc/passwd", libc::O_RDONLY),
+            (c"/etc/passwd", libc::O_WRONLY),
+            (c"/tmp", libc::O_RDONLY),
+        ] {
+            // SAFETY: static C path; any unexpected descriptor is closed.
+            let fd = unsafe { libc::open(path.as_ptr(), flags) };
+            if fd >= 0 {
+                // SAFETY: fd was returned by open immediately above.
+                unsafe { libc::close(fd) };
+            }
+            failed |= !denied(fd);
+        }
+        // SAFETY: scalar socket arguments; a descriptor is closed after use.
+        let socket = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        if socket >= 0 {
+            let address = libc::sockaddr_in {
+                sin_len: std::mem::size_of::<libc::sockaddr_in>() as u8,
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: 9u16.to_be(),
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from(std::net::Ipv4Addr::LOCALHOST).to_be(),
+                },
+                sin_zero: [0; 8],
+            };
+            // SAFETY: address is a valid sockaddr_in of the stated length.
+            let connected = unsafe {
+                libc::connect(
+                    socket,
+                    (&raw const address).cast(),
+                    std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                )
+            };
+            failed |= !denied(connected);
+            // SAFETY: socket was returned by socket() above.
+            unsafe { libc::close(socket) };
+        } else {
+            failed |= !denied(socket);
+        }
+        // SAFETY: signal 0 only checks permission; it delivers nothing.
+        failed |= !denied(unsafe { libc::kill(libc::getppid(), 0) });
+        // SAFETY: a fork that is wrongly admitted exits immediately without
+        // running any parent state, and is then reaped.
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            // SAFETY: async-signal-safe exit in the forked child.
+            unsafe { libc::_exit(0) };
+        }
+        if child > 0 {
+            let mut status = 0;
+            // SAFETY: child is our own just-forked process.
+            unsafe { libc::waitpid(child, &mut status, 0) };
+        }
+        failed |= !denied(child);
+        let argv = [c"/usr/bin/true".as_ptr(), std::ptr::null()];
+        let envp = [std::ptr::null()];
+        // SAFETY: NUL-terminated argv/envp of static strings. A wrongly
+        // admitted exec replaces the worker before Ready, which fails closed.
+        failed |= !denied(unsafe { libc::execve(argv[0], argv.as_ptr(), envp.as_ptr()) });
+        if failed {
+            return Err(Error::Unavailable("active native denial probe failed"));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn unsupported_platforms_are_explicitly_unavailable() {
-        if !cfg!(all(
+        if cfg!(all(
             target_os = "linux",
             any(target_arch = "aarch64", target_arch = "x86_64")
         )) {
+            assert_eq!(availability().unwrap(), LINUX_PROFILE);
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(availability().unwrap(), MACOS_PROFILE);
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(availability().unwrap(), WINDOWS_PROFILE);
+        } else {
             assert!(matches!(availability(), Err(Error::Unavailable(_))));
             assert!(matches!(confine(), Err(Error::Unavailable(_))));
-        } else {
-            assert_eq!(availability().unwrap(), LINUX_PROFILE);
         }
     }
 

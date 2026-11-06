@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use crate::windows::Child;
 use crate::{
     platform,
     protocol::{
@@ -7,11 +9,12 @@ use crate::{
     snapshot::{ApprovedBundle, BoundParameters, Parameters},
     Error,
 };
+#[cfg(not(windows))]
+use std::process::{Child, Command, Stdio};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     io::Write,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc, Arc, Mutex, TryLockError,
@@ -209,6 +212,8 @@ fn write_guarded(
 
 static CLEANUP_FAILED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(target_os = "macos")]
+const FOOTPRINT_INTERVAL: Duration = Duration::from_millis(5);
 const ADMISSION_OPEN: u8 = 0;
 const ADMISSION_CLAIMED: u8 = 1;
 const ADMISSION_CLOSED: u8 = 2;
@@ -429,24 +434,29 @@ impl Supervisor {
             )?));
         }
         frames.push_back(Outbound::unguarded(encode_frame(&ParentMessage::Run {})?));
-        let mut command = Command::new(&program.0);
-        command
-            .arg("--automation-worker")
-            .env_clear()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        #[cfg(target_os = "linux")]
-        command.env("MALLOC_ARENA_MAX", "1");
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
         let deadline = Instant::now()
             .checked_add(Duration::from_millis(limits.run_ms))
             .ok_or(Error::Deadline)?;
-        let child = OwnedChild(command.spawn()?, false);
+        #[cfg(not(windows))]
+        let child = {
+            let mut command = Command::new(&program.0);
+            command
+                .arg("--automation-worker")
+                .env_clear()
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            #[cfg(target_os = "linux")]
+            command.env("MALLOC_ARENA_MAX", "1");
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                command.process_group(0);
+            }
+            OwnedChild(command.spawn()?, false)
+        };
+        #[cfg(windows)]
+        let child = OwnedChild(Child::spawn(&program.0)?, false);
         let (controls, receiver) = mpsc::sync_channel(MAX_PENDING_CALLS);
         // 64 host calls plus a reserved terminal event.
         let (sender, events) = mpsc::sync_channel(MAX_PENDING_CALLS + 1);
@@ -627,6 +637,7 @@ fn supervise(
 ) -> Result<(), Error> {
     let child = &mut owned.0;
     let result = (|| -> Result<Outcome, Error> {
+        let expected_profile = platform::availability()?;
         let mut input = child.stdin.take().ok_or(Error::Protocol)?;
         let mut output = child.stdout.take().ok_or(Error::Protocol)?;
         #[cfg(unix)]
@@ -645,6 +656,10 @@ fn supervise(
         let mut outstanding = BTreeMap::new();
         let mut implicitly_admitted = BTreeSet::new();
         let mut cancelling = None;
+        #[cfg(windows)]
+        let mut connected = false;
+        #[cfg(target_os = "macos")]
+        let mut next_footprint_check = start;
         loop {
             let now = Instant::now();
             if !qualified && now >= startup_deadline {
@@ -664,6 +679,17 @@ fn supervise(
             }
             if cancelling.is_some_and(|deadline| now >= deadline) {
                 return Ok(Outcome::Cancelled {});
+            }
+            #[cfg(windows)]
+            if !connected {
+                if child.try_wait()?.is_some() {
+                    return Err(Error::Protocol);
+                }
+                connected = child.poll_connected()?;
+                if !connected {
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
             }
             if qualified {
                 while let Ok(control) = controls.try_recv() {
@@ -711,7 +737,7 @@ fn supervise(
             if let Some(message) = decoder.read::<WorkerMessage>(&mut output)? {
                 match message {
                     WorkerMessage::Ready { profile }
-                        if !qualified && profile == platform::LINUX_PROFILE =>
+                        if !qualified && profile == expected_profile =>
                     {
                         qualified = true;
                         startup.send(Ok(())).map_err(|_| Error::Protocol)?;
@@ -751,6 +777,16 @@ fn supervise(
             }
             if child.try_wait()?.is_some() {
                 return Err(Error::Protocol);
+            }
+            #[cfg(target_os = "macos")]
+            if now >= next_footprint_check {
+                next_footprint_check = now + FOOTPRINT_INTERVAL;
+                match platform::footprint_exceeded(child.id()) {
+                    Ok(false) => {}
+                    Ok(true) => return Ok(Outcome::ResourceLimit {}),
+                    Err(error) if child.try_wait()?.is_none() => return Err(error),
+                    Err(_) => return Err(Error::Protocol),
+                }
             }
             thread::sleep(Duration::from_millis(1));
         }
@@ -1141,14 +1177,71 @@ mod tests {
         drop(guard);
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn watchdog_kills_a_worker_over_the_footprint_ceiling() {
+        // Footprint is measured before qualification, so a silent child
+        // that dirties 2x the ceiling must be killed within the startup bound.
+        let child = Command::new("/usr/bin/perl")
+            .args(["-e", "my $x = 'a' x (256 * 1024 * 1024); sleep 20;"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let admission = Arc::new(Admission {
+            state: AtomicU8::new(ADMISSION_OPEN),
+            cancelled: AtomicBool::new(false),
+            gate: Mutex::new(()),
+            deadline: Instant::now() + Duration::from_secs(15),
+        });
+        let (_controls, receiver) = mpsc::sync_channel(MAX_PENDING_CALLS);
+        let (sender, events) = mpsc::sync_channel(MAX_PENDING_CALLS + 1);
+        let (startup, _ready) = mpsc::sync_channel(1);
+        let started = Instant::now();
+        supervise(
+            OwnedChild(child, false),
+            VecDeque::new(),
+            Limits::default(),
+            receiver,
+            sender,
+            startup,
+            admission,
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            events.try_recv(),
+            Ok(Event::Finished {
+                outcome: Outcome::ResourceLimit {}
+            })
+        ));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(platform::footprint_exceeded(pid).is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn watchdog_drains_worker_output_while_admission_gate_is_busy() {
+        let Ok(profile) = platform::availability() else {
+            return;
+        };
+        let mut frames = encode_frame(&WorkerMessage::Ready {
+            profile: profile.into(),
+        })
+        .unwrap();
+        frames.extend(
+            encode_frame(&WorkerMessage::HostCall {
+                id: 1,
+                request: HostRequest::Observe {},
+            })
+            .unwrap(),
+        );
+        let escaped: String = frames.iter().map(|byte| format!("\\{byte:03o}")).collect();
         let child = Command::new("/bin/sh")
             .arg("-c")
-            .arg(
-                r#"printf '\000\000\000\072{"type":"ready","profile":"linux-seccomp-stdio-rlimit-v1"}\000\000\000\071{"type":"hostCall","id":1,"request":{"method":"observe"}}'; exec /bin/sleep 60"#,
-            )
+            .arg(format!("printf '{escaped}'; exec /bin/sleep 60"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
