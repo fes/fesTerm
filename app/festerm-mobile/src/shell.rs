@@ -3,7 +3,7 @@
 
 use super::model::{Profile, Reattachable, SurfaceState, SurfaceSummary};
 use super::profiles::TrustedHostRow;
-use super::terminal_keyboard::KeyboardKind;
+use super::terminal_keyboard::{KeyboardKind, SplitMode};
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
     self, bottom_sheet, button, card, edit_zone_clicked, footnote, labelled, list_row,
@@ -63,6 +63,7 @@ pub struct ShellData<'a> {
     pub lock: Option<super::app_lock::LockView>,
     pub text_size: TextSize,
     pub default_keyboard: KeyboardKind,
+    pub split_keyboard: SplitMode,
 }
 
 /// Terminal text size preset. Pinch-zoom still adjusts a session freely; this
@@ -124,6 +125,7 @@ pub enum ShellAction {
     Lock(super::app_lock::LockAction),
     SetTextSize(TextSize),
     SetDefaultKeyboard(KeyboardKind),
+    SetSplitKeyboard(SplitMode),
     /// Move a saved profile before another, or to the end when `before` is
     /// `None`.
     MoveProfile {
@@ -517,6 +519,25 @@ fn settings_screen(ui: &mut Ui, data: &ShellData<'_>, actions: &mut Vec<ShellAct
     footnote(
         ui,
         "Used when fesTerm starts. Switching from More > Keyboard or the globe key also changes this default.",
+    );
+    section_header(ui, "Split keyboard", None, false);
+    let mut index = SplitMode::ALL
+        .iter()
+        .position(|mode| *mode == data.split_keyboard)
+        .unwrap_or(0);
+    let items = SplitMode::ALL.map(|mode| (None, mode.label()));
+    // Distinct id scope: the text-size control above shares this parent.
+    let changed = ui
+        .push_id("split-keyboard", |ui| {
+            widgets::segmented(ui, &items, &mut index, false)
+        })
+        .inner;
+    if changed {
+        actions.push(ShellAction::SetSplitKeyboard(SplitMode::ALL[index]));
+    }
+    footnote(
+        ui,
+        "Terminal keyboards split into left and right halves. Auto splits on wide landscape screens and around a fold or hinge.",
     );
     section_header(ui, "Dev Tunnel hosts", None, false);
     card(ui, |ui| {

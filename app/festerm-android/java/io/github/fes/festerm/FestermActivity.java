@@ -49,6 +49,9 @@ public final class FestermActivity extends NativeActivity {
     private InputView input;
     private View shield;
     private boolean ready, destroyed, resumed;
+    private Object windowLayout;
+    private java.util.function.Consumer<Object> hingeListener;
+    private Rect hinge;
     private volatile boolean protect, cover = true, hidePreview = true;
     private boolean picking, authPending;
     private long authToken;
@@ -69,6 +72,7 @@ public final class FestermActivity extends NativeActivity {
 
     private native void nativeInput(long target, long sequence, int kind, String text, int start, int end);
     private native void nativeInsets(float fraction, float top, float left, float bottom, float right);
+    private native void nativeHinge(float left, float right);
     private native void nativeLifecycle(int event);
     private native void nativeAuthenticated(long token, int result);
     private native void nativePicked(String path);
@@ -87,6 +91,7 @@ public final class FestermActivity extends NativeActivity {
         shield.setClickable(true);
         addContentView(shield, new FrameLayout.LayoutParams(-1, -1));
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalLayoutListener(this::reportInsets);
+        watchHinge();
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(screenOff, new IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -123,6 +128,53 @@ public final class FestermActivity extends NativeActivity {
         nativeInsets(height > 0 ? keyboard / height : 0,
             height > 0 ? top / height : 0, width > 0 ? left / width : 0,
             height > 0 ? bottom / height : 0, width > 0 ? right / width : 0);
+        sendHinge();
+    }
+
+    /**
+     * Folds and hinges come from the device's optional androidx.window.extensions
+     * library, read by reflection so the APK carries no AndroidX dependency.
+     * Without it, or on any failure, the app sees no hinge.
+     */
+    private void watchHinge() {
+        try {
+            Object extensions = Class.forName("androidx.window.extensions.WindowExtensionsProvider")
+                .getMethod("getWindowExtensions").invoke(null);
+            Object component = extensions.getClass().getMethod("getWindowLayoutComponent").invoke(extensions);
+            if (component == null) return;
+            java.util.function.Consumer<Object> listener = info -> runOnUiThread(() -> readHinge(info));
+            component.getClass()
+                .getMethod("addWindowLayoutInfoListener", android.app.Activity.class, java.util.function.Consumer.class)
+                .invoke(component, this, listener);
+            windowLayout = component;
+            hingeListener = listener;
+        } catch (Throwable ignored) {
+            // No window extensions on this device.
+        }
+    }
+
+    private void readHinge(Object info) {
+        Rect found = null;
+        try {
+            Class<?> folding = Class.forName("androidx.window.extensions.layout.FoldingFeature");
+            for (Object feature : (List<?>) info.getClass().getMethod("getDisplayFeatures").invoke(info)) {
+                if (!folding.isInstance(feature)) continue;
+                Rect bounds = (Rect) folding.getMethod("getBounds").invoke(feature);
+                // Only a vertical fold splits a keyboard docked at the bottom.
+                if (bounds != null && bounds.height() > bounds.width()) found = new Rect(bounds);
+            }
+        } catch (Throwable ignored) {
+            found = null;
+        }
+        hinge = found;
+        sendHinge();
+    }
+
+    private void sendHinge() {
+        if (destroyed || !ready || input == null) return;
+        float width = getWindow().getDecorView().getWidth();
+        if (hinge == null || width <= 0) nativeHinge(-1, -1);
+        else nativeHinge(hinge.left / width, hinge.right / width);
     }
 
     public void keyboardMode(int mode) {
@@ -310,6 +362,15 @@ public final class FestermActivity extends NativeActivity {
             nativeAuthenticated(token, AUTH_CANCELLED);
         }
         unregisterReceiver(screenOff);
+        if (windowLayout != null) {
+            try {
+                windowLayout.getClass()
+                    .getMethod("removeWindowLayoutInfoListener", java.util.function.Consumer.class)
+                    .invoke(windowLayout, hingeListener);
+            } catch (Throwable ignored) {
+                // The listener dies with the activity either way.
+            }
+        }
         files.shutdown();
         main.removeCallbacksAndMessages(null);
         super.onDestroy();

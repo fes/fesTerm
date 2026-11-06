@@ -256,6 +256,29 @@ with the shifted number row it reaches every ASCII symbol. Shell row keeps
 its dedicated `/\-_'"|&$~` row. The mobile app remains dark-only;
 the bundle's light appearance is not a new app-theme feature.
 
+### Split terminal keyboards
+
+On wide or dual-screen windows both terminal keyboards split iPad-style into
+left and right halves anchored to the outer edges, leaving the middle of the
+terminal visible above the gap. Settings → Split keyboard offers **Auto**
+(default), **Split** and **Full**; the choice is saved for startup. Auto splits
+when the window is at least 900 points wide and wider than tall, or when
+Android reports a vertical fold or hinge. Split forces halves whenever they
+fit; Full always uses the single board, even across a hinge. Halves are equal
+width, at most 420 points, separated by at least 40 points; if either half
+would be narrower than 240 points the full board is used. On Android a
+reported hinge is the split point: each half stays 8 points clear of the
+hinge's left and right edges, so no key straddles the fold.
+
+The left half holds Esc, Tab, Ctrl, Alt, Shift and the microphone; the left
+symbol/number columns; `q`–`t`, `a`–`g`, Shift with `z`–`v`; and the globe,
+symbols/letters, comma and Space. The right half holds the arrows, Extended
+keys and Hide; the right columns; `y`–`p`, `h`–`l`, `b`–`m` with Backspace; and
+Space, period and Return. Both Space keys type a space. Every key appears in
+exactly one half, and modifiers, hold alternates, repeats and callouts behave
+as on the full board. Built-in (native) keyboards are not split by fesTerm;
+the OS owns their presentation.
+
 Keyboard height is computed from the space available before the bottom panel
 is laid out, not its cached previous height. Normal typing keys are 44 points
 with 6-point gaps; short views reduce them to 32 points with 4-point gaps.

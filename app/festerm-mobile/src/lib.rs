@@ -537,6 +537,7 @@ impl MobileApp {
             }
             Err(error) => self.notice = Some(error),
         }
+        self.terminal_keyboard.split = profiles.split_keyboard();
         self.profiles = Some(profiles);
         self.apply_text_size(text_size);
         self
@@ -1176,6 +1177,7 @@ impl MobileApp {
             lock: self.lock.as_ref().map(app_lock::LockHost::view),
             text_size: self.text_size,
             default_keyboard: self.default_keyboard,
+            split_keyboard: self.terminal_keyboard.split,
         }
     }
 
@@ -1241,6 +1243,14 @@ impl MobileApp {
                         self.notice = self.profiles.is_none().then(|| {
                             "Default keyboard changed for this run; saved settings are unavailable".to_owned()
                         });
+                    }
+                }
+                ShellAction::SetSplitKeyboard(mode) => {
+                    self.terminal_keyboard.split = mode;
+                    if let Some(Err(error)) =
+                        self.profiles.as_ref().map(|p| p.save_split_keyboard(mode))
+                    {
+                        self.notice = Some(error);
                     }
                 }
                 ShellAction::Lock(action) => {
@@ -2273,6 +2283,11 @@ impl eframe::App for MobileApp {
                 right: rect.width() * insets.right,
             }));
         }
+        #[cfg(target_os = "android")]
+        {
+            self.terminal_keyboard.hinge = festerm_android_platform::hinge()
+                .map(|(left, right)| terminal_keyboard::Hinge { left, right });
+        }
         for key in self.keys.drain() {
             for pressed in [true, false] {
                 raw_input.events.push(egui::Event::Key {
@@ -2546,6 +2561,52 @@ mod tests {
         let reopened =
             MobileApp::new(Rc::new(Cell::new(Lifecycle::default()))).with_profiles(profiles);
         assert!(large(reopened.view.font_size_points()));
+    }
+
+    #[test]
+    fn split_keyboard_setting_applies_now_and_is_restored_at_startup() {
+        use terminal_keyboard::SplitMode;
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle::default())))
+            .with_profiles(profiles::testing::profiles());
+        assert_eq!(app.terminal_keyboard.split, SplitMode::Auto);
+        app.apply_shell_actions(
+            &egui::Context::default(),
+            vec![shell::ShellAction::SetSplitKeyboard(SplitMode::Never)],
+        );
+        assert_eq!(app.terminal_keyboard.split, SplitMode::Never);
+        let profiles = app.profiles.take().unwrap();
+        let reopened =
+            MobileApp::new(Rc::new(Cell::new(Lifecycle::default()))).with_profiles(profiles);
+        assert_eq!(reopened.terminal_keyboard.split, SplitMode::Never);
+    }
+
+    #[test]
+    fn settings_split_control_changes_only_the_split_mode() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        use terminal_keyboard::SplitMode;
+
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })))
+        .with_profiles(profiles::testing::profiles());
+        app.surface = Surface::Tabs;
+        app.shell.tab = shell::Tab::Settings;
+        let text_size = app.text_size;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1194.0, 834.0))
+            .build_ui_state(
+                |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                app,
+            );
+        harness.run();
+        harness.get_by_label("Split").click();
+        harness.run();
+        assert_eq!(harness.state().terminal_keyboard.split, SplitMode::Always);
+        harness.get_by_label("Full").click();
+        harness.run();
+        assert_eq!(harness.state().terminal_keyboard.split, SplitMode::Never);
+        assert_eq!(harness.state().text_size, text_size);
     }
 
     #[test]

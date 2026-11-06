@@ -265,8 +265,16 @@ fn configure(app: &mut MobileApp, state: &str) {
         "\x1b[32mdeploy@prod-web\x1b[0m:\x1b[34m~/app\x1b[0m$ ",
     ]);
     match state {
-        "keyboard-hold" | "keyboard-shell" | "keyboard-symbols" | "keyboard-preview" => {
-            app.select_keyboard(if state == "keyboard-shell" {
+        "keyboard-hold" | "keyboard-shell" | "keyboard-symbols" | "keyboard-preview"
+        | "keyboard-hinge" => {
+            if state == "keyboard-hinge" {
+                // Surface Duo-style spanned window: two 540 pt screens, 34 pt hinge.
+                app.terminal_keyboard.hinge = Some(terminal_keyboard::Hinge {
+                    left: 540.0 / 1114.0,
+                    right: 574.0 / 1114.0,
+                });
+            }
+            app.select_keyboard(if matches!(state, "keyboard-shell" | "keyboard-hinge") {
                 terminal_keyboard::KeyboardKind::ShellRow
             } else {
                 terminal_keyboard::KeyboardKind::HoldSymbols
@@ -477,6 +485,25 @@ fn capture_mobile_ui_gallery() {
 
 #[test]
 #[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
+fn capture_split_keyboard_ui_gallery() {
+    capture_gallery(
+        &[
+            "keyboard-hold",
+            "keyboard-shell",
+            "keyboard-symbols",
+            "keyboard-hinge",
+            "settings",
+        ],
+        &[
+            ("tablet-landscape", 1194.0, 834.0, 0.0),
+            ("dual-screen", 1114.0, 720.0, 0.0),
+            ("phone", 390.0, 844.0, 0.0),
+        ],
+    );
+}
+
+#[test]
+#[ignore = "explicit screenshot generation requires a working headless wgpu adapter"]
 fn capture_unlock_ui_gallery() {
     capture_gallery(
         &[
@@ -533,6 +560,7 @@ fn capture_gallery(states: &[&str], viewports: &[(&str, f32, f32, f32)]) {
                         | "keyboard-shell"
                         | "keyboard-symbols"
                         | "keyboard-preview"
+                        | "keyboard-hinge"
                 ) {
                 0.0
             } else {
