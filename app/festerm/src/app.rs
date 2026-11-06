@@ -6682,6 +6682,7 @@ impl FesTermApp {
                             scroll_speed_multiplier,
                             context_menu_action: session.terminal_context_menu_action(),
                             history_snapshot_actions: true,
+                            expose_text_to_accessibility: false,
                         };
                         let rectangle_was_active = session.view.rectangle_copy_active();
                         session.view.show_with_options(

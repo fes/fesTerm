@@ -60,6 +60,15 @@ universal local speech availability. System keyboard and biometric UI naturally
 follow Android rather than copying Apple controls. Qualification is tracked
 separately in [manual validation](../../docs/manual-validation.md#android-shared-mobile-port-adr-0073).
 
+## Accessibility
+
+TalkBack and UI automation see the shared egui tree through
+`accesskit_android`, hosted on an input-free view attached at the window origin
+(ADR 0075). Run the shared Maestro flows with
+`scripts/run-mobile-ui-flows.py --platform android --device <emulator>`.
+Explore-by-touch is not yet supported: hover events reach `NativeActivity`'s
+input queue, not the host view.
+
 ## Troubleshooting
 
 - Black/slow emulator rendering: the host intentionally uses GLES rather than

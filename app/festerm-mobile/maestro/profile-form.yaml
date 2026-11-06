@@ -1,0 +1,19 @@
+appId: ${APP_ID}
+name: Type into the new-profile form and cancel
+---
+- launchApp:
+    stopApp: true
+- tapOn: "New profile"
+- tapOn: "Host"
+- inputText: "example.net"
+- tapOn: "Username"
+- inputText: "dev"
+- assertVisible: "example.net"
+- assertVisible: "dev"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- tapOn: "Cancel"
+- assertVisible: "Open offline demo"

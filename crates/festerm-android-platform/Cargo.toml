@@ -10,6 +10,11 @@ description = "Isolated Android JNI services for the shared fesTerm mobile host.
 zeroize = "1"
 
 [target.'cfg(target_os = "android")'.dependencies]
+# Pinned with egui 0.36's accesskit 0.24 tree types (ADR 0075). The embedded
+# delegate dex loads from a native thread, where FindClass sees only the boot
+# class loader.
+accesskit = "0.24.1"
+accesskit_android = { version = "=0.7.4", features = ["embedded-dex"] }
 jni-legacy = { package = "jni", version = "0.21.1" }
 jni = "0.22.4"
 ndk-context = "0.1"

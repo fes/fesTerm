@@ -11,6 +11,11 @@ pub enum KeyboardMode {
     FieldCustom,
 }
 
+mod accessibility;
+pub use accessibility::{
+    AccessibilityAdapter, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler,
+    TreeUpdate,
+};
 mod field;
 pub use field::{FieldDocument, FieldInput, FieldKey, FieldModel, FieldSync};
 mod dictation;

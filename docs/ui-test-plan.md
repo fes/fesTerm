@@ -526,6 +526,18 @@ window/event/render loop participates in the scenario, but platform-native
 automation is still required for independently driven OS focus and
 accessibility evidence.
 
+### Mobile accessibility-driven flows
+
+The mobile app exposes its egui tree to the platform accessibility APIs
+(ADR 0075). The repository-owned Maestro flows in `app/festerm-mobile/maestro/`
+act only through named semantic elements: tap, type and assert visible text.
+One suite runs on an iOS Simulator and an Android emulator through
+`scripts/run-mobile-ui-flows.py`. That makes the flows both UI workflow
+regressions and a check that assistive technology can operate each step.
+They remain advisory optional validation, like the native smoke suites, until
+repeated clean runs justify a gate. `MOB-10` keeps VoiceOver/TalkBack usability
+and privacy concealment on physical devices as manual evidence.
+
 ## Platform Matrix
 
 | Platform | Required automated coverage | Native/window strategy | Scheduled or self-hosted coverage |
