@@ -5,14 +5,17 @@
 //! Tree generation starts only after a platform client (VoiceOver, TalkBack,
 //! UI automation) requests the tree; idle sessions do not build it per frame.
 
-use eframe::egui;
+use eframe::egui::{
+    self,
+    accesskit::{Action, Node, NodeId, Role},
+};
 use festerm_ios_window::{
     AccessibilityAdapter, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler,
     TreeUpdate,
 };
 use std::{
     cell::RefCell,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -157,8 +160,94 @@ impl egui::Plugin for Plugin {
     fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
         if let Some(update) = output.platform_output.accesskit_update.take() {
             if self.enabled {
+                let mut update = update;
+                hoist_from_leaves(&mut update);
                 (self.publish)(update);
             }
+        }
+    }
+}
+
+/// Actions that make UIKit treat a node as a leaf element and hide its
+/// descendants (mirrors `accesskit_ios`'s element filter).
+const LEAF_ACTIONS: [Action; 10] = [
+    Action::Click,
+    Action::Focus,
+    Action::Increment,
+    Action::Decrement,
+    Action::Expand,
+    Action::Collapse,
+    Action::CustomAction,
+    Action::ReplaceSelectedText,
+    Action::SetTextSelection,
+    Action::SetValue,
+];
+
+fn is_leaf_element(node: &Node) -> bool {
+    LEAF_ACTIONS
+        .iter()
+        .any(|action| node.supports_action(*action))
+        || node.toggled().is_some()
+        || node.value().is_some()
+        || node.numeric_value().is_some()
+}
+
+/// egui parents popups under their anchor button and may nest content under
+/// other actionable widgets; iOS would hide that content. Moves such
+/// children to follow their former parent; text runs stay with their field.
+fn hoist_from_leaves(update: &mut TreeUpdate) {
+    // Each pass lifts content one level; egui trees are shallow.
+    for _ in 0..8 {
+        let index: HashMap<NodeId, usize> = update
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(position, (id, _))| (*id, position))
+            .collect();
+        let mut parent_of = HashMap::new();
+        for (id, node) in &update.nodes {
+            for child in node.children() {
+                parent_of.insert(*child, *id);
+            }
+        }
+        let mut moved = false;
+        for position in 0..update.nodes.len() {
+            let (id, node) = &update.nodes[position];
+            let id = *id;
+            if !is_leaf_element(node) {
+                continue;
+            }
+            let Some(&parent) = parent_of.get(&id) else {
+                continue;
+            };
+            let (kept, lifted): (Vec<NodeId>, Vec<NodeId>) =
+                node.children().iter().partition(|child| {
+                    index
+                        .get(child)
+                        .is_some_and(|&at| update.nodes[at].1.role() == Role::TextRun)
+                });
+            if lifted.is_empty() {
+                continue;
+            }
+            update.nodes[position].1.set_children(kept);
+            let Some(&parent_at) = index.get(&parent) else {
+                continue;
+            };
+            let parent_node = &mut update.nodes[parent_at].1;
+            let mut siblings = parent_node.children().to_vec();
+            let after = siblings
+                .iter()
+                .position(|sibling| *sibling == id)
+                .map_or(siblings.len(), |at| at + 1);
+            siblings.splice(after..after, lifted.iter().copied());
+            parent_node.set_children(siblings);
+            for child in lifted {
+                parent_of.insert(child, parent);
+            }
+            moved = true;
+        }
+        if !moved {
+            break;
         }
     }
 }
@@ -281,5 +370,60 @@ mod tests {
         fixture.frame();
         assert!(fixture.handlers.0.actions.lock().unwrap().is_empty());
         assert_eq!(fixture.clicks, 1);
+    }
+
+    #[test]
+    fn content_under_actionable_widgets_is_lifted_so_ios_does_not_hide_it() {
+        let fixture = Fixture::new();
+        fixture.handlers.clone().request_initial_tree();
+        let mut output = fixture.ctx.run_ui(egui::RawInput::default(), |ui| {
+            let more = ui.button("More");
+            egui::Popup::menu(&more)
+                .open_memory(Some(egui::SetOpenCommand::Bool(true)))
+                .show(|ui| {
+                    let _ = ui.button("Reset demo");
+                    ui.add(egui::TextEdit::singleline(&mut String::from("typed")));
+                });
+        });
+        output.textures_delta.clear();
+        let update = take_published().pop().expect("published tree");
+        let nodes: HashMap<NodeId, &Node> = update.nodes.iter().map(|(id, n)| (*id, n)).collect();
+        let find = |role: Role, label: &str| {
+            update
+                .nodes
+                .iter()
+                .find(|(_, n)| n.role() == role && n.label() == Some(label))
+                .map(|(id, _)| *id)
+                .unwrap()
+        };
+        let reset = find(Role::Button, "Reset demo");
+        let mut ancestors = Vec::new();
+        let mut cursor = reset;
+        while let Some((parent, _)) = nodes.iter().find(|(_, n)| n.children().contains(&cursor)) {
+            ancestors.push(*parent);
+            cursor = *parent;
+        }
+        assert_eq!(
+            cursor,
+            update.tree.as_ref().unwrap().root,
+            "still reachable"
+        );
+        assert!(
+            ancestors.iter().all(|id| !is_leaf_element(nodes[id])),
+            "Reset demo sits under a leaf element"
+        );
+        let (_, field) = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == Role::TextInput)
+            .unwrap();
+        assert!(field
+            .children()
+            .iter()
+            .all(|child| nodes[child].role() == Role::TextRun));
+        assert!(
+            !field.children().is_empty(),
+            "text runs stay with the field"
+        );
     }
 }
