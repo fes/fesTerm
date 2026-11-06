@@ -20,8 +20,10 @@ covered by a regression:
 
 Visible terminal rows are published unless app protection hides content, and
 secret fields expose only their names. A shared Maestro suite now passes on an
-iPhone Simulator: navigation, profile-form typing, and the terminal menu and
-typing.
+iPhone Simulator and an Android 14 (API 34) ARM64 Pixel 7 emulator:
+navigation, profile-form typing, and the terminal menu and typing all pass on
+both platforms. The profile flow dismisses the software keyboard before
+cancelling the form.
 VoiceOver/TalkBack usability on physical devices, and Android
 explore-by-touch, remain open (`MOB-10`).
 

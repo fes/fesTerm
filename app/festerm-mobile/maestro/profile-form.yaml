@@ -10,5 +10,10 @@ name: Type into the new-profile form and cancel
 - inputText: "dev"
 - assertVisible: "example.net"
 - assertVisible: "dev"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
 - tapOn: "Cancel"
 - assertVisible: "Open offline demo"
