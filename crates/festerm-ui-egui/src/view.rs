@@ -409,11 +409,12 @@ fn publish_accessible_rows(
     {
         return;
     }
+    // Rows are siblings of the viewport: iOS treats an actionable node as a
+    // leaf element and would hide rows parented to it.
     let rows = ui.new_child(
         egui::UiBuilder::new()
             .id_salt("terminal-accessible-rows")
-            .max_rect(layout.rect)
-            .accessibility_parent(viewport_id),
+            .max_rect(layout.rect),
     );
     for row in 0..snapshot.dimensions().rows() {
         let text = accessible_row_text(snapshot, row);
@@ -5129,6 +5130,20 @@ mod tests {
             .next()
             .unwrap();
         assert!(terminal.rect().contains_rect(first_row.rect()));
+        // iOS hides the descendants of actionable nodes, so no ancestor of a
+        // row may take clicks or focus.
+        use egui_kittest::kittest::NodeT as _;
+        let mut ancestor = first_row.parent();
+        while let Some(node) = ancestor {
+            let data = node.accesskit_node().data().clone();
+            assert!(
+                !data.supports_action(egui::accesskit::Action::Click)
+                    && !data.supports_action(egui::accesskit::Action::Focus),
+                "row is inside actionable {:?}",
+                data.role()
+            );
+            ancestor = node.parent();
+        }
 
         // Hover-only row widgets must not take pointer input from the grid.
         let start = first_row.rect().left_center() + Vec2::new(2.0, 0.0);

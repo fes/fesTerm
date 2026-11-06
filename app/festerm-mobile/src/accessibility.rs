@@ -47,6 +47,10 @@ impl ActivationHandler for Handlers {
 
 impl ActionHandler for Handlers {
     fn do_action(&mut self, request: ActionRequest) {
+        eprintln!(
+            "A11YDEBUG action {:?} {:?}",
+            request.action, request.target_node
+        );
         if !self.0.active.load(Ordering::Acquire) {
             return;
         }
@@ -134,6 +138,17 @@ impl egui::Plugin for Plugin {
     }
 
     fn input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        for e in &input.events {
+            if matches!(
+                e,
+                egui::Event::PointerButton { .. }
+                    | egui::Event::Touch { .. }
+                    | egui::Event::PointerGone
+                    | egui::Event::WindowFocused(_)
+            ) {
+                eprintln!("A11YDEBUG in {:?} focused={}", e, input.focused);
+            }
+        }
         let active = self.shared.active.load(Ordering::Acquire);
         if active != self.enabled {
             self.enabled = active;
@@ -155,6 +170,14 @@ impl egui::Plugin for Plugin {
     }
 
     fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
+        let f = _ctx.memory(|m| m.focused());
+        if f.is_some() {
+            eprintln!(
+                "A11YDEBUG focus {:?} ime={:?}",
+                f,
+                output.platform_output.ime.is_some()
+            );
+        }
         if let Some(update) = output.platform_output.accesskit_update.take() {
             if self.enabled {
                 (self.publish)(update);
