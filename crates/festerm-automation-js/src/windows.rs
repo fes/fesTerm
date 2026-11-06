@@ -427,10 +427,12 @@ impl Child {
         let application = wide(program);
         let mut command_line = wide(format!("\"{}\" --automation-worker", program.display()));
         let environment = worker_environment()?;
+        let mut current_directory = windows_directory()?;
+        current_directory.push(0);
         // SAFETY: zero is a valid initial value for this output structure.
         let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
-        // SAFETY: all strings are NUL-terminated and writable where required;
-        // no handles are inherited; the empty environment block is terminated.
+        // SAFETY: strings are NUL-terminated and writable where required;
+        // no handles are inherited and the environment block is terminated.
         if unsafe {
             CreateProcessW(
                 application.as_ptr(),
@@ -443,7 +445,7 @@ impl Child {
                     | CREATE_UNICODE_ENVIRONMENT
                     | EXTENDED_STARTUPINFO_PRESENT,
                 environment.as_ptr().cast(),
-                ptr::null(),
+                current_directory.as_ptr(),
                 &startup.StartupInfo,
                 &mut info,
             )
