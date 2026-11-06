@@ -680,9 +680,10 @@ Desktop execution uses an install-owned worker process with no inherited
 secrets/environment, GUI/SSH/file descriptors or filesystem/network access
 beyond explicitly brokered IPC and the immutable script snapshot. Use an
 allowlisted minimal environment (Windows receives only its API-derived
-`SystemRoot` and fixed system-directory current-drive mapping; other platforms
-use their documented runtime exceptions) and explicitly passed handles rather
-than assuming inherited state is harmless.
+`SystemRoot` and drive mappings for the fixed system-directory working
+directory and worker image; other platforms use their documented runtime
+exceptions) and explicitly passed handles rather than assuming inherited state
+is harmless.
 The supervisor must retain a handle to
 its own child, enforce quotas, and reap only that child and its owned descendants.
 No shell/PATH lookup is used to launch a worker.

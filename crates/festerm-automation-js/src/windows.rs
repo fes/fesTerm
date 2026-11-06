@@ -12,7 +12,7 @@ use std::{
         ffi::OsStrExt,
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
     },
-    path::Path,
+    path::{Component, Path, Prefix},
     ptr,
     sync::Arc,
 };
@@ -426,7 +426,7 @@ impl Child {
         startup.lpAttributeList = list.0;
         let application = wide(program);
         let mut command_line = wide(format!("\"{}\" --automation-worker", program.display()));
-        let environment = worker_environment()?;
+        let environment = worker_environment(program)?;
         let mut current_directory = windows_directory()?;
         current_directory.push(0);
         // SAFETY: zero is a valid initial value for this output structure.
@@ -692,21 +692,49 @@ fn windows_directory() -> Result<Vec<u16>, Error> {
     Ok(buffer)
 }
 
-// Provide the system root and its current-drive mapping; inherit nothing else.
-fn worker_environment() -> Result<Vec<u16>, Error> {
+// Provide the system root and mappings for the system and image drives; inherit nothing else.
+fn worker_environment(program: &Path) -> Result<Vec<u16>, Error> {
     let root = windows_directory()?;
     if root.len() < 3 || root[1] != u16::from(b':') || root[2] != u16::from(b'\\') {
         return Err(unavailable(
             "Windows directory is not an absolute drive path",
         ));
     }
-    let mut environment = vec![u16::from(b'='), root[0], root[1], u16::from(b'=')];
-    environment.extend(&root);
-    environment.push(0);
+    let system_drive = u16::from((root[0] as u8).to_ascii_uppercase());
+    let image_drive =
+        path_drive(program).ok_or_else(|| unavailable("worker image is not on a local drive"))?;
+    let mut drives = [system_drive, image_drive];
+    drives.sort_unstable();
+    let mut environment = Vec::with_capacity(root.len() * 2 + 64);
+    for (index, drive) in drives.into_iter().enumerate() {
+        if index > 0 && drive == drives[index - 1] {
+            continue;
+        }
+        environment.extend([u16::from(b'='), drive, u16::from(b':'), u16::from(b'=')]);
+        if drive == system_drive {
+            environment.extend(&root);
+        } else {
+            environment.extend([drive, u16::from(b':'), u16::from(b'\\')]);
+        }
+        environment.push(0);
+    }
     environment.extend("SystemRoot=".encode_utf16());
     environment.extend(&root);
     environment.extend([0, 0]);
     Ok(environment)
+}
+
+fn path_drive(path: &Path) -> Option<u16> {
+    let prefix = path.components().find_map(|component| match component {
+        Component::Prefix(prefix) => Some(prefix.kind()),
+        _ => None,
+    })?;
+    match prefix {
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+            Some(u16::from(letter.to_ascii_uppercase()))
+        }
+        _ => None,
+    }
 }
 
 fn worker_environment_isolated() -> bool {
@@ -716,9 +744,22 @@ fn worker_environment_isolated() -> bool {
     if root.len() < 3 || root[1] != u16::from(b':') || root[2] != u16::from(b'\\') {
         return false;
     }
-    let drive_key = format!("={}", String::from_utf16_lossy(&root[..2]));
+    let Ok(program) = std::env::current_exe() else {
+        return false;
+    };
+    let Some(image_drive) = path_drive(&program) else {
+        return false;
+    };
+    let system_drive = u16::from((root[0] as u8).to_ascii_uppercase());
+    let mut expected_drives = [system_drive, image_drive];
+    expected_drives.sort_unstable();
+    let expected_drive_count = if expected_drives[0] == expected_drives[1] {
+        1
+    } else {
+        2
+    };
     let mut system_root_seen = false;
-    let mut drive_seen = false;
+    let mut drives_seen = [false; 2];
     for (key, value) in std::env::vars_os() {
         let key = key.to_string_lossy();
         if key.eq_ignore_ascii_case("SystemRoot")
@@ -726,16 +767,31 @@ fn worker_environment_isolated() -> bool {
             && value.encode_wide().eq(root.iter().copied())
         {
             system_root_seen = true;
-        } else if key.eq_ignore_ascii_case(&drive_key)
-            && !drive_seen
-            && value.encode_wide().eq(root.iter().copied())
-        {
-            drive_seen = true;
+        } else if key.len() == 3 && key.as_bytes()[0] == b'=' && key.as_bytes()[2] == b':' {
+            let drive = u16::from(key.as_bytes()[1].to_ascii_uppercase());
+            let Some(index) = expected_drives[..expected_drive_count]
+                .iter()
+                .position(|expected| *expected == drive)
+            else {
+                return false;
+            };
+            if drives_seen[index] {
+                return false;
+            }
+            let expected_value = if drive == system_drive {
+                root.clone()
+            } else {
+                vec![drive, u16::from(b':'), u16::from(b'\\')]
+            };
+            if !value.encode_wide().eq(expected_value) {
+                return false;
+            }
+            drives_seen[index] = true;
         } else {
             return false;
         }
     }
-    system_root_seen
+    system_root_seen && drives_seen[..expected_drive_count].iter().all(|seen| *seen)
 }
 
 /// Worker-side qualification before Ready: verify the containment the
@@ -878,4 +934,34 @@ pub(crate) fn cpu_time() -> Option<std::time::Duration> {
     };
     let total = ticks(kernel).checked_add(ticks(user))?;
     Some(std::time::Duration::from_nanos(total.checked_mul(100)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_environment_maps_the_image_drive_without_inheriting_host_variables() {
+        let program = std::env::current_exe().unwrap();
+        let image_drive = path_drive(&program).unwrap();
+        let root = windows_directory().unwrap();
+        let system_drive = u16::from((root[0] as u8).to_ascii_uppercase());
+        let environment = worker_environment(&program).unwrap();
+        let entries = environment
+            .split(|unit| *unit == 0)
+            .filter(|entry| !entry.is_empty())
+            .map(String::from_utf16_lossy)
+            .collect::<Vec<_>>();
+        let image_mapping = format!("={}:", char::from(image_drive as u8));
+
+        assert!(entries
+            .iter()
+            .any(|entry| entry.starts_with(&image_mapping)));
+        assert!(entries.iter().any(|entry| entry.starts_with("SystemRoot=")));
+        assert!(!entries.iter().any(|entry| entry.starts_with("PATH=")));
+        assert_eq!(
+            entries.len(),
+            if image_drive == system_drive { 2 } else { 3 }
+        );
+    }
 }
