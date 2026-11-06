@@ -409,8 +409,15 @@ dictionary polling plus notifications, Linux logind, the Windows session/power
 monitor) must install before admission and fail closed. This is an accepted
 beta risk, not process-identity or final-recipient qualification; presentation
 and metadata delivery stay unavailable. iOS exposure
-remains deferred. Later stages would add worker packaging and workflow-specific grant, queuing,
-cancellation and protocol conformance obligations. The engine and platform
+remains deferred. The owner also accepted a desktop JavaScript workflow beta:
+Settings runs one captured bundle against one local PTY after a native Run
+review, in the contained worker (`linux-seccomp-stdio-rlimit-v1`,
+`macos-seatbelt-footprint-watchdog-v1`, `windows-appcontainer-job-v1`), with
+broker-admitted reads and separately approved inputs. The macOS memory ceiling
+is a polled footprint watchdog rather than a kernel limit, and Windows
+containment has CI-only evidence; both are accepted beta risk. MCP-invoked
+workflows, persistent/remote targets and protocol conformance remain later
+obligations. The engine and platform
 containment remain substantial qualification work, not checklist claims.
 Desktop and mobile may qualify at different times.
 

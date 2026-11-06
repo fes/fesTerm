@@ -112,8 +112,14 @@ filesystem loader in this worker crate, bytecode, native loader or cwd lookup.
 The separate workflow composition crate has a
 [single-file local intake](../../docs/automation-design.md#user-selected-single-file-intake)
 which opens every path component without following links and constructs a
-frozen snapshot before approval. Desktop Settings can preview that snapshot,
-but does not approve or run it. Module names are ASCII, case-distinct, sorted, root-
+frozen snapshot before approval. Desktop Settings (Beta, off by default)
+previews that snapshot and can run it: the user picks one local terminal and
+parameter values, confirms review, and clicks Run, which is the native approval
+of that exact snapshot, parameters, terminal and scopes. Reads are then
+brokered for at most 5 minutes; every `sendText`/`sendKeys` waits for a
+separate human approval in Settings. See
+[`docs/examples/hello-terminal-workflow.json`](../../docs/examples/hello-terminal-workflow.json).
+Module names are ASCII, case-distinct, sorted, root-
 relative bundle names ending `.js`, e.g. `helpers/read.js`; imports use exactly
 those names, not `./`, `..`, URLs or package aliases. The manifest module list
 must exactly equal the reachable static graph, including re-exports/cycles.
@@ -185,8 +191,8 @@ only queues a message, not a delivery receipt.
 | Linux ARM64, kernel 6.8, glibc (local Ubuntu VM) | Real engine + supervised subprocess + native hostile probes passed. |
 | Linux x86-64 | Same implementation and runtime qualification; native x86-64 CI/distribution evidence still required before shipping enablement. |
 | Other Linux architectures, or missing kernel prerequisites | Explicit unavailable, no fallback. |
-| macOS | Explicit unavailable. Seatbelt alone cannot enforce the mandatory hard 128 MiB process ceiling; no advisory RSS limit or polling approximation is substituted. No unconfined production engine execution. |
-| Windows | Explicit unavailable pending reviewed native AppContainer containment. A Job Object alone is insufficient. |
+| macOS (desktop beta) | `macos-seatbelt-footprint-watchdog-v1`: deny-default Seatbelt, cleared environment (only the well-formed `__CF_USER_TEXT_ENCODING` value CoreFoundation sets before `main` in the app binary), only stdin/stdout descriptors, CPU/core/file rlimits, and a supervisor physical-footprint kill polled every 5 ms at 128 MiB backed by the 64 MiB QuickJS heap limit. macOS has no enforceable address-space rlimit, so the memory ceiling is a watchdog, not a kernel limit. |
+| Windows x86-64/ARM64 (desktop beta) | `windows-appcontainer-job-v1`: zero-capability AppContainer created suspended inside a kill-on-close Job Object with a hard 128 MiB commit ceiling, one active process, a CPU-time ceiling and UI restrictions; no inherited handles; a per-run pipe admits only the current user and this AppContainer, and the client PID is verified. Native validation is CI-only so far. |
 | iOS | Explicit unavailable: no qualified separate helper/stdio P1 transport. |
 
 Linux qualification runs **before Ready/source reception/engine construction**:

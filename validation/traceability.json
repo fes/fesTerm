@@ -191,12 +191,14 @@
         "target_parameters_require_exact_safe_generation_bindings",
         "target_parameters_are_generation_bound_handles",
         "target_parameter_reaches_worker_as_exact_bound_handle",
-        "projection_does_not_replace_broker_approval_or_completion_cut"
+        "projection_does_not_replace_broker_approval_or_completion_cut",
+        "start_refuses_stale_snapshots_missing_targets_and_closed_privacy",
+        "concurrent_workflow_approvals_require_a_safety_stop"
       ],
       "manual_scenarios": ["AUTO-01"],
       "status": "partial",
       "prerequisites": [
-        "iOS security-scoped selection, pending-approval invalidation, exact approval UI, worker/broker integration and platform qualification remain open; the desktop metadata and source previews are not an approval"
+        "The desktop beta Run review is the native approval of the exact snapshot, parameters, local terminal and scopes; iOS selection, persistent/remote targets, native usability and platform qualification remain open"
       ]
     },
     {
@@ -252,14 +254,17 @@
         "automation_reservation_preserves_order_and_releases_cancelled_slots",
         "local_pty_automation_reservation_cannot_send_cancelled_bytes",
         "worker_argument_with_extra_arguments_refuses_before_gui_startup",
-        "application_worker_reports_qualification_before_receiving_source"
+        "application_worker_reports_qualification_before_receiving_source",
+        "macos_worker_environment_allows_only_corefoundation_encoding",
+        "example_workflow_reads_and_sends_only_approved_input_through_a_real_worker",
+        "input_descriptions_escape_controls_and_invisible_formatting",
+        "scrollback_text_keeps_the_newest_lines_and_bytes"
       ],
       "manual_scenarios": ["AUTO-02", "AUTO-03"],
       "status": "partial",
       "prerequisites": [
         "Installed helper provenance and native sandbox qualification remain required per supported platform",
-        "Native approval, broker dispatch and lifecycle integration remain unavailable",
-        "Controller writer leases, human takeover and worker admission integration remain unavailable",
+        "Desktop beta integrates native approval, broker-admitted reads/waits, per-input human approval and lifecycle cancellation for local PTY targets; macOS and Windows containment is owner-accepted beta risk (macOS memory ceiling is a polled watchdog; Windows evidence is CI-only)",
         "SSH, persistent, tunnel and serial transports do not yet support reservations"
       ]
     },

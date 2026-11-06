@@ -119,11 +119,11 @@ can still interrupt later cleanup; this ordering does not establish a
 final-recipient or physical-delivery fence.
 
 Only an actual adapter may request shared startup. The JavaScript preference
-alone starts neither the broker nor an MCP listener, and there is no integrated
-JavaScript adapter in this slice. Future worker integration must serialize its
-own admission and delivery against the shared privacy gate and arrange
-cancellation/reaping on global loss; this prerequisite does not provide those
-worker guarantees.
+alone starts neither the broker nor an MCP listener; Settings' explicit "Start
+privacy monitoring" action does, and grants no terminal access. The desktop
+workflow run (see [Desktop JavaScript workflow beta](#desktop-javascript-workflow-beta))
+serializes its admission and delivery against the shared privacy gate and is
+cancelled and reaped on global loss.
 
 An adapter cannot call a session backend or GUI object directly. The broker
 copies bounded immutable observations and sends typed application/input
@@ -672,8 +672,9 @@ These are selection inputs, not evidence that either engine is a security
 sandbox or ready on every fesTerm target. No engine is selected by this ADR.
 The isolated worker component currently pins `rquickjs` 0.14.0 with QuickJS-NG;
 its [language profile and native probes](../crates/festerm-automation-js/README.md)
-are component evidence, not application integration or platform acceptance.
-The JavaScript preference still grants no execution.
+are component evidence, not platform acceptance. The JavaScript preference
+alone grants no execution; the desktop beta below runs only after a native Run
+review.
 
 Desktop execution uses an install-owned worker process with no inherited
 secrets/environment, GUI/SSH/file descriptors or filesystem/network access
@@ -698,6 +699,34 @@ allocation and microtask storms; the supervisor's watchdog covers failures of
 cooperative interruption, native callbacks or the engine. JS interruption
 cannot undo a broker action already admitted. Worker compromise is contained
 only to the extent demonstrated by the platform sandbox and broker protocol.
+
+### Desktop JavaScript workflow beta
+
+The owner accepted a default-off desktop beta on macOS, Linux and Windows. With
+"Enable JavaScript workflows (Beta)" on, Settings captures one bundle (see the
+[example](examples/hello-terminal-workflow.json)), requires privacy monitoring
+to be ready, and offers one local PTY target, parameter fields and a review
+checkbox. Clicking Run is the native approval: the broker accepts a native
+connection, approves exactly the frozen snapshot digest, parameters, target
+generation and the manifest's read/control scopes for at most 5 minutes, and
+hands control of that target to the run. Start refuses a stale snapshot, a
+missing/non-local/replaced target, closed privacy, a concurrent unwind, or two
+approvals in one command batch (a safety stop).
+
+The app re-executes its own binary with `--automation-worker`; the supervisor
+qualifies the platform profile before sending source. Each discover, read and
+wait host call is privacy-admitted, rechecked against the live attachment and
+size-reserved before disclosure under the supervisor's admission boundary.
+`sendText`/`sendKeys` calls queue (at most 8) and are shown escaped (controls
+and invisible formatting as `\u{..}`) with "Send this input"/"Deny" buttons.
+An approved input takes the writer lease, captures a fresh input fence on the
+exact tab, reserves ordered PTY input and commits only if the bytes, privacy,
+attachment, modes and fence still match; otherwise it is refused or retried
+within a 2-second fence window, never retargeted. Stop, disabling JavaScript,
+privacy loss, command overflow/conflict, unwind and shutdown cancel the run in
+the broker before the worker is reaped. The workflow's return value is not
+shown in this beta. MCP-invoked workflows, persistent/SSH/tunnel/serial
+targets and native qualification remain open.
 
 ## MCP surface and connection contract
 
