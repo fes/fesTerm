@@ -1,5 +1,25 @@
 # Milestone Progress Narrative
 
+## Proposed automation authoring, application hooks and debugging
+
+Beyond the shipped desktop JavaScript workflow beta, which runs one bundle
+captured in Settings, the automation proposal now specifies workflow authoring
+in the existing native editor, explicit immutable-version Run/Stop/status and a
+discoverable catalog of application event attachment points. Editor runs reuse
+the beta's intake validation, native Run review and Stop path. Saving is not
+execution; configuring a binding is not arming it. Automatic lifecycle hooks
+retain a separate P4 authority, lifecycle, disclosure and bounded-delivery gate.
+Static built-in API completion and broader typed UI control come later.
+ADR 0065, the action graph (`AUT-10` through `AUT-12`) and deferred validation
+inventory (`AUTO-06` through `AUTO-08`) remain aligned; none of this implements
+or enables these surfaces or accepts the Proposed ADR.
+
+The same proposal includes an explicit script Debug mode: source breakpoints,
+stepping, call stacks and read-only variable inspection in the reused editor.
+Frozen-source identity, inspector disclosure, inert property inspection and
+pause/Continue lifecycle need separate qualification; a paused script does
+not freeze a terminal, suspend grants or roll back accepted effects.
+
 ## Characterizing SSH channel backpressure
 
 An encrypted in-memory client/server fixture characterizes the current
