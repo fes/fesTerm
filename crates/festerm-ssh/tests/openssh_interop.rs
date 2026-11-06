@@ -655,6 +655,91 @@ fn controlled_openssh_interoperability() {
 
 #[test]
 #[ignore = "requires the repository-owned OpenSSH Docker fixture"]
+fn controlled_openssh_automation_reservations_preserve_order_and_cancellation() {
+    const AUTOMATED: &[u8] = b"printf '__SSH_AUTO_%s__\\n' 'MIDDLE'\n";
+    let configuration =
+        OpenSshConfiguration::from_environment().expect("OpenSSH fixture environment is invalid");
+    let session = SshSession::start(
+        connection_profile(&configuration),
+        SshAuthentication::password(configuration.password),
+    )
+    .expect("could not start OpenSSH session");
+    let resolver = session.host_key_decision_resolver();
+    let deadline = Instant::now() + EVENT_TIMEOUT;
+    let mut running = false;
+    let mut output = Vec::new();
+
+    while Instant::now() < deadline {
+        match session.try_recv_event() {
+            Ok(SessionEvent::HostKeyVerification(prompt)) => resolver
+                .resolve(&prompt, HostTrustDecision::AcceptOnce)
+                .expect("could not accept the test server host key"),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Running)) if !running => {
+                running = true;
+                session
+                    .try_send_input(b"printf '__SSH_AUTO_%s__\\n' 'BEFORE'\n")
+                    .unwrap();
+                let reservation = session.reserve_automation_input(1, AUTOMATED).unwrap();
+                session
+                    .try_send_input(b"printf '__SSH_AUTO_%s__\\n' 'AFTER'\n")
+                    .unwrap();
+                reservation
+                    .commit_with(|bytes| {
+                        assert_eq!(bytes, AUTOMATED);
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
+                let cancelled = session
+                    .reserve_automation_input(1, b"printf '__SSH_AUTO_%s__\\n' 'CANCELLED'\n")
+                    .unwrap();
+                drop(cancelled);
+                session
+                    .try_send_input(b"printf '__SSH_AUTO_%s__\\n' 'FINISHED'\n")
+                    .unwrap();
+            }
+            Ok(SessionEvent::Output(bytes)) => {
+                output.extend_from_slice(&bytes);
+                assert!(output.len() <= 64 * 1024, "unexpectedly large test output");
+                if output
+                    .windows(b"__SSH_AUTO_FINISHED__".len())
+                    .any(|window| window == b"__SSH_AUTO_FINISHED__")
+                {
+                    break;
+                }
+            }
+            Ok(SessionEvent::Error(error)) => {
+                panic!(
+                    "SSH reservation exchange emitted a {:?} error",
+                    error.kind()
+                );
+            }
+            Ok(_) | Err(SessionTryReceiveError::Empty) => thread::sleep(Duration::from_millis(10)),
+            Err(SessionTryReceiveError::Closed) => {
+                panic!("SSH session closed before the reservation exchange completed");
+            }
+        }
+    }
+
+    assert!(running, "SSH session did not reach Running");
+    let position = |marker: &[u8]| {
+        output
+            .windows(marker.len())
+            .position(|window| window == marker)
+    };
+    let before = position(b"__SSH_AUTO_BEFORE__").expect("missing preceding human input");
+    let middle = position(b"__SSH_AUTO_MIDDLE__").expect("missing committed automation input");
+    let after = position(b"__SSH_AUTO_AFTER__").expect("missing following human input");
+    let finished = position(b"__SSH_AUTO_FINISHED__").expect("missing final human input");
+    assert!(before < middle && middle < after && after < finished);
+    assert!(position(b"__SSH_AUTO_CANCELLED__").is_none());
+    match session.shutdown(SHUTDOWN_TIMEOUT) {
+        Ok(ShutdownResult::Stopped | ShutdownResult::AlreadyStopped) => {}
+        Err(_) => panic!("SSH session did not shut down within the test timeout"),
+    }
+}
+
+#[test]
+#[ignore = "requires the repository-owned OpenSSH Docker fixture"]
 fn controlled_openssh_interactive_password_interoperability() {
     const INTERACTIVE_MARKER: &[u8] = b"__FESTERM_OPENSSH_INTERACTIVE_OK__";
 

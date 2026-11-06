@@ -1946,16 +1946,21 @@ the adapter cannot turn a refused chord into a different key. An unrecognized
 token is `InvalidKey`; a syntactically valid chord that the core cannot encode
 (such as `ctrl:Plus`), or a locked key, is `Input(Rejected)`.
 
-The local PTY component can reserve an inert position in its existing bounded
-command queue before an exact broker commit. Its immutable bytes become
+The local PTY and interactive SSH components can reserve an inert position in
+their existing bounded command queues before an exact broker commit. Immutable
+bytes become
 sendable only after the application completes the broker callback while
 retaining worker, privacy and attachment admission fences through publication.
 An unresolved slot expires after 250 ms, without allowing later commands to
 overtake it. The bounded admission claim must be confirmed by a monotonic clock
 read after the claim; a timely published reservation remains admitted even if
-the transport consumes it later. If the callback succeeds but publication loses
-the slot, the caller must report an unknown outcome and must not retry
-automatically.
+the transport consumes it later. SSH discards reservations whose bound
+attachment generation was replaced rather than forwarding them to a new
+connection. If the callback succeeds but publication loses the slot, the caller
+must report an unknown outcome and must not retry automatically.
+SSH refuses a reservation while the shared admission lock is busy and does not
+block its I/O loop waiting to recheck a pending slot. Expired unresolved slots
+can be discarded without that lock; committed slots retain their order.
 The controller can capture a composite human-input, application-wide IME and
 authoritative backend-attachment fence only with no buffered input, clipboard
 reservation or pending paste/file-drop confirmation. Human keyboard, paste,
@@ -1978,9 +1983,9 @@ metadata fence is not a lease or native handoff. The future adapter must check
 it under the shared admission lock through every effect and disclosure, and
 synchronously cut the controlling
 invocation and descendants through the broker on takeover. An empty local
-queue is not evidence that the remote editing state is safe. Other session
-backends currently refuse reservations, and no application control adapter
-uses either primitive yet.
+queue is not evidence that the remote editing state is safe. Text-mode SFTP and
+other session backends currently refuse reservations, and no application
+control adapter uses the SSH reservation yet.
 
 Lock, native suspension, explicit disconnect, tab close, attachment replacement,
 caller disconnect, expiry and worker crash close new-effect/data admission,
