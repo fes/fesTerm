@@ -646,7 +646,7 @@
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/automation-design.md#mcp-surface-and-connection-contract"
       ],
-      "decisions": ["ADR-0065", "ADR-0073"],
+      "decisions": ["ADR-0065", "ADR-0074"],
       "automated_tests": [
         "identity_proof_is_bound_to_a_fresh_versioned_challenge",
         "identity_proof_refuses_tampering_and_noncanonical_seeds",
