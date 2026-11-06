@@ -416,7 +416,7 @@ impl Child {
         startup.lpAttributeList = list.0;
         let application = wide(program);
         let mut command_line = wide(format!("\"{}\" --automation-worker", program.display()));
-        let environment = [0u16, 0u16];
+        let environment = worker_environment()?;
         // SAFETY: zero is a valid initial value for this output structure.
         let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
         // SAFETY: all strings are NUL-terminated and writable where required;
@@ -669,10 +669,42 @@ fn system_path(directory: unsafe extern "system" fn(*mut u16, u32) -> u32, leaf:
     path
 }
 
+fn windows_directory() -> Result<Vec<u16>, Error> {
+    let mut buffer = vec![0u16; 32_768];
+    // SAFETY: buffer is writable for its stated length.
+    let length = unsafe { GetWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err(unavailable("Windows directory unavailable"));
+    }
+    buffer.truncate(length);
+    Ok(buffer)
+}
+
+// CreateProcess needs SystemRoot for the child runtime; inherit nothing else.
+fn worker_environment() -> Result<Vec<u16>, Error> {
+    let mut environment: Vec<_> = "SystemRoot=".encode_utf16().collect();
+    environment.extend(windows_directory()?);
+    environment.extend([0, 0]);
+    Ok(environment)
+}
+
+fn worker_environment_isolated() -> bool {
+    let Ok(system_root) = windows_directory() else {
+        return false;
+    };
+    let mut variables = std::env::vars_os();
+    let Some((key, value)) = variables.next() else {
+        return false;
+    };
+    key == "SystemRoot"
+        && value.encode_wide().eq(system_root.iter().copied())
+        && variables.next().is_none()
+}
+
 /// Worker-side qualification before Ready: verify the containment the
 /// supervisor established, then require representative native denials.
 pub(crate) fn confine() -> Result<(), Error> {
-    if std::env::vars_os().next().is_some() {
+    if !worker_environment_isolated() {
         return Err(unavailable(
             "worker environment was not cleared by its supervisor",
         ));
