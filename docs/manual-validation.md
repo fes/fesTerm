@@ -9,7 +9,7 @@
 | PN-01 | Desktop 2/4-pane geometry and keyboard/accessibility workflow | Pending Windows/macOS/Linux: integrated chrome, 1x/1.25x/1.5x/2x dividers/intersection, terminal padding on every edge, focus, narrow windows, long names, mixed surfaces and unread; compare to reviewed split-pane mockups |
 | PN-02 | Live pane lifecycle and workspace recovery | Pending controlled native PTY/SSH/serial/SFTP continuity, shared dirty documents across windows, cancellation, secondary/primary close, all-window restore and corrupt/save-failure recovery; do not infer acceptance from headless tests |
 
-PN-01 also requires default-on/disabled-hover handles, explicit Rearrange with
+PN-01 also requires default-off/explicitly-enabled hover handles, explicit Rearrange with
 hover off, high-contrast pane focus, long names, unchanged terminal padding/grid,
 keyboard destination selection, Above/Left/Swap/Right/Below, a safe owned
 chip-strip detach target and menus across display scales. Check input before
@@ -28,6 +28,14 @@ width), `desktop-panes-three` (two beside one), `desktop-panes-layout`, and
 `desktop-panes-hover-{equal,unequal,three}`. Hover captures exercise real pointer
 hover and assert that the details are not pinned. Pixel assertions cover
 passive-pane opacity, not native platform or assistive-technology acceptance.
+
+PAL-01 through PAL-04 additionally require native keyboard, IME and screen-reader
+review of the larger grouped palette: category sidebar at wide sizes, dropdown
+at narrow sizes, short-window scrolling, scoped multiword search, page navigation,
+category Enter/popup Escape ownership, and unchanged terminal/document input after
+dismissal. Responsive geometry, selected-ID stability, category filtering and
+contextual pane-command inventory have deterministic headless coverage.
+Production-renderer gallery captures are not native accessibility acceptance.
 
 **GitHub tracker:** [#43 — Manual and usability verification inventory](https://github.com/fes/fesTerm/issues/43)
 

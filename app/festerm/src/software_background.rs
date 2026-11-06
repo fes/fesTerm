@@ -1196,6 +1196,7 @@ mod tests {
         palette.open();
         let items = [festerm_ui_egui::palette::PaletteItem {
             id: 1,
+            category: festerm_ui_egui::palette::PaletteCategory::Application,
             label: "Settings".into(),
             hint: None,
             is_tab: false,
@@ -1399,6 +1400,7 @@ mod tests {
             let items = [
                 festerm_ui_egui::palette::PaletteItem {
                     id: 1,
+                    category: festerm_ui_egui::palette::PaletteCategory::Views,
                     label: "Local fixture".into(),
                     hint: Some("Active session".into()),
                     is_tab: true,
@@ -1406,6 +1408,7 @@ mod tests {
                 },
                 festerm_ui_egui::palette::PaletteItem {
                     id: 2,
+                    category: festerm_ui_egui::palette::PaletteCategory::Application,
                     label: "Open Settings".into(),
                     hint: Some("Ctrl+Shift+S".into()),
                     is_tab: false,

@@ -10226,22 +10226,22 @@ mod tests {
     fn pane_handles_preference_snapshot_adopt_and_reset() {
         let context = egui::Context::default();
         let mut state = AppState::for_test();
-        assert!(state.show_pane_handles());
-        state.dispatch(AppCommand::TogglePaneHandles, &context);
         assert!(!state.show_pane_handles());
+        state.dispatch(AppCommand::TogglePaneHandles, &context);
+        assert!(state.show_pane_handles());
         let snapshot = state.interface_settings();
-        assert!(!snapshot.show_pane_handles());
+        assert!(snapshot.show_pane_handles());
         let configuration = Configuration::empty()
             .with_interface_settings(snapshot)
             .unwrap();
-        assert!(!AppState::for_test_with_configuration(configuration.clone()).show_pane_handles());
+        assert!(AppState::for_test_with_configuration(configuration.clone()).show_pane_handles());
         state.dispatch(AppCommand::TogglePaneHandles, &context);
-        assert!(state.show_pane_handles());
-        state.adopt_configuration(configuration);
         assert!(!state.show_pane_handles());
-        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        state.adopt_configuration(configuration);
         assert!(state.show_pane_handles());
-        assert!(state.interface_settings().show_pane_handles());
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.show_pane_handles());
+        assert!(!state.interface_settings().show_pane_handles());
     }
 
     #[test]

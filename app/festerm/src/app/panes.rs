@@ -21,6 +21,10 @@ pub(super) struct PaneControls {
 }
 
 impl PaneControls {
+    pub(super) const fn is_arranging(&self) -> bool {
+        self.arranging
+    }
+
     pub(super) fn blocks_input(&self) -> bool {
         self.arranging
             || self.movement.is_some()

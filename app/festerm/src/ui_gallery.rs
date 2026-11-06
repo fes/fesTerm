@@ -602,9 +602,9 @@ fn scenarios() -> Vec<Scenario> {
         Scenario {
             id: "palette-command-menu",
             section: "surface-probes",
-            title: "Production command palette over Launcher",
+            title: "Grouped production command palette",
             caption: "The real application-owned command list and its initial search focus, \
-                      over synthetic Launcher metadata. This gallery-only fixture is not \
+                      over a synthetic SSH terminal with all applicable categories. This gallery-only fixture is not \
                       included in the bounded performance batch.",
             capture: capture_palette_normal,
         },
@@ -1402,7 +1402,7 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         chip_layout: ChipLayout::Wrap,
         status_bar_visible: true,
         show_session_details: true,
-        show_pane_handles: true,
+        show_pane_handles: false,
         pane_high_contrast: false,
         confirm_session_close: true,
         prefer_powershell: true,
@@ -5233,7 +5233,7 @@ pub(crate) fn surface_probe_provenance() -> serde_json::Value {
 }
 
 fn palette_gallery_harness(narrow: bool) -> Harness<'static, crate::app::FesTermApp> {
-    let mut app = crate::app::FesTermApp::for_test_with_configuration(synthetic_configuration());
+    let (mut app, _, _) = crate::app::FesTermApp::for_test_with_fake_ssh_session([]);
     app.open_palette_for_gallery(&egui::Context::default());
     let size = if narrow {
         egui::vec2(360.0, 516.0)

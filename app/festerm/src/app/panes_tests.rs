@@ -12,6 +12,7 @@ fn grouped_app() -> (
 ) {
     let (mut app, first, first_transport) = FesTermApp::for_test_with_fake_ssh_session([]);
     let context = egui::Context::default();
+    app.state.dispatch(AppCommand::TogglePaneHandles, &context);
     app.state.dispatch(AppCommand::OpenLauncher, &context);
     let second_transport = crate::session_controller::fake::FakeSshSession::new([]);
     let second = app.state.replace_active_with_test_ssh_session(
@@ -35,10 +36,44 @@ fn grouped_app() -> (
 }
 
 #[test]
+fn pane_palette_categories_and_actions_follow_active_composition_and_mode() {
+    use festerm_ui_egui::palette::PaletteCategory as C;
+    let (standalone, _, _) = FesTermApp::for_test_with_fake_ssh_session([]);
+    assert!(!standalone.state.show_pane_handles());
+    let items = standalone.palette_items();
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.category == C::Panes)
+            .map(|item| item.id)
+            .collect::<Vec<_>>(),
+        [31]
+    );
+    assert_eq!(
+        items.iter().find(|item| item.id == 13).unwrap().category,
+        C::Terminal
+    );
+    assert!(items
+        .iter()
+        .filter(|item| item.is_tab)
+        .all(|item| item.category == C::Views));
+    let (mut grouped, _, _, _, _) = grouped_app();
+    let actions = grouped.palette_items();
+    assert!(actions.iter().any(|item| item.id == 46));
+    assert!(!actions.iter().any(|item| item.id == 47));
+    grouped.begin_pane_rearrange(&egui::Context::default());
+    let actions = grouped.palette_items();
+    assert!(!actions.iter().any(|item| item.id == 46));
+    assert!(actions.iter().any(|item| item.id == 47));
+    assert!(actions.iter().any(|item| item.id == 32));
+}
+
+#[test]
 fn panes_disabled_hover_still_supports_explicit_rearrangement_without_resizing() {
     let (mut app, first, second, first_transport, second_transport) = grouped_app();
     let context = egui::Context::default();
     app.state.dispatch(AppCommand::TogglePaneHandles, &context);
+    assert!(!app.state.show_pane_handles());
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1600.0, 960.0))
         .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);

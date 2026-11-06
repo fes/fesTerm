@@ -18,9 +18,43 @@ use egui::{
     Context, Id, Key, Modifiers, ScrollArea, Sense, TextStyle, WidgetInfo, WidgetType, Window,
 };
 
+/// Presentation categories only; command availability and authority stay with the caller.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PaletteCategory {
+    Views,
+    Sessions,
+    Terminal,
+    Panes,
+    Files,
+    Application,
+}
+
+impl PaletteCategory {
+    pub const ALL: [Self; 6] = [
+        Self::Views,
+        Self::Sessions,
+        Self::Terminal,
+        Self::Panes,
+        Self::Files,
+        Self::Application,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Views => "Open views",
+            Self::Sessions => "Sessions & connections",
+            Self::Terminal => "Terminal",
+            Self::Panes => "Panes",
+            Self::Files => "Files & documents",
+            Self::Application => "Application",
+        }
+    }
+}
+
 /// One searchable entry: an application action or an open tab.
 #[derive(Clone, Debug)]
 pub struct PaletteItem {
+    pub category: PaletteCategory,
     /// Opaque id the caller correlates back to a concrete command or tab.
     /// Carries no terminal content.
     pub id: u64,
@@ -50,8 +84,12 @@ pub struct PaletteItem {
 pub struct PaletteState {
     open: bool,
     query: String,
-    selected: usize,
+    selected: Option<u64>,
     needs_focus: bool,
+    category: Option<PaletteCategory>,
+    category_widgets: Vec<Id>,
+    result_widgets: Vec<(Id, u64)>,
+    composition_owns_keys: bool,
 }
 
 impl PaletteState {
@@ -67,12 +105,26 @@ impl PaletteState {
     pub fn open(&mut self) {
         self.open = true;
         self.query.clear();
-        self.selected = 0;
+        self.selected = None;
+        self.category = None;
+        self.category_widgets.clear();
+        self.result_widgets.clear();
         self.needs_focus = true;
     }
 
     pub fn close(&mut self) {
         self.open = false;
+        self.query.clear();
+        self.selected = None;
+        self.category = None;
+        self.category_widgets.clear();
+        self.result_widgets.clear();
+        self.composition_owns_keys = false;
+    }
+
+    /// The caller supplies its existing per-frame IME ownership decision.
+    pub fn set_composition_owns_keys(&mut self, owns_keys: bool) {
+        self.composition_owns_keys = owns_keys;
     }
 
     pub fn toggle(&mut self) {
@@ -85,20 +137,20 @@ impl PaletteState {
 }
 
 fn filtered<'a>(items: &'a [PaletteItem], query: &str) -> Vec<&'a PaletteItem> {
-    if query.is_empty() {
-        return items.iter().collect();
-    }
     let query = query.to_lowercase();
-    items
+    let mut matches: Vec<_> = items
         .iter()
         .filter(|item| {
-            item.label.to_lowercase().contains(&query)
-                || item
-                    .hint
-                    .as_ref()
-                    .is_some_and(|hint| hint.to_lowercase().contains(&query))
+            let label = item.label.to_lowercase();
+            let hint = item.hint.as_deref().unwrap_or_default().to_lowercase();
+            let category = item.category.label().to_lowercase();
+            query
+                .split_whitespace()
+                .all(|word| label.contains(word) || hint.contains(word) || category.contains(word))
         })
-        .collect()
+        .collect();
+    matches.sort_by_key(|item| item.category);
+    matches
 }
 
 /// Renders the palette overlay when open. Returns:
@@ -117,13 +169,36 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
     let mut decision = None;
     let request_focus = state.needs_focus;
     state.needs_focus = false;
+    let focused = ctx.memory(|memory| memory.focused());
+    let category_owns_keyboard = focused.is_some_and(|id| state.category_widgets.contains(&id));
+    let popup_was_open = egui::Popup::is_any_open(ctx);
+    let list_owns_keyboard =
+        !category_owns_keyboard && !popup_was_open && !state.composition_owns_keys;
+    if let Some((_, id)) = state
+        .result_widgets
+        .iter()
+        .find(|(id, _)| Some(*id) == focused)
+    {
+        state.selected = Some(*id);
+    }
+    let navigation = list_owns_keyboard
+        .then(|| {
+            ctx.input_mut(|input| {
+                [Key::ArrowDown, Key::ArrowUp, Key::PageDown, Key::PageUp]
+                    .into_iter()
+                    .find(|key| input.consume_key(Modifiers::NONE, *key))
+            })
+        })
+        .flatten();
+    let mut category_widgets = Vec::new();
+    let mut result_widgets = Vec::new();
     let root = ctx.content_rect();
     let frame = egui::Frame::window(&ctx.global_style());
     let margin = frame.total_margin().sum();
     let top = if root.height() < 400.0 { 16.0 } else { 48.0 };
     let size = egui::vec2(
-        (root.width() - 32.0 - margin.x).clamp(0.0, 420.0),
-        (root.height() - top - 16.0 - margin.y - 40.0).clamp(0.0, 320.0),
+        (root.width() - 32.0 - margin.x).clamp(0.0, 840.0),
+        (root.height() - top - 16.0 - margin.y - 40.0).clamp(0.0, 600.0),
     );
 
     let area_response = Window::new("Command Palette")
@@ -138,165 +213,376 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
             let response = ui.add(
                 egui::TextEdit::singleline(&mut state.query)
                     .desired_width(f32::INFINITY)
-                    .hint_text("Search sessions and commands"),
+                    .hint_text(state.category.map_or_else(
+                        || "Search all commands and open views".to_owned(),
+                        |category| format!("Search {}", category.label().to_lowercase()),
+                    )),
             );
             if request_focus {
                 response.request_focus();
             }
-            if response.changed() {
-                state.selected = 0;
-            }
-
-            let matches = filtered(items, &state.query);
-            if matches.is_empty() {
-                state.selected = 0;
-            } else if state.selected >= matches.len() {
-                state.selected = matches.len() - 1;
-            }
-
-            // Keyboard navigation: Up/Down move the highlighted row, Enter
-            // confirms it, Escape dismisses without a selection.
-            let down_pressed =
-                ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::ArrowDown));
-            let up_pressed = ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::ArrowUp));
-            let enter_pressed =
-                ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
-            let escape_pressed =
-                ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
-
-            if down_pressed && !matches.is_empty() {
-                state.selected = (state.selected + 1).min(matches.len() - 1);
-            }
-            if up_pressed && state.selected > 0 {
-                state.selected -= 1;
-            }
-
-            ui.separator();
-            ScrollArea::vertical()
-                .max_height(ui.available_height().clamp(0.0, 220.0))
-                .show(ui, |ui| {
-                    // `with_cross_justify(true)` makes each row fill the full
-                    // available width instead of shrinking to its own text, so
-                    // the highlighted background spans the whole popup rather
-                    // than just the label.
-                    ui.with_layout(
-                        egui::Layout::top_down(egui::Align::Min).with_cross_justify(true),
-                        |ui| {
-                            for (index, item) in matches.iter().enumerate() {
-                                let highlighted = index == state.selected;
-                                let row_shortcut = if item.is_tab {
-                                    item.shortcut_label.as_deref()
-                                } else {
-                                    item.hint.as_deref()
-                                };
-                                let left_text = if item.is_tab {
-                                    match &item.hint {
-                                        Some(hint) => format!("{}  \u{2014}  {hint}", item.label),
-                                        None => item.label.clone(),
-                                    }
-                                } else {
-                                    item.label.clone()
-                                };
-                                let accessible_label = match row_shortcut {
-                                    Some(shortcut) => format!("{left_text}, {shortcut}"),
-                                    None => left_text.clone(),
-                                };
-                                let row_height = ui.spacing().interact_size.y.max(28.0);
-                                let (rect, response) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), row_height),
-                                    Sense::click(),
+            // Preserve the query owner until IME/palette Escape policy runs.
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    response.id,
+                    egui::EventFilter {
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                        ..Default::default()
+                    },
+                )
+            });
+            let mut reset_selection = request_focus || response.changed();
+            let all_matches = filtered(items, &state.query);
+            let previous_category = state.category;
+            let wide = ui.available_width() >= 620.0;
+            if !wide {
+                let category = egui::ComboBox::from_id_salt("palette-category")
+                    .selected_text(
+                        state
+                            .category
+                            .map_or("All categories", PaletteCategory::label),
+                    )
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut state.category, None, "All categories");
+                        for category in PaletteCategory::ALL {
+                            if items.iter().any(|item| item.category == category) {
+                                ui.selectable_value(
+                                    &mut state.category,
+                                    Some(category),
+                                    category.label(),
                                 );
-                                response.widget_info(|| {
-                                    let mut info = WidgetInfo::labeled(
-                                        WidgetType::SelectableLabel,
-                                        true,
-                                        accessible_label.clone(),
-                                    );
-                                    info.selected = Some(highlighted);
-                                    info
-                                });
-                                let selection = ui.visuals().selection;
-                                if highlighted {
-                                    ui.painter().rect_filled(rect, 3.0, selection.bg_fill);
-                                    ui.painter().rect_stroke(
-                                        rect,
-                                        3.0,
-                                        selection.stroke,
-                                        egui::StrokeKind::Inside,
-                                    );
-                                } else if response.hovered() {
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        3.0,
-                                        ui.visuals().widgets.hovered.weak_bg_fill,
-                                    );
-                                }
-
-                                let font = TextStyle::Button.resolve(ui.style());
-                                let left_color = if highlighted {
-                                    ui.visuals().strong_text_color()
-                                } else {
-                                    ui.visuals().text_color()
-                                };
-                                let painter =
-                                    ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-                                let shortcut = row_shortcut.map(|shortcut| {
-                                    let natural = painter.layout_no_wrap(
-                                        shortcut.to_owned(),
-                                        font.clone(),
-                                        ui.visuals().weak_text_color(),
-                                    );
-                                    elided_row_text(
-                                        &painter,
-                                        shortcut,
-                                        font.clone(),
-                                        ui.visuals().weak_text_color(),
-                                        natural.size().x.min(rect.width() * 0.35),
-                                    )
-                                });
-                                let shortcut_width = shortcut
-                                    .as_ref()
-                                    .map_or(0.0, |galley| galley.size().x + 12.0);
-                                let left = elided_row_text(
-                                    &painter,
-                                    &left_text,
-                                    font,
-                                    left_color,
-                                    (rect.width() - 14.0 - shortcut_width).max(0.0),
-                                );
-                                painter.galley(
-                                    rect.left_center() + egui::vec2(6.0, -left.size().y / 2.0),
-                                    left,
-                                    left_color,
-                                );
-                                if let Some(shortcut) = shortcut {
-                                    painter.galley(
-                                        rect.right_center()
-                                            - egui::vec2(
-                                                8.0 + shortcut.size().x,
-                                                shortcut.size().y / 2.0,
-                                            ),
-                                        shortcut,
-                                        ui.visuals().weak_text_color(),
-                                    );
-                                }
-                                if response.clicked() {
-                                    decision = Some(Some(item.id));
-                                }
                             }
+                        }
+                    });
+                category_widgets.push(category.response.id);
+            }
+            ui.separator();
+            let body_height = (ui.available_height() - 30.0).max(0.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), body_height),
+                egui::Layout::left_to_right(egui::Align::Min),
+                |ui| {
+                    if wide {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(192.0, body_height),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                ui.set_width(192.0);
+                                ScrollArea::vertical()
+                                    .id_salt("palette-categories")
+                                    .auto_shrink([false, false])
+                                    .max_height(body_height)
+                                    .show(ui, |ui| {
+                                        let button = ui.add_sized(
+                                            [ui.available_width(), 30.0],
+                                            egui::Button::selectable(
+                                                state.category.is_none(),
+                                                (
+                                                    "All categories",
+                                                    egui::Atom::grow(),
+                                                    egui::RichText::new(
+                                                        all_matches.len().to_string(),
+                                                    )
+                                                    .weak(),
+                                                ),
+                                            )
+                                            .frame_when_inactive(false)
+                                            .truncate(),
+                                        );
+                                        category_widgets.push(button.id);
+                                        if button.clicked() {
+                                            state.category = None;
+                                        }
+                                        for category in PaletteCategory::ALL {
+                                            if !items.iter().any(|item| item.category == category)
+                                                && state.category != Some(category)
+                                            {
+                                                continue;
+                                            }
+                                            let count = all_matches
+                                                .iter()
+                                                .filter(|item| item.category == category)
+                                                .count();
+                                            let button = ui.add_sized(
+                                                [ui.available_width(), 30.0],
+                                                egui::Button::selectable(
+                                                    state.category == Some(category),
+                                                    (
+                                                        category.label(),
+                                                        egui::Atom::grow(),
+                                                        egui::RichText::new(count.to_string())
+                                                            .weak(),
+                                                    ),
+                                                )
+                                                .frame_when_inactive(false)
+                                                .truncate(),
+                                            );
+                                            category_widgets.push(button.id);
+                                            if button.clicked() {
+                                                state.category = Some(category);
+                                            }
+                                        }
+                                    });
+                            },
+                        );
+                        ui.separator();
+                    }
+                    reset_selection |= previous_category != state.category;
+                    let matches: Vec<_> = all_matches
+                        .iter()
+                        .copied()
+                        .filter(|item| {
+                            state
+                                .category
+                                .is_none_or(|category| item.category == category)
+                        })
+                        .collect();
+                    if reset_selection {
+                        state.selected = matches.first().map(|item| item.id);
+                    } else if !matches.iter().any(|item| Some(item.id) == state.selected) {
+                        state.selected = None;
+                    }
+                    let mut scroll_selection = reset_selection;
+                    if let Some(key) = navigation {
+                        let current = matches
+                            .iter()
+                            .position(|item| Some(item.id) == state.selected);
+                        let page = (body_height / 30.0).floor().max(1.0) as usize;
+                        let index = match key {
+                            Key::ArrowDown => current.map_or(0, |index| index.saturating_add(1)),
+                            Key::ArrowUp => current.unwrap_or(0).saturating_sub(1),
+                            Key::PageDown => current.map_or(0, |index| index.saturating_add(page)),
+                            Key::PageUp => current.unwrap_or(0).saturating_sub(page),
+                            _ => unreachable!("only list navigation keys are captured"),
+                        };
+                        state.selected = matches
+                            .get(index.min(matches.len().saturating_sub(1)))
+                            .map(|item| item.id);
+                        scroll_selection = true;
+                        response.request_focus();
+                    }
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), body_height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ScrollArea::vertical()
+                                .id_salt(("palette-results", state.category))
+                                .auto_shrink([false, false])
+                                .max_height(body_height)
+                                .show(ui, |ui| {
+                                    if matches.is_empty() {
+                                        ui.label("No matching commands or open views.");
+                                    }
+                                    // `with_cross_justify(true)` makes each row fill the full
+                                    // available width instead of shrinking to its own text, so
+                                    // the highlighted background spans the whole popup rather
+                                    // than just the label.
+                                    ui.with_layout(
+                                        egui::Layout::top_down(egui::Align::Min)
+                                            .with_cross_justify(true),
+                                        |ui| {
+                                            let mut previous = None;
+                                            for item in &matches {
+                                                if previous != Some(item.category) {
+                                                    if previous.is_some() {
+                                                        ui.add_space(10.0);
+                                                    }
+                                                    ui.label(
+                                                        egui::RichText::new(item.category.label())
+                                                            .small()
+                                                            .strong()
+                                                            .color(ui.visuals().weak_text_color()),
+                                                    );
+                                                    previous = Some(item.category);
+                                                }
+                                                let highlighted = Some(item.id) == state.selected;
+                                                ui.push_id(item.id, |ui| {
+                                                    let row_shortcut = if item.is_tab {
+                                                        item.shortcut_label.as_deref()
+                                                    } else {
+                                                        item.hint.as_deref()
+                                                    };
+                                                    let left_text = if item.is_tab {
+                                                        match &item.hint {
+                                                            Some(hint) => format!(
+                                                                "{}  \u{2014}  {hint}",
+                                                                item.label
+                                                            ),
+                                                            None => item.label.clone(),
+                                                        }
+                                                    } else {
+                                                        item.label.clone()
+                                                    };
+                                                    let accessible_label = match row_shortcut {
+                                                        Some(shortcut) => {
+                                                            format!("{left_text}, {shortcut}")
+                                                        }
+                                                        None => left_text.clone(),
+                                                    };
+                                                    let row_height =
+                                                        ui.spacing().interact_size.y.max(28.0);
+                                                    let (rect, response) = ui.allocate_exact_size(
+                                                        egui::vec2(
+                                                            ui.available_width(),
+                                                            row_height,
+                                                        ),
+                                                        Sense::click(),
+                                                    );
+                                                    response.widget_info(|| {
+                                                        let mut info = WidgetInfo::labeled(
+                                                            WidgetType::SelectableLabel,
+                                                            true,
+                                                            accessible_label.clone(),
+                                                        );
+                                                        info.selected = Some(highlighted);
+                                                        info
+                                                    });
+                                                    let selection = ui.visuals().selection;
+                                                    if highlighted {
+                                                        ui.painter().rect_filled(
+                                                            rect,
+                                                            3.0,
+                                                            selection.bg_fill,
+                                                        );
+                                                        ui.painter().rect_stroke(
+                                                            rect,
+                                                            3.0,
+                                                            selection.stroke,
+                                                            egui::StrokeKind::Inside,
+                                                        );
+                                                    } else if response.hovered() {
+                                                        ui.painter().rect_filled(
+                                                            rect,
+                                                            3.0,
+                                                            ui.visuals()
+                                                                .widgets
+                                                                .hovered
+                                                                .weak_bg_fill,
+                                                        );
+                                                    }
+
+                                                    let font =
+                                                        TextStyle::Button.resolve(ui.style());
+                                                    let left_color = if highlighted {
+                                                        ui.visuals().strong_text_color()
+                                                    } else {
+                                                        ui.visuals().text_color()
+                                                    };
+                                                    let painter = ui.painter().with_clip_rect(
+                                                        rect.intersect(ui.clip_rect()),
+                                                    );
+                                                    let shortcut = row_shortcut.map(|shortcut| {
+                                                        let natural = painter.layout_no_wrap(
+                                                            shortcut.to_owned(),
+                                                            font.clone(),
+                                                            ui.visuals().weak_text_color(),
+                                                        );
+                                                        elided_row_text(
+                                                            &painter,
+                                                            shortcut,
+                                                            font.clone(),
+                                                            ui.visuals().weak_text_color(),
+                                                            natural
+                                                                .size()
+                                                                .x
+                                                                .min(rect.width() * 0.35),
+                                                        )
+                                                    });
+                                                    let shortcut_width =
+                                                        shortcut.as_ref().map_or(0.0, |galley| {
+                                                            galley.size().x + 12.0
+                                                        });
+                                                    let left = elided_row_text(
+                                                        &painter,
+                                                        &left_text,
+                                                        font,
+                                                        left_color,
+                                                        (rect.width() - 14.0 - shortcut_width)
+                                                            .max(0.0),
+                                                    );
+                                                    painter.galley(
+                                                        rect.left_center()
+                                                            + egui::vec2(6.0, -left.size().y / 2.0),
+                                                        left,
+                                                        left_color,
+                                                    );
+                                                    if let Some(shortcut) = shortcut {
+                                                        painter.galley(
+                                                            rect.right_center()
+                                                                - egui::vec2(
+                                                                    8.0 + shortcut.size().x,
+                                                                    shortcut.size().y / 2.0,
+                                                                ),
+                                                            shortcut,
+                                                            ui.visuals().weak_text_color(),
+                                                        );
+                                                    }
+                                                    if response.clicked() {
+                                                        state.selected = Some(item.id);
+                                                        decision = Some(Some(item.id));
+                                                    }
+                                                    result_widgets.push((response.id, item.id));
+                                                    if highlighted && scroll_selection {
+                                                        response.scroll_to_me(Some(
+                                                            egui::Align::Center,
+                                                        ));
+                                                    }
+                                                });
+                                            }
+                                        },
+                                    );
+                                });
                         },
                     );
-                });
-
-            if enter_pressed {
-                if let Some(item) = matches.get(state.selected) {
-                    decision = Some(Some(item.id));
-                }
+                },
+            );
+            if previous_category != state.category {
+                response.request_focus();
             }
+            let count = all_matches
+                .iter()
+                .filter(|item| {
+                    state
+                        .category
+                        .is_none_or(|category| item.category == category)
+                })
+                .count();
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{count} {}",
+                        if count == 1 { "result" } else { "results" }
+                    ))
+                    .small()
+                    .weak(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new("Up/Down · Page Up/Down · Enter · Esc")
+                            .small()
+                            .weak(),
+                    );
+                });
+            });
+            let enter_pressed = list_owns_keyboard
+                && previous_category == state.category
+                && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
+            if enter_pressed && decision.is_none() {
+                decision = state.selected.map(Some);
+                response.request_focus();
+            }
+            let escape_pressed = !popup_was_open
+                && !state.composition_owns_keys
+                && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape));
             if escape_pressed {
                 decision = Some(None);
             }
         });
+    state.category_widgets = category_widgets;
+    state.result_widgets = result_widgets;
 
     // Clicking anywhere outside the popup dismisses it without a selection,
     // matching how the launcher's own overlays and native command palettes
@@ -308,7 +594,7 @@ pub fn show(ctx: &Context, state: &mut PaletteState, items: &[PaletteItem]) -> O
     // later frame than the click that opened it (the same click a caller
     // used to toggle the palette open, e.g. a chrome button, must never be
     // mistaken for a dismiss).
-    if decision.is_none() {
+    if decision.is_none() && !popup_was_open {
         if let Some(area_response) = area_response {
             let window_rect = area_response.response.rect;
             let pressed_outside = ctx.input(|input| {
@@ -343,9 +629,11 @@ fn elided_row_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::kittest::NodeT as _;
 
     fn item(id: u64, label: &str) -> PaletteItem {
         PaletteItem {
+            category: PaletteCategory::Application,
             id,
             label: label.to_owned(),
             hint: None,
@@ -365,6 +653,7 @@ mod tests {
         let items = vec![
             PaletteItem {
                 id: 1,
+                category: PaletteCategory::Views,
                 label: "production-db".to_owned(),
                 hint: Some("nvim server.rs".to_owned()),
                 is_tab: false,
@@ -387,6 +676,7 @@ mod tests {
         state.query = "abc".to_owned();
         state.toggle();
         assert!(!state.is_open());
+        assert!(state.query.is_empty());
         state.toggle();
         assert!(state.is_open());
         assert_eq!(state.query, "", "opening resets the search query");
@@ -399,8 +689,15 @@ mod tests {
     }
 
     fn harness(state: PaletteHarnessState) -> egui_kittest::Harness<'static, PaletteHarnessState> {
+        harness_at(egui::vec2(500.0, 400.0), state)
+    }
+
+    fn harness_at(
+        size: egui::Vec2,
+        state: PaletteHarnessState,
+    ) -> egui_kittest::Harness<'static, PaletteHarnessState> {
         egui_kittest::Harness::builder()
-            .with_size(egui::vec2(500.0, 400.0))
+            .with_size(size)
             .build_ui_state(
                 |ui, state: &mut PaletteHarnessState| {
                     if let Some(decision) = show(ui.ctx(), &mut state.palette, &state.items) {
@@ -409,6 +706,320 @@ mod tests {
                 },
                 state,
             )
+    }
+
+    fn categorized_items() -> Vec<PaletteItem> {
+        vec![
+            PaletteItem {
+                category: PaletteCategory::Sessions,
+                ..item(1, "New Session")
+            },
+            PaletteItem {
+                category: PaletteCategory::Terminal,
+                ..item(2, "Copy")
+            },
+            PaletteItem {
+                category: PaletteCategory::Views,
+                hint: Some("release notes".into()),
+                ..item(3, "production-db")
+            },
+        ]
+    }
+
+    #[test]
+    fn grouped_search_matches_each_word_across_identity_hint_and_category() {
+        let items = categorized_items();
+        assert_eq!(
+            filtered(&items, "")
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            [3, 1, 2]
+        );
+        assert_eq!(filtered(&items, "OPEN production RELEASE")[0].id, 3);
+        assert_eq!(filtered(&items, "connections new")[0].id, 1);
+        assert!(filtered(&items, "production terminal").is_empty());
+    }
+
+    #[test]
+    fn category_scope_and_responsive_navigation_preserve_command_ids() {
+        use egui_kittest::kittest::Queryable as _;
+        for size in [egui::vec2(1000.0, 760.0), egui::vec2(360.0, 516.0)] {
+            let mut palette = PaletteState::default();
+            palette.open();
+            let mut harness = harness_at(
+                size,
+                PaletteHarnessState {
+                    palette,
+                    items: categorized_items(),
+                    decision: None,
+                },
+            );
+            harness.run();
+            assert_eq!(
+                harness.state().palette.category_widgets.len(),
+                if size.x > 620.0 { 4 } else { 1 }
+            );
+            // Exercise the real responsive category control, including its compact popup.
+            if size.x < 620.0 {
+                harness.get_by_role(egui::accesskit::Role::ComboBox).click();
+                harness.run();
+            }
+            harness
+                .query_all_by_label_contains("Sessions & connections")
+                .into_iter()
+                .find(|node| {
+                    node.accesskit_node().role() != egui::accesskit::Role::Label
+                        && node.accesskit_node().role() != egui::accesskit::Role::TextRun
+                })
+                .expect("interactive category control")
+                .click();
+            harness.run();
+            assert_eq!(
+                harness.state().palette.category,
+                Some(PaletteCategory::Sessions)
+            );
+            assert!(harness.query_by_label("Copy").is_none());
+            assert_eq!(harness.state().decision, None);
+            harness.key_press(Key::Enter);
+            harness.run();
+            assert_eq!(harness.state().decision, Some(Some(1)));
+        }
+    }
+
+    #[test]
+    fn category_keyboard_enter_never_dispatches_a_result() {
+        for size in [egui::vec2(1000.0, 760.0), egui::vec2(360.0, 516.0)] {
+            let mut palette = PaletteState::default();
+            palette.open();
+            let mut harness = harness_at(
+                size,
+                PaletteHarnessState {
+                    palette,
+                    items: categorized_items(),
+                    decision: None,
+                },
+            );
+            harness.run();
+            let category = harness.state().palette.category_widgets[0];
+            harness
+                .ctx
+                .memory_mut(|memory| memory.request_focus(category));
+            harness.key_press(Key::Enter);
+            harness.run();
+            assert_eq!(harness.state().decision, None);
+        }
+    }
+
+    #[test]
+    fn composing_query_owns_navigation_enter_and_escape_without_refocusing() {
+        let mut palette = PaletteState::default();
+        palette.open();
+        let mut harness = harness(PaletteHarnessState {
+            palette,
+            items: vec![item(1, "Alpha"), item(2, "Alpine")],
+            decision: None,
+        });
+        harness.run();
+        harness.state_mut().palette.set_composition_owns_keys(true);
+        harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "Al".into(),
+            active_range_chars: None,
+        }));
+        harness.run();
+        harness.key_press(Key::ArrowDown);
+        harness.run();
+        assert_eq!(harness.state().palette.selected, Some(1));
+        assert!(!harness
+            .output()
+            .platform_output
+            .ime
+            .as_ref()
+            .is_some_and(|ime| ime.should_interrupt_composition));
+        for key in [Key::Enter, Key::Escape] {
+            harness.key_press(key);
+            harness.run();
+            assert_eq!(harness.state().decision, None);
+        }
+    }
+
+    #[test]
+    fn category_popup_escape_closes_popup_before_palette() {
+        use egui_kittest::kittest::Queryable as _;
+        let mut palette = PaletteState::default();
+        palette.open();
+        let mut harness = harness(PaletteHarnessState {
+            palette,
+            items: categorized_items(),
+            decision: None,
+        });
+        harness.run();
+        harness.get_by_role(egui::accesskit::Role::ComboBox).click();
+        harness.run();
+        assert!(egui::Popup::is_any_open(&harness.ctx));
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert!(!egui::Popup::is_any_open(&harness.ctx));
+        assert_eq!(harness.state().decision, None);
+        harness.key_press(Key::Escape);
+        harness.run();
+        assert_eq!(harness.state().decision, Some(None));
+    }
+
+    #[test]
+    fn full_category_sidebar_fits_a_short_wide_root() {
+        let size = egui::vec2(1000.0, 240.0);
+        let mut palette = PaletteState::default();
+        palette.open();
+        let items = PaletteCategory::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(id, category)| PaletteItem {
+                category,
+                ..item(id as u64, category.label())
+            })
+            .collect();
+        let mut harness = harness_at(
+            size,
+            PaletteHarnessState {
+                palette,
+                items,
+                decision: None,
+            },
+        );
+        harness.run();
+        let window = harness
+            .ctx
+            .memory(|memory| memory.area_rect(PaletteState::window_id()))
+            .unwrap();
+        assert!(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(window),
+            "{window:?}"
+        );
+        assert_eq!(harness.state().palette.category_widgets.len(), 7);
+    }
+
+    #[test]
+    fn category_popup_click_outside_palette_keeps_palette_open_until_selection() {
+        use egui_kittest::kittest::Queryable as _;
+        let mut palette = PaletteState::default();
+        palette.open();
+        let items = PaletteCategory::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(id, category)| PaletteItem {
+                category,
+                ..item(id as u64, &format!("Action {id}"))
+            })
+            .collect();
+        let mut harness = harness_at(
+            egui::vec2(360.0, 240.0),
+            PaletteHarnessState {
+                palette,
+                items,
+                decision: None,
+            },
+        );
+        harness.run();
+        harness.get_by_role(egui::accesskit::Role::ComboBox).click();
+        harness.run();
+        let window = harness
+            .ctx
+            .memory(|memory| memory.area_rect(PaletteState::window_id()))
+            .unwrap();
+        let target = harness
+            .query_all_by_label_contains("Application")
+            .find(|node| node.accesskit_node().role() == egui::accesskit::Role::Button)
+            .expect("popup category");
+        let position = target.rect().center();
+        assert!(
+            !window.contains(position),
+            "must exercise a category outside the palette: {window:?} {position:?}"
+        );
+        harness.input_mut().events.extend([
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            },
+        ]);
+        harness.step();
+        assert_eq!(harness.state().decision, None);
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        harness.run();
+        assert_eq!(harness.state().decision, None);
+        assert_eq!(
+            harness.state().palette.category,
+            Some(PaletteCategory::Application)
+        );
+    }
+
+    #[test]
+    fn dynamic_results_keep_selected_identity_and_never_retarget_removed_selection() {
+        let mut palette = PaletteState::default();
+        palette.open();
+        let mut harness = harness(PaletteHarnessState {
+            palette,
+            items: vec![item(1, "First"), item(2, "Second"), item(3, "Third")],
+            decision: None,
+        });
+        harness.run();
+        harness.key_press(Key::ArrowDown);
+        harness.run();
+        assert_eq!(harness.state().palette.selected, Some(2));
+        harness.state_mut().items.swap(0, 2);
+        harness.run();
+        assert_eq!(harness.state().palette.selected, Some(2));
+        harness.state_mut().items.retain(|item| item.id != 2);
+        harness.key_press(Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().palette.selected, None);
+        assert_eq!(harness.state().decision, None);
+        harness.key_press(Key::ArrowDown);
+        harness.run();
+        assert_eq!(harness.state().palette.selected, Some(3));
+        harness.key_press(Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().decision, Some(Some(3)));
+    }
+
+    #[test]
+    fn paged_keyboard_navigation_scrolls_selected_result_into_view() {
+        use egui_kittest::kittest::Queryable as _;
+        let mut palette = PaletteState::default();
+        palette.open();
+        let mut harness = harness_at(
+            egui::vec2(1000.0, 760.0),
+            PaletteHarnessState {
+                palette,
+                items: (0..80)
+                    .map(|id| item(id, &format!("Command {id}")))
+                    .collect(),
+                decision: None,
+            },
+        );
+        harness.run();
+        for _ in 0..3 {
+            harness.key_press(Key::PageDown);
+            harness.run();
+        }
+        let selected = harness.state().palette.selected.unwrap();
+        assert!(selected > 20);
+        let window = harness
+            .ctx
+            .memory(|memory| memory.area_rect(PaletteState::window_id()))
+            .unwrap();
+        assert!(window.contains_rect(harness.get_by_label(&format!("Command {selected}")).rect()));
+        harness.key_press(Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().decision, Some(Some(selected)));
     }
 
     #[test]
@@ -440,6 +1051,7 @@ mod tests {
             palette,
             items: vec![PaletteItem {
                 id: 1,
+                category: PaletteCategory::Views,
                 label: "x".to_owned(),
                 hint: None,
                 is_tab: true,
@@ -526,6 +1138,7 @@ mod tests {
                         palette,
                         items: vec![PaletteItem {
                             id: 42,
+                            category: PaletteCategory::Views,
                             label: label.to_owned(),
                             hint: Some(hint.to_owned()),
                             is_tab: true,

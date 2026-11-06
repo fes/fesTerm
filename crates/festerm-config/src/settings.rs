@@ -23,7 +23,10 @@ pub struct InterfaceSettings {
     #[serde(default = "default_show_session_details")]
     show_session_details: bool,
     /// Whether desktop panes expose their compact handle on hover.
-    #[serde(default = "default_show_pane_handles", skip_serializing_if = "is_true")]
+    #[serde(
+        default = "default_show_pane_handles",
+        skip_serializing_if = "is_false"
+    )]
     show_pane_handles: bool,
     /// Whether desktop pane focus uses the stronger contrast treatment.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -189,7 +192,7 @@ impl InterfaceSettings {
         chip_layout: ChipLayoutPreference::SingleRowScroll,
         status_bar_visible: true,
         show_session_details: false,
-        show_pane_handles: true,
+        show_pane_handles: false,
         pane_high_contrast: false,
         confirm_session_close: false,
         prefer_powershell: true,
@@ -849,26 +852,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pane_handles_default_on_for_new_and_existing_configuration() {
-        assert!(crate::Configuration::empty()
+    fn pane_handles_default_off_for_new_and_existing_configuration() {
+        assert!(!crate::Configuration::empty()
             .interface_settings()
             .show_pane_handles());
         let settings: InterfaceSettings = toml::from_str("show_session_details = true").unwrap();
-        assert!(settings.show_pane_handles());
-        assert!(InterfaceSettings::default().show_pane_handles());
+        assert!(!settings.show_pane_handles());
+        assert!(!InterfaceSettings::default().show_pane_handles());
         assert!(!toml::to_string(&settings)
             .unwrap()
             .contains("show_pane_handles"));
     }
 
     #[test]
-    fn pane_handles_explicit_false_round_trips() {
-        let settings = InterfaceSettings::DEFAULT.with_show_pane_handles(false);
+    fn pane_handles_explicit_true_round_trips() {
+        let settings = InterfaceSettings::DEFAULT.with_show_pane_handles(true);
         let written = toml::to_string(&settings).unwrap();
-        assert!(written.contains("show_pane_handles = false"));
+        assert!(written.contains("show_pane_handles = true"));
         let read: InterfaceSettings = toml::from_str(&written).unwrap();
         assert_eq!(read, settings);
-        assert!(!read.show_pane_handles());
+        assert!(read.show_pane_handles());
     }
 
     #[test]

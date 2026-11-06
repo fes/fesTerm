@@ -36,6 +36,9 @@ Desktop split-pane composition is under development on
 [ADR 0075](docs/adr/0075-desktop-split-pane-presentation.md)). The live
 two-to-four-pane slice preserves existing session/document ownership and now
 includes transient handles, explicit rearrangement and atomic live-view swaps.
+Hover handles now default off; explicit rearrangement remains available.
+The desktop command palette uses a larger grouped layout with a category sidebar
+and a compact category picker in narrow windows.
 Named recipes, independent recovery preferences and native qualification remain open.
 
 An [Android port](app/festerm-android/README.md) now hosts the existing iOS

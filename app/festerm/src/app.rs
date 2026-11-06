@@ -3022,6 +3022,7 @@ impl FesTermApp {
     /// `docs/gui-design.md` ("a searchable session switcher keyed primarily
     /// by stable identity").
     fn palette_items(&self) -> Vec<PaletteItem> {
+        use festerm_ui_egui::palette::PaletteCategory as C;
         #[cfg(test)]
         self.palette_build_count
             .set(self.palette_build_count.get() + 1);
@@ -3058,6 +3059,7 @@ impl FesTermApp {
         let mut items = vec![
             PaletteItem {
                 id: NEW_LAUNCHER_TAB,
+                category: C::Sessions,
                 label: "New Session…".to_owned(),
                 hint: binding_label(A::NewSession),
                 is_tab: false,
@@ -3065,6 +3067,7 @@ impl FesTermApp {
             },
             PaletteItem {
                 id: START_LOCAL_SESSION,
+                category: C::Sessions,
                 label: "Start Local Shell".to_owned(),
                 hint: binding_label(A::StartLocalShell),
                 is_tab: false,
@@ -3072,6 +3075,7 @@ impl FesTermApp {
             },
             PaletteItem {
                 id: SET_UP_HOST,
+                category: C::Sessions,
                 label: "Dev Tunnel: Set up a host…".to_owned(),
                 hint: None,
                 is_tab: false,
@@ -3079,6 +3083,7 @@ impl FesTermApp {
             },
             PaletteItem {
                 id: NEW_WINDOW,
+                category: C::Application,
                 label: "New Window".to_owned(),
                 hint: binding_label(A::NewWindow),
                 is_tab: false,
@@ -3089,6 +3094,7 @@ impl FesTermApp {
             items.extend([
                 PaletteItem {
                     id: TOGGLE_FOCUS_MODE,
+                    category: C::Terminal,
                     label: if self.focus_mode {
                         "Exit Focus Mode".to_owned()
                     } else {
@@ -3100,6 +3106,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: ZOOM_IN,
+                    category: C::Terminal,
                     label: "Zoom In".to_owned(),
                     hint: binding_label(A::ZoomIn),
                     is_tab: false,
@@ -3107,6 +3114,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: ZOOM_OUT,
+                    category: C::Terminal,
                     label: "Zoom Out".to_owned(),
                     hint: binding_label(A::ZoomOut),
                     is_tab: false,
@@ -3114,6 +3122,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: RESET_ZOOM,
+                    category: C::Terminal,
                     label: "Reset Zoom".to_owned(),
                     hint: binding_label(A::ZoomReset),
                     is_tab: false,
@@ -3121,6 +3130,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: COPY,
+                    category: C::Terminal,
                     label: "Copy".to_owned(),
                     hint: binding_label(A::Copy),
                     is_tab: false,
@@ -3128,6 +3138,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: 26,
+                    category: C::Terminal,
                     label: "Bounded rectangle copy".to_owned(),
                     hint: binding_label(A::RectangleCopy),
                     is_tab: false,
@@ -3135,6 +3146,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: 27,
+                    category: C::Terminal,
                     label: "Smart Select Sentence".to_owned(),
                     hint: Some(
                         "Select around the cursor or selection end; Copy is separate".to_owned(),
@@ -3144,6 +3156,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: 28,
+                    category: C::Terminal,
                     label: "Smart Select Paragraph".to_owned(),
                     hint: Some(
                         "Select around the cursor or selection end; Copy is separate".to_owned(),
@@ -3153,6 +3166,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: 29,
+                    category: C::Terminal,
                     label: "Smart Select Block".to_owned(),
                     hint: Some(
                         "Select around the cursor or selection end; Copy is separate".to_owned(),
@@ -3162,6 +3176,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: PASTE,
+                    category: C::Terminal,
                     label: "Paste".to_owned(),
                     hint: binding_label(A::Paste),
                     is_tab: false,
@@ -3169,6 +3184,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: FIND_IN_TERMINAL,
+                    category: C::Terminal,
                     label: "Find in Terminal…".to_owned(),
                     hint: binding_label(A::Find),
                     is_tab: false,
@@ -3176,6 +3192,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: OPEN_TERMINAL_HISTORY_IN_EDITOR,
+                    category: C::Files,
                     label: "Open Terminal History in Editor".to_owned(),
                     hint: Some(
                         "Freeze retained terminal text into a new untitled editor snapshot"
@@ -3186,6 +3203,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: SAVE_TERMINAL_HISTORY_AS,
+                    category: C::Files,
                     label: "Save Terminal History As…".to_owned(),
                     hint: Some(
                         "Freeze retained terminal text and choose where to save a snapshot"
@@ -3196,6 +3214,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: PORT_FORWARD_MANAGER,
+                    category: C::Sessions,
                     label: if self.port_forward_manager_open_for_active_tab() {
                         "Hide Port Forward Manager".to_owned()
                     } else {
@@ -3207,6 +3226,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: RESET_TERMINAL,
+                    category: C::Terminal,
                     label: "Reset Terminal".to_owned(),
                     hint: binding_label(A::ResetTerminal),
                     is_tab: false,
@@ -3214,6 +3234,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: REDRAW_TERMINAL,
+                    category: C::Terminal,
                     label: "Redraw Terminal".to_owned(),
                     hint: Some(
                         "Repaint every visible region locally without sending input".to_owned(),
@@ -3223,6 +3244,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: CLEAR_TERMINAL_HISTORY,
+                    category: C::Terminal,
                     label: "Clear Terminal".to_owned(),
                     hint: binding_label(A::ClearTerminal),
                     is_tab: false,
@@ -3236,6 +3258,7 @@ impl FesTermApp {
                 if matches!(session.inspector_transport, InspectorTransport::Ssh { .. }) {
                     items.push(PaletteItem {
                         id: OPEN_SFTP_FILE_MANAGER,
+                        category: C::Files,
                         label: "Open SFTP".to_owned(),
                         hint: Some(
                             "Open the GUI SFTP file manager for this SSH session".to_owned(),
@@ -3253,6 +3276,7 @@ impl FesTermApp {
             items.extend([
                 PaletteItem {
                     id: RELOAD_MARKDOWN,
+                    category: C::Files,
                     label: "Reload Markdown".to_owned(),
                     hint: binding_label(A::MarkdownReload),
                     is_tab: false,
@@ -3260,6 +3284,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: TOGGLE_MARKDOWN_MODE,
+                    category: C::Files,
                     label: "Toggle Preview/Source".to_owned(),
                     hint: binding_label(A::MarkdownPreviewSource),
                     is_tab: false,
@@ -3267,6 +3292,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: FIND_IN_MARKDOWN,
+                    category: C::Files,
                     label: "Find in Markdown…".to_owned(),
                     hint: binding_label(A::MarkdownFind),
                     is_tab: false,
@@ -3274,6 +3300,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: TOGGLE_MARKDOWN_OUTLINE,
+                    category: C::Files,
                     label: "Toggle Markdown Outline".to_owned(),
                     hint: binding_label(A::MarkdownOutline),
                     is_tab: false,
@@ -3282,6 +3309,8 @@ impl FesTermApp {
             ]);
         }
         if self.state.composable(self.state.active()) {
+            let grouped = self.state.pane_group(self.state.active()).is_some();
+            let arranging = self.pane_controls.is_arranging();
             for (id, label) in [
                 (31, "Pane Layout…"),
                 (32, "Focus Next Pane"),
@@ -3301,8 +3330,15 @@ impl FesTermApp {
                 (46, "Rearrange panes"),
                 (47, "Finish rearranging panes"),
             ] {
+                if (id != 31 && !grouped && !(id == 47 && arranging))
+                    || (id == 46 && arranging)
+                    || (id == 47 && !arranging)
+                {
+                    continue;
+                }
                 items.push(PaletteItem {
                     id,
+                    category: C::Panes,
                     label: label.into(),
                     hint: None,
                     is_tab: false,
@@ -3312,6 +3348,16 @@ impl FesTermApp {
         }
         items.push(PaletteItem {
             id: CLOSE_ACTIVE_TAB,
+            category: match &self.state.active_tab().content {
+                TabContent::Session(_)
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_) => C::Sessions,
+                TabContent::TextEditor(_)
+                | TabContent::MarkdownViewer(_)
+                | TabContent::SftpFileManager(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_) => C::Files,
+                _ => C::Application,
+            },
             label: match &self.state.active_tab().content {
                 TabContent::Launcher => "Close Launcher".to_owned(),
                 TabContent::Settings => "Close Settings".to_owned(),
@@ -3383,6 +3429,7 @@ impl FesTermApp {
             };
             items.push(PaletteItem {
                 id: TAB_ACTIVATE_OFFSET + tab.id.chip_id(),
+                category: C::Views,
                 label,
                 hint,
                 is_tab: true,
@@ -3573,6 +3620,7 @@ impl FesTermApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        self.palette.set_composition_owns_keys(false);
         self.cancel_invalid_clipboard_paste(ctx);
         let deferred_id = Self::ordered_keyboard_events_id(ctx);
         let mut events = ctx
@@ -3801,6 +3849,11 @@ impl FesTermApp {
             )
         });
         let composition_owns_keys = crate::keyboard::composition_owns_keys(ctx, self.ime_owner());
+        // Packets reunite before palette rendering; a later release must not
+        // clear an earlier composition-owned key in the same frame.
+        if composition_owns_keys {
+            self.palette.set_composition_owns_keys(true);
+        }
         if crate::keyboard::take_composition_cancellation(ctx) {
             self.overlays.transient_notice = Some(("IME composition cancelled because its input owner changed. Re-enter the composed text in the intended pane.".into(),Instant::now()+Duration::from_secs(5)));
         }
@@ -19383,6 +19436,73 @@ mod tests {
             harness.get_by_label("Terminal viewport").is_focused(),
             "activating a background chip must hand keyboard focus to its terminal, \
              not leave it stranded on the chrome row"
+        );
+    }
+
+    #[test]
+    fn command_palette_same_frame_composition_cancel_keeps_escape_out_of_palette() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(bound_event(festerm_config::KeyboardAction::CommandPalette));
+        harness.run();
+        harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "New Session".into(),
+            active_range_chars: None,
+        }));
+        harness.run();
+        for pressed in [true, false] {
+            harness.input_mut().events.push(egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.step();
+        assert!(
+            harness.state().palette.is_open(),
+            "a later release must not unprotect the composition-owned Escape press"
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(
+            !harness.state().palette.is_open(),
+            "the next independent Escape can dismiss the palette"
+        );
+    }
+
+    #[test]
+    fn command_palette_composition_keeps_navigation_and_enter_owned_by_query() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(bound_event(festerm_config::KeyboardAction::CommandPalette));
+        harness.run();
+        assert!(harness.state().palette.is_open());
+        harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "New Session".into(),
+            active_range_chars: None,
+        }));
+        harness.run();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert!(!harness
+            .output()
+            .platform_output
+            .ime
+            .as_ref()
+            .is_some_and(|ime| ime.should_interrupt_composition));
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert!(
+            harness.state().palette.is_open(),
+            "IME Enter must not execute a palette command"
         );
     }
 
