@@ -692,25 +692,50 @@ fn windows_directory() -> Result<Vec<u16>, Error> {
     Ok(buffer)
 }
 
-// CreateProcess needs SystemRoot for the child runtime; inherit nothing else.
+// Provide the system root and its current-drive mapping; inherit nothing else.
 fn worker_environment() -> Result<Vec<u16>, Error> {
-    let mut environment: Vec<_> = "SystemRoot=".encode_utf16().collect();
-    environment.extend(windows_directory()?);
+    let root = windows_directory()?;
+    if root.len() < 3 || root[1] != u16::from(b':') || root[2] != u16::from(b'\\') {
+        return Err(unavailable(
+            "Windows directory is not an absolute drive path",
+        ));
+    }
+    let mut environment = vec![u16::from(b'='), root[0], root[1], u16::from(b'=')];
+    environment.extend(&root);
+    environment.push(0);
+    environment.extend("SystemRoot=".encode_utf16());
+    environment.extend(&root);
     environment.extend([0, 0]);
     Ok(environment)
 }
 
 fn worker_environment_isolated() -> bool {
-    let Ok(system_root) = windows_directory() else {
+    let Ok(root) = windows_directory() else {
         return false;
     };
-    let mut variables = std::env::vars_os();
-    let Some((key, value)) = variables.next() else {
+    if root.len() < 3 || root[1] != u16::from(b':') || root[2] != u16::from(b'\\') {
         return false;
-    };
-    key == "SystemRoot"
-        && value.encode_wide().eq(system_root.iter().copied())
-        && variables.next().is_none()
+    }
+    let drive_key = format!("={}", String::from_utf16_lossy(&root[..2]));
+    let mut system_root_seen = false;
+    let mut drive_seen = false;
+    for (key, value) in std::env::vars_os() {
+        let key = key.to_string_lossy();
+        if key.eq_ignore_ascii_case("SystemRoot")
+            && !system_root_seen
+            && value.encode_wide().eq(root.iter().copied())
+        {
+            system_root_seen = true;
+        } else if key.eq_ignore_ascii_case(&drive_key)
+            && !drive_seen
+            && value.encode_wide().eq(root.iter().copied())
+        {
+            drive_seen = true;
+        } else {
+            return false;
+        }
+    }
+    system_root_seen
 }
 
 /// Worker-side qualification before Ready: verify the containment the
