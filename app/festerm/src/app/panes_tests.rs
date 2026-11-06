@@ -566,11 +566,42 @@ fn panes_render_both_live_terminals_and_route_input_only_to_focused_view() {
     );
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum PaneGalleryScene {
+    Single,
+    Equal,
+    Unequal,
+    Three,
+    Layout,
+    HoverEqual,
+    HoverUnequal,
+    HoverThree,
+    Four,
+    Details,
+}
+
 pub(crate) fn pane_gallery_frame(details: bool) -> image::RgbaImage {
+    pane_gallery_scene_frame(if details {
+        PaneGalleryScene::Details
+    } else {
+        PaneGalleryScene::Four
+    })
+}
+
+pub(crate) fn pane_gallery_scene_frame(scene: PaneGalleryScene) -> image::RgbaImage {
     let (mut app, first, second, _, _) = grouped_app();
     let context = egui::Context::default();
     let mut ids = vec![first, second];
-    for (target, name) in [(first, "build"), (second, "logs")] {
+    if scene == PaneGalleryScene::Single {
+        app.state.dispatch(AppCommand::CloseTab(second), &context);
+        ids.pop();
+    }
+    let extra = match scene {
+        PaneGalleryScene::Three | PaneGalleryScene::HoverThree => 1,
+        PaneGalleryScene::Four | PaneGalleryScene::Details | PaneGalleryScene::Layout => 2,
+        _ => 0,
+    };
+    for (target, name) in [(first, "build"), (second, "logs")].into_iter().take(extra) {
         app.state.dispatch(AppCommand::OpenLauncher, &context);
         let view = app.state.replace_active_with_test_ssh_session(
             crate::session_controller::fake::FakeSshSession::new([]),
@@ -590,6 +621,21 @@ pub(crate) fn pane_gallery_frame(details: bool) -> image::RgbaImage {
         assert!(app.state.take_pane_error().is_none());
         ids.push(view);
     }
+    if matches!(
+        scene,
+        PaneGalleryScene::Unequal | PaneGalleryScene::HoverUnequal
+    ) {
+        app.state.dispatch(
+            AppCommand::ResizePaneSplit {
+                view: first,
+                path: Vec::new(),
+                ratio: 6667,
+                expected_revision: app.state.pane_revision(),
+            },
+            &context,
+        );
+        assert!(app.state.take_pane_error().is_none());
+    }
     for (index, view) in ids.iter().enumerate() {
         let session = app.state.session_tab_mut(*view).unwrap();
         session.label = ["Shell", "Tests", "Build", "Logs"][index].into();
@@ -602,26 +648,61 @@ pub(crate) fn pane_gallery_frame(details: bool) -> image::RgbaImage {
     harness.ctx.set_theme(egui::ThemePreference::Dark);
     harness.ctx.set_visuals(theme::default_visuals());
     harness.run();
-    assert_eq!(harness.state().pane_rects.len(), 4);
-    let image = harness.render().unwrap();
-    let focused_background = image.get_pixel(400, 200);
-    for (x, y) in [(1200, 200), (400, 700), (1200, 700)] {
-        assert_eq!(
-            image.get_pixel(x, y),
-            focused_background,
-            "passive panes must not be dimmed"
-        );
+    assert_eq!(harness.state().pane_rects.len(), ids.len());
+    if matches!(scene, PaneGalleryScene::Four | PaneGalleryScene::Details) {
+        let image = harness.render().unwrap();
+        let focused_background = image.get_pixel(400, 200);
+        for (x, y) in [(1200, 200), (400, 700), (1200, 700)] {
+            assert_eq!(
+                image.get_pixel(x, y),
+                focused_background,
+                "passive panes must not be dimmed"
+            );
+        }
     }
-    if !details {
-        return image;
+    if scene == PaneGalleryScene::Layout {
+        harness.state_mut().pane_layout_menu = Some(first);
+        harness.run();
+        harness.get_by_label("Move to own tab");
+        return harness.render().unwrap();
     }
+    let hover = matches!(
+        scene,
+        PaneGalleryScene::HoverEqual
+            | PaneGalleryScene::HoverUnequal
+            | PaneGalleryScene::HoverThree
+    );
+    if scene != PaneGalleryScene::Details && !hover {
+        return harness.render().unwrap();
+    }
+    let unread = if ids.len() > 2 { ids[2] } else { second };
     harness
         .state_mut()
         .state
-        .session_tab_mut(ids[2])
+        .session_tab_mut(unread)
         .unwrap()
         .has_new_output_since_active = true;
     harness.run();
+    if hover {
+        harness
+            .ctx
+            .global_style_mut(|style| style.interaction.tooltip_delay = 0.0);
+        let group = harness.state().state.pane_group(first).unwrap();
+        harness
+            .get_by_label(&format!(
+                "{} group, {} panes, 1 unread",
+                group.label,
+                ids.len()
+            ))
+            .hover();
+        harness.run_steps(5);
+        harness.get_by_label("1: Shell · SSH · Connected · focused");
+        assert!(
+            !harness.state().pane_details_open,
+            "capture a hover, not a pinned popup"
+        );
+        return harness.render().unwrap();
+    }
     harness
         .get_by_label("Pane details, 4 panes, 1 unread")
         .click();

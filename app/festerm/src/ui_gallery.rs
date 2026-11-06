@@ -97,6 +97,62 @@ fn scenarios() -> Vec<Scenario> {
             caption:"The production group chip opens themed, keyboard-accessible member details with an unread build pane; no real sessions, secrets or user configuration.",
             capture:|| crate::app::panes_tests::pane_gallery_frame(true),
         },
+        Scenario {
+            id:"desktop-panes-single",
+            section:"desktop-panes",
+            title:"Single terminal without a split",
+            caption:"The production single-view terminal retains its normal content padding; controlled synthetic SSH session.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Single),
+        },
+        Scenario {
+            id:"desktop-panes-equal",
+            section:"desktop-panes",
+            title:"Equal 1:1 split",
+            caption:"Two live terminal panes at equal width with the same content padding and one physical-pixel divider.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Equal),
+        },
+        Scenario {
+            id:"desktop-panes-unequal",
+            section:"desktop-panes",
+            title:"Unequal 2:1 width split",
+            caption:"Two live terminal panes with a 2:1 width ratio; padding is reserved inside each pane.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Unequal),
+        },
+        Scenario {
+            id:"desktop-panes-three",
+            section:"desktop-panes",
+            title:"Two panes beside one",
+            caption:"Three live terminal panes: two stacked on the left beside one full-height pane on the right.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Three),
+        },
+        Scenario {
+            id:"desktop-panes-layout",
+            section:"desktop-panes",
+            title:"Pane configuration dialog",
+            caption:"The production Pane Layout dialog over a four-pane group, including focus, resize, preset, swap, separate, rename and guarded-close controls.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Layout),
+        },
+        Scenario {
+            id:"desktop-panes-hover-equal",
+            section:"desktop-panes",
+            title:"Equal-split hover details",
+            caption:"Actual pointer-hover member details, not the pinned popup, over an equal split with an unread member.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HoverEqual),
+        },
+        Scenario {
+            id:"desktop-panes-hover-unequal",
+            section:"desktop-panes",
+            title:"Unequal-split hover details",
+            caption:"Actual pointer-hover member details over a 2:1 width split with an unread member.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HoverUnequal),
+        },
+        Scenario {
+            id:"desktop-panes-hover-three",
+            section:"desktop-panes",
+            title:"Three-pane hover details",
+            caption:"Actual pointer-hover member details over two panes beside one, with focused and unread members distinguished.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HoverThree),
+        },
         // -- new-session ------------------------------------------------
         Scenario {
             id: "launcher-populated",
@@ -577,7 +633,7 @@ fn selected_gallery_scenarios(selection: Option<&str>) -> Result<Vec<Scenario>, 
 
 #[test]
 fn surface_gallery_selection_preserves_default_and_limits_curated_captures() {
-    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 127);
+    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 135);
     assert_eq!(
         selected_gallery_scenarios(Some("desktop-panes-four,desktop-panes-details"))
             .unwrap()
@@ -769,7 +825,7 @@ fn surface_catalog_matches_reconciled_matrix_without_dropping_controls() {
     let gallery = scenarios();
     let ids: std::collections::BTreeSet<_> = gallery.iter().map(|scene| scene.id).collect();
     assert_eq!(ids.len(), gallery.len());
-    assert_eq!(gallery.len(), 50 + 52 + 2 + 23);
+    assert_eq!(gallery.len(), 50 + 52 + 10 + 23);
     let gallery_only: std::collections::BTreeSet<_> = matrix["gallery_only_states"]
         .as_array()
         .unwrap()

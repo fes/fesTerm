@@ -11,7 +11,11 @@
 
 Headless production four-pane and pinned-details/unread captures are available
 through the existing optional UI-state gallery (`scripts/capture-ui-state.sh`;
-scene IDs `desktop-panes-four,desktop-panes-details`). Pixel assertions cover
+scene IDs `desktop-panes-four,desktop-panes-details`). The same gallery includes
+`desktop-panes-single`, `desktop-panes-equal`, `desktop-panes-unequal` (2:1
+width), `desktop-panes-three` (two beside one), `desktop-panes-layout`, and
+`desktop-panes-hover-{equal,unequal,three}`. Hover captures exercise real pointer
+hover and assert that the details are not pinned. Pixel assertions cover
 passive-pane opacity, not native platform or assistive-technology acceptance.
 
 **GitHub tracker:** [#43 — Manual and usability verification inventory](https://github.com/fes/fesTerm/issues/43)
