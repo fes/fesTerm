@@ -1,0 +1,11 @@
+appId: ${APP_ID}
+name: Navigate between top-level screens
+---
+- launchApp:
+    stopApp: true
+- assertVisible: "Profiles"
+- tapOn: "Sessions"
+- tapOn: "Settings"
+- assertVisible: "Offline demo terminal"
+- tapOn: "Profiles"
+- assertVisible: "Open offline demo"

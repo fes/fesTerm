@@ -88,9 +88,12 @@ public final class FestermActivity extends NativeActivity {
         addContentView(input, new FrameLayout.LayoutParams(1, 1));
         // Transparent, input-free host for AccessKit's virtual node tree (ADR 0075).
         // NativeActivity delivers touches through its input queue, not views.
+        // egui lays out in window coordinates, so the host must sit at the
+        // window origin rather than inside the inset content frame.
         accessibilityHost = new View(this);
         accessibilityHost.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-        addContentView(accessibilityHost, new FrameLayout.LayoutParams(-1, -1));
+        ((ViewGroup) getWindow().getDecorView())
+                .addView(accessibilityHost, new FrameLayout.LayoutParams(-1, -1));
         shield = new View(this);
         shield.setBackgroundColor(BACKGROUND);
         shield.setClickable(true);
