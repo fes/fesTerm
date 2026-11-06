@@ -212,6 +212,10 @@ fn write_guarded(
 
 static CLEANUP_FAILED: AtomicBool = AtomicBool::new(false);
 
+/// Time allowed before the worker reports qualified Ready. The first launch
+/// of a freshly installed or linked image can be slowed by OS malware scans;
+/// no script or source is sent before Ready.
+const STARTUP_QUALIFICATION: Duration = Duration::from_secs(10);
 #[cfg(target_os = "macos")]
 const FOOTPRINT_INTERVAL: Duration = Duration::from_millis(5);
 const ADMISSION_OPEN: u8 = 0;
@@ -473,7 +477,7 @@ impl Supervisor {
             .spawn(move || {
                 supervise(child, frames, limits, receiver, sender, startup, open, wake)
             })?;
-        match ready.recv_timeout(Duration::from_secs(3)) {
+        match ready.recv_timeout(STARTUP_QUALIFICATION + Duration::from_secs(1)) {
             Ok(Ok(())) => Ok(Self {
                 controls,
                 events,
@@ -651,7 +655,7 @@ fn supervise(
         }
         let mut decoder = Decoder::default();
         let start = Instant::now();
-        let startup_deadline = start + Duration::from_secs(2);
+        let startup_deadline = start + STARTUP_QUALIFICATION;
         let run_deadline = admission.deadline;
         let mut qualified = false;
         let mut sent = 0;

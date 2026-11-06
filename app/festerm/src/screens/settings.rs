@@ -1217,6 +1217,9 @@ fn workflow_run_status(
     if run.starting {
         ssh_paragraph(ui, "Starting the isolated worker.");
     }
+    if let Some(notice) = &run.notice {
+        ui.colored_label(ui.visuals().warn_fg_color, notice);
+    }
     if let Some(input) = &run.input {
         ui.group(|ui| {
             ui.label(egui::RichText::new("Workflow input review").strong());

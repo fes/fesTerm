@@ -8140,7 +8140,10 @@ The first real-worker run was refused as "unavailable" on macOS: the app binary
 links CoreFoundation, which sets `__CF_USER_TEXT_ENCODING` before `main`, so the
 worker's cleared-environment check failed. The check now tolerates only that
 key with its well-formed value. The supervisor also hid the real startup error
-behind a generic message; it now reports the worker's actual failure. An
+behind a generic message; it now reports the worker's actual failure, which
+showed that the first launch of a freshly linked image can exceed the old
+2-second qualification window while the OS scans it. That window is now 10
+seconds; no source is sent before Ready. An
 end-to-end test runs `docs/examples/hello-terminal-workflow.json` through the
 real worker and observes exactly the two approved writes. MCP-invoked workflows,
 remote/persistent targets and native containment qualification remain open.

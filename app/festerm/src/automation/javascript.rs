@@ -49,6 +49,8 @@ struct Run {
     open: Arc<AtomicBool>,
     expires: Instant,
     phase: Phase,
+    /// Latest per-input failure; kept visible and carried into the outcome.
+    notice: Option<String>,
 }
 
 enum Phase {
@@ -107,6 +109,7 @@ pub(crate) struct RunView {
     pub starting: bool,
     pub input: Option<InputView>,
     pub queued_inputs: usize,
+    pub notice: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -177,8 +180,13 @@ fn retire_run(run: Run) {
     run.open.store(false, Ordering::Release);
     match run.phase {
         Phase::Running(running) => retire_supervisor(running.supervisor),
-        // The startup thread drops a late supervisor after this receiver closes.
-        Phase::Starting(_) => {}
+        Phase::Starting(receiver) => {
+            // A supervisor already buffered must not be dropped (joined) here;
+            // one sent after this receiver closes is retired by its thread.
+            if let Ok(Ok(supervisor)) = receiver.try_recv() {
+                retire_supervisor(supervisor);
+            }
+        }
     }
 }
 
@@ -332,6 +340,21 @@ fn uses_target(manifest: &festerm_automation_js::snapshot::Manifest) -> bool {
 impl Coordinator {
     fn javascript_status(&mut self, status: impl Into<String>) {
         self.javascript.outcome = Some(status.into());
+    }
+
+    fn javascript_notice(&mut self, notice: &str) {
+        match self.javascript.run.as_mut() {
+            Some(run) => run.notice = Some(notice.into()),
+            None => self.javascript_status(notice),
+        }
+    }
+
+    fn javascript_final_status(notice: Option<String>, status: impl Into<String>) -> String {
+        let status = status.into();
+        match notice {
+            Some(notice) => format!("{status} Last input problem: {notice}"),
+            None => status,
+        }
     }
 
     pub(super) fn javascript_monitoring(&self) -> Monitoring {
@@ -579,6 +602,7 @@ impl Coordinator {
             open: Arc::new(AtomicBool::new(true)),
             expires: now + festerm_automation::MAX_GRANT_LIFETIME,
             phase: Phase::Starting(receiver),
+            notice: None,
         });
     }
 
@@ -619,17 +643,22 @@ impl Coordinator {
             self.privacy_gate.signal_loss();
         }
         drop(guard);
+        let notice = run.notice.clone();
         retire_run(run);
-        self.javascript_status(status);
+        self.javascript_status(Self::javascript_final_status(notice, status));
     }
 
     /// Unwind path: no admission, no blocking, no callbacks.
     pub(super) fn javascript_unwind(&mut self) {
-        if let Some(run) = self.javascript.run.take() {
+        let notice = self.javascript.run.take().and_then(|run| {
+            let notice = run.notice.clone();
             retire_run(run);
-        }
-        self.javascript.outcome =
-            Some("Workflow stopped after an internal error. No further input was sent.".into());
+            notice
+        });
+        self.javascript.outcome = Some(Self::javascript_final_status(
+            notice,
+            "Workflow stopped after an internal error. No further input was sent.",
+        ));
     }
 
     fn finish_javascript(&mut self, completion: Completion, status: String) {
@@ -646,8 +675,9 @@ impl Coordinator {
             self.broker = None;
             self.privacy_gate.signal_loss();
         }
+        let notice = run.notice.clone();
         retire_run(run);
-        self.javascript_status(status);
+        self.javascript_status(Self::javascript_final_status(notice, status));
     }
 
     pub(crate) fn drive_javascript(&mut self, apps: &[&FesTermApp], context: &egui::Context) {
@@ -1295,7 +1325,7 @@ impl Coordinator {
         let Some(input) = running.inputs.pop_front() else {
             return;
         };
-        self.javascript_status(status);
+        self.javascript_notice(status);
         if self
             .javascript_reply(input.id, HostResult::Error { code }, None)
             .is_err()
@@ -1423,7 +1453,7 @@ impl Coordinator {
             return;
         };
         if let Some(status) = status {
-            self.javascript_status(status);
+            self.javascript_notice(status);
         }
         if self.javascript_reply(input.id, result, None).is_err() {
             self.cancel_javascript("Workflow stopped after a worker protocol failure.");
@@ -1599,6 +1629,7 @@ impl Coordinator {
                 starting,
                 input,
                 queued_inputs,
+                notice: run.notice.clone(),
             }
         });
         View {
@@ -1803,6 +1834,21 @@ mod tests {
             fake.drain_ordered_test_input(),
             [b"echo hi".to_vec(), b"\r".to_vec()]
         );
+    }
+
+    #[test]
+    fn input_problem_notices_stay_visible_and_survive_cancellation() {
+        let (mut coordinator, app, _id, _fake, target, context) = run_fixture();
+        let digest = example_bundle().digest().to_owned();
+        coordinator.start_javascript_run(digest, Some(target), parameters(true), &[&app], &context);
+        assert!(coordinator.javascript_run_active_for_test());
+        let notice = "Workflow input outcome is unknown: the terminal may have received it.";
+        coordinator.javascript_notice(notice);
+        let view = coordinator.javascript_view(&[&app]);
+        assert_eq!(view.run.and_then(|run| run.notice).as_deref(), Some(notice));
+        coordinator.cancel_javascript("Workflow stopped.");
+        let outcome = coordinator.javascript.outcome.clone().unwrap();
+        assert!(outcome.starts_with("Workflow stopped.") && outcome.contains(notice));
     }
 
     #[test]
