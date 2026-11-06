@@ -12,7 +12,7 @@ use std::{
         ffi::OsStrExt,
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
     },
-    path::{Component, Path, Prefix},
+    path::Path,
     ptr,
     sync::Arc,
 };
@@ -426,7 +426,7 @@ impl Child {
         startup.lpAttributeList = list.0;
         let application = wide(program);
         let mut command_line = wide(format!("\"{}\" --automation-worker", program.display()));
-        let environment = worker_environment(program)?;
+        let environment = worker_environment()?;
         let mut current_directory = windows_directory()?;
         current_directory.push(0);
         // SAFETY: zero is a valid initial value for this output structure.
@@ -692,106 +692,86 @@ fn windows_directory() -> Result<Vec<u16>, Error> {
     Ok(buffer)
 }
 
-// Provide the system root and mappings for the system and image drives; inherit nothing else.
-fn worker_environment(program: &Path) -> Result<Vec<u16>, Error> {
+fn is_drive_path(path: &[u16]) -> bool {
+    path.len() >= 3
+        && u8::try_from(path[0]).is_ok_and(|drive| drive.is_ascii_alphabetic())
+        && path[1] == u16::from(b':')
+        && path[2] == u16::from(b'\\')
+        && !path.contains(&0)
+}
+
+// CreateProcessW refuses an AppContainer launch with ERROR_ENVVAR_NOT_FOUND
+// unless LOCALAPPDATA is present; Windows then rewrites it, and adds TEMP/TMP,
+// to the container's own folder. Provide that and SystemRoot; nothing else.
+fn worker_environment() -> Result<Vec<u16>, Error> {
     let root = windows_directory()?;
-    if root.len() < 3 || root[1] != u16::from(b':') || root[2] != u16::from(b'\\') {
+    if !is_drive_path(&root) {
         return Err(unavailable(
             "Windows directory is not an absolute drive path",
         ));
     }
-    let system_drive = u16::from((root[0] as u8).to_ascii_uppercase());
-    let image_drive =
-        path_drive(program).ok_or_else(|| unavailable("worker image is not on a local drive"))?;
-    let mut drives = [system_drive, image_drive];
-    drives.sort_unstable();
-    let mut environment = Vec::with_capacity(root.len() * 2 + 64);
-    for (index, drive) in drives.into_iter().enumerate() {
-        if index > 0 && drive == drives[index - 1] {
-            continue;
-        }
-        environment.extend([u16::from(b'='), drive, u16::from(b':'), u16::from(b'=')]);
-        if drive == system_drive {
-            environment.extend(&root);
-        } else {
-            environment.extend([drive, u16::from(b':'), u16::from(b'\\')]);
-        }
-        environment.push(0);
-    }
+    let local: Vec<u16> = std::env::var_os("LOCALAPPDATA")
+        .map(|value| value.encode_wide().collect())
+        .filter(|value: &Vec<u16>| is_drive_path(value))
+        .ok_or_else(|| unavailable("local application data directory unavailable"))?;
+    let mut environment = Vec::with_capacity(local.len() + root.len() + 32);
+    environment.extend("LOCALAPPDATA=".encode_utf16());
+    environment.extend(&local);
+    environment.push(0);
     environment.extend("SystemRoot=".encode_utf16());
     environment.extend(&root);
     environment.extend([0, 0]);
     Ok(environment)
 }
 
-fn path_drive(path: &Path) -> Option<u16> {
-    let prefix = path.components().find_map(|component| match component {
-        Component::Prefix(prefix) => Some(prefix.kind()),
-        _ => None,
-    })?;
-    match prefix {
-        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
-            Some(u16::from(letter.to_ascii_uppercase()))
+/// Accept only what the supervisor supplied plus what Windows derives for
+/// this AppContainer: its own LOCALAPPDATA and the matching TEMP/TMP.
+fn environment_isolated(
+    variables: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    root: &[u16],
+) -> bool {
+    let suffix = format!(r"\Packages\{CONTAINER_NAME}\AC").to_ascii_lowercase();
+    let mut system_root = false;
+    let mut local: Option<String> = None;
+    let mut temps = Vec::new();
+    for (key, value) in variables {
+        let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
+            return false;
+        };
+        let wide_value: Vec<u16> = value.encode_utf16().collect();
+        if key.eq_ignore_ascii_case("SystemRoot") && !system_root && wide_value == root {
+            system_root = true;
+        } else if key.eq_ignore_ascii_case("LOCALAPPDATA")
+            && local.is_none()
+            && is_drive_path(&wide_value)
+            && value.to_ascii_lowercase().ends_with(&suffix)
+        {
+            local = Some(value.to_owned());
+        } else if (key.eq_ignore_ascii_case("TEMP") || key.eq_ignore_ascii_case("TMP"))
+            && !temps
+                .iter()
+                .any(|(seen, _): &(String, String)| seen.eq_ignore_ascii_case(key))
+        {
+            temps.push((key.to_owned(), value.to_owned()));
+        } else {
+            return false;
         }
-        _ => None,
     }
+    let Some(local) = local else {
+        return false;
+    };
+    let temp = format!(r"{local}\Temp");
+    system_root
+        && temps
+            .iter()
+            .all(|(_, value)| value.eq_ignore_ascii_case(&temp))
 }
 
 fn worker_environment_isolated() -> bool {
     let Ok(root) = windows_directory() else {
         return false;
     };
-    if root.len() < 3 || root[1] != u16::from(b':') || root[2] != u16::from(b'\\') {
-        return false;
-    }
-    let Ok(program) = std::env::current_exe() else {
-        return false;
-    };
-    let Some(image_drive) = path_drive(&program) else {
-        return false;
-    };
-    let system_drive = u16::from((root[0] as u8).to_ascii_uppercase());
-    let mut expected_drives = [system_drive, image_drive];
-    expected_drives.sort_unstable();
-    let expected_drive_count = if expected_drives[0] == expected_drives[1] {
-        1
-    } else {
-        2
-    };
-    let mut system_root_seen = false;
-    let mut drives_seen = [false; 2];
-    for (key, value) in std::env::vars_os() {
-        let key = key.to_string_lossy();
-        if key.eq_ignore_ascii_case("SystemRoot")
-            && !system_root_seen
-            && value.encode_wide().eq(root.iter().copied())
-        {
-            system_root_seen = true;
-        } else if key.len() == 3 && key.as_bytes()[0] == b'=' && key.as_bytes()[2] == b':' {
-            let drive = u16::from(key.as_bytes()[1].to_ascii_uppercase());
-            let Some(index) = expected_drives[..expected_drive_count]
-                .iter()
-                .position(|expected| *expected == drive)
-            else {
-                return false;
-            };
-            if drives_seen[index] {
-                return false;
-            }
-            let expected_value = if drive == system_drive {
-                root.clone()
-            } else {
-                vec![drive, u16::from(b':'), u16::from(b'\\')]
-            };
-            if !value.encode_wide().eq(expected_value) {
-                return false;
-            }
-            drives_seen[index] = true;
-        } else {
-            return false;
-        }
-    }
-    system_root_seen && drives_seen[..expected_drive_count].iter().all(|seen| *seen)
+    is_drive_path(&root) && environment_isolated(std::env::vars_os(), &root)
 }
 
 /// Worker-side qualification before Ready: verify the containment the
@@ -939,29 +919,67 @@ pub(crate) fn cpu_time() -> Option<std::time::Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+        pairs
+            .iter()
+            .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+            .collect()
+    }
 
     #[test]
-    fn worker_environment_maps_the_image_drive_without_inheriting_host_variables() {
-        let program = std::env::current_exe().unwrap();
-        let image_drive = path_drive(&program).unwrap();
-        let root = windows_directory().unwrap();
-        let system_drive = u16::from((root[0] as u8).to_ascii_uppercase());
-        let environment = worker_environment(&program).unwrap();
-        let entries = environment
+    fn worker_environment_supplies_only_local_app_data_and_system_root() {
+        let environment = worker_environment().unwrap();
+        let keys = environment
             .split(|unit| *unit == 0)
             .filter(|entry| !entry.is_empty())
-            .map(String::from_utf16_lossy)
+            .map(|entry| {
+                String::from_utf16_lossy(entry)
+                    .split('=')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            })
             .collect::<Vec<_>>();
-        let image_mapping = format!("={}:", char::from(image_drive as u8));
+        assert_eq!(keys, ["LOCALAPPDATA", "SystemRoot"]);
+    }
 
-        assert!(entries
-            .iter()
-            .any(|entry| entry.starts_with(&image_mapping)));
-        assert!(entries.iter().any(|entry| entry.starts_with("SystemRoot=")));
-        assert!(!entries.iter().any(|entry| entry.starts_with("PATH=")));
-        assert_eq!(
-            entries.len(),
-            if image_drive == system_drive { 2 } else { 3 }
-        );
+    #[test]
+    fn worker_accepts_only_the_appcontainer_derived_environment() {
+        let root: Vec<u16> = r"C:\Windows".encode_utf16().collect();
+        let local = format!(r"C:\Users\u\AppData\Local\Packages\{CONTAINER_NAME}\AC");
+        let temp = format!(r"{local}\Temp");
+        let derived = [
+            ("LOCALAPPDATA", local.as_str()),
+            ("SystemRoot", r"C:\Windows"),
+            ("TEMP", temp.as_str()),
+            ("TMP", temp.as_str()),
+        ];
+        assert!(environment_isolated(vars(&derived), &root));
+        assert!(environment_isolated(vars(&derived[..2]), &root));
+
+        let mut leaked = derived.to_vec();
+        leaked.push(("PATH", r"C:\Windows"));
+        assert!(!environment_isolated(vars(&leaked), &root));
+        assert!(!environment_isolated(
+            vars(&[
+                ("LOCALAPPDATA", r"C:\Users\u\AppData\Local"),
+                ("SystemRoot", r"C:\Windows"),
+            ]),
+            &root
+        ));
+        assert!(!environment_isolated(
+            vars(&[
+                ("LOCALAPPDATA", local.as_str()),
+                ("SystemRoot", r"C:\Windows"),
+                ("TEMP", r"C:\Users\u\AppData\Local\Temp"),
+            ]),
+            &root
+        ));
+        assert!(!environment_isolated(
+            vars(&[("SystemRoot", r"C:\Windows")]),
+            &root
+        ));
     }
 }

@@ -680,9 +680,9 @@ Desktop execution uses an install-owned worker process with no inherited
 secrets/environment, GUI/SSH/file descriptors or filesystem/network access
 beyond explicitly brokered IPC and the immutable script snapshot. Use an
 allowlisted minimal environment (Windows receives only its API-derived
-`SystemRoot` and drive mappings for the fixed system-directory working
-directory and worker image; other platforms use their documented runtime
-exceptions) and explicitly passed handles rather than assuming inherited state
+`SystemRoot` and `LOCALAPPDATA`, which `CreateProcessW` requires for an
+AppContainer and rewrites, with matching `TEMP`/`TMP`, to the container's own
+folder; other platforms use their documented runtime exceptions) and explicitly passed handles rather than assuming inherited state
 is harmless.
 The supervisor must retain a handle to
 its own child, enforce quotas, and reap only that child and its owned descendants.
