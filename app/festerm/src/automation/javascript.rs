@@ -1894,8 +1894,27 @@ mod tests {
     fn input_problem_notices_stay_visible_and_survive_cancellation() {
         let (mut coordinator, app, _id, _fake, target, context) = run_fixture();
         let digest = example_bundle().digest().to_owned();
-        coordinator.start_javascript_run(digest, Some(target), parameters(true), &[&app], &context);
-        assert!(coordinator.javascript_run_active_for_test());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            coordinator.start_javascript_run(
+                digest.clone(),
+                Some(target),
+                parameters(true),
+                &[&app],
+                &context,
+            );
+            if coordinator.javascript_run_active_for_test() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline
+                    && coordinator.javascript.outcome.as_deref()
+                        == Some("Automation is busy. Try running the workflow again."),
+                "workflow did not start: {:?}",
+                coordinator.javascript.outcome
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let notice = "Workflow input outcome is unknown: the terminal may have received it.";
         coordinator.javascript_notice(notice);
         let view = coordinator.javascript_view(&[&app]);
