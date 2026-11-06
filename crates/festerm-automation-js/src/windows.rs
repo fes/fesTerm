@@ -494,10 +494,6 @@ impl Child {
         })
     }
 
-    pub(crate) fn id(&self) -> u32 {
-        self.pid
-    }
-
     /// Accept only this worker process as the pipe's single client.
     pub(crate) fn poll_connected(&mut self) -> Result<bool, Error> {
         let handle = self.pipe.as_raw_handle();
