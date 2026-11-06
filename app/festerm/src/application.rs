@@ -1807,10 +1807,21 @@ mod tests {
                         assert!(!window.app.automation_mcp_enabled());
                         assert!(!window.app.automation_javascript_enabled());
                     }
-                    assert!(application
+                    let unrelated_saved = application
                         .window_mut(1 - first_window)
-                        .save_unrelated_interface_setting_for_test(&context));
-                    assert_saved_automation_preferences(&file.path, desired);
+                        .save_unrelated_interface_setting_for_test(&context);
+                    assert_eq!(
+                        unrelated_saved,
+                        matches!(failure, TestSaveFailure::BeforeWrite)
+                    );
+                    assert_saved_automation_preferences(
+                        &file.path,
+                        if unrelated_saved {
+                            desired
+                        } else {
+                            expected_disk
+                        },
+                    );
                     assert!(application.windows[0]
                         .app
                         .automation_preference_feedback_for_test()
@@ -1824,11 +1835,15 @@ mod tests {
                     for window in &application.windows {
                         assert!(!window.app.automation_mcp_enabled());
                         assert!(!window.app.automation_javascript_enabled());
-                        assert!(window
+                        let feedback = window
                             .app
                             .automation_preference_feedback_for_test()
-                            .unwrap()
-                            .contains("remain stopped until restart"));
+                            .unwrap();
+                        if matches!(failure, TestSaveFailure::BeforeWrite) {
+                            assert!(feedback.contains("remain stopped until restart"));
+                        } else {
+                            assert!(feedback.contains("reconcile manually"));
+                        }
                     }
                     assert_saved_automation_preferences(&file.path, desired);
                 }
@@ -1861,15 +1876,160 @@ mod tests {
                 assert_saved_automation_preferences(&file.path, expected_disk);
                 assert!(!application.windows[0].app.automation_mcp_enabled());
                 assert!(!application.windows[1].app.automation_javascript_enabled());
-                assert!(application
+                let unrelated_saved = application
                     .window_mut(1)
-                    .save_unrelated_interface_setting_for_test(&context));
-                assert_saved_automation_preferences(&file.path, off);
+                    .save_unrelated_interface_setting_for_test(&context);
+                assert_eq!(
+                    unrelated_saved,
+                    matches!(failure, TestSaveFailure::BeforeWrite)
+                );
+                assert_saved_automation_preferences(
+                    &file.path,
+                    if unrelated_saved { off } else { expected_disk },
+                );
                 assert!(application.windows[1]
                     .app
                     .automation_preference_feedback_for_test()
                     .unwrap()
                     .contains("outcome is uncertain"));
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_unrelated_save_blocks_stale_sibling_disable_retry_and_reload() {
+        use crate::configuration_startup::ConfigurationLoadFailure;
+
+        for disabled in [Feature::Mcp, Feature::Javascript] {
+            let LivePreferenceFixture {
+                mut application,
+                context,
+                file,
+                stop,
+                _receive,
+                ..
+            } = live_preference_fixture(true);
+            let (stale, _, reloader, _, _) =
+                application.window_mut(1).shared_application_services();
+            let unrelated = stale
+                .with_profile(Profile::local("unrelated", "sh", vec![], None).unwrap())
+                .unwrap();
+            let uncertain = reloader
+                .clone()
+                .with_save_failure_for_test(ConfigurationLoadFailure::OutcomeUnknown);
+            assert_eq!(
+                uncertain.save_configuration(&unrelated),
+                Err(ConfigurationLoadFailure::OutcomeUnknown)
+            );
+            assert_eq!(
+                Configuration::load_from_path(&file.path).unwrap(),
+                unrelated
+            );
+
+            application
+                .window_mut(1)
+                .toggle_automation_preference_for_test(disabled, &context);
+            assert!(stop.load(Ordering::Acquire));
+            for window in &application.windows {
+                assert!(!window.app.automation_mcp_enabled());
+                assert!(!window.app.automation_javascript_enabled());
+                let warning = window
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap();
+                assert!(warning.contains("reconcile manually"));
+                assert!(!warning.contains("retry saving"));
+            }
+            assert!(!application
+                .window_mut(0)
+                .save_unrelated_interface_setting_for_test(&context));
+            application
+                .window_mut(0)
+                .retry_automation_preferences_for_test(&context);
+            application.window_mut(0).broadcast_for_test(stale);
+            application.settle_windows_and_drive_automation(&context);
+            assert_eq!(
+                Configuration::load_from_path(&file.path).unwrap(),
+                unrelated
+            );
+            for window in &application.windows {
+                assert!(!window.app.automation_mcp_enabled());
+                assert!(!window.app.automation_javascript_enabled());
+                assert!(window
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("reconcile manually"));
+            }
+            let loaded = Configuration::load_from_path(&file.path).unwrap();
+            let restarted =
+                FesTermApplication::new(FesTermApp::for_test_with_configuration(loaded));
+            assert!(restarted
+                .automation
+                .settings(&[&restarted.windows[0].app])
+                .channels
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn preference_retry_is_hidden_during_busy_and_after_poison() {
+        use crate::configuration_startup::ConfigurationLoadFailure;
+        let initial = Values {
+            mcp: true,
+            javascript: true,
+        };
+        for poisoned in [false, true] {
+            let (mut application, context, file) =
+                application_with_saved_automation_preferences(initial);
+            let reloader = application.window_mut(0).shared_application_services().2;
+            if poisoned {
+                let failing = reloader.clone().with_panic_after_installation_for_test();
+                let candidate = automation_configuration(initial);
+                assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = failing.save_configuration(&candidate);
+                }))
+                .is_err());
+                application
+                    .window_mut(1)
+                    .toggle_automation_preference_for_test(Feature::Mcp, &context);
+                assert_eq!(
+                    reloader.save_configuration(&candidate),
+                    Err(ConfigurationLoadFailure::ReconciliationRequired)
+                );
+            } else {
+                let guard = reloader.hold_save_gate_for_test();
+                application
+                    .window_mut(1)
+                    .toggle_automation_preference_for_test(Feature::Mcp, &context);
+                for window in &application.windows {
+                    assert!(!window.app.automation_preference_retry_available_for_test());
+                    assert!(window
+                        .app
+                        .automation_preference_feedback_for_test()
+                        .unwrap()
+                        .contains("in progress"));
+                }
+                drop(guard);
+            }
+            for window in &application.windows {
+                assert!(!window.app.automation_mcp_enabled());
+                assert!(!window.app.automation_javascript_enabled());
+                assert_eq!(
+                    window.app.automation_preference_retry_available_for_test(),
+                    !poisoned
+                );
+            }
+            if poisoned {
+                application
+                    .window_mut(0)
+                    .retry_automation_preferences_for_test(&context);
+                assert_saved_automation_preferences(&file.path, initial);
+                assert!(application.windows[0]
+                    .app
+                    .automation_preference_feedback_for_test()
+                    .unwrap()
+                    .contains("reconcile manually"));
             }
         }
     }

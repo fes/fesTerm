@@ -59,18 +59,21 @@ committed before a cancellation in a later pass of the same frame.
 
 After a failed or indeterminate preference save, both live features are stopped
 for the rest of the process. Settings warns that an enabled value may remain
-or have reached disk and offers an explicit retry. Unrelated later saves cannot
-copy a failed enable, and do not clear that warning. A successful explicit
-preference save or retry confirms the current pair but does not resume
-automation in this process. There is no durable failure latch: on restart a
-value still enabled on disk can be read again; existing connection grants are
-never restored.
+or have reached disk. Retry is available only while the shared save gate is
+healthy; an in-progress save suppresses it, and an indeterminate attempted save
+or poisoned gate requires manual reconciliation and full restart. Unrelated
+later saves cannot copy a failed enable, and do not clear that warning. A
+successful explicit preference save or retry confirms the current pair but
+does not resume automation in this process. There is no durable failure latch:
+on restart a value still enabled on disk can be read again; existing connection
+grants are never restored.
 
 The guarantee covers in-process writes through the shared reloader and is
 subject to the existing storage contract. It does not reconcile unknown
 outcomes for unrelated fields, protect against other processes or filesystem
-namespace races, or qualify either adapter. A separate configuration-outcome
-owner/latch remains necessary for broader transaction guarantees.
+namespace races, or qualify either adapter. The shared in-process unknown-save
+latch does not establish a configuration-generation owner or broader
+transaction guarantees.
 
 Initial qualification targets desktop local stdio MCP and manually started,
 reviewed JavaScript workflows. Network MCP, unattended runs, timer/output/login

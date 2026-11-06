@@ -290,6 +290,10 @@
         "secondary_workspace_profile_save_preserves_automation_disable",
         "automation_preference_save_failures_stay_stopped_and_visible_until_retry",
         "automation_uncertain_enable_is_not_copied_by_an_unrelated_save",
+        "unknown_unrelated_save_blocks_stale_sibling_disable_retry_and_reload",
+        "preference_retry_is_hidden_during_busy_and_after_poison",
+        "stale_async_credential_completion_adopts_persisted_preference_overlay",
+        "stale_tunnel_import_adopts_persisted_preference_overlay",
         "automation_same_pass_stale_toggles_and_reset_cannot_reenable",
         "automation_cross_window_aba_invalidates_the_old_toggle_interaction",
         "automation_disable_guard_survives_discarded_ui_pass",
@@ -316,7 +320,7 @@
       "status": "partial",
       "prerequisites": [
         "Native multi-window Settings, warning and retry usability remain open under AUTO-01; configuration opt-in is not runtime or platform qualification",
-        "Failed or indeterminate preference saves cannot promise a durable off value across restart; unrelated indeterminate configuration outcomes and external writers remain outside this feature-specific fence"
+        "Failed or indeterminate preference saves cannot promise a durable off value across restart; the in-process save gate does not reconcile unknown disk outcomes or protect against external writers and filesystem aliases"
       ]
     },
     {
