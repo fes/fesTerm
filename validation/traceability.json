@@ -257,8 +257,10 @@
         "application_worker_reports_qualification_before_receiving_source",
         "macos_worker_environment_allows_only_corefoundation_encoding",
         "example_workflow_reads_and_sends_only_approved_input_through_a_real_worker",
+        "packaged_worker_path_uses_linux_helper_when_required",
         "input_descriptions_escape_controls_and_invisible_formatting",
         "input_problem_notices_stay_visible_and_survive_cancellation",
+        "wait_settlement_admission_does_not_block_on_contention",
         "scrollback_text_keeps_the_newest_lines_and_bytes"
       ],
       "manual_scenarios": ["AUTO-02", "AUTO-03"],

@@ -8127,8 +8127,9 @@ a person actually run a workflow. Settings now does, behind a default-off beta
 toggle on macOS, Linux and Windows. The user starts privacy monitoring, picks
 one local terminal and parameters, ticks a review box and clicks Run; that
 click is the native approval of the exact snapshot digest, parameters, target
-generation and manifest scopes for at most five minutes. The app re-executes
-itself as the contained worker, then brokers each read through privacy
+generation and manifest scopes for at most five minutes. The app starts the
+contained worker (the separately packaged helper on Linux, where the full app
+can exceed the address-space ceiling), then brokers each read through privacy
 admission, a live-attachment check and a size reservation before disclosure.
 Every `sendText`/`sendKeys` waits in Settings with an escaped preview; an
 approved input takes the writer lease and a fresh input fence, and commits only
@@ -8145,5 +8146,9 @@ showed that the first launch of a freshly linked image can exceed the old
 2-second qualification window while the OS scans it. That window is now 10
 seconds; no source is sent before Ready. An
 end-to-end test runs `docs/examples/hello-terminal-workflow.json` through the
-real worker and observes exactly the two approved writes. MCP-invoked workflows,
-remote/persistent targets and native containment qualification remain open.
+real worker and observes exactly the two approved writes. Linux uses its
+already-packaged standalone helper because the full app's initial mappings
+exceed the 128 MiB address-space ceiling. Reliability review also caught wait
+settlement blocking on the global admission lock; it now retries contention
+without stalling the UI. MCP-invoked workflows, remote/persistent targets and
+native containment qualification remain open.

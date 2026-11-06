@@ -2935,13 +2935,15 @@ instead, a disposable local shell, and
 4. While a run waits for approval, type into the terminal, switch tabs, close
    the tab, disable JavaScript, and lock the screen (separate runs). Expect
    refusal or cancellation and no write after each.
-5. Kill the worker process (`festerm --automation-worker`) during a run;
+5. Kill the contained worker process (`festerm-automation-js-worker` on Linux,
+   otherwise `festerm --automation-worker`) during a run;
    expect a visible failure and no further access.
 
 *Automated (macOS, 2026-11-05):* a real-worker end-to-end test runs the example
-through the app binary, approving both inputs, and observes exactly
-`echo hi` and Enter on a test PTY. Not yet run: steps 1–5 natively on any
-platform.
+through the contained worker, approving both inputs, and observes exactly
+`echo hi` and Enter on a test PTY. Linux uses its separately packaged helper;
+macOS and Windows use the app's early worker branch. Not yet run: steps 1–5
+natively on any platform.
 
 ### Desktop MCP beta checks
 

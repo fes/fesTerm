@@ -38,17 +38,19 @@ The desktop application and the standalone worker branch on **exactly**
 networking, or other application state. Additional arguments are refused.
 `worker_stdio()` calls the confined entry and emits only a content-free failure
 frame when possible; the process exits unsuccessfully even if the pipe is
-unavailable. The application does not yet launch this branch itself.
+unavailable. On Linux, the desktop launches the separately packaged
+`festerm-automation-js-worker` helper because the full application image can
+exceed the worker's 128 MiB address-space ceiling. macOS and Windows currently
+launch the app's early worker branch.
 On iOS the same entry calls the unavailable stub; the interpreter dependency
 is excluded from the iOS build.
 
-Use the install-owned absolute application executable (or the provided
-`festerm-automation-js-worker` binary) as `WorkerProgram`. The caller verifies
-install/signature provenance and protects every parent directory; this crate
-rejects relative/noncanonical paths, nonfiles and group/world-writable Unix
-executables. It never uses a shell or PATH lookup. Linux additionally refuses
-an executable whose initial process mappings already exceed 128 MiB; in that
-case a separately packaged and qualified helper is still required.
+Use an install-owned absolute executable as `WorkerProgram`. The caller
+verifies install/signature provenance and protects every parent directory;
+this crate rejects relative/noncanonical paths, nonfiles and Unix executables
+writable by group or others. It never uses a shell or PATH lookup. Linux refuses
+a worker whose initial process mappings already exceed 128 MiB before it can
+receive source.
 
 Events are `HostCall { id, request }`, `Finished { outcome }`, and `Failed(Error)`.
 An application event loop must use a wake-enabled spawn and bridge the shared

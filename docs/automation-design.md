@@ -713,10 +713,13 @@ hands control of that target to the run. Start refuses a stale snapshot, a
 missing/non-local/replaced target, closed privacy, a concurrent unwind, or two
 approvals in one command batch (a safety stop).
 
-The app re-executes its own binary with `--automation-worker`; the supervisor
-qualifies the platform profile before sending source. Each discover, read and
-wait host call is privacy-admitted, rechecked against the live attachment and
-size-reserved before disclosure under the supervisor's admission boundary.
+The app starts an install-owned worker with `--automation-worker`; on Linux it
+uses the separately packaged `festerm-automation-js-worker` because the full
+application image can exceed the 128 MiB address-space ceiling. On macOS and
+Windows it uses the app's early worker branch. The supervisor qualifies the
+platform profile before sending source. Each discover, read and wait host call
+is privacy-admitted, rechecked against the live attachment and size-reserved
+before disclosure under the supervisor's admission boundary.
 `sendText`/`sendKeys` calls queue (at most 8) and are shown escaped (controls
 and invisible formatting as `\u{..}`) with "Send this input"/"Deny" buttons.
 An approved input takes the writer lease, captures a fresh input fence on the

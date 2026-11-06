@@ -190,18 +190,35 @@ fn retire_run(run: Run) {
     }
 }
 
+fn try_wait_settlement_admission(
+) -> Result<festerm_session::AutomationAdmissionGuard, festerm_session::AutomationAdmissionTryError>
+{
+    festerm_session::try_automation_admission_lock()
+}
+
 fn worker_program() -> Result<WorkerProgram, &'static str> {
     #[cfg(test)]
     let executable = std::env::var_os("FESTERM_TEST_JS_WORKER")
         .map(std::path::PathBuf::from)
-        .map_or_else(std::env::current_exe, Ok);
+        .map_or_else(|| std::env::current_exe().map(packaged_worker_path), Ok);
     #[cfg(not(test))]
-    let executable = std::env::current_exe();
+    let executable = std::env::current_exe().map(packaged_worker_path);
     let executable = executable
         .and_then(|path| path.canonicalize())
         .map_err(|_| "Workflow worker executable could not be resolved.")?;
     WorkerProgram::from_install_owned_absolute(&executable)
         .map_err(|_| "Workflow worker executable is not a protected installed file.")
+}
+
+fn packaged_worker_path(app_executable: std::path::PathBuf) -> std::path::PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        app_executable.with_file_name("festerm-automation-js-worker")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        app_executable
+    }
 }
 
 /// Plain rows without trailing blanks, bounded to `max_bytes` UTF-8 bytes.
@@ -715,8 +732,6 @@ impl Coordinator {
                 Ok(Ok(supervisor)) => self.admit_javascript_run(supervisor),
                 Ok(Err(error)) => {
                     tracing::warn!(?error, "workflow worker failed to start");
-                    #[cfg(test)]
-                    eprintln!("DEBUG worker start error: {error:?}");
                     let status = match error {
                         festerm_automation_js::Error::Unavailable(_) => {
                             "Workflow refused: isolated JavaScript execution is unavailable on this system."
@@ -1149,13 +1164,31 @@ impl Coordinator {
             if revision == Some(wait.after) && now < wait.deadline {
                 return true;
             }
-            ready.push((wait.id, wait.request, wait.target, revision, wait.after));
+            ready.push((
+                wait.id,
+                wait.request,
+                wait.target,
+                revision,
+                wait.after,
+                wait.deadline,
+            ));
             false
         });
-        for (id, ticket, target, revision, after) in ready {
-            let result = self.settle_javascript_wait(ticket, target, revision, after);
-            let reply_target = matches!(result, HostResult::Change { .. }).then_some(target);
-            self.javascript_reply(id, result, reply_target)?;
+        for (id, ticket, target, revision, after, deadline) in ready {
+            if let Some(result) = self.settle_javascript_wait(ticket, target, revision, after) {
+                let reply_target = matches!(result, HostResult::Change { .. }).then_some(target);
+                self.javascript_reply(id, result, reply_target)?;
+            } else if let Some(Phase::Running(running)) =
+                self.javascript.run.as_mut().map(|run| &mut run.phase)
+            {
+                running.waits.push(Wait {
+                    id,
+                    request: ticket,
+                    target,
+                    after,
+                    deadline,
+                });
+            }
         }
         Ok(())
     }
@@ -1166,7 +1199,21 @@ impl Coordinator {
         target: TargetRef,
         revision: Option<u64>,
         after: u64,
-    ) -> HostResult {
+    ) -> Option<HostResult> {
+        let guard = match try_wait_settlement_admission() {
+            Ok(guard) => guard,
+            Err(festerm_session::AutomationAdmissionTryError::Busy) => return None,
+            Err(festerm_session::AutomationAdmissionTryError::Poisoned) => {
+                if let (Some(run), Some(broker)) =
+                    (self.javascript.run.as_ref(), self.broker.as_mut())
+                {
+                    let _ = broker.settle_request(run.principal, ticket);
+                }
+                return Some(HostResult::Error {
+                    code: HostError::Failed,
+                });
+            }
+        };
         let outcome = (|| {
             let run = self.javascript.run.as_ref().ok_or(HostError::Cancelled)?;
             let Phase::Running(running) = &run.phase else {
@@ -1180,7 +1227,6 @@ impl Coordinator {
             let bytes = serde_json::to_vec(&result)
                 .map_err(|_| HostError::Failed)?
                 .len() as u32;
-            let guard = festerm_session::automation_admission_lock().ok_or(HostError::Failed)?;
             if !self.privacy_gate.try_admit() || !self.live_target_locked(target, &guard) {
                 return Err(HostError::Revoked);
             }
@@ -1198,7 +1244,7 @@ impl Coordinator {
         if let (Some(run), Some(broker)) = (self.javascript.run.as_ref(), self.broker.as_mut()) {
             let _ = broker.settle_request(run.principal, ticket);
         }
-        outcome.unwrap_or_else(|code| HostResult::Error { code })
+        Some(outcome.unwrap_or_else(|code| HostResult::Error { code }))
     }
 
     fn queue_javascript_input(
@@ -1694,7 +1740,8 @@ mod tests {
             let path = path.to_str().unwrap();
             std::path::PathBuf::from(path.strip_prefix(r"\\?\").unwrap_or(path))
         };
-        festerm_automation_workflow::intake::load_user_selected_bundle(&path).unwrap()
+        festerm_automation_workflow::intake::load_user_selected_bundle(&path)
+            .unwrap_or_else(|error| panic!("example bundle path {path:?}: {error}"))
     }
 
     fn run_fixture() -> (
@@ -1868,5 +1915,47 @@ mod tests {
             describe_keys(&["Ctrl+C".into(), "Enter".into()]),
             "Keys: Ctrl+C Enter"
         );
+    }
+
+    #[test]
+    fn packaged_worker_path_uses_linux_helper_when_required() {
+        let app = std::path::PathBuf::from("/install/festerm");
+        let worker = packaged_worker_path(app.clone());
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            worker,
+            std::path::PathBuf::from("/install/festerm-automation-js-worker")
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(worker, app);
+    }
+
+    #[test]
+    fn wait_settlement_admission_does_not_block_on_contention() {
+        let (held_sender, held_receiver) = mpsc::sync_channel(1);
+        let (release_sender, release_receiver) = mpsc::sync_channel(1);
+        let holder = std::thread::spawn(move || {
+            let _guard = festerm_session::automation_admission_lock().unwrap();
+            held_sender.send(()).unwrap();
+            release_receiver.recv().unwrap();
+        });
+        held_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("admission lock was not acquired");
+
+        let (attempt_sender, attempt_receiver) = mpsc::sync_channel(1);
+        let attempt = std::thread::spawn(move || {
+            attempt_sender
+                .send(matches!(
+                    try_wait_settlement_admission(),
+                    Err(festerm_session::AutomationAdmissionTryError::Busy)
+                ))
+                .unwrap();
+        });
+        let busy = attempt_receiver.recv_timeout(Duration::from_millis(100));
+        release_sender.send(()).unwrap();
+        holder.join().unwrap();
+        attempt.join().unwrap();
+        assert!(busy.unwrap());
     }
 }
