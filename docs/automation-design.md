@@ -35,6 +35,16 @@ distinct observation-only MCP PR checkpoint before JavaScript/control, then
 continues through P3. PRs remain incomplete until tests, independent limited-context
 security/reliability/scope reviews and required CI pass. P4 remains deferred.
 
+The shipped [desktop JavaScript workflow beta](#desktop-javascript-workflow-beta)
+runs one user-selected bundle from Settings. A future step authors workflows in
+the existing native text editor. Built-in application events are the intended
+future execution attachment points, not debugger breakpoints or subscriptions
+to arbitrary diagnostic logs. A separate explicit Debug mode is also proposed.
+The [authoring, debugger and hook contracts](#script-authoring-and-execution-surfaces)
+are future proposals, not part of the beta and not new exceptions to its
+manual-only gates. Built-in API completion and broader UI manipulation are
+staged separately.
+
 ### Desktop preference ownership and failure
 
 The application shares the current MCP/JavaScript preference pair across
@@ -678,6 +688,9 @@ its [language profile and native probes](../crates/festerm-automation-js/README.
 are component evidence, not platform acceptance. The JavaScript preference
 alone grants no execution; the desktop beta below runs only after a native Run
 review.
+Breakpoint/stepping and side-effect-free inspector feasibility for that
+engine has not been assessed; the pin alone does not qualify the proposed
+[Debug mode](#script-debug-mode).
 
 Desktop execution uses an install-owned worker process with no inherited
 secrets/environment, GUI/SSH/file descriptors or filesystem/network access
@@ -737,6 +750,233 @@ privacy loss, command overflow/conflict, unwind and shutdown cancel the run in
 the broker before the worker is reaped. The workflow's return value is not
 shown in this beta. MCP-invoked workflows, persistent/SSH/tunnel/serial
 targets and native qualification remain open.
+
+## Script authoring and execution surfaces
+
+This section is future work beyond the shipped
+[desktop beta](#desktop-javascript-workflow-beta). The beta has no editor
+integration, workflow library, hook or debugger: Settings captures one
+user-selected JSON `SourceSnapshot` through the
+[single-file intake](#user-selected-single-file-intake), and its Run button is
+the native approval of that frozen snapshot, parameters and one local PTY
+target. Everything below must reuse that intake validation, canonical digest,
+broker approval, worker supervisor, per-input review and Stop path rather than
+introduce a parallel execution route.
+
+Reuse the [native text editor](text-editor-design.md), not a second embedded
+editor or a general IDE. Proposed native **New automation script** and
+**Manage workflows** commands create a draft or open an installed workflow's
+source in that editor. Creation supplies a minimal `main` template; workflow
+details expose the entry module, API version, typed parameter schema and
+maximum requested capabilities. A local file or imported bundle is not an
+installed, authorized workflow merely because it is open in the editor.
+
+Keep the existing shared-document identity, undo, dirty/conflict state,
+Find/Replace, syntax-highlighting framework, Save/Save As, auto-save and
+multi-view behavior. Workflow-specific **Run**, **Stop**, **Run status** and
+**Hook bindings** actions are contextual additions using normal application
+commands, styling and accessibility. Ordinary text editing, Save, auto-save,
+opening/importing a file and closing a view never execute a script or approve
+permissions.
+
+Run selects a saved, validated workflow version and parameters, captures the
+complete bundle as the same canonical snapshot the beta intake produces, then
+enters the beta's native Run review. Unsaved or
+conflicted changes must be resolved and the new artifact reviewed before
+running them; no implicit selection between the visible draft and an older
+installed version. Show the selected version/digest and target scopes. Editing
+or saving during execution does not change the frozen run; execution never
+reopens the editor's file. Multiple editor
+views observe the same run identity and state; closing one view does not
+silently cancel or orphan it. Runs remain visible in Manage workflows until
+their bounded receipt expires, independently of open editor views.
+
+Stop requests broker cancellation for the exact run, including owned children;
+it is not a rollback. Status distinguishes awaiting approval, running/waiting,
+completed, refused, cancelled and failed/unknown admitted effects. Use bounded
+content-free execution records and fixed diagnostic codes, with source
+locations where safe, rather than a default script console containing
+parameters, terminal data or arbitrary exception text. Explicit result
+inspection remains subject to recipient/disclosure checks. Ordinary Run status
+does not attach the separately qualified debugger.
+
+### Script Debug mode
+
+Provide an explicit native **Debug** action alongside Run in the reused editor.
+The proposed debugger supports unconditional source breakpoints, Pause,
+Continue, Step into/over/out, call-stack navigation, and read-only local/scope
+variable inspection with bounded object expansion. Use source-margin breakpoint
+markers, a compact control strip and native stack/variables panels, not a
+second IDE or arbitrary engine developer-tools frontend. Show async suspension
+and continuation boundaries honestly; the engine qualification must establish
+stepping behavior across `await` and which async parent frames are available.
+Do not fabricate missing frames or imply stepping into broker/native code.
+
+Debug starts a new manually approved run of the same saved immutable bundle
+and parameters as Run, with the native inspector explicitly named as a data
+recipient. It grants no additional host operations, credentials or targets.
+No automatic attach to ordinary runs, MCP runs or other workers is permitted.
+Event hooks and script `debugger` statements cannot start Debug or prompt for
+permission; a `debugger` statement may pause only an already approved debug run.
+Initially, child workflows are separate runs, not implicit debugger attachments.
+
+Bind breakpoints, frames and value handles to the application instance,
+principal, run, bundle digest, module path and pause generation. Breakpoints
+refer to the frozen source, not a moving line in the live draft. If editing
+diverges, show a clearly labelled read-only **Run snapshot** using the editor's
+presentation, not a second mutable document for the same file. Edits never
+hot-patch the running worker; stale breakpoint locations require explicit
+rebinding to a newly reviewed version. Resume/step invalidates old inspection
+handles. Terminal run states discard inspector handles and retained values;
+there is no post-run heap dump or time-travel recording.
+
+**Paused is not a dry run or a frozen terminal.** A native pause request first
+gates new workflow host-effect admission/dispatch for this run at the broker.
+Report pause-requested until a broker-serialized barrier acknowledges that
+the worker is stopped at a safe point. Pause acknowledgement needs a bounded
+qualified timeout; failure visibly cancels/reaps through normal teardown,
+never blocks the UI or falsely reports Paused. Only authorized native debugger
+control/inspection remains available through the gate, not a script-callable
+host API.
+Unadmitted requests remain bounded by existing quotas/deadlines and must be
+revalidated before dispatch on Continue/step. Already admitted operations may
+complete, and terminals, remote processes, other runs and already-started
+children may keep progressing; display that limitation with the pause state.
+Never replay an operation to recreate a breakpoint or roll back accepted input.
+Step/Continue revalidates the live grant, target generation and epoch before
+reopening admission; it is not a new approval or lease reacquisition mechanism.
+
+All wall deadlines, leases, quotas and supervisor cancellation remain active
+while paused; debugger pauses do not reset budgets or extend grants. Human
+takeover, lock/suspend, disconnect, replacement, expiry or revocation terminates
+the debug run and clears inspection data through normal teardown. No Continue
+after revocation, automatic rearm or new shell is allowed. Stop remains
+available outside the worker and cancels owned children. A paused run counts
+toward concurrency limits; closing an editor view does not hide it, and
+Manage workflows must retain reachable Stop/status/inspector controls.
+
+Inspecting variables can disclose every secret already present in parameters,
+terminal reads or script state. Apply the run's conservative source labels and
+all-source/all-sink checks to every inspector release, with native recipient
+authorization rechecked at delivery. Inspect only at acknowledged pauses;
+revalidate principal/run/pause generation on both request and delivery, and
+clear native value buffers on resume/stop so late replies cannot restore them.
+Stack names/source locations and value
+previews are also untrusted bounded data, escaped for native presentation.
+Use safe engine descriptors only: enumeration/expansion must not invoke getters,
+proxy traps, coercions, `toJSON`, user formatters or JavaScript serialization.
+Show accessors/exotic or otherwise unsafe values as unavailable rather than
+evaluating them. Conditional breakpoints, executable logpoints, watch
+expressions, REPL/eval, variable mutation and evaluation of selected editor text
+are outside this debugger contract.
+
+Inspector requests and paused buffers share existing operation, memory,
+response, observation and retained-result budgets, including the 1 MiB
+per-run disclosure ceiling; paginate/truncate explicitly instead of retaining
+an unbounded object graph. Values, stacks and exception contents never enter
+ordinary logs, diagnostic bundles, saved workspaces or crash-dump collection.
+Copy/export of inspected data requires a separate explicit disclosure action;
+redaction alone does not make inspection safe.
+
+Control and inspection use strict typed messages through the authenticated
+application broker and the confined worker's existing IPC. Expose no debug
+network listener, remote attach, arbitrary engine protocol, process debugger
+permission or new `fesTerm`/MCP debugging API. The worker remains confined;
+failed/unsupported debugger qualification disables Debug, not the sandbox.
+Feasibility must first be assessed against the pinned QuickJS-NG/`rquickjs`
+worker engine, but enabling Debug requires its own P4 protocol/containment,
+safe-inspection, pause/lifecycle and native UX acceptance on each supported
+platform.
+
+### Application event hooks
+
+Publish a discoverable, typed, versioned hook catalog in Manage workflows.
+Candidate attachment points are:
+
+| Hook | Meaning and boundary |
+| --- | --- |
+| `automation.command_invoked` | A user explicitly invokes a named workflow action through native chrome or the command palette. This is a manual invocation, not interception of every keystroke or application command. |
+| `session.created` | The application has committed a new exact session identity/generation; it does not confer authority over that session. |
+| `session.connected` | The application has committed a connected transition, not proof of shell readiness or command completion. |
+| `session.disconnected` | A transport transition; it does not permit automatic reconnect or preserve revoked target authority. |
+| `session.closed` | A future metadata-only lifecycle notification, not access to a closed target. A post-close disclosure policy must be reviewed before this hook can be armed. |
+
+These are application-owned events delivered after state commits, never
+JavaScript callbacks on the UI/session thread. Do not expose arbitrary Rust
+`tracing` events, raw transport output, executable event filters, timers, login
+scripts or repository-provided hooks through this catalog. Exact payload
+schemas and transition ordering must be pinned before hook implementation.
+
+**Binding is configuration; arming is authorization.** A native binding records
+the hook/version, immutable workflow digest, validated parameter digest and
+typed target/filter selection. The UI shows the event, workflow version,
+targets, requested scopes, expiry, state and last outcome. Users can inspect,
+edit, disable or delete bindings without running a workflow. Imported bindings
+start disabled. Saved profile selectors are templates, not grants over future
+session generations; they remain disarmed until exact targets can be approved.
+Updating a workflow, schema, parameters, hook version or target selection
+disarms the binding and invalidates pending approval rather than following
+the newest source silently.
+
+Disable/delete or any required disarm closes binding admission synchronously,
+discards pending events, revokes its arming grant and cancels its owned runs
+through normal broker teardown. This does not mutate a frozen artifact or
+cancel independently authorized manual runs of the same workflow.
+
+Only a deliberate native user action may arm a binding against a frozen
+artifact and explicit broker scopes. A matching event cannot open an approval
+dialog, acquire a lease or mint/renew a grant. Workflows and MCP cannot create,
+arm or modify bindings or borrow the native binding's authority. Explicit
+manual command invocations use the ordinary per-invocation approval route;
+automatic lifecycle delivery remains a separate P4 gate, even in a foreground
+unlocked application.
+
+An eventual armed binding is application-instance-owned and interactive-only.
+Each event run derives authority from its still-live arming grant, intersects
+the workflow manifest and shares the grant's cumulative budgets/deadline.
+Every event delivery and effect revalidates the principal, exact target
+generation, epoch and source/sink closure. A matching profile name, a new tab
+or a reconnect cannot substitute a new target. Disconnect/close that revokes
+the target grant disarms the binding; that event must not revive it.
+`session.closed` therefore needs a separately qualified metadata-only scope,
+not an exception to revocation of live-session access. Restart, lock/suspend,
+expiry, takeover or revocation require deliberate fresh arming, with no replay
+or automatic rearm. Saving a binding never persists its permission grant.
+
+Future event delivery supplies an optional immutable `event` value to `main`,
+alongside `fesTerm`, `params` and `signal`. It is bounded plain data: catalog
+version/kind, sequence and authorized opaque identity/state fields, not live
+session objects, credentials, command text, titles or terminal output. Payloads
+are disclosures and inherit the existing all-source/all-sink checks; even
+metadata is not automatically public. Workers cannot forge event origin.
+
+Before enabling lifecycle hooks, qualify ceilings of 16 bindings per app,
+one active run and one pending event per binding, and 4 KiB per event, within
+all existing global/principal quotas. Overflow pauses the binding and reports
+an explicit gap/refusal instead of silent loss, replay or an unbounded queue.
+Never block session/UI progress waiting for a script. Do not dispatch hook
+chains caused by automation-originated actions; retain broker-owned causal
+provenance across child runs and delayed effects so scripts cannot synthesize
+a user event or recursively trigger themselves. Observe missed/stale/refused
+counts in bounded content-free status, not persistent payload traces.
+
+### Later built-in API assistance and UI control
+
+Add completion, signature help and inline documentation for `fesTerm`, `params`,
+`signal` and qualified hook payloads after a versioned API/schema catalog
+exists. Reuse the editor's extension seams with static bundled declarations:
+method names, async return types, parameter shapes, required capabilities and
+availability for the selected API version. Completion must not execute source,
+getters, host calls or remote requests, inspect live terminal/secret data, or
+grant access because a method is suggested. This does not imply a general
+language server, project model, Node/npm compatibility or an IDE.
+
+Broader UI manipulation comes later through separately reviewed typed commands
+and explicit capabilities in the existing application command model. The
+bounded proposed focus/rename methods below are not a general UI API. Arbitrary
+widget references/tree mutation, synthetic clicks/keystrokes and manipulation
+of native approval/trust UI remain unavailable; future tab/pane/window layout
+operations need their own target, lifecycle and human-interference policy.
 
 ## MCP surface and connection contract
 
@@ -1824,6 +2064,7 @@ from a worker because it passed JavaScript-level validation.
 | Runaway regex/Promise/host-call loop or result fan-out | Interpreter/resource quotas, global admission, bounded results, watchdog and owned-process teardown. |
 | Approval lets a shell exfiltrate data | Control is explicitly full account execution authority. Only target-side containment can narrow shell effects; separate file/network host permissions do not. |
 | Read-only export exposes a token on screen | Explicit observation/disclosure grant; avoid blanket workspace access; redaction is best effort and cannot make a grant safe by itself. |
+| Debug inspection evaluates a getter, exposes a secret or resumes revoked control | Explicit native inspector recipient, inert bounded descriptors, per-delivery source/sink checks and pause-generation handles; no eval/remote attach, budget suspension or Continue after revocation. |
 
 An attacker already controlling the user's OS account, debugger, fesTerm
 binary or allowed remote account is outside the complete containment claim.
@@ -1909,14 +2150,19 @@ without Enter.
 3. **P2 — JavaScript qualification:** choose/pin an engine after conformance,
    memory/stack/CPU interruption, Promise scheduling, native crash and OS
    confinement tests on each desktop target. Manual local observation workflows
-   first; no terminal control yet. No insecure fallback for a failed platform.
+   first, then editor-backed authoring with explicit Run/Stop on top of the
+   shipped Settings beta; no automatic event hooks yet. No insecure fallback
+   for a failed platform.
 4. **P3 — explicit control:** writer leases, human handoff, trust/auth creation,
    serialized revocation and unknown-outcome behavior. Reviewed named workflows
    may then be invoked through MCP within caller scopes. Default-off execution
    needs a distinct acceptance decision; optional installation is not consent.
 5. **P4 — separately reviewed extensions:** reliable command jobs/shell
-   integration, scoped file APIs, HTTP, unattended grants/triggers, richer
-   modules and mobile execution each need their own acceptance boundary.
+   integration, scoped file APIs, HTTP, explicitly armed lifecycle hooks,
+   unattended grants/triggers, full script Debug mode, built-in API assistance,
+   broader typed UI control, richer modules and mobile execution each need
+   their own acceptance boundary.
+   Designing hook bindings does not enable them or authorize unattended runs.
 
 Windows x64/ARM64, macOS Apple Silicon and supported Linux distributions each
 need packaging and actual confinement evidence; desktop compilation is not
@@ -1933,7 +2179,7 @@ semantics remain unchanged. No mobile feature is promised by this ADR.
 The kernel and observation adapter have deterministic tests mapped in the
 traceability registry. The broader cases below remain acceptance requirements,
 not claims of complete coverage. Native evidence remains open under `AUTO-01`
-through `AUTO-04`; do not register placeholders as existing automated tests.
+through `AUTO-08`; do not register placeholders as existing automated tests.
 
 | Case family | Required adversarial oracles |
 | --- | --- |
@@ -1945,12 +2191,20 @@ through `AUTO-04`; do not register placeholders as existing automated tests.
 | AT-06 Observation | Alternate-screen/screen/history revisions, finite eviction, cursor gaps, control sequences, selection lifetime, locked content and revocation during delivery give bounded truthful results and no raw secret-bearing diagnostics. |
 | AT-07 MCP | Malformed/oversized JSON, protocol-version mismatch, spoofed clientInfo, unauthenticated IPC, client disconnect/cancel, duplicate start key, normal start-response completion versus request cancellation, parent return with live children, ancestor budgets/deadlines, lost response, restart, resource subscriptions and tool/resource equivalence obey broker grants and bounded outcomes. |
 | AT-08 UX/packaging | Native approval target/authority is readable with malicious labels, keyboard events cannot leak into a terminal, revoke/take-control works across windows, pairing/unpairing is clear, install/update helpers are immutable and correctly signed/owned. |
+| AT-09 Authoring/assistance | Shared editor views retain existing save/undo/conflict behavior; open/import/save/auto-save/close never execute. Run reviews the exact saved snapshot through the beta's intake validation and native Run review, edits cannot mutate it, and Stop/status survive view closure without hiding unknown effects. Later static completion uses the pinned catalog without executing source/getters or reading live data. |
+| AT-10 Event hooks | Binding import/edit/version changes and restart never arm; events cannot prompt, grant, renew, retarget or bypass source/sink checks. Race arm/delivery with disconnect/close, replacement, takeover, lock/suspend and revocation. Test automation-origin provenance across delayed effects/children, storms, quotas, overflow gaps and stale pending events; no recursion, replay, UI blocking or payload logging. Post-close metadata delivery requires its own accepted policy. |
+| AT-11 Debugger | Breakpoint/step/async-frame locations match the frozen bundle across draft edits. Race pause acknowledgement, queued/admitted operations, Continue, inspection and teardown with expiry/revocation/takeover/lock/disconnect; no post-revocation dispatch/data or replay. Test cross-run/stale pause handles, source/sink refusal, malicious getters/proxies/formatters, oversized/cyclic objects, repeated inspection and stalled workers. No user-code execution during inspection, ambient debugger access, payload persistence, budget extension or hidden paused run after view closure. |
 
 Read-only activation requires AT-01/02/06/07 and relevant AT-04/08 evidence.
-Script execution additionally requires AT-04/05 and engine qualification.
+Script execution additionally requires AT-04/05 and engine qualification;
+editor-backed authoring needs the applicable AT-09 and native AUTO-06 evidence.
 Terminal control additionally requires AT-03, native AT-08, explicit residual
 shell-authority acceptance and fresh manual lifecycle evidence. No stage may
 inherit a passing native result from a different OS, engine build or policy.
+Automatic event hooks additionally require P4 authority/lifecycle acceptance,
+AT-10 and AUTO-07; completion needs the static-catalog portion of AT-09.
+Debug mode additionally requires its P4 acceptance, engine debugger evidence,
+AT-11 and AUTO-08; passing ordinary Run tests is not debugger qualification.
 
 ## Open decisions and implementation prerequisites
 
@@ -1958,8 +2212,12 @@ The following are deliberate blocking gates, not implicit defaults: exact
 engine/version and ECMAScript profile; the OS sandbox policy and bootstrap on
 each distribution; precise IPC pairing/authentication design; MCP SDK/version
 and exact method schemas; scope/approval UX; quota measurements; reliable
-command-job integration; and any mobile architecture. The ADR fixes authority
-invariants now while leaving these engineering choices to reviewed spikes.
+command-job integration; editor workflow commands and saved-workflow storage;
+exact event schemas/ordering and post-close metadata policy; debugger
+protocol/safe inspection and async-stepping support; static API catalog
+generation; broader typed UI command scope; and any mobile architecture. The
+ADR fixes authority invariants now while leaving these engineering choices to
+reviewed spikes.
 Record an implementation ADR/amendment with concrete policies and evidence
 before enabling the corresponding stage.
 

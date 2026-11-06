@@ -152,6 +152,33 @@
       ]
     },
     {
+      "id": "automation-authoring-hooks-debugger-proposal",
+      "edges": [
+        "AUT-1[0-2]"
+      ],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
+        "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
+        "docs/automation-design.md#script-authoring-and-execution-surfaces"
+      ],
+      "decisions": [
+        "ADR-0065"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [
+        "AUTO-06",
+        "AUTO-07",
+        "AUTO-08"
+      ],
+      "status": "deferred",
+      "prerequisites": [
+        "Editor workflow commands and saved-workflow storage reusing the desktop beta intake validation, native Run review, worker supervisor and Stop path; later static API catalog qualification before completion",
+        "P4 separate hook schema/arming/recipient/causal-provenance/overflow and post-close metadata review before lifecycle hooks",
+        "Debugger feasibility assessment of the pinned worker engine and P4 protocol/containment, inert-inspection/disclosure, pause/lifecycle and native UX acceptance before Debug mode",
+        "P4 separate review for broader typed UI control"
+      ]
+    },
+    {
       "id": "automation-frozen-workflow-bindings",
       "edges": ["AUT-01"],
       "requirements": [

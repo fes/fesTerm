@@ -28,6 +28,22 @@ registry is implemented first; native Files/editor integration is not implied.
 The owner's iOS-specific override excludes Edit/Preview split panes, without
 changing desktop Split.
 
+### Proposed automation authoring (not implemented)
+
+The [automation design](automation-design.md#script-authoring-and-execution-surfaces)
+proposes reusing this editor for JavaScript workflows, with contextual Run,
+Debug, Stop, status and hook-binding commands. The shipped desktop workflow
+beta does not use this editor; it captures one bundle from Settings. The
+separately qualified [script debugger](automation-design.md#script-debug-mode)
+adds source breakpoints, stepping and native stack/variable panels tied to a
+read-only frozen run snapshot, not another mutable buffer for the same file.
+Existing document/save/conflict semantics remain unchanged; ordinary Save,
+auto-save, opening/importing and closing a view never execute scripts.
+Execution uses an explicitly reviewed immutable workflow snapshot, not the live
+buffer. Built-in API completion is a later static-catalog extension, not a
+general language server or a change to this editor's implemented status.
+Automation remains Proposed under ADR 0065.
+
 ## One document, many views
 
 The application owns a registry of open documents. A view owns only
