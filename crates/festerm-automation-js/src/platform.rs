@@ -98,6 +98,19 @@ mod linux {
     use super::*;
     use crate::{CPU_SECONDS, PROCESS_BYTES};
 
+    #[cfg(test)]
+    pub(super) static TEST_ALLOWED_SYSCALL: std::sync::atomic::AtomicI64 =
+        std::sync::atomic::AtomicI64::new(-1);
+    #[cfg(test)]
+    pub(super) static TEST_FAILED_SYSCALL: std::sync::atomic::AtomicI64 =
+        std::sync::atomic::AtomicI64::new(-1);
+    #[cfg(test)]
+    pub(super) static TEST_FAILED_RESULT: std::sync::atomic::AtomicI64 =
+        std::sync::atomic::AtomicI64::new(0);
+    #[cfg(test)]
+    pub(super) static TEST_FAILED_ERRNO: std::sync::atomic::AtomicI32 =
+        std::sync::atomic::AtomicI32::new(0);
+
     fn limit(resource: libc::__rlimit_resource_t, value: u64) -> Result<(), Error> {
         let r = libc::rlimit {
             rlim_cur: value,
@@ -220,6 +233,12 @@ mod linux {
             stmt(0x06, KILL),
             stmt(0x20, 0), // seccomp_data.nr
         ];
+        #[cfg(test)]
+        if let Ok(syscall) =
+            u32::try_from(TEST_ALLOWED_SYSCALL.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            filter.extend([jump(syscall, 0, 1), stmt(0x06, ALLOW)]);
+        }
         // Only read(stdin) and write(stdout), not arbitrary descriptors.
         for (syscall, fd) in [(libc::SYS_read, 0), (libc::SYS_write, 1)] {
             filter.extend([
@@ -384,7 +403,21 @@ mod linux {
                 libc::SYS_clone,
                 [libc::CLONE_THREAD as usize, 0, 0, 0, 0, 0],
             ),
+            (libc::SYS_clone3, [0; 6]),
             (libc::SYS_execve, [0, 0, 0, 0, 0, 0]),
+            (libc::SYS_execveat, [libc::AT_FDCWD as usize, 0, 0, 0, 0, 0]),
+            (
+                libc::SYS_prctl,
+                [
+                    libc::PR_SET_PDEATHSIG as usize,
+                    libc::SIGKILL as usize,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            (libc::SYS_pidfd_getfd, [usize::MAX, usize::MAX, 0, 0, 0, 0]),
             (
                 libc::SYS_ptrace,
                 [libc::PTRACE_TRACEME as usize, 0, 0, 0, 0, 0],
@@ -446,7 +479,19 @@ mod linux {
             // pointer arguments used by openat are static C strings; the
             // process, signal, and IPC probes are harmless if not denied.
             let result = unsafe { libc::syscall(syscall, a[0], a[1], a[2], a[3], a[4], a[5]) };
-            if result != -1 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
+            let errno = if result == -1 {
+                std::io::Error::last_os_error().raw_os_error()
+            } else {
+                None
+            };
+            if result != -1 || errno != Some(libc::EPERM) {
+                #[cfg(test)]
+                {
+                    use std::sync::atomic::Ordering;
+                    TEST_FAILED_SYSCALL.store(syscall, Ordering::Relaxed);
+                    TEST_FAILED_RESULT.store(result, Ordering::Relaxed);
+                    TEST_FAILED_ERRNO.store(errno.unwrap_or(0), Ordering::Relaxed);
+                }
                 return Err(Error::Unavailable("active native denial probe failed"));
             }
         }
@@ -792,16 +837,155 @@ mod tests {
         }
     }
 
-    #[test]
     #[cfg(all(
         target_os = "linux",
         any(target_arch = "aarch64", target_arch = "x86_64")
     ))]
+    fn fault_injection_baseline(mode: &str) -> Result<(i64, i32), String> {
+        let status = std::fs::read_to_string("/proc/thread-self/status")
+            .map_err(|error| format!("cannot inspect the test thread's seccomp mode: {error}"))?;
+        let seccomp = status
+            .lines()
+            .find_map(|line| line.strip_prefix("Seccomp:").map(str::trim))
+            .ok_or("test thread seccomp mode is missing")?;
+        if seccomp != "0" {
+            return Err(format!("test thread already has seccomp mode {seccomp}"));
+        }
+        let (syscall, args, expected) = match mode {
+            "allow-clone3" | "masked-clone3" => (libc::SYS_clone3, [0; 6], (-1, libc::EINVAL)),
+            "allow-execveat" => (
+                libc::SYS_execveat,
+                [libc::AT_FDCWD as usize, 0, 0, 0, 0, 0],
+                (-1, libc::EFAULT),
+            ),
+            "allow-prctl" => (
+                libc::SYS_prctl,
+                [
+                    libc::PR_SET_PDEATHSIG as usize,
+                    libc::SIGKILL as usize,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+                (0, 0),
+            ),
+            "allow-pidfd-getfd" => (
+                libc::SYS_pidfd_getfd,
+                [usize::MAX, usize::MAX, 0, 0, 0, 0],
+                (-1, libc::EBADF),
+            ),
+            _ => unreachable!("not a fault-injection mode"),
+        };
+        // SAFETY: these are the same inert arguments used by the native probes.
+        let result = unsafe {
+            libc::syscall(
+                syscall, args[0], args[1], args[2], args[3], args[4], args[5],
+            )
+        };
+        let errno = if result == -1 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        if (result, errno) != expected {
+            return Err(format!(
+                "{mode} baseline is unsupported or masked: result {result}, errno {errno}"
+            ));
+        }
+        Ok(expected)
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
+    fn install_masked_clone3_fixture() {
+        let mut filter = [
+            libc::sock_filter {
+                code: 0x20,
+                jt: 0,
+                jf: 0,
+                k: 0,
+            },
+            libc::sock_filter {
+                code: 0x15,
+                jt: 0,
+                jf: 1,
+                k: libc::SYS_clone3 as u32,
+            },
+            libc::sock_filter {
+                code: 0x06,
+                jt: 0,
+                jf: 0,
+                k: 0x00050000 | libc::ENOSYS as u32,
+            },
+            libc::sock_filter {
+                code: 0x06,
+                jt: 0,
+                jf: 0,
+                k: 0x7fff0000,
+            },
+        ];
+        let program = libc::sock_fprog {
+            len: filter.len() as u16,
+            filter: filter.as_mut_ptr(),
+        };
+        // SAFETY: this test-owned child supplies a valid BPF program to the kernel.
+        unsafe {
+            assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+            assert_eq!(libc::syscall(libc::SYS_seccomp, 1, 0, &program), 0);
+        }
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
+    #[test]
     fn confined_native_child() {
         let Ok(mode) = std::env::var("FESTERM_JS_NATIVE_PROBE") else {
             return;
         };
         std::env::remove_var("FESTERM_JS_NATIVE_PROBE");
+        if mode == "masked-clone3" {
+            if let Err(reason) = fault_injection_baseline("allow-clone3") {
+                println!("fault-injection evidence inconclusive: {reason}");
+                std::process::exit(81);
+            }
+            install_masked_clone3_fixture();
+        }
+        let allowed_syscall = match mode.as_str() {
+            "allow-clone3" | "masked-clone3" => Some(libc::SYS_clone3),
+            "allow-execveat" => Some(libc::SYS_execveat),
+            "allow-prctl" => Some(libc::SYS_prctl),
+            "allow-pidfd-getfd" => Some(libc::SYS_pidfd_getfd),
+            _ => None,
+        };
+        if let Some(syscall) = allowed_syscall {
+            use std::sync::atomic::Ordering;
+            let expected = match fault_injection_baseline(&mode) {
+                Ok(expected) => expected,
+                Err(reason) => {
+                    println!("fault-injection evidence inconclusive: {reason}");
+                    std::process::exit(81);
+                }
+            };
+            linux::TEST_ALLOWED_SYSCALL.store(syscall, Ordering::Relaxed);
+            let result = confine();
+            if matches!(
+                result,
+                Err(Error::Unavailable("active native denial probe failed"))
+            ) && linux::TEST_FAILED_SYSCALL.load(Ordering::Relaxed) == syscall
+                && (
+                    linux::TEST_FAILED_RESULT.load(Ordering::Relaxed),
+                    linux::TEST_FAILED_ERRNO.load(Ordering::Relaxed),
+                ) == expected
+            {
+                std::process::exit(79);
+            }
+            std::process::exit(80);
+        }
         if mode == "fail-setup" {
             let r = libc::rlimit {
                 rlim_cur: 64 * 1024 * 1024,
@@ -830,48 +1014,119 @@ mod tests {
         target_os = "linux",
         any(target_arch = "aarch64", target_arch = "x86_64")
     ))]
-    #[test]
-    fn native_adversarial_probes_and_cumulative_cpu_ceiling() {
+    fn run_native_probe(mode: &str) -> (std::process::ExitStatus, String) {
         use std::{
-            os::unix::process::ExitStatusExt,
+            io::Read,
             process::{Command, Stdio},
             time::{Duration, Instant},
         };
+        let start = Instant::now();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "platform::tests::confined_native_child",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("FESTERM_JS_NATIVE_PROBE", mode)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let mut output = String::new();
+                child
+                    .stdout
+                    .take()
+                    .unwrap()
+                    .read_to_string(&mut output)
+                    .unwrap();
+                return (status, output);
+            }
+            if start.elapsed() >= Duration::from_secs(20) {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("owned native qualification child exceeded deadline: {mode}");
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
+    #[test]
+    fn native_adversarial_probes_and_cumulative_cpu_ceiling() {
+        use std::{os::unix::process::ExitStatusExt, time::Instant};
+
         for (mode, code) in [
             ("deny-probes", Some(0)),
             ("fail-setup", Some(77)),
             ("cpu", None),
         ] {
             let start = Instant::now();
-            let mut child = Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "platform::tests::confined_native_child",
-                    "--nocapture",
-                ])
-                .env_clear()
-                .env("FESTERM_JS_NATIVE_PROBE", mode)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap();
-            let status = loop {
-                if let Some(status) = child.try_wait().unwrap() {
-                    break status;
-                }
-                if start.elapsed() >= Duration::from_secs(20) {
-                    child.kill().unwrap();
-                    child.wait().unwrap();
-                    panic!("owned native qualification child exceeded deadline: {mode}");
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            };
-            assert_eq!(status.code(), code, "native probe: {mode}, {status}");
+            let (status, output) = run_native_probe(mode);
+            assert_eq!(
+                status.code(),
+                code,
+                "native probe: {mode}, {status}: {output}"
+            );
             if mode == "cpu" {
                 assert_eq!(status.signal(), Some(libc::SIGKILL));
-                assert!(start.elapsed() >= Duration::from_secs(4));
+                assert!(start.elapsed() >= std::time::Duration::from_secs(4));
             }
+        }
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
+    fn assert_masked_fault_injection_is_inconclusive() {
+        let (status, output) = run_native_probe("masked-clone3");
+        assert_eq!(
+            status.code(),
+            Some(81),
+            "masked environment must be inconclusive: {status}: {output}"
+        );
+        assert!(
+            output.contains("test thread already has seccomp mode"),
+            "masked fixture did not identify seccomp: {output}"
+        );
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
+    #[test]
+    fn masked_fault_injection_is_inconclusive() {
+        assert_masked_fault_injection_is_inconclusive();
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "aarch64", target_arch = "x86_64")
+    ))]
+    #[test]
+    #[ignore = "requires an unfiltered Linux thread; mandatory in native Linux CI"]
+    fn native_probes_refuse_holes_in_process_escape_denials() {
+        assert_masked_fault_injection_is_inconclusive();
+        for mode in [
+            "allow-clone3",
+            "allow-execveat",
+            "allow-prctl",
+            "allow-pidfd-getfd",
+        ] {
+            let (status, output) = run_native_probe(mode);
+            assert_eq!(
+                status.code(),
+                Some(79),
+                "fault injection requires an unfiltered supported host; probe {mode}, {status}: {output}"
+            );
         }
     }
 }

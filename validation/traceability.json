@@ -212,6 +212,8 @@
       "automated_tests": [
         "identity_covers_manifest_schema_sources_and_dependencies",
         "native_adversarial_probes_and_cumulative_cpu_ceiling",
+        "masked_fault_injection_is_inconclusive",
+        "native_probes_refuse_holes_in_process_escape_denials",
         "native_policy_and_hard_memory_ceiling_precede_first_script_instruction",
         "runaway_jobs_unsettled_calls_and_private_errors_are_contained",
         "cancellation_closes_admission_and_reaps_within_bounds",

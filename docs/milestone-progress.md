@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Checking worker process-escape syscall variants
+
+The Linux worker now checks additional process-creation, exec, death-signal and
+pidfd-duplication syscall variants before announcing Ready. Fault-injected
+filters exercise whether each added denial probe refuses an unexpectedly
+permitted call; they require an unfiltered thread and expected inert syscall
+results so inherited filtering cannot masquerade as evidence. The tests identify
+the exact failing probe, but cannot qualify a hostile host. Normal filtered
+containers exercise inconclusive handling while required Linux CI explicitly
+runs the ignored, unfiltered-only injection test. These checks do not resolve
+the independent creator-death and process-ownership qualification gates in
+AUTO-02.
+
 ## Bringing the shared mobile application to Android
 
 The Android port reuses the iOS application rather than recreating its screens
