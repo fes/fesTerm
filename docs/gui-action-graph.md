@@ -11,6 +11,9 @@
 | `PANE-05` | Pane/group | Close focused view or preflight Close group | Existing guarded single-view close; group plan binds all view/session/document identities before any teardown; cancellation preserves every member |
 | `PANE-06` | Saved workspace | Capture/restore all windows | Metadata-only groups over ordinary fresh launches; no session/grant replay |
 | `PANE-07` | Group chip | Details/rename | Short independent group label; member focus/unread remains explicit |
+| `PANE-08` | Group / Settings | Hover handle or enter/finish Rearrange panes; toggle hover/high-contrast focus | Handles overlay unchanged padded viewports; hover defaults on for legacy settings; explicit mode works with hover disabled; no surface input while manipulating; Escape/focus loss retires transient ownership |
+| `PANE-09` | Moving exact live view | Choose target then Above/Left/Swap/Right/Below or Detach | Revision-checked atomic move/exchange/detach; cross-group/standalone exchange preserves identities and four-member capacity; stale/outside drops do not mutate sources |
+| `PANE-10` | Moving exact live view | Drop/click Close | Gesture retires before shared guarded close; trailing release/drag-end cannot dismiss confirmation; cancellation preserves layout and exact live source |
 
 Local background save completion is enqueued while write admission is held,
 then admission is released before the app is notified. The regression

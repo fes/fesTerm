@@ -226,10 +226,30 @@ saved tree. Focus acknowledges only that member's unread output.
 
 Current implementation: **Pane Layout…** in a chip context menu or command
 palette moves an existing live view left/right/above/below the focused pane.
-The same dialog offers member/directional focus, two-column/two-row/2×2
-presets, keyboard-operable resizing, swap, separate, equalize, zoom and guarded
-Close focused view. Single-view chips can be dragged onto a pane edge with a
-validated preview; group chips require the member-specific layout dialog.
+The compact dialog offers selectable members, visual two-column/two-row/2×2
+presets, equalize/zoom, explicit **Rearrange panes**, grouped member/keyboard
+sizing actions, an existing-view destination picker and a separate destructive
+footer. Details use compact name/status columns and one quiet horizontal footer.
+Hover reveals a grip/name/menu handle in the top edge of each pane, not a
+permanent header row. The reveal strip does not capture terminal clicks outside
+the actual handle. **Settings > Panes** defaults hover handles on (also for
+legacy settings); disabling hover never disables explicit rearrangement.
+The pane-only high-contrast setting strengthens the focused inset edge without
+changing global control borders. Handles do not change the eight-point inset,
+cell dimensions, status geometry or physical-pixel dividers.
+
+Grip dragging or click-grip then click-target exposes Above/Left/Swap/Right/Below
+and an accessible target picker, plus separated **Moving: source**, Detach and
+guarded Close actions. A temporary owned chip-strip target permits detach when
+space exists without occupying native title-bar dragging or window controls.
+Standalone chips can enter this picker; whole-group chip drags are distinct.
+Atomic center exchanges support standalone↔group and group↔group, including full
+groups, without restarting controllers or changing shared document ownership.
+Stale/outside drops leave presentation unchanged. Handle/menu/movement input is
+window-local and quarantined from both terminal and document bodies; Escape
+first cancels movement/menu, then exits rearrangement. Focus loss cancels it.
+Close retires the gesture before opening the existing exact-source confirmation,
+so drag-end cannot dismiss it and Cancel never changes layout.
 Group labels can be renamed independently of sessions. Group chips retain
 their runtime identity when the first member moves or closes. Their geometry
 icon exposes unread members, hover/keyboard details and a pinned member list.

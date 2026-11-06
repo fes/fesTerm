@@ -399,6 +399,129 @@ impl AppState {
         Ok(())
     }
 
+    fn swap_panes(&mut self, first: TabId, second: TabId) -> Result<(), String> {
+        if first == second || !self.composable(first) || !self.composable(second) {
+            return Err("Choose two different session or document views.".into());
+        }
+        let source = self
+            .pane_groups
+            .iter()
+            .position(|g| g.tree.contains(&first));
+        let destination = self
+            .pane_groups
+            .iter()
+            .position(|g| g.tree.contains(&second));
+        if source.is_none() && destination.is_none() {
+            return Err("Select at least one grouped pane.".into());
+        }
+        let first_index = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == first)
+            .ok_or("The view no longer exists.")?;
+        let second_index = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == second)
+            .ok_or("The view no longer exists.")?;
+        let leaf = |index: usize| PaneTree::Leaf {
+            pane_id: self.tabs[index].pane_id.clone(),
+            view: self.tabs[index].id,
+        };
+        let a = leaf(first_index);
+        let b = leaf(second_index);
+        for (index, view, leaf) in [(source, first, &a), (destination, second, &b)] {
+            if let Some(index) = index {
+                self.pane_groups[index].validate().map_err(str::to_owned)?;
+                if self.pane_groups[index].tree.leaf(&view).as_ref() != Some(leaf) {
+                    return Err("Invalid, duplicated or excessive pane placement".into());
+                }
+            }
+        }
+        fn exchange(
+            tree: &mut PaneTree<TabId>,
+            first: TabId,
+            second: TabId,
+            a: &PaneTree<TabId>,
+            b: &PaneTree<TabId>,
+        ) {
+            match tree {
+                PaneTree::Leaf { view, .. } if *view == first => *tree = b.clone(),
+                PaneTree::Leaf { view, .. } if *view == second => *tree = a.clone(),
+                PaneTree::Split {
+                    first: left,
+                    second: right,
+                    ..
+                } => {
+                    exchange(left, first, second, a, b);
+                    exchange(right, first, second, a, b);
+                }
+                _ => {}
+            }
+        }
+        let same_group = source == destination;
+        let mut groups = self.pane_groups.clone();
+        for (index, group) in groups.iter_mut().enumerate() {
+            if Some(index) != source && Some(index) != destination {
+                continue;
+            }
+            exchange(&mut group.tree, first, second, &a, &b);
+            if !same_group {
+                if Some(index) == destination {
+                    group.focused = first;
+                } else if group.focused == first {
+                    group.focused = second;
+                }
+            }
+        }
+        // Validate the staged trees and their relationship to the existing live
+        // views before exchanging either presentation placement.
+        let mut views = std::collections::HashSet::new();
+        let mut pane_ids = std::collections::HashSet::new();
+        let mut durable_ids = std::collections::HashSet::new();
+        for tab in &self.tabs {
+            if !views.insert(tab.id)
+                || !pane_ids.insert(&tab.pane_id)
+                || !durable_ids.insert(&tab.durable_id)
+            {
+                return Err("Invalid, duplicated or excessive pane placement".into());
+            }
+        }
+        let mut grouped_views = std::collections::HashSet::new();
+        let mut group_ids = std::collections::HashSet::new();
+        for group in &groups {
+            group.validate().map_err(str::to_owned)?;
+            if !group_ids.insert(&group.group_id) {
+                return Err("Invalid pane group identity, label or focus".into());
+            }
+            for view in group.tree.views() {
+                let tab = self
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == view)
+                    .ok_or("The view no longer exists.")?;
+                if !grouped_views.insert(view)
+                    || group.tree.leaf(&view)
+                        != Some(PaneTree::Leaf {
+                            pane_id: tab.pane_id.clone(),
+                            view,
+                        })
+                {
+                    return Err("Invalid, duplicated or excessive pane placement".into());
+                }
+            }
+        }
+        self.pane_groups = groups;
+        if !same_group {
+            self.tabs.swap(first_index, second_index);
+        }
+        self.pane_changed();
+        if !same_group {
+            self.set_active(first);
+        }
+        Ok(())
+    }
+
     pub(super) fn dispatch_pane_command(&mut self, command: AppCommand) {
         let result = match command {
             AppCommand::FocusPaneDirection(side) => {
@@ -522,47 +645,8 @@ impl AppState {
             } => {
                 if expected_revision != self.pane_revision {
                     Err("The layout changed. Select the panes again.".into())
-                } else if let Some(index) = self
-                    .pane_groups
-                    .iter()
-                    .position(|g| g.tree.contains(&first) && g.tree.contains(&second))
-                {
-                    let mut group = self.pane_groups[index].clone();
-                    let a = group.tree.leaf(&first).expect("source exists");
-                    let b = group.tree.leaf(&second).expect("destination exists");
-                    // A temporary view-only marker is unnecessary: replace
-                    // both leaves in one traversal of the original tree.
-                    fn swap(
-                        tree: &mut PaneTree<TabId>,
-                        first: TabId,
-                        second: TabId,
-                        a: &PaneTree<TabId>,
-                        b: &PaneTree<TabId>,
-                    ) {
-                        match tree {
-                            PaneTree::Leaf { view, .. } if *view == first => *tree = b.clone(),
-                            PaneTree::Leaf { view, .. } if *view == second => *tree = a.clone(),
-                            PaneTree::Split {
-                                first: left,
-                                second: right,
-                                ..
-                            } => {
-                                swap(left, first, second, a, b);
-                                swap(right, first, second, a, b);
-                            }
-                            _ => {}
-                        }
-                    }
-                    swap(&mut group.tree, first, second, &a, &b);
-                    if let Err(error) = group.validate() {
-                        Err(error.into())
-                    } else {
-                        self.pane_groups[index] = group;
-                        self.pane_changed();
-                        Ok(())
-                    }
                 } else {
-                    Err("Select two members of the same pane group.".into())
+                    self.swap_panes(first, second)
                 }
             }
             AppCommand::CombinePanes {
@@ -575,6 +659,22 @@ impl AppState {
                     Err("The layout changed. Select the destination again.".into())
                 } else {
                     self.combine_pane(source, target, side)
+                }
+            }
+            AppCommand::DetachPane {
+                view,
+                expected_revision,
+            } => {
+                if expected_revision != self.pane_revision {
+                    Err("The layout changed. Select the pane again.".into())
+                } else if !self.composable(view) {
+                    Err("The view no longer exists.".into())
+                } else if self.pane_group(view).is_none() {
+                    Err("Select a grouped pane first.".into())
+                } else {
+                    self.remove_pane(view);
+                    self.set_active(view);
+                    Ok(())
                 }
             }
             AppCommand::SeparatePane(view) => {
@@ -736,6 +836,107 @@ mod tests {
     use super::*;
     use festerm_config::Configuration;
 
+    #[derive(Debug, Eq, PartialEq)]
+    struct LiveIdentity {
+        id: TabId,
+        durable_id: String,
+        pane_id: String,
+        document: Option<festerm_document::DocumentId>,
+        session: Option<(u64, usize)>,
+    }
+
+    fn identities(state: &AppState) -> Vec<LiveIdentity> {
+        state
+            .tabs
+            .iter()
+            .map(|tab| LiveIdentity {
+                id: tab.id,
+                durable_id: tab.durable_id.clone(),
+                pane_id: tab.pane_id.clone(),
+                document: super::super::view_document(&tab.content),
+                session: state.session_tab(tab.id).map(|session| {
+                    (
+                        session.controller.lifecycle_generation(),
+                        std::ptr::from_ref(session) as usize,
+                    )
+                }),
+            })
+            .collect()
+    }
+
+    fn assert_identities(state: &AppState, mut before: Vec<LiveIdentity>) {
+        let mut after = identities(state);
+        before.sort_by_key(|identity| identity.id);
+        after.sort_by_key(|identity| identity.id);
+        assert_eq!(after, before);
+        for group in &state.pane_groups {
+            group.validate().unwrap();
+            for view in group.tree.views() {
+                let tab = state.tabs.iter().find(|tab| tab.id == view).unwrap();
+                assert_eq!(
+                    group.tree.leaf(&view),
+                    Some(PaneTree::Leaf {
+                        pane_id: tab.pane_id.clone(),
+                        view,
+                    })
+                );
+            }
+        }
+    }
+
+    fn combine(state: &mut AppState, context: &egui::Context, source: TabId, target: TabId) {
+        state.dispatch(
+            AppCommand::CombinePanes {
+                source,
+                target,
+                side: PaneSide::Right,
+                expected_revision: state.pane_revision(),
+            },
+            context,
+        );
+        assert!(state.take_pane_error().is_none());
+    }
+
+    fn swap(state: &mut AppState, context: &egui::Context, first: TabId, second: TabId) {
+        state.dispatch(
+            AppCommand::SwapPanes {
+                first,
+                second,
+                expected_revision: state.pane_revision(),
+            },
+            context,
+        );
+        assert!(state.take_pane_error().is_none());
+    }
+
+    fn assert_refused(state: &mut AppState, context: &egui::Context, command: AppCommand) {
+        let before = identities(state);
+        let groups = state.pane_groups.clone();
+        let presentation = state.presentation_tabs();
+        let effects = (
+            state.active,
+            state.pane_revision,
+            state.pane_zoom,
+            state.workspace_dirty,
+            state.input_ownership_epoch,
+        );
+        state.dispatch(command, context);
+        assert!(state.take_pane_error().is_some());
+        assert_eq!(identities(state), before);
+        assert_eq!(state.pane_groups, groups);
+        assert_eq!(state.presentation_tabs(), presentation);
+        assert_eq!(
+            (
+                state.active,
+                state.pane_revision,
+                state.pane_zoom,
+                state.workspace_dirty,
+                state.input_ownership_epoch
+            ),
+            effects
+        );
+    }
+
     fn state() -> (AppState, egui::Context, Vec<TabId>) {
         let context = egui::Context::default();
         let mut state = AppState::with_launcher(Configuration::empty());
@@ -746,6 +947,293 @@ mod tests {
         }
         state.pane_geometry(egui::vec2(8000.0, 1400.0), egui::vec2(520.0, 240.0));
         (state, context, ids)
+    }
+
+    #[test]
+    fn panes_external_center_exchange_preserves_live_sessions_and_tab_placements() {
+        let (mut state, context, ids) = state();
+        let documents = state.documents.clone();
+        let count = documents.borrow().len();
+        let mut sessions = Vec::new();
+        for name in ["Build", "Logs"] {
+            state.place_session(super::super::SessionTab::for_test_ssh(
+                crate::session_controller::fake::FakeSshSession::new([]),
+                name,
+                "example.test",
+                22,
+            ));
+            sessions.push(state.active());
+        }
+        let (build, logs) = (sessions[0], sessions[1]);
+        combine(&mut state, &context, ids[0], build);
+        let chip = state.presentation_chip(build);
+        let before = identities(&state);
+        let build_index = state.tabs.iter().position(|tab| tab.id == build).unwrap();
+        let logs_index = state.tabs.iter().position(|tab| tab.id == logs).unwrap();
+        let placements: Vec<_> = state
+            .presentation_tabs()
+            .into_iter()
+            .map(|id| {
+                if id == build {
+                    logs
+                } else if id == logs {
+                    build
+                } else {
+                    id
+                }
+            })
+            .collect();
+        swap(&mut state, &context, logs, build);
+        assert_eq!(state.tabs[build_index].id, logs);
+        assert_eq!(state.tabs[logs_index].id, build);
+        assert_eq!(state.presentation_tabs(), placements);
+        assert_eq!(state.pane_members(logs), vec![logs, ids[0]]);
+        assert!(state.pane_group(build).is_none());
+        assert_eq!(state.presentation_chip(logs), chip);
+        assert_eq!(state.active(), logs);
+        assert_eq!(state.pane_group(logs).unwrap().focused, logs);
+        assert_identities(&state, before);
+        assert!(std::rc::Rc::ptr_eq(&documents, &state.documents));
+        assert_eq!(documents.borrow().len(), count);
+        // Reverse direction also follows the dragged grouped view to its new tab.
+        let before = identities(&state);
+        swap(&mut state, &context, logs, build);
+        assert_eq!(state.active(), logs);
+        assert!(state.pane_group(logs).is_none());
+        assert_eq!(state.pane_group(build).unwrap().focused, build);
+        assert_identities(&state, before);
+        combine(&mut state, &context, logs, ids[2]);
+        let before = identities(&state);
+        swap(&mut state, &context, logs, build);
+        assert_eq!(state.pane_members(logs), vec![logs, ids[0]]);
+        assert_eq!(state.pane_members(build), vec![ids[2], build]);
+        assert_eq!(state.active(), logs);
+        assert_eq!(state.pane_group(logs).unwrap().focused, logs);
+        assert_eq!(state.pane_group(build).unwrap().focused, build);
+        assert_identities(&state, before);
+        let before = identities(&state);
+        state.dispatch(
+            AppCommand::DetachPane {
+                view: logs,
+                expected_revision: state.pane_revision(),
+            },
+            &context,
+        );
+        assert!(state.take_pane_error().is_none());
+        assert!(state.pane_group(logs).is_none());
+        assert_eq!(state.active(), logs);
+        assert_identities(&state, before);
+    }
+
+    #[test]
+    fn panes_cross_group_exchange_preserves_shared_documents_focus_and_chips() {
+        let (mut state, context, ids) = state();
+        state.set_active(ids[0]);
+        let document = state.active_document().unwrap();
+        state.documents.borrow_mut().retain(document);
+        state.open_text_document(document);
+        let shared = state.active();
+        combine(&mut state, &context, ids[1], ids[0]);
+        combine(&mut state, &context, ids[2], shared);
+        state.set_active(ids[0]);
+        let before = identities(&state);
+        let chips = (
+            state.presentation_chip(ids[0]),
+            state.presentation_chip(shared),
+        );
+        let placements = state.presentation_tabs();
+        swap(&mut state, &context, ids[0], shared);
+        assert_eq!(state.pane_members(shared), vec![shared, ids[1]]);
+        assert_eq!(state.pane_members(ids[0]), vec![ids[0], ids[2]]);
+        assert_eq!(state.pane_group(shared).unwrap().focused, shared);
+        assert_eq!(state.pane_group(ids[0]).unwrap().focused, ids[0]);
+        assert_eq!(state.presentation_chip(shared), chips.0);
+        assert_eq!(state.presentation_chip(ids[0]), chips.1);
+        assert_eq!(state.active(), ids[0]);
+        assert_eq!(state.documents.borrow().get(document).unwrap().views(), 2);
+        let expected: Vec<_> = placements
+            .into_iter()
+            .map(|id| {
+                if id == ids[0] {
+                    shared
+                } else if id == shared {
+                    ids[0]
+                } else {
+                    id
+                }
+            })
+            .collect();
+        assert_eq!(state.presentation_tabs(), expected);
+        assert_identities(&state, before);
+    }
+
+    #[test]
+    fn panes_full_four_leaf_exchange_does_not_require_extra_capacity() {
+        let (mut state, context, ids) = state();
+        for source in &ids[1..4] {
+            combine(&mut state, &context, *source, ids[0]);
+        }
+        let before = identities(&state);
+        let count = state.presentation_tabs().len();
+        swap(&mut state, &context, ids[4], ids[0]);
+        assert_eq!(state.pane_members(ids[4]).len(), MAX_GROUP_PANES);
+        assert!(state.pane_group(ids[0]).is_none());
+        assert_eq!(state.presentation_tabs().len(), count);
+        assert_identities(&state, before);
+    }
+
+    #[test]
+    fn panes_same_group_exchange_keeps_existing_focus_and_tab_order() {
+        let (mut state, context, ids) = state();
+        combine(&mut state, &context, ids[1], ids[0]);
+        state.set_active(ids[0]);
+        let before = identities(&state);
+        swap(&mut state, &context, ids[1], ids[0]);
+        assert_eq!(state.active(), ids[0]);
+        assert_eq!(state.pane_group(ids[0]).unwrap().focused, ids[0]);
+        assert_eq!(state.pane_members(ids[0]), vec![ids[1], ids[0]]);
+        assert_eq!(identities(&state), before);
+    }
+
+    #[test]
+    fn panes_invalid_and_stale_exchange_and_detach_are_mutation_free() {
+        let (mut state, context, ids) = state();
+        combine(&mut state, &context, ids[1], ids[0]);
+        state.dispatch(AppCommand::ZoomPane(ids[0]), &context);
+        let launcher = state.tabs[0].id;
+        let revision = state.pane_revision();
+        for (first, second, expected_revision) in [
+            (ids[4], ids[0], revision.wrapping_sub(1)),
+            (ids[0], ids[0], revision),
+            (TabId::next_for_test(), ids[0], revision),
+            (ids[0], TabId::next_for_test(), revision),
+            (launcher, ids[0], revision),
+            (ids[0], launcher, revision),
+            (ids[3], ids[4], revision),
+        ] {
+            assert_refused(
+                &mut state,
+                &context,
+                AppCommand::SwapPanes {
+                    first,
+                    second,
+                    expected_revision,
+                },
+            );
+        }
+        for (view, expected_revision) in [
+            (ids[0], revision.wrapping_sub(1)),
+            (ids[4], revision),
+            (launcher, revision),
+            (TabId::next_for_test(), revision),
+        ] {
+            assert_refused(
+                &mut state,
+                &context,
+                AppCommand::DetachPane {
+                    view,
+                    expected_revision,
+                },
+            );
+        }
+        let first_group = state.pane_groups[0].clone();
+        let mut duplicated = first_group.clone();
+        duplicated.group_id = uuid::Uuid::new_v4().to_string();
+        state.pane_groups.push(duplicated);
+        assert_refused(
+            &mut state,
+            &context,
+            AppCommand::SwapPanes {
+                first: ids[4],
+                second: ids[0],
+                expected_revision: revision,
+            },
+        );
+        state.pane_groups.pop();
+        state.pane_groups[0].label.clear();
+        assert_refused(
+            &mut state,
+            &context,
+            AppCommand::SwapPanes {
+                first: ids[4],
+                second: ids[0],
+                expected_revision: revision,
+            },
+        );
+        state.pane_groups[0] = first_group;
+        let index = state.tabs.iter().position(|tab| tab.id == ids[4]).unwrap();
+        let original_pane_id = state.tabs[index].pane_id.clone();
+        state.tabs[index].pane_id = state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == ids[3])
+            .unwrap()
+            .pane_id
+            .clone();
+        assert_refused(
+            &mut state,
+            &context,
+            AppCommand::SwapPanes {
+                first: ids[4],
+                second: ids[0],
+                expected_revision: revision,
+            },
+        );
+        state.tabs[index].pane_id = original_pane_id;
+        let original_durable_id = state.tabs[index].durable_id.clone();
+        state.tabs[index].durable_id = state
+            .tabs
+            .iter()
+            .find(|tab| tab.id == ids[3])
+            .unwrap()
+            .durable_id
+            .clone();
+        assert_refused(
+            &mut state,
+            &context,
+            AppCommand::SwapPanes {
+                first: ids[4],
+                second: ids[0],
+                expected_revision: revision,
+            },
+        );
+        state.tabs[index].durable_id = original_durable_id;
+    }
+
+    #[test]
+    fn panes_revision_checked_detach_preserves_identity_and_direct_separate_compatibility() {
+        let (mut state, context, ids) = state();
+        combine(&mut state, &context, ids[1], ids[0]);
+        combine(&mut state, &context, ids[2], ids[0]);
+        let before = identities(&state);
+        let revision = state.pane_revision();
+        state.dispatch(
+            AppCommand::DetachPane {
+                view: ids[0],
+                expected_revision: revision,
+            },
+            &context,
+        );
+        assert!(state.take_pane_error().is_none());
+        assert_eq!(state.active(), ids[0]);
+        assert!(state.pane_group(ids[0]).is_none());
+        assert_eq!(state.pane_members(ids[1]), vec![ids[2], ids[1]]);
+        assert_eq!(state.pane_revision(), revision + 1);
+        assert_identities(&state, before);
+        state.dispatch(AppCommand::SeparatePane(ids[0]), &context);
+        assert!(state.take_pane_error().is_none());
+        let before = identities(&state);
+        state.dispatch(
+            AppCommand::DetachPane {
+                view: ids[1],
+                expected_revision: state.pane_revision(),
+            },
+            &context,
+        );
+        assert!(state.take_pane_error().is_none());
+        assert!(state.pane_groups.is_empty());
+        assert_eq!(state.active(), ids[1]);
+        assert_identities(&state, before);
     }
 
     #[test]

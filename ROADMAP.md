@@ -13,7 +13,8 @@ The roadmap is foundation-first. Early milestones may produce little visible UI 
 
 Issue #65 is owner-authorized desktop split-pane work (ADR 0075).
 The presentation slice adds live composition, bounded layouts, focused input,
-group chrome and preflighted close. Complete recovery/named recipes and native
+group chrome, transient handles/explicit rearrangement, atomic live-view swaps
+and preflighted close. Complete recovery/named recipes and native
 PN-01/PN-02 qualification remain explicit gates; mobile composition and new
 MCP/JavaScript layout authority are excluded.
 

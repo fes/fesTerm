@@ -390,7 +390,7 @@ pub(super) fn show_chip(
 }
 
 fn show_pane_details(ui: &mut Ui, chip: &ChipViewModel, actions: &mut Vec<ChromeAction>) {
-    ui.set_min_width(360.0);
+    ui.set_min_width(320.0);
     ui.label(RichText::new(&chip.primary).strong());
     for (index, pane) in chip.panes.iter().enumerate() {
         let name = format!(
@@ -409,7 +409,7 @@ fn show_pane_details(ui: &mut Ui, chip: &ChipViewModel, actions: &mut Vec<Chrome
                 .rect_filled(response.rect, 3.0, theme::SURFACE_TAB_ACTIVE);
         }
         let mut left = response.rect.shrink2(egui::vec2(6.0, 0.0));
-        left.max.x = response.rect.left() + response.rect.width() * 0.55;
+        left.max.x = response.rect.left() + response.rect.width() * 0.38;
         let mut right = response.rect.shrink2(egui::vec2(6.0, 0.0));
         right.min.x = left.max.x + 8.0;
         for (rect, label, color) in [
@@ -454,16 +454,19 @@ fn show_pane_details(ui: &mut Ui, chip: &ChipViewModel, actions: &mut Vec<Chrome
             ui.separator();
         }
     }
-    if ui.button("Pin details").clicked() {
-        Popup::open_id(
-            ui.ctx(),
-            super::chip_widget_id(chip.id).with("pane-details"),
-        );
-    }
-    if ui.button("Pane layout…").clicked() {
-        actions.push(ChromeAction::PaneLayout(chip.id));
-        ui.close();
-    }
+    ui.separator();
+    ui.horizontal(|ui| {
+        if ui.small_button("Pin details").clicked() {
+            Popup::open_id(
+                ui.ctx(),
+                super::chip_widget_id(chip.id).with("pane-details"),
+            );
+        }
+        if ui.small_button("Pane layout…").clicked() {
+            actions.push(ChromeAction::PaneLayout(chip.id));
+            ui.close();
+        }
+    });
 }
 
 /// Paints one chip's content (status dot, label/rename field, secondary

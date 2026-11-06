@@ -31,6 +31,7 @@ pub const SEARCH_MATCH_RULE: Color32 = Color32::from_rgb(0xd2, 0xa9, 0x4b);
 
 pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(0x35, 0x41, 0x4e);
 pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(0x91, 0xa7, 0xb8);
+pub const BORDER_PANE_FOCUS: Color32 = Color32::from_rgb(0x45, 0x60, 0x79);
 pub const ACCENT_PRIMARY: Color32 = Color32::from_rgb(0x42, 0xbf, 0xd0);
 
 pub const STATUS_RUNNING: Color32 = Color32::from_rgb(0x4f, 0xc1, 0x7d);

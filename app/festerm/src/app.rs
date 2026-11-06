@@ -425,6 +425,7 @@ pub struct FesTermApp {
     state: AppState,
     pane_rects: Vec<(TabId, egui::Rect)>,
     pane_layout_menu: Option<TabId>,
+    pane_controls: panes::PaneControls,
     pane_details_open: bool,
     pane_close: Option<(
         crate::tabs::PaneClosePlan,
@@ -934,6 +935,7 @@ impl FesTermApp {
             state,
             pane_rects: Vec::new(),
             pane_layout_menu: None,
+            pane_controls: panes::PaneControls::default(),
             pane_details_open: false,
             pane_close: None,
             image_budget,
@@ -3296,6 +3298,8 @@ impl FesTermApp {
                 (43, "Make Pane Narrower"),
                 (44, "Make Pane Taller"),
                 (45, "Make Pane Shorter"),
+                (46, "Rearrange panes"),
+                (47, "Finish rearranging panes"),
             ] {
                 items.push(PaletteItem {
                     id,
@@ -3418,6 +3422,8 @@ impl FesTermApp {
                 context,
             ),
             31 => self.pane_layout_menu = Some(self.state.active()),
+            46 => self.begin_pane_rearrange(context),
+            47 => self.finish_pane_rearrange(context),
             32 => self
                 .state
                 .dispatch(AppCommand::FocusNextPane { reverse: false }, context),
@@ -3529,6 +3535,7 @@ impl FesTermApp {
             && self.pane_layout_menu.is_none()
             && !self.pane_details_open
             && self.pane_close.is_none()
+            && !self.pane_controls.blocks_input()
     }
 
     fn shortcut_context(
@@ -3673,6 +3680,7 @@ impl FesTermApp {
                         | egui::Event::Key { pressed: true, .. }
                 )
             }) && (self.pane_focus_target(&event).is_some()
+                || self.pane_handle_press(&event)
                 || self.shortcut_context(ctx, false).activates(
                     &event,
                     self.state.keyboard_bindings(),
@@ -3686,7 +3694,12 @@ impl FesTermApp {
                 ctx.request_repaint();
                 break;
             }
-            if let Some(view) = self.pane_focus_target(&event) {
+            self.record_pane_pointer_release(&event);
+            if self.pane_handle_press(&event) {
+                self.own_pane_handle_press(&event);
+                crate::keyboard::retire_composition(ctx);
+                self.cancel_clipboard_paste(ctx);
+            } else if let Some(view) = self.pane_focus_target(&event) {
                 crate::keyboard::retire_composition(ctx);
                 self.state.dispatch(AppCommand::ActivateTab(view), ctx);
                 self.cancel_invalid_clipboard_paste(ctx);
@@ -6553,6 +6566,7 @@ impl FesTermApp {
                 )
         });
         self.handle_native_menu_commands(ui.ctx());
+        self.prepare_pane_controls(ui.ctx());
         if self.pane_layout_menu.is_none() && !self.pane_details_open && self.pane_close.is_none() {
             self.handle_shortcuts(ui.ctx());
         } else {
@@ -6671,7 +6685,12 @@ impl FesTermApp {
         }
 
         let content_rect = ui.available_rect_before_wrap();
-        let active_pane_rect = self.prepare_pane_geometry(ui, content_rect);
+        let mut active_pane_rect = self.prepare_pane_geometry(ui, content_rect);
+        let pane_revision = self.state.pane_revision();
+        self.show_pane_controls(ui);
+        if pane_revision != self.state.pane_revision() {
+            active_pane_rect = self.prepare_pane_geometry(ui, content_rect);
+        }
         // Rendered before `TerminalView::show_with_options` below: while the
         // find bar is open that call marks `terminal_input_enabled = false`
         // and strips this frame's keyboard/text events from the shared
@@ -6754,12 +6773,20 @@ impl FesTermApp {
         };
         #[cfg(not(feature = "experimental-dev-tunnels"))]
         let running_tunnel_rows = Vec::new();
+        let pane_content_events = self
+            .pane_controls
+            .blocks_input()
+            .then(|| ui.input_mut(|input| std::mem::take(&mut input.events)));
         ui.scope_builder(
             egui::UiBuilder::new()
                 .id_salt(("surface", active_tab_id.chip_id()))
                 .max_rect(active_pane_rect),
             |ui| {
                 ui.set_clip_rect(ui.clip_rect().intersect(active_pane_rect));
+                if self.pane_controls.blocks_input() {
+                    ui.visuals_mut().disabled_alpha = 1.0;
+                    ui.disable();
+                }
                 let tab = self.state.active_tab_mut();
                 match &mut tab.content {
                     TabContent::Launcher => {
@@ -6793,6 +6820,8 @@ impl FesTermApp {
                                 chip_layout,
                                 status_bar_visible: self.state.status_bar_visible(),
                                 show_session_details: self.state.show_session_details(),
+                                show_pane_handles: self.state.show_pane_handles(),
+                                pane_high_contrast: self.state.pane_high_contrast(),
                                 confirm_session_close: self.state.confirm_session_close(),
                                 prefer_powershell: self.state.prefer_powershell(),
                                 extend_dev_tunnel_lifetime: self.state.extend_dev_tunnel_lifetime(),
@@ -6939,6 +6968,7 @@ impl FesTermApp {
                                     && self.pane_layout_menu.is_none()
                                     && !self.pane_details_open
                                     && self.pane_close.is_none()
+                                    && !self.pane_controls.blocks_input()
                                     && !egui::DragAndDrop::has_any_payload(ui.ctx())
                                     && !session.search.is_open(),
                                 keyboard_input_enabled: session.accepts_typed_input(),
@@ -7054,6 +7084,9 @@ impl FesTermApp {
                 }
             },
         );
+        if let Some(events) = pane_content_events {
+            ui.input_mut(|input| input.events = events);
+        }
         self.show_passive_panes(ui);
         for command in take_viewer_commands(ui.ctx()) {
             let context = ui.ctx().clone();
@@ -7406,6 +7439,8 @@ impl FesTermApp {
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
+                | AppCommand::TogglePaneHandles
+                | AppCommand::TogglePaneHighContrast
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::TogglePreferPowershell
                 | AppCommand::ToggleExtendDevTunnelLifetime
@@ -8033,6 +8068,7 @@ impl FesTermApp {
             state,
             pane_rects: Vec::new(),
             pane_layout_menu: None,
+            pane_controls: panes::PaneControls::default(),
             pane_details_open: false,
             pane_close: None,
             image_budget,

@@ -129,7 +129,7 @@ fn scenarios() -> Vec<Scenario> {
             id:"desktop-panes-layout",
             section:"desktop-panes",
             title:"Pane configuration dialog",
-            caption:"The production Pane Layout dialog over a four-pane group, including focus, resize, preset, swap, separate, rename and guarded-close controls.",
+            caption:"Compact production Pane Layout: selectable members, visual presets, rearrange/equalize/zoom, grouped actions and a separate guarded-close footer.",
             capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Layout),
         },
         Scenario {
@@ -154,6 +154,34 @@ fn scenarios() -> Vec<Scenario> {
             capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HoverThree),
         },
         // -- new-session ------------------------------------------------
+        Scenario {
+            id:"desktop-panes-handles",
+            section:"desktop-panes",
+            title:"Transient hover handle",
+            caption:"A real top-edge pointer hover reveals only the compact grip/name/menu; terminal geometry and padding are unchanged.",
+            capture:||crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Handles),
+        },
+        Scenario {
+            id:"desktop-panes-rearrange",
+            section:"desktop-panes",
+            title:"Explicit pane rearrangement",
+            caption:"Window-local manipulation mode shows all handles and Done without allocating a title row.",
+            capture:||crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Rearrange),
+        },
+        Scenario {
+            id:"desktop-panes-moving",
+            section:"desktop-panes",
+            title:"Source-specific destination picker",
+            caption:"Click-grip reveals an accessible target chooser, directional/Swap cross and separated source Detach/Close actions.",
+            capture:||crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Moving),
+        },
+        Scenario {
+            id:"desktop-panes-handle-menu",
+            section:"desktop-panes",
+            title:"Compact pane action menu",
+            caption:"The hovered member menu keeps Move/Detach and guarded Close distinct from neighboring panes.",
+            capture:||crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HandleMenu),
+        },
         Scenario {
             id: "launcher-populated",
             section: "new-session",
@@ -633,7 +661,7 @@ fn selected_gallery_scenarios(selection: Option<&str>) -> Result<Vec<Scenario>, 
 
 #[test]
 fn surface_gallery_selection_preserves_default_and_limits_curated_captures() {
-    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 135);
+    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 139);
     assert_eq!(
         selected_gallery_scenarios(Some("desktop-panes-four,desktop-panes-details"))
             .unwrap()
@@ -825,7 +853,7 @@ fn surface_catalog_matches_reconciled_matrix_without_dropping_controls() {
     let gallery = scenarios();
     let ids: std::collections::BTreeSet<_> = gallery.iter().map(|scene| scene.id).collect();
     assert_eq!(ids.len(), gallery.len());
-    assert_eq!(gallery.len(), 50 + 52 + 10 + 23);
+    assert_eq!(gallery.len(), 50 + 52 + 10 + 27);
     let gallery_only: std::collections::BTreeSet<_> = matrix["gallery_only_states"]
         .as_array()
         .unwrap()
@@ -1374,6 +1402,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         chip_layout: ChipLayout::Wrap,
         status_bar_visible: true,
         show_session_details: true,
+        show_pane_handles: true,
+        pane_high_contrast: false,
         confirm_session_close: true,
         prefer_powershell: true,
         extend_dev_tunnel_lifetime: false,

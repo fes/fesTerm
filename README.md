@@ -34,8 +34,9 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 Desktop split-pane composition is under development on
 `feature/desktop-split-panes` ([#65](https://github.com/fes/fesTerm/issues/65),
 [ADR 0075](docs/adr/0075-desktop-split-pane-presentation.md)). The live
-two-to-four-pane slice preserves existing session/document ownership; named
-recipes, independent recovery preferences and native qualification remain open.
+two-to-four-pane slice preserves existing session/document ownership and now
+includes transient handles, explicit rearrangement and atomic live-view swaps.
+Named recipes, independent recovery preferences and native qualification remain open.
 
 An [Android port](app/festerm-android/README.md) now hosts the existing iOS
 mobile application, with native input, Keystore credentials, document imports,

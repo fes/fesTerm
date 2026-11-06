@@ -2496,6 +2496,11 @@ pub enum AppCommand {
         expected_revision: u64,
     },
     SeparatePane(TabId),
+    /// Revision-checked separation for staged handle/tab-strip gestures.
+    DetachPane {
+        view: TabId,
+        expected_revision: u64,
+    },
     FocusPaneDirection(festerm_config::PaneSide),
     ResizeFocusedPane {
         axis: festerm_config::PaneAxis,
@@ -2569,6 +2574,10 @@ pub enum AppCommand {
     /// every chip is a compact single-line chip and the active session's
     /// detail relocates to the status bar instead.
     ToggleShowSessionDetails,
+    /// Toggles the app-wide compact pane handle hover preference.
+    TogglePaneHandles,
+    /// Toggles the stronger pane-only focus contrast treatment.
+    TogglePaneHighContrast,
     /// Toggles whether closing a live session requires confirmation.
     ToggleConfirmSessionClose,
     /// Toggles whether Windows default local sessions prefer the per-user
@@ -2982,6 +2991,8 @@ pub struct AppState {
     chip_layout: ChipLayout,
     status_bar_visible: bool,
     show_session_details: bool,
+    show_pane_handles: bool,
+    pane_high_contrast: bool,
     confirm_session_close: bool,
     prefer_powershell: bool,
     customize_local_shell: bool,
@@ -3122,6 +3133,8 @@ impl AppState {
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
+            show_pane_handles: settings.show_pane_handles(),
+            pane_high_contrast: settings.pane_high_contrast(),
             confirm_session_close: settings.confirm_session_close(),
             prefer_powershell: settings.prefer_powershell(),
             customize_local_shell: settings.customize_local_shell(),
@@ -3446,6 +3459,8 @@ impl AppState {
         self.chip_layout = chip_layout_from_preference(settings.chip_layout());
         self.status_bar_visible = settings.status_bar_visible();
         self.show_session_details = settings.show_session_details();
+        self.show_pane_handles = settings.show_pane_handles();
+        self.pane_high_contrast = settings.pane_high_contrast();
         self.confirm_session_close = settings.confirm_session_close();
         self.prefer_powershell = settings.prefer_powershell();
         self.extend_dev_tunnel_lifetime = settings.extend_dev_tunnel_lifetime();
@@ -3628,6 +3643,14 @@ impl AppState {
         self.show_session_details
     }
 
+    pub const fn show_pane_handles(&self) -> bool {
+        self.show_pane_handles
+    }
+
+    pub const fn pane_high_contrast(&self) -> bool {
+        self.pane_high_contrast
+    }
+
     pub const fn confirm_session_close(&self) -> bool {
         self.confirm_session_close
     }
@@ -3749,6 +3772,8 @@ impl AppState {
             self.restore_workspace,
         )
         .with_terminal_typography(self.terminal_font, self.terminal_ligatures)
+        .with_show_pane_handles(self.show_pane_handles)
+        .with_pane_high_contrast(self.pane_high_contrast)
         .with_prefer_powershell(self.prefer_powershell)
         .with_extend_dev_tunnel_lifetime(self.extend_dev_tunnel_lifetime)
         .with_show_running_dev_tunnels(self.show_running_dev_tunnels)
@@ -3933,6 +3958,7 @@ impl AppState {
             | AppCommand::SetPanePreset { .. }
             | AppCommand::SwapPanes { .. }
             | AppCommand::SeparatePane(_)
+            | AppCommand::DetachPane { .. }
             | AppCommand::SeparatePaneGroup(_)
             | AppCommand::EqualizePanes(_)
             | AppCommand::ZoomPane(_)
@@ -4223,6 +4249,12 @@ impl AppState {
             AppCommand::ToggleShowSessionDetails => {
                 self.show_session_details = !self.show_session_details;
             }
+            AppCommand::TogglePaneHandles => {
+                self.show_pane_handles = !self.show_pane_handles;
+            }
+            AppCommand::TogglePaneHighContrast => {
+                self.pane_high_contrast = !self.pane_high_contrast;
+            }
             AppCommand::ToggleConfirmSessionClose => {
                 self.confirm_session_close = !self.confirm_session_close;
             }
@@ -4425,6 +4457,8 @@ impl AppState {
                     chip_layout_from_preference(InterfaceSettings::DEFAULT.chip_layout());
                 self.status_bar_visible = InterfaceSettings::DEFAULT.status_bar_visible();
                 self.show_session_details = InterfaceSettings::DEFAULT.show_session_details();
+                self.show_pane_handles = InterfaceSettings::DEFAULT.show_pane_handles();
+                self.pane_high_contrast = InterfaceSettings::DEFAULT.pane_high_contrast();
                 self.confirm_session_close = InterfaceSettings::DEFAULT.confirm_session_close();
                 self.prefer_powershell = InterfaceSettings::DEFAULT.prefer_powershell();
                 self.extend_dev_tunnel_lifetime =
@@ -10186,6 +10220,50 @@ mod tests {
 
         state.dispatch(AppCommand::ToggleStatusBar, &context);
         assert!(state.status_bar_visible());
+    }
+
+    #[test]
+    fn pane_handles_preference_snapshot_adopt_and_reset() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(state.show_pane_handles());
+        state.dispatch(AppCommand::TogglePaneHandles, &context);
+        assert!(!state.show_pane_handles());
+        let snapshot = state.interface_settings();
+        assert!(!snapshot.show_pane_handles());
+        let configuration = Configuration::empty()
+            .with_interface_settings(snapshot)
+            .unwrap();
+        assert!(!AppState::for_test_with_configuration(configuration.clone()).show_pane_handles());
+        state.dispatch(AppCommand::TogglePaneHandles, &context);
+        assert!(state.show_pane_handles());
+        state.adopt_configuration(configuration);
+        assert!(!state.show_pane_handles());
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(state.show_pane_handles());
+        assert!(state.interface_settings().show_pane_handles());
+    }
+
+    #[test]
+    fn pane_high_contrast_preference_snapshot_adopt_and_reset() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test();
+        assert!(!state.pane_high_contrast());
+        state.dispatch(AppCommand::TogglePaneHighContrast, &context);
+        assert!(state.pane_high_contrast());
+        let snapshot = state.interface_settings();
+        assert!(snapshot.pane_high_contrast());
+        let configuration = Configuration::empty()
+            .with_interface_settings(snapshot)
+            .unwrap();
+        assert!(AppState::for_test_with_configuration(configuration.clone()).pane_high_contrast());
+        state.dispatch(AppCommand::TogglePaneHighContrast, &context);
+        assert!(!state.pane_high_contrast());
+        state.adopt_configuration(configuration);
+        assert!(state.pane_high_contrast());
+        state.dispatch(AppCommand::ResetInterfaceSettings, &context);
+        assert!(!state.pane_high_contrast());
+        assert!(!state.interface_settings().pane_high_contrast());
     }
 
     #[test]

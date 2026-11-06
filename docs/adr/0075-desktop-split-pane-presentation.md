@@ -41,6 +41,24 @@ existing combined, default-on restore preference; it neither silently changes
 that policy nor claims the new opt-in/migration behavior is implemented.
 No new MCP/JavaScript layout authority or mobile composition is introduced.
 
+Pane manipulation uses transient overlays, never a reserved title row or a
+changed terminal viewport. Hover handles default on, including legacy settings;
+the application-wide preference can disable hover without disabling explicit
+**Rearrange panes**. Rearrangement/menus/movement own input in their window.
+The first handle press is an ordered ownership boundary: preceding text/paste
+drains to its original owner, while later surface input is quarantined.
+The normal focused edge has a dedicated softer semantic role; the pane-only
+high-contrast preference restores the stronger focus edge.
+
+Member grips carry a typed view/revision token distinct from chip/group drags.
+Above/Left/Swap/Right/Below, an accessible target picker and separate
+Moving-source/Detach/Close actions support both dragging and clicking.
+Exchanges between groups or a group and a standalone view are staged atomically,
+including full four-member groups, preserving live controllers and documents.
+Staged detach rejects a stale revision. Close retires movement before handing
+the exact source to existing document/session confirmation; release, drag-end,
+Escape or cancellation cannot accidentally close a sibling or cancel a modal.
+
 ## Alternatives considered
 
 - Moving controllers into widgets duplicates ownership and disrupts live I/O.
@@ -58,10 +76,12 @@ Newer metadata is refused by older strict readers rather than misinterpreted.
 
 - **Invariants introduced or changed:** unique placement, four-leaf bound,
   atomic edits, exact input owner, transport continuity, metadata-only recovery.
-- **GUI/action edges affected:** PANE-01 through PANE-07.
+- **GUI/action edges affected:** PANE-01 through PANE-10.
 - **Automated tests required:** tree/reducer, generation/input continuity,
   geometry including single-view-equivalent terminal padding and minimum
-  content cells, cross-window refusal, dirty close and workspace roundtrip.
+  content cells, hover/mode input boundaries, exact-source drag-close,
+  configuration migration, atomic cross-presentation exchanges/staged detach,
+  cross-window refusal, dirty close and workspace roundtrip.
 - **Native/manual evidence required:** PN-01 and PN-02 across desktop platforms
   and display scales. Headless checks do not qualify native behavior.
 - **Coverage superseded:** None; existing session/document/transfer tests remain.

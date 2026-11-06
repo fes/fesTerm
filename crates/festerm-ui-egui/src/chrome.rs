@@ -676,6 +676,25 @@ pub fn show(
         );
     });
     tab_drag::record_footprint(&ui.ctx().clone(), band_rect, &chip_footprints);
+    let pane_strip_id = Id::new(("pane-tab-strip", ui.ctx().viewport_id()));
+    let strip_left = chip_footprints
+        .first()
+        .map_or(band_rect.left() + 96.0, |(_, rect)| rect.left());
+    let strip_right = band_rect.right()
+        - if cfg!(target_os = "macos") {
+            80.0
+        } else {
+            160.0
+        };
+    let after_chips = chip_footprints
+        .last()
+        .map_or(strip_left, |(_, rect)| rect.right() + 8.0);
+    let left = after_chips;
+    let strip = Rect::from_min_size(
+        egui::pos2(left, band_rect.top() + CHROME_TOP_INSET),
+        vec2((strip_right - left).clamp(0.0, 240.0), chip_row_height),
+    );
+    ui.data_mut(|data| data.insert_temp(pane_strip_id, strip));
     show_escaped_drag_ghost(ui, chips);
     if let Some(action) = released_cross_window_drag(ui, chips) {
         actions.push(action);
@@ -693,6 +712,11 @@ pub fn show(
         });
     });
     actions
+}
+
+pub fn pane_tab_strip_target(context: &egui::Context) -> Option<Rect> {
+    let id = Id::new(("pane-tab-strip", context.viewport_id()));
+    context.data(|data| data.get_temp(id))
 }
 
 /// Thin, invisible hit zones along the window's edges/corners that forward
