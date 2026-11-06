@@ -636,36 +636,40 @@ impl Session {
             }
             Some((&msg::GLOBAL_REQUEST, mut r)) => {
                 let req = map_err!(String::decode(&mut r))?;
-                let wants_reply = map_err!(u8::decode(&mut r))?;
+                let wants_reply = map_err!(u8::decode(&mut r))? != 0;
                 if let Some(ref mut enc) = self.common.encrypted {
                     if req.starts_with("keepalive") {
                         map_err!(ensure_end(&r))?;
-                        if wants_reply == 1 {
+                        if wants_reply {
                             trace!("Received keep alive message: {req:?}",);
                             self.common.wants_reply = false;
                             push_packet!(enc.write, enc.write.push(msg::REQUEST_SUCCESS));
-                        } else {
-                            warn!("Received keepalive without reply request!");
                         }
                     } else if req == "hostkeys-00@openssh.com" {
-                        let mut keys = vec![];
-                        while !r.is_empty() {
-                            let key_blob = map_err!(Bytes::decode(&mut r))?;
-                            match parse_public_key(&key_blob) {
-                                Ok(key) => keys.push(key),
-                                Err(ref err) => {
-                                    debug!(
-                                        "failed to parse announced host key {key_blob:?}: {err:?}",
-                                    )
+                        if wants_reply {
+                            push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE));
+                        } else {
+                            let mut keys = vec![];
+                            while !r.is_empty() {
+                                let key_blob = map_err!(Bytes::decode(&mut r))?;
+                                match parse_public_key(&key_blob) {
+                                    Ok(key) => keys.push(key),
+                                    Err(ref err) => {
+                                        debug!(
+                                            "failed to parse announced host key {key_blob:?}: {err:?}",
+                                        )
+                                    }
                                 }
                             }
+                            map_err!(ensure_end(&r))?;
+                            return client.openssh_ext_host_keys_announced(keys, self).await;
                         }
-                        map_err!(ensure_end(&r))?;
-                        return client.openssh_ext_host_keys_announced(keys, self).await;
                     } else {
                         warn!("Unhandled global request: {req:?} {wants_reply:?}",);
-                        self.common.wants_reply = false;
-                        push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
+                        if wants_reply {
+                            self.common.wants_reply = false;
+                            push_packet!(enc.write, enc.write.push(msg::REQUEST_FAILURE))
+                        }
                     }
                 }
                 self.common.received_data = false;

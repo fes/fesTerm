@@ -1,5 +1,20 @@
 # Milestone Progress Narrative
 
+## Keeping SSH global replies matched to requests
+
+The vendored SSH peers could both create phantom global-request replies:
+no-reply client requests occupied the reply FIFO, while either peer could send
+an unsolicited failure. A later ping or forwarding result could then consume
+the wrong response. The FIFO now tracks only assembled requests that ask for
+replies, and incoming requests emit at most one requested response; channel
+agent-forwarding replies remain channel-scoped. Deterministic peer and packet
+regressions passed locally, including an encrypted in-memory mixed-traffic
+client/server test.
+
+This fixes request correlation, not liveness qualification: locally blocked
+probes, cancelled waiters, lossless retirement and automation-worker platform
+gates remain separate open work.
+
 ## Avoiding destructive Windows configuration recovery
 
 The configuration writer no longer moves an existing Windows target aside

@@ -1869,6 +1869,232 @@ mod tests {
         (session, sender, reply_receiver)
     }
 
+    #[allow(clippy::expect_used, clippy::indexing_slicing, clippy::unwrap_used)]
+    mod global_requests {
+        use super::*;
+        use tokio::sync::oneshot::error::TryRecvError;
+
+        fn session() -> Session {
+            let (mut session, _sender, _replies) = keyboard_interactive_session();
+            session.common.encrypted.as_mut().unwrap().state = EncryptedState::Authenticated;
+            session
+        }
+
+        fn request(name: &str, want_reply: u8) -> Vec<u8> {
+            let mut packet = vec![msg::GLOBAL_REQUEST];
+            name.encode(&mut packet).unwrap();
+            want_reply.encode(&mut packet).unwrap();
+            if name == "hostkeys-00@openssh.com" {
+                let mut key = Vec::new();
+                "ssh-ed25519".encode(&mut key).unwrap();
+                let key_bytes: [u8; 32] = [
+                    0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9,
+                    0x64, 0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02,
+                    0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a,
+                ];
+                key_bytes.to_vec().encode(&mut key).unwrap();
+                key.encode(&mut packet).unwrap();
+            }
+            packet
+        }
+
+        fn take_written(session: &mut Session) -> Vec<u8> {
+            std::mem::take(&mut session.common.encrypted.as_mut().unwrap().write)
+        }
+
+        #[tokio::test]
+        async fn client_global_request_fifo_tracks_only_reply_requested_packets() {
+            let mut session = session();
+            session.send_keepalive(false).unwrap();
+            session.no_more_sessions(false).unwrap();
+            session.tcpip_forward(None, "127.0.0.1", 2222).unwrap();
+            session
+                .cancel_tcpip_forward(None, "127.0.0.1", 2222)
+                .unwrap();
+            session.streamlocal_forward(None, "/fixture").unwrap();
+
+            let (forward_sender, mut forward) = oneshot::channel();
+            session
+                .tcpip_forward(Some(forward_sender), "127.0.0.1", 0)
+                .unwrap();
+            session.send_keepalive(true).unwrap();
+            let (ping_sender, mut ping) = oneshot::channel();
+            session.send_ping(ping_sender).unwrap();
+            session.no_more_sessions(true).unwrap();
+            let (stream_sender, mut stream) = oneshot::channel();
+            session
+                .streamlocal_forward(Some(stream_sender), "/fixture")
+                .unwrap();
+            session
+                .cancel_streamlocal_forward(None, "/fixture")
+                .unwrap();
+            let (cancel_sender, mut cancel) = oneshot::channel();
+            session
+                .cancel_tcpip_forward(Some(cancel_sender), "127.0.0.1", 2222)
+                .unwrap();
+            let (second_ping_sender, mut second_ping) = oneshot::channel();
+            session.send_ping(second_ping_sender).unwrap();
+            assert_eq!(session.open_global_requests.len(), 7);
+
+            let mut handler = TestHandler;
+            let mut allocated = vec![msg::REQUEST_SUCCESS];
+            4242u32.encode(&mut allocated).unwrap();
+            session
+                .process_packet(&mut handler, &allocated)
+                .await
+                .unwrap();
+            assert_eq!(forward.try_recv(), Ok(Some(4242)));
+            assert!(matches!(ping.try_recv(), Err(TryRecvError::Empty)));
+
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert!(matches!(ping.try_recv(), Err(TryRecvError::Empty)));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert_eq!(ping.try_recv(), Ok(()));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_SUCCESS])
+                .await
+                .unwrap();
+            assert!(matches!(stream.try_recv(), Err(TryRecvError::Empty)));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert_eq!(stream.try_recv(), Ok(false));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_SUCCESS])
+                .await
+                .unwrap();
+            assert_eq!(cancel.try_recv(), Ok(true));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_SUCCESS])
+                .await
+                .unwrap();
+            assert_eq!(second_ping.try_recv(), Ok(()));
+            assert!(session.open_global_requests.is_empty());
+
+            let (sender, mut rejected_forward) = oneshot::channel();
+            session.tcpip_forward(Some(sender), "127.0.0.1", 0).unwrap();
+            let (sender, mut accepted_stream) = oneshot::channel();
+            session
+                .streamlocal_forward(Some(sender), "/fixture")
+                .unwrap();
+            let (sender, mut rejected_cancel) = oneshot::channel();
+            session
+                .cancel_streamlocal_forward(Some(sender), "/fixture")
+                .unwrap();
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert_eq!(rejected_forward.try_recv(), Ok(None));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_SUCCESS])
+                .await
+                .unwrap();
+            assert_eq!(accepted_stream.try_recv(), Ok(true));
+            session
+                .process_packet(&mut handler, &[msg::REQUEST_FAILURE])
+                .await
+                .unwrap();
+            assert_eq!(rejected_cancel.try_recv(), Ok(false));
+            assert!(session.open_global_requests.is_empty());
+        }
+
+        #[test]
+        fn client_global_requests_without_encryption_leave_no_reply_owner() {
+            let mut session = session();
+            session.common.encrypted = None;
+            session.send_keepalive(true).unwrap();
+            session.send_keepalive(false).unwrap();
+            session.no_more_sessions(true).unwrap();
+            session.no_more_sessions(false).unwrap();
+
+            let (sender, mut ping) = oneshot::channel();
+            session.send_ping(sender).unwrap();
+            assert!(matches!(ping.try_recv(), Err(TryRecvError::Closed)));
+            let (sender, mut forward) = oneshot::channel();
+            session.tcpip_forward(Some(sender), "127.0.0.1", 1).unwrap();
+            assert!(matches!(forward.try_recv(), Err(TryRecvError::Closed)));
+            let (sender, mut cancel) = oneshot::channel();
+            session
+                .cancel_tcpip_forward(Some(sender), "127.0.0.1", 1)
+                .unwrap();
+            assert!(matches!(cancel.try_recv(), Err(TryRecvError::Closed)));
+            let (sender, mut stream) = oneshot::channel();
+            session
+                .streamlocal_forward(Some(sender), "/fixture")
+                .unwrap();
+            assert!(matches!(stream.try_recv(), Err(TryRecvError::Closed)));
+            let (sender, mut cancel_stream) = oneshot::channel();
+            session
+                .cancel_streamlocal_forward(Some(sender), "/fixture")
+                .unwrap();
+            assert!(matches!(
+                cancel_stream.try_recv(),
+                Err(TryRecvError::Closed)
+            ));
+            assert!(session.open_global_requests.is_empty());
+
+            let (mut existing, _sender, _replies) = keyboard_interactive_session();
+            let (sender, mut pending) = oneshot::channel();
+            existing.send_ping(sender).unwrap();
+            existing.common.encrypted = None;
+            let (sender, mut refused) = oneshot::channel();
+            existing.send_ping(sender).unwrap();
+            assert!(matches!(refused.try_recv(), Err(TryRecvError::Closed)));
+            assert!(matches!(pending.try_recv(), Err(TryRecvError::Empty)));
+            assert_eq!(existing.open_global_requests.len(), 1);
+        }
+
+        #[derive(Default)]
+        struct HostKeysHandler {
+            announcements: usize,
+        }
+
+        impl Handler for HostKeysHandler {
+            type Error = crate::Error;
+
+            async fn openssh_ext_host_keys_announced(
+                &mut self,
+                keys: Vec<PublicKey>,
+                _session: &mut Session,
+            ) -> Result<(), Self::Error> {
+                self.announcements += keys.len();
+                Ok(())
+            }
+        }
+
+        #[tokio::test]
+        async fn client_replies_only_when_inbound_global_request_wants_reply() {
+            let mut session = session();
+            let mut handler = HostKeysHandler::default();
+            for (name, want, expected) in [
+                ("unknown@example.com", 0, None),
+                ("unknown@example.com", 1, Some(msg::REQUEST_FAILURE)),
+                ("unknown@example.com", 2, Some(msg::REQUEST_FAILURE)),
+                ("keepalive@openssh.com", 0, None),
+                ("keepalive@openssh.com", 1, Some(msg::REQUEST_SUCCESS)),
+                ("keepalive@openssh.com", 2, Some(msg::REQUEST_SUCCESS)),
+                ("hostkeys-00@openssh.com", 0, None),
+                ("hostkeys-00@openssh.com", 1, Some(msg::REQUEST_FAILURE)),
+            ] {
+                session
+                    .process_packet(&mut handler, &request(name, want))
+                    .await
+                    .unwrap();
+                let expected = expected.map_or_else(Vec::new, |msg| vec![0, 0, 0, 1, msg]);
+                assert_eq!(take_written(&mut session), expected, "{name} {want}");
+            }
+            assert_eq!(handler.announcements, 1);
+        }
+    }
+
     #[cfg(feature = "flate2")]
     fn authenticated_session() -> Session {
         let config = Arc::new(Config::default());

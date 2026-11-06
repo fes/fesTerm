@@ -724,21 +724,8 @@ pub trait Handler: Sized {
 
     /// The client requests OpenSSH agent forwarding
     ///
-    /// **Note:** Success or failure should be communicated to the client by calling
-    /// [`Session::channel_success`] or [`Session::channel_failure`] respectively.
-    ///
-    /// For instance:
-    ///
-    /// ```ignore
-    /// async fn agent_request(
-    ///     &mut self,
-    ///     channel: ChannelId,
-    ///     session: &mut Session,
-    /// ) -> Result<bool, Self::Error> {
-    ///     session.channel_success(channel);
-    ///     Ok(())
-    /// }
-    /// ```
+    /// Return whether forwarding is accepted. If a reply was requested, the
+    /// server sends the corresponding channel success or failure.
     #[allow(unused_variables)]
     fn agent_request(
         &mut self,
@@ -762,7 +749,8 @@ pub trait Handler: Sized {
 
     /// Used for reverse-forwarding ports, see
     /// [RFC4254](https://tools.ietf.org/html/rfc4254#section-7).
-    /// If `port` is 0, you should set it to the allocated port number.
+    /// If `port` is 0, set it to the allocated port number before returning.
+    /// A requested success without an allocated port is sent as a failure.
     #[allow(unused_variables)]
     fn tcpip_forward(
         &mut self,
@@ -1078,6 +1066,7 @@ where
         pending_len: 0,
         channels: HashMap::new(),
         open_global_requests: VecDeque::new(),
+        ephemeral_forward_reply: None,
         kex: SessionKexState::Idle,
     };
 
