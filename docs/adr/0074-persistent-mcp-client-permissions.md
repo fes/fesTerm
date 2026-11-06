@@ -1,4 +1,4 @@
-# ADR 0073: Persistent MCP Client Identity and Capability Grants
+# ADR 0074: Persistent MCP Client Identity and Capability Grants
 
 - **Status:** Proposed
 - **Date:** 2026-11-05
