@@ -265,6 +265,23 @@ impl Drop for ReservedAutomationInput {
 }
 
 impl PendingAutomationInput {
+    /// Expires an unresolved slot without consuming an already committed one.
+    pub fn is_cancelled(&self) -> bool {
+        if Instant::now() >= self.slot.deadline {
+            self.slot.cancel_open();
+        }
+        matches!(self.slot.state.load(Ordering::Acquire), CANCELLED | TAKEN)
+    }
+
+    /// Whether the attachment generation bound at reservation is still live.
+    /// A backend that can replace its attachment must check this under the
+    /// admission boundary before writing ready bytes.
+    pub fn attachment_is_current(&self, guard: &AutomationAdmissionGuard) -> bool {
+        self.slot
+            .attachment
+            .is_current_under_admission(guard, self.slot.attachment_generation)
+    }
+
     pub fn poll(&mut self) -> AutomationInputStatus {
         self.poll_at(Instant::now())
     }
@@ -353,6 +370,45 @@ mod tests {
             matches!(pending.poll(), AutomationInputStatus::Ready(bytes) if &*bytes == b"secret input")
         );
         assert!(matches!(pending.poll(), AutomationInputStatus::Cancelled));
+    }
+
+    #[test]
+    fn cancellation_probe_preserves_a_timely_committed_slot() {
+        let (reservation, mut pending) =
+            slot_with_deadline(b"committed", Instant::now() + Duration::from_secs(1));
+        reservation.commit_with(|_| Ok::<_, ()>(())).unwrap();
+        Arc::get_mut(&mut pending.slot).unwrap().deadline = Instant::now() - Duration::from_secs(1);
+        assert!(!pending.is_cancelled());
+        assert!(
+            matches!(pending.poll(), AutomationInputStatus::Ready(bytes) if &*bytes == b"committed")
+        );
+        assert!(pending.is_cancelled());
+
+        let (expired, pending) =
+            slot_with_deadline(b"expired", Instant::now() - Duration::from_secs(1));
+        assert!(pending.is_cancelled());
+        assert!(matches!(
+            expired.commit_with(|_| Ok::<_, ()>(())),
+            Err(CommitAutomationInputError::ClosedOrExpired)
+        ));
+    }
+
+    #[test]
+    fn pending_input_detects_a_replaced_attachment() {
+        let attachment = running_attachment();
+        let (_reservation, pending) = reserve_for(b"bound", 1, attachment.clone()).unwrap();
+        let guard = loop {
+            if let Ok(guard) = try_automation_admission_lock() {
+                break guard;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        assert!(pending.attachment_is_current(&guard));
+        drop(guard);
+        attachment.transition(false);
+        attachment.transition(true);
+        let guard = crate::automation_admission_lock().unwrap();
+        assert!(!pending.attachment_is_current(&guard));
     }
 
     #[test]

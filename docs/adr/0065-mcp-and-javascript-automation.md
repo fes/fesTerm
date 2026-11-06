@@ -161,16 +161,18 @@ to bypass another's restrictions.
    must explicitly cut the old grant/run/lease and serialize the handoff with
    controller and worker admission; a cut may require a fresh proposal and
    approval. No automatic takeover or recreation of an exited shell is introduced.
-   The local PTY backend can reserve an inert position in its existing bounded
-   command queue before an exact broker commit. The controller must hold its
+   Local PTY and interactive SSH backends can reserve an inert position in
+   their existing bounded command queues before an exact broker commit. The controller must hold its
    worker, privacy and attachment fences through publication, and must verify
    the writer lease and immutable bytes at commit. Each reservation carries the
    host controller identity and the creating backend's own attachment identity
    and generation, rechecked against the target under that boundary. A reservation that is
    dropped, refused or not committed within 250 ms cannot release input; later
    commands retain their order. A lost slot after the broker callback succeeds
-   requires conservative unknown-outcome handling, not replay. This primitive
-   is not authority, and other backends refuse reservations until implemented.
+   requires conservative unknown-outcome handling, not replay. SSH discards
+   reservations whose attachment generation was replaced instead of forwarding
+   them to a new connection. This primitive is not authority, and other
+   backends refuse reservations until implemented.
    The controller can also capture a composite human-input, application IME
    and live backend-attachment fence. Pending input confirmations, clipboard
    reservations and buffered input refuse capture; terminal-bound human input
@@ -531,8 +533,9 @@ in the design must be visible in implementation/release review.
   obtained human input or native usability. Coordinator
   lifecycle tests additionally distinguish
   MCP-only cleanup from global privacy revocation; they do not prove an
-  integrated JavaScript adapter. Local PTY reservation tests exercise ordered
-  commitment, cancellation and expiration, including a stalled callback; they
+  integrated JavaScript adapter. Local PTY and SSH reservation tests exercise
+  ordered commitment, cancellation and expiration, including a stalled
+  callback and SSH attachment replacement; they
   do not prove application writer-lease or human-takeover integration. Terminal
   request tests cover bounded mode-aware text/key preparation and refusal of
   malformed or unsupported chords; they grant no authority. P2 intake tests
