@@ -200,7 +200,7 @@ fn worker_program() -> Result<WorkerProgram, &'static str> {
     #[cfg(test)]
     let executable = std::env::var_os("FESTERM_TEST_JS_WORKER")
         .map(std::path::PathBuf::from)
-        .map_or_else(|| std::env::current_exe().map(packaged_worker_path), Ok);
+        .map_or_else(std::env::current_exe, Ok);
     #[cfg(not(test))]
     let executable = std::env::current_exe().map(packaged_worker_path);
     let executable = executable
