@@ -68,7 +68,7 @@ use windows_sys::Win32::{
             WaitForSingleObject, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS,
             EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
             PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY,
-            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTUPINFOEXW,
         },
         WindowsProgramming::PROCESS_CREATION_CHILD_PROCESS_RESTRICTED,
     },
@@ -422,8 +422,7 @@ impl Child {
         // SAFETY: zero is a valid initial value for these C structures.
         let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
         startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
-        // No standard handles: the worker speaks only on its verified pipe.
-        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        // The worker has no standard handles and speaks only on its verified pipe.
         startup.lpAttributeList = list.0;
         let application = wide(program);
         let mut command_line = wide(format!("\"{}\" --automation-worker", program.display()));

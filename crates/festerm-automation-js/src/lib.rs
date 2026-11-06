@@ -63,6 +63,8 @@ pub enum Error {
     Protocol,
     #[error("automation worker I/O failure")]
     Io(#[from] std::io::Error),
+    #[error("automation worker exited unexpectedly: {0}")]
+    WorkerExited(String),
     #[error("automation worker deadline exceeded")]
     Deadline,
     #[error("automation disclosure is no longer authorized")]

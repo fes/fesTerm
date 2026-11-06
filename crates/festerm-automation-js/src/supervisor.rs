@@ -736,7 +736,14 @@ fn supervise(
                         Some(Err(e))
                             if e.kind() == std::io::ErrorKind::WouldBlock
                                 || e.kind() == std::io::ErrorKind::Interrupted => {}
-                        Some(Err(e)) => return Err(e.into()),
+                        Some(Err(e)) => {
+                            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                                if let Some(status) = child.try_wait()? {
+                                    return Err(Error::WorkerExited(format!("{status:?}")));
+                                }
+                            }
+                            return Err(e.into());
+                        }
                         None => {}
                     }
                 }
