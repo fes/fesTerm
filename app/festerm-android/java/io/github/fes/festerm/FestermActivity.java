@@ -47,7 +47,7 @@ public final class FestermActivity extends NativeActivity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService files = Executors.newSingleThreadExecutor();
     private InputView input;
-    private View shield;
+    private View shield, accessibilityHost;
     private boolean ready, destroyed, resumed;
     private Object windowLayout;
     private java.util.function.Consumer<Object> hingeListener;
@@ -65,7 +65,7 @@ public final class FestermActivity extends NativeActivity {
             if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction()) && ready) {
                 cancelSpeech();
                 nativeLifecycle(3);
-                if (protect) shield.setVisibility(View.VISIBLE);
+                if (protect) shield(true);
             }
         }
     };
@@ -86,10 +86,16 @@ public final class FestermActivity extends NativeActivity {
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(true);
         input = new InputView();
         addContentView(input, new FrameLayout.LayoutParams(1, 1));
+        // Transparent, input-free host for AccessKit's virtual node tree (ADR 0075).
+        // NativeActivity delivers touches through its input queue, not views.
+        accessibilityHost = new View(this);
+        accessibilityHost.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        addContentView(accessibilityHost, new FrameLayout.LayoutParams(-1, -1));
         shield = new View(this);
         shield.setBackgroundColor(BACKGROUND);
         shield.setClickable(true);
         addContentView(shield, new FrameLayout.LayoutParams(-1, -1));
+        shield(true);
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalLayoutListener(this::reportInsets);
         watchHinge();
         if (Build.VERSION.SDK_INT >= 33) {
@@ -308,6 +314,17 @@ public final class FestermActivity extends NativeActivity {
         }
     }
 
+    /** AccessKit attaches here from the native loop thread. */
+    public View accessibilityHost() {
+        return accessibilityHost;
+    }
+
+    /** Accessibility services must not read the tree the privacy shield hides. */
+    private void shield(boolean visible) {
+        shield.setVisibility(visible ? View.VISIBLE : View.GONE);
+        accessibilityHost.setVisibility(visible ? View.INVISIBLE : View.VISIBLE);
+    }
+
     public void privacy(boolean enabled, boolean covered, boolean hide) {
         if (ready && protect == enabled && cover == covered && hidePreview == hide) return;
         protect = enabled;
@@ -321,7 +338,7 @@ public final class FestermActivity extends NativeActivity {
             } else {
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
             }
-            shield.setVisibility(covered || (!resumed && enabled && hide) ? View.VISIBLE : View.GONE);
+            shield(covered || (!resumed && enabled && hide));
         });
     }
 
@@ -336,7 +353,7 @@ public final class FestermActivity extends NativeActivity {
 
     @Override protected void onPause() {
         resumed = false;
-        if (protect && (hidePreview || cover)) shield.setVisibility(View.VISIBLE);
+        if (protect && (hidePreview || cover)) shield(true);
         if (ready) {
             input.mode(0);
             if (!speechPermission) cancelSpeech();

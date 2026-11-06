@@ -1,5 +1,6 @@
 //! iOS feasibility host: offline by default, with opt-in transient live SSH.
 
+mod accessibility;
 mod app_lock;
 mod dictation;
 mod document_preview;
@@ -2155,6 +2156,10 @@ impl MobileApp {
                 terminal_input_enabled: history_ready && !self.menu_open && !gesture.block_pointer,
                 keyboard_input_enabled: input_ready && !self.menu_open,
                 persistent_keyboard_focus: input_ready && !self.menu_open,
+                expose_text_to_accessibility: !self
+                    .lock
+                    .as_ref()
+                    .is_some_and(app_lock::LockHost::hides_terminal_text),
                 ..Default::default()
             },
         );
@@ -3494,6 +3499,52 @@ mod tests {
         )
         .drop_without_applying_deltas();
         assert_eq!(sink.0, b"\x1b[200~pasted\x1b[201~x");
+    }
+
+    #[test]
+    fn privacy_mode_keeps_terminal_text_out_of_the_accessibility_tree() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        use festerm_ios_lock::{
+            AppLock, Availability, BiometryKind, FakeLocker, LockSettings, ManualClock,
+        };
+
+        for (lock_enabled, hide_preview, exposed) in [
+            (None, false, true),
+            (Some(true), false, true),
+            (Some(true), true, false),
+        ] {
+            let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })));
+            if let Some(enabled) = lock_enabled {
+                let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+                let clock = std::sync::Arc::new(ManualClock::new());
+                let lock = AppLock::new(None, locker, clock, || {});
+                lock.apply_settings(LockSettings {
+                    enabled,
+                    hide_app_switcher_preview: hide_preview,
+                    ..LockSettings::default()
+                })
+                .unwrap();
+                app = app.with_lock(lock, None);
+            }
+            app.terminal.ingest(b"\x1b[2J\x1b[Hsecret output");
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(390.0, 844.0))
+                .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+            harness.run();
+            let visible = harness
+                .query_by_role(egui::accesskit::Role::Terminal)
+                .is_some()
+                && harness
+                    .query_all_by_role(egui::accesskit::Role::Label)
+                    .any(|node| node.value().as_deref() == Some("secret output"));
+            assert_eq!(
+                visible, exposed,
+                "lock {lock_enabled:?}, hide {hide_preview}"
+            );
+        }
     }
 
     #[test]

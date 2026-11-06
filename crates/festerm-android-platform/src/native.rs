@@ -735,3 +735,44 @@ extern "system" fn Java_io_github_fes_festerm_FestermActivity_nativeSpeechLevel(
         }
     }
 }
+
+/// AccessKit's Android adapter, injected into the activity's dedicated
+/// full-size accessibility host view (ADR 0075). Not `Send`: it lives on the
+/// native loop thread that publishes egui frames.
+pub struct AccessibilityAdapter(accesskit_android::InjectingAdapter);
+
+impl AccessibilityAdapter {
+    pub fn new(
+        activation: impl accesskit::ActivationHandler + Send + 'static,
+        action: impl accesskit::ActionHandler + Send + 'static,
+    ) -> Result<Self, &'static str> {
+        let bridge = bridge()?;
+        // The adapter reads this thread's JNIEnv on every update.
+        let mut env = bridge
+            .vm
+            .attach_current_thread_permanently()
+            .map_err(|_| "Android VM is unavailable")?;
+        let host = env
+            .call_method(
+                bridge.activity.as_obj(),
+                "accessibilityHost",
+                "()Landroid/view/View;",
+                &[],
+            )
+            .and_then(|value| value.l())
+            .map_err(|_| {
+                let _ = env.exception_clear();
+                "Android accessibility host is unavailable"
+            })?;
+        if host.is_null() {
+            return Err("Android accessibility host is unavailable");
+        }
+        Ok(Self(accesskit_android::InjectingAdapter::new(
+            &mut env, &host, activation, action,
+        )))
+    }
+
+    pub fn update_if_active(&mut self, update: impl FnOnce() -> accesskit::TreeUpdate) {
+        self.0.update_if_active(update);
+    }
+}

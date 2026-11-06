@@ -198,6 +198,10 @@ pub fn run_native(
                 .window_handle()
                 .ok()
                 .and_then(|handle| festerm_ios_lock::LockBridge::new(handle, lock.clone()));
+            let accessibility_repaint = context.clone();
+            crate::accessibility::install(&context, cc.window_handle().ok(), move || {
+                accessibility_repaint.request_repaint()
+            });
             let keyboard = cc.window_handle().ok().and_then(|handle| {
                 festerm_ios_window::KeyboardBridge::new(handle, move || context.request_repaint())
             });
