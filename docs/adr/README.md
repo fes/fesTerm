@@ -51,6 +51,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0075: Desktop Split-Pane Presentation](0075-desktop-split-pane-presentation.md) - issue #65; bounded live-view presentation trees, unchanged session/document ownership and staged desktop qualification
+
 - [ADR 0072: Installed-Profile Dev Tunnel Hosting](0072-installed-profile-tunnel-hosting.md) - explicit profile Save activation, non-attaching native ensure, protected host consent, staged helper updates and shared revocation/teardown
 - [ADR 0071: Explicit Managed Session Repair](0071-explicit-managed-session-repair.md) - explicit fresh-shell repair of a dead legacy host, preserved tunnel/key/grants and generation-journaled interruption safety
 

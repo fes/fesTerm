@@ -251,41 +251,125 @@ fn clipboard_key_kind(event: &egui::Event) -> u8 {
     }
 }
 
-pub fn composition_active(context: &egui::Context, surface: u64) -> bool {
-    let id = egui::Id::new("keyboard-ime-composition");
-    let owner = (surface, context.memory(|memory| memory.focused()));
-    context.data(|data| data.get_temp::<(u64, Option<egui::Id>)>(id) == Some(owner))
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct CompositionOwner {
+    pub surface: u64,
+    pub epoch: u64,
+    pub generation: Option<u64>,
 }
 
-pub fn composition_owns_keys(context: &egui::Context, surface: u64) -> bool {
-    let id = egui::Id::new("keyboard-ime-composition");
+#[derive(Clone, Copy)]
+struct CompositionState {
+    owner: (CompositionOwner, Option<egui::Id>),
+    active: bool,
+}
+
+fn composition_key(context: &egui::Context, name: &'static str) -> egui::Id {
+    egui::Id::new((name, context.viewport_id()))
+}
+
+pub fn composition_active(context: &egui::Context, surface: CompositionOwner) -> bool {
     let owner = (surface, context.memory(|memory| memory.focused()));
+    let id = composition_key(context, "keyboard-ime-composition");
+    context.data(|data| {
+        data.get_temp::<CompositionState>(id)
+            .is_some_and(|state| state.owner == owner && state.active)
+    })
+}
+
+pub fn retire_composition(context: &egui::Context) {
+    let id = composition_key(context, "keyboard-ime-composition");
+    let retired_id = composition_key(context, "keyboard-ime-retired-composition");
+    context.data_mut(|data| {
+        let pending = data.get_temp::<CompositionState>(id).is_some();
+        data.remove::<CompositionState>(id);
+        if pending {
+            data.insert_temp(retired_id, true);
+        }
+    });
+}
+
+pub fn take_composition_cancellation(context: &egui::Context) -> bool {
+    let id = composition_key(context, "keyboard-ime-cancelled");
+    context.data_mut(|data| data.remove_temp::<bool>(id).unwrap_or(false))
+}
+
+pub fn composition_owns_keys(context: &egui::Context, surface: CompositionOwner) -> bool {
+    let id = composition_key(context, "keyboard-ime-composition");
+    let owner = (surface, context.memory(|memory| memory.focused()));
+    if context.data(|data| {
+        data.get_temp::<CompositionState>(id)
+            .is_some_and(|previous| previous.owner != owner)
+    }) {
+        retire_composition(context);
+    }
+    let retired_id = composition_key(context, "keyboard-ime-retired-composition");
+    let cancelled_id = composition_key(context, "keyboard-ime-cancelled");
+    let mut retired = context.data(|data| data.get_temp::<bool>(retired_id).unwrap_or(false));
     let mut composing = composition_active(context, surface);
+    let mut pending = context.data(|data| data.get_temp::<CompositionState>(id).is_some());
     let mut owned = composing;
-    context.input(|input| {
-        for event in &input.events {
+    let mut cancelled = false;
+    context.input_mut(|input| {
+        input.events.retain(|event| {
+            if retired && matches!(event, egui::Event::Ime(_)) {
+                // Native IME events have no surface identity. Keep the old
+                // stream retired through empty/stale preedits until its
+                // terminal commit is discarded, never retargeted.
+                if matches!(event, egui::Event::Ime(egui::ImeEvent::Commit(_))) {
+                    retired = false;
+                    cancelled = true;
+                }
+                return false;
+            }
             match event {
                 egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) => {
                     composing = !text.is_empty();
+                    pending = true;
                     owned |= composing;
                 }
-                egui::Event::Ime(egui::ImeEvent::Commit(_)) | egui::Event::WindowFocused(false) => {
-                    composing = false
+                egui::Event::Ime(egui::ImeEvent::Commit(_)) => {
+                    composing = false;
+                    pending = false;
+                }
+                egui::Event::WindowFocused(false) => {
+                    retired |= pending;
+                    pending = false;
+                    composing = false;
                 }
                 egui::Event::Key {
                     key: Key::Escape,
                     pressed: true,
                     ..
-                } => composing = false,
+                } => {
+                    retired |= pending;
+                    pending = false;
+                    composing = false;
+                }
                 _ => {}
             }
-        }
+            true
+        });
     });
     context.data_mut(|data| {
-        if composing {
-            data.insert_temp(id, owner);
+        if pending {
+            data.insert_temp(
+                id,
+                CompositionState {
+                    owner,
+                    active: composing,
+                },
+            );
         } else {
-            data.remove::<(u64, Option<egui::Id>)>(id);
+            data.remove::<CompositionState>(id);
+        }
+        if retired {
+            data.insert_temp(retired_id, true);
+        } else {
+            data.remove::<bool>(retired_id);
+        }
+        if cancelled {
+            data.insert_temp(cancelled_id, true);
         }
     });
     owned

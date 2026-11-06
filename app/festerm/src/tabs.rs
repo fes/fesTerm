@@ -23,6 +23,9 @@ use std::thread::JoinHandle;
 
 const MAX_PENDING_OPEN_REFUSAL_NOTICES: usize = 16;
 
+mod panes;
+pub use panes::PaneClosePlan;
+
 use eframe::egui;
 use festerm_config::{
     ChipLayoutPreference, ConfigError, Configuration, DurableSessionIdentity,
@@ -2085,6 +2088,8 @@ pub(crate) struct DirtyDocumentClose {
 
 pub struct Tab {
     pub id: TabId,
+    durable_id: String,
+    pane_id: String,
     pub content: TabContent,
 }
 
@@ -2484,6 +2489,47 @@ pub enum AppCommand {
     /// stopped, or already-reconnecting tabs reject this safely.
     ReconnectSession(TabId),
     ActivateTab(TabId),
+    CombinePanes {
+        source: TabId,
+        target: TabId,
+        side: festerm_config::PaneSide,
+        expected_revision: u64,
+    },
+    SeparatePane(TabId),
+    FocusPaneDirection(festerm_config::PaneSide),
+    ResizeFocusedPane {
+        axis: festerm_config::PaneAxis,
+        increase: bool,
+    },
+    ClosePaneGroup {
+        plan: PaneClosePlan,
+        discard: Vec<festerm_document::DocumentId>,
+    },
+    SetPanePreset {
+        view: TabId,
+        preset: festerm_config::PanePreset,
+    },
+    SwapPanes {
+        first: TabId,
+        second: TabId,
+        expected_revision: u64,
+    },
+    SeparatePaneGroup(TabId),
+    EqualizePanes(TabId),
+    ZoomPane(TabId),
+    FocusNextPane {
+        reverse: bool,
+    },
+    RenamePaneGroup {
+        view: TabId,
+        label: String,
+    },
+    ResizePaneSplit {
+        view: TabId,
+        path: Vec<bool>,
+        ratio: u16,
+        expected_revision: u64,
+    },
     /// Activates the next/previous tab in stable list order
     /// (`docs/gui-design.md` "Next/Previous Tab switch predictably" —
     /// predictable and independent of visual wrapping).
@@ -2908,6 +2954,14 @@ pub struct AppState {
     #[cfg(feature = "experimental-dev-tunnels")]
     tunnel_reconnects: tunnel_reconnect::TunnelReconnects,
     tabs: Vec<Tab>,
+    pane_groups: Vec<festerm_config::PaneGroup<TabId>>,
+    pane_scale: f32,
+    pane_chip_ids: std::collections::HashMap<String, TabId>,
+    pane_zoom: Option<TabId>,
+    pane_revision: u64,
+    pane_error: Option<String>,
+    pane_available: egui::Vec2,
+    pane_minimum: egui::Vec2,
     active: TabId,
     presentation_workspace: Option<crate::automation::WorkspaceRevision>,
     /// Which tabs were looked at, oldest first, so that closing the active tab
@@ -3050,6 +3104,14 @@ impl AppState {
             #[cfg(feature = "experimental-dev-tunnels")]
             tunnel_reconnects: Default::default(),
             tabs,
+            pane_groups: Vec::new(),
+            pane_scale: 1.0,
+            pane_chip_ids: std::collections::HashMap::new(),
+            pane_zoom: None,
+            pane_revision: 0,
+            pane_error: None,
+            pane_available: egui::Vec2::ZERO,
+            pane_minimum: egui::vec2(520.0, 240.0),
             active,
             presentation_workspace: None,
             activation_history: Vec::new(),
@@ -3120,6 +3182,8 @@ impl AppState {
             configuration,
             vec![Tab {
                 id,
+                durable_id: uuid::Uuid::new_v4().to_string(),
+                pane_id: uuid::Uuid::new_v4().to_string(),
                 content: TabContent::Launcher,
             }],
             id,
@@ -3145,6 +3209,8 @@ impl AppState {
             configuration,
             vec![Tab {
                 id,
+                durable_id: uuid::Uuid::new_v4().to_string(),
+                pane_id: uuid::Uuid::new_v4().to_string(),
                 content: TabContent::Session(Box::new(session)),
             }],
             id,
@@ -3161,12 +3227,14 @@ impl AppState {
         configuration: Configuration,
         workspace: &WorkspaceConfiguration,
     ) -> Self {
-        Self::with_restored_window(
+        let mut state = Self::with_restored_window(
             context,
             configuration,
             workspace.tabs(),
             workspace.focused_tab_id(),
-        )
+        );
+        state.restore_pane_groups(workspace.pane_groups());
+        state
     }
 
     /// Restores one window's saved tabs. The primary window's are the
@@ -3274,7 +3342,12 @@ impl AppState {
                     session.restore_alias(saved.alias());
                 }
             }
-            restored.push(Tab { id, content });
+            restored.push(Tab {
+                id,
+                durable_id: workspace_tab.identifier().to_owned(),
+                pane_id: uuid::Uuid::new_v4().to_string(),
+                content,
+            });
         }
 
         let active = focused.unwrap_or_else(|| restored[0].id);
@@ -3410,9 +3483,10 @@ impl AppState {
     /// still present in the document being replaced.
     /// Captures this one window's restorable tabs and focus.
     ///
-    /// Tab identifiers have to be unique across the whole workspace, not just
-    /// this window (ADR 0033), so the caller threads a counter through every
-    /// window in turn rather than each window numbering from one.
+    /// Durable identifiers are assigned once at view creation and move with
+    /// the view. Legacy restored identifiers are preserved; new UUIDs cannot
+    /// collide with their positional `tab-N` namespace. The caller's counter
+    /// remains a count of captured views across windows.
     pub fn capture_window_workspace_tabs(
         &self,
         next_identifier: &mut usize,
@@ -3421,7 +3495,7 @@ impl AppState {
         let mut focused_tab_id = None;
 
         for tab in &self.tabs {
-            let identifier = format!("tab-{}", *next_identifier);
+            let identifier = tab.durable_id.clone();
             let workspace_tab = match &tab.content {
                 TabContent::Launcher => Some(WorkspaceTab::launcher(identifier.clone())?),
                 TabContent::Settings => Some(WorkspaceTab::settings(identifier.clone())?),
@@ -3518,17 +3592,19 @@ impl AppState {
     ) -> Result<Configuration, ConfigError> {
         let (mut tabs, mut focused_tab_id) = self.capture_window_workspace_tabs(next_identifier)?;
         if tabs.is_empty() {
-            let identifier = format!("tab-{}", *next_identifier);
+            let identifier = uuid::Uuid::new_v4().to_string();
             *next_identifier += 1;
             tabs.push(WorkspaceTab::launcher(identifier.clone())?);
             focused_tab_id = Some(identifier);
         }
+        let pane_groups = self.saved_pane_groups(&tabs);
         let workspace = WorkspaceConfiguration::with_windows_and_geometry(
             tabs,
             focused_tab_id,
             additional_windows,
             geometry,
-        )?;
+        )?
+        .with_pane_groups(pane_groups)?;
         self.configuration.with_workspace(workspace)
     }
 
@@ -3850,6 +3926,19 @@ impl AppState {
             self.pending_profile_usage = Some(profile_id.to_owned());
         }
         match command {
+            command @ (AppCommand::CombinePanes { .. }
+            | AppCommand::FocusPaneDirection(..)
+            | AppCommand::ResizeFocusedPane { .. }
+            | AppCommand::ClosePaneGroup { .. }
+            | AppCommand::SetPanePreset { .. }
+            | AppCommand::SwapPanes { .. }
+            | AppCommand::SeparatePane(_)
+            | AppCommand::SeparatePaneGroup(_)
+            | AppCommand::EqualizePanes(_)
+            | AppCommand::ZoomPane(_)
+            | AppCommand::FocusNextPane { .. }
+            | AppCommand::RenamePaneGroup { .. }
+            | AppCommand::ResizePaneSplit { .. }) => self.dispatch_pane_command(command),
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ConnectDevTunnel(launch) => {
                 self.start_tunnel_launch(None, None, move || Ok(launch), context);
@@ -3862,6 +3951,10 @@ impl AppState {
                 before,
                 screen_position,
             } => {
+                if self.pane_group(moved).is_some() {
+                    self.pane_error = Some("Separate the group into single-view tabs before moving it to another window.".into());
+                    return;
+                }
                 // ADR 0033: Launcher, Settings, and Profiles are per-window
                 // singletons every window opens for itself, so they never
                 // travel between windows. The chip row already refuses to
@@ -4411,6 +4504,8 @@ impl AppState {
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::Launcher,
         });
         self.set_active(id);
@@ -4431,6 +4526,8 @@ impl AppState {
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::Settings,
         });
         self.set_active(id);
@@ -4467,6 +4564,8 @@ impl AppState {
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::Profiles,
         });
         self.set_active(id);
@@ -4734,6 +4833,8 @@ impl AppState {
         );
         self.tabs.push(Tab {
             id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::TextEditor(Box::new(editor)),
         });
         self.set_active(id);
@@ -4854,6 +4955,8 @@ impl AppState {
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_remote(
                 source,
                 display_path,
@@ -5280,6 +5383,11 @@ impl AppState {
     /// another window, and what an emptied window does about it is
     /// Application policy (ADR 0033).
     pub fn detach_tab(&mut self, id: TabId) -> Option<Tab> {
+        if self.pane_group(id).is_some() {
+            self.pane_error =
+                Some("Separate the group before moving a view to another window.".into());
+            return None;
+        }
         let index = self.tabs.iter().position(|tab| tab.id == id)?;
         let tab = self.tabs.remove(index);
         self.workspace_dirty = true;
@@ -5821,6 +5929,8 @@ impl AppState {
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::SftpFileManagerAuthenticationRequired(Box::new(
                 SftpFileManagerAuthenticationRequiredTab::new(target, false),
             )),
@@ -6155,6 +6265,8 @@ impl AppState {
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::Session(Box::new(session)),
         });
         self.set_active(id);
@@ -6178,6 +6290,8 @@ impl AppState {
         let id = TabId::next();
         self.tabs.push(Tab {
             id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::SftpFileManager(Box::new(tab_content)),
         });
         self.set_active(id);
@@ -6288,15 +6402,21 @@ impl AppState {
     /// follows the tab list (also the drag-reorder order), independent of
     /// how chips currently wrap onto visual rows.
     fn activate_relative(&mut self, delta: i64) {
-        let Some(index) = self.tabs.iter().position(|tab| tab.id == self.active) else {
+        let visible = self.presentation_tabs();
+        let current = self
+            .pane_group(self.active)
+            .map_or(self.active, |group| group.tree.views()[0]);
+        let Some(index) = visible.iter().position(|id| *id == current) else {
             return;
         };
-        let len = self.tabs.len() as i64;
+        let len = visible.len() as i64;
         if len == 0 {
             return;
         }
         let next = (index as i64 + delta).rem_euclid(len) as usize;
-        self.set_active(self.tabs[next].id);
+        let next = visible[next];
+        let focused = self.pane_group(next).map_or(next, |group| group.focused);
+        self.set_active(focused);
         self.workspace_dirty = true;
     }
 
@@ -6305,6 +6425,7 @@ impl AppState {
     /// #68): once the user is looking at it again there is nothing left to
     /// notify them about.
     fn set_active(&mut self, id: TabId) {
+        self.focus_pane(id);
         if self.active != id {
             if let Some(revision) = &self.presentation_workspace {
                 revision.changed();
@@ -6368,13 +6489,23 @@ impl AppState {
     /// referenced (`docs/gui-design.md` "Drag-and-drop reorders independent
     /// session objects and should preserve their identity and state.").
     fn reorder(&mut self, moved: TabId, before: Option<TabId>) {
-        if Some(moved) == before {
+        let members = self.pane_members(moved);
+        if before.is_some_and(|id| members.contains(&id)) {
             return;
         }
-        let Some(from) = self.tabs.iter().position(|tab| tab.id == moved) else {
+        if !self.tabs.iter().any(|tab| tab.id == moved) {
             return;
-        };
-        let tab = self.tabs.remove(from);
+        }
+        let before = before.map(|id| {
+            self.pane_group(id)
+                .map_or(id, |group| group.tree.views()[0])
+        });
+        let mut tabs = Vec::new();
+        for member in members {
+            if let Some(from) = self.tabs.iter().position(|tab| tab.id == member) {
+                tabs.push(self.tabs.remove(from));
+            }
+        }
         let insert_at = match before {
             Some(before_id) => self
                 .tabs
@@ -6383,22 +6514,31 @@ impl AppState {
                 .unwrap_or(self.tabs.len()),
             None => self.tabs.len(),
         };
-        self.tabs.insert(insert_at, tab);
+        self.tabs.splice(insert_at..insert_at, tabs);
         self.workspace_dirty = true;
     }
 
     /// Moves a tab one place without changing which tab is active. Invalid ids
     /// and attempts to move beyond an edge are no-ops.
     fn move_tab(&mut self, id: TabId, delta: i64) {
-        let Some(from) = self.tabs.iter().position(|tab| tab.id == id) else {
+        let visible = self.presentation_tabs();
+        let id = self
+            .pane_group(id)
+            .map_or(id, |group| group.tree.views()[0]);
+        let Some(from) = visible.iter().position(|tab| *tab == id) else {
             return;
         };
         let to = from as i64 + delta;
-        if !(0..self.tabs.len() as i64).contains(&to) {
+        if !(0..visible.len() as i64).contains(&to) {
             return;
         }
-        self.tabs.swap(from, to as usize);
-        self.workspace_dirty = true;
+        let before = if delta < 0 {
+            visible.get(to as usize)
+        } else {
+            visible.get(to as usize + 1)
+        }
+        .copied();
+        self.reorder(id, before);
     }
 
     /// Renames the session tab's stable primary identity (label). A no-op
@@ -6526,6 +6666,8 @@ impl AppState {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
             return;
         };
+        let next_pane = self.pane_members(id).into_iter().find(|view| *view != id);
+        self.remove_pane(id);
         let removed = self.tabs.remove(index);
         self.workspace_dirty = true;
         // A view going is what makes the document's reference count fall, and
@@ -6550,10 +6692,12 @@ impl AppState {
             // Where the reader just was, if that tab is still open; otherwise
             // the neighbour to the left, and the rightmost tab when the
             // leftmost one is what closed.
-            let next = self.last_used_tab().unwrap_or_else(|| {
-                let fallback = index.checked_sub(1).unwrap_or(self.tabs.len() - 1);
-                self.tabs[fallback].id
-            });
+            let next = next_pane
+                .or_else(|| self.last_used_tab())
+                .unwrap_or_else(|| {
+                    let fallback = index.checked_sub(1).unwrap_or(self.tabs.len() - 1);
+                    self.tabs[fallback].id
+                });
             self.set_active(next);
         }
     }
@@ -8581,6 +8725,34 @@ mod tests {
     }
 
     #[test]
+    fn pane_workspace_capture_keeps_legacy_and_new_view_ids_unique_across_windows() {
+        let context = egui::Context::default();
+        let workspace = WorkspaceConfiguration::new(
+            vec![
+                WorkspaceTab::launcher("tab-1").unwrap(),
+                WorkspaceTab::settings("tab-2").unwrap(),
+            ],
+            Some("tab-2".into()),
+        )
+        .unwrap();
+        let mut state =
+            AppState::with_restored_workspace(&context, Configuration::empty(), &workspace);
+        state.dispatch(AppCommand::CloseTab(state.tabs[0].id), &context);
+        state.dispatch(AppCommand::OpenLauncher, &context);
+        let mut next = 1;
+        let (tabs, focus) = state.capture_window_workspace_tabs(&mut next).unwrap();
+        assert_eq!(tabs[0].identifier(), "tab-2");
+        assert!(uuid::Uuid::parse_str(tabs[1].identifier()).is_ok());
+        assert_ne!(tabs[0].identifier(), tabs[1].identifier());
+        let additional = festerm_config::WorkspaceWindow::new(
+            vec![WorkspaceTab::launcher("tab-3").unwrap()],
+            Some("tab-3".into()),
+            None,
+        );
+        WorkspaceConfiguration::with_windows(tabs, focus, vec![additional]).unwrap();
+    }
+
+    #[test]
     fn workspace_capture_preserves_order_focus_and_omits_nonrestorable_sessions() {
         let context = egui::Context::default();
         let configuration = Configuration::new(vec![
@@ -8626,6 +8798,8 @@ mod tests {
             .clone();
         state.tabs.push(Tab {
             id: TabId::next(),
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::SshAuthenticationRequired(SshAuthenticationRequiredTab {
                 profile: ssh,
                 alias: None,
@@ -8639,6 +8813,8 @@ mod tests {
             .clone();
         state.tabs.push(Tab {
             id: TabId::next(),
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::SftpAuthenticationRequired(SftpAuthenticationRequiredTab {
                 profile: sftp,
                 alias: None,
@@ -8651,19 +8827,34 @@ mod tests {
             .unwrap();
         let workspace = captured.workspace().unwrap();
 
+        let identifiers: std::collections::HashSet<_> = workspace
+            .tabs()
+            .iter()
+            .map(WorkspaceTab::identifier)
+            .collect();
+        assert_eq!(identifiers.len(), 4);
+        assert!(identifiers
+            .iter()
+            .all(|id| uuid::Uuid::parse_str(id).is_ok()));
         assert_eq!(
-            workspace
-                .tabs()
-                .iter()
-                .map(WorkspaceTab::identifier)
-                .collect::<Vec<_>>(),
-            ["tab-1", "tab-2", "tab-3", "tab-4"]
+            state
+                .capture_workspace_configuration(Vec::new(), &mut 1, None)
+                .unwrap(),
+            captured,
+            "capture preserves assigned view identities"
         );
         assert!(matches!(workspace.tabs()[0], WorkspaceTab::LocalSession(_)));
         assert!(matches!(workspace.tabs()[1], WorkspaceTab::Settings(_)));
         assert!(matches!(workspace.tabs()[2], WorkspaceTab::SshSession(_)));
         assert!(matches!(workspace.tabs()[3], WorkspaceTab::SftpSession(_)));
-        assert_eq!(workspace.focused_tab_id(), Some("tab-2"));
+        assert_eq!(
+            workspace.focused_tab_id(),
+            state
+                .tabs
+                .iter()
+                .find(|tab| tab.id == settings)
+                .map(|tab| tab.durable_id.as_str())
+        );
         assert_eq!(captured.profiles(), state.configuration().profiles());
     }
 
@@ -8679,7 +8870,10 @@ mod tests {
         let workspace = captured.workspace().unwrap();
 
         assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
-        assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
+        assert_eq!(
+            workspace.focused_tab_id(),
+            Some(workspace.tabs()[0].identifier())
+        );
         state.dispatch(AppCommand::CloseTab(state.active()), &context);
     }
 
@@ -8756,6 +8950,8 @@ mod tests {
         let mut state = AppState::for_test();
         state.tabs.push(Tab {
             id: TabId::next(),
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
             content: TabContent::MarkdownViewer(Box::new(MarkdownViewerTab::open_local(
                 PathBuf::from("/docs/readme.md"),
             ))),
@@ -8768,7 +8964,10 @@ mod tests {
         let workspace = captured.workspace().unwrap();
 
         assert!(matches!(workspace.tabs(), [WorkspaceTab::Launcher(_)]));
-        assert_eq!(workspace.focused_tab_id(), Some("tab-1"));
+        assert_eq!(
+            workspace.focused_tab_id(),
+            Some(workspace.tabs()[0].identifier())
+        );
     }
 
     fn test_remote_markdown_source(remote_path: &str) -> RemoteMarkdownSource {

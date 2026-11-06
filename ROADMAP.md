@@ -11,6 +11,12 @@ The roadmap is foundation-first. Early milestones may produce little visible UI 
 
 ## Milestone Issue Review
 
+Issue #65 is owner-authorized desktop split-pane work (ADR 0075).
+The presentation slice adds live composition, bounded layouts, focused input,
+group chrome and preflighted close. Complete recovery/named recipes and native
+PN-01/PN-02 qualification remain explicit gates; mobile composition and new
+MCP/JavaScript layout authority are excluded.
+
 The owner also requested Android functional/visual parity with the implemented
 iOS app. ADR 0073 adds a thin Android host around that shared application,
 native services and development APK packaging. This is active port work, not

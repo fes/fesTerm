@@ -207,30 +207,54 @@ launcher instead of showing a blank window or exiting unexpectedly. A possible
 future close-window-with-last-session preference remains a usability-testing
 question, not current configurable behavior.
 
-### One viewport per chip
+### Desktop pane groups
 
-One chip owns one session lifecycle and one terminal viewport. Split panes are
-not planned: fesTerm adds no split controls, pane keybindings, workspace pane
-trees, or speculative architecture for them. Terminal-native multiplexers are
-the appropriate composition mechanism unless a compelling unmet need later
-justifies reopening this product decision.
+Issue #65 and ADR 0075 reopen the former one-viewport-per-chip restriction.
+A chip can present a short independently named group of at most four live
+views. A bounded binary tree owns presentation only; existing window-owned
+tabs retain their terminal/controller or document-view state. Combine and
+Separate must not restart any session, transfer or document.
 
-This prohibition applies to splitting terminal viewports. A graphical file
-transfer tool may use a local/remote split inside its own non-terminal
-application surface without introducing terminal pane trees or changing a
-session's one-viewport ownership. The proposed SFTP interaction model and
-reviewable workflow mockups are specified in
-[`sftp-ui-design.md`](sftp-ui-design.md).
+Single/group chips remain in the integrated upper chrome. Adjacent panes
+share one physical-pixel rule with no gutter; focused panes have a subtle
+inset edge. Resize uses real cell metrics (52 columns by 12 rows minimum).
+A narrow window temporarily presents the focused member without changing the
+saved tree. Focus acknowledges only that member's unread output.
+
+Current implementation: **Pane Layout…** in a chip context menu or command
+palette moves an existing live view left/right/above/below the focused pane.
+The same dialog offers member/directional focus, two-column/two-row/2×2
+presets, keyboard-operable resizing, swap, separate, equalize, zoom and guarded
+Close focused view. Single-view chips can be dragged onto a pane edge with a
+validated preview; group chips require the member-specific layout dialog.
+Group labels can be renamed independently of sessions. Group chips retain
+their runtime identity when the first member moves or closes. Their geometry
+icon exposes unread members, hover/keyboard details and a pinned member list.
+Pinned details and layout/close dialogs cannot send keystrokes to terminals.
+Pane clicks respect queued input order: earlier text/paste stays with its
+original owner. Native IME composition is fenced by view, input epoch, session
+generation and viewport. Retired compositions cannot commit into another
+owner; if the native adapter never sends the old commit, the next composed
+attempt is discarded with a re-entry notice. Ordinary input/shortcuts remain
+usable; native IME timing remains PN-01 evidence.
+Close group preflights every member and session generation before teardown,
+including collectively final dirty document views across all windows. Cancel
+closes nothing; every discard requires explicit approval. Save-all failures or
+documents requiring Save As leave every view open.
+The original session registry and application-shared documents are unchanged.
+Workspace capture preserves groups for existing restorable session surfaces;
+untitled/unsaved editors remain excluded by the existing document policy.
+The full target additionally requires named recipes, richer recovery placeholders
+and independently opt-in capture/startup restore; these stages and native
+qualification must not be represented as complete by the initial slice.
 
 ### Window ownership
 
-Initial session management is single-window. One fesTerm process/window owns
-its chip collection. There is no detach-to-window, cross-window chip drag,
-live-session migration, secondary inspector, or speculative IPC/window-manager
-layer. Separate ordinary fesTerm instances may exist when the platform permits,
-but they own independent sessions. A future workspace may open fresh restored
-sessions in a new window; that is launch/restoration, never migration of a live
-PTY, SSH, or serial lifecycle.
+ADRs 0032/0033 govern implemented single-process multi-window ownership,
+live single-view transfer and all-window restoration. Single-view transfers
+continue moving the same runtime object. Grouped transfers refuse without
+mutation and ask the user to Separate first; new cross-window pane composition
+is deferred. Separate fesTerm processes remain independent.
 
 ## Session Launcher
 

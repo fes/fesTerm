@@ -1,5 +1,17 @@
 # GUI Exploration and Test Action Graph
 
+## Desktop pane composition (ADR 0075, issue #65)
+
+| Edge | From | Action | To / recovery |
+| --- | --- | --- | --- |
+| `PANE-01` | Two live views | Combine left/right/above/below | Same live views in one bounded group; stale/capacity/minimum refusal changes neither source |
+| `PANE-02` | Group | Focus a member | One input owner; unread acknowledged for that member only |
+| `PANE-03` | Group | Resize/equalize/zoom | One physical-pixel dividers; underlying tree survives constrained windows |
+| `PANE-04` | Group | Separate member/all | Same live views in independent chips; grouped cross-window transfer refuses |
+| `PANE-05` | Pane/group | Close focused view or preflight Close group | Existing guarded single-view close; group plan binds all view/session/document identities before any teardown; cancellation preserves every member |
+| `PANE-06` | Saved workspace | Capture/restore all windows | Metadata-only groups over ordinary fresh launches; no session/grant replay |
+| `PANE-07` | Group chip | Details/rename | Short independent group label; member focus/unread remains explicit |
+
 Local background save completion is enqueued while write admission is held,
 then admission is released before the app is notified. The regression
 `background_completed_save_wakes_after_releasing_write_admission` proves that

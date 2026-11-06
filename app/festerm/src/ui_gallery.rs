@@ -83,6 +83,20 @@ struct Scenario {
 }
 fn scenarios() -> Vec<Scenario> {
     let mut scenarios = vec![
+        Scenario {
+            id:"desktop-panes-four",
+            section:"desktop-panes",
+            title:"Four live desktop panes",
+            caption:"Production composition with controlled fake SSH surfaces; full-opacity siblings, focused inset and shared one-physical-pixel dividers. Not native qualification.",
+            capture:|| crate::app::panes_tests::pane_gallery_frame(false),
+        },
+        Scenario {
+            id:"desktop-panes-details",
+            section:"desktop-panes",
+            title:"Pinned pane details and unread member",
+            caption:"The production group chip opens themed, keyboard-accessible member details with an unread build pane; no real sessions, secrets or user configuration.",
+            capture:|| crate::app::panes_tests::pane_gallery_frame(true),
+        },
         // -- new-session ------------------------------------------------
         Scenario {
             id: "launcher-populated",
@@ -563,7 +577,13 @@ fn selected_gallery_scenarios(selection: Option<&str>) -> Result<Vec<Scenario>, 
 
 #[test]
 fn surface_gallery_selection_preserves_default_and_limits_curated_captures() {
-    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 125);
+    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 127);
+    assert_eq!(
+        selected_gallery_scenarios(Some("desktop-panes-four,desktop-panes-details"))
+            .unwrap()
+            .len(),
+        2
+    );
     let curated = selected_gallery_scenarios(Some("style-review")).unwrap();
     assert_eq!(curated.len(), 23);
     assert_eq!(
@@ -749,7 +769,7 @@ fn surface_catalog_matches_reconciled_matrix_without_dropping_controls() {
     let gallery = scenarios();
     let ids: std::collections::BTreeSet<_> = gallery.iter().map(|scene| scene.id).collect();
     assert_eq!(ids.len(), gallery.len());
-    assert_eq!(gallery.len(), 48 + 52 + 2 + 23);
+    assert_eq!(gallery.len(), 50 + 52 + 2 + 23);
     let gallery_only: std::collections::BTreeSet<_> = matrix["gallery_only_states"]
         .as_array()
         .unwrap()
@@ -2946,6 +2966,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
     vec![
         ChipViewModel {
             id: ChipId(1),
+            panes: Vec::new(),
             primary: "New Session".to_owned(),
             secondary: None,
             status: ChipStatus::Neutral,
@@ -2958,6 +2979,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
         },
         ChipViewModel {
             id: ChipId(2),
+            panes: Vec::new(),
             primary: "Staging web-1".to_owned(),
             secondary: Some("web-1.staging.example.com".to_owned()),
             status: ChipStatus::Connected,
@@ -2970,6 +2992,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
         },
         ChipViewModel {
             id: ChipId(3),
+            panes: Vec::new(),
             primary: "deploy-watch".to_owned(),
             secondary: Some("tmux session".to_owned()),
             status: ChipStatus::Connected,
@@ -2982,6 +3005,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
         },
         ChipViewModel {
             id: ChipId(4),
+            panes: Vec::new(),
             primary: "Bastion host".to_owned(),
             secondary: Some("Reconnecting…".to_owned()),
             status: ChipStatus::Reconnecting,
@@ -2994,6 +3018,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
         },
         ChipViewModel {
             id: ChipId(5),
+            panes: Vec::new(),
             primary: "NOTES.md".to_owned(),
             secondary: Some("Markdown".to_owned()),
             status: ChipStatus::Neutral,

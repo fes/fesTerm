@@ -908,6 +908,43 @@ impl TerminalView {
         self.show_in_ui_with_options(ui, terminal, sink, TerminalViewOptions::default());
     }
 
+    /// Paint and resize a non-focused pane without reading or consuming the
+    /// focused surface's events. Modal blackout alone intentionally consumes
+    /// events, so it cannot be used directly for a sibling pane.
+    pub fn show_passive_in_ui(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut Terminal,
+        sink: &mut impl EncodedInputSink,
+    ) {
+        let events = ui.input_mut(|input| std::mem::take(&mut input.events));
+        ui.scope(|ui| {
+            ui.visuals_mut().disabled_alpha = 1.0;
+            ui.disable();
+            self.show_in_ui_with_options(
+                ui,
+                terminal,
+                sink,
+                TerminalViewOptions {
+                    terminal_input_enabled: false,
+                    keyboard_input_enabled: false,
+                    paste_available: false,
+                    ..Default::default()
+                },
+            );
+        });
+        ui.input_mut(|input| input.events = events);
+    }
+
+    pub fn minimum_pane_size(&self, ui: &Ui) -> egui::Vec2 {
+        let glyph = ui.painter().layout_no_wrap(
+            "M".to_owned(),
+            self.fonts.regular_font_id(),
+            DEFAULT_FOREGROUND,
+        );
+        egui::vec2(glyph.size().x * 52.0, glyph.size().y * 12.0)
+    }
+
     pub fn show_in_ui_with_options(
         &mut self,
         ui: &mut Ui,

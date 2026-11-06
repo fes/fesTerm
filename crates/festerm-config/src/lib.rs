@@ -20,17 +20,20 @@ use profiles::CredentialReference;
 mod errors;
 mod file_io;
 mod keyboard;
+mod panes;
 mod profiles;
 mod session_names;
 mod settings;
 mod snapshot;
 mod workspace;
+
 pub use errors::{
     ConfigError, ConfigErrorKind, ConfigurationFileError, ConfigurationFileErrorKind,
     SourceLocation,
 };
 pub use file_io::ConfigurationState;
 pub use keyboard::{Chord, KeyboardAction, KeyboardBindings, KeyboardOverride, KeyboardScope};
+pub use panes::{PaneAxis, PaneGroup, PanePreset, PaneSide, PaneTree, MAX_GROUP_PANES};
 pub use profiles::{
     AccountProvider, CredentialKind, DevTunnelAccount, DevTunnelHost,
     DevTunnelProfileConfiguration, KnownHostEntry, LocalProfileConfiguration, LocalTunnelHosting,

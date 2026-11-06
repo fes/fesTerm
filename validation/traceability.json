@@ -35,6 +35,45 @@
   ],
   "coverage": [
     {
+      "id": "desktop-split-pane-presentation",
+      "edges": ["PANE-01", "PANE-02", "PANE-03", "PANE-04", "PANE-05", "PANE-06", "PANE-07"],
+      "requirements": ["docs/adr/0075-desktop-split-pane-presentation.md#decision", "docs/gui-design.md"],
+      "decisions": ["ADR-0075"],
+      "automated_tests": [
+        "pane_tree_preserves_identity_and_collapses_without_orphans",
+        "pane_tree_rejects_duplicate_capacity_depth_and_ratio",
+        "pane_tree_randomized_edits_keep_unique_reachable_views",
+        "panes_combine_separate_preserve_live_views_and_document_counts",
+        "panes_capacity_stale_and_geometry_refusals_are_atomic",
+        "panes_presets_swap_direction_and_keyboard_resize_preserve_views",
+        "panes_zoom_and_close_preflight_do_not_leak_between_groups",
+        "panes_group_close_preflights_collective_final_dirty_views_across_windows",
+        "panes_group_close_refuses_stale_lifecycle_without_closing_any_member",
+        "panes_pointer_focus_binds_same_frame_keyboard_to_only_the_clicked_surface",
+        "panes_later_click_cannot_retarget_earlier_text_or_native_paste",
+        "panes_retire_ime_composition_before_focus_handoff_and_reject_delayed_commit",
+        "panes_retire_ime_when_the_same_view_changes_session_generation",
+        "panes_ime_and_deferred_input_are_isolated_between_viewports",
+        "panes_retired_ime_without_old_commit_requires_reentry_but_not_ordinary_input",
+        "panes_equalize_refuses_without_changing_a_minimum_constrained_tree",
+        "panes_passive_surfaces_preserve_full_opacity",
+        "panes_unread_details_preserve_member_shape_and_accent",
+        "panes_pinned_details_and_layout_dialog_block_terminal_input",
+        "panes_render_both_live_terminals_and_route_input_only_to_focused_view",
+        "panes_cross_window_transfer_refuses_without_mutating_sources",
+        "pane_workspace_roundtrip_preserves_all_window_trees_and_rejects_foreign_views",
+        "pane_workspace_capture_keeps_legacy_and_new_view_ids_unique_across_windows",
+        "pane_dividers_are_one_physical_pixel_at_every_scale"
+      ],
+      "manual_scenarios": ["PN-01", "PN-02"],
+      "status": "partial",
+      "prerequisites": [
+        "Native visual/accessibility and live transport evidence remains PN-01/PN-02",
+        "Complete named recipes, independently opt-in capture/startup restore and recovery qualification are a subsequent stage",
+        "MCP/JavaScript layout tools and mobile composition are not exposed"
+      ]
+    },
+    {
       "id": "installed-profile-dev-tunnel-hosting",
       "edges": ["TUNNEL-15", "TUNNEL-16"],
       "requirements": [

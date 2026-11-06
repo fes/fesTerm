@@ -22,6 +22,8 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceConfiguration {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pane_groups: Vec<crate::PaneGroup<String>>,
     #[serde(default)]
     tabs: Vec<WorkspaceTab>,
     #[serde(default)]
@@ -67,6 +69,7 @@ impl WorkspaceConfiguration {
         geometry: Option<WorkspaceWindowGeometry>,
     ) -> Result<Self, ConfigError> {
         let workspace = Self {
+            pane_groups: Vec::new(),
             tabs,
             focused_tab_id,
             windows,
@@ -79,6 +82,19 @@ impl WorkspaceConfiguration {
     /// Returns the restorable tabs in their saved display order.
     pub fn tabs(&self) -> &[WorkspaceTab] {
         &self.tabs
+    }
+
+    pub fn pane_groups(&self) -> &[crate::PaneGroup<String>] {
+        &self.pane_groups
+    }
+
+    pub fn with_pane_groups(
+        mut self,
+        groups: Vec<crate::PaneGroup<String>>,
+    ) -> Result<Self, ConfigError> {
+        self.pane_groups = groups;
+        self.validate_structure()?;
+        Ok(self)
     }
 
     /// Returns the saved focused tab identifier, if one was explicitly saved.
@@ -138,6 +154,38 @@ impl WorkspaceConfiguration {
     }
 
     fn validate_structure(&self) -> Result<(), ConfigError> {
+        let mut group_ids = HashSet::new();
+        let mut pane_ids = HashSet::new();
+        for (tabs, groups) in std::iter::once((&self.tabs, &self.pane_groups)).chain(
+            self.windows
+                .iter()
+                .map(|window| (&window.tabs, &window.pane_groups)),
+        ) {
+            validate_pane_groups(tabs, groups)?;
+            for group in groups {
+                if !group_ids.insert(&group.group_id) {
+                    return Err(ConfigError::new(
+                        ConfigErrorKind::InvalidWorkspacePaneLayout,
+                    ));
+                }
+                fn collect<'a>(
+                    tree: &'a crate::PaneTree<String>,
+                    ids: &mut HashSet<&'a str>,
+                ) -> bool {
+                    match tree {
+                        crate::PaneTree::Leaf { pane_id, .. } => ids.insert(pane_id),
+                        crate::PaneTree::Split { first, second, .. } => {
+                            collect(first, ids) && collect(second, ids)
+                        }
+                    }
+                }
+                if !collect(&group.tree, &mut pane_ids) {
+                    return Err(ConfigError::new(
+                        ConfigErrorKind::InvalidWorkspacePaneLayout,
+                    ));
+                }
+            }
+        }
         // An additional window with no tabs would restore as an empty window,
         // which no application state can represent (ADR 0033: a window that
         // loses its last tab collapses instead of persisting).
@@ -184,6 +232,8 @@ impl WorkspaceConfiguration {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceWindow {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pane_groups: Vec<crate::PaneGroup<String>>,
     tabs: Vec<WorkspaceTab>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     focused_tab_id: Option<String>,
@@ -203,6 +253,7 @@ impl WorkspaceWindow {
         geometry: Option<WorkspaceWindowGeometry>,
     ) -> Self {
         Self {
+            pane_groups: Vec::new(),
             tabs,
             focused_tab_id,
             geometry,
@@ -212,6 +263,19 @@ impl WorkspaceWindow {
     /// Returns this window's restorable tabs in their saved display order.
     pub fn tabs(&self) -> &[WorkspaceTab] {
         &self.tabs
+    }
+
+    pub fn pane_groups(&self) -> &[crate::PaneGroup<String>] {
+        &self.pane_groups
+    }
+
+    pub fn with_pane_groups(
+        mut self,
+        groups: Vec<crate::PaneGroup<String>>,
+    ) -> Result<Self, ConfigError> {
+        validate_pane_groups(&self.tabs, &groups)?;
+        self.pane_groups = groups;
+        Ok(self)
     }
 
     /// Returns this window's saved focused tab identifier, if any.
@@ -224,6 +288,43 @@ impl WorkspaceWindow {
     pub const fn geometry(&self) -> Option<&WorkspaceWindowGeometry> {
         self.geometry.as_ref()
     }
+}
+
+fn validate_pane_groups(
+    tabs: &[WorkspaceTab],
+    groups: &[crate::PaneGroup<String>],
+) -> Result<(), ConfigError> {
+    let allowed: HashSet<_> = tabs
+        .iter()
+        .filter(|tab| {
+            !matches!(
+                tab,
+                WorkspaceTab::Launcher(_) | WorkspaceTab::Settings(_) | WorkspaceTab::Profiles(_)
+            )
+        })
+        .map(WorkspaceTab::identifier)
+        .collect();
+    let mut placed = HashSet::new();
+    if groups.len() > tabs.len() / 2 {
+        return Err(ConfigError::new(
+            ConfigErrorKind::InvalidWorkspacePaneLayout,
+        ));
+    }
+    for group in groups {
+        if group.validate().is_err()
+            || group.tree.views().len() < 2
+            || group
+                .tree
+                .views()
+                .iter()
+                .any(|view| !allowed.contains(view.as_str()) || !placed.insert(view.clone()))
+        {
+            return Err(ConfigError::new(
+                ConfigErrorKind::InvalidWorkspacePaneLayout,
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A window's saved outer position and inner size, in logical points.
