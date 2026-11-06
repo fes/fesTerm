@@ -715,6 +715,8 @@ impl Coordinator {
                 Ok(Ok(supervisor)) => self.admit_javascript_run(supervisor),
                 Ok(Err(error)) => {
                     tracing::warn!(?error, "workflow worker failed to start");
+                    #[cfg(test)]
+                    eprintln!("DEBUG worker start error: {error:?}");
                     let status = match error {
                         festerm_automation_js::Error::Unavailable(_) => {
                             "Workflow refused: isolated JavaScript execution is unavailable on this system."
@@ -1687,6 +1689,11 @@ mod tests {
             .join("../../docs/examples/hello-terminal-workflow.json")
             .canonicalize()
             .unwrap();
+        #[cfg(windows)]
+        let path = {
+            let path = path.to_str().unwrap();
+            std::path::PathBuf::from(path.strip_prefix(r"\\?\").unwrap_or(path))
+        };
         festerm_automation_workflow::intake::load_user_selected_bundle(&path).unwrap()
     }
 
