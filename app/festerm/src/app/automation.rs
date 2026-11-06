@@ -71,6 +71,11 @@ impl FesTermApp {
     }
 
     #[cfg(test)]
+    pub(crate) fn automation_preference_retry_available_for_test(&self) -> bool {
+        self.automation_preference_retry_available()
+    }
+
+    #[cfg(test)]
     pub(crate) fn reset_automation_preferences_for_test(&mut self, context: &egui::Context) {
         self.state
             .dispatch(crate::tabs::AppCommand::ResetInterfaceSettings, context);
@@ -120,15 +125,24 @@ impl FesTermApp {
     }
 
     pub(super) fn automation_preference_feedback(&self) -> Option<&'static str> {
-        self.configuration_reloader
-            .automation_preferences()
-            .and_then(|preferences| preferences.feedback())
+        use crate::configuration_startup::SaveGateState;
+        let preferences = self.configuration_reloader.automation_preferences()?;
+        if preferences.retry_available() {
+            match self.configuration_reloader.save_gate_state() {
+                SaveGateState::ReconciliationRequired => return Some("Automation preferences could not be saved or their outcome is uncertain. MCP and JavaScript are stopped for this run; an enabled preference may remain on disk. Configuration may have changed on disk; reconcile manually and restart all windows."),
+                SaveGateState::InProgress => return Some("Automation preferences could not be saved or their outcome is uncertain. MCP and JavaScript are stopped for this run; an enabled preference may remain on disk. Another configuration save is in progress; wait for its outcome before taking further action."),
+                SaveGateState::Healthy => {}
+            }
+        }
+        preferences.feedback()
     }
 
     pub(super) fn automation_preference_retry_available(&self) -> bool {
         self.configuration_reloader
             .automation_preferences()
             .is_some_and(|preferences| preferences.retry_available())
+            && self.configuration_reloader.save_gate_state()
+                == crate::configuration_startup::SaveGateState::Healthy
     }
 
     pub(super) fn automation_preference_ui_revision(&self, feature: Feature) -> u64 {
@@ -207,7 +221,8 @@ impl FesTermApp {
 
     pub(super) fn retry_automation_preferences(&mut self, context: &egui::Context) {
         let preferences = self.automation_preferences();
-        if !preferences.retry_available() {
+        if !self.automation_preference_retry_available() {
+            context.request_repaint();
             return;
         }
         let before = preferences.values();

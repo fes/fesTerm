@@ -561,7 +561,9 @@ broadcasts overlay that pair, so a stale sibling save cannot undo a successful
 disable. Same-pass conflicting automation actions stop admission and suppress
 approval with visible feedback. Preference-save failure or an uncertain result
 stops both live features for the process and warns that disk may still contain
-an enabled value; explicit retry can save the pair but does not resume it.
+an enabled value; explicit retry can save the pair only when the save gate is
+healthy and does not resume it. A busy gate suppresses retry, while an
+indeterminate save or poisoned gate requires reconciliation and full restart.
 
 This is not a durable failure latch: restart can read an enabled value that
 remained on disk, though prior grants are not restored. Unrelated configuration
@@ -579,6 +581,14 @@ preserves the independent direct-control path; MCP disable or either preference
 save failure closes it. Another regression combines new/restored secondary
 workspace preservation with a stale profile save after a preference disable.
 These synthetic regressions are not native qualification.
+
+The save-gate integration tests an unrelated uncertain save followed by a stale
+sibling disable or retry, busy and poisoned retry suppression, new and restored
+secondary workspaces, and stale asynchronous credential or tunnel-import
+completions. Shared preference values are overlaid inside the save gate, and
+callers adopt the configuration actually persisted. These in-process checks do
+not reconcile disk state after restart or protect against external writers and
+filesystem aliases.
 
 ## Binding direct input without a workflow
 

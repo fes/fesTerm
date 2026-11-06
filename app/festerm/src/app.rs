@@ -1444,7 +1444,7 @@ impl FesTermApp {
         save: impl FnOnce(
             &crate::configuration_startup::ConfigurationReloader,
             &festerm_config::Configuration,
-        ) -> ConfigurationStartupStatus,
+        ) -> (ConfigurationStartupStatus, Option<Configuration>),
     ) -> bool {
         let replacement = match replacement {
             Ok(replacement) => replacement,
@@ -1497,13 +1497,14 @@ impl FesTermApp {
                 on_invalid(crate::configuration_startup::ConfigurationLoadFailure::Invalid);
             return false;
         }
-        let status = save(&self.configuration_reloader, &replacement);
+        let (status, persisted) = save(&self.configuration_reloader, &replacement);
         let was_saved = status.was_saved();
         if was_saved {
+            let persisted = persisted.expect("successful configuration save returns its document");
             // Broadcast only this successfully persisted replacement.
             // Other save paths and sibling-window ordering are not fenced.
-            self.pending_configuration_broadcast = Some(replacement.clone());
-            self.state.replace_configuration(replacement);
+            self.pending_configuration_broadcast = Some(persisted.clone());
+            self.state.replace_configuration(persisted);
         } else if status.save_reconciliation_required() {
             if status.save_outcome_unknown() {
                 self.report_unknown_configuration_save(false);
@@ -2108,30 +2109,23 @@ impl FesTermApp {
         &mut self,
         import: crate::tunnel_profile_import::PublicProfileImport,
     ) {
+        let mut persisted = None;
         let result = self
             .configuration_reloader
-            .automation_configuration(self.state.configuration())
+            .tunnel_import_directory()
             .map_err(|_| {
                 crate::tunnel_profile_import::ImportSaveError::Failed(
-                    "The imported profile could not be saved. Configuration is invalid.",
+                    "The imported profile could not be saved. Configuration location unavailable.",
                 )
             })
-            .and_then(|configuration| {
-                self.configuration_reloader
-                    .tunnel_import_directory()
-                    .map_err(|_| {
-                        crate::tunnel_profile_import::ImportSaveError::Failed(
-                            "The imported profile could not be saved. Configuration location unavailable.",
-                        )
-                    })
-                    .and_then(|directory| {
-                        import.save(&configuration, &directory, |replacement| {
-                            self.configuration_reloader
-                                .save_configuration(replacement)
-                                .map(|_| ())
-                        })
-                    })
-            });
+            .and_then(|directory| {
+                import.save(self.state.configuration(), &directory, |replacement| {
+                    self.configuration_reloader
+                        .save_configuration(replacement)
+                        .map(|configuration| persisted = Some(configuration))
+                })
+            })
+            .map(|_| persisted.expect("successful import persisted its configuration"));
         self.finish_public_tunnel_import(result);
     }
 
@@ -9089,6 +9083,128 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stale_async_credential_completion_adopts_persisted_preference_overlay() {
+        use crate::automation::preferences::Feature;
+        use crate::configuration_startup::{
+            ConfigurationReloader, SessionNameConfigurationFixture,
+        };
+        use festerm_secret_store::{MemorySecretStore, SecretBytes, SecretStore};
+
+        let fixture = SessionNameConfigurationFixture::new();
+        let profile = Profile::ssh("saved", "example.test", 22, "user", "xterm", 80, 24).unwrap();
+        let configuration = Configuration::new(vec![profile.clone()])
+            .unwrap()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT
+                    .with_mcp_enabled(true)
+                    .with_javascript_enabled(true),
+            )
+            .unwrap();
+        configuration.save_to_path(&fixture.path).unwrap();
+        let context = egui::Context::default();
+        let mut primary = FesTermApp::for_test_with_configuration(configuration);
+        primary.configuration_reloader =
+            ConfigurationReloader::from_path_for_test(fixture.path.clone());
+        primary.initialize_automation_preferences();
+        let (configuration, status, reloader, secret_store, documents) =
+            primary.shared_application_services();
+        let mut secondary = FesTermApp::secondary_window(
+            &context,
+            configuration,
+            status,
+            reloader,
+            secret_store,
+            documents,
+        );
+        primary.toggle_automation_preference_for_test(Feature::Mcp, &context);
+        assert!(secondary
+            .state
+            .configuration()
+            .interface_settings()
+            .mcp_enabled());
+
+        let store = Arc::new(MemorySecretStore::new());
+        let new = store
+            .put(&SecretBytes::copy_from_slice(b"fixture"))
+            .unwrap();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        assert!(sender
+            .send(Ok(PendingSecret::new(
+                new.duplicate_for_transport(),
+                store.clone(),
+                secondary.configuration_reloader.secret_cleanup_failure(),
+                SecretCleanupNotice::ProfilePending,
+                context.clone(),
+            )))
+            .is_ok());
+        secondary.overlays.pending_password_store = Some(PendingPasswordStore {
+            expected_profile: profile,
+            receiver,
+            profile_id: "saved".into(),
+            store: store.clone(),
+            launch_after_store: None,
+            credential_kind: festerm_config::CredentialKind::Password,
+        });
+        secondary.process_pending_password_store(&context);
+        let saved = Configuration::load_from_path(&fixture.path).unwrap();
+        assert_eq!(secondary.state.configuration(), &saved);
+        assert!(!saved.interface_settings().mcp_enabled());
+        assert!(saved.interface_settings().javascript_enabled());
+        assert!(saved.profile("saved").unwrap().credential_reference() == Some(&new));
+        assert!(store.get(&new).is_ok());
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn stale_tunnel_import_adopts_persisted_preference_overlay() {
+        use crate::automation::preferences::Feature;
+        use crate::configuration_startup::ConfigurationReloader;
+
+        let directory = tempfile::Builder::new()
+            .prefix("import-preference-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let path = directory.path().join("config.toml");
+        let configuration = Configuration::empty()
+            .with_interface_settings(
+                InterfaceSettings::DEFAULT
+                    .with_mcp_enabled(true)
+                    .with_javascript_enabled(true),
+            )
+            .unwrap();
+        configuration.save_to_path(&path).unwrap();
+        let context = egui::Context::default();
+        let mut primary = FesTermApp::for_test_with_configuration(configuration);
+        primary.configuration_reloader = ConfigurationReloader::from_path_for_test(path.clone());
+        primary.initialize_automation_preferences();
+        let (configuration, status, reloader, secret_store, documents) =
+            primary.shared_application_services();
+        let mut secondary = FesTermApp::secondary_window(
+            &context,
+            configuration,
+            status,
+            reloader,
+            secret_store,
+            documents,
+        );
+        primary.toggle_automation_preference_for_test(Feature::Mcp, &context);
+        assert!(secondary
+            .state
+            .configuration()
+            .interface_settings()
+            .mcp_enabled());
+        let import = crate::tunnel_profile_import::PublicProfileImport::parse(
+            &crate::tunnel_profile_import::fixture_json().to_string(),
+        )
+        .unwrap();
+        secondary.import_public_tunnel_profile(import);
+        let saved = Configuration::load_from_path(&path).unwrap();
+        assert_eq!(secondary.state.configuration(), &saved);
+        assert!(!saved.interface_settings().mcp_enabled());
+        assert!(saved.interface_settings().javascript_enabled());
+        assert!(saved.profile("server-one").is_some());
+    }
     #[cfg(feature = "experimental-dev-tunnels")]
     #[test]
     fn persistence_outcome_tunnel_import_retains_and_reports_reconciliation() {

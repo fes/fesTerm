@@ -3131,9 +3131,12 @@ For the `AUT-05` preference owner, use a disposable configuration and two
 Settings windows. Disable either enabled feature while the sibling toggles the
 other feature or saves an unrelated setting; inspect both windows, restart and
 verify that the successfully saved disable remains off. Test the reverse
-directions and a sibling close. With a controlled denied/indeterminate write,
+directions and a sibling close. With a controlled denied pre-attempt write,
 verify both live features stop, the warning says disk may remain enabled, and
-retry saves the pair without resuming during that process. If the disk still
+retry saves the pair without resuming during that process. With an
+indeterminate attempted write or poisoned gate, verify retry is unavailable
+and manual reconciliation and full restart are required. While another save
+is busy, verify retry is suppressed until its outcome is known. If the disk still
 contains an enabled value, restart may read it; old grants must not reappear.
 Verify same-pass action conflicts/overflow visibly stop rather than approve;
 competing workflow selections, including two for the same path, must cancel
@@ -3141,7 +3144,8 @@ the preview and report a conflict instead of choosing a winner. Use the
 deterministic multi-window fixture when native timing cannot reproduce this.
 Indeterminate outcomes require the deterministic fault fixture if they cannot
 be produced safely in native testing. This is not evidence for arbitrary
-storage failures, external writers or the broader configuration-save latch.
+native storage failures, external writers, filesystem aliases or durable
+restart reconciliation.
 The local assembly also adds a synthetic preference/reservation regression:
 verify a qualified future implementation independently races MCP disable and
 indeterminate preference saves against presentation, metadata delivery and
