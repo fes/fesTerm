@@ -11,7 +11,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
@@ -49,6 +49,18 @@ pub use festerm_windows_runtime::{
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const BACKPRESSURE_RETRY: Duration = Duration::from_millis(5);
+/// Output bytes the reader may have queued but the consumer not yet taken.
+///
+/// The reader coalesces consecutive reads into chunks of up to
+/// `MAX_IO_CHUNK_BYTES`, so the event count alone no longer bounds memory or
+/// how far output can run ahead of input echo. This keeps the bound at what
+/// 128 events of the previous 16 KiB reads allowed.
+const MAX_QUEUED_OUTPUT_BYTES: usize = DEFAULT_EVENT_QUEUE_CAPACITY * 16 * 1024;
+/// Largest chunk the reader assembles from back-to-back readable data.
+const READ_CHUNK_BYTES: usize = MAX_IO_CHUNK_BYTES;
+/// How long the reader may keep a chunk open for more output, and only while
+/// earlier output is still queued unconsumed.
+const READ_COALESCE_WINDOW: Duration = Duration::from_millis(2);
 const READER_STOP_TIMEOUT: Duration = Duration::from_secs(2);
 const PATH_SCAN_ENTRY_BUDGET: usize = 4_096;
 const PATH_SCAN_DIRECTORY_LIMIT: usize = 64;
@@ -909,6 +921,7 @@ struct Shared {
     event_sender: SyncSender<SessionEvent>,
     event_notifier: Arc<dyn SessionEventNotifier>,
     cancel: AtomicBool,
+    queued_output_bytes: AtomicUsize,
     termination_requested: AtomicBool,
     process_tree: Option<ProcessTree>,
     completion_receiver: Mutex<Receiver<Result<ShutdownResult, SessionError>>>,
@@ -1018,7 +1031,22 @@ impl Shared {
                 .metrics
                 .lock()
                 .expect("session metrics lock is not poisoned");
-            match self.event_sender.try_send(output_event) {
+            // Charged before sending so the consumer's release can never
+            // run ahead of it; refunded if the send does not happen.
+            let queued = self
+                .queued_output_bytes
+                .fetch_add(output_len, Ordering::AcqRel);
+            let sent = if queued != 0 && queued.saturating_add(output_len) > MAX_QUEUED_OUTPUT_BYTES
+            {
+                Err(TrySendError::Full(output_event))
+            } else {
+                self.event_sender.try_send(output_event)
+            };
+            if sent.is_err() {
+                self.queued_output_bytes
+                    .fetch_sub(output_len, Ordering::AcqRel);
+            }
+            match sent {
                 Ok(()) => {
                     metrics.output_bytes = metrics.output_bytes.saturating_add(output_len as u64);
                     metrics.event_queue_depth = metrics.event_queue_depth.saturating_add(1);
@@ -1131,6 +1159,7 @@ impl LocalPtySession {
         let reader = pair.master.try_clone_reader().map_err(|error| {
             LocalPtyError::new(format!("could not open local PTY reader: {error}"))
         })?;
+        let readable = pty_readable_probe(&*pair.master);
         let writer = local_pty_writer(&*pair.master).map_err(|error| {
             LocalPtyError::new(format!("could not open local PTY writer: {error}"))
         })?;
@@ -1181,6 +1210,7 @@ impl LocalPtySession {
             event_sender,
             event_notifier,
             cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
             termination_requested: AtomicBool::new(false),
             process_tree: Some(process_tree),
             completion_receiver: Mutex::new(completion_receiver),
@@ -1215,7 +1245,7 @@ impl LocalPtySession {
         let reader_shared = Arc::clone(&shared);
         thread::Builder::new()
             .name(format!("festerm-pty-reader-{}", shared.id))
-            .spawn(move || reader_worker(reader_shared, reader, reader_done_sender))
+            .spawn(move || reader_worker(reader_shared, reader, readable, reader_done_sender))
             .map_err(|error| {
                 shared.request_stop();
                 LocalPtyError::new(format!("could not start local PTY reader worker: {error}"))
@@ -1361,6 +1391,11 @@ impl Session for LocalPtySession {
                     .lock()
                     .expect("session metrics lock is not poisoned");
                 metrics.event_queue_depth = metrics.event_queue_depth.saturating_sub(1);
+                if let SessionEvent::Output(bytes) = &event {
+                    self.shared
+                        .queued_output_bytes
+                        .fetch_sub(bytes.len(), Ordering::AcqRel);
+                }
                 Ok(event)
             }
             Err(TryRecvError::Empty) => Err(SessionTryReceiveError::Empty),
@@ -1540,34 +1575,85 @@ fn local_pty_writer(master: &dyn MasterPty) -> Result<Box<dyn Write + Send>, Loc
         .map_err(|error| LocalPtyError::new(error.to_string()))
 }
 
+/// Reads PTY output and publishes it as session events.
+///
+/// `readable(wait)` reports whether another read would return without
+/// blocking, waiting at most `wait` for that to become true. macOS PTYs hand
+/// out about 1 KiB per read and a writer only refills the buffer after it is
+/// read, so each read used to become its own event and a frame-bounded
+/// consumer draining a fixed number of events capped `cat` throughput near
+/// 7 MiB/s regardless of CPU. Reads are now appended to the same chunk, up to
+/// [`READ_CHUNK_BYTES`]. When the consumer has drained everything queued, the
+/// chunk is published as soon as the PTY has no more ready data, so
+/// interactive echo is never delayed. Only while earlier output is still
+/// queued, and so could not be consumed sooner anyway, does the reader wait
+/// up to [`READ_COALESCE_WINDOW`] for more.
 fn reader_worker(
     shared: Arc<Shared>,
     mut reader: Box<dyn Read + Send>,
+    mut readable: impl FnMut(Duration) -> bool,
     done_sender: SyncSender<Result<(), SessionError>>,
 ) {
-    let mut buffer = vec![0_u8; MAX_IO_CHUNK_BYTES.min(16 * 1024)];
+    let mut buffer = vec![0_u8; READ_CHUNK_BYTES];
     loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => {
+        let mut filled = 0;
+        let mut ended = None;
+        let mut chunk_started = None;
+        loop {
+            match reader.read(&mut buffer[filled..]) {
+                Ok(0) => {
+                    ended = Some(Ok(()));
+                    break;
+                }
+                Ok(read) => {
+                    filled += read;
+                    chunk_started.get_or_insert_with(std::time::Instant::now);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                    if filled == 0 {
+                        continue;
+                    }
+                    break;
+                }
+                Err(error) => {
+                    ended = Some(Err(error));
+                    break;
+                }
+            }
+            if filled == buffer.len() {
+                break;
+            }
+            let wait = if shared.queued_output_bytes.load(Ordering::Acquire) == 0 {
+                Duration::ZERO
+            } else {
+                chunk_started.map_or(Duration::ZERO, |started: std::time::Instant| {
+                    READ_COALESCE_WINDOW.saturating_sub(started.elapsed())
+                })
+            };
+            if !readable(wait) {
+                break;
+            }
+        }
+
+        // Keep draining after cancellation, without publishing events:
+        // a terminal client can need its last output drained to exit.
+        if filled > 0
+            && !shared.cancel.load(Ordering::Acquire)
+            && !shared.emit_output(buffer[..filled].to_vec())
+            && !shared.cancel.load(Ordering::Acquire)
+        {
+            let _ = done_sender.send(Ok(()));
+            return;
+        }
+
+        match ended {
+            None => {}
+            Some(Ok(())) => {
                 shared.invalidate_automation_epoch();
                 let _ = done_sender.send(Ok(()));
                 return;
             }
-            Ok(read) => {
-                // Keep draining after cancellation, without publishing events:
-                // a terminal client can need its last output drained to exit.
-                if shared.cancel.load(Ordering::Acquire) {
-                    continue;
-                }
-                if !shared.emit_output(buffer[..read].to_vec()) {
-                    if shared.cancel.load(Ordering::Acquire) {
-                        continue;
-                    }
-                    let _ = done_sender.send(Ok(()));
-                    return;
-                }
-            }
-            Err(error) => {
+            Some(Err(error)) => {
                 if shared.cancel.load(Ordering::Acquire) {
                     let _ = done_sender.send(Ok(()));
                     return;
@@ -1584,6 +1670,37 @@ fn reader_worker(
             }
         }
     }
+}
+
+/// A non-blocking "is more output ready?" probe for [`reader_worker`].
+///
+/// It owns its own duplicate of the master descriptor so that it stays valid
+/// for as long as the reader thread runs, independent of when the control
+/// worker drops the master.
+#[cfg(unix)]
+fn pty_readable_probe(master: &dyn MasterPty) -> impl FnMut(Duration) -> bool + Send + 'static {
+    let descriptor = master
+        .as_raw_fd()
+        .and_then(|descriptor| filedescriptor::FileDescriptor::dup(&descriptor).ok());
+    move |wait| {
+        let Some(descriptor) = descriptor.as_ref() else {
+            return false;
+        };
+        let mut poll = [filedescriptor::pollfd {
+            fd: std::os::fd::AsRawFd::as_raw_fd(descriptor),
+            events: filedescriptor::POLLIN,
+            revents: 0,
+        }];
+        matches!(filedescriptor::poll(&mut poll, Some(wait)), Ok(ready) if ready > 0)
+            && poll[0].revents & filedescriptor::POLLIN != 0
+    }
+}
+
+/// ConPTY output arrives through a pipe whose reads are already as large as
+/// the buffer allows, so Windows reads are published as they come.
+#[cfg(not(unix))]
+fn pty_readable_probe(_master: &dyn MasterPty) -> impl FnMut(Duration) -> bool + Send + 'static {
+    |_| false
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2245,6 +2362,7 @@ mod tests {
             event_sender,
             event_notifier: notifier.clone(),
             cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
             termination_requested: AtomicBool::new(false),
             process_tree: None,
             completion_receiver: Mutex::new(completion_receiver),
@@ -2298,6 +2416,7 @@ mod tests {
             event_sender,
             event_notifier: noop_session_event_notifier(),
             cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
             termination_requested: AtomicBool::new(false),
             process_tree: None,
             completion_receiver: Mutex::new(completion_receiver),
@@ -2345,6 +2464,7 @@ mod tests {
             event_sender,
             event_notifier: noop_session_event_notifier(),
             cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
             termination_requested: AtomicBool::new(false),
             process_tree: None,
             completion_receiver: Mutex::new(completion_receiver),
@@ -2353,12 +2473,148 @@ mod tests {
         shared.set_lifecycle(SessionLifecycle::Running);
         let generation = shared.automation_epoch.capture().unwrap();
 
-        reader_worker(Arc::clone(&shared), Box::new(std::io::empty()), reader_done);
+        reader_worker(
+            Arc::clone(&shared),
+            Box::new(std::io::empty()),
+            |_| false,
+            reader_done,
+        );
         assert_eq!(reader_completion.try_recv(), Ok(Ok(())));
         assert_eq!(shared.lifecycle(), SessionLifecycle::Running);
         assert_eq!(shared.automation_epoch.capture(), None);
         let _guard = festerm_session::automation_admission_lock().unwrap();
         assert!(!shared.automation_epoch.is_current(generation));
+    }
+
+    #[test]
+    fn queued_output_bytes_apply_backpressure_before_the_event_queue_fills() {
+        let (event_sender, event_receiver) = mpsc::sync_channel(8);
+        let (_completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared {
+            id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
+            lifecycle: Mutex::new(SessionLifecycle::Running),
+            metrics: Mutex::new(SessionMetrics {
+                event_queue_capacity: 8,
+                ..SessionMetrics::default()
+            }),
+            event_sender,
+            event_notifier: noop_session_event_notifier(),
+            cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
+            termination_requested: AtomicBool::new(false),
+            process_tree: None,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        });
+        // A lone oversized chunk is always admitted so output cannot wedge.
+        assert!(shared.emit_output(vec![b'a'; MAX_QUEUED_OUTPUT_BYTES]));
+
+        let producer_shared = Arc::clone(&shared);
+        let producer = thread::spawn(move || producer_shared.emit_output(b"b".to_vec()));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while shared.metrics().backpressure_count == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(shared.metrics().backpressure_count > 0);
+        assert!(matches!(
+            event_receiver.try_recv(),
+            Ok(SessionEvent::Output(bytes)) if bytes.len() == MAX_QUEUED_OUTPUT_BYTES
+        ));
+        assert!(matches!(
+            event_receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(SessionEvent::Backpressure {
+                direction: FlowDirection::Output,
+                ..
+            })
+        ));
+        assert!(
+            event_receiver.try_recv().is_err(),
+            "byte bound must hold output back"
+        );
+
+        // What `try_recv_event` releases once the consumer takes the chunk.
+        shared
+            .queued_output_bytes
+            .fetch_sub(MAX_QUEUED_OUTPUT_BYTES, Ordering::AcqRel);
+        assert!(matches!(
+            event_receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(SessionEvent::Output(bytes)) if bytes == b"b"
+        ));
+        assert!(producer.join().expect("producer joins"));
+        assert_eq!(shared.queued_output_bytes.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn pty_reader_coalesces_ready_reads_and_waits_only_behind_a_backlog() {
+        struct Chunks(Arc<Mutex<std::collections::VecDeque<&'static [u8]>>>);
+        impl Read for Chunks {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let Some(chunk) = self.0.lock().unwrap().pop_front() else {
+                    return Ok(0);
+                };
+                buffer[..chunk.len()].copy_from_slice(chunk);
+                Ok(chunk.len())
+            }
+        }
+
+        for backlog in [0, 1] {
+            let (event_sender, event_receiver) = mpsc::sync_channel(4);
+            let (_completion_sender, completion_receiver) = mpsc::sync_channel(1);
+            let (reader_done, reader_completion) = mpsc::sync_channel(1);
+            let shared = Arc::new(Shared {
+                id: SessionId::next(),
+                automation_epoch: Arc::new(AutomationEpoch::new()),
+                lifecycle_transition: Mutex::new(()),
+                lifecycle: Mutex::new(SessionLifecycle::Running),
+                metrics: Mutex::new(SessionMetrics {
+                    event_queue_capacity: 4,
+                    ..SessionMetrics::default()
+                }),
+                event_sender,
+                event_notifier: noop_session_event_notifier(),
+                cancel: AtomicBool::new(false),
+                queued_output_bytes: AtomicUsize::new(backlog),
+                termination_requested: AtomicBool::new(false),
+                process_tree: None,
+                completion_receiver: Mutex::new(completion_receiver),
+                completion: Mutex::new(None),
+            });
+            let chunks = Arc::new(Mutex::new(std::collections::VecDeque::from([
+                b"ab".as_slice(),
+                b"cd".as_slice(),
+                b"ef".as_slice(),
+            ])));
+            let mut waits = Vec::new();
+            let pending = Arc::clone(&chunks);
+            reader_worker(
+                Arc::clone(&shared),
+                Box::new(Chunks(chunks)),
+                |wait| {
+                    waits.push(wait);
+                    !pending.lock().unwrap().is_empty()
+                },
+                reader_done,
+            );
+
+            assert_eq!(reader_completion.try_recv(), Ok(Ok(())));
+            assert!(matches!(
+                event_receiver.try_recv(),
+                Ok(SessionEvent::Output(bytes)) if bytes == b"abcdef"
+            ));
+            assert_eq!(waits.len(), 3);
+            if backlog == 0 {
+                assert!(waits.iter().all(Duration::is_zero), "{waits:?}");
+            } else {
+                assert!(
+                    waits
+                        .iter()
+                        .all(|wait| !wait.is_zero() && *wait <= READ_COALESCE_WINDOW),
+                    "{waits:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -2383,6 +2639,7 @@ mod tests {
                 event_sender,
                 event_notifier: Arc::new(CountingNotifier::default()),
                 cancel: AtomicBool::new(false),
+                queued_output_bytes: AtomicUsize::new(0),
                 termination_requested: AtomicBool::new(false),
                 process_tree: None,
                 completion_receiver: Mutex::new(completion_receiver),
