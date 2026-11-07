@@ -534,6 +534,16 @@ impl Parser {
         self.state == ParserState::Ground
     }
 
+    /// Whether printable 7-bit bytes currently print as themselves.
+    pub(crate) fn prints_ascii_verbatim(&self) -> bool {
+        let charset = if self.shifted_to_g1 {
+            self.g1_charset
+        } else {
+            self.g0_charset
+        };
+        charset == Charset::Ascii
+    }
+
     /// Advances one byte and returns at most one fully typed operation.
     pub fn advance(&mut self, byte: u8) -> TerminalOp {
         if matches!(byte, 0x18 | 0x1a) {

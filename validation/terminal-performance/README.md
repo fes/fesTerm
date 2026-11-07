@@ -57,6 +57,33 @@ extent rescan. Apple M-series, release, throughput change:
 | `osc8_links` | 18.2 | +96% |
 | `alternate_repaint` | 19.8 | +84% |
 
+### Printable ASCII runs
+
+The terminal now writes contiguous printable ASCII runs directly into the
+screen when parser, decoder, charset, insert-mode and hyperlink state make
+per-byte printing unnecessary. The fast path retains scalar handling at wrap
+and scroll boundaries; a 2,000-case differential property test compares the
+complete terminal state with byte-at-a-time ingestion. The resize probe also
+skips ground-state bytes up to the next ESC.
+
+Criterion throughput on Apple M-series, release, compared with the #640
+baseline. The benchmark command is
+`cargo bench -p festerm-core --bench sustained_output -- sustained_output`.
+Values are representative medians; shared-host load was high, so these are
+throughput observations rather than end-to-end wall-time claims.
+
+| Case | #640 baseline (MiB/s) | Candidate (MiB/s) |
+| --- | ---: | ---: |
+| `plain_ascii` | 13.6 | 37.8 |
+| `ascii_200_cols` | 12.5 | 42.6 |
+| `sgr_dense` | 23.4 | 41.9 |
+| `full_history/plain_ascii` | 15.3 | 23.2 |
+| `full_history/sgr_dense` | 23.7 | 27.2 |
+| `alternate_repaint` | 30.7 | 59.3 |
+
+End-to-end `cat` timings were inconsistent under concurrent machine load and
+are not used to claim a speedup for this change.
+
 ## End-to-end output throughput (macOS)
 
 Measured as the wall time for `cat` of a file to finish inside a fesTerm

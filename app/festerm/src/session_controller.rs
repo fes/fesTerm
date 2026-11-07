@@ -191,9 +191,20 @@ enum CursorPositionQueryScanner {
 }
 
 impl CursorPositionQueryScanner {
-    fn observe(&mut self, bytes: &[u8]) -> u64 {
+    fn observe(&mut self, mut bytes: &[u8]) -> u64 {
         let mut recognized = 0_u64;
-        for &byte in bytes {
+        loop {
+            // Only ESC leaves ground, so plain text is skipped wholesale.
+            if *self == Self::Ground {
+                let Some(escape) = bytes.iter().position(|&byte| byte == 0x1b) else {
+                    return recognized;
+                };
+                bytes = &bytes[escape..];
+            }
+            let Some((&byte, rest)) = bytes.split_first() else {
+                return recognized;
+            };
+            bytes = rest;
             *self = match (*self, byte) {
                 (_, 0x1b) => Self::Escape,
                 (Self::Ground, _) => Self::Ground,
@@ -212,7 +223,6 @@ impl CursorPositionQueryScanner {
                 (Self::CsiOther, _) => Self::CsiOther,
             };
         }
-        recognized
     }
 }
 
@@ -2930,6 +2940,10 @@ mod tests {
         assert_eq!(scanner.observe(b"6n"), 1);
         assert_eq!(scanner.observe(b"\x1b[16n"), 0);
         assert_eq!(scanner.observe(b"\x1b[6n"), 1);
+        assert_eq!(scanner.observe(b"plain text\x1b[6nmore\x1b[6n tail"), 2);
+        assert_eq!(scanner.observe(b"text\x1b"), 0);
+        assert_eq!(scanner.observe(b"[6n"), 1);
+        assert_eq!(scanner.observe(b"no escapes here"), 0);
     }
 
     #[test]

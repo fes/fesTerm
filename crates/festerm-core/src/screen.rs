@@ -356,6 +356,56 @@ impl Screen {
         }
     }
 
+    /// Writes single-width ASCII cells left to right from `column`, exactly
+    /// as one [`Self::replace_cluster`] per byte would. The run must fit in
+    /// the row. When every target is already single width, no wide pair can
+    /// be split, so the cells are written in one pass with one extent update.
+    pub(crate) fn write_ascii(
+        &mut self,
+        column: usize,
+        row: usize,
+        text: &[u8],
+        foreground: crate::Color,
+        background: crate::Color,
+        attributes: Attributes,
+    ) {
+        let cell = |byte: u8| {
+            let text = CompactString::new(char::from(byte).encode_utf8(&mut [0; 4]));
+            let text_capacity_bytes = text.capacity();
+            Cell {
+                text,
+                text_capacity_bytes,
+                width: CellWidth::Single,
+                foreground,
+                background,
+                attributes,
+                hyperlink: None,
+            }
+        };
+        let start = self
+            .cell_index(column, row)
+            .expect("terminal cursor must remain within screen dimensions");
+        let end = start + text.len();
+        debug_assert!(column + text.len() <= self.dimensions.columns());
+        if self.cells[start..end]
+            .iter()
+            .any(|existing| existing.width != CellWidth::Single)
+        {
+            for (offset, &byte) in text.iter().enumerate() {
+                self.replace_cluster(column + offset, row, cell(byte));
+            }
+            return;
+        }
+        for (existing, &byte) in self.cells[start..end].iter_mut().zip(text) {
+            *existing = cell(byte);
+        }
+        self.occupied_cells[start..end].fill(true);
+        let physical_row = self.physical_row(row);
+        let extent = &mut self.occupied_columns[physical_row];
+        *extent = (*extent).max(column + text.len());
+        self.mark_dirty(row);
+    }
+
     /// Updates `occupied_columns` after writing an occupied cluster at
     /// `[column, column + width)`. Printing strictly at or beyond the row's
     /// previously known occupied extent - the overwhelmingly common case
