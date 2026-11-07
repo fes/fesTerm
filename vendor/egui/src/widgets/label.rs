@@ -281,8 +281,17 @@ impl Widget for Label {
         response
             .widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), galley.text()));
 
-        if ui.is_rect_visible(response.rect) {
-            if show_tooltip_when_elided && galley.elided {
+        let visible = ui.is_rect_visible(response.rect);
+        let selectable = selectable.unwrap_or_else(|| ui.style().interaction.selectable_labels);
+        let process_offscreen = !visible
+            && selectable
+            && ui
+                .ctx()
+                .plugin::<LabelSelectionState>()
+                .lock()
+                .needs_offscreen_label(ui.ctx().viewport_id(), response.id);
+        if visible || process_offscreen {
+            if visible && show_tooltip_when_elided && galley.elided {
                 // Keep the sections and text, but reset everything else (especially wrapping):
                 let job = crate::text::LayoutJob {
                     sections: galley.job.sections.clone(),
@@ -305,7 +314,6 @@ impl Widget for Label {
                 Stroke::NONE
             };
 
-            let selectable = selectable.unwrap_or_else(|| ui.style().interaction.selectable_labels);
             if selectable {
                 LabelSelectionState::label_text_selection(
                     ui,

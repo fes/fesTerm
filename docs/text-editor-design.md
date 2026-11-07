@@ -109,6 +109,10 @@ document or view mode. Switching documents dismisses the path menu instead of
 retargeting Copy. An untitled document has no file path and does not offer
 the action.
 
+Dragging an editor selection beyond its vertical viewport scrolls the editor
+and extends the selection without moving its anchor. Right-clicking selected
+text preserves it and offers a plain **Copy** action.
+
 ### Bounded live text-layout preparation
 
 Each editor view retains at most one complete laid-out body, under a 16 MiB

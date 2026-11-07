@@ -1009,6 +1009,12 @@ retire menu payloads. Source-mode and explicit code-block Copy stay plain.
 Native format delivery and paste interoperability remain CP-06/CP-15 evidence;
 the current Wayland backend publishes only text.
 
+`MD-04`/`EDIT-09` include mouse selection past a scrollable document edge:
+the owning viewport scrolls while the original anchor remains selected, in
+either direction, and stops at its bounds or when the drag ends. Source and
+editor selections offer plain **Copy** on right-click; Preview retains its rich
+menu. Other viewports do not acquire the drag.
+
 `MD-04`, `MD-05`, `EDIT-09` and `EDIT-18` share ADR 0048's static SVG and
 native HTML anchor projection. Source/Find retain exact document bytes.
 Named targets navigate by source byte without phantom headings; local SVG and

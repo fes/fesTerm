@@ -1555,6 +1555,23 @@ dismissal, mode stability and the untitled guard; native clipboard delivery,
 secondary-click conventions and screen-reader/tooltip presentation remain
 manual evidence.
 
+CP-06/CP-15 selection-edge scrolling ([#632](https://github.com/fes/fesTerm/issues/632)):
+on native macOS, Windows, and Linux, drag forward and backward beyond each
+scrollable edge in the viewer and editor, including overflowing tables/code
+where supported. Confirm the anchor and offscreen selection survive, scrolling
+stops on release or return inside the viewport, and unrelated panes do not
+move. Right-click the selection and verify Copy delivers the selected text to
+the native clipboard without terminal input. Headless regressions cover
+viewport ownership, bounds, both directions, Source/Preview and code selection,
+horizontal table selection, and editor Copy; native pointer and clipboard
+delivery remain platform evidence.
+
+On macOS 27.2 arm64, a debug build was exercised with synthesized native mouse
+events: forward drags in Edit and Preview scrolled beyond the viewport, and
+each right-click Copy delivered the original anchor and later paragraphs to the
+native clipboard. The previous clipboard was restored. Other directions,
+horizontal overflow, and Windows/Linux still need native evidence.
+
 The draft-consolidation Windows run retains an explicit environment boundary:
 the interactive account lacks `SeSecurityPrivilege`. Its 32 application and
 four Windows-security failures exactly match the unchanged `c333013c` main
