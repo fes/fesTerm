@@ -667,6 +667,10 @@ struct SavedAnsiCursor {
     protection: ProtectionSource,
 }
 
+const fn is_printable_ascii(byte: u8) -> bool {
+    matches!(byte, b' '..=b'~')
+}
+
 const fn initial_screen_generation() -> u64 {
     1
 }
@@ -1105,6 +1109,92 @@ impl Terminal {
     }
 
     pub fn ingest(&mut self, bytes: &[u8]) {
+        let mut index = 0;
+        while let Some(&byte) = bytes.get(index) {
+            if is_printable_ascii(byte) && self.ascii_run_fast_path_ready() {
+                let run = &bytes[index..];
+                let length = run
+                    .iter()
+                    .position(|&byte| !is_printable_ascii(byte))
+                    .unwrap_or(run.len());
+                self.print_ascii_run(&run[..length]);
+                index += length;
+            } else {
+                self.ingest_byte(byte);
+                index += 1;
+            }
+        }
+    }
+
+    /// Whether printable ASCII would reach [`Self::print`] untranslated, with
+    /// no parser, decoder, insert-mode or hyperlink side effects, so that a
+    /// run of it can be written row segment by row segment.
+    fn ascii_run_fast_path_ready(&self) -> bool {
+        !self.utf8.pending()
+            && self.parser.is_ground()
+            && self.parser.prints_ascii_verbatim()
+            && !self.modes.insert_mode
+            && self.current_hyperlink.is_none()
+    }
+
+    /// Prints printable ASCII with exactly the effect of calling
+    /// [`Self::print`] once per byte. ASCII never extends a grapheme and is
+    /// always one column wide, so everything that fits before the wrap point
+    /// is written in one pass; wrapping, and the scroll it can cause, still
+    /// go through `print`.
+    fn print_ascii_run(&mut self, mut run: &[u8]) {
+        while let Some(&first) = run.first() {
+            if self.active_buffer().pending_wrap && self.modes.auto_wrap {
+                self.print(char::from(first));
+                run = &run[1..];
+                continue;
+            }
+            let (wrap_limit, _) = self.wrap_geometry();
+            let auto_wrap = self.modes.auto_wrap;
+            let cursor = self.cursor();
+            // A cursor left of the left margin wraps at the screen edge only
+            // until it walks into the margins, where the right margin starts
+            // to apply, so a segment stops at that boundary.
+            let left_margin = self.horizontal_margins().left;
+            let segment_limit = if cursor.column < left_margin {
+                left_margin
+            } else {
+                wrap_limit
+            };
+            let length = run
+                .len()
+                .min(segment_limit.saturating_sub(cursor.column))
+                .max(1);
+            let (segment, rest) = run.split_at(length);
+            let foreground = self.current_foreground;
+            let background = self.current_background;
+            let attributes = if self.current_protected {
+                self.current_attributes.with(Attributes::PROTECTED)
+            } else {
+                self.current_attributes
+            };
+            let last = Cursor {
+                column: cursor.column + length - 1,
+                row: cursor.row,
+            };
+            let buffer = self.active_buffer_mut();
+            buffer.screen.write_ascii(
+                cursor.column,
+                cursor.row,
+                segment,
+                foreground,
+                background,
+                attributes,
+            );
+            buffer.grapheme_anchor = Some(last);
+            Self::place_cursor_after_cluster(buffer, last, 1, wrap_limit, auto_wrap);
+            self.last_graphic_character = Some(char::from(segment[length - 1]));
+            run = rest;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ingest_scalar(&mut self, bytes: &[u8]) {
         for &byte in bytes {
             self.ingest_byte(byte);
         }
@@ -3605,4 +3695,89 @@ fn resized_tab_stops(existing: &[bool], dimensions: Dimensions) -> Vec<bool> {
                 .unwrap_or(column != 0 && column % 8 == 0)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod ascii_run_fast_path_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn fragment() -> impl Strategy<Value = Vec<u8>> {
+        prop_oneof![
+            4 => "[ -~]{0,40}".prop_map(String::into_bytes),
+            1 => prop_oneof![
+                Just(b"\r\n".to_vec()),
+                Just(b"\r".to_vec()),
+                Just(b"\n".to_vec()),
+                Just(b"\x08".to_vec()),
+                Just(b"\t".to_vec()),
+                Just("漢字".as_bytes().to_vec()),
+                Just("e\u{301}".as_bytes().to_vec()),
+                Just("\u{301}".as_bytes().to_vec()),
+                Just("👩\u{200d}💻".as_bytes().to_vec()),
+                Just("\u{600}".as_bytes().to_vec()),
+                Just(b"\xe6\xbc".to_vec()),
+                Just(b"\xff".to_vec()),
+            ],
+            2 => prop_oneof![
+                Just(b"\x1b[4h".to_vec()),
+                Just(b"\x1b[4l".to_vec()),
+                Just(b"\x1b(0".to_vec()),
+                Just(b"\x1b(B".to_vec()),
+                Just(b"\x1b)0".to_vec()),
+                Just(vec![0x0e]),
+                Just(vec![0x0f]),
+                Just(b"\x1b]8;;https://e.x/\x1b\\".to_vec()),
+                Just(b"\x1b]8;;\x1b\\".to_vec()),
+                Just(b"\x1b[2;4r".to_vec()),
+                Just(b"\x1b[r".to_vec()),
+                Just(b"\x1b[?69h\x1b[3;8s".to_vec()),
+                Just(b"\x1b[?69l".to_vec()),
+                Just(b"\x1b[?7l".to_vec()),
+                Just(b"\x1b[?7h".to_vec()),
+                Just(b"\x1b[1;10H".to_vec()),
+                Just(b"\x1b[5G".to_vec()),
+                Just(b"\x1b[12G".to_vec()),
+                Just(b"\x1b[31;1m".to_vec()),
+                Just(b"\x1b[0m".to_vec()),
+                Just(b"\x1b[1\"q".to_vec()),
+                Just(b"\x1b[0\"q".to_vec()),
+                Just(b"\x1bV".to_vec()),
+                Just(b"\x1bW".to_vec()),
+                Just(b"\x1b[3b".to_vec()),
+                Just(b"\x1b[?1049h".to_vec()),
+                Just(b"\x1b[?1049l".to_vec()),
+                Just(b"\x1b[".to_vec()),
+                Just(b"\x1b]0;title".to_vec()),
+                Just(b"\x07".to_vec()),
+            ],
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2_000))]
+
+        #[test]
+        fn ascii_runs_match_byte_at_a_time_printing(
+            fragments in proptest::collection::vec(fragment(), 0..24),
+            cuts in proptest::collection::vec(any::<prop::sample::Index>(), 0..6),
+        ) {
+            let input: Vec<u8> = fragments.into_iter().flatten().collect();
+            let dimensions = Dimensions::new(12, 5).expect("dimensions");
+            let mut scalar = Terminal::new(dimensions).expect("terminal");
+            scalar.ingest_scalar(&input);
+
+            let mut boundaries: Vec<usize> =
+                cuts.iter().map(|cut| cut.index(input.len() + 1)).collect();
+            boundaries.extend([0, input.len()]);
+            boundaries.sort_unstable();
+            boundaries.dedup();
+            let mut fast = Terminal::new(dimensions).expect("terminal");
+            for window in boundaries.windows(2) {
+                fast.ingest(&input[window[0]..window[1]]);
+            }
+
+            prop_assert!(fast == scalar, "diverged on {:?}", String::from_utf8_lossy(&input));
+        }
+    }
 }
