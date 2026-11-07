@@ -195,7 +195,11 @@ background unread state remain independent. Pending resize deadlines re-arm
 an early repaint until the debounced resize can be sent, without an idle poll.
 Session availability uses egui's single-pass wake API rather than its zero-delay
 two-pass widget-settling policy. Every event still requests a wake, including
-events arriving during a frame; no output/frame-rate budget is introduced.
+events arriving during a frame. Terminal ingestion now shares a 4 ms budget
+across desktop sessions per application update, with bounded round-robin slices
+and continuation wakes when work remains. This bounds synchronous update work;
+it is not a frame-rate cap or a physical presentation-latency claim. The active
+session is no longer pumped again after painting.
 
 For `KEY-01` and `TERM-01`, exact Shift+Tab remains a typed modified key and
 emits Backtab (`ESC[Z`) through the ordinary bounded terminal queue. Presses

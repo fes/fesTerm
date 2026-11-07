@@ -101,8 +101,10 @@ The reader now appends further reads to the same chunk, up to 64 KiB:
 - Only while earlier output is still queued does it wait up to 2 ms for more.
 - Queued output is bounded at 2 MiB, the same bound as before.
 
-Each pump still ingests at least 256 KiB of a backlog, and keeps going for up
-to 8 ms (4 MiB at most), so fewer frames are spent waiting for a drawable.
+The #640 baseline pump ingested at least 256 KiB of a backlog, and continued
+for up to 8 ms per pump (4 MiB at most), so fewer frames were spent waiting for
+a drawable. The desktop scheduler policy was subsequently revised as described
+below.
 
 | `cat` workload | Before | After | Change |
 | --- | --- | --- | --- |
@@ -111,6 +113,23 @@ to 8 ms (4 MiB at most), so fewer frames are spent waiting for a drawable.
 
 The time budget alone accounts for about 3% (plain) and 20% (SGR) of the
 gain.
+
+## Shared desktop update budget
+
+The desktop application now shares one 4 ms terminal-ingest budget across all
+sessions per update. Each round-robin session slice is capped at 64 events or
+256 KiB of ingested bytes, with a 16 MiB aggregate byte threshold; the final
+bounded slice can cross the threshold. Remaining work requests a continuation
+frame; the active session is not pumped a second time after painting. This
+replaces #640's per-pump budget and bounds synchronous ingest work as the
+number of live sessions grows.
+
+The scheduler has deterministic fake-clock fairness coverage. A qualified
+before/after end-to-end throughput comparison is not yet available: shared-host
+load made the recent wall-time runs inconsistent. The 4 ms budget may trade
+single-session bulk throughput for multi-session fairness and bounded update
+work; no throughput or input-latency improvement is claimed until stable
+matched measurements are recorded.
 
 ## Automatic WARP composition rollout
 

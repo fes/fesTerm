@@ -583,7 +583,7 @@ fn aging_fixture_drop_releases_repaint_owner_with_six_backlogged_sessions() {
     for _ in 0..4 {
         let mut fixture = Fixture::new();
         let owner = Arc::downgrade(&fixture.requests);
-        for step in 0..=crate::session_controller::MAX_SESSION_EVENTS_PER_FRAME {
+        for step in 0..=crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE {
             fixture.feed("all", step);
         }
         fixture.app.pump_all_sessions(&fixture.context);
