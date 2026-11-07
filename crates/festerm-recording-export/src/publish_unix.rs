@@ -14,7 +14,7 @@ use nix::unistd::{unlinkat, UnlinkatFlags};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{collision_name, ExportError, StagedRecording};
+use crate::{collision_name, ExportError, StagedRecording, APPEARANCE_FILE_NAME};
 use std::os::unix::fs::MetadataExt;
 
 const MAX_COLLISIONS: usize = 10_000;
@@ -43,6 +43,7 @@ pub fn publish_to_directory(
     start: LocalStart,
     cancelled: &AtomicBool,
 ) -> Result<PublishedRecording, ExportError> {
+    let staging_directory = staged.staging_directory()?;
     if !root
         .metadata()
         .map_err(|error| ExportError::new(format!("could not inspect export folder: {error}")))?
@@ -96,7 +97,7 @@ pub fn publish_to_directory(
                 .path
                 .file_name()
                 .ok_or_else(|| ExportError::new("staged MP4 does not have a valid filename"))?;
-            let mut source = open_file_nofollow(&staged.directory, Path::new(name))
+            let mut source = open_file_nofollow(staging_directory, Path::new(name))
                 .map_err(|error| ExportError::new(format!("could not open staged MP4: {error}")))?;
             let mut hash = Sha256::new();
             let mut bytes = 0u64;
@@ -126,7 +127,14 @@ pub fn publish_to_directory(
             destination.sync_all().map_err(|error| {
                 ExportError::new(format!("could not sync destination MP4: {error}"))
             })?;
+            crate::verify_published_file(&mut destination, video, cancelled)?;
         }
+        let mut appearance = open_private_file(&directory, Path::new(APPEARANCE_FILE_NAME), true)
+            .map_err(|error| {
+            ExportError::new(format!("could not create recording appearance: {error}"))
+        })?;
+        created_names.push(APPEARANCE_FILE_NAME.to_owned());
+        crate::write_and_verify_appearance(&mut appearance, staged, cancelled)?;
         directory.sync_all().map_err(|error| {
             ExportError::new(format!("could not sync destination staging: {error}"))
         })?;
@@ -141,7 +149,7 @@ pub fn publish_to_directory(
             ));
         }
         for collision in 0..MAX_COLLISIONS {
-            let name = collision_name(&base, collision);
+            let name = collision_name(&base, collision, staged.recovered_prefix)?;
             match rename_noreplace(root, temp_path, root, Path::new(&name)) {
                 Ok(()) => {
                     published = Some(name);
@@ -220,6 +228,7 @@ pub fn delete_source_after_publication(
     staged: &StagedRecording,
     published: &mut PublishedRecording,
 ) -> Result<(), ExportError> {
+    staged.require_complete_source()?;
     if staged.stage_id != published.stage_id {
         return Err(ExportError::new(
             "the published videos do not belong to this recording source",
@@ -269,9 +278,17 @@ mod tests {
     #[test]
     fn collision_suffix_respects_byte_and_unicode_boundaries() {
         let base = "é".repeat(127);
-        let name = collision_name(&base, 1);
+        let name = collision_name(&base, 1, false).unwrap();
         assert!(name.len() <= 255);
         assert!(name.ends_with("-2"));
         assert!(name.is_char_boundary(name.len()));
+    }
+
+    #[test]
+    fn recovered_marker_survives_collision_truncation() {
+        let base = format!("{}-recovered", "é".repeat(122));
+        let name = collision_name(&base, 1, true).unwrap();
+        assert!(name.len() <= 255);
+        assert!(name.ends_with("-recovered-2"));
     }
 }

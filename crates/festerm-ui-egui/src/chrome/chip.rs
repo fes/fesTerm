@@ -14,6 +14,14 @@ fn rename_buffer_id(id: ChipId) -> Id {
     Id::new("chrome_chip_rename").with(id.0)
 }
 
+fn displayed_primary(chip: &ChipViewModel) -> std::borrow::Cow<'_, str> {
+    if chip.recording {
+        std::borrow::Cow::Owned(format!("[REC] {}", chip.primary))
+    } else {
+        std::borrow::Cow::Borrowed(&chip.primary)
+    }
+}
+
 /// Measures a chip's true content-driven width directly from its text,
 /// independent of whatever rect it's actually painted into.
 ///
@@ -51,9 +59,13 @@ pub(super) fn natural_chip_width(ui: &Ui, chip: &ChipViewModel, show_close: bool
     const CLOSE_RESERVED: f32 = 24.0;
 
     let primary_width = ctx.fonts_mut(|f| {
-        f.layout_no_wrap(chip.primary.clone(), body_font, Color32::WHITE)
-            .size()
-            .x
+        f.layout_no_wrap(
+            displayed_primary(chip).into_owned(),
+            body_font,
+            Color32::WHITE,
+        )
+        .size()
+        .x
     });
     let mut primary_line = LEFT_INSET + primary_width;
     if !chip.panes.is_empty() || !matches!(chip.status, ChipStatus::Neutral) {
@@ -185,15 +197,24 @@ pub(super) fn show_chip(
         // (ADR 0034 §8).
         let name = if !chip.panes.is_empty() {
             format!(
-                "{} group, {} panes, {} unread",
+                "{} group, {} panes, {} unread{}",
                 chip.primary,
                 chip.panes.len(),
-                chip.panes.iter().filter(|pane| pane.unread).count()
+                chip.panes.iter().filter(|pane| pane.unread).count(),
+                if chip.recording { ", recording" } else { "" },
             )
         } else {
             match chip.status.document_state() {
-                Some(state) => format!("{}, {state} chip", chip.primary),
-                None => format!("{} chip", chip.primary),
+                Some(state) => format!(
+                    "{}, {state} chip{}",
+                    chip.primary,
+                    if chip.recording { ", recording" } else { "" }
+                ),
+                None => format!(
+                    "{} chip{}",
+                    chip.primary,
+                    if chip.recording { ", recording" } else { "" }
+                ),
             }
         };
         WidgetInfo::labeled(WidgetType::Other, true, name)
@@ -394,13 +415,14 @@ fn show_pane_details(ui: &mut Ui, chip: &ChipViewModel, actions: &mut Vec<Chrome
     ui.label(RichText::new(&chip.primary).strong());
     for (index, pane) in chip.panes.iter().enumerate() {
         let name = format!(
-            "{}: {} · {} · {}{}{}",
+            "{}: {} · {} · {}{}{}{}",
             index + 1,
             pane.label,
             pane.surface,
             pane.status.accessible_label(),
             if pane.focused { " · focused" } else { "" },
-            if pane.unread { " · unread" } else { "" }
+            if pane.unread { " · unread" } else { "" },
+            if pane.recording { " · recording" } else { "" }
         );
         let response = ui.allocate_response(egui::vec2(ui.available_width(), 30.0), Sense::click());
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &name));
@@ -415,17 +437,23 @@ fn show_pane_details(ui: &mut Ui, chip: &ChipViewModel, actions: &mut Vec<Chrome
         for (rect, label, color) in [
             (
                 left,
-                format!("{}: {}", index + 1, pane.label),
+                format!(
+                    "{}: {}{}",
+                    index + 1,
+                    if pane.recording { "[REC] " } else { "" },
+                    pane.label
+                ),
                 theme::TEXT_PRIMARY,
             ),
             (
                 right,
                 format!(
-                    "{} · {}{}{}",
+                    "{} · {}{}{}{}",
                     pane.surface,
                     pane.status.accessible_label(),
                     if pane.focused { " · focused" } else { "" },
-                    if pane.unread { " · unread" } else { "" }
+                    if pane.unread { " · unread" } else { "" },
+                    if pane.recording { " · recording" } else { "" }
                 ),
                 if pane.unread {
                     theme::STATUS_STARTING
@@ -669,15 +697,27 @@ fn paint_chip_primary_contents(
                 ),
                 egui::StrokeKind::Inside,
             );
+            if pane.recording {
+                ui.painter()
+                    .circle_filled(bounds.center(), 1.5, theme::STATUS_ERROR);
+            }
         }
         response.widget_info(|| {
             WidgetInfo::labeled(
                 WidgetType::Button,
                 true,
                 format!(
-                    "Pane details, {} panes, {} unread",
+                    "Pane details, {} panes, {} unread{}",
                     chip.panes.len(),
-                    chip.panes.iter().filter(|pane| pane.unread).count()
+                    chip.panes.iter().filter(|pane| pane.unread).count(),
+                    if chip.recording {
+                        format!(
+                            ", {} recording",
+                            chip.panes.iter().filter(|pane| pane.recording).count()
+                        )
+                    } else {
+                        String::new()
+                    }
                 ),
             )
         });
@@ -740,7 +780,7 @@ fn paint_chip_primary(
             ui.data_mut(|d| d.insert_temp(rename_id, buffer));
         }
     } else {
-        let label = RichText::new(&chip.primary).color(CHIP_PRIMARY_TEXT);
+        let label = RichText::new(displayed_primary(chip)).color(CHIP_PRIMARY_TEXT);
         // Deliberately `Sense::hover()` only (no click/drag), matching the
         // secondary line below: the chip's own `bg_response` (covering the
         // whole chip footprint, including this label's pixels) is the sole

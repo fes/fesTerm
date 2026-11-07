@@ -41,6 +41,12 @@ The desktop command palette uses a larger grouped layout with a category sidebar
 and a compact category picker in narrow windows.
 Named recipes, independent recovery preferences and native qualification remain open.
 
+Synchronized terminal recording is implemented as a proposed desktop and
+mobile feature: selected sessions share a timeline and export separate silent
+MP4s. Recordings can contain sensitive terminal output; platform-native
+recording, export and privacy qualification remains open
+([ADR 0077](docs/adr/0077-synchronized-terminal-recording-and-mp4-export.md)).
+
 An [Android port](app/festerm-android/README.md) now hosts the existing iOS
 mobile application, with native input, Keystore credentials, document imports,
 device authentication and on-device speech adapters. Development APKs build

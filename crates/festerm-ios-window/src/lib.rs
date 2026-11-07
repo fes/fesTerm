@@ -20,7 +20,7 @@ mod field;
 pub use field::{FieldDocument, FieldInput, FieldKey, FieldModel, FieldSync};
 mod dictation;
 pub use dictation::{
-    dictation_permission_prompt_in_flight, Dictation, DictationPhase, DictationText,
+    dictation_permission_prompt_in_flight, Dictation, DictationPhase, DictationText, LevelHistory,
     MAX_DICTATION_BYTES,
 };
 mod document;
@@ -31,12 +31,18 @@ mod document;
 ))]
 pub use document::DocumentSmoke;
 mod document_writer;
+#[cfg(target_os = "ios")]
+mod recording_folder_ios;
 pub use document::{
     DocumentFile, DocumentFileError, DocumentFileEvent, DocumentFileSnapshot, DocumentPicker,
     MAX_DOCUMENT_BYTES, MAX_NATIVE_DOCUMENTS,
 };
 pub use document_writer::{
     local_file_mutation_epoch, try_local_file_mutation, DocumentWritePermit,
+};
+#[cfg(target_os = "ios")]
+pub use recording_folder_ios::{
+    with_recording_folder, RecordingFolderError, RecordingFolderPicker, RecordingFolderSelection,
 };
 
 #[cfg(target_os = "ios")]

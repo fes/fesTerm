@@ -120,7 +120,7 @@ impl AppleEncoder {
         if rgba.len() != self.bytes_per_frame {
             return Err(VideoError::new("the video frame has the wrong dimensions"));
         }
-        if rgba.chunks_exact(4).any(|pixel| pixel[3] != 255) {
+        if rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255) {
             return Err(VideoError::new("video frames must be opaque RGBA"));
         }
         let mut error = [0; ERROR_BYTES];
@@ -213,7 +213,7 @@ mod tests {
         let mut encoder = AppleEncoder::new(path, 64, 64).unwrap();
         let mut frame = vec![255; 64 * 64 * 4];
         for index in 0..30 {
-            for pixel in frame.chunks_exact_mut(4) {
+            for pixel in frame.as_chunks_mut::<4>().0 {
                 pixel[0] = index * 6;
                 pixel[1] = 60;
                 pixel[2] = 180;

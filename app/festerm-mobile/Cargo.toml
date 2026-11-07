@@ -10,7 +10,7 @@ publish = false
 
 [features]
 default = []
-live-ssh = ["dep:festerm-session", "dep:festerm-mobile-tunnels", "dep:festerm-recording", "dep:tokio"]
+live-ssh = ["dep:festerm-session", "dep:festerm-mobile-tunnels", "dep:festerm-recording", "dep:festerm-recording-export", "dep:festerm-recording-apple", "dep:festerm-unix-security", "dep:tokio"]
 native-document-smoke = ["festerm-ios-window/native-document-smoke"]
 
 [dependencies]
@@ -24,6 +24,7 @@ festerm-markdown = { path = "../../crates/festerm-markdown" }
 festerm-mobile-docs = { path = "../../crates/festerm-mobile-docs" }
 festerm-mobile-profiles = { path = "../../crates/festerm-mobile-profiles" }
 festerm-recording = { path = "../../crates/festerm-recording", optional = true }
+festerm-recording-export = { path = "../../crates/festerm-recording-export", optional = true }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-mobile-tunnels = { path = "../../crates/festerm-mobile-tunnels", optional = true }
 festerm-session = { path = "../../crates/festerm-session", optional = true }
@@ -38,6 +39,7 @@ zeroize = "1"
 
 [dev-dependencies]
 festerm-mobile-tunnels = { path = "../../crates/festerm-mobile-tunnels", features = ["testing"] }
+festerm-unix-security = { path = "../../crates/festerm-unix-security" }
 festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", default-features = false, features = ["client"] }
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }
 tokio = { version = "1.17.0", default-features = false, features = ["net", "rt", "sync", "time", "io-util", "macros"] }
@@ -50,6 +52,12 @@ tempfile = "3"
 # to an iOS package. The production desktop composition root is not imported.
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "=0.36.1", default-features = false, features = ["x11", "wayland"] }
+
+[target.'cfg(unix)'.dependencies]
+festerm-unix-security = { path = "../../crates/festerm-unix-security", optional = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+festerm-recording-apple = { path = "../../crates/festerm-recording-apple", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "android-native-activity"] }

@@ -22,7 +22,7 @@ pub(super) struct SessionTab {
     pub reconnect_armed: bool,
     /// Output arrived while parked; cleared when the tab is shown again.
     pub has_new_output: bool,
-    parked: Option<(Terminal, TerminalView)>,
+    pub(super) parked: Option<(Terminal, TerminalView)>,
 }
 
 /// A durable remote session offered for reattachment.
@@ -208,6 +208,8 @@ impl MobileApp {
         spec: SessionSpec,
         ctx: &egui::Context,
     ) -> Result<(), String> {
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let recording = self.recording_for_new_session();
         let request = self.connect_request(&spec)?;
         let live = live_ssh::LiveSsh::connect(request, self.terminal.dimensions(), ctx)
             .map_err(str::to_owned)?;
@@ -222,6 +224,8 @@ impl MobileApp {
         self.active_tab = Some(id);
         self.workspace = workspaces::Workspace::Terminal;
         self.clear_sticky_modifiers();
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        self.include_new_session(id, recording);
         Ok(())
     }
 

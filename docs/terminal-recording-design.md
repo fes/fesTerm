@@ -1,9 +1,11 @@
 # Terminal Recording and MP4 Export Design
 
 **Status: Proposed under [ADR 0077](adr/0077-synchronized-terminal-recording-and-mp4-export.md).**
-End-to-end desktop and mobile implementation is authorized; this design does
-not claim that any recording or MP4 export path currently ships. Stable
-requirement/action IDs belong to the implementation review.
+The desktop and mobile implementation is under validation; no platform is
+accepted solely on the basis of implementation or isolated encoder/provider
+smoke. The remaining native and usability scenarios are `TR-01`–`TR-03` in
+[`manual-validation.md`](manual-validation.md), with action edges
+`REC-01`–`REC-05` in the GUI graph.
 
 ## Goals and non-goals
 
@@ -54,24 +56,33 @@ requirement/action IDs belong to the implementation review.
 4. The confirmation shows the saved export location and a preview of the
    recording subdirectory and MP4 names from **Settings > Recordings**. The
    user configures a location on first use and may override it for this
-   recording. The sheet also shows whether the source will be deleted after
-   encoding (on by default) and allows a one-recording override. Capture
-   stages data
+   recording. Desktop offers a one-recording override of its default-on
+   deletion setting. Mobile always retains the source until explicit deletion
+   in the recording library. Capture stages data
    in app-private storage, not at the destination. One global recording state
    and per-included-tab indicators appear; one **Stop recording** action stops
    every stream.
 5. App privacy lock, app deactivation/backgrounding that can suspend the
    process, a qualified OS lock/suspend signal, or a capture safety failure
    stops all streams and finalizes the source artifact where possible.
-   Abrupt process termination leaves a recoverable incomplete artifact for
-   explicit handling at next launch. Recording does not continue in the
-   background or automatically resume.
-6. User stop finalizes the shared source artifact and automatically begins
-   offline export of every included session to a separate MP4. The UI shows
-   per-file progress and results, with all files grouped in the recording's
-   subdirectory. The source is deleted only after every MP4 has been
-   successfully published unless retained by explicit choice; it stays
-   available after any encoding or publication failure for retry or recovery.
+   Abrupt process termination may leave an incomplete artifact. At the next
+   launch, the library can offer an explicitly labelled export of its validated
+   prefix while retaining the original.
+   Recording does not continue in the
+   background or automatically resume. On Linux, admission requires a GNOME
+   Shell screen shield in the same logind session in addition to the logind
+   monitor. Third-party screen lockers are not monitored and can be invisible;
+   do not rely on them while recording. Native GNOME qualification remains
+   open.
+6. User stop finalizes the shared source artifact and opens an export
+   confirmation. The user can override pacing and appearance (and desktop
+   retention), calculate the shared duration, and explicitly export or keep
+   the source for later.
+   Export creates a separate MP4 for each included session and shows per-file
+   progress and results in one recording subdirectory. Desktop deletes a
+   source only after every MP4 and the appearance metadata have been
+   published and verified, unless the user chose to keep it. Mobile always
+   keeps it for explicit deletion.
 
 Session names in the UI are not copied to the source artifact by default.
 Export filenames use generic recording-local labels unless the user chooses
@@ -85,21 +96,29 @@ explicit recover/delete controls.
 **Settings > Recordings** provides a saved export root folder, a recording
 subdirectory naming template, and an MP4 filename template, with a live preview
 of the resulting layout. It also holds the pacing defaults described under
-[Pacing settings](#pacing-settings) and a **Delete source recording after
-encoding** toggle that is on by default. The folder is chosen with the
+[Pacing settings](#pacing-settings) and the recording-wide appearance used by
+default at export. Desktop also offers a **Delete source
+recording after encoding** toggle that is on by default; mobile keeps sources
+until the user deletes them from the library. The folder is chosen with the
 platform's native directory picker. There is no implicit export destination
 before the user chooses one. These preferences and directory authorizations
 are device-local; they are not stored in profiles, workspaces or synchronized
 configuration.
 
-With the default deletion setting, a recording's source is deleted
-immediately after every MP4 has been successfully published; re-export with
-different pacing is then impossible. Turning the toggle off keeps sources in
+On desktop, with the default deletion setting, a recording's source is deleted
+immediately after every MP4 and its appearance metadata have been successfully
+published and verified; re-export with different settings is then impossible.
+Turning the toggle off keeps sources in
 the in-app library until deleted, and the setting explains that a retained
 source holds every captured terminal byte, including echoed secrets and OSC
 payloads. The start sheet can override it for one recording. Failed or
-interrupted exports always keep the source for retry or explicit deletion,
-regardless of this setting.
+interrupted exports keep the source for retry or explicit deletion unless
+source deletion was already committed after successful publication.
+Cancellation cannot interrupt a native operation already in progress; on
+desktop, if deletion was committed before an interruption, it may finish
+afterward. The UI reports incomplete cleanup instead of claiming the source
+was retained. Mobile never starts automatic source deletion, including when
+an older saved setting requested it.
 
 The proposed default templates are `recording-{recording_id}` for the
 subdirectory and `session-{session_index}.mp4` for each MP4. For example:
@@ -109,6 +128,7 @@ subdirectory and `session-{session_index}.mp4` for each MP4. For example:
   recording-7f2c9a10/
     session-01.mp4
     session-02.mp4
+    recording-appearance.json
 ```
 
 One subdirectory represents the entire synchronized recording operation, not
@@ -150,6 +170,16 @@ temporary destination-side directory before its final name is exposed; a
 cloud-backed provider may synchronize those copies even if publication later
 fails. Warn about this before export and clean up temporary copies where
 possible.
+
+Android's Storage Access Framework does not promise atomic publication of a
+multi-file directory. On Android, create a new provider directory and publish
+the already-encoded MP4s sequentially into it. The directory can be visible
+before the set is complete; tell the user this before export, mark it
+incomplete in fesTerm until every file is verified, and report any partial
+destination that could not be removed. Use the actual provider-returned names,
+never merge into or overwrite an existing export, and retain the private source
+on cancellation, interruption, or any failure. A successful mobile export
+also keeps the source until explicit deletion.
 
 This setting controls the published MP4 location only. Source recordings, retained sources and temporary MP4 staging remain in
 app-managed private storage using recommended backup-exclusion mechanisms
@@ -211,10 +241,10 @@ link-opening and other external side effects.
 
 ### Shared timeline and separate exports
 
-User stop automatically exports each session stream to its own silent MP4.
-All streams use one timeline origin and one time transform, configured by the
-pacing settings below. Independent per-session retiming is not supported
-because it would break alignment. Output timestamps correspond to applied
+After user stop, the confirmed export renders each session stream to its own
+silent MP4. All streams use one timeline origin and one time transform,
+configured by the pacing settings below. Independent per-session retiming is
+not supported because it would break alignment. Output timestamps correspond to applied
 mutation events, not individual keystrokes; bursty reads may contain many
 characters.
 
@@ -312,8 +342,8 @@ the source; the user can retry with the advanced pacing options disabled.
 
 ## Recording artifact and privacy
 
-One versioned source artifact contains the manifest, shared timeline and all
-terminal streams. It is staged in app-private storage with restrictive
+One versioned source artifact contains the shared timeline and all terminal
+streams; saved export options are stored separately. It is staged in app-private storage with restrictive
 permissions, using each platform's recommended non-backup location and
 backup-exclusion API where available. Apple exclusion is advisory, Android's
 no-backup directory excludes Auto Backup, and other backup software can still
@@ -326,6 +356,17 @@ finalization, integrity checking and bounded parsing. Arbitrary file import
 is not supported in v1; retained app-created recordings can be listed,
 re-exported and deleted. Interrupted artifacts are surfaced for explicit
 recovery or deletion at next launch and are not silently left indefinitely.
+Recovery validates framing, checksums, timestamps, stream state and checkpoints
+in order, stopping at the first invalid or truncated frame. Output requiring a
+post-mutation checkpoint is excluded unless that checkpoint is present. The
+user is told that later output may be missing, and the recovered export folder
+is marked `-recovered`. The original source is never modified or automatically
+deleted. Recovery binds both the replayed prefix and the complete inspected
+source bytes to the library snapshot before publication.
+While capture is active, completed frames are flushed to the OS at roughly
+one-second intervals when the writer is not blocked. This limits buffered loss
+on process termination but does not guarantee durability after power loss; the
+finalized source is synchronized to storage.
 
 The source artifact is sensitive plaintext. It may include tokens, passwords,
 private keys, personal information, echoed input, terminal titles, paths,
@@ -361,10 +402,24 @@ existing parser/allocation bounds and suppresses external side effects. Existing
 The manifest records the recording format, core/renderer version and terminal
 geometry. Export settings, including font, theme, cell scale and pixel
 dimensions, are chosen recording-wide at export rather than captured from
-per-tab view zoom. The chosen font/theme identity is recorded with each export.
-If the exact font is unavailable, the user must choose a substitute; do not
-silently substitute. Custom font bytes are not embedded in the recording. The
-cursor is rendered steady (no blink).
+per-tab view zoom. The defaults are JetBrains Mono without ligatures, the
+fesTerm dark palette, 20-point text and a 1920×1080 canvas. JetBrains Mono with
+ligatures and the fesTerm light palette are also available on desktop and
+mobile. Desktop can additionally use already-downloaded and verified
+Iosevka Term, JuliaMono and Maple Mono faces; export never initiates a font
+download. Text size is 8–64 points and canvas dimensions are even, at most
+3840×2160. Missing or changed selected font faces fail export and retain the
+source; the user must choose another font rather than receiving a silent
+substitution.
+
+Every published set includes `recording-appearance.json`, recording the chosen
+font and version, regular/bold/italic/bold-italic face hashes, emoji identities
+and hashes, theme, text size, dimensions, renderer version and whether the set
+is a recovered prefix. It contains no terminal content. The metadata is
+verified along with every MP4 before a publication is complete or a desktop
+source may be deleted. A provider that changes the metadata filename or
+contents fails publication and reports any partial folder. Font bytes are not
+embedded in the source or metadata. The cursor is rendered steady (no blink).
 Every session is rendered into a fixed, even-aligned canvas at 30 fps; resize
 events update the terminal grid while the output is letterboxed/scaled to fit.
 Frame sampling shows the state after all applied events at or before that
@@ -403,13 +458,16 @@ until native exports pass playback, dimensions, cadence and readability
 checks; this is not a promise of universal MP4 support.
 
 The export worker is isolated from live sessions, uses bounded queues and
-cancellable progress, and is foreground-only on mobile. If the app is
-suspended during export, the source remains available and export resumes only
-after the user reopens the app. Encode every MP4 into private staging first;
+cancellable progress, and is foreground-only on mobile. CPU-only pacing
+analysis checks cancellation at bounded intervals; an already-running native
+I/O or encoder operation may still finish. If the mobile app is suspended during
+export, work is cancelled and the source remains available; automatic deletion
+is disabled on mobile. A later retry
+requires explicit user action. Encode every MP4 into private staging first;
 publish the complete set only after every stream succeeds. Use a staged
 recording directory and a single final directory publication where supported;
-otherwise present the set as incomplete until all individual files are
-published. Never replace an existing export silently.
+on Android, present the provider directory as incomplete until all individual
+files are published and verified. Never replace an existing export silently.
 
 ## Validation plan
 
@@ -428,8 +486,9 @@ published. Never replace an existing export silently.
   stay stable, date/time tokens are opt-in, and collision/re-export handling
   creates a new directory without overwriting existing files.
 - Unavailable roots, revoked directory grants and publication errors are
-  surfaced without fallback; source deletion requires successful publication
-  of the complete set.
+  surfaced without fallback; desktop automatic deletion requires successful
+  publication of the complete set, while mobile retains sources for explicit
+  deletion.
 - Output chunks retain observed application-level timing without
   implying per-key timing; shared speed/idle transforms preserve alignment.
 - Echo-like segment detection, typing normalization, long-output limiting and
@@ -437,7 +496,7 @@ published. Never replace an existing export silently.
   state, resolve overlaps by the longest required duration, and never consume
   keystroke timing.
 - Source deletion after encoding is on by default, follows per-recording
-  overrides, and never deletes after a failed or incomplete export.
+  overrides, and is committed only after complete verified publication.
 - Queue overflow, disk errors, truncated files, oversized checkpoints,
   malformed timestamps and unknown required versions stop capture safely.
 - Start/stop, background, privacy-lock, suspend and failure cuts apply to all

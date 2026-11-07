@@ -334,7 +334,7 @@ impl LinuxEncoder {
         if rgba.len() != self.bytes_per_frame {
             return Err(VideoError::new("the video frame has the wrong dimensions"));
         }
-        if rgba.chunks_exact(4).any(|pixel| pixel[3] != 255) {
+        if rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255) {
             return Err(VideoError::new("video frames must be opaque RGBA"));
         }
         let next_frame = self
@@ -567,7 +567,7 @@ mod tests {
         let mut encoder = LinuxEncoder::new(&path, 320, 180).unwrap();
         let mut frame = vec![255; 320 * 180 * 4];
         for index in 0..90 {
-            for pixel in frame.chunks_exact_mut(4) {
+            for pixel in frame.as_chunks_mut::<4>().0 {
                 pixel[0] = if index < 30 { 220 } else { 20 };
                 pixel[1] = if (30..60).contains(&index) { 220 } else { 20 };
                 pixel[2] = if index >= 60 { 220 } else { 20 };

@@ -1,18 +1,28 @@
-use std::{fmt, io::Read, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    io::Read,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use festerm_core::Terminal;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     advanced_pacing::{AdvancedTimeline, EventTiming, SplitKind},
-    ArtifactError, ArtifactEvent, ArtifactReader, StreamId, MAX_DURATION,
+    ArtifactError, ArtifactEvent, ArtifactReader, FinishReason, RecoveryPrefix, RecoveryReader,
+    StreamId, MAX_DURATION,
 };
 
 const FRAMES_PER_SECOND: u64 = 30;
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
 /// A playback multiplier applied to the shared timeline.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PlaybackSpeed {
     Half,
     #[default]
@@ -171,6 +181,28 @@ impl From<ArtifactError> for PlaybackError {
     }
 }
 
+pub(crate) fn check_cancelled(cancelled: &impl Fn() -> bool) -> Result<(), PlaybackError> {
+    if cancelled() {
+        return Err(PlaybackError::new("recording planning was cancelled"));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FinishPolicy {
+    Complete,
+    Recovered,
+}
+
+impl FinishPolicy {
+    pub(crate) const fn accepts(self, reason: FinishReason) -> bool {
+        match self {
+            Self::Complete => reason.is_complete(),
+            Self::Recovered => matches!(reason, FinishReason::RecoveredPrefix),
+        }
+    }
+}
+
 /// A validated, shared frame schedule for all streams of one source.
 #[derive(Clone, Debug)]
 pub struct PlaybackPlan {
@@ -179,14 +211,56 @@ pub struct PlaybackPlan {
     frame_count: u64,
     stream_count: usize,
     fingerprint: [u8; 32],
+    finish_policy: FinishPolicy,
     advanced: Option<Arc<AdvancedTimeline>>,
 }
 
 impl PlaybackPlan {
     /// Validates the whole source before any output is published.
     pub fn inspect<R: Read>(source: R, pacing: Pacing) -> Result<Self, PlaybackError> {
+        Self::inspect_with_cancellation(source, pacing, FinishPolicy::Complete, &|| false)
+    }
+
+    /// Validates and plans a source while observing cancellation during both
+    /// reads and CPU-only pacing work.
+    pub fn inspect_cancellable<R: Read>(
+        source: R,
+        pacing: Pacing,
+        cancelled: &AtomicBool,
+    ) -> Result<Self, PlaybackError> {
+        Self::inspect_with_cancellation(source, pacing, FinishPolicy::Complete, &|| {
+            cancelled.load(Ordering::Acquire)
+        })
+    }
+
+    /// Plans an explicitly selected prefix and binds it to its inspected bytes.
+    pub fn inspect_recovered_cancellable<R: Read>(
+        source: RecoveryReader<R>,
+        prefix: RecoveryPrefix,
+        pacing: Pacing,
+        cancelled: &AtomicBool,
+    ) -> Result<Self, PlaybackError> {
+        let plan =
+            Self::inspect_with_cancellation(source, pacing, FinishPolicy::Recovered, &|| {
+                cancelled.load(Ordering::Acquire)
+            })?;
+        if plan.fingerprint != prefix.fingerprint() || plan.stream_count != prefix.stream_count() {
+            return Err(PlaybackError::new(
+                "the recovered recording prefix changed after inspection",
+            ));
+        }
+        Ok(plan)
+    }
+
+    fn inspect_with_cancellation<R: Read>(
+        source: R,
+        pacing: Pacing,
+        finish_policy: FinishPolicy,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Self, PlaybackError> {
+        check_cancelled(cancelled)?;
         if pacing.typing.is_some() || pacing.long_output.is_some() || pacing.reveal.is_some() {
-            let timeline = AdvancedTimeline::inspect(source, pacing)?;
+            let timeline = AdvancedTimeline::inspect(source, pacing, finish_policy, cancelled)?;
             let duration = timeline.duration();
             let frames = Self::count_frames(duration)?;
             return Ok(Self {
@@ -195,6 +269,7 @@ impl PlaybackPlan {
                 frame_count: frames,
                 stream_count: timeline.stream_count(),
                 fingerprint: timeline.fingerprint(),
+                finish_policy,
                 advanced: Some(Arc::new(timeline)),
             });
         }
@@ -202,6 +277,7 @@ impl PlaybackPlan {
         let mut warp = TimeWarp::new(pacing);
         let mut stream_count = 0;
         let duration = loop {
+            check_cancelled(cancelled)?;
             let event = reader
                 .next_event()?
                 .ok_or_else(|| PlaybackError::new("recording ended without a finish frame"))?;
@@ -209,7 +285,7 @@ impl PlaybackPlan {
             match event {
                 ArtifactEvent::Started { .. } => stream_count += 1,
                 ArtifactEvent::Finished { reason, .. } => {
-                    if !reason.is_complete() {
+                    if !finish_policy.accepts(reason) {
                         return Err(PlaybackError::new(
                             "an incomplete recording requires explicit recovery",
                         ));
@@ -219,6 +295,7 @@ impl PlaybackPlan {
                 _ => {}
             }
         };
+        check_cancelled(cancelled)?;
         Ok(Self {
             pacing,
             duration,
@@ -227,6 +304,7 @@ impl PlaybackPlan {
             fingerprint: reader
                 .fingerprint()
                 .expect("a validated finish provides a source fingerprint"),
+            finish_policy,
             advanced: None,
         })
     }
@@ -436,7 +514,7 @@ impl<R: Read> Playback<R> {
                     }
                 }
                 ArtifactEvent::Finished { reason, .. } => {
-                    if !reason.is_complete()
+                    if !self.plan.finish_policy.accepts(reason)
                         || Duration::from_nanos(mapped) != self.plan.duration
                         || self.reader.fingerprint() != Some(self.plan.fingerprint)
                         || self
@@ -940,5 +1018,35 @@ mod tests {
         };
         let error = PlaybackPlan::inspect(Cursor::new(bytes), pacing).unwrap_err();
         assert!(error.to_string().contains("eight-hour"));
+    }
+
+    #[test]
+    fn advanced_pacing_observes_cancellation_after_the_last_source_read() {
+        struct CancelAtEof<'a> {
+            source: Cursor<Vec<u8>>,
+            cancelled: &'a AtomicBool,
+        }
+
+        impl Read for CancelAtEof<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let count = self.source.read(buffer)?;
+                if count == 0 {
+                    self.cancelled.store(true, Ordering::Release);
+                }
+                Ok(count)
+            }
+        }
+
+        let cancelled = AtomicBool::new(false);
+        let reader = CancelAtEof {
+            source: Cursor::new(source(b"C", FinishReason::User)),
+            cancelled: &cancelled,
+        };
+        let pacing = Pacing {
+            typing: Some(TypingSpeed::new(15).unwrap()),
+            ..Pacing::default()
+        };
+        let error = PlaybackPlan::inspect_cancellable(reader, pacing, &cancelled).unwrap_err();
+        assert!(error.to_string().contains("cancelled"));
     }
 }

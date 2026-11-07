@@ -3,19 +3,23 @@
 use std::{
     fs::{self, DirBuilder, Permissions},
     os::unix::fs::{symlink, DirBuilderExt, PermissionsExt},
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::AtomicBool,
     thread,
     time::{Duration, Instant},
 };
 
 use festerm_core::{Dimensions, Terminal};
-use festerm_recording::{Completion, FinishReason, Pacing, Recorder};
-use festerm_recording_export::{stage_recording, AndroidEncoderFactory, ExportOptions};
+use festerm_recording::{Completion, FinishReason, LocalStart, NameTemplates, Pacing, Recorder};
+use festerm_recording_export::{
+    delete_source_after_provider_publication, publish_to_provider, stage_recording,
+    AndroidEncoderFactory, AndroidRecordingProvider, ExportOptions, ProviderJournal,
+    StagedRecording,
+};
 use festerm_ui_egui::RecordingFrameSize;
 use jni_legacy::{
     objects::{JClass, JString},
-    sys::jint,
+    sys::{jint, jstring},
     JNIEnv,
 };
 
@@ -46,6 +50,51 @@ extern "system" fn Java_io_github_fes_festerm_RecordingNativeTest_encode(
 }
 
 fn encode(directory: &Path) -> Result<(), String> {
+    let _ = stage_fixture(directory)?;
+    Ok(())
+}
+
+#[unsafe(no_mangle)]
+extern "system" fn Java_io_github_fes_festerm_RecordingNativeTest_publish(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    directory: JString<'_>,
+    tree_uri: JString<'_>,
+    name: JString<'_>,
+) -> jstring {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let directory: String = env
+            .get_string(&directory)
+            .map_err(|error| error.to_string())?
+            .into();
+        let tree_uri: String = env
+            .get_string(&tree_uri)
+            .map_err(|error| error.to_string())?
+            .into();
+        let name: String = env
+            .get_string(&name)
+            .map_err(|error| error.to_string())?
+            .into();
+        publish_fixture(Path::new(&directory), &tree_uri, &name)
+    }));
+    match result {
+        Ok(Ok(uri)) => match env.new_string(uri) {
+            Ok(uri) => uri.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(error)) => {
+            eprintln!("fesTerm: Android provider recording validation failed: {error}");
+            std::ptr::null_mut()
+        }
+        Err(_) => {
+            eprintln!("fesTerm: Android provider recording validation panicked");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+fn stage_fixture(directory: &Path) -> Result<(StagedRecording, PathBuf), String> {
+    LocalStart::now().map_err(|error| error.to_string())?;
     let source_directory = directory.join("sources");
     let staging_directory = directory.join("staging");
     for path in [&source_directory, &staging_directory] {
@@ -123,7 +172,63 @@ fn encode(directory: &Path) -> Result<(), String> {
     if staged.videos().len() != 2 || !source.is_file() {
         return Err("the staged video set or retained source is missing".to_owned());
     }
-    Ok(())
+    Ok((staged, source))
+}
+
+fn publish_fixture(directory: &Path, tree_uri: &str, name: &str) -> Result<String, String> {
+    let (staged, source) = stage_fixture(directory)?;
+    let mut provider =
+        AndroidRecordingProvider::new(tree_uri).map_err(|error| error.to_string())?;
+    let templates = NameTemplates::new(name, "session-{session_index}.mp4")
+        .map_err(|error| error.to_string())?;
+    let start = LocalStart::new(2026, 2, 28, 9, 6, 5).map_err(|error| error.to_string())?;
+    let mut journal = ProviderJournal::begin(directory, &staged, tree_uri, &templates, start)
+        .map_err(|error| error.to_string())?;
+    let pending = ProviderJournal::recover(directory).map_err(|error| error.to_string())?;
+    if pending.len() != 1 || pending[0].record().directory().is_some() {
+        return Err("provider export intent was not recoverable".to_owned());
+    }
+    let mut published = publish_to_provider(
+        &staged,
+        &mut provider,
+        &templates,
+        journal.record().recording_id(),
+        start,
+        &AtomicBool::new(false),
+        |entry| journal.remember_directory(entry),
+    )
+    .map_err(|error| error.to_string())?;
+    let partial = ProviderJournal::recover(directory).map_err(|error| error.to_string())?;
+    if !source.is_file()
+        || published.videos.len() != 2
+        || partial.len() != 1
+        || partial[0].record().directory() != Some(&published.directory)
+        || partial[0].record().published_videos().is_some()
+    {
+        return Err("provider publication did not preserve the source or journal".to_owned());
+    }
+    journal
+        .mark_published(&published)
+        .map_err(|error| error.to_string())?;
+    let complete = ProviderJournal::recover(directory).map_err(|error| error.to_string())?;
+    if complete.len() != 1
+        || complete[0].record().published_videos() != Some(published.videos.as_slice())
+    {
+        return Err("completed provider export was not recoverable".to_owned());
+    }
+    delete_source_after_provider_publication(&staged, &mut published)
+        .map_err(|error| error.to_string())?;
+    if source.exists() {
+        return Err("published source was not removed".to_owned());
+    }
+    journal.remove().map_err(|error| error.to_string())?;
+    if !ProviderJournal::recover(directory)
+        .map_err(|error| error.to_string())?
+        .is_empty()
+    {
+        return Err("completed provider journal was not removed".to_owned());
+    }
+    Ok(published.directory.id)
 }
 
 fn verify_collision(directory: &Path, terminal: &Terminal) -> Result<(), String> {

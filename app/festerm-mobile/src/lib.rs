@@ -23,6 +23,14 @@ mod local_input;
 mod model;
 mod password_buffer;
 mod profiles;
+#[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+mod recording_library_ui;
+#[cfg(all(feature = "live-ssh", unix))]
+mod recording_storage;
+#[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+mod recording_tasks;
+#[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+mod recording_ui;
 mod runtime;
 pub use runtime::run_native;
 #[cfg(test)]
@@ -174,7 +182,60 @@ pub struct SuspensionHandle {
     connection: Rc<RefCell<Option<live_ssh::LiveSsh>>>,
     /// Sessions of parked tabs, keyed by tab id.
     background: Rc<RefCell<Vec<(u64, live_ssh::LiveSsh)>>>,
-    recording: std::sync::Arc<std::sync::Mutex<Option<festerm_recording::SharedRecording>>>,
+    recording: std::sync::Arc<std::sync::Mutex<Option<RecordingOwner>>>,
+    export: std::sync::Arc<
+        std::sync::Mutex<Option<std::sync::Weak<festerm_recording_export::ExportCancellation>>>,
+    >,
+}
+
+#[cfg(feature = "live-ssh")]
+struct RecordingOwner {
+    loss: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    recording: Option<festerm_recording::SharedRecording>,
+}
+
+#[cfg(feature = "live-ssh")]
+struct RecordingStartGuard<'a> {
+    holder: &'a std::sync::Mutex<Option<RecordingOwner>>,
+    loss: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    armed: bool,
+}
+
+#[cfg(feature = "live-ssh")]
+impl Drop for RecordingStartGuard<'_> {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+
+        if !self.armed {
+            return;
+        }
+        self.loss.store(true, Ordering::Release);
+        let recording = {
+            let mut slot = match self.holder.lock() {
+                Ok(slot) => slot,
+                Err(poisoned) => {
+                    eprintln!("fesTerm: recording lifecycle state was poisoned");
+                    poisoned.into_inner()
+                }
+            };
+            match slot.as_ref() {
+                Some(owner) if std::sync::Arc::ptr_eq(&owner.loss, &self.loss) => {
+                    if let Some(recording) = &owner.recording {
+                        Some(recording.clone())
+                    } else {
+                        *slot = None;
+                        None
+                    }
+                }
+                _ => None,
+            }
+        };
+        if let Some(recording) = recording {
+            if let Err(error) = recording.stop(festerm_recording::FinishReason::Lifecycle) {
+                eprintln!("fesTerm: recording could not be stopped after start failed: {error}");
+            }
+        }
+    }
 }
 
 #[cfg(feature = "live-ssh")]
@@ -185,16 +246,21 @@ const SUSPENDED: &str =
 impl SuspensionHandle {
     fn stop_recording(&self) {
         Self::stop_shared_recording(&self.recording);
+        Self::cancel_shared_export(&self.export);
     }
 
-    fn stop_shared_recording(
-        holder: &std::sync::Mutex<Option<festerm_recording::SharedRecording>>,
-    ) {
+    fn stop_shared_recording(holder: &std::sync::Mutex<Option<RecordingOwner>>) {
         let recording = match holder.lock() {
-            Ok(recording) => recording.clone(),
+            Ok(recording) => recording.as_ref().and_then(|owner| {
+                owner.loss.store(true, std::sync::atomic::Ordering::Release);
+                owner.recording.clone()
+            }),
             Err(poisoned) => {
                 eprintln!("fesTerm: recording lifecycle state was poisoned");
-                poisoned.into_inner().clone()
+                poisoned.into_inner().as_ref().and_then(|owner| {
+                    owner.loss.store(true, std::sync::atomic::Ordering::Release);
+                    owner.recording.clone()
+                })
             }
         };
         if let Some(recording) = recording {
@@ -206,7 +272,283 @@ impl SuspensionHandle {
 
     fn content_lock_callback(&self) -> impl Fn() + Send + Sync + 'static {
         let recording = self.recording.clone();
-        move || Self::stop_shared_recording(&recording)
+        let export = self.export.clone();
+        move || {
+            Self::stop_shared_recording(&recording);
+            Self::cancel_shared_export(&export);
+        }
+    }
+
+    fn cancel_shared_export(
+        holder: &std::sync::Mutex<
+            Option<std::sync::Weak<festerm_recording_export::ExportCancellation>>,
+        >,
+    ) {
+        let cancellation = match holder.lock() {
+            Ok(slot) => slot.as_ref().and_then(std::sync::Weak::upgrade),
+            Err(poisoned) => {
+                eprintln!("fesTerm: recording export lifecycle state was poisoned");
+                poisoned
+                    .into_inner()
+                    .as_ref()
+                    .and_then(std::sync::Weak::upgrade)
+            }
+        };
+        if let Some(cancellation) = cancellation {
+            if !cancellation.cancel() {
+                eprintln!("fesTerm: recording export retention had already been committed");
+            }
+        }
+    }
+
+    #[cfg(any(test, target_os = "android", target_os = "ios"))]
+    fn foreground_export_cancellation(
+        &self,
+        privacy_generation: impl Fn() -> Result<u64, String>,
+    ) -> Result<std::sync::Arc<festerm_recording_export::ExportCancellation>, String> {
+        let generation = privacy_generation()?;
+        let cancellation =
+            std::sync::Arc::new(festerm_recording_export::ExportCancellation::default());
+        {
+            let mut slot = self
+                .export
+                .lock()
+                .map_err(|_| "Recording export lifecycle state is unavailable".to_owned())?;
+            if slot.as_ref().and_then(std::sync::Weak::upgrade).is_some() {
+                return Err("A recording export is already active".to_owned());
+            }
+            *slot = Some(std::sync::Arc::downgrade(&cancellation));
+        }
+        match privacy_generation() {
+            Ok(current)
+                if current == generation
+                    && !cancellation
+                        .flag()
+                        .load(std::sync::atomic::Ordering::Acquire) =>
+            {
+                Ok(cancellation)
+            }
+            Ok(_) => {
+                cancellation.cancel();
+                Err("Recording export requires an active, unlocked app".to_owned())
+            }
+            Err(error) => {
+                cancellation.cancel();
+                Err(error)
+            }
+        }
+    }
+
+    fn start_recording(
+        &self,
+        directory: &std::path::Path,
+        terminals: &[&Terminal],
+        privacy_generation: impl Fn() -> Result<u64, String>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<
+        (
+            festerm_recording::SharedRecording,
+            Vec<festerm_recording::RecordingStream>,
+        ),
+        String,
+    > {
+        self.start_recording_using(None, privacy_generation, |loss| {
+            festerm_recording::SharedRecording::start_with_privacy_loss_flag(
+                directory, terminals, loss, wake,
+            )
+        })
+    }
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    fn start_prepared_recording(
+        &self,
+        prepared: festerm_recording::PreparedRecording,
+        terminals: &[&Terminal],
+        expected_generation: u64,
+        privacy_generation: impl Fn() -> Result<u64, String>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<
+        (
+            festerm_recording::SharedRecording,
+            Vec<festerm_recording::RecordingStream>,
+        ),
+        String,
+    > {
+        self.start_recording_using(Some(expected_generation), privacy_generation, |loss| {
+            festerm_recording::SharedRecording::start_prepared_with_privacy_loss_flag(
+                prepared, terminals, loss, wake,
+            )
+        })
+    }
+
+    fn start_recording_using(
+        &self,
+        expected_generation: Option<u64>,
+        privacy_generation: impl Fn() -> Result<u64, String>,
+        start: impl FnOnce(
+            std::sync::Arc<std::sync::atomic::AtomicBool>,
+        ) -> Result<
+            (
+                festerm_recording::SharedRecording,
+                Vec<festerm_recording::RecordingStream>,
+            ),
+            festerm_recording::CaptureError,
+        >,
+    ) -> Result<
+        (
+            festerm_recording::SharedRecording,
+            Vec<festerm_recording::RecordingStream>,
+        ),
+        String,
+    > {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let generation = privacy_generation()?;
+        if expected_generation.is_some_and(|expected| expected != generation) {
+            return Err("Recording stopped because privacy or app activity changed".to_owned());
+        }
+        let loss = Arc::new(AtomicBool::new(false));
+        {
+            let mut slot = self
+                .recording
+                .lock()
+                .map_err(|_| "Recording lifecycle state is unavailable".to_owned())?;
+            if slot.is_some() {
+                return Err("A recording is already starting or finishing".to_owned());
+            }
+            *slot = Some(RecordingOwner {
+                loss: loss.clone(),
+                recording: None,
+            });
+        }
+        let mut start_guard = RecordingStartGuard {
+            holder: &self.recording,
+            loss: loss.clone(),
+            armed: true,
+        };
+        let check_privacy = || {
+            let current = privacy_generation()?;
+            if current != generation || loss.load(Ordering::Acquire) {
+                Err("Recording stopped because privacy or app activity changed".to_owned())
+            } else {
+                Ok(())
+            }
+        };
+        if let Err(error) = check_privacy() {
+            self.clear_pending_recording(&loss)?;
+            return Err(error);
+        }
+        let (recording, streams) = match start(loss.clone()) {
+            Ok(started) => started,
+            Err(error) => {
+                self.clear_pending_recording(&loss)?;
+                return Err(error.to_string());
+            }
+        };
+        {
+            let mut slot = match self.recording.lock() {
+                Ok(slot) => slot,
+                Err(poisoned) => {
+                    let mut slot = poisoned.into_inner();
+                    if let Some(owner) = slot.as_mut() {
+                        owner.loss.store(true, Ordering::Release);
+                        owner.recording = Some(recording.clone());
+                    }
+                    drop(slot);
+                    recording
+                        .stop(festerm_recording::FinishReason::Lifecycle)
+                        .map_err(|error| error.to_string())?;
+                    return Err("Recording lifecycle state was poisoned".to_owned());
+                }
+            };
+            let Some(owner) = slot
+                .as_mut()
+                .filter(|owner| Arc::ptr_eq(&owner.loss, &loss))
+            else {
+                loss.store(true, Ordering::Release);
+                drop(slot);
+                recording
+                    .stop(festerm_recording::FinishReason::Lifecycle)
+                    .map_err(|error| error.to_string())?;
+                return Err("Recording lifecycle state changed unexpectedly".to_owned());
+            };
+            owner.recording = Some(recording.clone());
+        }
+        if let Err(error) = check_privacy() {
+            recording
+                .stop(festerm_recording::FinishReason::Lifecycle)
+                .map_err(|stop| format!("{error}; could not stop recording: {stop}"))?;
+            return Err(error);
+        }
+        if !recording
+            .is_recording()
+            .map_err(|error| error.to_string())?
+        {
+            return Err("Recording stopped while it was starting".to_owned());
+        }
+        start_guard.armed = false;
+        Ok((recording, streams))
+    }
+
+    fn clear_pending_recording(
+        &self,
+        loss: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<(), String> {
+        let mut slot = self
+            .recording
+            .lock()
+            .map_err(|_| "Recording lifecycle state is unavailable".to_owned())?;
+        if slot.as_ref().is_some_and(|owner| {
+            std::sync::Arc::ptr_eq(&owner.loss, loss) && owner.recording.is_none()
+        }) {
+            *slot = None;
+            Ok(())
+        } else {
+            Err("Recording lifecycle state changed unexpectedly".to_owned())
+        }
+    }
+
+    fn current_recording(&self) -> Result<Option<festerm_recording::SharedRecording>, String> {
+        Ok(self
+            .recording
+            .lock()
+            .map_err(|_| "Recording lifecycle state is unavailable".to_owned())?
+            .as_ref()
+            .and_then(|owner| owner.recording.clone()))
+    }
+
+    fn poll_recording_completion(&self) -> Result<Option<festerm_recording::Completion>, String> {
+        let Some(recording) = self.current_recording()? else {
+            return Ok(None);
+        };
+        let Some(completion) = recording
+            .poll_completion()
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
+        let mut slot = self
+            .recording
+            .lock()
+            .map_err(|_| "Recording lifecycle state is unavailable".to_owned())?;
+        if slot
+            .as_ref()
+            .and_then(|owner| owner.recording.as_ref())
+            .is_none_or(|current| current.id() != recording.id())
+        {
+            return Err("Recording lifecycle state changed unexpectedly".to_owned());
+        }
+        *slot = None;
+        Ok(Some(completion))
+    }
+
+    #[cfg(test)]
+    fn install_test_recording(&self, recording: festerm_recording::SharedRecording) {
+        *self.recording.lock().unwrap() = Some(RecordingOwner {
+            loss: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            recording: Some(recording),
+        });
     }
 
     pub fn suspend(&self) {
@@ -387,6 +729,28 @@ struct LiveView {
     status: &'static str,
 }
 
+#[cfg(feature = "live-ssh")]
+enum RecordingStart<'a> {
+    Directory(&'a std::path::Path),
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    Prepared {
+        source: festerm_recording::PreparedRecording,
+        generation: u64,
+    },
+}
+
+#[cfg(feature = "live-ssh")]
+struct RecordingSessionSelection {
+    tab: u64,
+    session: std::sync::Weak<dyn festerm_session::Session>,
+}
+
+#[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+struct RecordingConsent {
+    generation: u64,
+    selected: Vec<RecordingSessionSelection>,
+}
+
 pub struct MobileApp {
     #[cfg(all(
         target_os = "ios",
@@ -423,6 +787,12 @@ pub struct MobileApp {
     surface: Surface,
     shell: shell::ShellState,
     profiles: Option<profiles::Profiles>,
+    #[cfg(all(feature = "live-ssh", unix))]
+    recording_storage: Option<recording_storage::RecordingStorage>,
+    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    recording_ui: recording_ui::RecordingUi,
+    #[cfg(all(feature = "live-ssh", target_os = "ios"))]
+    recording_folder_picker: Option<festerm_ios_window::RecordingFolderPicker>,
     lock: Option<app_lock::LockHost>,
     text_size: shell::TextSize,
     default_keyboard: terminal_keyboard::KeyboardKind,
@@ -432,6 +802,7 @@ pub struct MobileApp {
     terminal_keyboard: terminal_keyboard::TerminalKeyboard,
     terminal_keyboard_input: bool,
     dictation: Option<festerm_ios_window::Dictation>,
+    dictation_send_pending: bool,
     dictation_tab: Option<u64>,
     dictation_target: Option<dictation::Destination>,
     dictation_owns_frame: bool,
@@ -510,6 +881,12 @@ impl MobileApp {
             surface: Surface::Tabs,
             shell: shell::ShellState::default(),
             profiles: None,
+            #[cfg(all(feature = "live-ssh", unix))]
+            recording_storage: None,
+            #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+            recording_ui: recording_ui::RecordingUi::default(),
+            #[cfg(all(feature = "live-ssh", target_os = "ios"))]
+            recording_folder_picker: None,
             lock: None,
             text_size: shell::TextSize::default(),
             default_keyboard: terminal_keyboard::KeyboardKind::Native,
@@ -518,6 +895,7 @@ impl MobileApp {
             terminal_keyboard: terminal_keyboard::TerminalKeyboard::default(),
             terminal_keyboard_input: false,
             dictation: None,
+            dictation_send_pending: false,
             dictation_tab: None,
             dictation_target: None,
             dictation_owns_frame: false,
@@ -572,6 +950,19 @@ impl MobileApp {
         self
     }
 
+    #[cfg(all(feature = "live-ssh", any(target_os = "ios", target_os = "android")))]
+    fn with_recording_storage(mut self) -> Self {
+        match recording_storage::RecordingStorage::open_default() {
+            Ok((storage, settings)) => {
+                self.shell.recording_settings = Some(settings.clone());
+                self.shell.recording_saved = Some(settings);
+                self.recording_storage = Some(storage);
+            }
+            Err(error) => self.shell.recording_error = Some(error),
+        }
+        self
+    }
+
     /// Sets every terminal, open or parked, to the preset size.
     fn apply_text_size(&mut self, size: shell::TextSize) {
         self.text_size = size;
@@ -619,6 +1010,12 @@ impl MobileApp {
                 .as_ref()
                 .and_then(|bridge| bridge.document_picker()),
         );
+        #[cfg(all(feature = "live-ssh", target_os = "ios"))]
+        {
+            self.recording_folder_picker = keyboard
+                .as_ref()
+                .and_then(|bridge| bridge.recording_folder_picker());
+        }
         self.keyboard = keyboard;
         self
     }
@@ -629,6 +1026,315 @@ impl MobileApp {
         self
     }
 
+    /// Starts one shared recording for the explicitly selected live terminal
+    /// tabs. The caller must establish private, backup-excluded storage first.
+    #[cfg(feature = "live-ssh")]
+    pub fn start_terminal_recording(
+        &mut self,
+        directory: &std::path::Path,
+        selected: &[u64],
+        context: &egui::Context,
+    ) -> Result<(), String> {
+        let (_, selected) = self.recording_terminals(selected)?;
+        self.start_terminal_recording_from(RecordingStart::Directory(directory), &selected, context)
+    }
+
+    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    fn start_prepared_terminal_recording(
+        &mut self,
+        prepared: festerm_recording::PreparedRecording,
+        consent: &RecordingConsent,
+        context: &egui::Context,
+    ) -> Result<(), String> {
+        self.start_terminal_recording_from(
+            RecordingStart::Prepared {
+                source: prepared,
+                generation: consent.generation,
+            },
+            &consent.selected,
+            context,
+        )
+    }
+
+    #[cfg(feature = "live-ssh")]
+    fn recording_terminals(
+        &self,
+        selected: &[u64],
+    ) -> Result<(Vec<&Terminal>, Vec<RecordingSessionSelection>), String> {
+        use std::collections::HashSet;
+
+        if selected.is_empty() || selected.len() > festerm_recording::MAX_STREAMS {
+            return Err("Select between one and sixteen terminal sessions".to_owned());
+        }
+        let mut unique = HashSet::new();
+        let active = self.sink.live.connection.borrow();
+        let parked = self.sink.live.background.borrow();
+        let mut terminals = Vec::with_capacity(selected.len());
+        let mut identities = Vec::with_capacity(selected.len());
+        for id in selected {
+            if !unique.insert(*id) {
+                return Err("A terminal session was selected more than once".to_owned());
+            }
+            let tab = self
+                .tabs
+                .iter()
+                .find(|tab| tab.id == *id)
+                .ok_or_else(|| "A selected terminal session is no longer open".to_owned())?;
+            let (terminal, view, live) = if self.active_tab == Some(*id) {
+                (&self.terminal, &self.view, active.as_ref())
+            } else {
+                let (terminal, view) = tab
+                    .parked
+                    .as_ref()
+                    .ok_or_else(|| "A selected terminal session is unavailable".to_owned())?;
+                let live = parked
+                    .iter()
+                    .find(|(parked_id, _)| parked_id == id)
+                    .map(|(_, live)| live);
+                (terminal, view, live)
+            };
+            let session = live
+                .and_then(live_ssh::LiveSsh::input_destination)
+                .ok_or_else(|| "A selected terminal session is not live".to_owned())?;
+            if !view.shows_live_screen(terminal) {
+                return Err(
+                    "Return each selected terminal to its live screen before recording".to_owned(),
+                );
+            }
+            terminals.push(terminal);
+            identities.push(RecordingSessionSelection { tab: *id, session });
+        }
+        Ok((terminals, identities))
+    }
+
+    #[cfg(feature = "live-ssh")]
+    fn validate_recording_selection(
+        &self,
+        selected: &[RecordingSessionSelection],
+    ) -> Result<Vec<&Terminal>, String> {
+        let ids: Vec<_> = selected.iter().map(|selection| selection.tab).collect();
+        let (terminals, current) = self.recording_terminals(&ids)?;
+        if selected.iter().zip(&current).any(|(expected, current)| {
+            !std::sync::Weak::ptr_eq(&expected.session, &current.session)
+        }) {
+            return Err("A selected terminal session changed; select it again".to_owned());
+        }
+        Ok(terminals)
+    }
+
+    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    fn validate_recording_consent(&self, consent: &RecordingConsent) -> Result<(), String> {
+        if self.recording_privacy_generation()? != consent.generation {
+            return Err("Recording stopped because privacy or app activity changed".to_owned());
+        }
+        self.validate_recording_selection(&consent.selected)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "live-ssh")]
+    fn start_terminal_recording_from(
+        &mut self,
+        source: RecordingStart<'_>,
+        selected: &[RecordingSessionSelection],
+        context: &egui::Context,
+    ) -> Result<(), String> {
+        let terminals = self.validate_recording_selection(selected)?;
+        let context = context.clone();
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let recording_lease = self.recording_ui.lease.clone();
+        let wake = move || {
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            let _lease = &recording_lease;
+            context.request_repaint();
+        };
+        let (recording, streams) = match source {
+            RecordingStart::Directory(directory) => self.sink.live.start_recording(
+                directory,
+                &terminals,
+                || self.recording_privacy_generation(),
+                wake,
+            ),
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            RecordingStart::Prepared {
+                source: prepared,
+                generation,
+            } => self.sink.live.start_prepared_recording(
+                prepared,
+                &terminals,
+                generation,
+                || self.recording_privacy_generation(),
+                wake,
+            ),
+        }?;
+        drop(terminals);
+        for (selection, stream) in selected.iter().zip(streams) {
+            let attached = if self.active_tab == Some(selection.tab) {
+                if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
+                    live.recording_stream = Some(stream);
+                    true
+                } else {
+                    false
+                }
+            } else if let Some((_, live)) = self
+                .sink
+                .live
+                .background
+                .borrow_mut()
+                .iter_mut()
+                .find(|(parked_id, _)| *parked_id == selection.tab)
+            {
+                live.recording_stream = Some(stream);
+                true
+            } else {
+                false
+            };
+            if !attached {
+                recording
+                    .fail_integrity("A selected terminal session changed during recording start")
+                    .map_err(|error| error.to_string())?;
+                return Err("A selected terminal session changed during recording start".to_owned());
+            }
+        }
+        Ok(())
+    }
+
+    /// Explicitly includes an additional live terminal in the shared timeline.
+    #[cfg(feature = "live-ssh")]
+    pub fn include_terminal_in_recording(&mut self, id: u64) -> Result<(), String> {
+        let recording = self
+            .sink
+            .live
+            .current_recording()?
+            .ok_or_else(|| "No recording is active".to_owned())?;
+        let generation = match self.recording_privacy_generation() {
+            Ok(generation) => generation,
+            Err(error) => {
+                recording
+                    .stop(festerm_recording::FinishReason::Lifecycle)
+                    .map_err(|stop| format!("{error}; could not stop recording: {stop}"))?;
+                return Err(error);
+            }
+        };
+        let stream = {
+            let active = self.sink.live.connection.borrow();
+            let parked = self.sink.live.background.borrow();
+            let tab = self
+                .tabs
+                .iter()
+                .find(|tab| tab.id == id)
+                .ok_or_else(|| "The selected terminal session is no longer open".to_owned())?;
+            let (terminal, view, live) = if self.active_tab == Some(id) {
+                (
+                    &self.terminal,
+                    &self.view,
+                    active
+                        .as_ref()
+                        .ok_or_else(|| "The selected terminal session is not live".to_owned())?,
+                )
+            } else {
+                (
+                    &tab.parked
+                        .as_ref()
+                        .ok_or_else(|| "The selected terminal session is unavailable".to_owned())?
+                        .0,
+                    &tab.parked
+                        .as_ref()
+                        .ok_or_else(|| "The selected terminal session is unavailable".to_owned())?
+                        .1,
+                    &parked
+                        .iter()
+                        .find(|(parked_id, _)| *parked_id == id)
+                        .ok_or_else(|| "The selected terminal session is not live".to_owned())?
+                        .1,
+                )
+            };
+            if live.can_reset() {
+                return Err("The selected terminal session is not live".to_owned());
+            }
+            if !view.shows_live_screen(terminal) {
+                return Err("Return the terminal to its live screen before recording".to_owned());
+            }
+            if live
+                .recording_stream
+                .as_ref()
+                .is_some_and(|stream| stream.recording_id() == recording.id())
+            {
+                return Err("The terminal session is already included".to_owned());
+            }
+            recording
+                .enroll(terminal)
+                .map_err(|error| error.to_string())?
+        };
+        let privacy_error = match self.recording_privacy_generation() {
+            Ok(current) if current == generation => None,
+            Ok(_) => Some("Recording stopped because privacy or app activity changed".to_owned()),
+            Err(error) => Some(error),
+        };
+        if let Some(error) = privacy_error {
+            recording
+                .stop(festerm_recording::FinishReason::Lifecycle)
+                .map_err(|stop| format!("{error}; could not stop recording: {stop}"))?;
+            return Err(error);
+        }
+        if self.active_tab == Some(id) {
+            if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
+                live.recording_stream = Some(stream);
+                return Ok(());
+            }
+        } else if let Some((_, live)) = self
+            .sink
+            .live
+            .background
+            .borrow_mut()
+            .iter_mut()
+            .find(|(parked_id, _)| *parked_id == id)
+        {
+            live.recording_stream = Some(stream);
+            return Ok(());
+        }
+        recording
+            .fail_integrity("A terminal session changed during recording enrollment")
+            .map_err(|error| error.to_string())?;
+        Err("A terminal session changed during recording enrollment".to_owned())
+    }
+
+    #[cfg(feature = "live-ssh")]
+    fn recording_privacy_generation(&self) -> Result<u64, String> {
+        if !self.lifecycle.get().active {
+            return Err("Recording requires an active, unlocked app".to_owned());
+        }
+        self.lock
+            .as_ref()
+            .ok_or_else(|| "Recording requires the native privacy monitor".to_owned())?
+            .recording_privacy_generation()
+    }
+
+    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    fn foreground_export_cancellation(
+        &self,
+    ) -> Result<std::sync::Arc<festerm_recording_export::ExportCancellation>, String> {
+        self.sink
+            .live
+            .foreground_export_cancellation(|| self.recording_privacy_generation())
+    }
+
+    #[cfg(feature = "live-ssh")]
+    pub fn stop_terminal_recording(&self) -> Result<bool, String> {
+        let Some(recording) = self.sink.live.current_recording()? else {
+            return Ok(false);
+        };
+        recording
+            .stop(festerm_recording::FinishReason::User)
+            .map_err(|error| error.to_string())
+    }
+
+    /// The owner must collect completion after every wake, including when a
+    /// privacy change interrupts startup before it can return success.
+    #[cfg(feature = "live-ssh")]
+    pub fn poll_terminal_recording(&self) -> Result<Option<festerm_recording::Completion>, String> {
+        self.sink.live.poll_recording_completion()
+    }
+
     fn terminal_surface(&self) -> bool {
         self.surface == Surface::Terminal
             && self.workspace == workspaces::Workspace::Terminal
@@ -636,6 +1342,12 @@ impl MobileApp {
     }
 
     fn show_with_occlusion(&mut self, ui: &mut egui::Ui, occlusion: f32) {
+        #[cfg(all(feature = "live-ssh", unix))]
+        self.poll_recording_settings();
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.poll_recording_folder();
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.poll_recording_ui(ui.ctx());
         #[cfg(all(
             target_os = "ios",
             target_abi = "sim",
@@ -729,6 +1441,11 @@ impl MobileApp {
                 field = None;
                 festerm_ios_window::KeyboardMode::Hidden
             };
+            if mode != festerm_ios_window::KeyboardMode::System {
+                // winit's iOS IME request makes its own view first responder,
+                // replacing the bridge's chosen responder with the system keyboard.
+                ui.ctx().output_mut(|output| output.ime = None);
+            }
             // Publish before switching, so the keyboard reads the new field.
             keyboard.set_field_document(field);
             if let Err(error) = keyboard.set_keyboard_mode(mode) {
@@ -867,7 +1584,7 @@ impl MobileApp {
                 {
                     match key {
                         egui::Key::C => Some('c'),
-                        egui::Key::P => Some('p'),
+                        egui::Key::V => Some('v'),
                         _ => None,
                     }
                 }
@@ -887,7 +1604,7 @@ impl MobileApp {
                         if self.control
                             && self.shift
                             && !self.alt
-                            && matches!(character.to_ascii_lowercase(), 'c' | 'p')
+                            && matches!(character.to_ascii_lowercase(), 'c' | 'v')
                         {
                             // Finish IME composition before the local action, then
                             // let trailing committed text follow it in the same batch.
@@ -1022,6 +1739,8 @@ impl MobileApp {
             return model::SessionSource::surfaces(sessions);
         }
         let mut surfaces = self.tab_surfaces();
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.mark_recorded_surfaces(&mut surfaces);
         surfaces.extend(self.documents.surfaces(self.surface == Surface::Documents));
         surfaces
     }
@@ -1136,6 +1855,8 @@ impl MobileApp {
                 return;
             }
         }
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.show_recording_status(ui);
         if self.editor.open {
             self.show_editor(ui);
             #[cfg(feature = "live-ssh")]
@@ -1290,6 +2011,14 @@ impl MobileApp {
                         self.notice = Some(error);
                     }
                 }
+                #[cfg(all(feature = "live-ssh", unix))]
+                ShellAction::ChooseRecordingFolder => self.choose_recording_folder(),
+                #[cfg(all(feature = "live-ssh", unix))]
+                ShellAction::SaveRecordingSettings => self.save_recording_settings(ctx),
+                #[cfg(all(feature = "live-ssh", unix))]
+                ShellAction::ReloadRecordingSettings => self.reload_recording_settings(ctx),
+                #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+                ShellAction::OpenRecordingLibrary => self.open_recording_library(ctx),
                 ShellAction::Lock(action) => {
                     if let Some(lock) = self.lock.as_mut() {
                         lock.apply(action);
@@ -1358,6 +2087,200 @@ impl MobileApp {
                     self.documents.browse();
                     self.notice = self.documents.notice.take();
                 }
+            }
+        }
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    fn save_recording_settings(&mut self, ctx: &egui::Context) {
+        let Some(settings) = self.shell.recording_settings.clone() else {
+            self.shell.recording_error = Some("Recording settings are unavailable".to_owned());
+            return;
+        };
+        let Some(storage) = self.recording_storage.as_mut() else {
+            self.shell.recording_error = Some("Recording storage is unavailable".to_owned());
+            return;
+        };
+        let context = ctx.clone();
+        match storage.save(settings, move || context.request_repaint()) {
+            Ok(()) => {
+                self.shell.recording_busy = true;
+                self.shell.recording_error = None;
+                self.shell.recording_message = None;
+            }
+            Err(error) => self.shell.recording_error = Some(error),
+        }
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    fn reload_recording_settings(&mut self, ctx: &egui::Context) {
+        let Some(storage) = self.recording_storage.as_mut() else {
+            self.shell.recording_error = Some("Recording storage is unavailable".to_owned());
+            return;
+        };
+        let context = ctx.clone();
+        match storage.reload(move || context.request_repaint()) {
+            Ok(()) => {
+                self.shell.recording_busy = true;
+                self.shell.recording_error = None;
+                self.shell.recording_message = None;
+            }
+            Err(error) => self.shell.recording_error = Some(error),
+        }
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    fn poll_recording_settings(&mut self) {
+        let Some(result) = self
+            .recording_storage
+            .as_mut()
+            .and_then(recording_storage::RecordingStorage::poll)
+        else {
+            return;
+        };
+        self.shell.recording_busy = false;
+        match result {
+            Ok(settings) => {
+                self.shell.recording_settings = Some(settings.clone());
+                self.shell.recording_saved = Some(settings);
+                self.shell.recording_message = Some("Recording settings updated.".to_owned());
+                self.shell.recording_error = None;
+            }
+            Err(error) => self.shell.recording_error = Some(error),
+        }
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    fn choose_recording_folder(&mut self) {
+        #[cfg(target_os = "android")]
+        {
+            match festerm_android_platform::pick_recording_folder() {
+                Ok(()) => {
+                    self.shell.recording_picker_pending = true;
+                    self.shell.recording_error = None;
+                    self.shell.recording_message = None;
+                }
+                Err(error) => self.shell.recording_error = Some(error.to_owned()),
+            }
+        }
+        #[cfg(target_os = "ios")]
+        {
+            let result = self
+                .recording_folder_picker
+                .as_ref()
+                .ok_or("The native recording folder picker is unavailable")
+                .and_then(|picker| picker.open().map_err(|error| error.message()));
+            match result {
+                Ok(()) => {
+                    self.shell.recording_picker_pending = true;
+                    self.shell.recording_error = None;
+                    self.shell.recording_message = None;
+                }
+                Err(error) => self.shell.recording_error = Some(error.to_owned()),
+            }
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            self.shell.recording_error =
+                Some("The native recording folder picker is unavailable".to_owned());
+        }
+    }
+
+    #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+    fn finish_recording_folder(
+        &mut self,
+        result: Result<Option<festerm_recording::ExportDestination>, String>,
+    ) {
+        self.shell.recording_picker_pending = false;
+        if std::mem::take(&mut self.recording_ui.picking_for_retry) {
+            match result {
+                Ok(Some(destination)) => {
+                    if let Some(retry) = self.recording_ui.retry.as_mut() {
+                        retry.settings.destination = Some(destination);
+                        self.recording_ui.status = None;
+                    } else {
+                        self.recording_ui.status =
+                            Some("The export options are no longer available.".to_owned());
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => self.recording_ui.status = Some(error),
+            }
+        } else if std::mem::take(&mut self.recording_ui.picking_for_capture) {
+            match result {
+                Ok(Some(destination)) => {
+                    if let Some(settings) = self.recording_ui.draft.as_mut() {
+                        settings.destination = Some(destination);
+                        self.recording_ui.status = None;
+                    } else {
+                        self.recording_ui.status =
+                            Some("The recording options are no longer available.".to_owned());
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => self.recording_ui.status = Some(error),
+            }
+        } else {
+            match result {
+                Ok(Some(destination)) => {
+                    if let Some(settings) = self.shell.recording_settings.as_mut() {
+                        settings.destination = Some(destination);
+                        self.shell.recording_message =
+                            Some("Folder selected. Save recording settings to keep it.".to_owned());
+                    } else {
+                        self.shell.recording_error =
+                            Some("Recording settings are unavailable".into());
+                    }
+                }
+                Ok(None) => {
+                    self.shell.recording_message = Some("Folder selection cancelled.".to_owned());
+                }
+                Err(error) => self.shell.recording_error = Some(error),
+            }
+        }
+    }
+
+    #[cfg(all(feature = "live-ssh", target_os = "ios"))]
+    fn poll_recording_folder(&mut self) {
+        if !self.shell.recording_picker_pending {
+            return;
+        }
+        let Some(result) = self
+            .recording_folder_picker
+            .as_ref()
+            .and_then(festerm_ios_window::RecordingFolderPicker::take_result)
+        else {
+            return;
+        };
+        self.finish_recording_folder(match result {
+            Ok(selection) => Ok(Some(festerm_recording::ExportDestination::IosBookmark {
+                bookmark: selection.bookmark,
+                display_name: selection.display_name,
+            })),
+            Err(festerm_ios_window::RecordingFolderError::Cancelled) => Ok(None),
+            Err(error) => Err(error.message().to_owned()),
+        });
+    }
+
+    #[cfg(all(feature = "live-ssh", target_os = "android"))]
+    fn poll_recording_folder(&mut self) {
+        if !self.shell.recording_picker_pending {
+            return;
+        }
+        match festerm_android_platform::take_picked_recording_folder() {
+            Ok(None) => {}
+            Ok(Some(Ok(uri))) => {
+                self.finish_recording_folder(Ok(Some(
+                    festerm_recording::ExportDestination::AndroidTree(uri),
+                )));
+            }
+            Ok(Some(Err(festerm_android_platform::PickError::Cancelled))) => {
+                self.finish_recording_folder(Ok(None));
+            }
+            Ok(Some(Err(festerm_android_platform::PickError::Unavailable))) | Err(_) => {
+                self.finish_recording_folder(Err(
+                    "The Files folder could not be selected. Try again.".to_owned(),
+                ));
             }
         }
     }
@@ -1500,6 +2423,16 @@ impl MobileApp {
             self.apply_shell_actions(ctx, actions);
         }
         self.show_tab_menu(ctx, bounds);
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.show_recording_sheet(ctx, bounds);
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.poll_recording_preparation(ctx);
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.show_recording_export(ctx, bounds);
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.poll_recording_export_preview(ctx);
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        self.show_recording_library(ctx, bounds);
         if let Some(id) = self.confirm_close {
             match self.tabs.iter().find(|tab| tab.id == id) {
                 Some(tab) => {
@@ -1899,6 +2832,13 @@ impl MobileApp {
                         files = true;
                         ui.close();
                     }
+                    #[cfg(all(
+                        feature = "live-ssh",
+                        any(target_os = "android", target_os = "ios")
+                    ))]
+                    if in_terminal {
+                        self.recording_menu(ui);
+                    }
                     if in_terminal {
                         keyboard_action = terminal_chrome::keyboard_menu(ui, self.keyboard_kind);
                         if self.caps.paste
@@ -2024,6 +2964,8 @@ impl MobileApp {
             && self.confirm_close.is_none()
             && !self.editor.open
             && !self.documents.modal_open();
+        #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
+        let ready = ready && !self.recording_ui.blocks_terminal_input();
         #[cfg(feature = "live-ssh")]
         let ready = ready
             && self
@@ -2667,6 +3609,58 @@ mod tests {
         harness.run();
         assert_eq!(harness.state().terminal_keyboard.split, SplitMode::Never);
         assert_eq!(harness.state().text_size, text_size);
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    #[test]
+    fn recording_settings_ui_saves_a_valid_device_local_draft() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        use std::{fs::File, time::Duration};
+
+        let root = tempfile::tempdir().unwrap();
+        festerm_unix_security::make_private_directory(&File::open(root.path()).unwrap()).unwrap();
+        let (storage, settings) = recording_storage::RecordingStorage::open(root.path()).unwrap();
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.recording_storage = Some(storage);
+        app.shell.recording_settings = Some(settings.clone());
+        app.shell.recording_saved = Some(settings);
+        app.shell.tab = shell::Tab::Settings;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(850.0, 2400.0))
+            .build_ui_state(
+                |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                app,
+            );
+        harness.run();
+        harness.get_by_label("Normalize echoed typing").click();
+        harness.run();
+        assert!(
+            harness
+                .state()
+                .shell
+                .recording_settings
+                .as_ref()
+                .unwrap()
+                .normalize_typing
+        );
+        harness.get_by_label("Save recording settings").click();
+        harness.run();
+        for _ in 0..100 {
+            if !harness.state().shell.recording_busy {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            harness.run();
+        }
+        assert!(!harness.state().shell.recording_busy);
+        assert!(harness.state().shell.recording_error.is_none());
+        let (_, persisted) = festerm_recording::RecordingSettingsStore::open(root.path()).unwrap();
+        assert!(persisted.normalize_typing);
+        assert!(persisted.destination.is_none());
+        assert!(!persisted.delete_source_after_export);
     }
 
     #[test]
@@ -3493,7 +4487,7 @@ mod tests {
 
         app.control = true;
         app.shift = true;
-        let mut events = vec![egui::Event::Text("p".into())];
+        let mut events = vec![egui::Event::Text("v".into())];
         let mut reads = 0;
         app.consume_sticky_text(&mut events, || {
             reads += 1;
@@ -3507,8 +4501,8 @@ mod tests {
         assert!(!app.control && !app.shift);
 
         let mut events = vec![egui::Event::Key {
-            key: egui::Key::P,
-            physical_key: Some(egui::Key::P),
+            key: egui::Key::V,
+            physical_key: Some(egui::Key::V),
             pressed: true,
             repeat: false,
             modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
@@ -3517,6 +4511,21 @@ mod tests {
         assert!(events.is_empty());
         assert_eq!(app.input_notice, Some("The clipboard has no text to paste"));
         assert_eq!(app.sink.diagnostics.byte_count, 0);
+
+        // Ctrl+Shift+P is no longer a paste shortcut; it stays ordinary input.
+        app.control = true;
+        app.shift = true;
+        let mut events = vec![egui::Event::Key {
+            key: egui::Key::P,
+            physical_key: Some(egui::Key::P),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        }];
+        app.consume_sticky_text(&mut events, || panic!("P must not read the clipboard"));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Paste(_))));
     }
 
     #[test]
@@ -3535,7 +4544,7 @@ mod tests {
         app.control = true;
         app.shift = true;
         app.terminal.ingest(b"\x1b[?2004h");
-        let mut events = vec![egui::Event::Text("px".into())];
+        let mut events = vec![egui::Event::Text("vx".into())];
         app.consume_sticky_text(&mut events, || Some("pasted".into()));
         let mut sink = Sink::default();
         let ctx = egui::Context::default();

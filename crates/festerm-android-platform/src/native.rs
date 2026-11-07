@@ -1,12 +1,14 @@
 use crate::{AuthCallback, AuthRequests, AuthResult, Input, InputQueue, MAX_INPUT_BYTES};
 use jni_legacy::{
-    objects::{GlobalRef, JByteArray, JObject, JString, JValue},
+    objects::{GlobalRef, JByteArray, JObject, JObjectArray, JString, JValue},
     sys::{jfloat, jint, jlong},
     JNIEnv, JavaVM,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
     fmt,
+    fs::File,
+    os::fd::FromRawFd,
     path::Path,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -44,6 +46,7 @@ struct Bridge {
     authentication: Mutex<AuthRequests>,
     speech: Mutex<Option<SpeechCallback>>,
     picked: Mutex<Option<Result<PathBuf, PickError>>>,
+    picked_recording_folder: Mutex<Option<Result<String, PickError>>>,
 }
 
 static BRIDGE: Mutex<Option<Arc<Bridge>>> = Mutex::new(None);
@@ -145,6 +148,7 @@ pub fn initialize(
         authentication: Mutex::new(AuthRequests::default()),
         speech: Mutex::new(None),
         picked: Mutex::new(None),
+        picked_recording_folder: Mutex::new(None),
     }));
     Ok(())
 }
@@ -268,6 +272,156 @@ pub fn recording_directory() -> Result<PathBuf, &'static str> {
     })
 }
 
+/// A provider-created document, identified by its URI and actual display name.
+pub struct RecordingDocument {
+    pub uri: String,
+    pub display_name: String,
+}
+
+/// A content-free failure from the Android Files provider boundary.
+#[derive(Debug)]
+pub struct RecordingDestinationError(&'static str);
+
+impl fmt::Display for RecordingDestinationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl std::error::Error for RecordingDestinationError {}
+
+/// One selected, persistently authorized document tree.
+pub struct AndroidRecordingDestination {
+    bridge: Arc<Bridge>,
+    native: GlobalRef,
+}
+
+impl AndroidRecordingDestination {
+    pub fn new(tree_uri: &str) -> Result<Self, RecordingDestinationError> {
+        let bridge = bridge().map_err(RecordingDestinationError)?;
+        let native = bridge
+            .call(|env, activity| {
+                let uri = env.new_string(tree_uri)?;
+                let object = env
+                    .call_method(
+                        activity,
+                        "newRecordingDestination",
+                        "(Ljava/lang/String;)Lio/github/fes/festerm/RecordingDestination;",
+                        &[JValue::Object(uri.as_ref())],
+                    )?
+                    .l()?;
+                env.new_global_ref(object)
+            })
+            .map_err(|_| {
+                RecordingDestinationError(
+                    "the selected Files folder is unavailable; choose it again",
+                )
+            })?;
+        Ok(Self { bridge, native })
+    }
+
+    pub fn create_directory(
+        &mut self,
+        name: &str,
+    ) -> Result<RecordingDocument, RecordingDestinationError> {
+        self.create_entry("createDirectory", None, name)
+    }
+
+    pub fn create_video(
+        &mut self,
+        directory: &str,
+        name: &str,
+    ) -> Result<RecordingDocument, RecordingDestinationError> {
+        self.create_entry("createVideo", Some(directory), name)
+    }
+
+    pub fn create_appearance(
+        &mut self,
+        directory: &str,
+        name: &str,
+    ) -> Result<RecordingDocument, RecordingDestinationError> {
+        self.create_entry("createAppearance", Some(directory), name)
+    }
+
+    fn create_entry(
+        &self,
+        method: &str,
+        directory: Option<&str>,
+        name: &str,
+    ) -> Result<RecordingDocument, RecordingDestinationError> {
+        self.bridge
+            .call(|env, _| {
+                let name = env.new_string(name)?;
+                let result = if let Some(directory) = directory {
+                    let directory = env.new_string(directory)?;
+                    env.call_method(
+                        self.native.as_obj(),
+                        method,
+                        "(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;",
+                        &[
+                            JValue::Object(directory.as_ref()),
+                            JValue::Object(name.as_ref()),
+                        ],
+                    )?
+                } else {
+                    env.call_method(
+                        self.native.as_obj(),
+                        method,
+                        "(Ljava/lang/String;)[Ljava/lang/String;",
+                        &[JValue::Object(name.as_ref())],
+                    )?
+                };
+                let array = JObjectArray::from(result.l()?);
+                if env.get_array_length(&array)? != 2 {
+                    return Err(jni_legacy::errors::Error::NullPtr(
+                        "invalid recording destination",
+                    ));
+                }
+                let uri = JString::from(env.get_object_array_element(&array, 0)?);
+                let display_name = JString::from(env.get_object_array_element(&array, 1)?);
+                let uri = env.get_string(&uri)?.into();
+                let display_name = env.get_string(&display_name)?.into();
+                Ok(RecordingDocument { uri, display_name })
+            })
+            .map_err(|_| {
+                RecordingDestinationError(
+                    "the Files provider could not create a new recording destination",
+                )
+            })
+    }
+
+    pub fn open_for_write(&mut self, uri: &str) -> Result<File, RecordingDestinationError> {
+        self.open_file("openForWrite", uri)
+    }
+
+    pub fn open_for_read(&mut self, uri: &str) -> Result<File, RecordingDestinationError> {
+        self.open_file("openForRead", uri)
+    }
+
+    fn open_file(&self, method: &str, uri: &str) -> Result<File, RecordingDestinationError> {
+        let descriptor = self
+            .bridge
+            .call(|env, _| {
+                let uri = env.new_string(uri)?;
+                env.call_method(
+                    self.native.as_obj(),
+                    method,
+                    "(Ljava/lang/String;)I",
+                    &[JValue::Object(uri.as_ref())],
+                )?
+                .i()
+            })
+            .map_err(|_| RecordingDestinationError("the Files provider could not open the MP4"))?;
+        if descriptor < 0 {
+            return Err(RecordingDestinationError(
+                "the Files provider returned an invalid MP4 handle",
+            ));
+        }
+        // SAFETY: Java detaches this owned descriptor and transfers it exactly once.
+        Ok(unsafe { File::from_raw_fd(descriptor) })
+    }
+}
+
 /// A content-free failure from Android's MediaCodec/MediaMuxer boundary.
 #[derive(Debug)]
 pub struct VideoError(String);
@@ -350,7 +504,7 @@ impl AndroidEncoder {
         if rgba.len() != self.bytes_per_frame {
             return Err(VideoError::new("the video frame has the wrong dimensions"));
         }
-        if rgba.chunks_exact(4).any(|pixel| pixel[3] != 255) {
+        if rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255) {
             return Err(VideoError::new("video frames must be opaque RGBA"));
         }
         let result = self.bridge.call(|env, _| {
@@ -595,6 +749,21 @@ pub fn take_picked_document() -> Option<Result<PathBuf, PickError>> {
     bridge().ok()?.picked.lock().ok()?.take()
 }
 
+pub fn pick_recording_folder() -> Result<(), &'static str> {
+    bridge()?.call(|env, activity| {
+        env.call_method(activity, "pickRecordingFolder", "()V", &[])?;
+        Ok(())
+    })
+}
+
+pub fn take_picked_recording_folder() -> Result<Option<Result<String, PickError>>, &'static str> {
+    Ok(bridge()?
+        .picked_recording_folder
+        .lock()
+        .map_err(|_| "Android recording folder picker is unavailable")?
+        .take())
+}
+
 pub fn set_speech_callback(callback: SpeechCallback) -> Result<(), &'static str> {
     *bridge()?
         .speech
@@ -837,6 +1006,33 @@ extern "system" fn Java_io_github_fes_festerm_FestermActivity_nativePicked(
             });
         let _ = env.exception_clear();
         *bridge.picked.lock().expect("picker state poisoned") = Some(result);
+        bridge.wake();
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "system" fn Java_io_github_fes_festerm_FestermActivity_nativeRecordingFolderPicked(
+    mut env: JNIEnv,
+    _activity: JObject,
+    uri: JString,
+) {
+    if let Ok(bridge) = bridge() {
+        let result = env
+            .get_string(&uri)
+            .map(String::from)
+            .map_err(|_| PickError::Unavailable)
+            .and_then(|uri| {
+                if uri.is_empty() {
+                    Err(PickError::Cancelled)
+                } else {
+                    Ok(uri)
+                }
+            });
+        let _ = env.exception_clear();
+        *bridge
+            .picked_recording_folder
+            .lock()
+            .expect("recording folder picker state poisoned") = Some(result);
         bridge.wake();
     }
 }

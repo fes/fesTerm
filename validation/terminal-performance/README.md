@@ -27,6 +27,63 @@ usable size, native allocations, fragmentation, RSS, GPU retirement, full-frame
 CPU or multi-day growth. Existing Criterion `interaction_rendering` benchmarks
 remain the timing surface; this oracle has no wall-clock acceptance threshold.
 
+## Core ingest throughput
+
+Run `cargo bench -p festerm-core --bench sustained_output`. Each case ingests
+256 KiB into a 120x40 terminal; `sustained_output_full_history` repeats the
+scroll-heavy cases with history already at its byte limit, so every line also
+pays eviction. Cases: `plain_ascii`, `styled_utf8`, `ascii_200_cols`,
+`sgr_dense`, `cjk_emoji`, `osc8_links`, `yes_scroll` (`y\r\n`),
+`tui_overwrite` (cursor-addressed mid-row redraws) and `alternate_repaint`.
+
+Profiling showed scrolling, not parsing, dominated: each scrolled line cloned
+its cells into history, refilled the revealed row cell by cell, and grew then
+shrank the history line. Departing cells are now moved into history as an
+exactly sized row, only the revealed row's occupied prefix is cleared (cells
+past a row's extent are structural blanks by invariant), and a single-width
+cell overwriting a single-width cell skips wide-pair repair and the full-row
+extent rescan. Apple M-series, release, throughput change:
+
+| Case | Before (MiB/s) | Change |
+| --- | --- | --- |
+| `yes_scroll` | 2.6 | +520% |
+| `full_history/yes_scroll` | 2.6 | +345% |
+| `plain_ascii` | 10.4 | +113% |
+| `full_history/plain_ascii` | 10.7 | +79% |
+| `styled_utf8` | 13.1 | +114% |
+| `tui_overwrite` | 21.2 | +153% |
+| `sgr_dense` | 21.0 | +62% |
+| `cjk_emoji` | 13.1 | +59% |
+| `osc8_links` | 18.2 | +96% |
+| `alternate_repaint` | 19.8 | +84% |
+
+## End-to-end output throughput (macOS)
+
+Measured as the wall time for `cat` of a file to finish inside a fesTerm
+window (about 117x40, release build, Apple M-series, shared host).
+
+The faster core did not change these numbers at first. Each macOS PTY read
+returns only about 1 KiB, and `cat` refills the PTY only after a read. Every
+read became its own event, and the UI drains at most 64 events per pump, so
+output was capped near 7 MiB/s by the frame rate, not by the CPU.
+
+The reader now appends further reads to the same chunk, up to 64 KiB:
+- When everything queued has already been consumed, it publishes as soon as
+  the PTY has no more ready data, so interactive echo is never held back.
+- Only while earlier output is still queued does it wait up to 2 ms for more.
+- Queued output is bounded at 2 MiB, the same bound as before.
+
+Each pump still ingests at least 256 KiB of a backlog, and keeps going for up
+to 8 ms (4 MiB at most), so fewer frames are spent waiting for a drawable.
+
+| `cat` workload | Before | After | Change |
+| --- | --- | --- | --- |
+| 100 MB plain ASCII (93-column lines) | 13.8 s | 3.6 s | 3.8x faster |
+| 50 MB SGR-dense | 6.9 s | 1.3 s | 5.4x faster |
+
+The time budget alone accounts for about 3% (plain) and 20% (SGR) of the
+gain.
+
 ## Automatic WARP composition rollout
 
 PR #281 consolidates the stacked follow-on and reviewed shipping main. At the

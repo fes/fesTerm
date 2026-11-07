@@ -735,6 +735,11 @@ impl TerminalView {
         self.history.offset_rows == 0
     }
 
+    /// Whether this viewport displays the terminal's live screen, not history.
+    pub fn shows_live_screen(&self, terminal: &Terminal) -> bool {
+        terminal.modes().alternate_screen() || self.follows_latest_output()
+    }
+
     /// Marks this view as needing keyboard focus again on its next frame.
     /// Chip/tab activation switches which session's `show`/`show_in_ui` is
     /// called each frame (inactive tabs render nothing at all), so the
@@ -1993,6 +1998,7 @@ impl TerminalView {
                         cache: &self.cache,
                         selection: &self.selection,
                         fonts: &self.fonts,
+                        color_scheme: None,
                         shape_cell_runs: self.force_cell_run_shaping
                             || self.fonts.font_set().ligatures(),
                         focused: response.has_focus(),
@@ -2421,6 +2427,7 @@ impl TerminalView {
                 cache: &self.cache,
                 selection: &self.selection,
                 fonts: &self.fonts,
+                color_scheme: None,
                 shape_cell_runs: self.force_cell_run_shaping || self.fonts.font_set().ligatures(),
                 focused: false,
                 suppress_cursor: true,
@@ -3082,6 +3089,18 @@ mod history_overlay_tests {
             history.offset_rows <= rows_after,
             "an anchored offset must clamp to retained history after eviction"
         );
+    }
+
+    #[test]
+    fn live_screen_visibility_distinguishes_history_and_alternate_screen() {
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"old\r\nscreen\r\nsecret");
+        let mut view = TerminalView::default();
+        assert!(view.shows_live_screen(&terminal));
+        view.reveal_document_row(&terminal, 0);
+        assert!(!view.shows_live_screen(&terminal));
+        terminal.ingest(b"\x1b[?1049h");
+        assert!(view.shows_live_screen(&terminal));
     }
 
     #[test]

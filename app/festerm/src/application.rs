@@ -19,6 +19,8 @@ use crate::app::FesTermApp;
 use crate::document_activation::{ActivationError, ActivationQueue};
 use crate::tabs::{Tab, TabMoveRequest};
 
+pub(crate) mod recording;
+
 /// The stable identity of one open window, used for its egui `ViewportId` and
 /// its title. Monotonic and never reused, so closing window 2 and opening
 /// another does not produce two windows egui believes are the same viewport.
@@ -134,6 +136,7 @@ pub(crate) struct FesTermApplication {
     /// Always non-empty, and `windows[0]` is always the primary window that
     /// renders into `ViewportId::ROOT`.
     windows: Vec<Window>,
+    recording: recording::DesktopRecording,
     next_window_id: u64,
     last_active_window: WindowId,
     document_activation: ActivationQueue,
@@ -181,6 +184,7 @@ impl FesTermApplication {
                 app: primary,
                 placement: None,
             }],
+            recording: recording::DesktopRecording::new(!cfg!(test)),
             next_window_id: 1,
             last_active_window: WindowId::PRIMARY,
             document_activation: ActivationQueue::default(),
@@ -462,6 +466,7 @@ impl FesTermApplication {
     /// `Fn + Send + Sync + 'static` and so cannot borrow a window's live
     /// PTYs, SSH transports, and texture handles mutably (ADR 0032).
     fn show_secondary_windows(&mut self, context: &egui::Context) {
+        let choices = self.recording_choices(self.recording.recording_id(), self.recording.owner);
         for window in self.windows.iter_mut().skip(1) {
             let builder = Self::viewport_builder(window);
             let app = &mut window.app;
@@ -478,6 +483,7 @@ impl FesTermApplication {
                 }
                 app.frame_logic(ui.ctx());
                 app.ui_content(ui);
+                self.recording.show(ui.ctx(), window.id, &choices);
             });
         }
     }
@@ -1134,6 +1140,7 @@ impl FesTermApplication {
     }
 
     fn ui_inner(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.poll_recording(ui.ctx());
         ui.ctx()
             .input(|input| self.ime_admission.observe(WindowId::PRIMARY, &input.events));
         if ui.ctx().input(|input| input.viewport().focused) == Some(true) {
@@ -1141,8 +1148,11 @@ impl FesTermApplication {
         }
         eframe::App::ui(self.primary_mut(), ui, frame);
         let context = ui.ctx().clone();
+        let choices = self.recording_choices(self.recording.recording_id(), WindowId::PRIMARY);
+        self.recording.show(&context, WindowId::PRIMARY, &choices);
         self.show_secondary_windows(&context);
         festerm_ui_egui::chrome::tab_drag::show_requested_drag_ghost(&context);
+        self.settle_recording(&context);
         self.settle_windows_and_drive_automation_inner(&context);
         self.process_document_activation(&context);
         if !context.will_discard() && self.ime_admission.finish_pass() {
@@ -1179,6 +1189,11 @@ impl eframe::App for FesTermApplication {
             .advance_presentation_deadline(context);
         guard.application.refresh_application_close_context();
         eframe::App::logic(guard.application.primary_mut(), context, frame);
+        if context.input(|input| input.viewport().close_requested())
+            && guard.application.primary_mut().window_close_accepted()
+        {
+            guard.application.recording.defer_quit(context);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

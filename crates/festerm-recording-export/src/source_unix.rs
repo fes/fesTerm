@@ -2,12 +2,27 @@ use std::{ffi::OsString, fs::File, os::unix::fs::MetadataExt, path::Path};
 
 use festerm_recording::MAX_ARTIFACT_BYTES;
 use festerm_unix_security::{is_current_user_only, make_private, open_file_nofollow};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+))]
 use nix::unistd::{unlinkat, UnlinkatFlags};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+))]
 use std::io::Read;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+))]
 use crate::fingerprint;
 use crate::ExportError;
 
@@ -21,6 +36,10 @@ pub(crate) struct SourceBinding {
 }
 
 impl SourceBinding {
+    pub(crate) fn name(&self) -> &std::ffi::OsStr {
+        &self.name
+    }
+
     pub(crate) fn open(path: &Path) -> Result<(Self, File), ExportError> {
         let name = path
             .file_name()
@@ -76,7 +95,12 @@ impl SourceBinding {
         Ok(file)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android"
+    ))]
     pub(crate) fn remove_verified(&self, expected: [u8; 32]) -> Result<(), ExportError> {
         let mut source = self.open_current()?;
         let before = source.metadata().map_err(|error| {

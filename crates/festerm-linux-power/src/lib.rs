@@ -142,7 +142,7 @@ impl WakeMonitor {
 mod privacy;
 
 #[cfg(target_os = "linux")]
-pub use privacy::PrivacyMonitor;
+pub use privacy::{PrivacyMonitor, RecordingPrivacyMonitor};
 
 /// Privacy monitoring is unavailable off Linux. Installation synchronously
 /// revokes and returns an error.

@@ -43,7 +43,7 @@ public final class FestermActivity extends NativeActivity {
     static { System.loadLibrary("festerm_android"); }
 
     private static final int BACKGROUND = Color.rgb(15, 20, 28);
-    private static final int PICK_DOCUMENT = 40, MICROPHONE = 41;
+    private static final int PICK_DOCUMENT = 40, MICROPHONE = 41, PICK_RECORDING_FOLDER = 42;
     private static final int AUTH_OK = 0, AUTH_CANCELLED = 1, AUTH_LOCKED_OUT = 2,
         AUTH_NO_CREDENTIAL = 3, AUTH_UNAVAILABLE = 4;
     private static final int MAX_DOCUMENT = 1024 * 1024, MAX_SECRET = 64 * 1024;
@@ -80,6 +80,7 @@ public final class FestermActivity extends NativeActivity {
     private native void nativeLifecycle(int event);
     private native void nativeAuthenticated(long token, int result);
     private native void nativePicked(String path);
+    private native void nativeRecordingFolderPicked(String uri);
     private native void nativeSpeech(long generation, int status, String text);
     private native void nativeSpeechLevel(long generation, float rmsDb);
 
@@ -120,6 +121,10 @@ public final class FestermActivity extends NativeActivity {
 
     public RecordingEncoder newRecordingEncoder(String path, int width, int height) throws IOException {
         return new RecordingEncoder(path, width, height);
+    }
+
+    public RecordingDestination newRecordingDestination(String treeUri) throws IOException {
+        return new RecordingDestination(this, treeUri);
     }
 
     public String recordingDirectory() throws IOException {
@@ -451,6 +456,22 @@ public final class FestermActivity extends NativeActivity {
         });
     }
 
+    public void pickRecordingFolder() {
+        runOnUiThread(() -> {
+            if (destroyed || picking) { nativeRecordingFolderPicked(null); return; }
+            picking = true;
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+            try {
+                startActivityForResult(intent, PICK_RECORDING_FOLDER);
+            } catch (ActivityNotFoundException error) {
+                picking = false;
+                nativeRecordingFolderPicked(null);
+            }
+        });
+    }
+
     private void openSavedCopy() {
         files.execute(() -> {
             ArrayList<File> copies = new ArrayList<>();
@@ -505,6 +526,10 @@ public final class FestermActivity extends NativeActivity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == PICK_RECORDING_FOLDER) {
+            recordingFolderResult(result, data);
+            return;
+        }
         if (request != PICK_DOCUMENT) return;
         if (result != RESULT_OK) {
             picking = false;
@@ -569,6 +594,43 @@ public final class FestermActivity extends NativeActivity {
                 if (!destroyed) nativePicked(path);
             });
         });
+    }
+
+    private void recordingFolderResult(int result, Intent data) {
+        if (result != RESULT_OK) {
+            picking = false;
+            nativeRecordingFolderPicked("");
+            return;
+        }
+        Uri uri = data == null ? null : data.getData();
+        int flags = data == null ? 0 : data.getFlags()
+            & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        if (uri == null || flags != (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) {
+            picking = false;
+            nativeRecordingFolderPicked(null);
+            return;
+        }
+        try {
+            files.execute(() -> {
+                String chosen = null;
+                try {
+                    getContentResolver().takePersistableUriPermission(uri, flags);
+                    new RecordingDestination(this, uri.toString());
+                    chosen = uri.toString();
+                } catch (IOException | SecurityException | IllegalArgumentException
+                         | UnsupportedOperationException error) {
+                    android.util.Log.w("fesTerm", "Recording folder access is unavailable");
+                }
+                final String destination = chosen;
+                main.post(() -> {
+                    picking = false;
+                    if (!destroyed) nativeRecordingFolderPicked(destination);
+                });
+            });
+        } catch (RejectedExecutionException error) {
+            picking = false;
+            nativeRecordingFolderPicked(null);
+        }
     }
 
     private synchronized SecretKey secretKey() throws GeneralSecurityException, IOException {

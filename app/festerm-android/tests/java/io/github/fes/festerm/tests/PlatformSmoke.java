@@ -7,10 +7,13 @@ import android.graphics.Color;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
+import android.net.Uri;
 import android.os.*;
+import android.provider.DocumentsContract;
 import android.system.Os;
 import android.system.OsConstants;
 import android.view.*;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.inputmethod.*;
 import io.github.fes.festerm.FestermActivity;
 import io.github.fes.festerm.RecordingEncoder;
@@ -67,6 +70,181 @@ public final class PlatformSmoke extends Instrumentation {
             return times;
         } finally {
             extractor.release();
+        }
+    }
+
+    private static List<Long> videoTimes(Context context, Uri uri) throws IOException {
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(context, uri, null);
+            require(extractor.getTrackCount() == 1, "one provider MP4 track");
+            require("video/avc".equals(extractor.getTrackFormat(0).getString(MediaFormat.KEY_MIME)),
+                "provider MP4 is H.264");
+            extractor.selectTrack(0);
+            List<Long> times = new ArrayList<>();
+            do {
+                long time = extractor.getSampleTime();
+                if (time < 0) break;
+                times.add(time);
+            } while (extractor.advance());
+            return times;
+        } finally {
+            extractor.release();
+        }
+    }
+
+    private static boolean tap(AccessibilityNodeInfo node, String label) {
+        if (node == null) return false;
+        CharSequence text = node.getText(), description = node.getContentDescription();
+        if ((text != null && label.equalsIgnoreCase(text.toString()))
+            || (description != null && label.equalsIgnoreCase(description.toString()))) {
+            AccessibilityNodeInfo candidate = node;
+            while (candidate != null) {
+                if (candidate.isEnabled() && candidate.isClickable()
+                    && candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+                candidate = candidate.getParent();
+            }
+        }
+        for (int index = 0; index < node.getChildCount(); index++) {
+            if (tap(node.getChild(index), label)) return true;
+        }
+        return false;
+    }
+
+    private Uri recordingTree(FestermActivity activity) throws Exception {
+        String target = "primary:Documents/fes-recording-00dd";
+        for (android.content.UriPermission permission : activity.getContentResolver().getPersistedUriPermissions()) {
+            if (permission.isReadPermission() && permission.isWritePermission()
+                && DocumentsContract.isTreeUri(permission.getUri())
+                && target.equals(DocumentsContract.getTreeDocumentId(permission.getUri()))) return permission.getUri();
+        }
+        Field request = FestermActivity.class.getDeclaredField("PICK_RECORDING_FOLDER");
+        request.setAccessible(true);
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+            .putExtra(DocumentsContract.EXTRA_INITIAL_URI,
+                DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", target));
+        int code = request.getInt(null);
+        onMain(() -> activity.startActivityForResult(pick, code));
+        UiAutomation automation = getUiAutomation();
+        long deadline = SystemClock.uptimeMillis() + 30000;
+        while (SystemClock.uptimeMillis() < deadline) {
+            for (android.content.UriPermission permission : activity.getContentResolver().getPersistedUriPermissions()) {
+                if (permission.isReadPermission() && permission.isWritePermission()
+                    && DocumentsContract.isTreeUri(permission.getUri())
+                    && target.equals(DocumentsContract.getTreeDocumentId(permission.getUri()))) return permission.getUri();
+            }
+            AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+            if (!tap(root, "Use this folder")) tap(root, "Allow");
+            Thread.sleep(300);
+        }
+        throw new AssertionError("recording folder picker did not grant the test directory");
+    }
+
+    private void providerRecording(FestermActivity activity) throws Exception {
+        Uri tree = recordingTree(activity);
+        ContentResolver resolver = activity.getContentResolver();
+        Uri root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+        String base = "recording-native-" + UUID.randomUUID().toString();
+        Uri existing = DocumentsContract.createDocument(resolver, root,
+            DocumentsContract.Document.MIME_TYPE_DIR, base);
+        require(existing != null, "create preexisting export fixture");
+        Uri keep = DocumentsContract.createDocument(resolver, existing, "text/plain", "keep.txt");
+        require(keep != null, "create preexisting export marker");
+        try (OutputStream output = resolver.openOutputStream(keep, "w")) {
+            require(output != null, "open preexisting export marker");
+            output.write("preserve".getBytes(StandardCharsets.UTF_8));
+        }
+        File parent = new File(activity.recordingDirectory());
+        File local = new File(parent, "provider-test-" + UUID.randomUUID());
+        require(local.mkdir(), "create provider recording test directory");
+        Uri published = null;
+        Uri appearance = null;
+        List<Uri> documents = new ArrayList<>();
+        List<Uri> videos = new ArrayList<>();
+        try {
+            Class<?> hooks = Class.forName("io.github.fes.festerm.RecordingNativeTest",
+                true, activity.getClassLoader());
+            String result = (String) hooks.getMethod("publish", String.class, String.class, String.class)
+                .invoke(null, local.getPath(), tree.toString(), base);
+            require(result != null, "Rust-to-Android provider recording publication");
+            published = Uri.parse(result);
+            require(!DocumentsContract.getDocumentId(existing).equals(DocumentsContract.getDocumentId(published)),
+                "provider publication did not reuse an existing directory");
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(
+                tree, DocumentsContract.getDocumentId(published));
+            try (android.database.Cursor cursor = resolver.query(children,
+                    new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                        DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null)) {
+                require(cursor != null, "list published provider files");
+                while (cursor.moveToNext()) {
+                    Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0));
+                    documents.add(document);
+                    String name = cursor.getString(1), mime = cursor.getString(2);
+                    if ("recording-appearance.json".equals(name)) {
+                        require(appearance == null && "application/json".equals(mime),
+                            "one correctly typed appearance document");
+                        appearance = document;
+                    } else {
+                        require(name.startsWith("session-") && name.endsWith(".mp4")
+                            && "video/mp4".equals(mime), "unexpected provider document: " + name);
+                        videos.add(document);
+                    }
+                }
+            }
+            require(videos.size() == 2, "two provider MP4s");
+            require(appearance != null, "provider appearance document");
+            try (InputStream input = resolver.openInputStream(appearance)) {
+                require(input != null, "open provider appearance document");
+                ByteArrayOutputStream contents = new ByteArrayOutputStream();
+                byte[] buffer = new byte[1024];
+                int count;
+                while ((count = input.read(buffer)) != -1) contents.write(buffer, 0, count);
+                org.json.JSONObject metadata = new org.json.JSONObject(
+                    new String(contents.toByteArray(), StandardCharsets.UTF_8));
+                require("jet_brains_mono".equals(metadata.getString("font"))
+                    && metadata.getInt("width") == 256 && metadata.getInt("height") == 128
+                    && !metadata.getBoolean("recovered_prefix"), "provider appearance identity");
+            }
+            List<Long> first = videoTimes(activity, videos.get(0));
+            require(first.size() >= 4 && first.equals(videoTimes(activity, videos.get(1))),
+                "provider MP4s retain the synchronized frame schedule");
+            try (InputStream input = resolver.openInputStream(keep)) {
+                require(input != null, "open existing provider marker");
+                ByteArrayOutputStream contents = new ByteArrayOutputStream();
+                byte[] buffer = new byte[64];
+                int count;
+                while ((count = input.read(buffer)) != -1) contents.write(buffer, 0, count);
+                require(Arrays.equals(contents.toByteArray(), "preserve".getBytes(StandardCharsets.UTF_8)),
+                    "existing provider export remains untouched");
+            }
+        } finally {
+            for (Uri document : documents) require(DocumentsContract.deleteDocument(resolver, document),
+                "remove provider test document");
+            if (published != null) require(DocumentsContract.deleteDocument(resolver, published),
+                "remove provider test export");
+            require(DocumentsContract.deleteDocument(resolver, keep), "remove preexisting marker");
+            require(DocumentsContract.deleteDocument(resolver, existing), "remove preexisting fixture");
+            File staging = new File(local, "staging");
+            File[] files = staging.listFiles();
+            if (files != null) for (File file : files) {
+                require(file.getName().startsWith("stream-") && file.delete(), "remove staged test MP4");
+            }
+            if (staging.exists()) require(staging.delete(), "remove provider staging");
+            File sources = new File(local, "sources");
+            File[] remaining = sources.listFiles();
+            if (remaining != null) for (File file : remaining) {
+                require(file.getName().startsWith("recording-") && file.delete(), "remove retained test source");
+            }
+            if (sources.exists()) require(sources.delete(), "remove provider source directory");
+            File[] journals = local.listFiles();
+            if (journals != null) for (File journal : journals) {
+                if (journal.getName().startsWith("provider-") && journal.getName().endsWith(".json"))
+                    require(journal.delete(), "remove provider test journal");
+            }
+            require(local.delete(), "remove provider test directory");
         }
     }
 
@@ -238,6 +416,7 @@ public final class PlatformSmoke extends Instrumentation {
             waitForIdleSync();
             Thread.sleep(2000);
             recordingEncoder(activity, recordingValidation);
+            if (recordingValidation) providerRecording(activity);
             String reference = UUID.randomUUID().toString();
             byte[] fixture = "native-store-fixture".getBytes(StandardCharsets.UTF_8);
             require(activity.secretWrite(reference, fixture.clone(), false), "secret insert");
@@ -335,7 +514,7 @@ public final class PlatformSmoke extends Instrumentation {
             require(verifier != null, "native TLS verifier packaged");
             Class.forName("kotlin.enums.EnumEntriesKt");
             result.putString("stream", "PASS: H.264 recording"
-                + (recordingValidation ? " and Rust JNI export" : "")
+                + (recordingValidation ? ", Rust JNI export and Files-provider publication" : "")
                 + ", Keystore encryption/tamper/delete, clipboard, privacy, document URI, JNI IME, TLS classes\n");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {

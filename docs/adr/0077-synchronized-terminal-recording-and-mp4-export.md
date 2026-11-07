@@ -59,9 +59,11 @@ app-private storage using the platform's recommended backup-exclusion
 mechanism where available; disclose that this does not guarantee exclusion
 from all backup software. Failure to apply an available exclusion is an error,
 not a reason to silently use a less-private location. Provide a recording list,
-explicit deletion and interrupted-recording recovery/cleanup. A **Delete
-source recording after encoding** setting is on by default; turning it off
-retains sources for re-export with a warning. Arbitrary external
+explicit deletion and interrupted-recording recovery/cleanup. On desktop, a
+**Delete source recording after encoding** setting is on by default; turning it
+off retains sources for re-export with a warning. On mobile, sources are
+always retained until explicitly deleted, avoiding a race between automatic
+deletion and suspension. Arbitrary external
 recording import is out of scope. The artifact and exported videos are
 sensitive plaintext; additional encryption is not part of this proposal.
 Exporting to a user-selected folder may place an MP4 in a cloud-synchronized
@@ -90,8 +92,11 @@ integrity/resource failure stops every included stream together and finalizes
 the recording. Continuing requires a new explicit recording. No background
 capture is promised.
 
-Stopping automatically starts offline rendering and creates a separate silent
-MP4 for every included session. All MP4s use one shared time transform,
+Stopping opens a confirmation that permits pacing and appearance overrides and
+desktop retention overrides, shows the calculated shared duration, and requires
+explicit export. Cancelling
+keeps the private source for later. Confirmed offline rendering creates a
+separate silent MP4 for every included session. All MP4s use one shared time transform,
 duration and frame-time schedule. Export applies device-local pacing defaults
 that can be overridden per export: global playback rate, idle-gap compression,
 typing-speed normalization, long-output limiting and progressive output
@@ -106,9 +111,15 @@ checkpoint; ended sessions hold their last frame to the shared end. Export
 never connects to or mutates a live session. It uses a dedicated bounded CPU
 offscreen renderer, not test-only headless harnesses or a GPU context on the
 export worker. All files are staged and verified before the export set is
-published. If any stream fails, the source artifact remains for retry/recovery.
-Only after every MP4 has been successfully published is the source removed,
-unless deletion after encoding was turned off.
+published. The set includes a verified `recording-appearance.json` with the
+font/emoji identities and hashes, theme, size, canvas, renderer version and
+recovery marker. Optional desktop faces must already be downloaded and verified;
+unavailable faces fail rather than being silently substituted. If any stream or
+metadata publication fails, the source artifact remains for retry/recovery.
+On desktop, the source is removed only after every MP4 and the metadata have
+been successfully published and only if deletion is enabled. Mobile never
+automatically removes the source, even if an older settings snapshot requested
+deletion.
 
 End-to-end desktop and mobile implementation is authorized. The
 encoder/provider and platform lifecycle gates in
@@ -166,6 +177,13 @@ private-storage handling, lifecycle stop and privacy behavior pass native
 validation. Codec and plugin licensing, distribution, and sandbox behavior
 remain qualification gates.
 
+Android document providers do not guarantee atomic publication of a
+multi-file directory. The user chose direct export to a selected Files folder
+over an atomic app-private-only export: Android publishes the completed MP4s
+sequentially into a new directory, which may be visible while incomplete.
+Incomplete or interrupted publication is reported and retains the source;
+existing exports are never merged with or overwritten.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** Recording is explicit, local and
@@ -173,26 +191,41 @@ remain qualification gates.
   terminal mutations without becoming a writer; it excludes input and
   backend/recovery state; offline export is non-interactive; lock, lifecycle
   and integrity cuts stop all streams.
-- **GUI/action edges affected:** Add stable recording settings, folder
-  selection, naming preview, recording, session selection, stop and export
-  edges with the implementation.
+- **GUI/action edges affected:** `REC-01` covers device-local settings and
+  folder selection; `REC-02` covers consent and preparation; `REC-03` covers
+  inclusion and user stop; `REC-04` covers privacy and integrity stops; and
+  `REC-05` covers export, retention and library recovery.
 - **Automated tests required:** Recording-only checkpoint projection and size
   bounds; event capture for output, resize/reflow, reset and recovery changes;
   per-stream ordering and shared timestamps; explicit current/future session
   enrollment; no input/backend queue capture; bounded parser refusal;
   lock/background/resource stop; deterministic frame sampling and common
   speed/idle transforms; output-only typing inference, long-output limiting
-  and reveal preserving final state and alignment; default-on source deletion
-  after complete publication; fixed even encoder dimensions; export-root grants,
+  and reveal preserving final state and alignment; default-on desktop deletion
+  after complete publication and explicit-only mobile deletion; fixed even encoder dimensions; export-root grants,
   template validation, stable names, collision-safe per-recording directories
   and settings snapshots; atomic export-set publication where supported;
   source retention until complete publication; and failure isolation from
-  live sessions.
+  live sessions. Representative coverage includes
+  `synchronized_capture_spans_windows_and_excludes_local_input`,
+  `mobile_recording_binds_selected_active_and_parked_sessions`,
+  `shared_lifecycle_stop_blocks_later_output_in_every_stream`,
+  `resetting_reopened_sheet_restores_its_top`,
+  `advanced_pacing_observes_cancellation_after_the_last_source_read`,
+  `worker_publishes_all_streams_before_applying_retention`,
+  `retaining_backend_preserves_sources_even_with_old_deletion_settings`,
+  `recovery_stops_before_corrupt_truncated_or_semantically_invalid_frames`,
+  `recovery_omits_output_without_its_required_post_mutation_checkpoint`,
+  `recovered_prefix_is_labeled_and_never_deletes_the_original`, and
+  `worker_retains_source_on_encoding_and_publication_failure`.
 - **Native/manual evidence required:** Consent and recording indicators;
   recording settings, naming previews and persisted directory access;
   lock/background interruption; OS-recommended backup handling and its
   disclosed limitations, deletion/recovery;
   MP4 synchronization, dimensions, cadence and text legibility; encoder
   availability and failure; and privacy inspection on each supported
-  platform.
+  platform. The remaining platform-specific scenarios are tracked as
+  `TR-01` through `TR-03` in `docs/manual-validation.md`; automated and
+  isolated encoder/provider smoke evidence is not native UX or device
+  qualification.
 - **Coverage superseded:** None.

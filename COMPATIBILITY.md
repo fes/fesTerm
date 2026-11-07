@@ -16,6 +16,12 @@ fesTerm measures compatibility in terms of observable application behavior. Reco
 
 ## Compatibility Baseline
 
+Synchronized terminal recording and per-session silent MP4 export are
+implemented under proposed ADR 0077. Shared capture, pacing and publication
+tests do not establish native lifecycle, picker, encoder or physical-device
+qualification; the remaining evidence is `TR-01`–`TR-03` in
+`docs/manual-validation.md`.
+
 The [automation campaign](docs/automation-design.md) has a default-off local
 MCP **beta** on macOS, Linux and Windows: observation and per-input-reviewed
 control of exact local terminals, gated by verification-code matching and

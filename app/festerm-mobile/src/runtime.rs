@@ -223,6 +223,8 @@ pub fn run_native(
                     app
                 }
             };
+            #[cfg(all(feature = "live-ssh", any(target_os = "ios", target_os = "android")))]
+            let app = app.with_recording_storage();
             #[cfg(feature = "live-ssh")]
             let app = app.with_suspension(app_suspension);
             Ok(Box::new(app))

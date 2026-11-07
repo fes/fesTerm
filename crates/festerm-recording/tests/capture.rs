@@ -2,18 +2,55 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver},
-    time::Duration,
+    sync::{
+        atomic::AtomicBool,
+        mpsc::{self, Receiver},
+        Arc,
+    },
+    time::{Duration, Instant},
 };
 
 use festerm_core::{Dimensions, Terminal};
 use festerm_recording::{
     ArtifactEvent, ArtifactReader, Completion, FinishReason, Pacing, Playback, PlaybackPlan,
-    Recorder, SharedRecording, MAX_OUTPUT_BYTES,
+    PreparedRecording, Recorder, RecordingId, SharedRecording, MAX_OUTPUT_BYTES,
 };
 
 fn terminal(columns: usize, rows: usize) -> Terminal {
     Terminal::new(Dimensions::new(columns, rows).unwrap()).unwrap()
+}
+
+struct PrivateDir {
+    _directory: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl PrivateDir {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn private_dir() -> PrivateDir {
+    let directory = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    festerm_unix_security::make_private_directory(&fs::File::open(directory.path()).unwrap())
+        .unwrap();
+    #[cfg(windows)]
+    let path = {
+        let parent =
+            festerm_windows_security::lock_directory_path_without_delete_sharing(directory.path())
+                .unwrap();
+        let child = Path::new("private");
+        festerm_windows_security::create_current_user_only_directory(&parent, child).unwrap();
+        directory.path().join(child)
+    };
+    #[cfg(not(windows))]
+    let path = directory.path().to_owned();
+    PrivateDir {
+        _directory: directory,
+        path,
+    }
 }
 
 fn start(
@@ -24,6 +61,52 @@ fn start(
     let (recorder, streams) =
         Recorder::start(directory, terminals, move || wake.send(()).unwrap()).unwrap();
     (recorder, streams, ready)
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_requires_private_storage_without_a_symlink() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let parent = private_dir();
+    let storage = parent.path().join("storage");
+    std::fs::create_dir(&storage).unwrap();
+    std::fs::set_permissions(&storage, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let terminal = Terminal::new(Dimensions::new(20, 3).unwrap()).unwrap();
+    assert!(Recorder::start(&storage, &[&terminal], || {}).is_err());
+    assert_eq!(std::fs::read_dir(&storage).unwrap().count(), 0);
+
+    std::fs::set_permissions(&storage, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let link = parent.path().join("link");
+    symlink(&storage, &link).unwrap();
+    assert!(Recorder::start(&link, &[&terminal], || {}).is_err());
+    assert_eq!(std::fs::read_dir(&storage).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_preserves_the_source_when_its_storage_is_replaced() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = private_dir();
+    let storage = parent.path().join("storage");
+    std::fs::create_dir(&storage).unwrap();
+    std::fs::set_permissions(&storage, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let terminal = Terminal::new(Dimensions::new(20, 3).unwrap()).unwrap();
+    let (mut recorder, _, ready) = start(&storage, &[&terminal]);
+    let id = recorder.id();
+    let moved = parent.path().join("original");
+    std::fs::rename(&storage, &moved).unwrap();
+    std::fs::create_dir(&storage).unwrap();
+    std::fs::set_permissions(&storage, std::fs::Permissions::from_mode(0o700)).unwrap();
+    recorder.stop(FinishReason::User).unwrap();
+    ready.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(matches!(
+        recorder.poll_completion(),
+        Some(Completion::Failed { .. })
+    ));
+    assert!(moved.join(format!("recording-{id}.partial")).is_file());
+    assert_eq!(std::fs::read_dir(&storage).unwrap().count(), 0);
 }
 
 fn completion(recorder: &mut Recorder, ready: Receiver<()>) -> Completion {
@@ -39,8 +122,49 @@ fn completed_path(completion: Completion) -> PathBuf {
 }
 
 #[test]
+fn active_recording_flushes_its_recent_complete_events() {
+    let directory = private_dir();
+    let mut terminal = terminal(4, 2);
+    let (mut recorder, streams, ready) = start(directory.path(), &[&terminal]);
+    let generation = terminal.screen_generation();
+    terminal.ingest(b"hi");
+    recorder
+        .observe_output(streams[0], b"hi", generation, &terminal)
+        .unwrap();
+    let partial = directory
+        .path()
+        .join(format!("recording-{}.partial", recorder.id()));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let flushed = fs::File::open(&partial)
+            .ok()
+            .and_then(|file| ArtifactReader::new(file).ok())
+            .is_some_and(|mut reader| {
+                matches!(reader.next_event(), Ok(Some(ArtifactEvent::Started { .. })))
+                    && matches!(
+                        reader.next_event(),
+                        Ok(Some(ArtifactEvent::Output { bytes, .. })) if bytes == b"hi"
+                    )
+            });
+        if flushed {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "active recording was not flushed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    recorder.stop(FinishReason::User).unwrap();
+    assert!(matches!(
+        completion(&mut recorder, ready),
+        Completion::Complete { .. }
+    ));
+}
+
+#[test]
 fn selected_streams_share_a_timeline_and_replay_applied_mutations() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let mut first = terminal(24, 2);
     first.ingest(b"HISTORY-PRIVATE\r\nnext\r\nvisible");
     first.ingest(b"\x1b]2;TITLE-PRIVATE\x07");
@@ -166,17 +290,74 @@ fn selected_streams_share_a_timeline_and_replay_applied_mutations() {
 
 #[test]
 fn partial_preconsent_sequences_refuse_start_without_creating_a_source() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let mut terminal = terminal(20, 2);
     terminal.ingest(b"\x1b]2;PRIVATE-PENDING");
     assert!(Recorder::start(directory.path(), &[&terminal], || {}).is_err());
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
+#[test]
+fn preallocated_recording_id_binds_the_capture_to_its_saved_manifest() {
+    let directory = private_dir();
+    let terminal = terminal(20, 2);
+    let id = RecordingId::new();
+    let (wake, ready) = mpsc::channel();
+    let (mut recorder, _) =
+        Recorder::start_with_id(directory.path(), id, &[&terminal], move || {
+            wake.send(()).unwrap()
+        })
+        .unwrap();
+    assert_eq!(recorder.id(), id);
+    assert!(Recorder::start_with_id(directory.path(), id, &[&terminal], || {}).is_err());
+    recorder.stop(FinishReason::User).unwrap();
+    let path = completed_path(completion(&mut recorder, ready));
+    assert_eq!(
+        path.file_name().unwrap(),
+        format!("recording-{id}.fstrec").as_str()
+    );
+}
+
+#[test]
+fn prepared_sources_remain_empty_until_admitted_and_are_removed_on_refusal() {
+    let directory = private_dir();
+    let terminal = terminal(20, 2);
+    let id = RecordingId::new();
+    let prepared = PreparedRecording::create(directory.path(), id).unwrap();
+    let partial = directory.path().join(format!("recording-{id}.partial"));
+    assert_eq!(fs::metadata(&partial).unwrap().len(), 0);
+    assert!(SharedRecording::start_prepared_with_privacy_loss_flag(
+        prepared,
+        &[&terminal],
+        Arc::new(AtomicBool::new(true)),
+        || {},
+    )
+    .is_err());
+    assert!(!partial.exists());
+
+    let prepared = PreparedRecording::create(directory.path(), id).unwrap();
+    let (wake, ready) = mpsc::channel();
+    let (recording, streams) = SharedRecording::start_prepared_with_privacy_loss_flag(
+        prepared,
+        &[&terminal],
+        Arc::new(AtomicBool::new(false)),
+        move || wake.send(()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(recording.id(), id);
+    drop(streams);
+    recording.stop(FinishReason::User).unwrap();
+    ready.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(matches!(
+        recording.poll_completion().unwrap(),
+        Some(Completion::Complete { .. })
+    ));
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_recording_source_is_current_user_only() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let terminal = terminal(20, 2);
     let (mut recorder, _, ready) = start(directory.path(), &[&terminal]);
     recorder.stop(FinishReason::User).unwrap();
@@ -198,7 +379,7 @@ fn windows_recording_source_is_current_user_only() {
 
 #[test]
 fn repeat_of_offscreen_preconsent_character_is_checkpointed_after_output() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let mut original = terminal(20, 2);
     original.ingest("🧬".as_bytes());
     original.ingest(b"\x1b[2J\x1b[H");
@@ -256,7 +437,7 @@ fn repeat_of_offscreen_preconsent_character_is_checkpointed_after_output() {
 
 #[test]
 fn unsafe_screen_switch_stops_the_whole_recording_as_incomplete() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let mut first = terminal(20, 2);
     let second = terminal(20, 2);
     let (mut recorder, streams, ready) = start(directory.path(), &[&first, &second]);
@@ -294,7 +475,7 @@ fn unsafe_screen_switch_stops_the_whole_recording_as_incomplete() {
 
 #[test]
 fn oversized_output_stops_all_streams_and_preserves_an_incomplete_source() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let first = terminal(20, 2);
     let second = terminal(20, 2);
     let (mut recorder, streams, ready) = start(directory.path(), &[&first, &second]);
@@ -314,7 +495,7 @@ fn oversized_output_stops_all_streams_and_preserves_an_incomplete_source() {
 
 #[test]
 fn corrupt_truncated_and_oversized_frames_are_rejected() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let terminal = terminal(20, 2);
     let (mut recorder, _, ready) = start(directory.path(), &[&terminal]);
     recorder.stop(FinishReason::User).unwrap();
@@ -361,7 +542,7 @@ fn shared_completion(recording: &SharedRecording, ready: &Receiver<()>) -> Compl
 
 #[test]
 fn shared_lifecycle_stop_blocks_later_output_in_every_stream() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let mut first = terminal(20, 2);
     let mut second = terminal(20, 2);
     let (wake, ready) = mpsc::channel();
@@ -401,7 +582,7 @@ fn shared_lifecycle_stop_blocks_later_output_in_every_stream() {
 
 #[test]
 fn closing_one_shared_stream_keeps_the_other_recording() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let first = terminal(20, 2);
     let mut second = terminal(20, 2);
     let (wake, ready) = mpsc::channel();
@@ -438,7 +619,7 @@ fn closing_one_shared_stream_keeps_the_other_recording() {
 
 #[test]
 fn shared_capture_failure_is_visible_and_stops_every_stream() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_dir();
     let first = terminal(20, 2);
     let second = terminal(20, 2);
     let (wake, ready) = mpsc::channel();

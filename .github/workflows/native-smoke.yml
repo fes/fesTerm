@@ -9,7 +9,7 @@ permissions:
 jobs:
   recording-windows:
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: dtolnay/rust-toolchain@stable
@@ -24,6 +24,12 @@ jobs:
           }
           ffmpeg -version
           ffprobe -version
+      - name: Check Windows desktop
+        run: cargo check --locked -p festerm --bin festerm
+      - name: Test shared Windows privacy
+        run: cargo test --locked -p festerm-windows-power --lib
+      - name: Test desktop recording coordinator
+        run: cargo test --locked -p festerm --bin festerm application::recording::tests
       - name: Encode and inspect native Windows video
         run: cargo test --locked -p festerm-recording-windows -- --ignored --nocapture
       - name: Verify private synchronized capture

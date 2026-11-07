@@ -1,7 +1,7 @@
 use std::{
     fmt,
     fs::File,
-    io::{BufWriter, Read, Write},
+    io::{self, BufWriter, Cursor, Read, Take, Write},
     time::Duration,
 };
 
@@ -44,6 +44,8 @@ pub enum FinishReason {
     ResourceLimit,
     IntegrityFailure,
     Interrupted,
+    /// A separately confirmed export of an incomplete source's valid prefix.
+    RecoveredPrefix,
 }
 
 impl FinishReason {
@@ -58,6 +60,7 @@ impl FinishReason {
             Self::ResourceLimit => 3,
             Self::IntegrityFailure => 4,
             Self::Interrupted => 5,
+            Self::RecoveredPrefix => 6,
         }
     }
 
@@ -68,6 +71,7 @@ impl FinishReason {
             3 => Some(Self::ResourceLimit),
             4 => Some(Self::IntegrityFailure),
             5 => Some(Self::Interrupted),
+            6 => Some(Self::RecoveredPrefix),
             _ => None,
         }
     }
@@ -139,6 +143,67 @@ impl std::error::Error for ArtifactError {}
 impl From<std::io::Error> for ArtifactError {
     fn from(error: std::io::Error) -> Self {
         Self::new(format!("recording I/O failed: {error}"))
+    }
+}
+
+/// A checked prefix of an interrupted recording. It is not a complete source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoveryPrefix {
+    length: u64,
+    duration: Duration,
+    stream_count: usize,
+    fingerprint: [u8; 32],
+    finish: [u8; HEADER_BYTES + 1],
+}
+
+impl RecoveryPrefix {
+    pub const fn length(self) -> u64 {
+        self.length
+    }
+
+    pub const fn duration(self) -> Duration {
+        self.duration
+    }
+
+    pub const fn stream_count(self) -> usize {
+        self.stream_count
+    }
+
+    /// Fingerprint of the exact prefix followed by its synthetic recovery end.
+    pub const fn fingerprint(self) -> [u8; 32] {
+        self.fingerprint
+    }
+
+    /// Reads only the checked prefix and appends an explicitly recovered end.
+    pub fn reader<R: Read>(self, input: R) -> RecoveryReader<R> {
+        RecoveryReader {
+            prefix: input.take(self.length),
+            finish: Cursor::new(self.finish),
+        }
+    }
+}
+
+pub struct RecoveryReader<R> {
+    prefix: Take<R>,
+    finish: Cursor<[u8; HEADER_BYTES + 1]>,
+}
+
+impl<R: Read> Read for RecoveryReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        if self.prefix.limit() != 0 {
+            let count = self.prefix.read(buffer)?;
+            if count == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "the inspected recording prefix was truncated",
+                ));
+            }
+            return Ok(count);
+        }
+        self.finish.read(buffer)
     }
 }
 
@@ -214,6 +279,11 @@ impl ArtifactWriter {
         self.write_frame(FINISH, 0, at_ns, &[reason.code()])?;
         self.file.flush()?;
         self.file.get_ref().sync_all()?;
+        Ok(())
+    }
+
+    pub(crate) fn flush(&mut self) -> Result<(), ArtifactError> {
+        self.file.flush()?;
         Ok(())
     }
 
@@ -350,13 +420,12 @@ impl<R: Read> ArtifactReader<R> {
                 "recording frame checksum does not match",
             ));
         }
-        self.fingerprint.update(header);
-        self.fingerprint.update(&payload);
-        self.bytes_read = next;
-        self.last_ns = at_ns;
         let at = Duration::from_nanos(at_ns);
+        let mut fingerprint = self.fingerprint.clone();
+        fingerprint.update(header);
+        fingerprint.update(&payload);
 
-        if kind == FINISH {
+        let event = if kind == FINISH {
             if stream_byte != 0 || self.next_stream == 1 || length != 1 {
                 return Err(ArtifactError::new("invalid recording finish frame"));
             }
@@ -367,53 +436,81 @@ impl<R: Read> ArtifactReader<R> {
                 return Err(ArtifactError::new("recording has trailing data"));
             }
             self.finished = true;
-            return Ok(Some(ArtifactEvent::Finished { at, reason }));
-        }
-
-        let stream = StreamId::from_index(usize::from(stream_byte))
-            .ok_or_else(|| ArtifactError::new("recording has an invalid stream index"))?;
-        let slot = stream.index() - 1;
-        if kind == START {
-            if stream.index() != self.next_stream || self.active[slot] {
-                return Err(ArtifactError::new(
-                    "recording streams are not in enrollment order",
-                ));
+            ArtifactEvent::Finished { at, reason }
+        } else {
+            let stream = StreamId::from_index(usize::from(stream_byte))
+                .ok_or_else(|| ArtifactError::new("recording has an invalid stream index"))?;
+            let slot = stream.index() - 1;
+            if kind == START {
+                if stream.index() != self.next_stream || self.active[slot] {
+                    return Err(ArtifactError::new(
+                        "recording streams are not in enrollment order",
+                    ));
+                }
+                let terminal = decode_checkpoint(&payload)?;
+                self.next_stream += 1;
+                self.active[slot] = true;
+                ArtifactEvent::Started {
+                    at,
+                    stream,
+                    terminal,
+                }
+            } else {
+                if !self.active[slot] {
+                    return Err(ArtifactError::new("recording event has no active stream"));
+                }
+                match kind {
+                    OUTPUT => ArtifactEvent::Output {
+                        at,
+                        stream,
+                        bytes: payload,
+                    },
+                    CHECKPOINT => ArtifactEvent::Checkpoint {
+                        at,
+                        stream,
+                        terminal: decode_checkpoint(&payload)?,
+                    },
+                    RESIZE => ArtifactEvent::Resized {
+                        at,
+                        stream,
+                        terminal: decode_checkpoint(&payload)?,
+                    },
+                    END => {
+                        self.active[slot] = false;
+                        ArtifactEvent::Ended { at, stream }
+                    }
+                    _ => return Err(ArtifactError::new("unexpected recording frame")),
+                }
             }
-            let terminal = decode_checkpoint(&payload)?;
-            self.next_stream += 1;
-            self.active[slot] = true;
-            return Ok(Some(ArtifactEvent::Started {
-                at,
-                stream,
-                terminal,
-            }));
-        }
-        if !self.active[slot] {
-            return Err(ArtifactError::new("recording event has no active stream"));
-        }
-        let event = match kind {
-            OUTPUT => ArtifactEvent::Output {
-                at,
-                stream,
-                bytes: payload,
-            },
-            CHECKPOINT => ArtifactEvent::Checkpoint {
-                at,
-                stream,
-                terminal: decode_checkpoint(&payload)?,
-            },
-            RESIZE => ArtifactEvent::Resized {
-                at,
-                stream,
-                terminal: decode_checkpoint(&payload)?,
-            },
-            END => {
-                self.active[slot] = false;
-                ArtifactEvent::Ended { at, stream }
-            }
-            _ => return Err(ArtifactError::new("unexpected recording frame")),
         };
+        self.fingerprint = fingerprint;
+        self.bytes_read = next;
+        self.last_ns = at_ns;
         Ok(Some(event))
+    }
+
+    pub(crate) fn recovery_prefix(&self) -> Option<RecoveryPrefix> {
+        if self.finished || self.next_stream == 1 {
+            return None;
+        }
+        let mut finish = [0; HEADER_BYTES + 1];
+        finish[0] = FINISH;
+        finish[2..10].copy_from_slice(&self.last_ns.to_le_bytes());
+        finish[10..14].copy_from_slice(&1u32.to_le_bytes());
+        finish[HEADER_BYTES] = FinishReason::RecoveredPrefix.code();
+        let mut checksum = crc32fast::Hasher::new();
+        checksum.update(&finish[..14]);
+        checksum.update(&finish[HEADER_BYTES..]);
+        finish[14..18].copy_from_slice(&checksum.finalize().to_le_bytes());
+        let mut fingerprint = self.fingerprint.clone();
+        fingerprint.update(finish);
+        Some(RecoveryPrefix {
+            length: self.bytes_read,
+            duration: Duration::from_nanos(self.last_ns),
+            stream_count: self.next_stream - 1,
+            fingerprint: fingerprint.finalize().into(),
+            finish,
+        })
     }
 }
 

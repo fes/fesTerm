@@ -45,7 +45,10 @@ A successful inference shows no notice; the highlight is the feedback. An
 unavailable result leaves an existing selection intact and explains that
 ordinary drag is available. Rows painted by a TUI (for example Copilot CLI's
 bulleted, hanging-indent prose) join as one paragraph, but same-indent lines
-without a marker row keep their line breaks so stack traces stay intact. There is intentionally no immediate **Smart Copy**:
+without a marker row keep their line breaks so stack traces stay intact. A
+leading list marker (`●`, `•`, `1.` and similar) is layout, not content: the
+selection starts at the text after it, and later rows lose the same
+indentation. There is intentionally no immediate **Smart Copy**:
 it would skip the inspection step on unqualified layout inference.
 Instruction and refusal feedback expires automatically. Escape is consumed
 only while cancelling an inferred selection or keyboard target; otherwise it
@@ -73,15 +76,28 @@ feedback. Ordinary clicks, drags, Copy and application shortcuts retain their
 meaning.
 
 Layout precedes segmentation. A vertical box/ASCII border or internal run of
-two spaces bounds the clicked row's text segment. Such layouts conservatively
+two spaces bounds the clicked row's text segment; the two blank cells must share
+a background, because inline code painted on a background (Copilot CLI) pads an
+ordinary space with a styled one and is not a column gap. A lone border or block glyph
+in the last column after blank padding is a TUI scrollbar (Copilot CLI paints
+`┃`); nothing lies beyond it, so it is excluded without bounding the row. Such
+layouts conservatively
 select only that visual row: full-width terminal soft-wrap metadata cannot
 certify a pane's logical wraps. Unbordered, one-space-separated columns cannot
 be reliably inferred and are **unsupported**, not validated pane recognition.
 Blank/border targets refuse. Full-width prose follows recorded soft wraps;
 paragraphs additionally group explicit adjacent lines with equal indentation.
 Blocks allow indentation transitions (for example an error plus indented
-details), stopping before the next unindented record and at blank lines.
-Sentence punctuation is `. ! ? 。 ！ ？` followed by whitespace/end; abbreviations,
+details), stopping before the next unindented record and at blank lines. When
+the clicked row belongs to a marker-led record (the outermost marker row above
+it with every row between indented deeper, as in a Copilot CLI `●` message),
+the block is that whole record: it spans interior blank rows and nested bullets
+and stops before the next row indented at or left of the marker. Inside such a
+record only borders bound a row; a plain double space in its prose is not a
+pane gap.
+Sentence punctuation is `. ! ? 。 ！ ？` followed by whitespace/end, except
+where it is painted on a background different from the row's text (inline code
+such as an illustrative `1.`); abbreviations,
 language-specific sentence rules and semantic explanation understanding are
 not claimed. Explicit newlines are preserved; visual wraps are joined.
 Printed indentation and interior spaces are preserved, trailing row padding is
@@ -878,7 +894,7 @@ keyboard movement/resizing, and accessibility work tracked in issue #29.
 
 **About fesTerm** is a compact native-style dialog containing the same branded
 fesTerm application icon used by the native window, dock, and task switcher,
-`fesTerm`, exact application version, the description “A compact local,
+`fesTerm`, exact application version, the description “An AI-friendly local,
 SSH, and serial terminal.”, the explicit disclosure “Entirely AI-written with
 human guidance.” plus concise GitHub Copilot/project-owner attribution,
 **Copy Version Information**, **Licenses**, the canonical project/source link,

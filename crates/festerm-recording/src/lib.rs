@@ -6,14 +6,29 @@ mod artifact;
 mod capture;
 mod naming;
 mod playback;
+mod settings;
+#[cfg(any(unix, windows))]
+mod settings_store;
 mod shared;
 
-pub use artifact::{ArtifactError, ArtifactEvent, ArtifactReader, FinishReason, StreamId};
-pub use capture::{CaptureError, Completion, Recorder};
+pub use artifact::{
+    ArtifactError, ArtifactEvent, ArtifactReader, FinishReason, RecoveryPrefix, RecoveryReader,
+    StreamId,
+};
+pub use capture::{CaptureError, Completion, PreparedRecording, Recorder};
 pub use naming::{LocalStart, NameError, NameTemplates, RecordingId};
 pub use playback::{
     IdleCompression, LongOutputLimit, OutputRevealRate, Pacing, Playback, PlaybackError,
     PlaybackFrame, PlaybackPlan, PlaybackSpeed, TypingSpeed,
+};
+pub use settings::{
+    ExportDestination, RecordingAppearance, RecordingFont, RecordingSettings, RecordingTheme,
+    ValidatedRecordingSettings,
+};
+#[cfg(any(unix, windows))]
+pub use settings_store::{
+    RecordingLease, RecordingManifest, RecordingSettingsStore, RecordingSource,
+    RecordingSourceState,
 };
 pub use shared::{RecordingStream, SharedRecording};
 

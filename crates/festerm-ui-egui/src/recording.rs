@@ -5,18 +5,59 @@ use egui::{
     Color32, Context, Pos2, RawInput, Rect, TextureFilter, TextureId, TextureOptions,
     TextureWrapMode,
 };
-use festerm_core::Terminal;
+use festerm_core::{ColorScheme, Rgb, Terminal};
 
 use crate::{
     geometry::CellMetrics,
     renderer::{paint_grid, FontSettings, GlyphCache, GridLayout, GridPaint},
     Selection, TerminalFontFamily, TerminalFontSet, TerminalRenderCache, TerminalSnapshot,
-    DEFAULT_BACKGROUND, DEFAULT_FOREGROUND,
 };
 
 const MAX_TEXTURE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_WIDTH: usize = 3840;
 const MAX_HEIGHT: usize = 2160;
+
+/// Fixed palettes for an offline export, independent of live window styling.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RecordingPalette {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl RecordingPalette {
+    fn scheme(self) -> ColorScheme {
+        match self {
+            Self::Dark => crate::terminal_color_scheme(),
+            Self::Light => {
+                let foreground = Rgb::new(0x19, 0x23, 0x2f);
+                ColorScheme::new(
+                    foreground,
+                    Rgb::new(0xf7, 0xf8, 0xfa),
+                    foreground,
+                    [
+                        Rgb::new(0x1c, 0x23, 0x2b),
+                        Rgb::new(0xa6, 0x1b, 0x29),
+                        Rgb::new(0x06, 0x70, 0x40),
+                        Rgb::new(0x78, 0x59, 0x00),
+                        Rgb::new(0x00, 0x51, 0xa6),
+                        Rgb::new(0x83, 0x1e, 0x80),
+                        Rgb::new(0x00, 0x67, 0x75),
+                        Rgb::new(0x4f, 0x59, 0x62),
+                        Rgb::new(0x54, 0x5e, 0x68),
+                        Rgb::new(0xb4, 0x18, 0x2a),
+                        Rgb::new(0x00, 0x75, 0x38),
+                        Rgb::new(0x73, 0x55, 0x00),
+                        Rgb::new(0x00, 0x4f, 0xb0),
+                        Rgb::new(0x8c, 0x1c, 0x86),
+                        Rgb::new(0x00, 0x66, 0x75),
+                        Rgb::new(0x16, 0x1b, 0x22),
+                    ],
+                )
+            }
+        }
+    }
+}
 
 /// Fixed, even-aligned dimensions for an offline video frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,13 +115,13 @@ struct Texture {
     options: TextureOptions,
 }
 
-/// A terminal-only CPU renderer using fesTerm's bundled JetBrains Mono and
-/// default terminal theme. It does not create an input sink or a GPU context.
+/// A terminal-only CPU renderer. It does not create an input sink or GPU context.
 pub struct RecordingRenderer {
     context: Context,
     size: RecordingFrameSize,
     font_size: f32,
     fonts: FontSettings,
+    color_scheme: ColorScheme,
     cache: TerminalRenderCache,
     glyphs: GlyphCache,
     selection: Selection,
@@ -91,19 +132,51 @@ pub struct RecordingRenderer {
 
 impl RecordingRenderer {
     pub fn new(size: RecordingFrameSize, font_size: f32) -> Result<Self, RecordingRenderError> {
+        Self::with_appearance(
+            size,
+            font_size,
+            TerminalFontFamily::JetBrainsMono,
+            false,
+            None,
+            RecordingPalette::Dark,
+        )
+    }
+
+    /// Optional faces must already have been verified by the application.
+    /// Missing or invalid selected faces are an error, never a substitution.
+    pub fn with_appearance(
+        size: RecordingFrameSize,
+        font_size: f32,
+        family: TerminalFontFamily,
+        ligatures: bool,
+        faces: Option<[Vec<u8>; 4]>,
+        palette: RecordingPalette,
+    ) -> Result<Self, RecordingRenderError> {
         if !font_size.is_finite() || !(8.0..=64.0).contains(&font_size) {
             return Err(RecordingRenderError::new(
                 "recording font size must be between 8 and 64 points",
             ));
         }
         let context = Context::default();
-        let generation = crate::install_terminal_fonts(&context);
+        let generation = match (family, faces) {
+            (TerminalFontFamily::JetBrainsMono, None) => crate::install_terminal_fonts(&context),
+            (TerminalFontFamily::JetBrainsMono, Some(_)) => {
+                return Err(RecordingRenderError::new(
+                    "the bundled recording font cannot use supplied faces",
+                ))
+            }
+            (_, Some(faces)) if !ligatures => {
+                crate::install_terminal_font_faces(&context, family, faces)
+                    .map_err(RecordingRenderError::new)?
+            }
+            _ => {
+                return Err(RecordingRenderError::new(
+                    "the selected recording font is unavailable",
+                ))
+            }
+        };
         let mut fonts = FontSettings::default();
-        fonts.set_font_set(TerminalFontSet::new(
-            TerminalFontFamily::JetBrainsMono,
-            false,
-            generation,
-        ));
+        fonts.set_font_set(TerminalFontSet::new(family, ligatures, generation));
         let byte_count = size.width * size.height * 4;
         let mut pixels = Vec::new();
         pixels.try_reserve_exact(byte_count).map_err(|error| {
@@ -115,6 +188,7 @@ impl RecordingRenderer {
             size,
             font_size,
             fonts,
+            color_scheme: palette.scheme(),
             cache: TerminalRenderCache::default(),
             glyphs: GlyphCache::default(),
             selection: Selection::default(),
@@ -126,8 +200,10 @@ impl RecordingRenderer {
 
     /// Returns opaque RGBA pixels. `None` renders the neutral pre-enrollment frame.
     pub fn render(&mut self, terminal: Option<&Terminal>) -> Result<&[u8], RecordingRenderError> {
-        for pixel in self.pixels.chunks_exact_mut(4) {
-            pixel.copy_from_slice(&DEFAULT_BACKGROUND.to_array());
+        let background = self.color_scheme.background();
+        let background = Color32::from_rgb(background.red, background.green, background.blue);
+        for pixel in self.pixels.as_chunks_mut::<4>().0 {
+            pixel.copy_from_slice(&background.to_array());
         }
         let Some(terminal) = terminal else {
             return Ok(&self.pixels);
@@ -152,8 +228,9 @@ impl RecordingRenderer {
             let dimensions = terminal.dimensions();
             let mut fonts = self.fonts.clone();
             fonts.size_points = self.font_size;
-            let glyph =
-                painter.layout_no_wrap("M".to_owned(), fonts.regular_font_id(), DEFAULT_FOREGROUND);
+            let foreground = self.color_scheme.foreground();
+            let foreground = Color32::from_rgb(foreground.red, foreground.green, foreground.blue);
+            let glyph = painter.layout_no_wrap("M".to_owned(), fonts.regular_font_id(), foreground);
             let scale = (rect.width() / (glyph.size().x * dimensions.columns() as f32))
                 .min(rect.height() / (glyph.size().y * dimensions.rows() as f32))
                 .min(1.0);
@@ -164,8 +241,7 @@ impl RecordingRenderer {
                 return;
             }
             fonts.size_points *= scale;
-            let glyph =
-                painter.layout_no_wrap("M".to_owned(), fonts.regular_font_id(), DEFAULT_FOREGROUND);
+            let glyph = painter.layout_no_wrap("M".to_owned(), fonts.regular_font_id(), foreground);
             let Some(metrics) = CellMetrics::new(glyph.size().x, glyph.size().y) else {
                 error = Some(RecordingRenderError::new(
                     "recording font has invalid metrics",
@@ -198,7 +274,8 @@ impl RecordingRenderer {
                     cache: &self.cache,
                     selection: &self.selection,
                     fonts: &fonts,
-                    shape_cell_runs: false,
+                    color_scheme: Some(&self.color_scheme),
+                    shape_cell_runs: fonts.font_set().ligatures(),
                     focused: true,
                     suppress_cursor: false,
                     full_redraw: true,
@@ -324,7 +401,7 @@ fn rasterize(
         let texture = textures
             .get(&mesh.texture_id)
             .ok_or_else(|| RecordingRenderError::new("recording paint texture is unavailable"))?;
-        for indices in mesh.indices.chunks_exact(3) {
+        for indices in mesh.indices.as_chunks::<3>().0 {
             let vertices = [
                 mesh.vertices[indices[0] as usize],
                 mesh.vertices[indices[1] as usize],
@@ -468,6 +545,7 @@ mod tests {
     use festerm_core::{Dimensions, Terminal};
 
     use super::*;
+    use crate::DEFAULT_BACKGROUND;
 
     #[test]
     fn recording_renderer_draws_terminal_text_without_mutating_the_source() {
@@ -478,9 +556,11 @@ mod tests {
         let cursor = terminal.cursor();
         let first = renderer.render(Some(&terminal)).unwrap().to_vec();
         assert_eq!(first.len(), 640 * 360 * 4);
-        assert!(first.chunks_exact(4).all(|pixel| pixel[3] == 255));
+        assert!(first.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255));
         assert!(first
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[..3] != DEFAULT_BACKGROUND.to_array()[..3]));
         assert_eq!(renderer.render(Some(&terminal)).unwrap(), first);
         assert_eq!(terminal.cursor(), cursor);
@@ -494,8 +574,60 @@ mod tests {
         assert_ne!(resized, first);
         let neutral = renderer.render(None).unwrap();
         assert!(neutral
-            .chunks_exact(4)
-            .all(|pixel| pixel == DEFAULT_BACKGROUND.to_array()));
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == DEFAULT_BACKGROUND.to_array()));
+    }
+
+    #[test]
+    fn recording_palette_resolves_default_ansi_and_inverse_colors() {
+        let size = RecordingFrameSize::new(320, 180).unwrap();
+        let mut renderer = RecordingRenderer::with_appearance(
+            size,
+            20.0,
+            TerminalFontFamily::JetBrainsMono,
+            false,
+            None,
+            RecordingPalette::Light,
+        )
+        .unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?25l\x1b[41m \x1b[0m\x1b[7m \x1b[0m");
+        let pixels = renderer.render(Some(&terminal)).unwrap().as_chunks::<4>().0;
+        assert!(pixels.contains(&[0xf7, 0xf8, 0xfa, 255]));
+        assert!(pixels.contains(&[0xa6, 0x1b, 0x29, 255]));
+        assert!(pixels.contains(&[0x19, 0x23, 0x2f, 255]));
+        assert!(renderer
+            .render(None)
+            .unwrap()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [0xf7, 0xf8, 0xfa, 255]));
+    }
+
+    #[test]
+    fn recording_rejects_missing_or_invalid_selected_fonts() {
+        let size = RecordingFrameSize::new(320, 180).unwrap();
+        assert!(RecordingRenderer::with_appearance(
+            size,
+            20.0,
+            TerminalFontFamily::IosevkaTerm,
+            false,
+            None,
+            RecordingPalette::Dark,
+        )
+        .is_err());
+        assert!(RecordingRenderer::with_appearance(
+            size,
+            20.0,
+            TerminalFontFamily::IosevkaTerm,
+            false,
+            Some(std::array::from_fn(|_| vec![0])),
+            RecordingPalette::Dark,
+        )
+        .is_err());
     }
 
     #[test]
@@ -507,7 +639,7 @@ mod tests {
             options: TextureOptions::NEAREST,
         };
         let mut pixels = vec![0; 4 * 4 * 4];
-        for pixel in pixels.chunks_exact_mut(4) {
+        for pixel in pixels.as_chunks_mut::<4>().0 {
             pixel[3] = 255;
         }
         let vertex = |x, y| Vertex {
@@ -531,8 +663,10 @@ mod tests {
             [vertex(0.0, 0.0), vertex(4.0, 4.0), vertex(0.0, 4.0)],
         );
         assert!(pixels
-            .chunks_exact(4)
-            .all(|pixel| pixel == [128, 0, 0, 255]));
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [128, 0, 0, 255]));
     }
 
     #[test]
@@ -542,7 +676,7 @@ mod tests {
         let mut terminal = Terminal::new(Dimensions::new(12, 3).unwrap()).unwrap();
         terminal.ingest("\x1b[?25l🤖".as_bytes());
         let first = renderer.render(Some(&terminal)).unwrap().to_vec();
-        assert!(first.chunks_exact(4).any(|pixel| {
+        assert!(first.as_chunks::<4>().0.iter().any(|pixel| {
             pixel[0] != pixel[1]
                 && pixel[1] != pixel[2]
                 && pixel[..3] != DEFAULT_BACKGROUND.to_array()[..3]

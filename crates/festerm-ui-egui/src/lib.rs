@@ -56,7 +56,9 @@ pub use native_painter::{
     install_root_terminal_painter_with_options, remove_root_terminal_painter, FontAtlasCapture,
     NativePainterOptions, TerminalPaintFrame,
 };
-pub use recording::{RecordingFrameSize, RecordingRenderError, RecordingRenderer};
+pub use recording::{
+    RecordingFrameSize, RecordingPalette, RecordingRenderError, RecordingRenderer,
+};
 pub use rectangle_copy::RectangleCopyError;
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
 pub use selection::{

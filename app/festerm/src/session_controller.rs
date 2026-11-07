@@ -51,6 +51,18 @@ fn automation_instance() -> Option<u64> {
 /// latency - low regardless of the size of the retained backlog.
 pub const MAX_INGEST_BYTES_PER_FRAME: usize = MAX_IO_CHUNK_BYTES * 4;
 
+/// Once [`MAX_INGEST_BYTES_PER_FRAME`] has been ingested, a pump keeps
+/// draining an already-queued backlog until this much wall time has elapsed.
+/// Under sustained output each frame otherwise spends most of its time
+/// blocked acquiring the next drawable, so a fixed byte floor alone caps
+/// throughput at the display rate. The budget still bounds how long `update()`
+/// can be held, keeping keyboard input (including Ctrl+C) responsive.
+pub const INGEST_TIME_BUDGET: Duration = Duration::from_millis(8);
+
+/// Absolute ceiling on bytes ingested by one pump, regardless of the time
+/// budget, so a very fast parser still yields regularly for repaint.
+pub const MAX_INGEST_BYTES_PER_PUMP: usize = MAX_INGEST_BYTES_PER_FRAME * 16;
+
 /// Maximum bytes retained in the ordered pending-write buffer.
 pub const MAX_PENDING_COMMAND_BYTES: usize = DEFAULT_COMMAND_QUEUE_CAPACITY * MAX_IO_CHUNK_BYTES;
 
@@ -625,6 +637,18 @@ impl<S: Session> SessionController<S> {
         self.recording_stream = Some(stream);
     }
 
+    pub fn recording_id(&self) -> Option<festerm_recording::RecordingId> {
+        self.recording_stream
+            .as_ref()
+            .map(festerm_recording::RecordingStream::recording_id)
+    }
+
+    pub fn detach_recording_stream(&mut self, id: festerm_recording::RecordingId) {
+        if self.recording_id() == Some(id) {
+            self.recording_stream = None;
+        }
+    }
+
     pub fn record_checkpoint(&self, terminal: &Terminal) {
         if let Some(stream) = &self.recording_stream {
             // The shared recording retains any error and wakes its owner.
@@ -929,6 +953,7 @@ impl<S: Session> SessionController<S> {
             session,
             terminal,
             MAX_SESSION_EVENTS_PER_FRAME,
+            INGEST_TIME_BUDGET,
             resize,
             |event| match event {
                 PumpedSessionEvent::Output(bytes) => resize_probe.record_output(bytes),
@@ -1718,6 +1743,7 @@ pub fn pump_session_events(
         session,
         terminal,
         maximum,
+        INGEST_TIME_BUDGET,
         |terminal, dimensions| terminal.resize(dimensions).is_ok(),
         observe,
     )
@@ -1727,6 +1753,7 @@ fn pump_session_events_with_resize(
     session: &impl Session,
     terminal: &mut Terminal,
     maximum: usize,
+    time_budget: Duration,
     mut resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
     mut observe: impl FnMut(PumpedSessionEvent<'_>),
 ) -> PumpResult {
@@ -1734,6 +1761,7 @@ fn pump_session_events_with_resize(
         session,
         terminal,
         maximum,
+        time_budget,
         &mut resize,
         &mut observe,
         |_| {},
@@ -1744,10 +1772,12 @@ fn pump_session_events_with_mutations(
     session: &impl Session,
     terminal: &mut Terminal,
     maximum: usize,
+    time_budget: Duration,
     mut resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
     mut observe: impl FnMut(PumpedSessionEvent<'_>),
     mut mutation: impl FnMut(TerminalMutation<'_>),
 ) -> PumpResult {
+    let started = Instant::now();
     let mut output_received = false;
     let mut ingested_bytes = 0usize;
     for _ in 0..maximum {
@@ -1768,7 +1798,10 @@ fn pump_session_events_with_mutations(
                         let _ = terminal.take_reply_queue_overflowed();
                     }
                     ingested_bytes = ingested_bytes.saturating_add(bytes.len());
-                    if ingested_bytes >= MAX_INGEST_BYTES_PER_FRAME {
+                    if ingested_bytes >= MAX_INGEST_BYTES_PER_PUMP
+                        || (ingested_bytes >= MAX_INGEST_BYTES_PER_FRAME
+                            && started.elapsed() >= time_budget)
+                    {
                         return PumpResult {
                             hit_limit: true,
                             output_received,
@@ -2371,6 +2404,42 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     use festerm_pty::{LocalProfile, LocalPtySession};
+
+    struct PrivateRecordingDir {
+        _directory: tempfile::TempDir,
+        path: std::path::PathBuf,
+    }
+
+    impl PrivateRecordingDir {
+        fn path(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+
+    fn private_recording_dir() -> PrivateRecordingDir {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        festerm_unix_security::make_private_directory(
+            &std::fs::File::open(directory.path()).unwrap(),
+        )
+        .unwrap();
+        #[cfg(windows)]
+        let path = {
+            let parent = festerm_windows_security::lock_directory_path_without_delete_sharing(
+                directory.path(),
+            )
+            .unwrap();
+            let child = std::path::Path::new("private");
+            festerm_windows_security::create_current_user_only_directory(&parent, child).unwrap();
+            directory.path().join(child)
+        };
+        #[cfg(not(windows))]
+        let path = directory.path().to_owned();
+        PrivateRecordingDir {
+            _directory: directory,
+            path,
+        }
+    }
 
     fn install_ime_epoch<S: Session>(
         controller: &mut SessionController<S>,
@@ -3029,6 +3098,7 @@ mod tests {
             &session,
             &mut terminal,
             10,
+            INGEST_TIME_BUDGET,
             |terminal, dimensions| {
                 assert_eq!(terminal.dimensions(), Dimensions::new(20, 6).unwrap());
                 assert_eq!(terminal.cell_ref(0, 0).unwrap().text(), "b");
@@ -3062,7 +3132,7 @@ mod tests {
         .with_backend_owned_terminal();
         let mut controller = SessionController::for_test(session);
         let mut terminal = Terminal::new(Dimensions::new(20, 6).unwrap()).unwrap();
-        let directory = tempfile::tempdir().unwrap();
+        let directory = private_recording_dir();
         let (wake, ready) = std::sync::mpsc::channel();
         let (recording, mut streams) =
             festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
@@ -3123,7 +3193,7 @@ mod tests {
         let session = FakeSession::new([SessionEvent::RecoverySync(vec![255])]);
         let mut controller = SessionController::for_test(session);
         let mut terminal = Terminal::new(Dimensions::new(20, 6).unwrap()).unwrap();
-        let directory = tempfile::tempdir().unwrap();
+        let directory = private_recording_dir();
         let (wake, ready) = std::sync::mpsc::channel();
         let (recording, mut streams) =
             festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
@@ -3508,10 +3578,12 @@ mod tests {
             Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
 
         let mut observed_events = 0usize;
-        let result = pump_session_events(
+        let result = pump_session_events_with_resize(
             &session,
             &mut terminal,
             MAX_SESSION_EVENTS_PER_FRAME,
+            Duration::ZERO,
+            |terminal, dimensions| terminal.resize(dimensions).is_ok(),
             |_| observed_events += 1,
         );
 
@@ -3521,6 +3593,67 @@ mod tests {
             observed_events, 1,
             "only the first chunk should be ingested before the byte budget stops the drain"
         );
+    }
+
+    #[test]
+    fn ingest_time_budget_drains_past_the_byte_floor_but_stops_at_the_pump_ceiling() {
+        let chunk_count = MAX_INGEST_BYTES_PER_PUMP / MAX_IO_CHUNK_BYTES + 1;
+        let session = FakeSession::new(
+            (0..chunk_count).map(|_| SessionEvent::Output(vec![b'x'; MAX_IO_CHUNK_BYTES])),
+        );
+        let mut terminal =
+            Terminal::new(Dimensions::new(80, 24).unwrap()).expect("terminal allocation");
+
+        let mut observed_events = 0usize;
+        let result = pump_session_events_with_resize(
+            &session,
+            &mut terminal,
+            usize::MAX,
+            Duration::from_secs(3600),
+            |terminal, dimensions| terminal.resize(dimensions).is_ok(),
+            |_| observed_events += 1,
+        );
+
+        assert!(
+            result.hit_limit,
+            "the pump ceiling must report backpressure"
+        );
+        assert_eq!(
+            observed_events,
+            MAX_INGEST_BYTES_PER_PUMP / MAX_IO_CHUNK_BYTES,
+            "an unexpired budget drains past the floor up to the ceiling"
+        );
+    }
+
+    #[test]
+    fn recording_observes_each_applied_chunk_before_the_ingest_budget_yields() {
+        let session = FakeSession::new(
+            (0..5).map(|index| SessionEvent::Output(vec![b'a' + index; MAX_IO_CHUNK_BYTES])),
+        );
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        let mut recorded = 0;
+        let result = pump_session_events_with_mutations(
+            &session,
+            &mut terminal,
+            usize::MAX,
+            Duration::ZERO,
+            |terminal, dimensions| terminal.resize(dimensions).is_ok(),
+            |_| {},
+            |mutation| {
+                if let TerminalMutation::Output {
+                    bytes, terminal, ..
+                } = mutation
+                {
+                    assert_eq!(
+                        terminal.cell_ref(0, 0).unwrap().text(),
+                        std::str::from_utf8(&bytes[..1]).unwrap()
+                    );
+                    recorded += bytes.len();
+                }
+            },
+        );
+        assert!(result.hit_limit);
+        assert_eq!(recorded, MAX_INGEST_BYTES_PER_FRAME);
     }
 
     #[test]

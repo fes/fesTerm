@@ -1,5 +1,6 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::StreamId;
@@ -42,7 +43,8 @@ impl fmt::Display for RecordingId {
 }
 
 /// Local wall-clock values captured once at the start of a recording.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct LocalStart {
     year: u16,
     month: u8,
@@ -53,6 +55,24 @@ pub struct LocalStart {
 }
 
 impl LocalStart {
+    /// Captures the system's local wall-clock components without silently
+    /// substituting another time zone when the system zone is unavailable.
+    pub fn now() -> Result<Self, NameError> {
+        let zone = jiff::tz::TimeZone::try_system()
+            .map_err(|error| NameError::new(format!("local time zone is unavailable: {error}")))?;
+        let instant = jiff::Timestamp::try_from(std::time::SystemTime::now())
+            .map_err(|error| NameError::new(format!("local start time is unavailable: {error}")))?;
+        let time = instant.to_zoned(zone);
+        Self::new(
+            u16::try_from(time.year()).map_err(|_| NameError::new("invalid local year"))?,
+            u8::try_from(time.month()).map_err(|_| NameError::new("invalid local month"))?,
+            u8::try_from(time.day()).map_err(|_| NameError::new("invalid local day"))?,
+            u8::try_from(time.hour()).map_err(|_| NameError::new("invalid local hour"))?,
+            u8::try_from(time.minute()).map_err(|_| NameError::new("invalid local minute"))?,
+            u8::try_from(time.second()).map_err(|_| NameError::new("invalid local second"))?,
+        )
+    }
+
     pub fn new(
         year: u16,
         month: u8,
@@ -88,6 +108,17 @@ impl LocalStart {
             minute,
             second,
         })
+    }
+
+    pub(crate) fn validate(self) -> Result<Self, NameError> {
+        Self::new(
+            self.year,
+            self.month,
+            self.day,
+            self.hour,
+            self.minute,
+            self.second,
+        )
     }
 }
 
@@ -258,6 +289,12 @@ fn validate_component(name: &str) -> Result<(), NameError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "ios")]
+    #[test]
+    fn ios_system_local_time_is_available_for_recording_names() {
+        LocalStart::now().expect("the simulator or device must provide its local time zone");
+    }
 
     fn sample() -> (RecordingId, LocalStart) {
         (

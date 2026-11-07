@@ -34,6 +34,8 @@ use zbus::message::Type as MessageType;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::{Connection, MatchRule, MessageStream};
 
+mod gnome;
+
 /// Upper bound between property reads when no signal is delivered.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -94,6 +96,44 @@ pub struct PrivacyMonitor {
     shared: Arc<Shared>,
     shutdown: watch::Sender<bool>,
     thread: Option<JoinHandle<()>>,
+}
+
+/// Recording requires both logind and the built-in GNOME Shell lock screen.
+/// Other lockers are not observed and must not be used while recording.
+pub struct RecordingPrivacyMonitor {
+    _logind: PrivacyMonitor,
+    _gnome: gnome::GnomePrivacyMonitor,
+}
+
+impl RecordingPrivacyMonitor {
+    pub fn install(callback: Arc<dyn Fn() + Send + Sync>) -> io::Result<Self> {
+        let lost = Arc::new(AtomicBool::new(false));
+        let callback_loss = lost.clone();
+        let callback: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if !callback_loss.swap(true, Ordering::AcqRel) {
+                callback();
+            }
+        });
+        if !gnome::supported_desktop(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref()) {
+            callback();
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Linux recording requires GNOME Shell and its built-in screen lock",
+            ));
+        }
+        let gnome = gnome::GnomePrivacyMonitor::install(callback.clone())?;
+        let logind = PrivacyMonitor::install(callback.clone())?;
+        if lost.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "GNOME screen-lock monitoring was interrupted",
+            ));
+        }
+        Ok(Self {
+            _logind: logind,
+            _gnome: gnome,
+        })
+    }
 }
 
 impl PrivacyMonitor {

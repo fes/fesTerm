@@ -1,7 +1,7 @@
 use eframe::egui;
 use festerm_markdown::{
     Block, Inline, ListKind, LocalMarkdownSource, MarkdownCancellation, MarkdownDocument,
-    MarkdownLoader, TaskState,
+    MarkdownLoader, TableAlignment, TaskState,
 };
 use std::sync::Arc;
 
@@ -463,24 +463,44 @@ fn show_markdown_block(
                 }
             }
             wide_block(ui, block, |ui| {
-                egui::Grid::new(("mobile-markdown-table", block.span().start().byte_offset()))
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for row in table.rows() {
-                            for (column, cell) in row.cells().iter().enumerate() {
-                                ui.allocate_ui(egui::vec2(widths[column], 0.0), |ui| {
-                                    let text = egui::RichText::new(flowing_text(cell.inlines()));
-                                    preview_label(
-                                        ui,
-                                        if row.is_header() { text.strong() } else { text },
-                                        true,
-                                        selection,
-                                    );
-                                });
-                            }
-                            ui.end_row();
+                let old_spacing = ui.spacing().item_spacing;
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                for (row_index, row) in table.rows().iter().enumerate() {
+                    ui.horizontal_top(|ui| {
+                        for (column, cell) in row.cells().iter().enumerate() {
+                            let alignment = match table.alignments().get(column) {
+                                Some(TableAlignment::Center) => egui::Align::Center,
+                                Some(TableAlignment::Right) => egui::Align::RIGHT,
+                                _ => egui::Align::LEFT,
+                            };
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(widths[column], 0.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    egui::Frame::new()
+                                        .fill(if row.is_header() || row_index % 2 == 0 {
+                                            super::theme::color::SURFACE
+                                        } else {
+                                            super::theme::color::FIELD
+                                        })
+                                        .stroke(egui::Stroke::new(0.5, super::theme::color::BORDER))
+                                        .inner_margin(egui::Margin::symmetric(8, 6))
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            preview_table_label(
+                                                ui,
+                                                egui::RichText::new(flowing_text(cell.inlines())),
+                                                row.is_header(),
+                                                alignment,
+                                                selection,
+                                            );
+                                        });
+                                },
+                            );
                         }
                     });
+                }
+                ui.spacing_mut().item_spacing = old_spacing;
             });
         }
         Block::CodeBlock(code) => {
@@ -511,6 +531,36 @@ fn show_markdown_block(
         Block::Rule { .. } => {
             ui.separator();
         }
+    }
+}
+
+fn preview_table_label(
+    ui: &mut egui::Ui,
+    text: egui::RichText,
+    header: bool,
+    alignment: egui::Align,
+    selection: &mut PreviewSelection,
+) {
+    let text = if selection.all {
+        text.background_color(ui.visuals().selection.bg_fill)
+            .color(ui.visuals().selection.stroke.color)
+    } else {
+        text
+    };
+    let text = if header { text.strong() } else { text };
+    let response = ui
+        .with_layout(egui::Layout::top_down(alignment), |ui| {
+            ui.add(
+                egui::Label::new(text)
+                    .wrap_mode(egui::TextWrapMode::Wrap)
+                    .selectable(true),
+            )
+        })
+        .inner;
+    selection.widgets.push(response.id);
+    selection.menu |= response.secondary_clicked();
+    if !response.secondary_clicked() && (response.clicked() || response.drag_started()) {
+        selection.all = false;
     }
 }
 
@@ -580,11 +630,96 @@ fn flowing_text(inlines: &[Inline]) -> String {
 }
 
 fn wide_block(ui: &mut egui::Ui, block: &Block, content: impl FnOnce(&mut egui::Ui)) {
-    let output = egui::ScrollArea::horizontal()
-        .id_salt(("markdown-overflow", block.span().start().byte_offset()))
-        .min_scrolled_width(0.0)
-        .auto_shrink([false, true])
-        .show(ui, |ui| ui.scope(content).response.rect);
+    let output = ui
+        .scope(|ui| {
+            ui.style_mut().always_scroll_the_only_direction = false;
+            let salt = ("markdown-overflow", block.span().start().byte_offset());
+            let id = ui.make_persistent_id(salt);
+            let ctx = ui.ctx().clone();
+            let offset_id = id.with("horizontal-offset");
+            let gesture_id = id.with("horizontal-gesture");
+            let offset = ui
+                .data(|data| data.get_temp::<f32>(offset_id))
+                .or_else(|| {
+                    egui::containers::scroll_area::State::load(&ctx, id).map(|state| state.offset.x)
+                })
+                .unwrap_or(0.0);
+            // Let the parent vertical reader own touch drags; horizontal pans
+            // are applied after the gesture's dominant axis is established.
+            let output = egui::ScrollArea::horizontal()
+                .id_salt(salt)
+                .min_scrolled_width(0.0)
+                .auto_shrink([false, true])
+                .horizontal_scroll_offset(offset)
+                .scroll_source(egui::containers::scroll_area::ScrollSource {
+                    scroll_bar: true,
+                    drag: egui::containers::scroll_area::DragScroll::Never,
+                    mouse_wheel: true,
+                })
+                .show(ui, |ui| ui.scope(content).response.rect);
+            let mut next_offset = output.state.offset.x;
+            let mut gesture = ui
+                .data(|data| data.get_temp::<HorizontalPan>(gesture_id))
+                .unwrap_or_default();
+            let (position, pressed, down) = ui.input(|input| {
+                let touch_start = input.raw.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Touch {
+                            phase: egui::TouchPhase::Start,
+                            ..
+                        }
+                    )
+                });
+                let touch_position = input.raw.events.iter().rev().find_map(|event| {
+                    if let egui::Event::Touch { pos, .. } = event {
+                        Some(*pos)
+                    } else {
+                        None
+                    }
+                });
+                (
+                    touch_position.or_else(|| input.pointer.interact_pos()),
+                    input.pointer.button_pressed(egui::PointerButton::Primary) || touch_start,
+                    input.pointer.primary_down() || input.any_touches(),
+                )
+            });
+            if pressed {
+                gesture = position
+                    .filter(|position| output.inner_rect.contains(*position))
+                    .map(|position| HorizontalPan {
+                        start: Some(position),
+                        last: Some(position),
+                        horizontal: None,
+                    })
+                    .unwrap_or_default();
+            } else if down {
+                if let (Some(position), Some(start), Some(last)) =
+                    (position, gesture.start, gesture.last)
+                {
+                    let total = position - start;
+                    if gesture.horizontal.is_none() && total.length_sq() >= 64.0 {
+                        gesture.horizontal = Some(total.x.abs() > total.y.abs() * 1.2);
+                    }
+                    if gesture.horizontal == Some(true) {
+                        let max_offset =
+                            (output.content_size.x - output.inner_rect.width()).max(0.0);
+                        next_offset =
+                            (output.state.offset.x - (position.x - last.x)).clamp(0.0, max_offset);
+                        ctx.request_repaint();
+                    }
+                    gesture.last = Some(position);
+                }
+            } else {
+                gesture = HorizontalPan::default();
+            }
+            ui.data_mut(|data| {
+                data.insert_temp(gesture_id, gesture);
+                data.insert_temp(offset_id, next_offset);
+            });
+            output
+        })
+        .inner;
     if output.state.offset.x + output.inner_rect.width() + 1.0 < output.content_size.x {
         let visible = output
             .inner
@@ -599,6 +734,13 @@ fn wide_block(ui: &mut egui::Ui, block: &Block, content: impl FnOnce(&mut egui::
             );
         }
     }
+}
+
+#[derive(Clone, Copy, Default)]
+struct HorizontalPan {
+    start: Option<egui::Pos2>,
+    last: Option<egui::Pos2>,
+    horizontal: Option<bool>,
 }
 
 fn synthetic_markdown() -> &'static str {
@@ -860,12 +1002,15 @@ mod tests {
     #[test]
     fn preview_wide_tables_scroll_independently_without_expanding_the_viewport() {
         use egui_kittest::{kittest::Queryable, Harness};
-        let workspace = MarkdownWorkspace::from_text(
-            "tables.md", "synthetic",
-            "| First A | First B | First C |\n| --- | --- | --- |\n| A long column with readable wrapping and bounded width | Another long column with readable wrapping and bounded width | Third long column with readable wrapping and bounded width |\n\n| Second A | Second B | Second C |\n| --- | --- | --- |\n| A long second table column with wrapping | Another long second table column with wrapping | Third long second table column with wrapping |\n\n```text\nan_unbroken_code_line_that_must_scroll_horizontally_instead_of_wrapping_or_expanding_the_viewport\n```\n",
-        ).unwrap();
+        let extra_rows = (0..8)
+            .map(|index| format!("| Row {index} A | Row {index} B | Row {index} C |\n"))
+            .collect::<String>();
+        let markdown = format!(
+            "| First A | First B | First C |\n| --- | --- | --- |\n| A long column with readable wrapping and bounded width | Another long column with readable wrapping and bounded width | Third long column with readable wrapping and bounded width |\n{extra_rows}\n| Second A | Second B | Second C |\n| --- | --- | --- |\n| A long second table column with wrapping | Another long second table column with wrapping | Third long second table column with wrapping |\n\n```text\nan_unbroken_code_line_that_must_scroll_horizontally_instead_of_wrapping_or_expanding_the_viewport\n```\n"
+        );
+        let workspace = MarkdownWorkspace::from_text("tables.md", "synthetic", &markdown).unwrap();
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(320.0, 568.0))
+            .with_size(egui::vec2(320.0, 220.0))
             .build_ui_state(
                 |ui, workspace: &mut MarkdownWorkspace| workspace.show_projection(ui),
                 workspace,
@@ -886,7 +1031,187 @@ mod tests {
             harness.get_by_label("Second A").rect().left(),
             second.left()
         );
+        let second_before_vertical_scroll = harness.get_by_label("Second A").rect();
+        let first = harness.get_by_label("First A").rect();
+        harness.event(egui::Event::PointerMoved(egui::pos2(
+            100.0,
+            first.center().y,
+        )));
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -100.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run();
+        let second_after_vertical_scroll = harness.get_by_label("Second A").rect();
+        assert!(
+            second_after_vertical_scroll.top() < second_before_vertical_scroll.top(),
+            "vertical scrolling over a wide table must scroll the document: \
+             before {second_before_vertical_scroll:?}, after {second_after_vertical_scroll:?}"
+        );
+        let touch_workspace =
+            MarkdownWorkspace::from_text("tables.md", "synthetic", &markdown).unwrap();
+        let mut touch_harness = Harness::builder()
+            .with_size(egui::vec2(320.0, 220.0))
+            .build_ui_state(
+                |ui, workspace: &mut MarkdownWorkspace| workspace.show_projection(ui),
+                touch_workspace,
+            );
+        touch_harness.run();
+        let first_before_touch = touch_harness.get_by_label("First A").rect();
+        let second_before_touch = touch_harness.get_by_label("Second A").rect();
+        let touch = egui::pos2(100.0, first_before_touch.center().y);
+        let device_id = egui::TouchDeviceId(1);
+        let touch_id = egui::TouchId(1);
+        touch_harness.event(egui::Event::Touch {
+            device_id,
+            id: touch_id,
+            phase: egui::TouchPhase::Start,
+            pos: touch,
+            force: None,
+        });
+        touch_harness.event(egui::Event::PointerMoved(touch));
+        touch_harness.event(egui::Event::PointerButton {
+            pos: touch,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        touch_harness.step();
+        let touch_end = touch - egui::vec2(60.0, 0.0);
+        touch_harness.event(egui::Event::Touch {
+            device_id,
+            id: touch_id,
+            phase: egui::TouchPhase::Move,
+            pos: touch_end,
+            force: None,
+        });
+        touch_harness.event(egui::Event::PointerMoved(touch_end));
+        touch_harness.step();
+        touch_harness.event(egui::Event::Touch {
+            device_id,
+            id: touch_id,
+            phase: egui::TouchPhase::End,
+            pos: touch_end,
+            force: None,
+        });
+        touch_harness.event(egui::Event::PointerButton {
+            pos: touch_end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        touch_harness.run();
+        assert!(
+            touch_harness.get_by_label("First A").rect().left() < first_before_touch.left(),
+            "horizontal touch dragging over a wide table must pan the table"
+        );
+        let first_after_horizontal_touch = touch_harness.get_by_label("First A").rect();
+        let touch = egui::pos2(100.0, first_after_horizontal_touch.center().y);
+        touch_harness.event(egui::Event::Touch {
+            device_id,
+            id: touch_id,
+            phase: egui::TouchPhase::Start,
+            pos: touch,
+            force: None,
+        });
+        touch_harness.event(egui::Event::PointerMoved(touch));
+        touch_harness.event(egui::Event::PointerButton {
+            pos: touch,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        touch_harness.step();
+        let touch_end = touch - egui::vec2(0.0, 60.0);
+        touch_harness.event(egui::Event::Touch {
+            device_id,
+            id: touch_id,
+            phase: egui::TouchPhase::Move,
+            pos: touch_end,
+            force: None,
+        });
+        touch_harness.event(egui::Event::PointerMoved(touch_end));
+        touch_harness.step();
+        touch_harness.event(egui::Event::Touch {
+            device_id,
+            id: touch_id,
+            phase: egui::TouchPhase::End,
+            pos: touch_end,
+            force: None,
+        });
+        touch_harness.event(egui::Event::PointerButton {
+            pos: touch_end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        touch_harness.run();
+        assert!(
+            touch_harness.get_by_label("Second A").rect().top() < second_before_touch.top(),
+            "vertical touch dragging over a wide table must scroll the document"
+        );
         assert_eq!(harness.ctx.content_rect().width(), 320.0);
+    }
+
+    #[test]
+    fn preview_tables_honor_left_center_and_right_column_alignment() {
+        use egui_kittest::Harness;
+        let workspace = MarkdownWorkspace::from_text(
+            "alignment.md",
+            "synthetic",
+            "| Left | Center | Right |\n| :--- | :---: | ---: |\n| L | C | R |\n",
+        )
+        .unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 300.0))
+            .build_ui_state(
+                |ui, workspace: &mut MarkdownWorkspace| workspace.show_projection(ui),
+                workspace,
+            );
+        harness.run();
+        let text_position = |label: &str| {
+            harness
+                .output()
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Text(text) if text.galley.text() == label => {
+                        Some(text.pos)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let cell_inset = |label: &str| {
+            let position = text_position(label);
+            harness
+                .output()
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Rect(rect)
+                        if rect.fill == super::super::theme::color::SURFACE
+                            && rect.rect.contains(position) =>
+                    {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .min_by(|left, right| left.area().total_cmp(&right.area()))
+                .map(|rect| position.x - rect.left())
+                .unwrap()
+        };
+        let left = cell_inset("Left");
+        let center = cell_inset("Center");
+        let right = cell_inset("Right");
+        assert!(left < 24.0, "left column inset: {left}");
+        assert!(
+            (48.0..70.0).contains(&center),
+            "center column inset: {center}"
+        );
+        assert!(right > 80.0, "right column inset: {right}");
     }
 
     #[test]

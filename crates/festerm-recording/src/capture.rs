@@ -1,16 +1,18 @@
 use std::{
     fmt,
-    fs::{self, File},
+    fs::File,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering},
-        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
         Arc,
     },
     time::{Duration, Instant},
 };
 
-#[cfg(not(windows))]
+#[cfg(not(any(unix, windows)))]
+use std::fs;
+#[cfg(not(any(unix, windows)))]
 use std::fs::OpenOptions;
 
 use crate::{
@@ -19,7 +21,15 @@ use crate::{
 };
 use festerm_core::{Parser, RecordingCheckpoint, Terminal, MAX_RECORDING_CHECKPOINT_BYTES};
 
+#[cfg(unix)]
+#[path = "source_unix.rs"]
+mod private_source;
+#[cfg(windows)]
+#[path = "source_windows.rs"]
+mod private_source;
+
 const MAX_QUEUED_EVENTS: usize = 512;
+const WRITER_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// A content-free failure to start or continue capture.
 #[derive(Debug)]
@@ -76,6 +86,71 @@ impl Drop for Queued {
     }
 }
 
+/// An empty private source prepared off the UI thread after user consent.
+///
+/// The host must persist the matching recording manifest before preparation.
+/// If preparation is abandoned, call `discard`; a process interruption leaves
+/// the empty source and manifest available for explicit recovery.
+pub struct PreparedRecording {
+    id: RecordingId,
+    file: File,
+    partial_path: PathBuf,
+    final_path: PathBuf,
+    #[cfg(any(unix, windows))]
+    source: private_source::PrivateSource,
+}
+
+impl PreparedRecording {
+    pub fn create(private_directory: &Path, id: RecordingId) -> Result<Self, CaptureError> {
+        let partial_path = private_directory.join(format!("recording-{id}.partial"));
+        let final_path = private_directory.join(format!("recording-{id}.fstrec"));
+        #[cfg(any(unix, windows))]
+        let (file, source) = private_source::PrivateSource::create(&partial_path, &final_path)?;
+        #[cfg(not(any(unix, windows)))]
+        let file = create_private_file(&partial_path)?;
+        Ok(Self {
+            id,
+            file,
+            partial_path,
+            final_path,
+            #[cfg(any(unix, windows))]
+            source,
+        })
+    }
+
+    pub const fn id(&self) -> RecordingId {
+        self.id
+    }
+
+    pub fn discard(self) -> Result<(), CaptureError> {
+        let Self {
+            file,
+            partial_path,
+            #[cfg(any(unix, windows))]
+            source,
+            ..
+        } = self;
+        drop(file);
+        #[cfg(any(unix, windows))]
+        let result = source.remove_partial();
+        #[cfg(not(any(unix, windows)))]
+        let result = fs::remove_file(&partial_path);
+        result.map_err(|error| {
+            CaptureError::new(format!(
+                "unused private recording {} could not be removed: {error}",
+                partial_path.display()
+            ))
+        })
+    }
+
+    fn discard_after_error(self, error: CaptureError) -> CaptureError {
+        match self.discard() {
+            Ok(()) => error,
+            Err(cleanup) => CaptureError::new(format!("{error}; {cleanup}")),
+        }
+    }
+}
+
 /// An application-owned, single-writer coordinator for one synchronized capture.
 ///
 /// The host must obtain consent first and supply an existing app-private
@@ -103,40 +178,77 @@ impl Recorder {
         terminals: &[&Terminal],
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<(Self, Vec<StreamId>), CaptureError> {
-        if terminals.is_empty() || terminals.len() > MAX_STREAMS {
-            return Err(CaptureError::new(
-                "select between one and sixteen terminal sessions",
-            ));
-        }
-        let mut initial = Vec::with_capacity(terminals.len());
-        let mut total_charge = 0usize;
-        for terminal in terminals {
-            let checkpoint = checkpoint(terminal)?;
-            let charge = checkpoint
-                .estimated_allocation_bytes()
-                .map_err(|error| CaptureError::new(error.to_string()))?
-                .checked_add(event_overhead())
-                .ok_or_else(|| CaptureError::new("recording queue size overflows"))?;
-            total_charge = total_charge
-                .checked_add(charge)
-                .ok_or_else(|| CaptureError::new("recording queue size overflows"))?;
-            if total_charge > MAX_QUEUE_BYTES {
-                return Err(CaptureError::new(
-                    "the selected terminal screens exceed the recording queue limit",
-                ));
-            }
-            initial.push(checkpoint);
-        }
+        Self::start_with_id(private_directory, RecordingId::new(), terminals, wake)
+    }
 
-        if !private_directory.is_dir() {
-            return Err(CaptureError::new(
-                "private recording storage is not an available directory",
-            ));
+    /// Starts a capture with a preallocated ID, allowing the host to durably
+    /// save its per-recording settings before terminal content is captured.
+    pub fn start_with_id(
+        private_directory: &Path,
+        id: RecordingId,
+        terminals: &[&Terminal],
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<(Self, Vec<StreamId>), CaptureError> {
+        Self::start_guarded(private_directory, id, terminals, None, wake)
+    }
+
+    pub(crate) fn start_guarded(
+        private_directory: &Path,
+        id: RecordingId,
+        terminals: &[&Terminal],
+        admission_closed: Option<&AtomicBool>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<(Self, Vec<StreamId>), CaptureError> {
+        let initial = initial_checkpoints(terminals, admission_closed)?;
+        let prepared = PreparedRecording::create(private_directory, id)?;
+        Self::begin(prepared, initial, admission_closed, wake)
+    }
+
+    pub(crate) fn start_prepared_guarded(
+        prepared: PreparedRecording,
+        terminals: &[&Terminal],
+        admission_closed: Option<&AtomicBool>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<(Self, Vec<StreamId>), CaptureError> {
+        let initial = match initial_checkpoints(terminals, admission_closed) {
+            Ok(initial) => initial,
+            Err(error) => return Err(prepared.discard_after_error(error)),
+        };
+        Self::begin(prepared, initial, admission_closed, wake)
+    }
+
+    fn begin(
+        prepared: PreparedRecording,
+        initial: Vec<RecordingCheckpoint>,
+        admission_closed: Option<&AtomicBool>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<(Self, Vec<StreamId>), CaptureError> {
+        if let Err(error) = require_admission(admission_closed) {
+            return Err(prepared.discard_after_error(error));
         }
-        let id = RecordingId::new();
-        let partial_path = private_directory.join(format!("recording-{id}.partial"));
-        let final_path = private_directory.join(format!("recording-{id}.fstrec"));
-        let file = create_private_file(&partial_path)?;
+        let PreparedRecording {
+            id,
+            file,
+            partial_path,
+            final_path,
+            #[cfg(any(unix, windows))]
+            source,
+        } = prepared;
+        #[cfg(any(unix, windows))]
+        let cleanup = match source.try_clone() {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                drop(file);
+                let cleanup = source.remove_partial();
+                return Err(CaptureError::new(match cleanup {
+                    Ok(()) => format!("recording storage could not be retained: {error}"),
+                    Err(cleanup) => format!(
+                        "recording storage could not be retained: {error}; \
+                         the private source also could not be removed: {cleanup}"
+                    ),
+                }));
+            }
+        };
         let (sender, receiver) = mpsc::sync_channel(MAX_QUEUED_EVENTS);
         let (completion_sender, completion) = mpsc::channel();
         let budget = Arc::new(AtomicUsize::new(0));
@@ -146,12 +258,27 @@ impl Recorder {
         let spawn = std::thread::Builder::new()
             .name("festerm-recording-writer".to_owned())
             .spawn(move || {
-                let result =
-                    run_writer(file, receiver, &worker_finish, &worker_partial, &final_path);
+                let result = run_writer(
+                    file,
+                    receiver,
+                    &worker_finish,
+                    &worker_partial,
+                    &final_path,
+                    #[cfg(any(unix, windows))]
+                    source,
+                );
                 let _ = completion_sender.send(result);
                 wake();
             });
         if let Err(error) = spawn {
+            #[cfg(any(unix, windows))]
+            cleanup.remove_partial().map_err(|cleanup| {
+                CaptureError::new(format!(
+                    "recording worker could not start: {error}; \
+                     the private source also could not be removed: {cleanup}"
+                ))
+            })?;
+            #[cfg(not(any(unix, windows)))]
             fs::remove_file(&partial_path).map_err(|cleanup| {
                 CaptureError::new(format!(
                     "recording worker could not start: {error}; \
@@ -470,6 +597,49 @@ impl Drop for Recorder {
     }
 }
 
+fn require_admission(admission_closed: Option<&AtomicBool>) -> Result<(), CaptureError> {
+    if admission_closed.is_some_and(|closed| closed.load(Ordering::Acquire)) {
+        Err(CaptureError::new(
+            "privacy monitoring became unavailable before recording started",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn initial_checkpoints(
+    terminals: &[&Terminal],
+    admission_closed: Option<&AtomicBool>,
+) -> Result<Vec<RecordingCheckpoint>, CaptureError> {
+    require_admission(admission_closed)?;
+    if terminals.is_empty() || terminals.len() > MAX_STREAMS {
+        return Err(CaptureError::new(
+            "select between one and sixteen terminal sessions",
+        ));
+    }
+    let mut initial = Vec::with_capacity(terminals.len());
+    let mut total_charge = 0usize;
+    for terminal in terminals {
+        let checkpoint = checkpoint(terminal)?;
+        let charge = checkpoint
+            .estimated_allocation_bytes()
+            .map_err(|error| CaptureError::new(error.to_string()))?
+            .checked_add(event_overhead())
+            .ok_or_else(|| CaptureError::new("recording queue size overflows"))?;
+        total_charge = total_charge
+            .checked_add(charge)
+            .ok_or_else(|| CaptureError::new("recording queue size overflows"))?;
+        if total_charge > MAX_QUEUE_BYTES {
+            return Err(CaptureError::new(
+                "the selected terminal screens exceed the recording queue limit",
+            ));
+        }
+        initial.push(checkpoint);
+    }
+    require_admission(admission_closed)?;
+    Ok(initial)
+}
+
 fn checkpoint(terminal: &Terminal) -> Result<RecordingCheckpoint, CaptureError> {
     terminal
         .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
@@ -495,42 +665,13 @@ fn event_charge(data: &CapturedData) -> Result<usize, CaptureError> {
         .ok_or_else(|| CaptureError::new("recording queue size overflows"))
 }
 
+#[cfg(not(any(unix, windows)))]
 fn create_private_file(path: &Path) -> Result<File, CaptureError> {
-    #[cfg(windows)]
-    {
-        let parent = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        let name = path
-            .file_name()
-            .ok_or_else(|| CaptureError::new("recording source has no filename"))?;
-        let directory = festerm_windows_security::lock_directory_path_without_delete_sharing(
-            parent,
-        )
-        .map_err(|error| {
-            CaptureError::new(format!(
-                "private recording storage could not be opened: {error}"
-            ))
-        })?;
-        festerm_windows_security::create_current_user_only_file(&directory, Path::new(name))
-            .map_err(|error| {
-                CaptureError::new(format!("private recording could not be created: {error}"))
-            })
-    }
-    #[cfg(not(windows))]
-    {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        options.open(path).map_err(|error| {
-            CaptureError::new(format!("private recording could not be created: {error}"))
-        })
-    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    options.open(path).map_err(|error| {
+        CaptureError::new(format!("private recording could not be created: {error}"))
+    })
 }
 
 fn run_writer(
@@ -539,11 +680,21 @@ fn run_writer(
     finish: &FinishState,
     partial_path: &Path,
     final_path: &Path,
+    #[cfg(any(unix, windows))] source: private_source::PrivateSource,
 ) -> Completion {
     let result = (|| {
         let mut writer = ArtifactWriter::new(file)?;
-        for queued in receiver {
-            writer.write_event(&queued.event)?;
+        let mut flush_at = Instant::now() + WRITER_FLUSH_INTERVAL;
+        loop {
+            match receiver.recv_timeout(flush_at.saturating_duration_since(Instant::now())) {
+                Ok(queued) => writer.write_event(&queued.event)?,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+            if Instant::now() >= flush_at {
+                writer.flush()?;
+                flush_at = Instant::now() + WRITER_FLUSH_INTERVAL;
+            }
         }
         let at_ns = finish.at_ns.load(Ordering::Acquire);
         let reason = FinishReason::from_code(finish.reason.load(Ordering::Acquire))
@@ -568,18 +719,18 @@ fn run_writer(
             reason,
         };
     }
-    #[cfg(target_os = "android")]
-    if let Err((path, message)) = finalize_android_source(partial_path, final_path) {
+    #[cfg(any(unix, windows))]
+    if let Err((path, message)) = source.finalize() {
         return Completion::Failed { path, message };
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(unix, windows)))]
     if let Err(error) = fs::hard_link(partial_path, final_path) {
         return Completion::Failed {
             path: partial_path.to_owned(),
             message: format!("recording could not be finalized: {error}"),
         };
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(unix, windows)))]
     if let Err(error) = fs::remove_file(partial_path) {
         return Completion::Failed {
             path: partial_path.to_owned(),
@@ -594,42 +745,4 @@ fn run_writer(
         duration,
         reason,
     }
-}
-
-#[cfg(target_os = "android")]
-fn finalize_android_source(
-    partial_path: &Path,
-    final_path: &Path,
-) -> Result<(), (PathBuf, String)> {
-    let failed = |error: &dyn fmt::Display| {
-        (
-            partial_path.to_owned(),
-            format!("recording could not be finalized: {error}"),
-        )
-    };
-    let directory = partial_path
-        .parent()
-        .filter(|parent| final_path.parent() == Some(*parent))
-        .ok_or_else(|| failed(&"invalid recording storage directory"))?;
-    let partial = partial_path
-        .file_name()
-        .ok_or_else(|| failed(&"invalid recording source name"))?;
-    let final_name = final_path
-        .file_name()
-        .ok_or_else(|| failed(&"invalid recording destination name"))?;
-    let directory = File::open(directory).map_err(|error| failed(&error))?;
-    // Android's app SELinux policy forbids hard links.
-    festerm_unix_security::rename_noreplace(
-        &directory,
-        Path::new(partial),
-        &directory,
-        Path::new(final_name),
-    )
-    .map_err(|error| failed(&error))?;
-    directory.sync_all().map_err(|error| {
-        (
-            final_path.to_owned(),
-            format!("recording was finalized but its storage could not be synced: {error}"),
-        )
-    })
 }

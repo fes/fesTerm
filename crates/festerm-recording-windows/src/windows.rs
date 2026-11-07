@@ -345,7 +345,7 @@ impl WindowsEncoder {
         if rgba.len() != self.bytes_per_frame {
             return Err(VideoError::new("the video frame has the wrong dimensions"));
         }
-        if rgba.chunks_exact(4).any(|pixel| pixel[3] != 255) {
+        if rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255) {
             return Err(VideoError::new("video frames must be opaque RGBA"));
         }
         let next = self
@@ -381,7 +381,12 @@ impl WindowsEncoder {
         }
         // The locked buffer is writable for `maximum` bytes until Unlock.
         let destination = unsafe { std::slice::from_raw_parts_mut(data, self.bytes_per_frame) };
-        for (source, target) in rgba.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
+        for (source, target) in rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(destination.as_chunks_mut::<4>().0)
+        {
             target.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
         }
         mf("unlock a video frame", unsafe { buffer.Unlock() })?;
@@ -542,7 +547,7 @@ mod tests {
         let mut encoder = WindowsEncoder::new(&path, 320, 180).unwrap();
         let mut frame = vec![255; 320 * 180 * 4];
         for index in 0..90 {
-            for (position, pixel) in frame.chunks_exact_mut(4).enumerate() {
+            for (position, pixel) in frame.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let top = position / 320 < 90;
                 pixel[0] = if top && index < 30 { 220 } else { 20 };
                 pixel[1] = if top && (30..60).contains(&index) {

@@ -9,7 +9,9 @@ use std::{
 
 use festerm_core::Terminal;
 
-use crate::{CaptureError, Completion, FinishReason, Recorder, RecordingId, StreamId};
+use crate::{
+    CaptureError, Completion, FinishReason, PreparedRecording, Recorder, RecordingId, StreamId,
+};
 
 struct State {
     recorder: Recorder,
@@ -22,7 +24,7 @@ struct State {
 #[derive(Clone)]
 pub struct SharedRecording {
     state: Arc<Mutex<State>>,
-    admitting: Arc<AtomicBool>,
+    admission_closed: Arc<AtomicBool>,
     wake: Arc<dyn Fn() + Send + Sync>,
     id: RecordingId,
 }
@@ -33,16 +35,79 @@ impl SharedRecording {
         terminals: &[&Terminal],
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Result<(Self, Vec<RecordingStream>), CaptureError> {
+        Self::start_with_privacy_loss_flag(
+            private_directory,
+            terminals,
+            Arc::new(AtomicBool::new(false)),
+            wake,
+        )
+    }
+
+    /// The privacy monitor must set `loss` before invoking its stop callback
+    /// and must never clear it. A concurrent loss can return a stopped
+    /// recording whose completion still needs to be collected by the host.
+    pub fn start_with_privacy_loss_flag(
+        private_directory: &Path,
+        terminals: &[&Terminal],
+        loss: Arc<AtomicBool>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<(Self, Vec<RecordingStream>), CaptureError> {
+        Self::start_with_id_and_privacy_loss_flag(
+            private_directory,
+            RecordingId::new(),
+            terminals,
+            loss,
+            wake,
+        )
+    }
+
+    /// Uses an ID whose settings were persisted before capture was admitted.
+    pub fn start_with_id_and_privacy_loss_flag(
+        private_directory: &Path,
+        id: RecordingId,
+        terminals: &[&Terminal],
+        loss: Arc<AtomicBool>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<(Self, Vec<RecordingStream>), CaptureError> {
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
         let worker_wake = Arc::clone(&wake);
-        let (recorder, ids) = Recorder::start(private_directory, terminals, move || worker_wake())?;
+        let (recorder, ids) =
+            Recorder::start_guarded(private_directory, id, terminals, Some(&loss), move || {
+                worker_wake()
+            })?;
+        Self::finish_start(recorder, ids, loss, wake)
+    }
+
+    /// Admits checkpoints to a source prepared off-thread after the host saved
+    /// the matching per-recording settings.
+    pub fn start_prepared_with_privacy_loss_flag(
+        prepared: PreparedRecording,
+        terminals: &[&Terminal],
+        loss: Arc<AtomicBool>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<(Self, Vec<RecordingStream>), CaptureError> {
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        let worker_wake = Arc::clone(&wake);
+        let (recorder, ids) =
+            Recorder::start_prepared_guarded(prepared, terminals, Some(&loss), move || {
+                worker_wake()
+            })?;
+        Self::finish_start(recorder, ids, loss, wake)
+    }
+
+    fn finish_start(
+        recorder: Recorder,
+        ids: Vec<StreamId>,
+        loss: Arc<AtomicBool>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<(Self, Vec<RecordingStream>), CaptureError> {
         let shared = Self {
             id: recorder.id(),
             state: Arc::new(Mutex::new(State {
                 recorder,
                 failure: None,
             })),
-            admitting: Arc::new(AtomicBool::new(true)),
+            admission_closed: loss,
             wake,
         };
         let streams = ids
@@ -53,6 +118,9 @@ impl SharedRecording {
                 ended: false,
             })
             .collect();
+        if shared.admission_closed.load(Ordering::Acquire) {
+            shared.stop(FinishReason::Lifecycle)?;
+        }
         Ok((shared, streams))
     }
 
@@ -62,7 +130,7 @@ impl SharedRecording {
 
     pub fn enroll(&self, terminal: &Terminal) -> Result<RecordingStream, CaptureError> {
         let id = self.apply(|recorder| {
-            if self.admitting.load(Ordering::Acquire) {
+            if !self.admission_closed.load(Ordering::Acquire) {
                 recorder.enroll(terminal)
             } else {
                 Err(CaptureError::new("recording is not active"))
@@ -79,7 +147,7 @@ impl SharedRecording {
     /// lifecycle callback without a subsequent UI frame.
     pub fn stop(&self, reason: FinishReason) -> Result<bool, CaptureError> {
         let stopped_at = Instant::now();
-        self.admitting.store(false, Ordering::Release);
+        self.admission_closed.store(true, Ordering::Release);
         self.apply(|recorder| {
             if recorder.is_recording() {
                 recorder.stop_at(reason, stopped_at)?;
@@ -94,7 +162,7 @@ impl SharedRecording {
     /// ordering or integrity of one included terminal.
     pub fn fail_integrity(&self, message: &'static str) -> Result<(), CaptureError> {
         let stopped_at = Instant::now();
-        self.admitting.store(false, Ordering::Release);
+        self.admission_closed.store(true, Ordering::Release);
         let mut state = self.lock()?;
         if !state.recorder.is_recording() {
             return Ok(());
@@ -112,7 +180,7 @@ impl SharedRecording {
 
     pub fn check_duration(&self) -> Result<(), CaptureError> {
         self.apply(|recorder| {
-            if recorder.is_recording() {
+            if !self.admission_closed.load(Ordering::Acquire) && recorder.is_recording() {
                 recorder.check_duration()
             } else {
                 Ok(())
@@ -121,11 +189,11 @@ impl SharedRecording {
     }
 
     pub fn is_recording(&self) -> Result<bool, CaptureError> {
-        if self.admitting.load(Ordering::Acquire) {
-            Ok(self.lock()?.recorder.is_recording())
-        } else {
-            Ok(false)
+        if self.admission_closed.load(Ordering::Acquire) {
+            return Ok(false);
         }
+        let state = self.lock()?;
+        Ok(!self.admission_closed.load(Ordering::Acquire) && state.recorder.is_recording())
     }
 
     pub fn poll_completion(&self) -> Result<Option<Completion>, CaptureError> {
@@ -141,7 +209,7 @@ impl SharedRecording {
         match self.state.lock() {
             Ok(state) => Ok(state),
             Err(poisoned) => {
-                self.admitting.store(false, Ordering::Release);
+                self.admission_closed.store(true, Ordering::Release);
                 let mut state = poisoned.into_inner();
                 if state.recorder.is_recording() {
                     if let Err(error) = state.recorder.stop(FinishReason::IntegrityFailure) {
@@ -168,7 +236,7 @@ impl SharedRecording {
         let mut state = self.lock()?;
         let result = operation(&mut state.recorder);
         if !state.recorder.is_recording() {
-            self.admitting.store(false, Ordering::Release);
+            self.admission_closed.store(true, Ordering::Release);
         }
         let notify = if let Err(error) = &result {
             if state.failure.is_none() {
@@ -197,6 +265,10 @@ pub struct RecordingStream {
 }
 
 impl RecordingStream {
+    pub const fn recording_id(&self) -> RecordingId {
+        self.recording.id()
+    }
+
     pub const fn id(&self) -> StreamId {
         self.id
     }
@@ -251,7 +323,7 @@ impl RecordingStream {
         operation: impl FnOnce(&mut Recorder, StreamId) -> Result<(), CaptureError>,
     ) -> Result<(), CaptureError> {
         self.recording.apply(|recorder| {
-            if self.recording.admitting.load(Ordering::Acquire) && recorder.is_recording() {
+            if !self.recording.admission_closed.load(Ordering::Acquire) && recorder.is_recording() {
                 operation(recorder, self.id)
             } else {
                 Ok(())
@@ -269,16 +341,107 @@ impl Drop for RecordingStream {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, sync::mpsc, thread, time::Duration};
+    use std::{
+        fs::File,
+        path::{Path, PathBuf},
+        sync::mpsc,
+        thread,
+        time::Duration,
+    };
 
     use festerm_core::{Dimensions, Terminal};
 
     use super::*;
     use crate::{ArtifactEvent, ArtifactReader};
 
+    struct PrivateDir {
+        _directory: tempfile::TempDir,
+        path: PathBuf,
+    }
+
+    impl PrivateDir {
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    fn private_dir() -> PrivateDir {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        festerm_unix_security::make_private_directory(&File::open(directory.path()).unwrap())
+            .unwrap();
+        #[cfg(windows)]
+        let path = {
+            let parent = festerm_windows_security::lock_directory_path_without_delete_sharing(
+                directory.path(),
+            )
+            .unwrap();
+            let child = Path::new("private");
+            festerm_windows_security::create_current_user_only_directory(&parent, child).unwrap();
+            directory.path().join(child)
+        };
+        #[cfg(not(windows))]
+        let path = directory.path().to_owned();
+        PrivateDir {
+            _directory: directory,
+            path,
+        }
+    }
+
+    #[test]
+    fn refuses_start_when_privacy_was_already_lost() {
+        let directory = private_dir();
+        let terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+        let loss = Arc::new(AtomicBool::new(true));
+        assert!(SharedRecording::start_with_privacy_loss_flag(
+            directory.path(),
+            &[&terminal],
+            loss,
+            || {}
+        )
+        .is_err());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn native_loss_flag_closes_admission_before_its_callback_runs() {
+        let directory = private_dir();
+        let mut terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+        let loss = Arc::new(AtomicBool::new(false));
+        let (wake, ready) = mpsc::channel();
+        let (recording, streams) = SharedRecording::start_with_privacy_loss_flag(
+            directory.path(),
+            &[&terminal],
+            loss.clone(),
+            move || {
+                let _ = wake.send(());
+            },
+        )
+        .unwrap();
+        loss.store(true, Ordering::Release);
+        assert!(!recording.is_recording().unwrap());
+        let generation = terminal.screen_generation();
+        terminal.ingest(b"after native privacy loss");
+        streams[0]
+            .observe_output(b"after native privacy loss", generation, &terminal)
+            .unwrap();
+        recording.stop(FinishReason::Lifecycle).unwrap();
+        ready.recv_timeout(Duration::from_secs(10)).unwrap();
+        let Completion::Complete { path, reason, .. } =
+            recording.poll_completion().unwrap().unwrap()
+        else {
+            panic!("expected a completed lifecycle cut");
+        };
+        assert_eq!(reason, FinishReason::Lifecycle);
+        let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+        while let Some(event) = reader.next_event().unwrap() {
+            assert!(!matches!(event, ArtifactEvent::Output { .. }));
+        }
+    }
+
     #[test]
     fn lifecycle_closes_admission_before_waiting_for_the_capture_lock() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = private_dir();
         let mut terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
         let (wake, ready) = mpsc::channel();
         let (recording, mut streams) =
@@ -290,7 +453,7 @@ mod tests {
         let lifecycle = recording.clone();
         let stop = thread::spawn(move || lifecycle.stop(FinishReason::Lifecycle).unwrap());
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while recording.admitting.load(Ordering::Acquire) {
+        while !recording.admission_closed.load(Ordering::Acquire) {
             assert!(
                 std::time::Instant::now() < deadline,
                 "lifecycle cut timed out"
@@ -330,7 +493,7 @@ mod tests {
 
     #[test]
     fn lifecycle_finish_is_not_before_an_already_admitted_mutation() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = private_dir();
         let mut terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
         let (wake, ready) = mpsc::channel();
         let (recording, streams) =
@@ -344,7 +507,7 @@ mod tests {
         let lifecycle = recording.clone();
         let stop = thread::spawn(move || lifecycle.stop(FinishReason::Lifecycle).unwrap());
         let deadline = Instant::now() + Duration::from_secs(10);
-        while recording.admitting.load(Ordering::Acquire) {
+        while !recording.admission_closed.load(Ordering::Acquire) {
             assert!(Instant::now() < deadline, "lifecycle cut timed out");
             thread::yield_now();
         }

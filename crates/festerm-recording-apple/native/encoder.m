@@ -34,6 +34,30 @@ static NSString *writer_error(AVAssetWriter *writer, NSString *fallback) {
     return error != nil ? error.localizedDescription : fallback;
 }
 
+bool festerm_apple_exclude_recording_directory_from_backup(const char *path,
+                                                            char *error, size_t error_size) {
+    @autoreleasepool {
+        NSString *filename = [NSString stringWithUTF8String:path];
+        if (filename == nil) {
+            set_error(error, error_size, @"Invalid private recording directory");
+            return false;
+        }
+        NSURL *url = [NSURL fileURLWithPath:filename isDirectory:YES];
+        NSError *native_error = nil;
+        if (![url setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&native_error]) {
+            set_error(error, error_size, @"Could not exclude private recording storage from backup");
+            return false;
+        }
+        id value = nil;
+        if (![url getResourceValue:&value forKey:NSURLIsExcludedFromBackupKey error:&native_error]
+            || ![value respondsToSelector:@selector(boolValue)] || ![value boolValue]) {
+            set_error(error, error_size, @"Could not verify recording storage backup exclusion");
+            return false;
+        }
+        return true;
+    }
+}
+
 void *festerm_apple_video_create(const char *path, uint32_t width, uint32_t height,
                                  char *error, size_t error_size) {
     @autoreleasepool {

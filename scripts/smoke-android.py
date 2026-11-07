@@ -55,6 +55,8 @@ def main():
             build.ROOT / "target/android/development.keystore",
             "--ks-pass", "pass:android", "--out", apk, aligned)
     build.run(*adb, "install", "-r", apk)
+    if args.recording_validation:
+        build.run(*adb, "shell", "mkdir", "-p", "/sdcard/Documents/fes-recording-00dd")
     build.run(*adb, "shell", "am", "force-stop", "io.github.fes.festerm")
     try:
         result = build.run(*adb, "shell", "am", "instrument", "-w",

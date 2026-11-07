@@ -805,11 +805,15 @@ impl FesTermApp {
                     match &mut tab.content {
                         TabContent::Session(session) => {
                             session.view.set_font_set(fonts);
+                            let dimensions_before = session.terminal.dimensions();
                             session.view.show_passive_in_ui(
                                 ui,
                                 &mut session.terminal,
                                 &mut session.controller,
                             );
+                            if session.terminal.dimensions() != dimensions_before {
+                                session.controller.record_resize(&session.terminal);
+                            }
                         }
                         TabContent::TextEditor(editor) => {
                             editor.set_status_bar_visible(status_bar);
