@@ -607,6 +607,7 @@ pub(crate) struct TextEditorTab {
     options_changed: bool,
     /// The byte offset of the first character visible in the text pane.
     top_visible_offset: usize,
+    selection_dragging: bool,
     /// What that offset was last frame, so the pane the reader is actually
     /// moving is the one that leads.
     last_top_offset: usize,
@@ -778,6 +779,7 @@ impl TextEditorTab {
             pending_scroll_offset: None,
             options_changed: false,
             top_visible_offset: 0,
+            selection_dragging: false,
             last_top_offset: 0,
             #[cfg(test)]
             last_scroll_target: None,
@@ -2367,7 +2369,7 @@ impl TextEditorTab {
     }
 
     fn show_edit_pane(&mut self, ui: &mut egui::Ui, documents: &SharedDocuments, width: f32) {
-        let scroll = egui::ScrollArea::vertical()
+        let mut scroll = egui::ScrollArea::vertical()
             .id_salt(("text-editor-body", self.document))
             .auto_shrink([false, false])
             .max_width(width)
@@ -2376,6 +2378,13 @@ impl TextEditorTab {
                     self.show_text(ui, documents);
                 });
             });
+        crate::markdown_viewer::selection_drag_autoscroll(
+            ui,
+            &mut scroll,
+            self.selection_dragging,
+            false,
+            true,
+        );
         tracing::debug!(target: "festerm::editor_scroll",
             editor_scroll_offset_y = scroll.state.offset.y,
             editor_scroll_content_height = scroll.content_size.y,
@@ -2729,6 +2738,15 @@ impl TextEditorTab {
         let body_id = self.body_id();
         self.route_undo_shortcuts(ui, documents, read_only);
         self.layout.begin(ui);
+        let selection_before_secondary = egui::text_edit::TextEditState::load(ui.ctx(), body_id)
+            .and_then(|state| state.cursor.char_range());
+        let secondary_press = ui.input(|input| {
+            input
+                .pointer
+                .button_pressed(egui::PointerButton::Secondary)
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        });
         // Normal and Visual mode draw their own block caret below, so the
         // widget's blinking bar is taken away for the duration of the widget
         // rather than left to flash inside the block.
@@ -2740,7 +2758,7 @@ impl TextEditorTab {
             hidden.preview = false;
             previous
         });
-        let output = {
+        let mut output = {
             let matches = if self.highlighting_matches() {
                 self.find.matches()
             } else {
@@ -2781,6 +2799,59 @@ impl TextEditorTab {
                 .layouter(&mut layouter)
                 .show(ui)
         };
+        self.selection_dragging = ui.is_being_dragged(body_id);
+        if let (Some(position), Some(selection)) = (secondary_press, selection_before_secondary) {
+            if output.response.rect.contains(position)
+                && ui.ctx().layer_id_at(position) == Some(output.response.layer_id)
+                && selection.primary.index.0 != selection.secondary.index.0
+            {
+                output.state.cursor.set_char_range(Some(selection));
+                output.state.clone().store(ui.ctx(), body_id);
+            }
+        }
+        let context_menu_id = body_id.with("selection-copy-context-menu");
+        let context_menu_position = ui.input(|input| {
+            input
+                .pointer
+                .button_clicked(egui::PointerButton::Secondary)
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        });
+        let opening_context_menu = context_menu_position.is_some_and(|position| {
+            output.response.rect.contains(position)
+                && ui.clip_rect().contains(position)
+                && ui.ctx().layer_id_at(position) == Some(output.response.layer_id)
+        });
+        let open_context_menu = opening_context_menu.then_some(egui::SetOpenCommand::Bool(true));
+        egui::Popup::new(
+            context_menu_id,
+            ui.ctx().clone(),
+            egui::PopupAnchor::PointerFixed,
+            ui.layer_id(),
+        )
+        .kind(egui::PopupKind::Menu)
+        .open_memory(open_context_menu)
+        .show(|ui| {
+            let selected_text = output.state.cursor.char_range().and_then(|range| {
+                let start = range.primary.index.0.min(range.secondary.index.0);
+                let count = range.primary.index.0.abs_diff(range.secondary.index.0);
+                (count > 0).then(|| {
+                    self.buffer
+                        .chars()
+                        .skip(start)
+                        .take(count)
+                        .collect::<String>()
+                })
+            });
+            if let Some(text) = &selected_text {
+                if ui.button("Copy").clicked() {
+                    ui.ctx().copy_text(text.clone());
+                    ui.close();
+                }
+            } else {
+                ui.add_enabled(false, egui::Button::new("Copy"));
+            }
+        });
         if let Some(previous) = widget_caret {
             ui.visuals_mut().text_cursor = previous;
         }
@@ -3909,6 +3980,192 @@ mod tests {
                 assert_eq!(harness.state().buffer, "# Controlled document\n");
             }
         }
+    }
+
+    #[test]
+    fn editor_selected_text_context_menu_preserves_selection_and_copies_it() {
+        let directory = TemporaryDirectory::new("copy-selected-text");
+        let text = "alpha βeta gamma\n";
+        let path = directory.file("selected.txt", text);
+        let (documents, mut editor) = editor_for(&path);
+        let context = egui::Context::default();
+        let body_id = editor.body_id();
+
+        let mut frame = 0;
+        let mut run = |events| {
+            frame += 1;
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 360.0),
+                    )),
+                    events,
+                    time: Some(frame as f64 / 60.0),
+                    ..Default::default()
+                },
+                |ui| editor.show_text(ui, &documents),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let output = run(Vec::new());
+        let mut state = egui::text_edit::TextEditState::load(&context, body_id).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(6),
+                egui::text::CCursor::new(10),
+            )));
+        state.store(&context, body_id);
+        let body = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(body) if body.galley.text() == text => Some(body),
+                _ => None,
+            })
+            .expect("the editor body was painted");
+        let position = body.pos
+            + body
+                .galley
+                .pos_from_cursor(egui::text::CCursor::new(8))
+                .center()
+                .to_vec2();
+
+        run(vec![
+            egui::Event::PointerMoved(position),
+            egui::Event::PointerButton {
+                pos: position,
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        run(vec![egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        let output = run(Vec::new());
+        let copy = output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(label) if label.galley.job.text == "Copy" => {
+                Some(label.galley.rect.translate(label.pos.to_vec2()).center())
+            }
+            _ => None,
+        });
+        let copy = copy.expect("right-click opens a Copy context menu");
+        let selection = egui::text_edit::TextEditState::load(&context, body_id)
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert_eq!(
+            (selection.secondary.index.0, selection.primary.index.0),
+            (6, 10),
+            "right-click preserves the selected range"
+        );
+
+        run(vec![
+            egui::Event::PointerMoved(copy),
+            egui::Event::PointerButton {
+                pos: copy,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        let output = run(vec![egui::Event::PointerButton {
+            pos: copy,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        assert_eq!(
+            output.platform_output.commands,
+            vec![egui::OutputCommand::CopyText("βeta".to_owned())]
+        );
+    }
+
+    #[test]
+    fn editor_drag_autoscroll_extends_selection_with_the_original_anchor() {
+        let directory = TemporaryDirectory::new("editor-drag-autoscroll");
+        let text = (0..140)
+            .map(|index| format!("line {index:03}\n"))
+            .collect::<String>();
+        let path = directory.file("long.txt", &text);
+        let (documents, mut editor) = editor_for(&path);
+        let context = egui::Context::default();
+        let body_id = editor.body_id();
+        let mut frame = 0;
+        let mut run = |events| {
+            frame += 1;
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 360.0),
+                    )),
+                    events,
+                    time: Some(frame as f64 / 60.0),
+                    ..Default::default()
+                },
+                |ui| editor.show_edit_pane(ui, &documents, ui.available_width()),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        run(Vec::new());
+        let output = run(Vec::new());
+        let (start, bottom) = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(body) if body.galley.text() == text => Some((
+                    body.pos
+                        + body
+                            .galley
+                            .pos_from_cursor(egui::text::CCursor::new(0))
+                            .center()
+                            .to_vec2(),
+                    shape.clip_rect.bottom(),
+                )),
+                _ => None,
+            })
+            .expect("editor body is visible");
+        run(vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        let outside = egui::pos2(start.x + 20.0, bottom + 40.0);
+        run(vec![egui::Event::PointerMoved(outside)]);
+        for _ in 0..80 {
+            run(Vec::new());
+        }
+        run(vec![egui::Event::PointerButton {
+            pos: outside,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        let selection = egui::text_edit::TextEditState::load(&context, body_id)
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert_eq!(selection.secondary.index.0, 0);
+        assert!(selection.primary.index.0 > text.find("line 025").unwrap());
+        let output = run(vec![egui::Event::Copy]);
+        assert!(output.platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyText(copied)
+                if copied.starts_with("line 000") && copied.contains("line 025"))
+        }));
     }
 
     #[test]

@@ -140,15 +140,39 @@ pub(super) fn begin(ui: &egui::Ui) {
         state.current = Selection::default();
         state.capturing = copying || opening_menu;
     }
-    ui.ctx()
-        .plugin::<egui::text_selection::LabelSelectionState>()
-        .lock()
-        .begin_preserve_selection_on_secondary_press(ui.ctx().viewport_id());
+    {
+        let plugin = ui
+            .ctx()
+            .plugin::<egui::text_selection::LabelSelectionState>();
+        let mut selection = plugin.lock();
+        selection.begin_preserve_selection_on_secondary_press(ui.ctx().viewport_id());
+        selection.begin_offscreen_selection(ui.ctx().viewport_id());
+    }
     if opening_menu {
         ui.ctx()
             .plugin::<egui::text_selection::LabelSelectionState>()
             .lock()
             .capture_selection_text(ui.ctx().viewport_id());
+    }
+}
+
+pub(super) fn plain_label(ui: &egui::Ui, response: &egui::Response) {
+    if !ui.ctx().plugin::<ClipboardSelection>().lock().capturing {
+        return;
+    }
+    if ui
+        .ctx()
+        .plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .selected_label_range(ui.ctx().viewport_id(), response.id)
+        .is_some()
+    {
+        ui.ctx()
+            .plugin::<ClipboardSelection>()
+            .lock()
+            .current
+            .widgets
+            .insert(response.id);
     }
 }
 
@@ -724,13 +748,17 @@ pub(super) fn finish(
         && pointer_pos.is_some_and(|pos| {
             rect.contains(pos) && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
         });
-    ui.ctx()
-        .plugin::<egui::text_selection::LabelSelectionState>()
-        .lock()
-        .end_preserve_selection_on_secondary_press(
+    {
+        let plugin = ui
+            .ctx()
+            .plugin::<egui::text_selection::LabelSelectionState>();
+        let mut selection = plugin.lock();
+        selection.end_preserve_selection_on_secondary_press(
             ui.ctx().viewport_id(),
             preserve_background_press,
         );
+        selection.end_offscreen_selection(ui.ctx().viewport_id());
+    }
     let plugin = ui.ctx().plugin::<ClipboardSelection>();
     let id = ui.id().with(("markdown-selection-copy", owner));
     let viewport = ui.ctx().viewport_id();
@@ -875,6 +903,128 @@ pub(super) fn finish(
         });
 }
 
+pub(super) fn finish_plain(ui: &mut egui::Ui, owner: u64, generation: u64, rect: egui::Rect) {
+    let (secondary_pressed, pointer_pos) = ui.input(|input| {
+        (
+            input.pointer.button_pressed(egui::PointerButton::Secondary),
+            input.pointer.interact_pos(),
+        )
+    });
+    let preserve_background_press = secondary_pressed
+        && pointer_pos.is_some_and(|pos| {
+            rect.contains(pos) && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
+        });
+    {
+        let plugin = ui
+            .ctx()
+            .plugin::<egui::text_selection::LabelSelectionState>();
+        let mut selection = plugin.lock();
+        selection.end_preserve_selection_on_secondary_press(
+            ui.ctx().viewport_id(),
+            preserve_background_press,
+        );
+        selection.end_offscreen_selection(ui.ctx().viewport_id());
+    }
+
+    let plugin = ui.ctx().plugin::<ClipboardSelection>();
+    let id = ui.id().with(("markdown-selection-copy-plain", owner));
+    let viewport = ui.ctx().viewport_id();
+    let opening = ui.input(|input| {
+        input.pointer.button_clicked(egui::PointerButton::Secondary)
+            && input
+                .pointer
+                .interact_pos()
+                .is_some_and(|pos| rect.contains(pos))
+    }) && ui
+        .ctx()
+        .layer_id_at(ui.ctx().pointer_interact_pos().unwrap_or_default())
+        == Some(ui.layer_id());
+    let selected_text = if opening {
+        let selection_plugin = ui
+            .ctx()
+            .plugin::<egui::text_selection::LabelSelectionState>();
+        let selection = selection_plugin.lock();
+        let ranges = selection.selected_label_ranges(viewport);
+        let state = plugin.lock();
+        let owns_selection = !ranges.is_empty()
+            && ranges
+                .iter()
+                .all(|(id, _)| state.current.widgets.contains(id));
+        owns_selection
+            .then(|| selection.pending_copy_text(viewport).map(str::to_owned))
+            .flatten()
+            .filter(|text| !text.is_empty())
+    } else {
+        None
+    };
+
+    if !opening && !egui::Popup::is_id_open(ui.ctx(), id) {
+        let mut state = plugin.lock();
+        if state
+            .menus
+            .get(&viewport)
+            .is_some_and(|(owner, _)| *owner == id)
+        {
+            state.menus.remove(&viewport);
+        }
+        return;
+    }
+
+    let revision = DocumentRevision { owner, generation };
+    if opening {
+        let mut state = plugin.lock();
+        state.menus.remove(&viewport);
+        if let Some(text) = selected_text {
+            state.menus.insert(
+                viewport,
+                (
+                    id,
+                    Arc::new(MenuSelection {
+                        revision,
+                        html: String::new(),
+                        markdown: None,
+                        text,
+                        include_source: false,
+                        source_inexact: false,
+                    }),
+                ),
+            );
+        }
+    }
+
+    let payload = {
+        let mut state = plugin.lock();
+        let payload = state
+            .menus
+            .get(&viewport)
+            .filter(|(owner, payload)| *owner == id && payload.revision == revision)
+            .map(|(_, payload)| payload.clone());
+        if payload.is_some() {
+            state.seen_menus.insert(viewport);
+        }
+        payload
+    };
+    let open = opening.then_some(egui::SetOpenCommand::Bool(payload.is_some()));
+    egui::Popup::new(
+        id,
+        ui.ctx().clone(),
+        egui::PopupAnchor::PointerFixed,
+        ui.layer_id(),
+    )
+    .kind(egui::PopupKind::Menu)
+    .open_memory(open)
+    .show(|ui| {
+        let Some(payload) = payload else {
+            ui.close();
+            return;
+        };
+        if ui.button("Copy").clicked() {
+            ui.ctx().copy_text(payload.text.clone());
+            ui.close();
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::MarkdownPreviewPane;
@@ -885,16 +1035,18 @@ mod tests {
         context: egui::Context,
         pane: MarkdownPreviewPane,
         frame: usize,
+        horizontal_parent: bool,
     }
 
-    impl CopyHarness {
-        fn new(source: &str) -> Self {
+    struct PlainCopyHarness {
+        context: egui::Context,
+        frame: usize,
+    }
+
+    impl PlainCopyHarness {
+        fn new() -> Self {
             Self {
                 context: egui::Context::default(),
-                pane: MarkdownPreviewPane::new(
-                    LocalMarkdownSource::new("/owned/copy.md").unwrap().into(),
-                    source,
-                ),
                 frame: 0,
             }
         }
@@ -911,7 +1063,112 @@ mod tests {
                     time: Some(self.frame as f64 / 60.0),
                     ..Default::default()
                 },
-                |ui| self.pane.show(ui),
+                |ui| {
+                    super::begin(ui);
+                    let response = ui.add(egui::Label::new("source text").selectable(true));
+                    super::plain_label(ui, &response);
+                    super::finish_plain(ui, 1, 1, ui.max_rect());
+                },
+            );
+            output.textures_delta.clear();
+            output
+        }
+
+        fn label_position(&mut self) -> egui::Pos2 {
+            let output = self.step(Vec::new());
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(label) if label.galley.job.text == "source text" => Some(
+                        label.pos
+                            + label
+                                .galley
+                                .pos_from_cursor(label.galley.begin())
+                                .center()
+                                .to_vec2(),
+                    ),
+                    _ => None,
+                })
+                .unwrap()
+        }
+
+        fn select(&mut self) -> egui::Pos2 {
+            let start = self.label_position();
+            let output = self.step(Vec::new());
+            let end = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(label) if label.galley.job.text == "source text" => Some(
+                        label.pos
+                            + label
+                                .galley
+                                .pos_from_cursor(label.galley.end())
+                                .center()
+                                .to_vec2(),
+                    ),
+                    _ => None,
+                })
+                .unwrap();
+            self.step(vec![
+                egui::Event::PointerMoved(start),
+                button(start, true, egui::PointerButton::Primary),
+            ]);
+            self.step(vec![egui::Event::PointerMoved(end)]);
+            self.step(vec![button(end, false, egui::PointerButton::Primary)]);
+            end
+        }
+
+        fn menu(&mut self, pos: egui::Pos2) -> egui::FullOutput {
+            self.step(vec![button(pos, true, egui::PointerButton::Secondary)]);
+            self.step(vec![button(pos, false, egui::PointerButton::Secondary)]);
+            self.step(Vec::new())
+        }
+    }
+
+    impl CopyHarness {
+        fn new(source: &str) -> Self {
+            Self {
+                context: egui::Context::default(),
+                pane: MarkdownPreviewPane::new(
+                    LocalMarkdownSource::new("/owned/copy.md").unwrap().into(),
+                    source,
+                ),
+                frame: 0,
+                horizontal_parent: false,
+            }
+        }
+
+        fn in_horizontal_parent(source: &str) -> Self {
+            let mut harness = Self::new(source);
+            harness.horizontal_parent = true;
+            harness
+        }
+
+        fn step(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+            self.frame += 1;
+            let mut output = self.context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 600.0),
+                    )),
+                    events,
+                    time: Some(self.frame as f64 / 60.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    if self.horizontal_parent {
+                        ui.allocate_ui_with_layout(
+                            ui.available_size(),
+                            egui::Layout::left_to_right(egui::Align::Min),
+                            |ui| self.pane.show(ui),
+                        );
+                    } else {
+                        self.pane.show(ui);
+                    }
+                },
             );
             output.textures_delta.clear();
             output
@@ -1118,6 +1375,23 @@ mod tests {
     }
 
     #[test]
+    fn markdown_preview_copy_menu_uses_viewport_in_horizontal_layout() {
+        let mut harness = CopyHarness::in_horizontal_parent("selected text\n");
+        let end = harness.select("selected text");
+        let output = harness.menu(end, false);
+        let copy = menu_button(&output, "Copy rich text")
+            .expect("right-click opens the preview Copy menu");
+        harness.step(vec![
+            egui::Event::PointerMoved(copy),
+            button(copy, true, egui::PointerButton::Primary),
+        ]);
+        let output = harness.step(vec![button(copy, false, egui::PointerButton::Primary)]);
+        assert!(output.platform_output.commands.iter().any(|command| {
+            matches!(command, egui::OutputCommand::CopyHtml {text, ..} if text == "selected text")
+        }));
+    }
+
+    #[test]
     fn markdown_selection_keeps_secondary_but_not_middle_click_behavior() {
         let mut harness = CopyHarness::new("selected text\n");
         harness.select("selected text");
@@ -1142,6 +1416,365 @@ mod tests {
             .plugin::<egui::text_selection::LabelSelectionState>()
             .lock()
             .has_selection());
+    }
+
+    #[test]
+    fn markdown_drag_autoscroll_keeps_the_offscreen_anchor_and_copy_text() {
+        let source = (0..80)
+            .map(|index| format!("Paragraph {index:03}\n\n"))
+            .collect::<String>();
+        let mut harness = CopyHarness::new(&source);
+        harness.step(Vec::new());
+        let output = harness.step(Vec::new());
+        let start = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == "Paragraph 000" => Some(
+                    label.pos
+                        + label
+                            .galley
+                            .pos_from_cursor(label.galley.begin())
+                            .center()
+                            .to_vec2(),
+                ),
+                _ => None,
+            })
+            .expect("initial paragraph is visible");
+        harness.step(vec![
+            egui::Event::PointerMoved(start),
+            button(start, true, egui::PointerButton::Primary),
+        ]);
+        let outside = egui::pos2(start.x + 20.0, 640.0);
+        harness.step(vec![egui::Event::PointerMoved(outside)]);
+        for _ in 0..70 {
+            harness.step(Vec::new());
+        }
+        let output = harness.step(vec![button(outside, false, egui::PointerButton::Primary)]);
+
+        assert!(harness
+            .context
+            .plugin::<egui::text_selection::LabelSelectionState>()
+            .lock()
+            .has_selection());
+        let selected = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text.starts_with("Paragraph ") => {
+                    let point = label.pos
+                        + label
+                            .galley
+                            .pos_from_cursor(egui::text::CCursor::new(3))
+                            .center()
+                            .to_vec2();
+                    shape.clip_rect.contains(point).then_some(point)
+                }
+                _ => None,
+            })
+            .expect("a selected paragraph is visible");
+        let menu = harness.menu(selected, false);
+        let copy = menu_button(&menu, "Copy rich text")
+            .expect("offscreen selection has a context-menu Copy action");
+        harness.step(vec![
+            egui::Event::PointerMoved(copy),
+            button(copy, true, egui::PointerButton::Primary),
+        ]);
+        let output = harness.step(vec![button(copy, false, egui::PointerButton::Primary)]);
+        let copied = output
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text)
+                | egui::OutputCommand::CopyHtml { text, .. } => Some(text),
+                _ => None,
+            })
+            .expect("selection remains copyable");
+        assert!(copied.contains("Paragraph 000"), "{copied}");
+        assert!(copied.contains("Paragraph 020"), "{copied}");
+    }
+
+    #[test]
+    fn markdown_backward_drag_autoscroll_keeps_the_offscreen_anchor() {
+        let source = (0..80)
+            .map(|index| format!("Paragraph {index:03}\n\n"))
+            .collect::<String>();
+        let mut harness = CopyHarness::new(&source);
+        harness.pane.pending_scroll = Some(super::super::PendingScroll::Byte(
+            source.find("Paragraph 070").unwrap(),
+        ));
+        let mut output = harness.step(Vec::new());
+        for _ in 0..119 {
+            output = harness.step(Vec::new());
+        }
+        let start = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == "Paragraph 070" => {
+                    let point = label.pos
+                        + label
+                            .galley
+                            .pos_from_cursor(egui::text::CCursor::new(12))
+                            .center()
+                            .to_vec2();
+                    shape.clip_rect.contains(point).then_some(point)
+                }
+                _ => None,
+            })
+            .expect("target paragraph is visible");
+        harness.step(vec![
+            egui::Event::PointerMoved(start),
+            button(start, true, egui::PointerButton::Primary),
+        ]);
+        let outside = egui::pos2(start.x - 20.0, -40.0);
+        harness.step(vec![egui::Event::PointerMoved(outside)]);
+        for frame in 0..70 {
+            harness.step(Vec::new());
+            assert!(
+                harness
+                    .context
+                    .plugin::<egui::text_selection::LabelSelectionState>()
+                    .lock()
+                    .has_selection(),
+                "backward selection was lost on frame {frame}"
+            );
+        }
+        harness.step(vec![button(outside, false, egui::PointerButton::Primary)]);
+        let output = harness.step(vec![egui::Event::Copy]);
+        let copied = output
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text)
+                | egui::OutputCommand::CopyHtml { text, .. } => Some(text),
+                _ => None,
+            })
+            .expect("backward selection remains copyable");
+        assert!(copied.contains("Paragraph 050"), "{copied}");
+        assert!(copied.contains("Paragraph 07"), "{copied}");
+    }
+
+    #[test]
+    fn markdown_code_drag_autoscroll_extends_selection_vertically() {
+        let lines = (0..100)
+            .map(|index| format!("code{index:03}\n"))
+            .collect::<String>();
+        let mut harness = CopyHarness::new(&format!("```text\n{lines}```\n"));
+        harness.step(Vec::new());
+        let output = harness.step(Vec::new());
+        let (start, clip) = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == "code000" => Some((
+                    label.pos
+                        + label
+                            .galley
+                            .pos_from_cursor(label.galley.begin())
+                            .center()
+                            .to_vec2(),
+                    shape.clip_rect,
+                )),
+                _ => None,
+            })
+            .expect("code line is visible");
+        harness.step(vec![
+            egui::Event::PointerMoved(start),
+            button(start, true, egui::PointerButton::Primary),
+        ]);
+        let outside = egui::pos2(start.x + 20.0, clip.bottom() + 40.0);
+        harness.step(vec![egui::Event::PointerMoved(outside)]);
+        for _ in 0..80 {
+            harness.step(Vec::new());
+        }
+        harness.step(vec![button(outside, false, egui::PointerButton::Primary)]);
+        let output = harness.step(vec![egui::Event::Copy]);
+        let copied = output
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text)
+                | egui::OutputCommand::CopyHtml { text, .. } => Some(text),
+                _ => None,
+            })
+            .expect("extended code selection remains copyable");
+        assert!(copied.starts_with("code000"), "{copied}");
+        assert!(copied.contains("code020"), "{copied}");
+    }
+
+    #[test]
+    fn markdown_table_drag_autoscroll_extends_selection_horizontally() {
+        let header = (0..35)
+            .map(|index| format!("c{index:02}"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let separator = std::iter::repeat_n("---", 35)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let mut harness = CopyHarness::new(&format!("| {header} |\n| {separator} |\n"));
+        harness.step(Vec::new());
+        let output = harness.step(Vec::new());
+        let (start, clip) = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == "c00" => Some((
+                    label.pos
+                        + label
+                            .galley
+                            .pos_from_cursor(label.galley.begin())
+                            .center()
+                            .to_vec2(),
+                    shape.clip_rect,
+                )),
+                _ => None,
+            })
+            .expect("first table cell is visible");
+        harness.step(vec![
+            egui::Event::PointerMoved(start),
+            button(start, true, egui::PointerButton::Primary),
+        ]);
+        let outside = egui::pos2(clip.right() + 40.0, start.y);
+        harness.step(vec![egui::Event::PointerMoved(outside)]);
+        for _ in 0..80 {
+            harness.step(Vec::new());
+        }
+        harness.step(vec![button(outside, false, egui::PointerButton::Primary)]);
+        let output = harness.step(vec![egui::Event::Copy]);
+        let copied = output
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text)
+                | egui::OutputCommand::CopyHtml { text, .. } => Some(text),
+                _ => None,
+            })
+            .expect("horizontally extended table selection remains copyable");
+        assert!(copied.starts_with("c00"), "{copied}");
+        assert!(copied.contains("c15"), "{copied}");
+
+        let output = harness.step(Vec::new());
+        let (start, clip) = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == "c24" => Some((
+                    label.pos
+                        + label
+                            .galley
+                            .pos_from_cursor(label.galley.end())
+                            .center()
+                            .to_vec2(),
+                    shape.clip_rect,
+                )),
+                _ => None,
+            })
+            .expect("later table cell is visible");
+        harness.step(vec![
+            egui::Event::PointerMoved(start),
+            button(start, true, egui::PointerButton::Primary),
+        ]);
+        let outside = egui::pos2(clip.left() - 40.0, start.y);
+        harness.step(vec![egui::Event::PointerMoved(outside)]);
+        for _ in 0..90 {
+            harness.step(Vec::new());
+        }
+        harness.step(vec![button(outside, false, egui::PointerButton::Primary)]);
+        let output = harness.step(vec![egui::Event::Copy]);
+        let copied = output
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                egui::OutputCommand::CopyText(text)
+                | egui::OutputCommand::CopyHtml { text, .. } => Some(text),
+                _ => None,
+            })
+            .expect("backward horizontal selection remains copyable");
+        assert!(copied.starts_with("c00"), "{copied}");
+        assert!(copied.contains("c24"), "{copied}");
+    }
+
+    #[test]
+    fn markdown_horizontal_drag_does_not_scroll_another_table() {
+        let header = |prefix| {
+            (0..35)
+                .map(|index| format!("{prefix}{index:02}"))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        };
+        let separator = std::iter::repeat_n("---", 35)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let source = format!(
+            "| {} |\n| {separator} |\n\nBetween tables.\n\n| {} |\n| {separator} |\n",
+            header("a"),
+            header("b"),
+        );
+        let mut harness = CopyHarness::new(&source);
+        harness.step(Vec::new());
+        let output = harness.step(Vec::new());
+        let label = |output: &egui::FullOutput, text: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == text => {
+                    Some((label.pos, label.galley.clone(), shape.clip_rect))
+                }
+                _ => None,
+            })
+        };
+        let (position, galley, clip) = label(&output, "a00").unwrap();
+        let start = position + galley.pos_from_cursor(galley.begin()).center().to_vec2();
+        let first_before = label(&output, "a08").unwrap().0.x;
+        let second_before = label(&output, "b08").unwrap().0.x;
+        harness.step(vec![
+            egui::Event::PointerMoved(start),
+            button(start, true, egui::PointerButton::Primary),
+        ]);
+        let outside = egui::pos2(clip.right() + 40.0, start.y);
+        harness.step(vec![egui::Event::PointerMoved(outside)]);
+        let mut output = harness.step(Vec::new());
+        for _ in 1..30 {
+            output = harness.step(Vec::new());
+        }
+        let first_after = label(&output, "a08").unwrap().0.x;
+        let second_after = label(&output, "b08").unwrap().0.x;
+        assert!(first_after < first_before - 100.0);
+        assert_eq!(second_after, second_before);
+    }
+
+    #[test]
+    fn markdown_source_selection_has_a_plain_copy_context_menu() {
+        let mut harness = PlainCopyHarness::new();
+        let end = harness.select();
+        let output = harness.step(vec![egui::Event::Copy]);
+        assert_eq!(
+            output.platform_output.commands,
+            vec![egui::OutputCommand::CopyText("source text".to_owned())]
+        );
+        let output = harness.menu(end);
+        assert!(menu_button(&output, "Copy").is_some());
+        assert!(menu_button(&output, "Copy rich text").is_none());
+        assert!(harness
+            .context
+            .plugin::<egui::text_selection::LabelSelectionState>()
+            .lock()
+            .has_selection());
+
+        let copy = menu_button(&output, "Copy").unwrap();
+        harness.step(vec![
+            egui::Event::PointerMoved(copy),
+            button(copy, true, egui::PointerButton::Primary),
+        ]);
+        let output = harness.step(vec![button(copy, false, egui::PointerButton::Primary)]);
+        assert_eq!(
+            output.platform_output.commands,
+            vec![egui::OutputCommand::CopyText("source text".to_owned())]
+        );
     }
 
     #[test]

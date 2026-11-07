@@ -39,6 +39,145 @@ pub(crate) fn install_clipboard(context: &egui::Context) {
     clipboard::install(context);
 }
 
+pub(crate) fn selection_drag_autoscroll<R>(
+    ui: &egui::Ui,
+    output: &mut egui::scroll_area::ScrollAreaOutput<R>,
+    dragging: bool,
+    horizontal: bool,
+    vertical: bool,
+) {
+    let (pointer, origin, primary_down, primary_pressed, dt) = ui.input(|input| {
+        (
+            input.pointer.interact_pos(),
+            input.pointer.press_origin(),
+            input.pointer.button_down(egui::PointerButton::Primary),
+            input.pointer.button_pressed(egui::PointerButton::Primary),
+            input.unstable_dt.min(0.05),
+        )
+    });
+    let owner_id = selection_drag_owner_id(ui, output.id);
+    if !primary_down {
+        ui.ctx().data_mut(|data| data.remove::<bool>(owner_id));
+        return;
+    }
+    // The returned inner rect is measured before a horizontal area's
+    // auto-shrink establishes its content height.
+    let owner_rect = if horizontal && !vertical {
+        egui::Rect::from_min_size(
+            output.inner_rect.min,
+            vec2(output.inner_rect.width(), output.content_size.y),
+        )
+    } else {
+        output.inner_rect
+    };
+    let started_here = ui.ctx().data_mut(|data| {
+        if primary_pressed || data.get_temp::<bool>(owner_id).is_none() {
+            let started_here =
+                origin.is_some_and(|pos| owner_rect.intersect(ui.clip_rect()).contains(pos));
+            data.insert_temp(owner_id, started_here);
+            started_here
+        } else {
+            data.get_temp::<bool>(owner_id).unwrap_or(false)
+        }
+    });
+    let Some(pointer) = pointer.filter(|_| dragging && started_here) else {
+        return;
+    };
+
+    let mut delta = egui::Vec2::ZERO;
+    for (axis, enabled, coordinate, low, high, content, viewport) in [
+        (
+            0,
+            horizontal,
+            pointer.x,
+            output.inner_rect.left(),
+            output.inner_rect.right(),
+            output.content_size.x,
+            output.inner_rect.width(),
+        ),
+        (
+            1,
+            vertical,
+            pointer.y,
+            output.inner_rect.top(),
+            output.inner_rect.bottom(),
+            output.content_size.y,
+            output.inner_rect.height(),
+        ),
+    ] {
+        if !enabled {
+            continue;
+        }
+        let max_offset = (content - viewport).max(0.0);
+        if max_offset <= 0.0 {
+            continue;
+        }
+        let distance = if coordinate < low {
+            coordinate - low
+        } else if coordinate > high {
+            coordinate - high
+        } else {
+            0.0
+        };
+        if distance == 0.0 {
+            continue;
+        }
+        let speed =
+            (distance.abs() / SELECTION_AUTOSCROLL_EDGE).min(1.0) * SELECTION_AUTOSCROLL_SPEED;
+        let change = distance.signum() * speed * dt;
+        if axis == 0 {
+            delta.x = change;
+        } else {
+            delta.y = change;
+        }
+    }
+
+    let max_offset = (output.content_size - output.inner_rect.size()).max(egui::Vec2::ZERO);
+    let new_offset = (output.state.offset + delta).clamp(egui::Vec2::ZERO, max_offset);
+    if new_offset != output.state.offset {
+        output.state.offset = new_offset;
+        output.state.store(ui.ctx(), output.id);
+        ui.ctx().request_repaint();
+    }
+}
+
+fn label_selection_dragging(ui: &egui::Ui) -> bool {
+    ui.ctx()
+        .plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .is_dragging(ui.ctx().viewport_id())
+}
+
+fn selection_drag_owner_id(ui: &egui::Ui, scroll_id: egui::Id) -> egui::Id {
+    scroll_id.with(("selection-drag-autoscroll-owner", ui.ctx().viewport_id()))
+}
+
+fn begin_horizontal_selection(ui: &egui::Ui, scroll_id: egui::Id) {
+    let owner_id = selection_drag_owner_id(ui, scroll_id);
+    if ui.ctx().data(|data| data.get_temp::<bool>(owner_id)) == Some(true) {
+        ui.ctx()
+            .plugin::<egui::text_selection::LabelSelectionState>()
+            .lock()
+            .begin_horizontal_drag_selection(ui);
+    }
+}
+
+fn end_horizontal_selection(ui: &egui::Ui) {
+    if ui
+        .ctx()
+        .plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .end_horizontal_drag_selection(ui.ctx().viewport_id())
+    {
+        ui.ctx().request_repaint();
+    }
+}
+
+fn horizontal_scroll_id(ui: &egui::Ui, salt: impl egui::AsIdSalt) -> egui::Id {
+    // ScrollArea turns its salt into an IdSalt before deriving the ID.
+    ui.make_persistent_id(egui::IdSalt::new(salt))
+}
+
 const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 16 * 1024 * 1024;
 /// How many images a local document may load without the reader asking
@@ -135,6 +274,8 @@ const MAX_PREPARED_TABLE_LAYOUTS: usize = 512;
 const MAX_PREPARED_TABLE_LAYOUT_CELLS: usize = 8192;
 const MAX_PREPARED_TABLE_LAYOUT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_LAYOUT_FIND_MATCHES: usize = 8192;
+const SELECTION_AUTOSCROLL_EDGE: f32 = 36.0;
+const SELECTION_AUTOSCROLL_SPEED: f32 = 900.0;
 /// Height reserved for the viewer's own footer, used only when the shared
 /// application status bar is hidden. Matches the status bar's own geometry
 /// so toggling it doesn't reflow the document.
@@ -2178,6 +2319,7 @@ impl SourcePreparation {
         ui: &mut egui::Ui,
         line_start: usize,
         job: Arc<LayoutJob>,
+        selection_active: bool,
     ) -> egui::Response {
         #[cfg(test)]
         let ordinary = self
@@ -2203,6 +2345,12 @@ impl SourcePreparation {
                     egui::Rect::from_min_size(ui.next_widget_position(), geometry.size).round_ui();
                 let rect = ui.layout().align_size_within_rect(geometry.size, frame);
                 !rect.intersects(ui.clip_rect())
+                    && (!selection_active
+                        || !ui
+                            .ctx()
+                            .plugin::<egui::text_selection::LabelSelectionState>()
+                            .lock()
+                            .needs_offscreen_label(ui.ctx().viewport_id(), ui.next_auto_id()))
             });
         if let Some(geometry) = geometry {
             // Label's selection/painting branch only runs for visible response
@@ -3214,9 +3362,7 @@ impl MarkdownRenderState<'_> {
         clipboard_owner: u64,
         document_revision: u64,
     ) -> MarkdownDocumentLayout {
-        if self.mode == MarkdownViewerMode::Preview {
-            clipboard::begin(ui);
-        }
+        clipboard::begin(ui);
         self.table_layouts.begin(ui, self.find);
         self.code_preparation.begin(ui);
         let viewport_height = ui.available_height().max(120.0);
@@ -3241,7 +3387,7 @@ impl MarkdownRenderState<'_> {
                     egui::Layout::top_down(Align::Min),
                     |ui| {
                         document_rect = ui.max_rect();
-                        let scroll = egui::ScrollArea::vertical()
+                        let mut scroll = egui::ScrollArea::vertical()
                             .id_salt("markdown-document")
                             .max_height(viewport_height)
                             .min_scrolled_height(viewport_height)
@@ -3285,6 +3431,13 @@ impl MarkdownRenderState<'_> {
                                     );
                                 });
                             });
+                        selection_drag_autoscroll(
+                            ui,
+                            &mut scroll,
+                            label_selection_dragging(ui),
+                            false,
+                            true,
+                        );
                         if self.mode == MarkdownViewerMode::Preview {
                             tracing::debug!(target: "festerm::markdown_scroll",
                                 markdown_preview_offset_y = scroll.state.offset.y,
@@ -3306,14 +3459,20 @@ impl MarkdownRenderState<'_> {
                 }
             })
             .inner;
-        if self.mode == MarkdownViewerMode::Preview {
-            clipboard::finish(
+        match self.mode {
+            MarkdownViewerMode::Preview => clipboard::finish(
                 ui,
                 document,
                 clipboard_owner,
                 document_revision,
                 layout.document_rect,
-            );
+            ),
+            MarkdownViewerMode::Source => clipboard::finish_plain(
+                ui,
+                clipboard_owner,
+                document_revision,
+                layout.document_rect,
+            ),
         }
         layout
     }
@@ -3603,114 +3762,130 @@ impl MarkdownRenderState<'_> {
             .stroke(egui::Stroke::new(1.0, theme::BORDER_SUBTLE))
             .inner_margin(egui::Margin::same(1))
             .show(ui, |ui| {
-                egui::ScrollArea::horizontal()
-                    .id_salt(("markdown-table", block.span().byte_range().start))
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                        let mut cell_rects: Vec<Vec<egui::Rect>> =
-                            Vec::with_capacity(table.rows.len());
-                        for (row, prepared) in block.rows().iter().zip(&table.rows) {
-                            let row_height = prepared.height;
-                            let (row_rect, _) = ui.allocate_exact_size(
-                                vec2(total_width, row_height),
-                                egui::Sense::hover(),
-                            );
-                            if row.is_header() {
-                                ui.painter().rect_filled(
-                                    row_rect,
+                let scroll_salt = ("markdown-table", block.span().byte_range().start);
+                let scroll_id = horizontal_scroll_id(ui, scroll_salt);
+                let mut scroll =
+                    egui::ScrollArea::horizontal()
+                        .id_salt(scroll_salt)
+                        .show(ui, |ui| {
+                            if total_width > ui.clip_rect().width() {
+                                begin_horizontal_selection(ui, scroll_id);
+                            }
+                            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                            let mut cell_rects: Vec<Vec<egui::Rect>> =
+                                Vec::with_capacity(table.rows.len());
+                            for (row, prepared) in block.rows().iter().zip(&table.rows) {
+                                let row_height = prepared.height;
+                                let (row_rect, _) = ui.allocate_exact_size(
+                                    vec2(total_width, row_height),
+                                    egui::Sense::hover(),
+                                );
+                                if row.is_header() {
+                                    ui.painter().rect_filled(
+                                        row_rect,
+                                        0.0,
+                                        theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.55),
+                                    );
+                                }
+
+                                let mut row_rects = Vec::with_capacity(prepared.galleys.len());
+                                let mut left = row_rect.left();
+                                for (column, galley) in prepared.galleys.iter().enumerate() {
+                                    let width = widths
+                                        .get(column)
+                                        .copied()
+                                        .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
+                                    let cell_rect = egui::Rect::from_min_size(
+                                        egui::pos2(left, row_rect.top()),
+                                        vec2(width, row_height),
+                                    );
+                                    left += width;
+                                    let layout = match block
+                                        .alignments()
+                                        .get(column)
+                                        .copied()
+                                        .unwrap_or(TableAlignment::None)
+                                    {
+                                        TableAlignment::Right => {
+                                            egui::Layout::right_to_left(Align::Center)
+                                        }
+                                        TableAlignment::Center => {
+                                            egui::Layout::left_to_right(Align::Center)
+                                                .with_main_align(Align::Center)
+                                        }
+                                        _ => egui::Layout::left_to_right(Align::Center),
+                                    };
+                                    let mut cell_ui = ui.new_child(
+                                        egui::UiBuilder::new()
+                                            .max_rect(cell_rect.shrink2(vec2(padding_x, padding_y)))
+                                            .layout(layout),
+                                    );
+                                    let response = cell_ui
+                                        .add(egui::Label::new(galley.clone()).selectable(true));
+                                    clipboard::inlines(
+                                        &cell_ui,
+                                        &response,
+                                        document,
+                                        row.cells()[column].inlines(),
+                                        text_style,
+                                        Some(row.cells()[column].span()),
+                                    );
+                                    #[cfg(test)]
+                                    self.table_cells
+                                        .record(row.cells()[column].span(), &response);
+                                    #[cfg(not(test))]
+                                    let _ = response;
+                                    row_rects.push(cell_rect);
+                                }
+                                cell_rects.push(row_rects);
+                            }
+
+                            let mut cells = cell_rects.iter().flatten();
+                            if let Some(first_cell) = cells.next() {
+                                let table_rect =
+                                    cells.fold(*first_cell, |rect, next| rect.union(*next));
+                                ui.painter().rect_stroke(
+                                    table_rect,
                                     0.0,
-                                    theme::SURFACE_TAB_ACTIVE.gamma_multiply(0.55),
+                                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                    egui::StrokeKind::Inside,
                                 );
-                            }
-
-                            let mut row_rects = Vec::with_capacity(prepared.galleys.len());
-                            let mut left = row_rect.left();
-                            for (column, galley) in prepared.galleys.iter().enumerate() {
-                                let width = widths
-                                    .get(column)
-                                    .copied()
-                                    .unwrap_or(TABLE_MIN_COLUMN_WIDTH);
-                                let cell_rect = egui::Rect::from_min_size(
-                                    egui::pos2(left, row_rect.top()),
-                                    vec2(width, row_height),
-                                );
-                                left += width;
-                                let layout = match block
-                                    .alignments()
-                                    .get(column)
-                                    .copied()
-                                    .unwrap_or(TableAlignment::None)
+                                // Full-height dividers belong to columns, not rows.
+                                let mut right = table_rect.left();
+                                for width in widths.iter().take(widths.len().saturating_sub(1)) {
+                                    right += width;
+                                    ui.painter().line_segment(
+                                        [
+                                            egui::pos2(right, table_rect.top()),
+                                            egui::pos2(right, table_rect.bottom()),
+                                        ],
+                                        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                    );
+                                }
+                                for row in
+                                    cell_rects.iter().take(cell_rects.len().saturating_sub(1))
                                 {
-                                    TableAlignment::Right => {
-                                        egui::Layout::right_to_left(Align::Center)
-                                    }
-                                    TableAlignment::Center => {
-                                        egui::Layout::left_to_right(Align::Center)
-                                            .with_main_align(Align::Center)
-                                    }
-                                    _ => egui::Layout::left_to_right(Align::Center),
-                                };
-                                let mut cell_ui = ui.new_child(
-                                    egui::UiBuilder::new()
-                                        .max_rect(cell_rect.shrink2(vec2(padding_x, padding_y)))
-                                        .layout(layout),
-                                );
-                                let response =
-                                    cell_ui.add(egui::Label::new(galley.clone()).selectable(true));
-                                clipboard::inlines(
-                                    &cell_ui,
-                                    &response,
-                                    document,
-                                    row.cells()[column].inlines(),
-                                    text_style,
-                                    Some(row.cells()[column].span()),
-                                );
-                                #[cfg(test)]
-                                self.table_cells
-                                    .record(row.cells()[column].span(), &response);
-                                #[cfg(not(test))]
-                                let _ = response;
-                                row_rects.push(cell_rect);
+                                    let Some(first_cell) = row.first() else {
+                                        continue;
+                                    };
+                                    ui.painter().line_segment(
+                                        [
+                                            egui::pos2(table_rect.left(), first_cell.bottom()),
+                                            egui::pos2(table_rect.right(), first_cell.bottom()),
+                                        ],
+                                        egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
+                                    );
+                                }
                             }
-                            cell_rects.push(row_rects);
-                        }
-
-                        let mut cells = cell_rects.iter().flatten();
-                        if let Some(first_cell) = cells.next() {
-                            let table_rect =
-                                cells.fold(*first_cell, |rect, next| rect.union(*next));
-                            ui.painter().rect_stroke(
-                                table_rect,
-                                0.0,
-                                egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-                                egui::StrokeKind::Inside,
-                            );
-                            // Full-height dividers belong to columns, not rows.
-                            let mut right = table_rect.left();
-                            for width in widths.iter().take(widths.len().saturating_sub(1)) {
-                                right += width;
-                                ui.painter().line_segment(
-                                    [
-                                        egui::pos2(right, table_rect.top()),
-                                        egui::pos2(right, table_rect.bottom()),
-                                    ],
-                                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-                                );
-                            }
-                            for row in cell_rects.iter().take(cell_rects.len().saturating_sub(1)) {
-                                let Some(first_cell) = row.first() else {
-                                    continue;
-                                };
-                                ui.painter().line_segment(
-                                    [
-                                        egui::pos2(table_rect.left(), first_cell.bottom()),
-                                        egui::pos2(table_rect.right(), first_cell.bottom()),
-                                    ],
-                                    egui::Stroke::new(1.0, theme::BORDER_SUBTLE),
-                                );
-                            }
-                        }
-                    });
+                            end_horizontal_selection(ui);
+                        });
+                selection_drag_autoscroll(
+                    ui,
+                    &mut scroll,
+                    label_selection_dragging(ui),
+                    true,
+                    false,
+                );
             });
     }
 
@@ -3783,8 +3958,9 @@ impl MarkdownRenderState<'_> {
                             }
                         }
                         let mut vertical_scroll_target = None;
-                        egui::ScrollArea::horizontal()
-                            .id_salt(("markdown-code", block.span().byte_range().start))
+                        let scroll_salt = ("markdown-code", block.span().byte_range().start);
+                        let mut scroll = egui::ScrollArea::horizontal()
+                            .id_salt(scroll_salt)
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = CODE_LINE_SPACING;
                                 let mut code_offset = 0;
@@ -3815,6 +3991,13 @@ impl MarkdownRenderState<'_> {
                                     }
                                 }
                             });
+                        selection_drag_autoscroll(
+                            ui,
+                            &mut scroll,
+                            label_selection_dragging(ui),
+                            true,
+                            false,
+                        );
                         if let Some(mut target) = vertical_scroll_target {
                             // The horizontal child consumes both target axes.
                             // Reissue the selected line to the outer vertical
@@ -3866,12 +4049,20 @@ impl MarkdownRenderState<'_> {
                 let syntax = source_syntax_spans(self.source_syntax, document.source_text());
                 self.source_preparation.begin(self.find);
                 self.source_preparation.begin_geometry(ui);
+                let selection_active = ui
+                    .ctx()
+                    .plugin::<egui::text_selection::LabelSelectionState>()
+                    .lock()
+                    .has_selection();
                 let mut line_start = 0usize;
                 for (line_index, line) in document.source_text().split_inclusive('\n').enumerate() {
                     let (span, job) = self.source_preparation.line(
                         line_start, line, document, self.find, syntax,
                     );
-                    let response = self.source_preparation.label(ui, line_start, job);
+                    let response =
+                        self.source_preparation
+                            .label(ui, line_start, job, selection_active);
+                    clipboard::plain_label(ui, &response);
                     #[cfg(test)]
                     self.source_preparation.record(span, &response);
                     if matches!(*self.pending_scroll, Some(PendingScroll::Byte(target)) if byte_range_contains(span, target))
@@ -5635,7 +5826,7 @@ impl MarkdownPreviewPane {
         let viewport_height = ui.available_height().max(120.0);
         let viewport_top = ui.cursor().top();
         clipboard::begin(ui);
-        let scroll = egui::ScrollArea::vertical()
+        let mut scroll = egui::ScrollArea::vertical()
             .id_salt("markdown-preview-pane")
             .max_height(viewport_height)
             .auto_shrink([false, true])
@@ -5664,6 +5855,7 @@ impl MarkdownPreviewPane {
                     );
                 });
             });
+        selection_drag_autoscroll(ui, &mut scroll, label_selection_dragging(ui), false, true);
         tracing::debug!(target: "festerm::markdown_scroll",
             markdown_preview_offset_y = scroll.state.offset.y,
             markdown_preview_content_height = scroll.content_size.y,
@@ -5680,11 +5872,7 @@ impl MarkdownPreviewPane {
             &document,
             self.clipboard_owner,
             self.document_revision,
-            egui::Rect::from_min_size(
-                egui::pos2(ui.min_rect().left(), viewport_top),
-                vec2(ui.available_width(), viewport_height),
-            )
-            .intersect(ui.clip_rect()),
+            scroll.inner_rect.intersect(ui.clip_rect()),
         );
         #[cfg(test)]
         {
@@ -6261,6 +6449,152 @@ mod tests {
         "| Product scope and priorities | `DESIGN.md`, `ROADMAP.md` |\n",
         "| Dependency and ownership boundaries | `ARCHITECTURE.md` |\n",
     );
+
+    #[test]
+    fn selection_drag_autoscrolls_each_scrollable_axis_and_stops_at_bounds() {
+        let context = egui::Context::default();
+        let mut frame = 0;
+        let mut run = |events: Vec<egui::Event>| {
+            frame += 1;
+            let mut metrics = None;
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(200.0, 200.0),
+                    )),
+                    time: Some(frame as f64 / 20.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let mut area = egui::ScrollArea::both()
+                        .id_salt("selection-autoscroll-test")
+                        .max_width(100.0)
+                        .max_height(100.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.allocate_exact_size(vec2(500.0, 500.0), Sense::hover());
+                        });
+                    metrics = Some((area.id, area.inner_rect, area.content_size));
+                    selection_drag_autoscroll(ui, &mut area, true, true, true);
+                },
+            );
+            output.textures_delta.clear();
+            let (id, rect, content_size) = metrics.unwrap();
+            (output, id, rect, content_size)
+        };
+
+        let (_, id, inner_rect, _) = run(Vec::new());
+        let start = inner_rect.center();
+        run(vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        let outside = inner_rect.right_bottom() + vec2(24.0, 24.0);
+        for _ in 0..12 {
+            run(vec![egui::Event::PointerMoved(outside)]);
+        }
+        let state = egui::scroll_area::State::load(&context, id).unwrap();
+        assert!(state.offset.x > 0.0 && state.offset.y > 0.0);
+
+        let (_, _, inner_rect, content_size) = run(Vec::new());
+        let max_offset = content_size - inner_rect.size();
+        for _ in 0..12 {
+            run(vec![egui::Event::PointerMoved(egui::pos2(1000.0, 1000.0))]);
+        }
+        let state = egui::scroll_area::State::load(&context, id).unwrap();
+        assert!((state.offset.x - max_offset.x).abs() < 1.0);
+        assert!((state.offset.y - max_offset.y).abs() < 1.0);
+
+        for _ in 0..4 {
+            run(vec![egui::Event::PointerMoved(inner_rect.center())]);
+        }
+        let state = egui::scroll_area::State::load(&context, id).unwrap();
+        assert!((state.offset.x - max_offset.x).abs() < 1.0);
+        assert!((state.offset.y - max_offset.y).abs() < 1.0);
+
+        for _ in 0..12 {
+            run(vec![egui::Event::PointerMoved(egui::pos2(-100.0, -100.0))]);
+        }
+        let state = egui::scroll_area::State::load(&context, id).unwrap();
+        assert!(state.offset.x < 1.0 && state.offset.y < 1.0);
+
+        run(vec![
+            egui::Event::PointerButton {
+                pos: egui::pos2(-100.0, -100.0),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerMoved(egui::pos2(1000.0, 1000.0)),
+        ]);
+        let state = egui::scroll_area::State::load(&context, id).unwrap();
+        assert!(state.offset.x < 1.0 && state.offset.y < 1.0);
+    }
+
+    #[test]
+    fn selection_autoscroll_only_moves_the_drag_origin_viewport() {
+        let context = egui::Context::default();
+        let mut frame = 0;
+        let mut run = |events: Vec<egui::Event>| {
+            frame += 1;
+            let mut areas = Vec::new();
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(300.0, 200.0),
+                    )),
+                    time: Some(frame as f64 / 20.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.horizontal(|ui| {
+                        for index in 0..2 {
+                            let mut area = egui::ScrollArea::vertical()
+                                .id_salt(("selection-owner-test", index))
+                                .max_width(100.0)
+                                .max_height(100.0)
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.allocate_exact_size(vec2(100.0, 500.0), Sense::hover());
+                                });
+                            areas.push((area.id, area.inner_rect));
+                            selection_drag_autoscroll(ui, &mut area, true, false, true);
+                        }
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            areas
+        };
+        let areas = run(Vec::new());
+        let start = areas[0].1.center();
+        run(vec![
+            egui::Event::PointerMoved(start),
+            egui::Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        let outside = egui::pos2(start.x, areas[0].1.bottom() + 40.0);
+        for _ in 0..8 {
+            run(vec![egui::Event::PointerMoved(outside)]);
+        }
+        let first = egui::scroll_area::State::load(&context, areas[0].0).unwrap();
+        let second = egui::scroll_area::State::load(&context, areas[1].0).unwrap();
+        assert!(first.offset.y > 0.0);
+        assert_eq!(second.offset.y, 0.0);
+    }
 
     #[test]
     fn markdown_path_context_menu_copies_the_full_path_in_preview_and_source() {
@@ -7240,6 +7574,72 @@ mod tests {
         pair
     }
 
+    #[test]
+    fn source_drag_autoscroll_keeps_offscreen_selection_copyable() {
+        let text = (0..140)
+            .map(|index| format!("line {index:03}\n"))
+            .collect::<String>();
+        let mut pair = source_geometry_pair(&text);
+        let size = vec2(900.0, 600.0);
+        source_preparation_frame(&mut pair, 0, size, Vec::new());
+        let output = source_preparation_frame(&mut pair, 1, size, Vec::new());
+        let (start, bottom) = output[1]
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(label) if label.galley.job.text == "line 000" => Some((
+                    label.pos
+                        + label
+                            .galley
+                            .pos_from_cursor(label.galley.begin())
+                            .center()
+                            .to_vec2(),
+                    shape.clip_rect.bottom(),
+                )),
+                _ => None,
+            })
+            .expect("first source line is visible");
+        source_preparation_frame(
+            &mut pair,
+            2,
+            size,
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let outside = egui::pos2(start.x + 20.0, bottom + 40.0);
+        source_preparation_frame(&mut pair, 3, size, vec![egui::Event::PointerMoved(outside)]);
+        for frame in 4..84 {
+            source_preparation_frame(&mut pair, frame, size, Vec::new());
+        }
+        source_preparation_frame(
+            &mut pair,
+            84,
+            size,
+            vec![egui::Event::PointerButton {
+                pos: outside,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let output = source_preparation_frame(&mut pair, 85, size, vec![egui::Event::Copy]);
+        for frame in output {
+            let [egui::OutputCommand::CopyText(copied)] = frame.platform_output.commands.as_slice()
+            else {
+                panic!("source selection must emit exactly one plain Copy");
+            };
+            assert!(copied.contains("line 000"), "{copied}");
+            assert!(copied.contains("line 025"), "{copied}");
+        }
+    }
+
     fn assert_source_geometry_warm(pair: &[(egui::Context, MarkdownViewerTab); 2], control: &str) {
         let ordinary = pair[0].1.source_preparation.probe.as_ref().unwrap();
         let candidate = pair[1].1.source_preparation.probe.as_ref().unwrap();
@@ -7757,7 +8157,7 @@ mod tests {
                             for line in raw.split_inclusive('\n') {
                                 let (span, job) =
                                     preparation.line(start, line, &document, find, &[]);
-                                let response = preparation.label(ui, start, job);
+                                let response = preparation.label(ui, start, job, false);
                                 preparation.record(span, &response);
                                 start += line.len();
                             }
