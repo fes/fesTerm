@@ -38,7 +38,7 @@ impl MobileApp {
         };
         let height = ui.available_height()
             - if self.dictation_open() {
-                (ui.available_height() * 0.25).clamp(100.0, 170.0)
+                super::dictation::panel_height(ui.available_height())
             } else {
                 0.0
             };

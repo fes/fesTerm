@@ -366,7 +366,7 @@ impl Speech {
                             let buffer = buffer.as_ref();
                             let channels = buffer.floatChannelData();
                             let frames = (buffer.frameLength() as usize).min(1024);
-                            draft.audio_level = if channels.is_null() || frames == 0 {
+                            let level = if channels.is_null() || frames == 0 {
                                 None
                             } else {
                                 // AVAudioPCMBuffer owns these Float32 samples for
@@ -376,6 +376,7 @@ impl Speech {
                                     frames,
                                 ))
                             };
+                            draft.record_level(level);
                         }
                         accepts
                     };

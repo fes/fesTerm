@@ -59,15 +59,15 @@ fn dictation_review_text_has_consistent_inset_padding_at_compact_and_phone_sizes
                     }
                     _ => None,
                 })
-                .min_by(|left, right| left.area().total_cmp(&right.area()))
+                .max_by(|left, right| left.area().total_cmp(&right.area()))
                 .expect("draft has a text-field frame");
             assert!(
-                (text.pos.x - field.left() - theme::space::MD).abs() <= 0.5,
+                (text.pos.x - field.left() - theme::space::SM - 1.5).abs() <= 0.5,
                 "horizontal inset at {width} {kind:?}: {field:?}, {:?}",
                 text.pos
             );
             assert!(
-                (text.pos.y - field.top() - theme::space::SM).abs() <= 0.5,
+                (text.pos.y - field.top() - theme::space::SM - 1.5).abs() <= 0.5,
                 "vertical inset at {width} {kind:?}: {field:?}, {:?}",
                 text.pos
             );
@@ -375,7 +375,7 @@ fn shared_custom_keyboard_edits_source_and_dictation_replaces_unicode_as_one_und
     harness.run();
     assert_eq!(harness.state().keyboard_kind, KeyboardKind::HoldSymbols);
     assert!(harness.query_by_label("q").is_some());
-    harness.get_by_label("Insert").click();
+    harness.get_by_label("Send").click();
     harness.run();
     assert!(
         !harness.state().dictation_open(),
@@ -462,6 +462,30 @@ fn snapshot(bytes: &[u8], version: u8, writable: bool) -> DocumentFileSnapshot {
     }
 }
 
+#[test]
+fn markdown_documents_open_in_preview_by_default() {
+    let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+        active: true,
+        ..Default::default()
+    })));
+    app.open_local_tab();
+    let opening = opening(&app.documents);
+    let mut markdown = snapshot(INITIAL, 1, true);
+    markdown.path = "/authorized/Runbook.md".into();
+    app.documents
+        .attach(opening, markdown, &mut app.next_tab)
+        .unwrap();
+    let view = app.documents.active.unwrap();
+    assert!(
+        app.documents
+            .views
+            .iter()
+            .find(|entry| entry.id == view)
+            .unwrap()
+            .previewing
+    );
+}
+
 fn app(writable: bool) -> MobileApp {
     let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
         active: true,
@@ -473,6 +497,7 @@ fn app(writable: bool) -> MobileApp {
     app.documents
         .attach(opening, snapshot(INITIAL, 1, writable), &mut app.next_tab)
         .unwrap();
+    app.documents.views[0].previewing = false;
     let tab = app.documents.views[0].tab;
     app.activate_tab(tab);
     app
@@ -1633,7 +1658,7 @@ fn capture_document_ui() {
                             draft.text =
                                 "Review the deployment notes before continuing.\n".repeat(50);
                         }
-                        draft.audio_level = Some(0.62);
+                        draft.record_level(Some(0.62));
                     });
                 harness.run();
             }

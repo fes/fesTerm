@@ -2,7 +2,12 @@ use super::{password_buffer::PasswordBuffer, route_input, widgets, MobileApp};
 use eframe::egui::{self, TextBuffer};
 use festerm_core::InputEvent;
 use festerm_ios_window::{Dictation, DictationPhase, MAX_DICTATION_BYTES};
+use festerm_ui_egui::icon::{self, Icon};
 use zeroize::{Zeroize, Zeroizing};
+
+pub(super) fn panel_height(available_height: f32) -> f32 {
+    (available_height * 0.4).clamp(150.0, 186.0)
+}
 
 pub(super) enum Destination {
     Terminal {
@@ -58,6 +63,7 @@ impl MobileApp {
     }
 
     pub(super) fn cancel_dictation(&mut self) {
+        self.dictation_send_pending = false;
         self.pending_local_dictation = None;
         if let Some(speech) = &mut self.dictation {
             speech.cancel();
@@ -145,6 +151,11 @@ impl MobileApp {
             return;
         };
         self.cancel_dictation();
+        ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
         self.clear_sticky_modifiers();
         self.terminal_keyboard.cancel();
         self.gestures.cancel();
@@ -256,148 +267,230 @@ impl MobileApp {
         }
         let mut cancel = false;
         let mut stop = false;
-        let mut retry = false;
-        let mut edit = false;
-        let mut insert = false;
+        let mut send = false;
         let mut resume = false;
+        let mut edit = false;
         let document = matches!(self.dictation_target, Some(Destination::Document(_)));
-        let draft_height = (ui.available_height() * 0.25).clamp(28.0, 76.0);
-        let panel_height = (ui.available_height() * 0.4).clamp(98.0, 170.0);
+        let panel_height = panel_height(ui.available_height());
         egui::Panel::bottom("shared-dictation-composer")
             .exact_size(panel_height)
             .frame(
                 egui::Frame::new()
                     .fill(super::theme::color::BAR)
-                    .inner_margin(egui::Margin::same(8)),
+                    .inner_margin(egui::Margin::same(6)),
             )
             .show(ui, |ui| {
                 ui.spacing_mut().scroll.floating = false;
-                if panel_height <= 110.0 {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                }
-                ui.horizontal(|ui| {
-                    ui.strong(match phase {
-                        DictationPhase::Listening => "Listening",
-                        DictationPhase::Finishing => "Finishing...",
-                        DictationPhase::Authorizing => "Permission",
-                        DictationPhase::Failed(_) => "Dictation unavailable",
-                        _ => "Review",
-                    });
-                    cancel = ui
-                        .add_sized([64.0, 44.0], egui::Button::new("Cancel"))
-                        .clicked();
-                    if phase == DictationPhase::Listening {
-                        stop = ui
-                            .add_sized([64.0, 44.0], egui::Button::new("Stop"))
-                            .clicked();
-                    } else if phase == DictationPhase::Review {
-                        resume = ui
-                            .add_sized([64.0, 44.0], egui::Button::new("Resume"))
-                            .clicked();
-                        let allowed = speech.with_text(|draft| {
-                            if document {
-                                draft.document_insertion_error().is_none()
+                ui.spacing_mut().item_spacing.y = 4.0;
+                let card = egui::Frame::new()
+                    .fill(super::theme::color::SHEET)
+                    .stroke(egui::Stroke::new(1.0, super::theme::color::BORDER))
+                    .corner_radius(egui::CornerRadius::same(super::theme::radius::CARD))
+                    .inner_margin(egui::Margin::same(8));
+                card.show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.add_space(2.0);
+                    let grabber = egui::Rect::from_center_size(
+                        egui::pos2(ui.max_rect().center().x, ui.cursor().top() + 2.0),
+                        egui::vec2(34.0, 4.0),
+                    );
+                    ui.painter().rect_filled(
+                        grabber,
+                        egui::CornerRadius::same(2),
+                        super::theme::color::TEXT_FAINT,
+                    );
+                    ui.add_space(12.0);
+
+                    let field_height = (ui.available_height() - 58.0).clamp(30.0, 64.0);
+                    let field_frame = egui::Frame::new()
+                        .fill(super::theme::color::FIELD)
+                        .stroke(egui::Stroke::new(
+                            if phase == DictationPhase::Review {
+                                1.5
                             } else {
-                                draft.insertion_error().is_none()
+                                1.0
+                            },
+                            if phase == DictationPhase::Review {
+                                super::theme::color::PRIMARY
+                            } else {
+                                super::theme::color::BORDER
+                            },
+                        ))
+                        .corner_radius(egui::CornerRadius::same(super::theme::radius::FIELD))
+                        .inner_margin(egui::Margin::same(8));
+                    field_frame.show(ui, |ui| {
+                        ui.set_min_height(field_height - 16.0);
+                        speech.with_text(|draft| {
+                            if phase == DictationPhase::Review {
+                                let mut buffer = ReviewBuffer(PasswordBuffer(
+                                    std::mem::take(&mut draft.text).into(),
+                                ));
+                                ui.visuals_mut().text_cursor.stroke.color =
+                                    super::theme::color::PRIMARY;
+                                let output = widgets::local_text_edit(
+                                    ui,
+                                    draft_id(),
+                                    egui::TextEdit::multiline(&mut buffer)
+                                        .desired_width(ui.available_width())
+                                        .desired_rows(2)
+                                        .font(super::theme::type_scale::font(16.0))
+                                        .margin(egui::Vec2::ZERO)
+                                        .frame(egui::Frame::NONE)
+                                        .hint_text("Text to insert"),
+                                    false,
+                                    true,
+                                );
+                                output.response.request_focus();
+                                if let Some(mut state) =
+                                    egui::text_edit::TextEditState::load(&ctx, output.response.id)
+                                {
+                                    state.clear_undoer_with(|(_, text)| text.zeroize());
+                                    state.store(&ctx, output.response.id);
+                                }
+                                draft.text = buffer.take();
+                                let error = if document {
+                                    draft.document_insertion_error()
+                                } else {
+                                    draft.insertion_error()
+                                };
+                                if let Some(error) = error {
+                                    widgets::footnote(ui, error);
+                                }
+                            } else {
+                                let (rect, response) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), field_height - 16.0),
+                                    egui::Sense::click(),
+                                );
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::WidgetType::TextEdit,
+                                        true,
+                                        "Dictation transcript",
+                                    )
+                                });
+                                if response.clicked() {
+                                    edit = true;
+                                }
+                                let text = if let DictationPhase::Failed(message) = phase {
+                                    message.to_owned()
+                                } else if draft.text.is_empty() {
+                                    "Listening on device".to_owned()
+                                } else {
+                                    draft.text.clone()
+                                };
+                                let color = if matches!(phase, DictationPhase::Failed(_)) {
+                                    super::theme::color::DANGER
+                                } else if draft.text.is_empty() {
+                                    super::theme::color::TEXT_MUTED
+                                } else {
+                                    super::theme::color::TEXT
+                                };
+                                let galley = ui.painter().layout(
+                                    text,
+                                    super::theme::type_scale::font(16.0),
+                                    color,
+                                    rect.width(),
+                                );
+                                ui.painter().galley(rect.left_top(), galley, color);
                             }
                         });
-                        let response = ui.add_enabled(
-                            allowed,
-                            egui::Button::new("Insert").min_size(egui::vec2(64.0, 44.0)),
-                        );
-                        insert = response.clicked();
+                    });
+
+                    if let DictationPhase::Failed(message) = phase {
+                        ui.label(egui::RichText::new(message).color(super::theme::color::DANGER));
+                        edit = ui.small_button("Edit text manually").clicked();
+                    }
+
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let waveform_width = (ui.available_width() - 252.0).max(16.0);
+                        speech.with_text(|draft| {
+                            paint_waveform(
+                                ui,
+                                waveform_width,
+                                draft.levels(),
+                                phase == DictationPhase::Listening,
+                            );
+                        });
+                        ui.add_space(2.0);
+                        ui.separator();
+                        match phase {
+                            DictationPhase::Listening => {
+                                let response = control_button(
+                                    ui,
+                                    "Stop",
+                                    super::theme::color::PRIMARY_PRESSED,
+                                );
+                                paint_stop(ui, response.rect);
+                                stop = response.clicked();
+                            }
+                            DictationPhase::Review => {
+                                let response = icon_button(
+                                    ui,
+                                    "Resume",
+                                    super::theme::color::ICON_TILE,
+                                    Icon::Microphone,
+                                );
+                                resume = response.clicked();
+                            }
+                            DictationPhase::Failed(_) => {
+                                let response = icon_button(
+                                    ui,
+                                    "Try again",
+                                    super::theme::color::ICON_TILE,
+                                    Icon::Microphone,
+                                );
+                                resume = response.clicked();
+                            }
+                            _ => {
+                                let response = ui.add_enabled(
+                                    false,
+                                    egui::Button::new("...").min_size(egui::vec2(44.0, 44.0)),
+                                );
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::WidgetType::Button,
+                                        false,
+                                        "Stop",
+                                    )
+                                });
+                            }
+                        }
+                        ui.add_space(2.0);
+                        ui.separator();
+                        let cancel_response =
+                            control_button(ui, "Cancel", super::theme::color::ICON_TILE);
+                        paint_cancel(ui, cancel_response.rect);
+                        cancel = cancel_response.clicked();
+
+                        let allowed = match phase {
+                            DictationPhase::Listening | DictationPhase::Finishing => true,
+                            DictationPhase::Review => speech.with_text(|draft| {
+                                if document {
+                                    draft.document_insertion_error().is_none()
+                                } else {
+                                    draft.insertion_error().is_none()
+                                }
+                            }),
+                            _ => false,
+                        };
+                        let send_response = send_button(ui, allowed);
+                        send = send_response.clicked();
+                    });
+                    if phase == DictationPhase::Authorizing {
+                        widgets::footnote(ui, "Allow speech and microphone access.");
+                    }
+                    if phase != DictationPhase::Review {
+                        widgets::publish_input_placeholder(ui, draft_id());
                     }
                 });
-                match phase {
-                    DictationPhase::Authorizing => {
-                        ui.label("Allow speech and microphone access.");
-                    }
-                    DictationPhase::Listening => {
-                        speech.with_text(|draft| {
-                            let label = match draft.audio_level {
-                                Some(level) if level > 0.01 => "Microphone level",
-                                Some(_) => "Quiet input",
-                                None => "Waiting for microphone level",
-                            };
-                            ui.add(
-                                egui::ProgressBar::new(draft.audio_level.unwrap_or(0.0))
-                                    .desired_height(if panel_height <= 110.0 { 14.0 } else { 18.0 })
-                                    .text(label),
-                            );
-                            egui::ScrollArea::vertical()
-                                .max_height(draft_height)
-                                .show(ui, |ui| {
-                                    ui.label(if draft.text.is_empty() {
-                                        "Listening on device - up to 45 seconds"
-                                    } else {
-                                        &draft.text
-                                    });
-                                });
-                        });
-                    }
-                    DictationPhase::Finishing => {
-                        speech.with_text(|draft| {
-                            egui::ScrollArea::vertical()
-                                .max_height(draft_height)
-                                .show(ui, |ui| {
-                                    ui.label(&draft.text);
-                                });
-                        });
-                    }
-                    DictationPhase::Review => {
-                        speech.with_text(|draft| {
-                            let mut buffer = ReviewBuffer(PasswordBuffer(
-                                std::mem::take(&mut draft.text).into(),
-                            ));
-                            let output = egui::ScrollArea::vertical()
-                                .max_height(draft_height)
-                                .show(ui, |ui| {
-                                    widgets::local_text_edit(
-                                        ui,
-                                        draft_id(),
-                                        egui::TextEdit::multiline(&mut buffer)
-                                            .desired_width(ui.available_width())
-                                            .desired_rows(if panel_height <= 110.0 { 1 } else { 2 })
-                                            .margin(egui::vec2(
-                                                super::theme::space::MD,
-                                                super::theme::space::SM,
-                                            ))
-                                            .hint_text("Text to insert"),
-                                        false,
-                                        true,
-                                    )
-                                })
-                                .inner;
-                            let response = output.response;
-                            response.request_focus();
-                            if let Some(mut state) =
-                                egui::text_edit::TextEditState::load(&ctx, response.id)
-                            {
-                                state.clear_undoer_with(|(_, text)| text.zeroize());
-                                state.store(&ctx, response.id);
-                            }
-                            draft.text = buffer.take();
-                            let error = if document {
-                                draft.document_insertion_error()
-                            } else {
-                                draft.insertion_error()
-                            };
-                            if let Some(error) = error {
-                                widgets::footnote(ui, error);
-                            }
-                        });
-                    }
-                    DictationPhase::Failed(message) => {
-                        ui.label(egui::RichText::new(message).color(super::theme::color::DANGER));
-                        retry = ui.button("Try again").clicked();
-                        edit = ui.button("Edit text manually").clicked();
-                    }
-                    DictationPhase::Idle => {}
-                }
-                if phase != DictationPhase::Review {
-                    widgets::publish_input_placeholder(ui, draft_id());
-                }
             });
+        if self.dictation_send_pending && phase == DictationPhase::Review {
+            self.dictation_send_pending = false;
+            send = true;
+        } else if self.dictation_send_pending && matches!(phase, DictationPhase::Failed(_)) {
+            self.dictation_send_pending = false;
+        }
         if cancel {
             let document = matches!(self.dictation_target, Some(Destination::Document(_)));
             self.cancel_dictation();
@@ -412,25 +505,166 @@ impl MobileApp {
             }
         } else if stop {
             self.dictation.as_mut().expect("visible dictation").stop();
-        } else if retry {
-            self.dictation.as_mut().expect("visible dictation").begin();
+        } else if send {
+            match phase {
+                DictationPhase::Listening => {
+                    self.dictation_send_pending = true;
+                    self.dictation.as_mut().expect("visible dictation").stop();
+                }
+                DictationPhase::Finishing => {
+                    self.dictation_send_pending = true;
+                }
+                DictationPhase::Review => {
+                    self.insert_dictation();
+                }
+                _ => {}
+            }
         } else if edit {
-            self.dictation
-                .as_ref()
-                .expect("visible dictation")
-                .with_text(|draft| draft.phase = DictationPhase::Review);
-        } else if insert {
-            self.insert_dictation();
+            if matches!(phase, DictationPhase::Listening | DictationPhase::Finishing) {
+                let speech = self.dictation.as_mut().expect("visible dictation");
+                speech.stop();
+                speech.with_text(|draft| draft.phase = DictationPhase::Review);
+            } else {
+                self.dictation
+                    .as_ref()
+                    .expect("visible dictation")
+                    .with_text(|draft| draft.phase = DictationPhase::Review);
+            }
         } else if resume {
-            self.dictation.as_mut().expect("visible dictation").resume();
+            if matches!(phase, DictationPhase::Failed(_)) {
+                self.dictation.as_mut().expect("visible dictation").begin();
+            } else {
+                self.dictation.as_mut().expect("visible dictation").resume();
+            }
         }
     }
+}
+
+fn paint_waveform(
+    ui: &mut egui::Ui,
+    width: f32,
+    levels: &festerm_ios_window::LevelHistory,
+    active: bool,
+) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 44.0), egui::Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Microphone level")
+    });
+    let values: Vec<f32> = levels.iter().collect();
+    let pitch = 8.5;
+    let capacity = ((rect.width() + 1.0) / pitch).floor() as usize;
+    let count = capacity.min(values.len());
+    if count == 0 {
+        return;
+    }
+    let start = capacity - count;
+    let color = if active {
+        super::theme::color::PRIMARY
+    } else {
+        super::theme::color::TEXT_FAINT
+    };
+    for index in 0..count {
+        let source_index = index * values.len() / count;
+        let level = values[source_index];
+        let height = 4.0 + ((level - 0.08) / 0.82).clamp(0.0, 1.0) * (rect.height() - 4.0);
+        let x = rect.left() + (start + index) as f32 * pitch;
+        let bar = egui::Rect::from_center_size(
+            egui::pos2(x + 1.5, rect.center().y),
+            egui::vec2(3.0, height),
+        );
+        ui.painter()
+            .rect_filled(bar, egui::CornerRadius::same(2), color);
+    }
+}
+
+fn icon_button(
+    ui: &mut egui::Ui,
+    label: &'static str,
+    fill: egui::Color32,
+    icon: Icon,
+) -> egui::Response {
+    let response = control_button(ui, label, fill);
+    icon::paint(
+        ui.painter(),
+        icon,
+        response.rect.shrink(6.0),
+        super::theme::color::ON_PRIMARY,
+    );
+    response
+}
+
+fn control_button(ui: &mut egui::Ui, label: &'static str, fill: egui::Color32) -> egui::Response {
+    let response = ui.add_sized(
+        [44.0, 44.0],
+        egui::Button::new("")
+            .fill(fill)
+            .corner_radius(egui::CornerRadius::same(10)),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    response
+}
+
+fn paint_cancel(ui: &egui::Ui, rect: egui::Rect) {
+    let half = 8.0;
+    let center = rect.center();
+    let stroke = egui::Stroke::new(3.0, super::theme::color::DANGER);
+    for (from, to) in [
+        (egui::vec2(-half, -half), egui::vec2(half, half)),
+        (egui::vec2(half, -half), egui::vec2(-half, half)),
+    ] {
+        ui.painter()
+            .line_segment([center + from, center + to], stroke);
+    }
+}
+
+fn paint_stop(ui: &egui::Ui, rect: egui::Rect) {
+    let square = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0));
+    ui.painter().rect_filled(
+        square,
+        egui::CornerRadius::same(2),
+        super::theme::color::ON_PRIMARY,
+    );
+}
+
+fn send_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new("")
+            .fill(super::theme::color::PRIMARY)
+            .corner_radius(egui::CornerRadius::same(18))
+            .min_size(egui::vec2(110.0, 44.0)),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Send"));
+    let color = super::theme::color::ON_PRIMARY;
+    let center = egui::pos2(response.rect.left() + 24.0, response.rect.center().y);
+    let plane = [
+        center + egui::vec2(-9.0, -4.0),
+        center + egui::vec2(9.0, -9.0),
+        center + egui::vec2(2.0, 9.0),
+        center + egui::vec2(-1.0, 2.0),
+        center + egui::vec2(-9.0, -4.0),
+    ];
+    let stroke = egui::Stroke::new(1.8, color);
+    ui.painter().add(egui::Shape::line(plane.to_vec(), stroke));
+    ui.painter()
+        .line_segment([plane[1], center + egui::vec2(-1.0, 2.0)], stroke);
+    ui.painter().text(
+        egui::pos2(response.rect.left() + 46.0, response.rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "Send",
+        egui::FontId::proportional(14.0),
+        color,
+    );
+    response
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{terminal_chrome::KeyRowAction, Lifecycle, Surface};
+    use egui_kittest::kittest::Queryable;
     use std::{cell::Cell, rc::Rc};
 
     fn app() -> MobileApp {
@@ -473,9 +707,117 @@ mod tests {
     }
 
     #[test]
+    fn send_while_listening_waits_for_review_then_inserts_once() {
+        let mut app = app();
+        review(&mut app, "send after stop");
+        app.dictation
+            .as_ref()
+            .unwrap()
+            .with_text(|draft| draft.phase = DictationPhase::Listening);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+        harness.run();
+        harness.get_by_label("Send").click();
+        harness.run_steps(2);
+        assert_eq!(
+            harness.state().sink.diagnostics.byte_count,
+            "send after stop".len() as u64
+        );
+        assert_eq!(harness.state().sink.diagnostics.event_count, 1);
+        assert!(!harness.state().dictation_open());
+    }
+
+    #[test]
+    fn send_while_finishing_waits_for_review_then_inserts_once() {
+        let mut app = app();
+        review(&mut app, "send after final recognition");
+        app.dictation
+            .as_ref()
+            .unwrap()
+            .with_text(|draft| draft.phase = DictationPhase::Finishing);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+        harness.run();
+        harness.get_by_label("Send").click();
+        harness.run();
+        assert!(harness.state().dictation_send_pending);
+        assert_eq!(
+            harness.state().dictation.as_ref().unwrap().phase(),
+            DictationPhase::Finishing
+        );
+        assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+
+        harness
+            .state()
+            .dictation
+            .as_ref()
+            .unwrap()
+            .with_text(|draft| draft.phase = DictationPhase::Review);
+        harness.run();
+        assert_eq!(
+            harness.state().sink.diagnostics.byte_count,
+            "send after final recognition".len() as u64
+        );
+        assert_eq!(harness.state().sink.diagnostics.event_count, 1);
+        assert!(!harness.state().dictation_open());
+    }
+
+    #[test]
+    fn live_dictation_transcript_wraps_inside_its_field() {
+        let transcript = "Review the deployment notes before continuing. ".repeat(4);
+        let mut app = app();
+        review(&mut app, &transcript);
+        app.dictation
+            .as_ref()
+            .unwrap()
+            .with_text(|draft| draft.phase = DictationPhase::Listening);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+        harness.run();
+        let rows = harness
+            .output()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(galley) if galley.galley.text() == transcript => {
+                    Some(galley.galley.rows.len())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            rows > 1,
+            "long live transcripts must wrap into multiple lines"
+        );
+    }
+
+    #[test]
+    fn tapping_live_transcript_stops_capture_and_opens_editing() {
+        let mut app = app();
+        review(&mut app, "partial transcript");
+        app.dictation
+            .as_ref()
+            .unwrap()
+            .with_text(|draft| draft.phase = DictationPhase::Listening);
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+        harness.run();
+        harness.get_by_label("Dictation transcript").click();
+        harness.run();
+        assert_eq!(
+            harness.state().dictation.as_ref().unwrap().phase(),
+            DictationPhase::Review
+        );
+    }
+
+    #[test]
     fn dictation_close_frame_never_replays_queued_local_text_into_terminal() {
         use egui_kittest::kittest::Queryable;
-        for action in ["Cancel", "Insert"] {
+        for action in ["Cancel", "Send"] {
             let mut app = app();
             app.choose_keyboard(crate::terminal_keyboard::KeyboardKind::HoldSymbols);
             review(&mut app, "safe");
@@ -512,7 +854,7 @@ mod tests {
             assert!(!harness.state().dictation_open());
             assert_eq!(
                 harness.state().sink.diagnostics.byte_count,
-                if action == "Insert" {
+                if action == "Send" {
                     "safequeued local".len() as u64
                 } else {
                     0
@@ -666,5 +1008,17 @@ mod tests {
             DictationPhase::Review
         );
         assert_eq!(harness.state().sink.diagnostics.byte_count, 0);
+    }
+
+    #[test]
+    fn beginning_dictation_surrenders_the_focused_input() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let field = egui::Id::new("focused-input");
+        ctx.memory_mut(|memory| memory.request_focus(field));
+
+        app.begin_dictation(&ctx);
+
+        assert!(!ctx.memory(|memory| memory.has_focus(field)));
     }
 }

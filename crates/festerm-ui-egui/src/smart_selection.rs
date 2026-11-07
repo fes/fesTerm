@@ -26,6 +26,8 @@ pub(crate) struct SmartRow {
     /// Rows broken by TUI painting rather than terminal soft-wrap that belong
     /// to one prose run are rejoined with a single space.
     pub space_join: bool,
+    /// Blank rows inside a block record that precede this row.
+    pub blank_before: usize,
     pub soft_wrapped: bool,
 }
 
@@ -93,11 +95,14 @@ impl SmartSelection {
         }
         collect_bounded_text(max_bytes, work, |append, work| {
             for (index, row) in self.rows.iter().enumerate() {
-                work.charge(1)?;
+                work.charge(1 + row.blank_before)?;
                 if index > 0 {
                     if row.space_join {
                         append(" ")?;
                     } else if !row.joined {
+                        append("\n")?;
+                    }
+                    for _ in 0..row.blank_before {
                         append("\n")?;
                     }
                 }
@@ -110,12 +115,16 @@ impl SmartSelection {
 
 struct Row {
     cells: Vec<(usize, String)>,
+    /// Cells painted on a background other than the row's text, such as
+    /// Copilot CLI inline code; their punctuation never ends a sentence.
+    code: Vec<bool>,
     bounded: bool,
     indent: usize,
     /// Column where text starts after a list/bullet marker, if the row has one.
     marker_text: Option<usize>,
     /// Joined to the row above as one prose run across a TUI-painted break.
     prose_join: bool,
+    blank_before: usize,
 }
 
 /// Bullets and ordered-list markers as drawn by terminal UIs such as Copilot CLI.
@@ -163,6 +172,7 @@ fn prose_continues(
     upper: &Row,
     upper_y: usize,
     lower: &Row,
+    gaps: bool,
 ) -> bool {
     if upper.marker_text == Some(lower.indent) {
         return true;
@@ -183,7 +193,7 @@ fn prose_continues(
             return false;
         };
         y = previous;
-        let Some(candidate) = row(snapshot, y, None, &mut budget, &mut byte_budget) else {
+        let Some(candidate) = row(snapshot, y, None, gaps, &mut budget, &mut byte_budget) else {
             return false;
         };
         if candidate.bounded {
@@ -223,15 +233,68 @@ fn border(text: &str) -> bool {
     )
 }
 
+/// A lone glyph in the last column after blank padding is a TUI scrollbar
+/// (Copilot CLI paints `┃`); nothing lies beyond it, so it splits no panes.
+fn scrollbar(text: &str) -> bool {
+    border(text)
+        || matches!(
+            text,
+            "█" | "▐" | "▕" | "▌" | "░" | "▒" | "▓" | "╎" | "╏" | "┇" | "┋"
+        )
+}
+
+/// A marker row that owns the hit as one block record: Copilot CLI messages
+/// start with `●` and keep their body, blank rows included, indented deeper.
+/// Only borders split a record; a double space inside its prose is not a pane.
+fn record_anchor(
+    snapshot: TerminalSnapshot<'_>,
+    hit_y: usize,
+    hit: &Row,
+) -> Option<(usize, usize)> {
+    let mut budget = MAX_CELLS;
+    let mut byte_budget = MAX_BYTES;
+    let columns = snapshot.dimensions().columns();
+    let mut anchor = hit.marker_text.map(|_| (hit_y, hit.indent));
+    let mut indent = hit.indent;
+    let mut y = hit_y;
+    for _ in 0..MAX_ROWS {
+        let Some(above) = y.checked_sub(1) else { break };
+        y = above;
+        if budget < columns {
+            break;
+        }
+        let Some(candidate) = row(snapshot, y, None, false, &mut budget, &mut byte_budget) else {
+            if byte_budget == 0 {
+                break;
+            }
+            continue;
+        };
+        if candidate.bounded {
+            break;
+        }
+        if candidate.indent < indent {
+            if candidate.marker_text.is_none() {
+                break;
+            }
+            // Keep climbing: a nested bullet belongs to the outermost message.
+            indent = candidate.indent;
+            anchor = Some((y, indent));
+        }
+    }
+    anchor
+}
+
 fn row(
     snapshot: TerminalSnapshot<'_>,
     y: usize,
     x: Option<usize>,
+    gaps: bool,
     budget: &mut usize,
     byte_budget: &mut usize,
 ) -> Option<Row> {
     let width = snapshot.dimensions().columns();
     let mut cells = Vec::new();
+    let mut backgrounds = Vec::new();
     for column in 0..width {
         *budget = budget.checked_sub(1)?;
         let cell = snapshot.cell(column, y);
@@ -243,6 +306,7 @@ fn row(
         *byte_budget -= text.len();
         if !cell.is_some_and(|cell| cell.is_continuation()) {
             cells.push((column, text.to_owned()));
+            backgrounds.push(cell.map(|cell| cell.background()));
         }
     }
     let hit = match x {
@@ -252,21 +316,33 @@ fn row(
     if border(&cells[hit].1) || cells[hit].1.trim().is_empty() {
         return None;
     }
+    let mut edge = cells.len();
+    if edge >= 2 && scrollbar(&cells[edge - 1].1) && cells[edge - 2].1.trim().is_empty() {
+        edge -= 1;
+    }
+    if hit >= edge {
+        return None;
+    }
     let mut left = 0;
-    let mut right = cells.len();
+    let mut right = edge;
     // Borders and runs of two blank cells are conservative column separators.
     // Initial indentation and trailing padding are not neighboring panes.
     let mut index = 0;
-    while index < cells.len() {
+    while index < edge {
         let start = index;
         let separator = if border(&cells[index].1) {
             index += 1;
             true
         } else if cells[index].1.trim().is_empty() {
-            while index < cells.len() && cells[index].1.trim().is_empty() {
+            while index < edge && cells[index].1.trim().is_empty() {
                 index += 1;
             }
-            start > 0 && index < cells.len() && index - start >= 2
+            // Inline code painted on a background (Copilot CLI) pads a normal
+            // space with a styled one; a pane gap is uniformly painted.
+            let gap = backgrounds[start..index]
+                .windows(2)
+                .any(|pair| pair[0] == pair[1]);
+            gaps && start > 0 && index < edge && gap
         } else {
             index += 1;
             false
@@ -280,7 +356,7 @@ fn row(
             }
         }
     }
-    let bounded = left != 0 || right != cells.len();
+    let bounded = left != 0 || right != edge;
     while left < right && cells[left].1.trim().is_empty() {
         left += 1;
     }
@@ -291,6 +367,7 @@ fn row(
         return None;
     }
     let indent = cells[left].0;
+    let base = backgrounds[left];
     let marker_text = marker_text_column(&cells[left..right]);
     if !bounded {
         left = 0;
@@ -302,10 +379,15 @@ fn row(
     }
     Some(Row {
         indent,
+        code: backgrounds[left..right]
+            .iter()
+            .map(|background| *background != base)
+            .collect(),
         cells: cells[left..right].to_vec(),
         bounded,
         marker_text,
         prose_join: false,
+        blank_before: 0,
     })
 }
 
@@ -320,13 +402,34 @@ pub(crate) fn infer(
     }
     let mut budget = MAX_CELLS;
     let mut byte_budget = MAX_BYTES;
-    let center = row(
+    let mut center = row(
         snapshot,
         hit.row,
         Some(hit.column),
+        true,
         &mut budget,
         &mut byte_budget,
     )?;
+    let mut anchor = None;
+    if !center.bounded {
+        anchor = record_anchor(snapshot, hit.row, &center);
+    } else if let Some(open) = row(
+        snapshot,
+        hit.row,
+        Some(hit.column),
+        false,
+        &mut budget,
+        &mut byte_budget,
+    )
+    .filter(|open| !open.bounded)
+    {
+        // A gap-split row inside a marker-led message is prose, not panes.
+        anchor = record_anchor(snapshot, hit.row, &open).filter(|(y, _)| *y != hit.row);
+        if anchor.is_some() {
+            center = open;
+        }
+    }
+    let gaps = anchor.is_none();
     let conservative = center.bounded;
     let mut first = hit.row;
     let mut last = hit.row;
@@ -335,14 +438,20 @@ pub(crate) fn infer(
     // Pane inference intentionally stops at one visual row: wrap metadata only
     // describes the entire terminal, not individual TUI panes.
     if !rows[0].1.bounded {
+        let record = anchor.filter(|_| scope == SmartSelectionScope::Block);
         for upwards in [true, false] {
+            let mut cursor = if upwards { first } else { last };
+            let mut pending = 0;
             loop {
                 let y = if upwards {
-                    first.checked_sub(1)
+                    cursor.checked_sub(1)
                 } else {
-                    (last + 1 < snapshot.dimensions().rows()).then_some(last + 1)
+                    (cursor + 1 < snapshot.dimensions().rows()).then_some(cursor + 1)
                 };
                 let Some(y) = y else { break };
+                if upwards && record.is_some_and(|(anchor, _)| y < anchor) {
+                    break;
+                }
                 if examined_rows == MAX_ROWS {
                     return None;
                 }
@@ -352,42 +461,49 @@ pub(crate) fn infer(
                 } else {
                     &rows[rows.len() - 1].1
                 };
-                let previous = if upwards { y } else { last };
-                let wrapped = snapshot
-                    .absolute_row_soft_wrapped(snapshot.content_row_for_viewport_row(previous)?)?;
+                let wrapped = pending == 0
+                    && snapshot.absolute_row_soft_wrapped(
+                        snapshot.content_row_for_viewport_row(if upwards { y } else { cursor })?,
+                    )?;
                 if budget < snapshot.dimensions().columns() {
                     return None;
                 }
-                let Some(candidate) = row(snapshot, y, None, &mut budget, &mut byte_budget) else {
+                let Some(mut candidate) =
+                    row(snapshot, y, None, gaps, &mut budget, &mut byte_budget)
+                else {
                     if byte_budget == 0 {
                         return None;
+                    }
+                    if record.is_some() && !wrapped {
+                        pending += 1;
+                        cursor = y;
+                        continue;
                     }
                     break;
                 };
                 let (upper, upper_y, lower) = if upwards {
                     (&candidate, y, edge)
                 } else {
-                    (edge, last, &candidate)
+                    (edge, cursor, &candidate)
                 };
-                let prose = !wrapped && prose_continues(snapshot, upper, upper_y, lower);
+                let prose = !wrapped
+                    && pending == 0
+                    && prose_continues(snapshot, upper, upper_y, lower, gaps);
                 if candidate.bounded
                     || (!wrapped
                         && !prose
                         && match scope {
                             SmartSelectionScope::Sentence => true,
                             SmartSelectionScope::Paragraph => candidate.indent != edge.indent,
-                            SmartSelectionScope::Block => {
-                                if upwards {
-                                    edge.indent == 0
-                                } else {
-                                    candidate.indent == 0
-                                }
-                            }
+                            SmartSelectionScope::Block => match record {
+                                Some((_, indent)) => !upwards && candidate.indent <= indent,
+                                None if upwards => edge.indent == 0,
+                                None => candidate.indent == 0,
+                            },
                         })
                 {
                     break;
                 }
-                let mut candidate = candidate;
                 if prose {
                     if upwards {
                         rows[0].1.prose_join = true;
@@ -396,12 +512,16 @@ pub(crate) fn infer(
                     }
                 }
                 if upwards {
+                    rows[0].1.blank_before = pending;
                     first = y;
                     rows.insert(0, (y, candidate));
                 } else {
+                    candidate.blank_before = pending;
                     last = y;
                     rows.push((y, candidate));
                 }
+                pending = 0;
+                cursor = y;
             }
         }
     }
@@ -409,13 +529,20 @@ pub(crate) fn infer(
     let mut clicked = 0;
     let mut text = String::new();
     let mut space_rows = Vec::new();
-    for (y, source) in &rows {
+    let mut code = Vec::new();
+    // A leading list marker is layout, not content; later rows lose the same
+    // indentation so nested structure stays relative to the selected text.
+    let dedent = rows[0].1.marker_text.unwrap_or(0);
+    for (index, (y, source)) in rows.iter().enumerate() {
         if source.prose_join {
             text.push(' ');
             space_rows.push(*y);
         }
-        for (column, value) in &source.cells {
-            if source.prose_join && value.trim().is_empty() && mapped_in_row(&mapped, *y) == 0 {
+        for ((column, value), styled) in source.cells.iter().zip(&source.code) {
+            let leading = mapped_in_row(&mapped, *y) == 0;
+            if (index == 0 && *column < dedent)
+                || (leading && value.trim().is_empty() && (source.prose_join || *column < dedent))
+            {
                 continue;
             }
             if *y == hit.row && *column == hit.column {
@@ -423,6 +550,9 @@ pub(crate) fn infer(
             }
             let start = text.len();
             text.push_str(value);
+            if *styled {
+                code.push(start..text.len());
+            }
             mapped.push((start, text.len(), *y, *column));
         }
     }
@@ -431,9 +561,12 @@ pub(crate) fn infer(
     }
     let (mut begin, mut end) = (0, text.len());
     if scope == SmartSelectionScope::Sentence {
-        // Deliberately not a language model: punctuation followed by whitespace.
+        // Deliberately not a language model: punctuation followed by whitespace,
+        // outside inline code such as an illustrative `1.` list marker.
         for (index, character) in text.char_indices() {
-            if matches!(character, '.' | '!' | '?' | '。' | '！' | '？') {
+            if matches!(character, '.' | '!' | '?' | '。' | '！' | '？')
+                && !code.iter().any(|range| range.contains(&index))
+            {
                 let after = index + character.len_utf8();
                 if after == text.len() || text[after..].starts_with(char::is_whitespace) {
                     if after <= clicked {
@@ -460,9 +593,17 @@ pub(crate) fn infer(
                 snapshot.absolute_row_soft_wrapped(previous.row) == Some(true)
             });
             let space_join = !selected.is_empty() && space_rows.contains(&y);
+            let blank_before = if selected.is_empty() {
+                0
+            } else {
+                rows.iter()
+                    .find(|(row, _)| *row == y)
+                    .map_or(0, |(_, row)| row.blank_before)
+            };
             selected.push(SmartRow {
                 row: absolute,
                 space_join,
+                blank_before,
                 first: column,
                 last: column,
                 text: String::new(),
@@ -525,7 +666,7 @@ mod tests {
             (
                 30,
                 "• First part\r\n  second part",
-                "• First part second part",
+                "First part second part",
             ),
         ] {
             let terminal = make_terminal(columns, 5, text);
@@ -633,18 +774,131 @@ mod tests {
         let paragraph = select(&terminal, 5, 1, SmartSelectionScope::Paragraph);
         assert_eq!(
             selection_text(snapshot, &paragraph).as_deref(),
-            Some("● Smart selection spans the rows of one answer. It then stops at a blank row.")
+            Some("Smart selection spans the rows of one answer. It then stops at a blank row.")
         );
         let sentence = select(&terminal, 5, 1, SmartSelectionScope::Sentence);
         assert_eq!(
             selection_text(snapshot, &sentence).as_deref(),
-            Some("● Smart selection spans the rows of one answer.")
+            Some("Smart selection spans the rows of one answer.")
         );
         let code = make_terminal(40, 4, "  let a = 1;\r\n  let b = 2;");
         let block = select(&code, 4, 0, SmartSelectionScope::Block);
         assert_eq!(
             selection_text(TerminalSnapshot::from_terminal(&code), &block).as_deref(),
             Some("  let a = 1;\n  let b = 2;")
+        );
+    }
+
+    /// Copilot CLI layout: one-column margin, `●` messages, hanging-indent
+    /// bullets, and a `┃` scrollbar thumb in the last column.
+    fn copilot_terminal() -> Terminal {
+        let lines = [
+            " ❯ previous prompt",
+            "",
+            " ● I don't think Tree-sitter is the right tool here. By the",
+            "   time the output reaches us, it has been rewrapped.",
+            "",
+            "   What I would do:",
+            "",
+            "   • Use style signals. Colors mark the",
+            "     message boundaries.",
+            "   • Build a test set first. Capture failures. The design doc already",
+            "     requires this set before any model is considered. Every rule change gets measured against it.",
+            "   • Then fix actual failures, not guesses.",
+            "",
+            "   Limitation: copied text reads like \"leading  ● ,\".",
+            "",
+            " ● Next message.",
+            "",
+            " ~/src [main]",
+        ];
+        let text: Vec<String> = lines.iter().map(|line| format!("{line:<119}┃")).collect();
+        make_terminal(120, 20, &text.join("\r\n"))
+    }
+
+    #[test]
+    fn smart_selection_spans_copilot_inline_code_and_wrapped_bullets() {
+        let code = |text: &str| format!("\x1b[48;5;236m {text} \x1b[49m");
+        let lines = [
+            format!(
+                " • Bullets: Paragraph and Block selections now start after a leading {}, {} or {} marker, and",
+                code("●"),
+                code("•"),
+                code("1.")
+            ),
+            "   the rows below lose the same indentation.".to_owned(),
+            format!(" • Block: clicking anywhere in a {} message selects it.", code("●")),
+        ];
+        let text: Vec<String> = lines
+            .iter()
+            .map(|line| format!("{line}\x1b[K\x1b[120G┃"))
+            .collect();
+        let terminal = make_terminal(120, 5, &text.join("\r\n"));
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let expected =
+            "Bullets: Paragraph and Block selections now start after a leading  ● ,  •  \
+                        or  1.  marker, and the rows below lose the same indentation.";
+        for scope in [SmartSelectionScope::Paragraph, SmartSelectionScope::Block] {
+            let selection = select(&terminal, 10, 0, scope);
+            assert!(!selection.smart.as_ref().unwrap().conservative);
+            assert_eq!(
+                selection_text(snapshot, &selection).as_deref(),
+                Some(expected)
+            );
+        }
+        for (x, y) in [(10, 0), (10, 1)] {
+            let sentence = select(&terminal, x, y, SmartSelectionScope::Sentence);
+            assert_eq!(
+                selection_text(snapshot, &sentence).as_deref(),
+                Some(expected)
+            );
+        }
+        let neighbor = make_terminal(40, 2, "left  \x1b[48;5;236m  \x1b[49m right");
+        let selection = select(&neighbor, 1, 0, SmartSelectionScope::Paragraph);
+        assert_eq!(
+            selection_text(TerminalSnapshot::from_terminal(&neighbor), &selection).as_deref(),
+            Some("left")
+        );
+    }
+
+    #[test]
+    fn smart_selection_reads_copilot_messages_past_its_scrollbar() {
+        let terminal = copilot_terminal();
+        let snapshot = TerminalSnapshot::from_terminal(&terminal);
+        let paragraph = select(&terminal, 20, 9, SmartSelectionScope::Paragraph);
+        assert!(!paragraph.smart.as_ref().unwrap().conservative);
+        assert_eq!(
+            selection_text(snapshot, &paragraph).as_deref(),
+            Some(
+                "Build a test set first. Capture failures. The design doc already requires this set \
+                 before any model is considered. Every rule change gets measured against it."
+            )
+        );
+        let message = "I don't think Tree-sitter is the right tool here. By the time the output \
+                       reaches us, it has been rewrapped.\n\nWhat I would do:\n\n• Use style \
+                       signals. Colors mark the message boundaries.\n• Build a test set first. \
+                       Capture failures. The design doc already requires this set before any model \
+                       is considered. Every rule change gets measured against it.\n• Then fix \
+                       actual failures, not guesses.\n\nLimitation: copied text reads like \
+                       \"leading  ● ,\".";
+        for (x, y) in [(10, 3), (1, 2), (6, 5), (20, 10), (36, 13)] {
+            let block = select(&terminal, x, y, SmartSelectionScope::Block);
+            assert_eq!(selection_text(snapshot, &block).as_deref(), Some(message));
+        }
+        let paragraph = select(&terminal, 36, 13, SmartSelectionScope::Paragraph);
+        assert_eq!(
+            selection_text(snapshot, &paragraph).as_deref(),
+            Some("   Limitation: copied text reads like \"leading  ● ,\".")
+        );
+        let block = select(&terminal, 5, 15, SmartSelectionScope::Block);
+        assert_eq!(
+            selection_text(snapshot, &block).as_deref(),
+            Some("Next message.")
+        );
+        let prompt = select(&terminal, 3, 17, SmartSelectionScope::Block);
+        assert_eq!(
+            selection_text(snapshot, &prompt).as_deref(),
+            Some(" ~/src [main]")
         );
     }
 

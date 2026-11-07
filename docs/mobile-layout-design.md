@@ -100,6 +100,10 @@ horizontal scroller and overflow cue. Table columns grow with bounded content
 width rather than squeezing into a phone. Selectable rendered labels remain
 plain-text clipboard targets; native handles and real pasteboard behavior still
 require device qualification, not an assumption of a new selection defect.
+An opened `.md`/`.markdown` document starts in Preview; Edit remains an explicit
+toolbar choice. Table cells use parser-provided alignment and stable per-column
+widths. Horizontal table gestures lock to the horizontal axis so vertical
+reading gestures continue to scroll the document.
 
 ## On-device dictation
 
@@ -107,9 +111,13 @@ The experimental Hold symbols and Shell row keyboards add a microphone icon
 (accessible name **Mic**) immediately after the Left/Up/Down/Right arrows in the
 pinned utility row, before Extended keys. A bounded composer sits above the
 still-visible selected keyboard, retaining the terminal/document context.
-Listening shows real PCM-derived microphone level and partial text; Stop leads
-through Finishing to editable same-panel review, Resume, Cancel and Insert.
-Silence is distinct from recognition, and unavailable samples are labelled.
+Listening shows partial text and a waveform from real bounded microphone-level
+history; Stop leads through Finishing to editable same-panel review, where the
+waveform freezes in muted colors. Tapping the transcript stops capture and
+enters editing. Resume appends to the existing text; Send inserts text only,
+without Return, and waits for final recognition when invoked during capture.
+Cancel discards the draft. Silence is distinct from recognition, and
+unavailable samples are labelled.
 Resume preserves the edited prefix while replacing only the new partial.
 Terminal Insert rejects controls/line breaks, clears modifiers and revalidates
 the original tab and exact live transport, including reconnect in the same tab.
@@ -190,7 +198,7 @@ Terminal is active. Files and Markdown open from More → Files and from file ro
   touching the extra-keys row or scrolling.
   The terminal sits above the docked Esc/Tab/Ctrl/Alt/Shift row and keyboard.
   Ctrl, Alt and Shift are one-shot latches. Ctrl+Shift+C copies the selection
-  locally; Ctrl+Shift+P pastes from the iOS clipboard, not a remote control chord.
+  locally; Ctrl+Shift+V pastes from the iOS clipboard, not a remote control chord.
   This replaces the earlier focus-only
   dismissal design at the owner's explicit request.
 - The same vertical arrangement applies to iPad portrait, landscape and

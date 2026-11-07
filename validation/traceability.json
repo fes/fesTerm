@@ -2250,6 +2250,8 @@
         "smart_selection_wraps_sentences_and_preserves_explicit_breaks",
         "smart_selection_never_crosses_borders_or_columns",
         "smart_selection_structured_errors_preserve_indent_and_blank_boundary",
+        "smart_selection_reads_copilot_messages_past_its_scrollbar",
+        "smart_selection_spans_copilot_inline_code_and_wrapped_bullets",
         "smart_selection_unicode_mapping_mutation_and_adjustment",
         "smart_selection_wide_wrap_excludes_synthetic_padding",
         "smart_selection_invalidation_tracks_wrap_resize_and_screen_identity",
@@ -4845,11 +4847,13 @@
         "mobile_preview_releases_closed_document_cache_without_adopting_late_results",
         "mobile_preview_failed_projection_retries_without_mutating_source",
         "shared_markdown_views_reuse_projection_but_keep_navigation_independent",
+        "markdown_documents_open_in_preview_by_default",
         "markdown_edit_preview_keeps_source_selection_and_shared_history",
         "markdown_contents_is_view_local_and_never_mutates_or_sends_terminal_input",
         "markdown_contents_navigation_and_view_switch_dismiss_the_captured_sheet",
         "markdown_contents_scrolls_to_an_offscreen_heading_without_editing",
-        "markdown_wide_preview_uses_contents_rail_and_dismisses_old_sheet"
+        "markdown_wide_preview_uses_contents_rail_and_dismisses_old_sheet",
+        "preview_tables_honor_left_center_and_right_column_alignment"
       ],
       "manual_scenarios": ["MOB-08"],
       "status": "partial",
@@ -4884,7 +4888,12 @@
         "resumed_partials_replace_only_the_new_segment_and_keep_utf8_bounds",
         "dictation_refuses_a_replacement_transport_in_the_same_tab",
         "dictation_close_frame_never_replays_queued_local_text_into_terminal",
-        "dictation_review_text_has_consistent_inset_padding_at_compact_and_phone_sizes"
+        "dictation_review_text_has_consistent_inset_padding_at_compact_and_phone_sizes",
+        "send_while_listening_waits_for_review_then_inserts_once",
+        "send_while_finishing_waits_for_review_then_inserts_once",
+        "live_dictation_transcript_wraps_inside_its_field",
+        "tapping_live_transcript_stops_capture_and_opens_editing",
+        "waveform_history_buckets_peaks_and_keeps_a_bounded_oldest_first_window"
       ],
       "manual_scenarios": ["MOB-07"],
       "status": "partial",

@@ -32,6 +32,66 @@ pub enum DictationPhase {
     Failed(&'static str),
 }
 
+/// Bounded recent microphone levels for the waveform, oldest first. Each entry
+/// is the peak level over a short interval; no audio samples are retained.
+#[derive(Clone, Copy, Debug)]
+pub struct LevelHistory {
+    peaks: [f32; Self::CAPACITY],
+    len: usize,
+    next: usize,
+    bucket_started: Option<std::time::Instant>,
+}
+
+impl Default for LevelHistory {
+    fn default() -> Self {
+        Self {
+            peaks: [0.0; Self::CAPACITY],
+            len: 0,
+            next: 0,
+            bucket_started: None,
+        }
+    }
+}
+
+impl LevelHistory {
+    pub const CAPACITY: usize = 96;
+    const BUCKET: std::time::Duration = std::time::Duration::from_millis(60);
+
+    fn record(&mut self, level: f32, now: std::time::Instant) {
+        let level = if level.is_finite() {
+            level.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let same_bucket = self
+            .bucket_started
+            .is_some_and(|started| now.saturating_duration_since(started) < Self::BUCKET);
+        if same_bucket && self.len > 0 {
+            let last = (self.next + Self::CAPACITY - 1) % Self::CAPACITY;
+            self.peaks[last] = self.peaks[last].max(level);
+            return;
+        }
+        self.bucket_started = Some(now);
+        self.peaks[self.next] = level;
+        self.next = (self.next + 1) % Self::CAPACITY;
+        self.len = (self.len + 1).min(Self::CAPACITY);
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Recorded peaks, oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = f32> + '_ {
+        let start = (self.next + Self::CAPACITY - self.len) % Self::CAPACITY;
+        (0..self.len).map(move |i| self.peaks[(start + i) % Self::CAPACITY])
+    }
+}
+
 /// Volatile, bounded preview only. This type deliberately has no Debug/serde.
 #[derive(Default)]
 pub struct DictationText {
@@ -41,6 +101,7 @@ pub struct DictationText {
     /// measures PCM in a -60..0 dBFS range; Android reports its recognizer's
     /// own RMS estimate.
     pub audio_level: Option<f32>,
+    levels: LevelHistory,
     prefix: String,
     pub(crate) generation: u64,
     pub(crate) permission_pending: bool,
@@ -54,6 +115,19 @@ impl Drop for DictationText {
 }
 
 impl DictationText {
+    /// Updates the live meter and appends it to the waveform history.
+    pub fn record_level(&mut self, level: Option<f32>) {
+        self.audio_level = level;
+        if let Some(level) = level {
+            self.levels.record(level, std::time::Instant::now());
+        }
+    }
+
+    /// Recent microphone peaks for the waveform; kept after capture ends.
+    pub fn levels(&self) -> &LevelHistory {
+        &self.levels
+    }
+
     pub fn insertion_error(&self) -> Option<&'static str> {
         self.document_insertion_error().or_else(|| {
             self.text
@@ -86,6 +160,7 @@ impl DictationText {
         self.text.zeroize();
         self.prefix.zeroize();
         self.audio_level = None;
+        self.levels = LevelHistory::default();
         self.phase = DictationPhase::Idle;
         self.permission_pending = false;
     }
@@ -326,6 +401,27 @@ mod tests {
     }
 
     #[test]
+    fn waveform_history_buckets_peaks_and_keeps_a_bounded_oldest_first_window() {
+        let start = std::time::Instant::now();
+        let mut history = LevelHistory::default();
+        history.record(0.2, start);
+        history.record(0.8, start + std::time::Duration::from_millis(30));
+        assert_eq!(history.len(), 1);
+        assert_eq!(history.iter().collect::<Vec<_>>(), [0.8]);
+
+        for index in 1..=LevelHistory::CAPACITY {
+            history.record(
+                index as f32 / LevelHistory::CAPACITY as f32,
+                start + std::time::Duration::from_millis(100 + index as u64 * 70),
+            );
+        }
+        assert_eq!(history.len(), LevelHistory::CAPACITY);
+        let values = history.iter().collect::<Vec<_>>();
+        assert_eq!(values.len(), LevelHistory::CAPACITY);
+        assert!(values.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+
+    #[test]
     fn resumed_partials_replace_only_the_new_segment_and_keep_utf8_bounds() {
         let mut draft = listening("edited first");
         draft.prefix = "edited first".to_owned();
@@ -355,6 +451,7 @@ mod tests {
             generation: 0,
             permission_pending: false,
             audio_level: None,
+            levels: LevelHistory::default(),
             prefix: String::new(),
         };
         draft.text = "echo hello".to_owned();
@@ -390,6 +487,7 @@ mod tests {
             generation: 0,
             permission_pending: false,
             audio_level: None,
+            levels: LevelHistory::default(),
             prefix: String::new(),
         };
         draft.recognize(0, "one", false);
@@ -419,6 +517,7 @@ mod tests {
             generation: 3,
             permission_pending: false,
             audio_level: None,
+            levels: LevelHistory::default(),
             prefix: String::new(),
         }
     }

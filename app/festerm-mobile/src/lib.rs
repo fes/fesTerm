@@ -404,6 +404,7 @@ pub struct MobileApp {
     terminal_keyboard: terminal_keyboard::TerminalKeyboard,
     terminal_keyboard_input: bool,
     dictation: Option<festerm_ios_window::Dictation>,
+    dictation_send_pending: bool,
     dictation_tab: Option<u64>,
     dictation_target: Option<dictation::Destination>,
     dictation_owns_frame: bool,
@@ -490,6 +491,7 @@ impl MobileApp {
             terminal_keyboard: terminal_keyboard::TerminalKeyboard::default(),
             terminal_keyboard_input: false,
             dictation: None,
+            dictation_send_pending: false,
             dictation_tab: None,
             dictation_target: None,
             dictation_owns_frame: false,
@@ -701,6 +703,11 @@ impl MobileApp {
                 field = None;
                 festerm_ios_window::KeyboardMode::Hidden
             };
+            if mode != festerm_ios_window::KeyboardMode::System {
+                // winit's iOS IME request makes its own view first responder,
+                // replacing the bridge's chosen responder with the system keyboard.
+                ui.ctx().output_mut(|output| output.ime = None);
+            }
             // Publish before switching, so the keyboard reads the new field.
             keyboard.set_field_document(field);
             if let Err(error) = keyboard.set_keyboard_mode(mode) {
@@ -839,7 +846,7 @@ impl MobileApp {
                 {
                     match key {
                         egui::Key::C => Some('c'),
-                        egui::Key::P => Some('p'),
+                        egui::Key::V => Some('v'),
                         _ => None,
                     }
                 }
@@ -859,7 +866,7 @@ impl MobileApp {
                         if self.control
                             && self.shift
                             && !self.alt
-                            && matches!(character.to_ascii_lowercase(), 'c' | 'p')
+                            && matches!(character.to_ascii_lowercase(), 'c' | 'v')
                         {
                             // Finish IME composition before the local action, then
                             // let trailing committed text follow it in the same batch.
@@ -3438,7 +3445,7 @@ mod tests {
 
         app.control = true;
         app.shift = true;
-        let mut events = vec![egui::Event::Text("p".into())];
+        let mut events = vec![egui::Event::Text("v".into())];
         let mut reads = 0;
         app.consume_sticky_text(&mut events, || {
             reads += 1;
@@ -3452,8 +3459,8 @@ mod tests {
         assert!(!app.control && !app.shift);
 
         let mut events = vec![egui::Event::Key {
-            key: egui::Key::P,
-            physical_key: Some(egui::Key::P),
+            key: egui::Key::V,
+            physical_key: Some(egui::Key::V),
             pressed: true,
             repeat: false,
             modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
@@ -3462,6 +3469,21 @@ mod tests {
         assert!(events.is_empty());
         assert_eq!(app.input_notice, Some("The clipboard has no text to paste"));
         assert_eq!(app.sink.diagnostics.byte_count, 0);
+
+        // Ctrl+Shift+P is no longer a paste shortcut; it stays ordinary input.
+        app.control = true;
+        app.shift = true;
+        let mut events = vec![egui::Event::Key {
+            key: egui::Key::P,
+            physical_key: Some(egui::Key::P),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        }];
+        app.consume_sticky_text(&mut events, || panic!("P must not read the clipboard"));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Paste(_))));
     }
 
     #[test]
@@ -3480,7 +3502,7 @@ mod tests {
         app.control = true;
         app.shift = true;
         app.terminal.ingest(b"\x1b[?2004h");
-        let mut events = vec![egui::Event::Text("px".into())];
+        let mut events = vec![egui::Event::Text("vx".into())];
         app.consume_sticky_text(&mut events, || Some("pasted".into()));
         let mut sink = Sink::default();
         let ctx = egui::Context::default();
