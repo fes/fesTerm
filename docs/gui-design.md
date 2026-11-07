@@ -894,7 +894,7 @@ keyboard movement/resizing, and accessibility work tracked in issue #29.
 
 **About fesTerm** is a compact native-style dialog containing the same branded
 fesTerm application icon used by the native window, dock, and task switcher,
-`fesTerm`, exact application version, the description “A compact local,
+`fesTerm`, exact application version, the description “An AI-friendly local,
 SSH, and serial terminal.”, the explicit disclosure “Entirely AI-written with
 human guidance.” plus concise GitHub Copilot/project-owner attribution,
 **Copy Version Information**, **Licenses**, the canonical project/source link,
