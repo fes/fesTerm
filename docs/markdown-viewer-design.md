@@ -504,6 +504,12 @@ inside a horizontal-only viewport. The original row choice, horizontal target,
 wrapping, selection and raw code Copy remain unchanged. Table cells do not yet
 handle byte targets; this separate gap is not covered by the code-row fix.
 
+Dragging a selection beyond a scrollable document edge advances that viewport
+until the pointer returns or the drag ends. The anchor and selected text
+survive scrolling out of view, including backward selections. Horizontal table
+and code scrollers respond only to drags originating inside them. Source mode
+offers a plain **Copy** context action for its selection.
+
 Preview selection Copy publishes restricted semantic HTML with the existing
 plain-text selection as its fallback. This applies to the standalone viewer
 and editor Preview/Split. A scoped selection opt-in preserves right-click only

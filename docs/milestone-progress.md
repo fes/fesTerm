@@ -1,5 +1,71 @@
 # Milestone Progress Narrative
 
+## Mobile accessibility tree and UI automation
+
+VoiceOver and TalkBack could not see any fesTerm mobile control, and no tool
+could drive the app by name. ADR 0075 publishes egui's AccessKit tree through
+`accesskit_ios` and `accesskit_android`. A plugin activates the tree only when
+a platform client asks for it and injects bounded actions as egui input.
+Simulator and emulator runs exposed four platform-specific defects, each now
+covered by a regression:
+
+- iOS hides the subtree of any actionable node, which hid terminal rows and
+  popup menus. Terminal rows are now siblings of the viewport, and the plugin
+  lifts content out of actionable nodes.
+- Uppercase field captions shadowed the fields themselves. Fields are now named
+  and their captions hidden.
+- Android skipped the whole tree because the root had no bounds.
+- Android offset every node by the status-bar inset. The host view now sits at
+  the window origin.
+
+Visible terminal rows are published unless app protection hides content, and
+secret fields expose only their names. A shared Maestro suite now passes on an
+iPhone Simulator and an Android 14 (API 34) ARM64 Pixel 7 emulator:
+navigation, profile-form typing, and the terminal menu and typing all pass on
+both platforms. The profile flow dismisses the software keyboard before
+cancelling the form.
+VoiceOver/TalkBack usability on physical devices, and Android
+explore-by-touch, remain open (`MOB-10`).
+
+## Reserving ordered SSH input without retargeting
+
+Interactive SSH now reserves an inert position in its existing bounded command
+queue using the same authority-free, expiring slot as the local PTY, bound to
+the host controller and SSH's own attachment generation. Human input cannot
+overtake the slot; refusal, cancellation or expiration release no bytes.
+Pending or committed slots tied to a replaced attachment are discarded rather
+than sent to the new connection. A slow SSH write preserves subsequent queued
+input while remaining interruptible by shutdown; one poll discards only a
+bounded number of cancelled slots. A busy shared admission lock refuses a new
+SSH reservation without blocking the transport, and an expired unresolved slot
+can release later input even while it is busy.
+
+Component tests and a controlled OpenSSH fixture exercise ordering and
+cancellation. The desktop workflow beta still targets local terminals only:
+native handoff, leases, human takeover and broker integration for SSH targets
+and real-target lifecycle evidence remain open. Text-mode SFTP, sessiond,
+tunnels and serial still refuse automation reservations.
+
+## Proposed automation authoring, application hooks and debugging
+
+Beyond the shipped desktop JavaScript workflow beta, which runs one bundle
+captured in Settings, the automation proposal now specifies workflow authoring
+in the existing native editor, explicit immutable-version Run/Stop/status and a
+discoverable catalog of application event attachment points. Editor runs reuse
+the beta's intake validation, native Run review and Stop path. Saving is not
+execution; configuring a binding is not arming it. Automatic lifecycle hooks
+retain a separate P4 authority, lifecycle, disclosure and bounded-delivery gate.
+Static built-in API completion and broader typed UI control come later.
+ADR 0065, the action graph (`AUT-10` through `AUT-12`) and deferred validation
+inventory (`AUTO-06` through `AUTO-08`) remain aligned; none of this implements
+or enables these surfaces or accepts the Proposed ADR.
+
+The same proposal includes an explicit script Debug mode: source breakpoints,
+stepping, call stacks and read-only variable inspection in the reused editor.
+Frozen-source identity, inspector disclosure, inert property inspection and
+pause/Continue lifecycle need separate qualification; a paused script does
+not freeze a terminal, suspend grants or roll back accepted effects.
+
 ## Characterizing SSH channel backpressure
 
 An encrypted in-memory client/server fixture characterizes the current
@@ -573,7 +639,9 @@ broadcasts overlay that pair, so a stale sibling save cannot undo a successful
 disable. Same-pass conflicting automation actions stop admission and suppress
 approval with visible feedback. Preference-save failure or an uncertain result
 stops both live features for the process and warns that disk may still contain
-an enabled value; explicit retry can save the pair but does not resume it.
+an enabled value; explicit retry can save the pair only when the save gate is
+healthy and does not resume it. A busy gate suppresses retry, while an
+indeterminate save or poisoned gate requires reconciliation and full restart.
 
 This is not a durable failure latch: restart can read an enabled value that
 remained on disk, though prior grants are not restored. Unrelated configuration
@@ -591,6 +659,14 @@ preserves the independent direct-control path; MCP disable or either preference
 save failure closes it. Another regression combines new/restored secondary
 workspace preservation with a stale profile save after a preference disable.
 These synthetic regressions are not native qualification.
+
+The save-gate integration tests an unrelated uncertain save followed by a stale
+sibling disable or retry, busy and poisoned retry suppression, new and restored
+secondary workspaces, and stale asynchronous credential or tunnel-import
+completions. Shared preference values are overlaid inside the save gate, and
+callers adopt the configuration actually persisted. These in-process checks do
+not reconcile disk state after restart or protect against external writers and
+filesystem aliases.
 
 ## Binding direct input without a workflow
 
@@ -757,8 +833,8 @@ conservatively and never replay it automatically.
 
 Component and controlled-PTY tests cover ordering, refusal and stalled
 commitment. This is not a control adapter or a lease: native handoff, human
-takeover, privacy and broker integration remain open, as do reservations for
-SSH, persistent, tunnel and serial backends.
+takeover, privacy and broker integration remain open, as did reservations for
+SSH, persistent, tunnel and serial backends at this stage.
 
 ## Separating shared automation and MCP lifetimes
 

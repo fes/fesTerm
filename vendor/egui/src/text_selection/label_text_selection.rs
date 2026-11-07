@@ -78,6 +78,20 @@ struct CurrentSelection {
     pub secondary: WidgetTextCursor,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct HorizontalDragCandidate {
+    vertical_distance: f32,
+    horizontal_distance: f32,
+    cursor: WidgetTextCursor,
+}
+
+#[derive(Clone, Debug)]
+struct HorizontalDragSelection {
+    clip: Rect,
+    pointer: Pos2,
+    candidate: Option<HorizontalDragCandidate>,
+}
+
 /// Handles text selection in labels (NOT in [`crate::TextEdit`])s.
 ///
 /// Each viewport has its own state, because viewports are rendered in separate passes.
@@ -115,6 +129,8 @@ struct ViewportLabelSelectionState {
     preserve_secondary_for_labels: bool,
     preserve_touch_for_labels: bool,
     preserved_secondary_this_pass: bool,
+    process_offscreen_labels: bool,
+    horizontal_drag_selection: Option<HorizontalDragSelection>,
     selected_labels: Vec<(Id, std::ops::Range<usize>)>,
     selected_label_lookup: HashMap<Id, std::ops::Range<usize>>,
 
@@ -141,6 +157,8 @@ impl Default for ViewportLabelSelectionState {
             preserve_secondary_for_labels: Default::default(),
             preserve_touch_for_labels: Default::default(),
             preserved_secondary_this_pass: Default::default(),
+            process_offscreen_labels: Default::default(),
+            horizontal_drag_selection: Default::default(),
             selected_labels: Default::default(),
             selected_label_lookup: Default::default(),
             painted_selections: Default::default(),
@@ -211,6 +229,76 @@ impl LabelSelectionState {
             .capture_text_without_copy = true;
     }
 
+    /// Keep a selection traversable when its owning surface renders labels
+    /// outside the current clip rectangle.
+    pub fn begin_offscreen_selection(&mut self, viewport: crate::ViewportId) {
+        self.states
+            .entry(viewport)
+            .or_default()
+            .process_offscreen_labels = true;
+    }
+
+    /// End the surface-local offscreen selection traversal.
+    pub fn end_offscreen_selection(&mut self, viewport: crate::ViewportId) {
+        if let Some(state) = self.states.get_mut(&viewport) {
+            state.process_offscreen_labels = false;
+        }
+    }
+
+    /// Whether an offscreen label is an endpoint or lies between the endpoints
+    /// of the selection currently being traversed.
+    pub fn needs_offscreen_label(&self, viewport: crate::ViewportId, widget: Id) -> bool {
+        self.states.get(&viewport).is_some_and(|state| {
+            state.process_offscreen_labels
+                && state.selection.is_some_and(|selection| {
+                    selection.primary.widget_id == widget
+                        || selection.secondary.widget_id == widget
+                        || state.has_reached_primary != state.has_reached_secondary
+                })
+        })
+    }
+
+    /// Begin traversing labels in a horizontal scroller that owns the drag.
+    pub fn begin_horizontal_drag_selection(&mut self, ui: &Ui) {
+        let Some(pointer) = ui.ctx().pointer_interact_pos() else {
+            return;
+        };
+        let clip = ui
+            .ctx()
+            .layer_transform_to_global(ui.layer_id())
+            .unwrap_or_default()
+            * ui.clip_rect();
+        if ui.input(|input| input.pointer.primary_down())
+            && (pointer.x < clip.left() || pointer.x > clip.right())
+        {
+            self.states
+                .entry(ui.ctx().viewport_id())
+                .or_default()
+                .horizontal_drag_selection = Some(HorizontalDragSelection {
+                clip,
+                pointer,
+                candidate: None,
+            });
+        }
+    }
+
+    /// Finish horizontal traversal and report whether its selection moved.
+    pub fn end_horizontal_drag_selection(&mut self, viewport: crate::ViewportId) -> bool {
+        let Some(state) = self.states.get_mut(&viewport) else {
+            return false;
+        };
+        let Some(drag) = state.horizontal_drag_selection.take() else {
+            return false;
+        };
+        let (Some(candidate), Some(selection)) = (drag.candidate, &mut state.selection) else {
+            return false;
+        };
+        let changed = selection.primary.widget_id != candidate.cursor.widget_id
+            || selection.primary.ccursor != candidate.cursor.ccursor;
+        selection.primary = candidate.cursor;
+        changed
+    }
+
     /// Plain label-selection payload queued during this pass, before end-of-pass.
     pub fn pending_copy_text(&self, viewport: crate::ViewportId) -> Option<&str> {
         self.states
@@ -246,6 +334,13 @@ impl LabelSelectionState {
             .unwrap_or_default()
     }
 
+    /// Is a mouse drag currently extending a label selection in this viewport?
+    pub fn is_dragging(&self, viewport: crate::ViewportId) -> bool {
+        self.states
+            .get(&viewport)
+            .is_some_and(|state| state.is_dragging)
+    }
+
     /// Is there a label text selection in any viewport?
     pub fn has_selection(&self) -> bool {
         self.states
@@ -273,6 +368,9 @@ impl LabelSelectionState {
         let state = plugin.states.entry(ui.ctx().viewport_id()).or_default();
         let new_vertex_indices = state.on_label(ui, response, galley_pos, &mut galley);
 
+        if !ui.is_rect_visible(response.rect) {
+            return;
+        }
         let shape_idx = ui.painter().add(
             epaint::TextShape::new(galley_pos, galley, fallback_color).with_underline(underline),
         );
@@ -305,6 +403,8 @@ impl ViewportLabelSelectionState {
         self.preserve_secondary_for_labels = false;
         self.preserve_touch_for_labels = false;
         self.preserved_secondary_this_pass = false;
+        self.process_offscreen_labels = false;
+        self.horizontal_drag_selection = None;
         self.selected_labels.clear();
         self.selected_label_lookup.clear();
         self.painted_selections.clear();
@@ -456,6 +556,7 @@ impl ViewportLabelSelectionState {
             multi_widget_text_select || selection.primary.widget_id == response.id;
 
         if self.is_dragging
+            && ui.is_rect_visible(response.rect)
             && may_select_widget
             && let Some(pointer_pos) = ui.ctx().pointer_interact_pos()
         {
@@ -683,6 +784,52 @@ impl ViewportLabelSelectionState {
                 && pointer_down_for_selection(ui, preserve_secondary);
         }
 
+        if self.is_dragging
+            && ui.is_rect_visible(response.rect)
+            && let Some(selection) = self.selection
+            && selection.layer_id == response.layer_id
+            && (ui.style().interaction.multi_widget_text_select
+                || selection.primary.widget_id == response.id)
+            && let Some(drag) = &mut self.horizontal_drag_selection
+        {
+            // Cells can leave gaps at the edge, so select the nearest visible
+            // label rather than requiring the pointer to hit a label directly.
+            let visible = (global_from_layer * response.rect).intersect(drag.clip);
+            if visible.is_positive() {
+                let vertical_distance = if drag.pointer.y < visible.top() {
+                    visible.top() - drag.pointer.y
+                } else {
+                    (drag.pointer.y - visible.bottom()).max(0.0)
+                };
+                let horizontal_distance = if drag.pointer.x < drag.clip.left() {
+                    visible.left() - drag.clip.left()
+                } else {
+                    drag.clip.right() - visible.right()
+                };
+                if drag.candidate.is_none_or(|candidate| {
+                    vertical_distance < candidate.vertical_distance
+                        || (vertical_distance == candidate.vertical_distance
+                            && horizontal_distance < candidate.horizontal_distance)
+                }) {
+                    let target = Pos2::new(
+                        drag.pointer.x.clamp(drag.clip.left(), drag.clip.right()),
+                        drag.pointer.y.clamp(visible.top(), visible.bottom()),
+                    );
+                    let cursor = galley.cursor_from_pos((galley_from_global * target).to_vec2());
+                    drag.candidate = Some(HorizontalDragCandidate {
+                        vertical_distance,
+                        horizontal_distance,
+                        cursor: WidgetTextCursor::new(
+                            response.id,
+                            cursor,
+                            global_from_galley,
+                            galley,
+                        ),
+                    });
+                }
+            }
+        }
+
         let old_selection = self.selection;
 
         let mut cursor_state = self.cursor_for(ui, response, global_from_galley, galley);
@@ -802,6 +949,10 @@ impl ViewportLabelSelectionState {
                     }
                 }
             }
+        }
+
+        if !ui.is_rect_visible(response.rect) {
+            return Vec::new();
         }
 
         let cursor_range = cursor_state.range(galley);

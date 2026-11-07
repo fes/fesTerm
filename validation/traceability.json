@@ -37,8 +37,8 @@
     {
       "id": "desktop-split-pane-presentation",
       "edges": ["PANE-01", "PANE-02", "PANE-03", "PANE-04", "PANE-05", "PANE-06", "PANE-07", "PANE-08", "PANE-09", "PANE-10"],
-      "requirements": ["docs/adr/0075-desktop-split-pane-presentation.md#decision", "docs/gui-design.md"],
-      "decisions": ["ADR-0075"],
+      "requirements": ["docs/adr/0078-desktop-split-pane-presentation.md#decision", "docs/gui-design.md"],
+      "decisions": ["ADR-0078"],
       "automated_tests": [
         "pane_tree_preserves_identity_and_collapses_without_orphans",
         "pane_tree_rejects_duplicate_capacity_depth_and_ratio",
@@ -212,6 +212,33 @@
       ]
     },
     {
+      "id": "automation-authoring-hooks-debugger-proposal",
+      "edges": [
+        "AUT-1[0-2]"
+      ],
+      "requirements": [
+        "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
+        "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
+        "docs/automation-design.md#script-authoring-and-execution-surfaces"
+      ],
+      "decisions": [
+        "ADR-0065"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [
+        "AUTO-06",
+        "AUTO-07",
+        "AUTO-08"
+      ],
+      "status": "deferred",
+      "prerequisites": [
+        "Editor workflow commands and saved-workflow storage reusing the desktop beta intake validation, native Run review, worker supervisor and Stop path; later static API catalog qualification before completion",
+        "P4 separate hook schema/arming/recipient/causal-provenance/overflow and post-close metadata review before lifecycle hooks",
+        "Debugger feasibility assessment of the pinned worker engine and P4 protocol/containment, inert-inspection/disclosure, pause/lifecycle and native UX acceptance before Debug mode",
+        "P4 separate review for broader typed UI control"
+      ]
+    },
+    {
       "id": "automation-frozen-workflow-bindings",
       "edges": ["AUT-01"],
       "requirements": [
@@ -315,6 +342,15 @@
         "reservation_enforces_input_bounds_and_expiry_before_authority",
         "automation_reservation_preserves_order_and_releases_cancelled_slots",
         "local_pty_automation_reservation_cannot_send_cancelled_bytes",
+        "cancellation_probe_preserves_a_timely_committed_slot",
+        "pending_input_detects_a_replaced_attachment",
+        "ssh_automation_reservation_preserves_input_order_and_releases_cancelled_slots",
+        "ssh_automation_reservation_never_crosses_attachment_replacement",
+        "ssh_automation_reservation_refuses_unavailable_or_full_queues",
+        "ssh_automation_receiver_yields_after_bounded_cancelled_slots",
+        "ssh_automation_receiver_stays_responsive_during_busy_admission",
+        "slow_ssh_writes_preserve_queued_input_and_remain_interruptible",
+        "controlled_openssh_automation_reservations_preserve_order_and_cancellation",
         "worker_argument_with_extra_arguments_refuses_before_gui_startup",
         "application_worker_reports_qualification_before_receiving_source",
         "macos_worker_environment_allows_only_corefoundation_encoding",
@@ -330,7 +366,7 @@
       "prerequisites": [
         "Installed helper provenance and native sandbox qualification remain required per supported platform",
         "Desktop beta integrates native approval, broker-admitted reads/waits, per-input human approval and lifecycle cancellation for local PTY targets; macOS and Windows containment is owner-accepted beta risk (macOS memory ceiling is a polled watchdog; Windows evidence is CI-only)",
-        "SSH, persistent, tunnel and serial transports do not yet support reservations"
+        "Interactive SSH supports ordered reservations but is not yet an application control target; text-mode SFTP, persistent, tunnel and serial transports do not yet support reservations"
       ]
     },
     {
@@ -350,6 +386,10 @@
         "secondary_workspace_profile_save_preserves_automation_disable",
         "automation_preference_save_failures_stay_stopped_and_visible_until_retry",
         "automation_uncertain_enable_is_not_copied_by_an_unrelated_save",
+        "unknown_unrelated_save_blocks_stale_sibling_disable_retry_and_reload",
+        "preference_retry_is_hidden_during_busy_and_after_poison",
+        "stale_async_credential_completion_adopts_persisted_preference_overlay",
+        "stale_tunnel_import_adopts_persisted_preference_overlay",
         "automation_same_pass_stale_toggles_and_reset_cannot_reenable",
         "automation_cross_window_aba_invalidates_the_old_toggle_interaction",
         "automation_disable_guard_survives_discarded_ui_pass",
@@ -376,7 +416,7 @@
       "status": "partial",
       "prerequisites": [
         "Native multi-window Settings, warning and retry usability remain open under AUTO-01; configuration opt-in is not runtime or platform qualification",
-        "Failed or indeterminate preference saves cannot promise a durable off value across restart; unrelated indeterminate configuration outcomes and external writers remain outside this feature-specific fence"
+        "Failed or indeterminate preference saves cannot promise a durable off value across restart; the in-process save gate does not reconcile unknown disk outcomes or protect against external writers and filesystem aliases"
       ]
     },
     {
@@ -2926,6 +2966,18 @@
         "editor_path_menu_does_not_retarget_when_switching_documents",
         "untitled_editor_path_context_menu_has_no_copy_action",
         "editor_drag_keeps_press_anchor_when_movement_shares_the_input_batch",
+        "editor_drag_autoscroll_extends_selection_with_the_original_anchor",
+        "editor_selected_text_context_menu_preserves_selection_and_copies_it",
+        "selection_drag_autoscrolls_each_scrollable_axis_and_stops_at_bounds",
+        "selection_autoscroll_only_moves_the_drag_origin_viewport",
+        "markdown_drag_autoscroll_keeps_the_offscreen_anchor_and_copy_text",
+        "markdown_backward_drag_autoscroll_keeps_the_offscreen_anchor",
+        "markdown_code_drag_autoscroll_extends_selection_vertically",
+        "markdown_table_drag_autoscroll_extends_selection_horizontally",
+        "markdown_horizontal_drag_does_not_scroll_another_table",
+        "markdown_preview_copy_menu_uses_viewport_in_horizontal_layout",
+        "source_drag_autoscroll_keeps_offscreen_selection_copyable",
+        "markdown_source_selection_has_a_plain_copy_context_menu",
         "batched_text_selection_respects_disabled_clipped_and_modal_ownership",
         "batched_independent_clicks_keep_only_the_latest_caret",
         "markdown_preview_and_split_keep_batched_selection_and_copy_exact",
@@ -4223,6 +4275,16 @@
         "editor_path_context_menu_copies_the_full_path_in_all_modes",
         "editor_path_menu_does_not_retarget_when_switching_documents",
         "untitled_editor_path_context_menu_has_no_copy_action",
+        "selection_drag_autoscrolls_each_scrollable_axis_and_stops_at_bounds",
+        "selection_autoscroll_only_moves_the_drag_origin_viewport",
+        "markdown_drag_autoscroll_keeps_the_offscreen_anchor_and_copy_text",
+        "markdown_backward_drag_autoscroll_keeps_the_offscreen_anchor",
+        "markdown_code_drag_autoscroll_extends_selection_vertically",
+        "markdown_table_drag_autoscroll_extends_selection_horizontally",
+        "markdown_horizontal_drag_does_not_scroll_another_table",
+        "markdown_preview_copy_menu_uses_viewport_in_horizontal_layout",
+        "source_drag_autoscroll_keeps_offscreen_selection_copyable",
+        "markdown_source_selection_has_a_plain_copy_context_menu",
         "local_markdown_display_paths_hide_windows_verbatim_prefixes",
         "find_highlighting_tracks_inline_code_text_offsets",
         "find_highlighting_tracks_link_label_offsets",
@@ -4458,6 +4520,29 @@
         "Provisioned physical iPhone: automatic Face ID success/failure/cancellation, explicit system passcode, unavailable biometrics, repeated rapid app switches, phone lock/unlock and return from system prompts without stuck controls or stale authorization",
         "Android emulator app-lock flow covered cold launch, cancel/retry, device-passcode authentication, device-lock and immediate app-switch relock, prompt retirement and authenticated disable; physical biometrics, API 29 credential behavior, compositor/snapshot timing, rapid lifecycle races and active/parked tunnel identity remain unqualified",
         "Native compositor/opaque-cover removal and app-switcher snapshots, complete narrow-width recovery errors, VoiceOver/touch and healthy active/parked tunnel identity remain manual evidence; portable tests, headless widget captures and Apple-target compilation do not establish device acceptance; no deployment authorized"
+      ]
+    },
+    {
+      "id": "mobile-accessibility-tree",
+      "edges": ["MOB-10"],
+      "requirements": [
+        "docs/adr/0075-mobile-accessibility-tree.md#decision"
+      ],
+      "decisions": ["ADR-0075", "ADR-0073", "ADR-0058"],
+      "automated_tests": [
+        "tree_generation_waits_for_a_platform_client_and_stops_on_deactivation",
+        "platform_actions_reach_widgets_only_while_active_and_stay_bounded",
+        "content_under_actionable_widgets_is_lifted_so_ios_does_not_hide_it",
+        "privacy_mode_keeps_terminal_text_out_of_the_accessibility_tree",
+        "password_field_is_named_for_assistive_technology_without_exposing_the_secret",
+        "terminal_rows_reach_accessibility_only_when_the_application_opts_in"
+      ],
+      "manual_scenarios": ["MOB-10"],
+      "status": "partial",
+      "prerequisites": [
+        "Shared Maestro flows (scripts/run-mobile-ui-flows.py; scripts/tests/test_mobile_ui_flows.py) pass on an iOS Simulator and an Android emulator; they are optional validation, not a merge gate",
+        "VoiceOver and TalkBack navigation, activation, typing and privacy-mode concealment on physical iPhone/iPad and Android devices remain manual evidence",
+        "Android explore-by-touch hover is delivered to NativeActivity's input queue and does not yet reach the accessibility host view"
       ]
     },
     {

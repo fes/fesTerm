@@ -1,4 +1,4 @@
-# ADR 0075: Desktop Split-Pane Presentation
+# ADR 0078: Desktop Split-Pane Presentation
 
 - **Status:** Proposed; owner-directed implementation on feature branch
 - **Date:** 2026-11-06

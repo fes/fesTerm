@@ -7,9 +7,9 @@ use super::model::{Capabilities, DevTunnelChoices, HostDecision, HostVerificatio
 use super::profiles::{SftpSpec, TunnelSpec};
 use super::theme::{color, radius, space, type_scale};
 use super::widgets::{
-    bottom_sheet, button, button_sized, caption_label, card, footnote, form_field, labelled,
-    list_row, paint_fit, segmented, sheet_title, switch_row, text_field, ButtonKind, RowSpec,
-    Trailing,
+    bottom_sheet, button, button_sized, caption_label, card, field_caption, footnote, form_field,
+    labelled, list_row, name_field, paint_fit, segmented, sheet_title, switch_row, text_field,
+    ButtonKind, RowSpec, Trailing,
 };
 use eframe::egui::{self, Align2, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui};
 use festerm_mobile_profiles::{RemoteSession, SshAuth, SshProfile};
@@ -625,22 +625,25 @@ pub fn authentication_sheet(
                 "fesTerm asks for the password every time you connect. Nothing is saved.",
             ),
             AuthMode::Password => {
-                caption_label(ui, "Password");
-                form_field(
-                    ui,
-                    [ui.available_width(), space::FIELD_HEIGHT],
-                    "profile_password",
-                    egui::TextEdit::singleline(&mut state.password)
-                        .password(true)
-                        .sensitive(true)
-                        .hint_text(if matches!(state.auth, Some(SshAuth::Password { .. })) {
-                            "Saved password (leave empty to keep)"
-                        } else {
-                            "Password"
-                        })
-                        .margin(egui::Margin::symmetric(14, 14))
-                        .char_limit(1024),
-                    true,
+                field_caption(ui, "Password");
+                name_field(
+                    form_field(
+                        ui,
+                        [ui.available_width(), space::FIELD_HEIGHT],
+                        "profile_password",
+                        egui::TextEdit::singleline(&mut state.password)
+                            .password(true)
+                            .sensitive(true)
+                            .hint_text(if matches!(state.auth, Some(SshAuth::Password { .. })) {
+                                "Saved password (leave empty to keep)"
+                            } else {
+                                "Password"
+                            })
+                            .margin(egui::Margin::symmetric(14, 14))
+                            .char_limit(1024),
+                        true,
+                    ),
+                    "Password",
                 );
                 footnote(
                     ui,
@@ -726,18 +729,21 @@ fn key_section(
         );
     }
     if state.needs_passphrase {
-        caption_label(ui, "Key passphrase");
-        form_field(
-            ui,
-            [ui.available_width(), space::FIELD_HEIGHT],
-            "key_passphrase",
-            egui::TextEdit::singleline(&mut state.key_passphrase)
-                .password(true)
-                .sensitive(true)
-                .hint_text("Passphrase to decrypt the key")
-                .margin(egui::Margin::symmetric(14, 14))
-                .char_limit(1024),
-            true,
+        field_caption(ui, "Key passphrase");
+        name_field(
+            form_field(
+                ui,
+                [ui.available_width(), space::FIELD_HEIGHT],
+                "key_passphrase",
+                egui::TextEdit::singleline(&mut state.key_passphrase)
+                    .password(true)
+                    .sensitive(true)
+                    .hint_text("Passphrase to decrypt the key")
+                    .margin(egui::Margin::symmetric(14, 14))
+                    .char_limit(1024),
+                true,
+            ),
+            "Key passphrase",
         );
         if button(ui, ButtonKind::Primary, "Unlock & import key", true).clicked() {
             *action = AuthAction::ImportPending;
@@ -1091,16 +1097,19 @@ pub fn password_sheet(
                     .color(color::WARNING),
             );
         }
-        form_field(
-            ui,
-            [ui.available_width(), space::FIELD_HEIGHT],
-            "auth_password",
-            egui::TextEdit::singleline(password)
-                .password(true)
-                .sensitive(true)
-                .margin(egui::Margin::symmetric(14, 14))
-                .char_limit(4096),
-            true,
+        name_field(
+            form_field(
+                ui,
+                [ui.available_width(), space::FIELD_HEIGHT],
+                "auth_password",
+                egui::TextEdit::singleline(password)
+                    .password(true)
+                    .sensitive(true)
+                    .margin(egui::Margin::symmetric(14, 14))
+                    .char_limit(4096),
+                true,
+            ),
+            "Password",
         );
         if button(ui, ButtonKind::Primary, "Authenticate", true).clicked() {
             decision = PasswordDecision::Submit;
@@ -1112,4 +1121,41 @@ pub fn password_sheet(
     // A stray scrim tap must not discard typed input; cancel is explicit.
     let _ = outcome;
     decision
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::{
+        kittest::{By, Queryable},
+        Harness,
+    };
+
+    #[test]
+    fn password_field_is_named_for_assistive_technology_without_exposing_the_secret() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(
+                |ui, password: &mut String| {
+                    let bounds = ui.ctx().content_rect();
+                    password_sheet(ui.ctx(), bounds, "dev@example.net", false, password);
+                },
+                String::new(),
+            );
+        harness.run();
+        harness.get_by_label("Password").focus();
+        harness.run();
+        harness.get_by_label("Password").type_text("hunter2");
+        harness.run();
+        assert_eq!(harness.state(), "hunter2");
+        let leaked = harness
+            .query_all(By::new().predicate(|node| {
+                [node.label(), node.value()]
+                    .iter()
+                    .flatten()
+                    .any(|text| text.contains("hunter2"))
+            }))
+            .count();
+        assert_eq!(leaked, 0);
+    }
 }

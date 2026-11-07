@@ -34,6 +34,13 @@ const SAVE_IN_PROGRESS_MESSAGE: &str = "A configuration save is in progress; its
 pub(crate) const SAVE_GATE_HEALTHY_MESSAGE: &str =
     "At the last check, no in-process save was unresolved or in progress.";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SaveGateState {
+    Healthy,
+    InProgress,
+    ReconciliationRequired,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum SecretCleanupNotice {
     ProfilePending,
@@ -506,12 +513,20 @@ impl ConfigurationReloader {
         Arc::clone(&self.secret_cleanup_failure)
     }
 
-    pub(crate) fn save_gate_warning(&self) -> Option<&'static str> {
+    pub(crate) fn save_gate_state(&self) -> SaveGateState {
         match self.save_gate.try_lock() {
-            Ok(unresolved) if *unresolved => Some(RECONCILE_SAVE_MESSAGE),
-            Ok(_) => None,
-            Err(TryLockError::Poisoned(_)) => Some(RECONCILE_SAVE_MESSAGE),
-            Err(TryLockError::WouldBlock) => Some(SAVE_IN_PROGRESS_MESSAGE),
+            Ok(unresolved) if *unresolved => SaveGateState::ReconciliationRequired,
+            Ok(_) => SaveGateState::Healthy,
+            Err(TryLockError::Poisoned(_)) => SaveGateState::ReconciliationRequired,
+            Err(TryLockError::WouldBlock) => SaveGateState::InProgress,
+        }
+    }
+
+    pub(crate) fn save_gate_warning(&self) -> Option<&'static str> {
+        match self.save_gate_state() {
+            SaveGateState::Healthy => None,
+            SaveGateState::InProgress => Some(SAVE_IN_PROGRESS_MESSAGE),
+            SaveGateState::ReconciliationRequired => Some(RECONCILE_SAVE_MESSAGE),
         }
     }
 
@@ -566,20 +581,26 @@ impl ConfigurationReloader {
     pub(crate) fn save_workspace(
         &self,
         configuration: &Configuration,
-    ) -> ConfigurationStartupStatus {
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
         match self.save_configuration(configuration) {
-            Ok(_) => ConfigurationStartupStatus::WorkspaceSaved,
-            Err(failure) => ConfigurationStartupStatus::WorkspaceSaveFailure(failure),
+            Ok(saved) => (ConfigurationStartupStatus::WorkspaceSaved, Some(saved)),
+            Err(failure) => (
+                ConfigurationStartupStatus::WorkspaceSaveFailure(failure),
+                None,
+            ),
         }
     }
 
     pub(crate) fn save_session_names(
         &self,
         configuration: &Configuration,
-    ) -> ConfigurationStartupStatus {
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
         match self.save_configuration(configuration) {
-            Ok(_) => ConfigurationStartupStatus::SessionNamesSaved,
-            Err(failure) => ConfigurationStartupStatus::SessionNamesSaveFailure(failure),
+            Ok(saved) => (ConfigurationStartupStatus::SessionNamesSaved, Some(saved)),
+            Err(failure) => (
+                ConfigurationStartupStatus::SessionNamesSaveFailure(failure),
+                None,
+            ),
         }
     }
 
@@ -591,10 +612,16 @@ impl ConfigurationReloader {
     pub(crate) fn save_interface_settings(
         &self,
         configuration: &Configuration,
-    ) -> ConfigurationStartupStatus {
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
         match self.save_configuration(configuration) {
-            Ok(_) => ConfigurationStartupStatus::InterfaceSettingsSaved,
-            Err(failure) => ConfigurationStartupStatus::InterfaceSettingsSaveFailure(failure),
+            Ok(saved) => (
+                ConfigurationStartupStatus::InterfaceSettingsSaved,
+                Some(saved),
+            ),
+            Err(failure) => (
+                ConfigurationStartupStatus::InterfaceSettingsSaveFailure(failure),
+                None,
+            ),
         }
     }
 
@@ -605,10 +632,13 @@ impl ConfigurationReloader {
     pub(crate) fn save_known_host_trust(
         &self,
         configuration: &Configuration,
-    ) -> ConfigurationStartupStatus {
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
         match self.save_configuration(configuration) {
-            Ok(_) => ConfigurationStartupStatus::KnownHostTrustSaved,
-            Err(failure) => ConfigurationStartupStatus::KnownHostTrustSaveFailure(failure),
+            Ok(saved) => (ConfigurationStartupStatus::KnownHostTrustSaved, Some(saved)),
+            Err(failure) => (
+                ConfigurationStartupStatus::KnownHostTrustSaveFailure(failure),
+                None,
+            ),
         }
     }
 
@@ -616,10 +646,16 @@ impl ConfigurationReloader {
     /// explicit Save in the Profiles editor, whether creating a new profile
     /// or editing an existing one (both are the same upsert-by-identifier
     /// write, `Configuration::with_profile`).
-    pub(crate) fn save_profile(&self, configuration: &Configuration) -> ConfigurationStartupStatus {
+    pub(crate) fn save_profile(
+        &self,
+        configuration: &Configuration,
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
         match self.save_configuration(configuration) {
-            Ok(_) => ConfigurationStartupStatus::ProfileSaved,
-            Err(failure) => ConfigurationStartupStatus::ProfileSaveFailure(failure),
+            Ok(saved) => (ConfigurationStartupStatus::ProfileSaved, Some(saved)),
+            Err(failure) => (
+                ConfigurationStartupStatus::ProfileSaveFailure(failure),
+                None,
+            ),
         }
     }
 
@@ -628,10 +664,13 @@ impl ConfigurationReloader {
     pub(crate) fn delete_profile(
         &self,
         configuration: &Configuration,
-    ) -> ConfigurationStartupStatus {
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
         match self.save_configuration(configuration) {
-            Ok(_) => ConfigurationStartupStatus::ProfileDeleted,
-            Err(failure) => ConfigurationStartupStatus::ProfileDeleteFailure(failure),
+            Ok(saved) => (ConfigurationStartupStatus::ProfileDeleted, Some(saved)),
+            Err(failure) => (
+                ConfigurationStartupStatus::ProfileDeleteFailure(failure),
+                None,
+            ),
         }
     }
 
@@ -641,10 +680,13 @@ impl ConfigurationReloader {
     pub(crate) fn reorder_profiles(
         &self,
         configuration: &Configuration,
-    ) -> ConfigurationStartupStatus {
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
         match self.save_configuration(configuration) {
-            Ok(_) => ConfigurationStartupStatus::ProfilesReordered,
-            Err(failure) => ConfigurationStartupStatus::ProfilesReorderFailure(failure),
+            Ok(saved) => (ConfigurationStartupStatus::ProfilesReordered, Some(saved)),
+            Err(failure) => (
+                ConfigurationStartupStatus::ProfilesReorderFailure(failure),
+                None,
+            ),
         }
     }
 
@@ -705,7 +747,8 @@ impl ConfigurationReloader {
                 }
                 #[cfg(test)]
                 if matches!(failure, Some(TestSaveFailure::AfterWrite)) {
-                    return Err(ConfigurationLoadFailure::Unreadable);
+                    *unresolved = true;
+                    return Err(ConfigurationLoadFailure::OutcomeUnknown);
                 }
                 Ok(configuration)
             }
@@ -1146,7 +1189,10 @@ mod tests {
         assert!(!native_directory.exists());
         assert_eq!(
             reloader.save_workspace(&configuration),
-            ConfigurationStartupStatus::WorkspaceSaved
+            (
+                ConfigurationStartupStatus::WorkspaceSaved,
+                Some(configuration.clone())
+            )
         );
         assert!(native_directory.is_dir());
         #[cfg(unix)]
@@ -1186,7 +1232,10 @@ mod tests {
         assert!(!native_directory.parent().unwrap().exists());
         assert_eq!(
             reloader.save_profile(&configuration),
-            ConfigurationStartupStatus::ProfileSaved
+            (
+                ConfigurationStartupStatus::ProfileSaved,
+                Some(configuration.clone())
+            )
         );
         assert!(native_directory.is_dir());
         let loaded =
@@ -1199,7 +1248,8 @@ mod tests {
         let directory = TestDirectory::new();
         let source_path = directory.path().to_path_buf();
         let reloader = ConfigurationReloader::from_path_for_test(source_path.clone());
-        let status = reloader.save_workspace(&Configuration::empty());
+        let (status, persisted) = reloader.save_workspace(&Configuration::empty());
+        assert!(persisted.is_none());
         let diagnostic = status.settings_message();
 
         assert!(matches!(

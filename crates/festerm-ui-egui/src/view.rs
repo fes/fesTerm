@@ -84,6 +84,11 @@ pub struct TerminalViewOptions {
     /// Whether the application wants terminal-history snapshot actions in the
     /// local context menu when no selection is active.
     pub history_snapshot_actions: bool,
+    /// Publish each visible, non-blank terminal row as a read-only label in
+    /// the AccessKit tree. Off by default: platform accessibility services can
+    /// read whatever is published, so the application decides when terminal
+    /// output may leave the process (ADR 0075).
+    pub expose_text_to_accessibility: bool,
 }
 
 impl Default for TerminalViewOptions {
@@ -97,6 +102,7 @@ impl Default for TerminalViewOptions {
             scroll_speed_multiplier: 1.0,
             context_menu_action: None,
             history_snapshot_actions: false,
+            expose_text_to_accessibility: false,
         }
     }
 }
@@ -365,6 +371,69 @@ fn scrollbar_geometry(
             egui::vec2(visual_track.width(), thumb_height),
         ),
     })
+}
+
+/// Text a screen reader or UI-automation client sees for one visible row:
+/// grapheme text without width-two continuations, control or bidi-control
+/// characters, or trailing blank cells.
+fn accessible_row_text(snapshot: TerminalSnapshot<'_>, row: usize) -> String {
+    let bidi = CodePointSetData::new::<BidiControl>();
+    let mut text = String::new();
+    for column in 0..snapshot.dimensions().columns() {
+        match snapshot.cell(column, row) {
+            Some(cell) if cell.is_continuation() => {}
+            Some(cell) => text.extend(
+                cell.text()
+                    .chars()
+                    .filter(|character| !character.is_control() && !bidi.contains(*character)),
+            ),
+            None => text.push(' '),
+        }
+    }
+    text.truncate(text.trim_end().len());
+    text
+}
+
+/// Publishes visible rows as hover-only label children of the viewport node.
+/// Hover-only widgets never take clicks or drags from the terminal.
+fn publish_accessible_rows(
+    ui: &mut Ui,
+    viewport_id: egui::Id,
+    layout: GridLayout,
+    snapshot: TerminalSnapshot<'_>,
+) {
+    if ui
+        .ctx()
+        .accesskit_node_builder(viewport_id, |node| {
+            node.set_role(egui::accesskit::Role::Terminal)
+        })
+        .is_none()
+    {
+        return;
+    }
+    // Rows are siblings of the viewport: iOS treats an actionable node as a
+    // leaf element and would hide rows parented to it.
+    let rows = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("terminal-accessible-rows")
+            .max_rect(layout.rect),
+    );
+    for row in 0..snapshot.dimensions().rows() {
+        let text = accessible_row_text(snapshot, row);
+        if text.is_empty() {
+            continue;
+        }
+        let rect = Rect::from_min_size(
+            layout.rect.min + egui::vec2(0.0, row as f32 * layout.metrics.height),
+            egui::vec2(layout.rect.width(), layout.metrics.height),
+        );
+        rows.interact(
+            rect,
+            viewport_id.with(("accessible-row", row)),
+            Sense::hover(),
+        )
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text));
+    }
 }
 
 fn jump_to_latest_rect(viewport: Rect) -> Rect {
@@ -1933,6 +2002,14 @@ impl TerminalView {
                     &mut self.glyphs,
                 )
             });
+        if options.expose_text_to_accessibility {
+            publish_accessible_rows(
+                ui,
+                response.id,
+                layout,
+                TerminalSnapshot::from_terminal_viewport(terminal, self.history.offset_rows),
+            );
+        }
         if let Some(target) = self.smart_keyboard_hit {
             let rect = Rect::from_min_size(
                 layout.rect.min
@@ -5050,6 +5127,83 @@ mod tests {
         assert!(harness.state().0.sink.0.is_empty());
     }
 
+    fn accessible_row_values(harness: &Harness<'_, HeadlessViewState>) -> Vec<String> {
+        harness
+            .query_all_by_role(egui::accesskit::Role::Label)
+            .filter_map(|node| node.value())
+            .collect()
+    }
+
+    #[test]
+    fn terminal_rows_reach_accessibility_only_when_the_application_opts_in() {
+        let mut state = HeadlessViewState::new();
+        state
+            .terminal
+            .ingest("prompt$ ls\r\n\x1b[31mred\x1b[0m \u{202e}evil\r\n\r\nlast   ".as_bytes());
+        let expose = std::rc::Rc::new(std::cell::Cell::new(false));
+        let builder_expose = expose.clone();
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                move |ui, state: &mut HeadlessViewState| {
+                    state.view.show_with_options(
+                        ui,
+                        &mut state.terminal,
+                        &mut state.sink,
+                        TerminalViewOptions {
+                            expose_text_to_accessibility: builder_expose.get(),
+                            ..TerminalViewOptions::default()
+                        },
+                    );
+                },
+                state,
+            );
+        harness.run();
+        assert!(accessible_row_values(&harness).is_empty());
+        assert!(harness
+            .query_by_role(egui::accesskit::Role::Terminal)
+            .is_none());
+
+        expose.set(true);
+        harness.run();
+        assert_eq!(
+            accessible_row_values(&harness),
+            ["prompt$ ls", "red evil", "last"]
+        );
+        let terminal = harness.get_by_role(egui::accesskit::Role::Terminal);
+        let first_row = harness
+            .query_all_by_role(egui::accesskit::Role::Label)
+            .next()
+            .unwrap();
+        assert!(terminal.rect().contains_rect(first_row.rect()));
+        // iOS hides the descendants of actionable nodes, so no ancestor of a
+        // row may take clicks or focus.
+        use egui_kittest::kittest::NodeT as _;
+        let mut ancestor = first_row.parent();
+        while let Some(node) = ancestor {
+            let data = node.accesskit_node().data().clone();
+            assert!(
+                !data.supports_action(egui::accesskit::Action::Click)
+                    && !data.supports_action(egui::accesskit::Action::Focus),
+                "row is inside actionable {:?}",
+                data.role()
+            );
+            ancestor = node.parent();
+        }
+
+        // Hover-only row widgets must not take pointer input from the grid.
+        let start = first_row.rect().left_center() + Vec2::new(2.0, 0.0);
+        harness.drag_at(start);
+        harness.hover_at(start + Vec2::new(120.0, 30.0));
+        harness.drop_at(start + Vec2::new(120.0, 30.0));
+        harness.run();
+        assert!(harness.state().view.selection.range().is_some());
+
+        expose.set(false);
+        harness.run();
+        assert!(accessible_row_values(&harness).is_empty());
+    }
+
     /// Drags the pointer across the terminal viewport and reports whether a
     /// selection was made, optionally with a tab chip drag already in flight.
     fn selection_after_drag_across_terminal(carrying_a_chip: bool) -> bool {
@@ -6542,6 +6696,7 @@ mod tests {
                             scroll_speed_multiplier: 1.0,
                             context_menu_action: None,
                             history_snapshot_actions: false,
+                            expose_text_to_accessibility: false,
                         },
                     );
                 },
@@ -6586,6 +6741,7 @@ mod tests {
                             scroll_speed_multiplier: 1.0,
                             context_menu_action: None,
                             history_snapshot_actions: false,
+                            expose_text_to_accessibility: false,
                         },
                     );
                 },

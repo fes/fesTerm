@@ -31,9 +31,9 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 ## Status
 
-Desktop split-pane composition is under development on
-`feature/desktop-split-panes` ([#65](https://github.com/fes/fesTerm/issues/65),
-[ADR 0075](docs/adr/0075-desktop-split-pane-presentation.md)). The live
+Desktop split-pane composition is available as a staged feature
+([#65](https://github.com/fes/fesTerm/issues/65),
+[ADR 0078](docs/adr/0078-desktop-split-pane-presentation.md)). The live
 two-to-four-pane slice preserves existing session/document ownership and now
 includes transient handles, explicit rearrangement and atomic live-view swaps.
 Hover handles now default off; explicit rearrangement remains available.

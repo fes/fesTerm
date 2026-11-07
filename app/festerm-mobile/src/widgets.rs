@@ -649,7 +649,7 @@ pub fn text_field_with_limit(
     ui.allocate_ui_with_layout(egui::vec2(width, 0.0), layout, |ui| {
         ui.spacing_mut().item_spacing.y = 6.0;
         ui.set_width(width);
-        caption_label(ui, caption);
+        field_caption(ui, caption);
         let margin = Margin::symmetric(14, 14);
         // A stable id keeps focus (and the keyboard) when content above the
         // field appears or disappears between frames.
@@ -666,17 +666,34 @@ pub fn text_field_with_limit(
         if response.has_focus() && !ui.clip_rect().contains_rect(response.rect) {
             response.scroll_to_me(Some(egui::Align::Center));
         }
-        response
+        name_field(response, caption)
     })
     .inner
 }
 
-pub fn caption_label(ui: &mut Ui, text: &str) {
+/// Names a field for screen readers and UI automation; the visible caption
+/// is uppercase and drawn as a separate label.
+pub fn name_field(response: Response, name: &str) -> Response {
+    response
+        .ctx
+        .accesskit_node_builder(response.id, |node| node.set_label(name));
+    response
+}
+
+pub fn caption_label(ui: &mut Ui, text: &str) -> Response {
     ui.label(
         egui::RichText::new(text.to_uppercase())
             .size(type_scale::MICRO)
             .color(color::TEXT_FAINT),
-    );
+    )
+}
+
+/// Caption drawn above a field that [`name_field`] names; hidden from
+/// assistive technology so the name is announced (and matched) once.
+pub fn field_caption(ui: &mut Ui, text: &str) {
+    let caption = caption_label(ui, text);
+    ui.ctx()
+        .accesskit_node_builder(caption.id, |node| node.set_hidden());
 }
 
 pub fn footnote(ui: &mut Ui, text: &str) {

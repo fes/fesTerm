@@ -53,6 +53,32 @@ else
     printf 'suite=macos-development-launch status=skipped reason=macos-required\n' >>"$result_path"
     printf 'suite=ios-simulator status=skipped reason=macos-required\n' >>"$result_path"
 fi
+# Exit status 3 from the UI-flow runner means Maestro is not installed.
+record_ui_flows() {
+    case "$1" in
+    0) printf 'suite=%s status=pass\n' "$2" >>"$result_path" ;;
+    3) printf 'suite=%s status=skipped reason=maestro-unavailable\n' "$2" >>"$result_path" ;;
+    *)
+        printf 'suite=%s status=fail\n' "$2" >>"$result_path"
+        status=fail
+        ;;
+    esac
+}
+if [ "$(uname -s)" = Darwin ]; then
+    ui_flows_status=0
+    python3 scripts/run-mobile-ui-flows.py --platform ios --build || ui_flows_status=$?
+    record_ui_flows "$ui_flows_status" ios-ui-flows
+else
+    printf 'suite=ios-ui-flows status=skipped reason=macos-required\n' >>"$result_path"
+fi
+if [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ]; then
+    ui_flows_status=0
+    python3 scripts/run-mobile-ui-flows.py --platform android \
+        --device "$FESTERM_ANDROID_EMULATOR_SERIAL" || ui_flows_status=$?
+    record_ui_flows "$ui_flows_status" android-ui-flows
+else
+    printf 'suite=android-ui-flows status=skipped reason=explicit-isolated-emulator-required\n' >>"$result_path"
+fi
 cargo build --workspace
 if cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check; then
     printf 'suite=presentation-cache-allocations status=pass\n' >>"$result_path"

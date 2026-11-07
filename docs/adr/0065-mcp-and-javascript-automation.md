@@ -161,16 +161,18 @@ to bypass another's restrictions.
    must explicitly cut the old grant/run/lease and serialize the handoff with
    controller and worker admission; a cut may require a fresh proposal and
    approval. No automatic takeover or recreation of an exited shell is introduced.
-   The local PTY backend can reserve an inert position in its existing bounded
-   command queue before an exact broker commit. The controller must hold its
+   Local PTY and interactive SSH backends can reserve an inert position in
+   their existing bounded command queues before an exact broker commit. The controller must hold its
    worker, privacy and attachment fences through publication, and must verify
    the writer lease and immutable bytes at commit. Each reservation carries the
    host controller identity and the creating backend's own attachment identity
    and generation, rechecked against the target under that boundary. A reservation that is
    dropped, refused or not committed within 250 ms cannot release input; later
    commands retain their order. A lost slot after the broker callback succeeds
-   requires conservative unknown-outcome handling, not replay. This primitive
-   is not authority, and other backends refuse reservations until implemented.
+   requires conservative unknown-outcome handling, not replay. SSH discards
+   reservations whose attachment generation was replaced instead of forwarding
+   them to a new connection. This primitive is not authority, and other
+   backends refuse reservations until implemented.
    The controller can also capture a composite human-input, application IME
    and live backend-attachment fence. Pending input confirmations, clipboard
    reservations and buffered input refuse capture; terminal-bound human input
@@ -332,6 +334,38 @@ to bypass another's restrictions.
    deferred until platform confinement, distribution and lifecycle gates are
    resolved; no indefinite background execution or App Store acceptance is
    promised.
+9. **Reuse the native editor for future workflow authoring.** The shipped
+   desktop beta runs one bundle captured in Settings; editor authoring is
+   later work that must reuse its intake validation, canonical digest, native
+   Run review, worker supervisor and Stop path. Preserve the editor's shared
+   documents, save/conflict/undo and multi-view contract. Explicit Run freezes
+   and reviews a saved workflow version; Stop and content-free run status are
+   broker-owned and remain available after editor views close. Save/import and
+   auto-save never execute or approve code. Later completion/signature help
+   uses a static versioned built-in API catalog, not code execution or an
+   implicit general language server. Broader UI control remains separately
+   reviewed typed application commands, not widget access or synthetic input.
+10. **Specify application event hooks without enabling them.** Discoverable
+    versioned lifecycle hooks attach immutable workflows through native binding
+    management. Binding configuration is not authorization: automatic delivery
+    requires a separately qualified P4 arming grant with exact targets,
+    recipient checks, cumulative budgets and bounded queues. Events cannot
+    initiate approval, renew authority or revive a revoked target; automation
+    provenance suppresses recursive hook chains. Saved/imported bindings do
+    not persist grants. Post-close metadata delivery requires its own policy.
+    Explicit user-invoked workflow commands remain manual invocations, not
+    permission to enable background/lifecycle triggers.
+11. **Design a separately qualified native script debugger.** Explicit Debug
+    supports source breakpoints, stepping, stack navigation and inert bounded
+    variable inspection of a frozen workflow in its confined worker. The
+    native inspector is an explicit disclosure recipient, not a privileged
+    bypass. Pause gates new effects for that run but cannot undo admitted
+    operations or freeze terminals/children; deadlines, revocation and human
+    takeover remain effective. Inspection executes no getters/proxy traps;
+    eval, variable mutation, remote attach, debug listeners and a relaxed
+    sandbox remain unavailable. Feasibility must be assessed against the
+    pinned worker engine; P4 protocol, containment, lifecycle/disclosure and
+    native UX evidence is required before enablement.
 
 The Windows privacy-monitor ownership prerequisite uses one process-wide
 listener slot and one process-lifetime reaper. Cleanup is complete only after
@@ -434,7 +468,9 @@ in the design must be visible in implementation/release review.
   workflow identity, caller attenuation, bounded isolated JavaScript execution,
   explicit output disclosure, exact-target input leases and fail-closed
   lifecycle behavior. Existing single-writer, secret-store and trust/recovery
-  boundaries remain in force.
+  boundaries remain in force. Proposed editor-backed immutable runs and
+  separately gated event binding/arming and debug inspection extend the UX
+  contract, not ambient authority; none is implemented by the desktop beta.
 - **GUI/action edges affected:** `AUT-01` through `AUT-04` remain deferred for
   workflows/control. `AUT-05` covers independent default-off settings,
   `AUT-06` the shared authority kernel, and `AUT-07` the partial local MCP
@@ -443,7 +479,9 @@ in the design must be visible in implementation/release review.
   selection route; authenticated bootstrap and native qualification remain
   deferred. `AUT-09`
   covers the bounded presentation/revalidation seam and its unavailable client
-  contract.
+  contract. `AUT-10` through `AUT-12` are deferred proposal edges for
+  editor authoring, application event hooks and script Debug mode; no
+  current interaction changes.
 - **Automated tests required:** The future acceptance matrix in
   [automation design](../automation-design.md#validation-plan) covers delegation,
   replay, disclosure, imports, resource bounds, confinement, cancellation,
@@ -495,8 +533,9 @@ in the design must be visible in implementation/release review.
   obtained human input or native usability. Coordinator
   lifecycle tests additionally distinguish
   MCP-only cleanup from global privacy revocation; they do not prove an
-  integrated JavaScript adapter. Local PTY reservation tests exercise ordered
-  commitment, cancellation and expiration, including a stalled callback; they
+  integrated JavaScript adapter. Local PTY and SSH reservation tests exercise
+  ordered commitment, cancellation and expiration, including a stalled
+  callback and SSH attachment replacement; they
   do not prove application writer-lease or human-takeover integration. Terminal
   request tests cover bounded mode-aware text/key preparation and refusal of
   malformed or unsupported chords; they grant no authority. P2 intake tests
@@ -573,6 +612,9 @@ in the design must be visible in implementation/release review.
 - **Native/manual evidence required:** `AUTO-01` through `AUTO-05` remain open;
   observation requires real platform/client/lock evidence, and later stages
   additionally require engine, platform sandbox and input-ownership evidence.
+  `AUTO-06` through `AUTO-08` are deferred behind editor command integration
+  and separately accepted lifecycle-hook and debugger prerequisites; the
+  acceptance matrix adds AT-09 through AT-11 with no executable tests claimed.
 - **Coverage superseded:** None. All existing accepted requirements and evidence
   retain their status. Workflow/control edges remain deferred and the local MCP
   observation edge is recorded as partial.

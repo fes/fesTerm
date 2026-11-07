@@ -209,7 +209,7 @@ question, not current configurable behavior.
 
 ### Desktop pane groups
 
-Issue #65 and ADR 0075 reopen the former one-viewport-per-chip restriction.
+Issue #65 and ADR 0078 reopen the former one-viewport-per-chip restriction.
 A chip can present a short independently named group of at most four live
 views. A bounded binary tree owns presentation only; existing window-owned
 tabs retain their terminal/controller or document-view state. Combine and
