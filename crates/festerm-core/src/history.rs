@@ -445,7 +445,16 @@ impl Scrollback {
                 .map(cell_owned_charge)
                 .fold(0usize, usize::saturating_add),
         );
-        line.cells.extend(row.cells);
+        if line.cells.is_empty() {
+            // The screen hands over an exactly sized row; adopting it avoids
+            // a copy and leaves nothing for the shrink below to reallocate.
+            line.cells = row.cells;
+        } else {
+            line.cells.extend(row.cells);
+        }
+        if line.row_ends.capacity() == 0 && ends_line {
+            line.row_ends.reserve_exact(1);
+        }
         line.cell_capacity = line.cells.capacity();
         line.row_ends.push(line.cells.len());
         line.row_end_capacity = line.row_ends.capacity();

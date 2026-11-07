@@ -1650,8 +1650,7 @@ impl Terminal {
             }
         }
         let buffer = self.active_buffer_mut();
-        let mut text = CompactString::const_new("");
-        text.push(character);
+        let text = CompactString::new(character.encode_utf8(&mut [0; 4]));
         let text_capacity_bytes = text.capacity();
         buffer.screen.replace_cluster(
             cursor.column,
@@ -1693,12 +1692,17 @@ impl Terminal {
         let Some(anchor) = self.active_buffer().grapheme_anchor else {
             return false;
         };
-        let Some(mut cell) = self.active_buffer().screen.cell(anchor.column, anchor.row) else {
+        let Some(anchor_cell) = self
+            .active_buffer()
+            .screen
+            .cell_ref(anchor.column, anchor.row)
+        else {
             return false;
         };
-        if cell.is_continuation() || !extends_grapheme(cell.text(), character) {
+        if anchor_cell.is_continuation() || !extends_grapheme(anchor_cell.text(), character) {
             return false;
         }
+        let mut cell = anchor_cell.clone();
         if cell.text().len().saturating_add(character.len_utf8()) > MAX_GRAPHEME_BYTES {
             cell.text.clear();
             cell.text.push(char::REPLACEMENT_CHARACTER);
