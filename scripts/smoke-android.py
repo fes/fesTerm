@@ -18,6 +18,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True)
     parser.add_argument("--sdk", default=os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk")))
+    parser.add_argument("--recording-validation", action="store_true",
+                        help="Exercise Rust-to-Java recording export in a validation APK")
     args = parser.parse_args()
     sdk = Path(args.sdk)
     tools = sdk / "build-tools" / build.BUILD_TOOLS
@@ -56,6 +58,7 @@ def main():
     build.run(*adb, "shell", "am", "force-stop", "io.github.fes.festerm")
     try:
         result = build.run(*adb, "shell", "am", "instrument", "-w",
+            *(["-e", "recording-validation", "true"] if args.recording_validation else []),
             "io.github.fes.festerm.tests/.PlatformSmoke", capture=True, timeout=90)
     except subprocess.TimeoutExpired:
         result = "FAIL: Android native instrumentation exceeded 90 seconds\n"

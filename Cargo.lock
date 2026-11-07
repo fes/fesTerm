@@ -2363,7 +2363,12 @@ name = "festerm-android"
 version = "0.15.0"
 dependencies = [
  "festerm-android-platform",
+ "festerm-core",
  "festerm-mobile",
+ "festerm-recording",
+ "festerm-recording-export",
+ "festerm-ui-egui",
+ "jni 0.21.1",
  "winit",
 ]
 
@@ -2470,6 +2475,7 @@ dependencies = [
  "portable-pty",
  "proptest",
  "serde",
+ "serde_json",
  "unicode-segmentation",
  "unicode-width",
  "url",
@@ -2652,6 +2658,62 @@ dependencies = [
  "serde_json",
  "tempfile",
  "terminal_size",
+]
+
+[[package]]
+name = "festerm-recording"
+version = "0.15.0"
+dependencies = [
+ "bincode",
+ "crc32fast",
+ "festerm-core",
+ "sha2 0.10.9",
+ "tempfile",
+ "unicode-segmentation",
+ "uuid",
+]
+
+[[package]]
+name = "festerm-recording-apple"
+version = "0.15.0"
+dependencies = [
+ "cc",
+ "tempfile",
+]
+
+[[package]]
+name = "festerm-recording-export"
+version = "0.15.0"
+dependencies = [
+ "festerm-android-platform",
+ "festerm-core",
+ "festerm-recording",
+ "festerm-recording-apple",
+ "festerm-recording-linux",
+ "festerm-recording-windows",
+ "festerm-ui-egui",
+ "festerm-unix-security",
+ "nix 0.31.3",
+ "sha2 0.10.9",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "festerm-recording-linux"
+version = "0.15.0"
+dependencies = [
+ "libloading",
+ "tempfile",
+]
+
+[[package]]
+name = "festerm-recording-windows"
+version = "0.15.0"
+dependencies = [
+ "libloading",
+ "tempfile",
+ "windows",
 ]
 
 [[package]]

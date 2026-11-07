@@ -1,0 +1,328 @@
+use std::{
+    fs,
+    io::Cursor,
+    path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver},
+    time::Duration,
+};
+
+use festerm_core::{Dimensions, Terminal};
+use festerm_recording::{
+    ArtifactEvent, ArtifactReader, Completion, FinishReason, Pacing, Playback, PlaybackPlan,
+    Recorder, MAX_OUTPUT_BYTES,
+};
+
+fn terminal(columns: usize, rows: usize) -> Terminal {
+    Terminal::new(Dimensions::new(columns, rows).unwrap()).unwrap()
+}
+
+fn start(
+    directory: &Path,
+    terminals: &[&Terminal],
+) -> (Recorder, Vec<festerm_recording::StreamId>, Receiver<()>) {
+    let (wake, ready) = mpsc::channel();
+    let (recorder, streams) =
+        Recorder::start(directory, terminals, move || wake.send(()).unwrap()).unwrap();
+    (recorder, streams, ready)
+}
+
+fn completion(recorder: &mut Recorder, ready: Receiver<()>) -> Completion {
+    ready.recv_timeout(Duration::from_secs(10)).unwrap();
+    recorder.poll_completion().unwrap()
+}
+
+fn completed_path(completion: Completion) -> PathBuf {
+    match completion {
+        Completion::Complete { path, .. } => path,
+        other => panic!("expected a completed recording, got {other:?}"),
+    }
+}
+
+#[test]
+fn selected_streams_share_a_timeline_and_replay_applied_mutations() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut first = terminal(24, 2);
+    first.ingest(b"HISTORY-PRIVATE\r\nnext\r\nvisible");
+    first.ingest(b"\x1b]2;TITLE-PRIVATE\x07");
+    first.ingest(b"\x1b]8;;https://private.example/\x07 link\x1b]8;;\x07");
+    first.queue_input(b"INPUT-PRIVATE");
+    first.queue_reply(b"REPLY-PRIVATE");
+    let mut second = terminal(24, 2);
+    second.ingest(b"second session");
+
+    let (mut recorder, streams, ready) = start(directory.path(), &[&first, &second]);
+    let generation = first.screen_generation();
+    first.ingest(b" more");
+    recorder
+        .observe_output(streams[0], b" more", generation, &first)
+        .unwrap();
+    let generation = second.screen_generation();
+    second.ingest(b"\r\nupdated");
+    recorder
+        .observe_output(streams[1], b"\r\nupdated", generation, &second)
+        .unwrap();
+    first.resize(Dimensions::new(18, 3).unwrap()).unwrap();
+    recorder.observe_resize(streams[0], &first).unwrap();
+    for output in [
+        b"\x1b[?1049halternate".as_slice(),
+        b"\x1b[?1049l returned".as_slice(),
+    ] {
+        let generation = first.screen_generation();
+        first.ingest(output);
+        recorder
+            .observe_output(streams[0], output, generation, &first)
+            .unwrap();
+    }
+    recorder.end_stream(streams[1]).unwrap();
+    recorder.stop(FinishReason::User).unwrap();
+    let path = completed_path(completion(&mut recorder, ready));
+    assert_eq!(
+        path.file_name().unwrap().to_string_lossy(),
+        format!("recording-{}.fstrec", recorder.id())
+    );
+    let bytes = fs::read(&path).unwrap();
+    for secret in [
+        b"HISTORY-PRIVATE".as_slice(),
+        b"INPUT-PRIVATE".as_slice(),
+        b"REPLY-PRIVATE".as_slice(),
+        b"TITLE-PRIVATE".as_slice(),
+        b"private.example".as_slice(),
+    ] {
+        assert!(!bytes.windows(secret.len()).any(|window| window == secret));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
+    }
+
+    let mut reader = ArtifactReader::new(Cursor::new(bytes)).unwrap();
+    let mut replay: Vec<Option<Terminal>> = vec![None, None];
+    let mut last_time = Duration::ZERO;
+    let mut last_output_time = None;
+    let mut switch_checkpoints = 0;
+    let mut finished = false;
+    while let Some(event) = reader.next_event().unwrap() {
+        match event {
+            ArtifactEvent::Started {
+                at,
+                stream,
+                terminal,
+            }
+            | ArtifactEvent::Resized {
+                at,
+                stream,
+                terminal,
+            } => {
+                assert!(at >= last_time);
+                last_time = at;
+                replay[stream.index() - 1] = Some(terminal);
+            }
+            ArtifactEvent::Checkpoint {
+                at,
+                stream,
+                terminal,
+            } => {
+                assert_eq!(Some(at), last_output_time);
+                assert!(at >= last_time);
+                last_time = at;
+                switch_checkpoints += 1;
+                replay[stream.index() - 1] = Some(terminal);
+            }
+            ArtifactEvent::Output { at, stream, bytes } => {
+                assert!(at >= last_time);
+                last_time = at;
+                last_output_time = Some(at);
+                let terminal = replay[stream.index() - 1].as_mut().unwrap();
+                terminal.ingest(&bytes);
+                let _ = terminal.drain_replies();
+            }
+            ArtifactEvent::Ended { at, .. } => {
+                assert!(at >= last_time);
+                last_time = at;
+            }
+            ArtifactEvent::Finished { at, reason } => {
+                assert!(at >= last_time);
+                assert_eq!(reason, FinishReason::User);
+                finished = true;
+            }
+        }
+    }
+    assert!(finished);
+    assert_eq!(switch_checkpoints, 2);
+    for (recorded, original) in replay.into_iter().zip([&first, &second]) {
+        let recorded = recorded.unwrap();
+        assert_eq!(recorded.dimensions(), original.dimensions());
+        assert_eq!(recorded.cursor(), original.cursor());
+        assert_eq!(recorded.modes(), original.modes());
+        assert!(recorded.queued_input().is_empty());
+        assert!(recorded.queued_replies().is_empty());
+        assert_eq!(recorded.scrollback_stats().logical_lines(), 0);
+        for row in 0..original.dimensions().rows() {
+            assert_eq!(recorded.row_text(row), original.row_text(row));
+        }
+    }
+}
+
+#[test]
+fn partial_preconsent_sequences_refuse_start_without_creating_a_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut terminal = terminal(20, 2);
+    terminal.ingest(b"\x1b]2;PRIVATE-PENDING");
+    assert!(Recorder::start(directory.path(), &[&terminal], || {}).is_err());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn repeat_of_offscreen_preconsent_character_is_checkpointed_after_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut original = terminal(20, 2);
+    original.ingest("🧬".as_bytes());
+    original.ingest(b"\x1b[2J\x1b[H");
+    let (mut recorder, streams, ready) = start(directory.path(), &[&original]);
+
+    for output in [
+        b"\x1b]2;not a repeat b\x07".as_slice(),
+        b"\x1b[",
+        b"2b",
+        b"\x1b[3b",
+    ] {
+        let generation = original.screen_generation();
+        original.ingest(output);
+        recorder
+            .observe_output(streams[0], output, generation, &original)
+            .unwrap();
+    }
+    recorder.stop(FinishReason::User).unwrap();
+    let path = completed_path(completion(&mut recorder, ready));
+    let bytes = fs::read(path).unwrap();
+    let mut reader = ArtifactReader::new(Cursor::new(&bytes)).unwrap();
+    let mut replay = match reader.next_event().unwrap().unwrap() {
+        ArtifactEvent::Started { terminal, .. } => terminal,
+        _ => panic!("expected an initial checkpoint"),
+    };
+    let mut checkpoint_count = 0;
+    let mut last_output_time = None;
+    while let Some(event) = reader.next_event().unwrap() {
+        match event {
+            ArtifactEvent::Output { at, bytes, .. } => {
+                replay.ingest(&bytes);
+                last_output_time = Some(at);
+            }
+            ArtifactEvent::Checkpoint { at, terminal, .. } => {
+                assert_eq!(Some(at), last_output_time);
+                replay = terminal;
+                checkpoint_count += 1;
+            }
+            ArtifactEvent::Finished { .. } => {}
+            _ => panic!("unexpected recording event"),
+        }
+    }
+    assert_eq!(checkpoint_count, 2);
+    assert_eq!(replay.row_text(0), original.row_text(0));
+    assert_eq!(replay.cursor(), original.cursor());
+
+    let plan = PlaybackPlan::inspect(Cursor::new(&bytes), Pacing::default()).unwrap();
+    let mut playback = Playback::new(Cursor::new(&bytes), streams[0], plan).unwrap();
+    let mut final_row = None;
+    while let Some(frame) = playback.next_frame().unwrap() {
+        final_row = frame.terminal.and_then(|terminal| terminal.row_text(0));
+    }
+    assert_eq!(final_row, original.row_text(0));
+}
+
+#[test]
+fn unsafe_screen_switch_stops_the_whole_recording_as_incomplete() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut first = terminal(20, 2);
+    let second = terminal(20, 2);
+    let (mut recorder, streams, ready) = start(directory.path(), &[&first, &second]);
+    let output = b"\x1b[?1049h\x1b]2;partial";
+    let generation = first.screen_generation();
+    first.ingest(output);
+    assert!(recorder
+        .observe_output(streams[0], output, generation, &first)
+        .is_err());
+    assert!(!recorder.is_recording());
+    let path = match completion(&mut recorder, ready) {
+        Completion::Incomplete { path, reason, .. } => {
+            assert_eq!(reason, FinishReason::IntegrityFailure);
+            path
+        }
+        other => panic!("expected an incomplete recording, got {other:?}"),
+    };
+    let mut reader = ArtifactReader::new(fs::File::open(path).unwrap()).unwrap();
+    assert!(matches!(
+        reader.next_event().unwrap(),
+        Some(ArtifactEvent::Started { .. })
+    ));
+    assert!(matches!(
+        reader.next_event().unwrap(),
+        Some(ArtifactEvent::Started { .. })
+    ));
+    assert!(matches!(
+        reader.next_event().unwrap(),
+        Some(ArtifactEvent::Finished {
+            reason: FinishReason::IntegrityFailure,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn oversized_output_stops_all_streams_and_preserves_an_incomplete_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = terminal(20, 2);
+    let second = terminal(20, 2);
+    let (mut recorder, streams, ready) = start(directory.path(), &[&first, &second]);
+    let output = vec![b'x'; MAX_OUTPUT_BYTES + 1];
+    assert!(recorder
+        .observe_output(streams[1], &output, second.screen_generation(), &second)
+        .is_err());
+    assert!(!recorder.is_recording());
+    assert!(matches!(
+        completion(&mut recorder, ready),
+        Completion::Incomplete {
+            reason: FinishReason::ResourceLimit,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn corrupt_truncated_and_oversized_frames_are_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let terminal = terminal(20, 2);
+    let (mut recorder, _, ready) = start(directory.path(), &[&terminal]);
+    recorder.stop(FinishReason::User).unwrap();
+    let path = completed_path(completion(&mut recorder, ready));
+    let bytes = fs::read(path).unwrap();
+
+    let mut corrupted = bytes.clone();
+    corrupted[8 + 18] ^= 0x40;
+    let mut reader = ArtifactReader::new(Cursor::new(corrupted)).unwrap();
+    assert!(reader.next_event().is_err());
+
+    let mut oversized = bytes.clone();
+    oversized[18..22].copy_from_slice(&u32::MAX.to_le_bytes());
+    let mut reader = ArtifactReader::new(Cursor::new(oversized)).unwrap();
+    assert!(reader.next_event().is_err());
+
+    let mut truncated = bytes.clone();
+    truncated.pop();
+    let mut reader = ArtifactReader::new(Cursor::new(truncated)).unwrap();
+    assert!(matches!(
+        reader.next_event().unwrap(),
+        Some(ArtifactEvent::Started { .. })
+    ));
+    assert!(reader.next_event().is_err());
+
+    let mut trailing = bytes;
+    trailing.push(0);
+    let mut reader = ArtifactReader::new(Cursor::new(trailing)).unwrap();
+    assert!(matches!(
+        reader.next_event().unwrap(),
+        Some(ArtifactEvent::Started { .. })
+    ));
+    assert!(reader.next_event().is_err());
+}

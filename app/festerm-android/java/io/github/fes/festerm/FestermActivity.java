@@ -19,6 +19,10 @@ import android.provider.OpenableColumns;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.speech.*;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
+import android.system.StructStat;
 import android.text.*;
 import android.util.AtomicFile;
 import android.view.*;
@@ -111,6 +115,34 @@ public final class FestermActivity extends NativeActivity {
     public String privateDirectory() throws IOException {
         File directory = new File(getFilesDir(), "festerm");
         if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Storage unavailable");
+        return directory.getCanonicalPath();
+    }
+
+    public RecordingEncoder newRecordingEncoder(String path, int width, int height) throws IOException {
+        return new RecordingEncoder(path, width, height);
+    }
+
+    public String recordingDirectory() throws IOException {
+        File root = getNoBackupFilesDir();
+        if (root == null || !root.isDirectory()) throw new IOException("Recording storage unavailable");
+        File directory = new File(root, "terminal-recordings");
+        if (!directory.isDirectory() && !directory.mkdir() && !directory.isDirectory()) {
+            throw new IOException("Recording storage unavailable");
+        }
+        try {
+            StructStat metadata = Os.lstat(directory.getPath());
+            if (!OsConstants.S_ISDIR(metadata.st_mode) || metadata.st_uid != android.os.Process.myUid()) {
+                throw new IOException("Recording storage is not a private directory");
+            }
+            Os.chmod(directory.getPath(), OsConstants.S_IRWXU);
+            metadata = Os.lstat(directory.getPath());
+            if (!OsConstants.S_ISDIR(metadata.st_mode) || metadata.st_uid != android.os.Process.myUid()
+                || (metadata.st_mode & 0777) != 0700) {
+                throw new IOException("Recording storage is not a private directory");
+            }
+        } catch (ErrnoException error) {
+            throw new IOException("Could not protect recording storage", error);
+        }
         return directory.getCanonicalPath();
     }
 

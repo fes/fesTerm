@@ -1,5 +1,12 @@
 //! The exported Android activity entry point; application policy stays shared.
 
+#[cfg(all(
+    target_os = "android",
+    feature = "native-recording-validation",
+    debug_assertions
+))]
+mod recording_validation;
+
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: winit::platform::android::activity::AndroidApp) {

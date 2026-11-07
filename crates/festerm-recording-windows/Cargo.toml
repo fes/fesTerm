@@ -1,0 +1,23 @@
+[package]
+name = "festerm-recording-windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Windows Media Foundation MP4 encoder boundary for fesTerm."
+publish = false
+
+[target.'cfg(target_os = "windows")'.dependencies]
+libloading = "0.8"
+windows = { version = "=0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.clippy]
+all = "warn"

@@ -16,10 +16,10 @@ use crate::{
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
     parser::{
         ColorQuery, CsiParameters, DcsAction, OscAction, ParameterSeparator, Parser,
-        StringTerminator, TerminalOp,
+        RecordingParser, StringTerminator, TerminalOp,
     },
     replies::{queue_transport_bytes, QueuePushResult},
-    screen::{ColumnSpan, Rectangle, Screen},
+    screen::{deserialize_recording_vec, ColumnSpan, RecordingScreen, Rectangle, Screen},
     unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
     Cursor, Dimensions, TRANSPORT_QUEUE_HIGH_WATERMARK,
 };
@@ -323,6 +323,39 @@ struct BufferState {
     ansi_saved: Option<SavedAnsiCursor>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct RecordingBufferState {
+    screen: RecordingScreen,
+    cursor: Cursor,
+    scroll_top: usize,
+    scroll_bottom: usize,
+    scroll_left: usize,
+    scroll_right: usize,
+    pending_wrap: bool,
+    grapheme_anchor: Option<Cursor>,
+    dec_saved: Option<SavedDecState>,
+    ansi_saved: Option<SavedAnsiCursor>,
+}
+
+impl RecordingBufferState {
+    fn into_buffer(self) -> Result<BufferState, String> {
+        let buffer = BufferState {
+            screen: self.screen.into_screen()?,
+            cursor: self.cursor,
+            scroll_top: self.scroll_top,
+            scroll_bottom: self.scroll_bottom,
+            scroll_left: self.scroll_left,
+            scroll_right: self.scroll_right,
+            pending_wrap: self.pending_wrap,
+            grapheme_anchor: self.grapheme_anchor,
+            dec_saved: self.dec_saved,
+            ansi_saved: self.ansi_saved,
+        };
+        buffer.validate_recovery_state()?;
+        Ok(buffer)
+    }
+}
+
 impl BufferState {
     fn new(dimensions: Dimensions) -> Result<Self, TerminalError> {
         Ok(Self {
@@ -337,6 +370,21 @@ impl BufferState {
             dec_saved: None,
             ansi_saved: None,
         })
+    }
+
+    fn recording_copy(&self) -> RecordingBufferState {
+        RecordingBufferState {
+            screen: self.screen.recording_copy(),
+            cursor: self.cursor,
+            scroll_top: self.scroll_top,
+            scroll_bottom: self.scroll_bottom,
+            scroll_left: self.scroll_left,
+            scroll_right: self.scroll_right,
+            pending_wrap: self.pending_wrap,
+            grapheme_anchor: self.grapheme_anchor,
+            dec_saved: self.dec_saved,
+            ansi_saved: self.ansi_saved,
+        }
     }
 
     fn resized(&self, dimensions: Dimensions) -> Result<Self, TerminalError> {
@@ -710,6 +758,110 @@ pub struct Terminal {
     reply_queue_overflowed: bool,
     input_queue_overflowed: bool,
     scrollback: Scrollback,
+}
+
+/// A recording-owned projection of one visible terminal screen.
+///
+/// It contains no retained history, transport queues, titles or link targets.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RecordingCheckpoint {
+    parser: RecordingParser,
+    visible: RecordingBufferState,
+    active_screen: ActiveScreen,
+    screen_generation: u64,
+    modes: TerminalModes,
+    cursor_style: CursorStyle,
+    cursor_style_set: bool,
+    #[serde(deserialize_with = "deserialize_recording_vec")]
+    tab_stops: Vec<bool>,
+    current_attributes: Attributes,
+    current_protected: bool,
+    protection: ProtectionSource,
+    current_foreground: Color,
+    current_background: Color,
+    color_scheme: ColorScheme,
+}
+
+/// Maximum estimated allocation for one recording checkpoint.
+pub const MAX_RECORDING_CHECKPOINT_BYTES: usize = 8 * 1024 * 1024;
+
+impl RecordingCheckpoint {
+    /// Returns the conservative allocation charge used by the recording queue.
+    pub fn estimated_allocation_bytes(&self) -> Result<usize, TerminalError> {
+        validate_recording_size(
+            self.visible.screen.allocation_bound(),
+            self.tab_stops.len(),
+            MAX_RECORDING_CHECKPOINT_BYTES,
+        )
+    }
+
+    /// Validates and restores a checkpoint into an isolated terminal with no history.
+    pub fn into_terminal(self) -> Result<Terminal, TerminalError> {
+        self.estimated_allocation_bytes()?;
+        if self.modes.alternate_screen() != (self.active_screen == ActiveScreen::Alternate) {
+            return Err(TerminalError::invalid_snapshot(
+                "recording screen and alternate-screen mode disagree",
+            ));
+        }
+        let visible = self
+            .visible
+            .into_buffer()
+            .map_err(TerminalError::invalid_snapshot)?;
+        let dimensions = visible.screen.dimensions();
+        let parser = self.parser.into_parser();
+        let (primary, alternate) = match self.active_screen {
+            ActiveScreen::Primary => (visible, None),
+            ActiveScreen::Alternate => (BufferState::new(dimensions)?, Some(visible)),
+        };
+        let mut terminal = Terminal {
+            parser,
+            utf8: Utf8Decoder::new(),
+            primary,
+            alternate,
+            active_screen: self.active_screen,
+            screen_generation: self.screen_generation,
+            modes: self.modes,
+            cursor_style: self.cursor_style,
+            last_graphic_character: None,
+            cursor_style_set: self.cursor_style_set,
+            tab_stops: self.tab_stops,
+            current_attributes: self.current_attributes,
+            current_protected: self.current_protected,
+            protection: self.protection,
+            current_foreground: self.current_foreground,
+            current_background: self.current_background,
+            title: String::new(),
+            current_hyperlink: None,
+            current_hyperlink_cells_remaining: 0,
+            color_scheme: self.color_scheme,
+            reply_queue: Vec::new(),
+            input_queue: Vec::new(),
+            reply_queue_overflowed: false,
+            input_queue_overflowed: false,
+            scrollback: Scrollback::new(0),
+        };
+        terminal.validate_recovery_snapshot()?;
+        terminal.restore_recovery_snapshot_allocations();
+        Ok(terminal)
+    }
+}
+
+fn validate_recording_size(
+    screen_bytes: Option<usize>,
+    tab_stops: usize,
+    maximum_bytes: usize,
+) -> Result<usize, TerminalError> {
+    let maximum_bytes = maximum_bytes.min(MAX_RECORDING_CHECKPOINT_BYTES);
+    let estimated_bytes = screen_bytes
+        .and_then(|bytes| bytes.checked_add(tab_stops))
+        .and_then(|bytes| bytes.checked_add(4096))
+        .ok_or_else(|| TerminalError::invalid_snapshot("recording checkpoint size overflow"))?;
+    if estimated_bytes > maximum_bytes {
+        return Err(TerminalError::invalid_snapshot(format!(
+            "recording checkpoint exceeds the {maximum_bytes}-byte limit"
+        )));
+    }
+    Ok(estimated_bytes)
 }
 
 // Frozen schema-2 field order: generation is synthesized, not consumed from the wire.
@@ -1198,6 +1350,55 @@ impl Terminal {
             alternate.screen.mark_all_dirty();
         }
         clone
+    }
+
+    /// Captures only the visible screen and bounded state needed for recording.
+    ///
+    /// A partial protocol or UTF-8 sequence must finish before capture starts:
+    /// its buffered bytes may contain pre-consent output not visible on screen.
+    /// The last character used by `REP` is omitted because it can have scrolled
+    /// offscreen; recording must checkpoint again after applying `REP`.
+    pub fn recording_checkpoint(
+        &self,
+        maximum_bytes: usize,
+    ) -> Result<RecordingCheckpoint, TerminalError> {
+        let parser = self.parser.recording_copy().ok_or_else(|| {
+            TerminalError::invalid_snapshot(
+                "terminal has an incomplete control sequence; retry recording",
+            )
+        })?;
+        if self.utf8.pending() {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal has an incomplete UTF-8 sequence; retry recording",
+            ));
+        }
+        validate_recording_size(
+            self.active_buffer().screen.recording_allocation_bound(),
+            self.tab_stops.len(),
+            maximum_bytes,
+        )?;
+        let checkpoint = RecordingCheckpoint {
+            parser,
+            visible: self.active_buffer().recording_copy(),
+            active_screen: self.active_screen,
+            screen_generation: self.screen_generation,
+            modes: self.modes,
+            cursor_style: self.cursor_style,
+            cursor_style_set: self.cursor_style_set,
+            tab_stops: self.tab_stops.clone(),
+            current_attributes: self.current_attributes,
+            current_protected: self.current_protected,
+            protection: self.protection,
+            current_foreground: self.current_foreground,
+            current_background: self.current_background,
+            color_scheme: self.color_scheme,
+        };
+        validate_recording_size(
+            checkpoint.visible.screen.allocation_bound(),
+            checkpoint.tab_stops.len(),
+            maximum_bytes,
+        )?;
+        Ok(checkpoint)
     }
 
     /// Queues an atomic input write for the session transport.

@@ -458,6 +458,23 @@ pub struct Parser {
     shifted_to_g1: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct RecordingParser {
+    g0_charset: Charset,
+    g1_charset: Charset,
+    shifted_to_g1: bool,
+}
+
+impl RecordingParser {
+    pub(crate) fn into_parser(self) -> Parser {
+        let mut parser = Parser::new();
+        parser.g0_charset = self.g0_charset;
+        parser.g1_charset = self.g1_charset;
+        parser.shifted_to_g1 = self.shifted_to_g1;
+        parser
+    }
+}
+
 /// Translates a 7-bit printable byte through the DEC Special Graphics
 /// (VT100 line-drawing) charset, as designated by `ESC ( 0` / `ESC ) 0`.
 /// Bytes outside `0x60..=0x7e` are not remapped by this charset and pass
@@ -532,6 +549,29 @@ impl Parser {
 
     pub(crate) fn is_ground(&self) -> bool {
         self.state == ParserState::Ground
+    }
+
+    pub(crate) fn recording_copy(&self) -> Option<RecordingParser> {
+        if !self.is_ground() {
+            return None;
+        }
+        Some(RecordingParser {
+            g0_charset: self.g0_charset,
+            g1_charset: self.g1_charset,
+            shifted_to_g1: self.shifted_to_g1,
+        })
+    }
+
+    /// Advances a recording-only observer without retaining completed string
+    /// actions, returning whether the output applied a repeat-character command.
+    pub fn observe_recording_output(&mut self, bytes: &[u8]) -> bool {
+        let mut repeated = false;
+        for &byte in bytes {
+            repeated |= matches!(self.advance(byte), TerminalOp::RepeatPrecedingCharacter(_));
+            self.take_osc_action();
+            self.take_dcs_action();
+        }
+        repeated
     }
 
     /// Advances one byte and returns at most one fully typed operation.

@@ -6,6 +6,8 @@ use jni_legacy::{
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
+    fmt,
+    path::Path,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -253,6 +255,157 @@ pub fn storage_directory() -> Result<PathBuf, &'static str> {
         let text: String = env.get_string(&JString::from(value))?.into();
         Ok(PathBuf::from(text))
     })
+}
+
+/// App-private recording storage excluded from Android Auto Backup.
+pub fn recording_directory() -> Result<PathBuf, &'static str> {
+    bridge()?.call(|env, activity| {
+        let value = env
+            .call_method(activity, "recordingDirectory", "()Ljava/lang/String;", &[])?
+            .l()?;
+        let text: String = env.get_string(&JString::from(value))?.into();
+        Ok(PathBuf::from(text))
+    })
+}
+
+/// A content-free failure from Android's MediaCodec/MediaMuxer boundary.
+#[derive(Debug)]
+pub struct VideoError(String);
+
+impl VideoError {
+    fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl fmt::Display for VideoError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for VideoError {}
+
+/// One silent H.264 MP4 in caller-owned private staging.
+pub struct AndroidEncoder {
+    bridge: Arc<Bridge>,
+    native: GlobalRef,
+    bytes_per_frame: usize,
+    finished: bool,
+    failed: bool,
+}
+
+impl AndroidEncoder {
+    pub fn new(path: &Path, width: u32, height: u32) -> Result<Self, VideoError> {
+        if width < 16
+            || height < 16
+            || width > 3840
+            || height > 2160
+            || !width.is_multiple_of(2)
+            || !height.is_multiple_of(2)
+        {
+            return Err(VideoError::new(
+                "video dimensions must be even and between 16x16 and 3840x2160",
+            ));
+        }
+        let path = path
+            .to_str()
+            .ok_or_else(|| VideoError::new("the private video path is not valid UTF-8"))?;
+        let bridge = bridge().map_err(VideoError::new)?;
+        let native = bridge
+            .call(|env, activity| {
+                let path = env.new_string(path)?;
+                let object = env
+                    .call_method(
+                        activity,
+                        "newRecordingEncoder",
+                        "(Ljava/lang/String;II)Lio/github/fes/festerm/RecordingEncoder;",
+                        &[
+                            JValue::Object(path.as_ref()),
+                            JValue::Int(width as i32),
+                            JValue::Int(height as i32),
+                        ],
+                    )?
+                    .l()?;
+                env.new_global_ref(object)
+            })
+            .map_err(|error| {
+                VideoError::new(format!(
+                    "could not start Android H.264/MP4 encoding ({error}); check that the device supports this frame size and private storage is available"
+                ))
+            })?;
+        Ok(Self {
+            bridge,
+            native,
+            bytes_per_frame: width as usize * height as usize * 4,
+            finished: false,
+            failed: false,
+        })
+    }
+
+    pub fn append(&mut self, rgba: &[u8]) -> Result<(), VideoError> {
+        if self.finished || self.failed {
+            return Err(VideoError::new("the video encoder is no longer active"));
+        }
+        if rgba.len() != self.bytes_per_frame {
+            return Err(VideoError::new("the video frame has the wrong dimensions"));
+        }
+        if rgba.chunks_exact(4).any(|pixel| pixel[3] != 255) {
+            return Err(VideoError::new("video frames must be opaque RGBA"));
+        }
+        let result = self.bridge.call(|env, _| {
+            // Java reads the borrowed buffer synchronously and never retains or
+            // writes it; the frame remains alive until the call returns.
+            let frame =
+                unsafe { env.new_direct_byte_buffer(rgba.as_ptr().cast_mut(), rgba.len()) }?;
+            env.call_method(
+                self.native.as_obj(),
+                "append",
+                "(Ljava/nio/ByteBuffer;)V",
+                &[JValue::Object(frame.as_ref())],
+            )?;
+            Ok(())
+        });
+        if let Err(error) = result {
+            self.failed = true;
+            return Err(VideoError::new(format!(
+                "Android H.264 encoding failed ({error})"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn finish(&mut self) -> Result<(), VideoError> {
+        if self.finished || self.failed {
+            return Err(VideoError::new("the video encoder is no longer active"));
+        }
+        let result = self.bridge.call(|env, _| {
+            env.call_method(self.native.as_obj(), "finish", "()V", &[])?;
+            Ok(())
+        });
+        if let Err(error) = result {
+            self.failed = true;
+            return Err(VideoError::new(format!(
+                "Android MP4 finalization failed ({error})"
+            )));
+        }
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for AndroidEncoder {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        if let Err(error) = self.bridge.call(|env, _| {
+            env.call_method(self.native.as_obj(), "close", "()V", &[])?;
+            Ok(())
+        }) {
+            eprintln!("fesTerm: could not release the Android video encoder: {error}");
+        }
+    }
 }
 
 pub fn keyboard_mode(mode: i32) -> Result<(), &'static str> {
