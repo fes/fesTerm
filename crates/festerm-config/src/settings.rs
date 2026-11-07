@@ -22,6 +22,15 @@ pub struct InterfaceSettings {
     status_bar_visible: bool,
     #[serde(default = "default_show_session_details")]
     show_session_details: bool,
+    /// Whether desktop panes expose their compact handle on hover.
+    #[serde(
+        default = "default_show_pane_handles",
+        skip_serializing_if = "is_false"
+    )]
+    show_pane_handles: bool,
+    /// Whether desktop pane focus uses the stronger contrast treatment.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pane_high_contrast: bool,
     /// Whether closing a live session asks for confirmation before
     /// terminating or disconnecting it. On by default to preserve the safe
     /// close behavior; users who prefer one-click closing may opt out.
@@ -183,6 +192,8 @@ impl InterfaceSettings {
         chip_layout: ChipLayoutPreference::SingleRowScroll,
         status_bar_visible: true,
         show_session_details: false,
+        show_pane_handles: false,
+        pane_high_contrast: false,
         confirm_session_close: false,
         prefer_powershell: true,
         customize_local_shell: false,
@@ -234,6 +245,16 @@ impl InterfaceSettings {
     ) -> Self {
         self.terminal_font = terminal_font;
         self.terminal_ligatures = terminal_ligatures;
+        self
+    }
+
+    pub const fn with_show_pane_handles(mut self, show: bool) -> Self {
+        self.show_pane_handles = show;
+        self
+    }
+
+    pub const fn with_pane_high_contrast(mut self, enabled: bool) -> Self {
+        self.pane_high_contrast = enabled;
         self
     }
 
@@ -368,6 +389,14 @@ impl InterfaceSettings {
 
     pub const fn show_session_details(&self) -> bool {
         self.show_session_details
+    }
+
+    pub const fn show_pane_handles(&self) -> bool {
+        self.show_pane_handles
+    }
+
+    pub const fn pane_high_contrast(&self) -> bool {
+        self.pane_high_contrast
     }
 
     pub const fn confirm_session_close(&self) -> bool {
@@ -752,6 +781,10 @@ fn default_show_session_details() -> bool {
     InterfaceSettings::DEFAULT.show_session_details
 }
 
+fn default_show_pane_handles() -> bool {
+    InterfaceSettings::DEFAULT.show_pane_handles
+}
+
 fn default_automatic_update_checks() -> bool {
     InterfaceSettings::DEFAULT.automatic_update_checks
 }
@@ -817,6 +850,50 @@ pub enum ChipLayoutPreference {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_handles_default_off_for_new_and_existing_configuration() {
+        assert!(!crate::Configuration::empty()
+            .interface_settings()
+            .show_pane_handles());
+        let settings: InterfaceSettings = toml::from_str("show_session_details = true").unwrap();
+        assert!(!settings.show_pane_handles());
+        assert!(!InterfaceSettings::default().show_pane_handles());
+        assert!(!toml::to_string(&settings)
+            .unwrap()
+            .contains("show_pane_handles"));
+    }
+
+    #[test]
+    fn pane_handles_explicit_true_round_trips() {
+        let settings = InterfaceSettings::DEFAULT.with_show_pane_handles(true);
+        let written = toml::to_string(&settings).unwrap();
+        assert!(written.contains("show_pane_handles = true"));
+        let read: InterfaceSettings = toml::from_str(&written).unwrap();
+        assert_eq!(read, settings);
+        assert!(read.show_pane_handles());
+    }
+
+    #[test]
+    fn pane_high_contrast_is_opt_in_and_round_trips() {
+        assert!(!crate::Configuration::empty()
+            .interface_settings()
+            .pane_high_contrast());
+        let existing: InterfaceSettings = toml::from_str("show_session_details = true").unwrap();
+        assert!(!existing.pane_high_contrast());
+        assert!(!toml::to_string(&InterfaceSettings::DEFAULT)
+            .unwrap()
+            .contains("pane_high_contrast"));
+        let enabled = InterfaceSettings::DEFAULT.with_pane_high_contrast(true);
+        let written = toml::to_string(&enabled).unwrap();
+        assert!(written.contains("pane_high_contrast = true"));
+        assert_eq!(
+            toml::from_str::<InterfaceSettings>(&written).unwrap(),
+            enabled
+        );
+        let disabled: InterfaceSettings = toml::from_str("pane_high_contrast = false").unwrap();
+        assert!(!disabled.pane_high_contrast());
+    }
 
     #[test]
     fn empty_interface_settings_document_deserializes_to_default() {

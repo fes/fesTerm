@@ -51,6 +51,7 @@ pub enum ConfigErrorKind {
     WorkspacePresentWhenDisabled,
     WorkspaceMissingWhenEnabled,
     EmptyWorkspace,
+    InvalidWorkspacePaneLayout,
     InvalidWorkspaceTabIdentifier,
     DuplicateWorkspaceTabIdentifier,
     InvalidWorkspaceProfileReference,
@@ -165,6 +166,9 @@ impl fmt::Display for ConfigError {
             ),
             ConfigErrorKind::EmptyWorkspace => {
                 formatter.write_str("workspace metadata must contain at least one tab")
+            }
+            ConfigErrorKind::InvalidWorkspacePaneLayout => {
+                formatter.write_str("workspace pane groups must contain unique valid views belonging to their window")
             }
             ConfigErrorKind::InvalidWorkspaceTabIdentifier => formatter.write_str(
                 "workspace tab IDs must be a non-empty, control-character-free string of at most 200 characters with no leading or trailing whitespace",

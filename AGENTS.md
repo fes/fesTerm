@@ -153,6 +153,13 @@ complete policy.
 
 ## Working Conventions
 
+- For interactive macOS testing, use `python3 scripts/run-macos-development.py`
+  rather than a raw Cargo executable or the installed application. It creates a
+  distinct branded development bundle with fresh data/runtime directories.
+  Keep its tracked supervisor alive during user testing; verify owned frontend
+  and helper shutdown when testing ends. Never change OS permissions, suppress
+  warnings, or stop installed/unrelated processes to make a check pass. See
+  [the development handoff](docs/development-handoff.md#macos-interactive-development).
 - Keep the active milestone status accurate in `ROADMAP.md` and the concise
   status in `README.md`.
 - Review open GitHub issues when starting and releasing a milestone. Fix

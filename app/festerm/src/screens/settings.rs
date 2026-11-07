@@ -30,6 +30,8 @@ pub(crate) struct SettingsViewModel {
     pub chip_layout: ChipLayout,
     pub status_bar_visible: bool,
     pub show_session_details: bool,
+    pub show_pane_handles: bool,
+    pub pane_high_contrast: bool,
     pub confirm_session_close: bool,
     pub prefer_powershell: bool,
     pub extend_dev_tunnel_lifetime: bool,
@@ -86,6 +88,8 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
         chip_layout,
         status_bar_visible,
         show_session_details,
+        show_pane_handles,
+        pane_high_contrast,
         confirm_session_close,
         prefer_powershell,
         extend_dev_tunnel_lifetime,
@@ -203,6 +207,25 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         ui.heading("Settings");
                         ui.add_space(2.0);
 
+                        settings_card(ui, "Panes", |ui| {
+                            if settings_toggle_row(
+                                ui,
+                                "Show pane handles on hover",
+                                "Reveal a compact handle near each pane's top edge. \
+                                 Rearrange panes always shows handles, even when this is off.",
+                                show_pane_handles,
+                            ) {
+                                command = Some(AppCommand::TogglePaneHandles);
+                            }
+                            if settings_toggle_row(
+                                ui,
+                                "High-contrast pane focus",
+                                "Use a stronger outline around the focused pane.",
+                                pane_high_contrast,
+                            ) {
+                                command = Some(AppCommand::TogglePaneHighContrast);
+                            }
+                        });
                         settings_card(ui, "Interface", |ui| {
                             if settings_segmented_row(
                                 ui,
@@ -2374,6 +2397,8 @@ mod tests {
                             chip_layout: ChipLayout::Wrap,
                             status_bar_visible: true,
                             show_session_details: true,
+                            show_pane_handles: false,
+                            pane_high_contrast: false,
                             confirm_session_close: true,
                             prefer_powershell: true,
                             extend_dev_tunnel_lifetime: false,
@@ -4464,6 +4489,8 @@ mod tests {
                             chip_layout: ChipLayout::Wrap,
                             status_bar_visible: true,
                             show_session_details: true,
+                            show_pane_handles: false,
+                            pane_high_contrast: false,
                             confirm_session_close: true,
                             prefer_powershell: true,
                             extend_dev_tunnel_lifetime: false,

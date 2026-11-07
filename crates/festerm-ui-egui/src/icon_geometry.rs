@@ -560,6 +560,14 @@ fn icon_geometry(icon: Icon) -> &'static [Primitive] {
             Primitive::FilledCircle { x: 12.0, y: 12.0, radius: 1.25 },
             Primitive::FilledCircle { x: 18.0, y: 12.0, radius: 1.25 },
         ],
+        Icon::PaneHandle => &[
+            Primitive::Circle { x: 8.0, y: 6.0, radius: 1.25 },
+            Primitive::Circle { x: 16.0, y: 6.0, radius: 1.25 },
+            Primitive::Circle { x: 8.0, y: 12.0, radius: 1.25 },
+            Primitive::Circle { x: 16.0, y: 12.0, radius: 1.25 },
+            Primitive::Circle { x: 8.0, y: 18.0, radius: 1.25 },
+            Primitive::Circle { x: 16.0, y: 18.0, radius: 1.25 },
+        ],
         Icon::ParentDirectory => &[
             Primitive::Polyline(&[
                 (5.0, 15.0),

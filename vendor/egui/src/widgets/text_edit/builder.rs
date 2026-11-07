@@ -83,6 +83,7 @@ pub struct TextEdit<'t> {
     margin: Margin,
     multiline: bool,
     interactive: bool,
+    preserve_selection_on_focus_loss: bool,
     desired_width: Option<f32>,
     desired_height_rows: usize,
     event_filter: EventFilter,
@@ -138,6 +139,7 @@ impl<'t> TextEdit<'t> {
             margin: Margin::symmetric(4, 2),
             multiline: true,
             interactive: true,
+            preserve_selection_on_focus_loss: false,
             desired_width: None,
             desired_height_rows: 4,
             event_filter: EventFilter {
@@ -314,6 +316,14 @@ impl<'t> TextEdit<'t> {
         self
     }
 
+    /// Retain ordinary selection when this editor loses focus. IME composition
+    /// and password or sensitive fields still discard their selection.
+    #[inline]
+    pub fn preserve_selection_on_focus_loss(mut self, preserve: bool) -> Self {
+        self.preserve_selection_on_focus_loss = preserve;
+        self
+    }
+
     /// Customize the [`Frame`] around the text edit.
     #[inline]
     pub fn frame(mut self, frame: Frame) -> Self {
@@ -463,6 +473,7 @@ impl TextEdit<'_> {
             margin,
             multiline,
             interactive,
+            preserve_selection_on_focus_loss,
             desired_width,
             desired_height_rows,
             event_filter,
@@ -559,8 +570,12 @@ impl TextEdit<'_> {
 
         let owns_ime_events = ui.memory(|mem| mem.owns_ime_events(id));
         if !owns_ime_events {
+            let preserve_selection = preserve_selection_on_focus_loss
+                && !password
+                && !sensitive
+                && state.cursor_purpose.is_selection();
             state.cursor_purpose = TextEditCursorPurpose::Selection;
-            if !state.cursor.is_empty() {
+            if !preserve_selection && !state.cursor.is_empty() {
                 state.cursor.set_char_range(
                     state
                         .cursor
@@ -1096,6 +1111,55 @@ mod password_mask_tests {
         assert!(!masked.contains("first"));
         assert!(!masked.contains("second"));
         assert!(!masked.contains("third"));
+    }
+}
+
+#[cfg(test)]
+mod focus_selection_tests {
+    use super::*;
+
+    #[test]
+    fn focus_loss_preserves_only_opted_in_non_sensitive_selection() {
+        for (preserve, composition, password, sensitive, expected) in [
+            (false, false, false, false, 0),
+            (true, false, false, false, 3),
+            (true, true, false, false, 0),
+            (true, false, true, false, 0),
+            (true, false, false, true, 0),
+        ] {
+            let context = Context::default();
+            let id = Id::new("editor-selection");
+            let mut state = TextEditState::default();
+            state
+                .cursor
+                .set_char_range(Some(CCursorRange::two(CCursor::new(1), CCursor::new(4))));
+            if composition {
+                state.cursor_purpose = TextEditCursorPurpose::ImeComposition { active_range: None };
+            }
+            state.store(&context, id);
+            let mut text = "sample".to_owned();
+            let mut output = context.run_ui(crate::RawInput::default(), |ui| {
+                TextEdit::multiline(&mut text)
+                    .id(id)
+                    .password(password)
+                    .sensitive(sensitive)
+                    .preserve_selection_on_focus_loss(preserve)
+                    .show(ui);
+            });
+            output.textures_delta.clear();
+            let state = TextEditState::load(&context, id).unwrap();
+            let selection = state.cursor.char_range().unwrap();
+            assert_eq!(
+                selection
+                    .primary
+                    .index
+                    .0
+                    .abs_diff(selection.secondary.index.0),
+                expected,
+                "preserve={preserve}, composition={composition}, password={password}, sensitive={sensitive}"
+            );
+            assert!(state.cursor_purpose.is_selection());
+        }
     }
 }
 

@@ -8,6 +8,7 @@ mod app;
 mod application;
 mod automation;
 mod configuration_startup;
+mod desktop_panes;
 mod diagnostics;
 mod direct2d;
 #[cfg(all(test, windows))]

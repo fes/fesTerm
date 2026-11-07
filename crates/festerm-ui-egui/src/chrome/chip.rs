@@ -56,7 +56,7 @@ pub(super) fn natural_chip_width(ui: &Ui, chip: &ChipViewModel, show_close: bool
             .x
     });
     let mut primary_line = LEFT_INSET + primary_width;
-    if !matches!(chip.status, ChipStatus::Neutral) {
+    if !chip.panes.is_empty() || !matches!(chip.status, ChipStatus::Neutral) {
         primary_line += DOT_DIAMETER + DOT_LABEL_SPACING;
     }
 
@@ -183,9 +183,18 @@ pub(super) fn show_chip(
         // A document chip says its state in its name, so a screen reader is
         // told what the shape is showing rather than only that a file is open
         // (ADR 0034 §8).
-        let name = match chip.status.document_state() {
-            Some(state) => format!("{}, {state} chip", chip.primary),
-            None => format!("{} chip", chip.primary),
+        let name = if !chip.panes.is_empty() {
+            format!(
+                "{} group, {} panes, {} unread",
+                chip.primary,
+                chip.panes.len(),
+                chip.panes.iter().filter(|pane| pane.unread).count()
+            )
+        } else {
+            match chip.status.document_state() {
+                Some(state) => format!("{}, {state} chip", chip.primary),
+                None => format!("{} chip", chip.primary),
+            }
         };
         WidgetInfo::labeled(WidgetType::Other, true, name)
     });
@@ -279,7 +288,21 @@ pub(super) fn show_chip(
         .open_memory(secondary_clicked.then_some(egui::SetOpenCommand::Bool(true)))
         .show(|ui| {
             super::controls::style_context_menu(ui);
-            if chip.renamable && ui.button("Rename session").clicked() {
+            if (chip.movable_across_windows || chip.renamable)
+                && ui.button("Pane layout…").clicked()
+            {
+                actions.push(ChromeAction::PaneLayout(chip.id));
+                ui.close();
+            }
+            if chip.renamable
+                && ui
+                    .button(if chip.panes.is_empty() {
+                        "Rename session"
+                    } else {
+                        "Rename group"
+                    })
+                    .clicked()
+            {
                 ui.data_mut(|data| {
                     data.insert_temp(rename_buffer_id(chip.id), chip.primary.clone())
                 });
@@ -341,7 +364,109 @@ pub(super) fn show_chip(
         }
     }
 
+    if !chip.panes.is_empty() {
+        let popup_id = chip_id.with("pane-details");
+        if Popup::is_id_open(&ctx, popup_id) {
+            Popup::from_response(&bg_response)
+                .id(popup_id)
+                .open_memory(None)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| show_pane_details(ui, chip, actions));
+        } else if bg_response.has_focus() {
+            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape)) {
+                if let Some(pane) = chip.panes.iter().find(|pane| pane.focused) {
+                    actions.push(ChromeAction::FocusPane(pane.id));
+                }
+            } else {
+                egui::Tooltip::for_widget(&bg_response)
+                    .show(|ui| show_pane_details(ui, chip, actions));
+            }
+        } else {
+            egui::Tooltip::for_enabled(&bg_response)
+                .show(|ui| show_pane_details(ui, chip, actions));
+        }
+    }
     bg_rect
+}
+
+fn show_pane_details(ui: &mut Ui, chip: &ChipViewModel, actions: &mut Vec<ChromeAction>) {
+    ui.set_min_width(320.0);
+    ui.label(RichText::new(&chip.primary).strong());
+    for (index, pane) in chip.panes.iter().enumerate() {
+        let name = format!(
+            "{}: {} · {} · {}{}{}",
+            index + 1,
+            pane.label,
+            pane.surface,
+            pane.status.accessible_label(),
+            if pane.focused { " · focused" } else { "" },
+            if pane.unread { " · unread" } else { "" }
+        );
+        let response = ui.allocate_response(egui::vec2(ui.available_width(), 30.0), Sense::click());
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &name));
+        if response.hovered() || response.has_focus() {
+            ui.painter()
+                .rect_filled(response.rect, 3.0, theme::SURFACE_TAB_ACTIVE);
+        }
+        let mut left = response.rect.shrink2(egui::vec2(6.0, 0.0));
+        left.max.x = response.rect.left() + response.rect.width() * 0.38;
+        let mut right = response.rect.shrink2(egui::vec2(6.0, 0.0));
+        right.min.x = left.max.x + 8.0;
+        for (rect, label, color) in [
+            (
+                left,
+                format!("{}: {}", index + 1, pane.label),
+                theme::TEXT_PRIMARY,
+            ),
+            (
+                right,
+                format!(
+                    "{} · {}{}{}",
+                    pane.surface,
+                    pane.status.accessible_label(),
+                    if pane.focused { " · focused" } else { "" },
+                    if pane.unread { " · unread" } else { "" }
+                ),
+                if pane.unread {
+                    theme::STATUS_STARTING
+                } else {
+                    theme::TEXT_SECONDARY
+                },
+            ),
+        ] {
+            ui.scope_builder(
+                UiBuilder::new()
+                    .max_rect(rect)
+                    .layout(Layout::left_to_right(Align::Center)),
+                |ui| {
+                    ui.set_clip_rect(ui.clip_rect().intersect(rect));
+                    ui.add(
+                        egui::Label::new(RichText::new(label).color(color).size(12.0)).truncate(),
+                    );
+                },
+            );
+        }
+        if response.clicked() {
+            actions.push(ChromeAction::FocusPane(pane.id));
+            ui.close();
+        }
+        if index + 1 < chip.panes.len() {
+            ui.separator();
+        }
+    }
+    ui.separator();
+    ui.horizontal(|ui| {
+        if ui.small_button("Pin details").clicked() {
+            Popup::open_id(
+                ui.ctx(),
+                super::chip_widget_id(chip.id).with("pane-details"),
+            );
+        }
+        if ui.small_button("Pane layout…").clicked() {
+            actions.push(ChromeAction::PaneLayout(chip.id));
+            ui.close();
+        }
+    });
 }
 
 /// Paints one chip's content (status dot, label/rename field, secondary
@@ -512,6 +637,56 @@ fn paint_chip_primary_contents(
     let show_number = quick_switch_overlay_active && chip.quick_switch_number.is_some();
     if show_number {
         paint_quick_switch_number(ui, chip.quick_switch_number.expect("checked above"));
+    } else if !chip.panes.is_empty() {
+        let height = ui.text_style_height(&egui::TextStyle::Body);
+        let (rect, response) = ui.allocate_exact_size(vec2(14.0, height), Sense::click());
+        let icon = Rect::from_center_size(rect.center(), vec2(12.0, 12.0));
+        for pane in &chip.panes {
+            let bounds = Rect::from_min_max(
+                icon.min + pane.bounds.min.to_vec2() * 0.012,
+                icon.min + pane.bounds.max.to_vec2() * 0.012,
+            )
+            .shrink(0.5);
+            ui.painter().rect_filled(
+                bounds,
+                0.0,
+                if pane.unread {
+                    theme::STATUS_STARTING
+                } else {
+                    CHIP_INACTIVE_FILL
+                },
+            );
+            ui.painter().rect_stroke(
+                bounds,
+                0.0,
+                Stroke::new(
+                    0.75,
+                    if pane.focused {
+                        CHIP_ACTIVE_OUTLINE
+                    } else {
+                        CHIP_SECONDARY_TEXT
+                    },
+                ),
+                egui::StrokeKind::Inside,
+            );
+        }
+        response.widget_info(|| {
+            WidgetInfo::labeled(
+                WidgetType::Button,
+                true,
+                format!(
+                    "Pane details, {} panes, {} unread",
+                    chip.panes.len(),
+                    chip.panes.iter().filter(|pane| pane.unread).count()
+                ),
+            )
+        });
+        if response.clicked() {
+            Popup::toggle_id(
+                ui.ctx(),
+                super::chip_widget_id(chip.id).with("pane-details"),
+            );
+        }
     } else if !matches!(chip.status, ChipStatus::Neutral) {
         paint_status_dot(ui, chip.status, chip.has_unread_output);
     }

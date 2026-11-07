@@ -1,5 +1,20 @@
 # GUI Exploration and Test Action Graph
 
+## Desktop pane composition (ADR 0078, issue #65)
+
+| Edge | From | Action | To / recovery |
+| --- | --- | --- | --- |
+| `PANE-01` | Two live views | Combine left/right/above/below | Same live views in one bounded group; stale/capacity/minimum refusal changes neither source |
+| `PANE-02` | Group | Focus a member by keyboard or primary, secondary, or middle press | One input owner; prior text/paste stays with its original owner; the targeted pane handles the gesture and its context menu, even over a sibling; unread acknowledged for that member only |
+| `PANE-03` | Group | Resize/equalize/zoom | One physical-pixel dividers; terminal padding and minimum content cells preserved; underlying tree survives constrained windows |
+| `PANE-04` | Group | Separate member/all | Same live views in independent chips; the remaining group and unrelated chips keep their relative positions; grouped cross-window transfer refuses |
+| `PANE-05` | Pane/group | Close focused view or preflight Close group | Existing guarded single-view close; group plan binds all view/session/document identities before any teardown; cancellation preserves every member |
+| `PANE-06` | Saved workspace | Capture/restore all windows | Metadata-only groups over ordinary fresh launches; no session/grant replay |
+| `PANE-07` | Group chip | Details/rename | Short independent group label; member focus/unread remains explicit |
+| `PANE-08` | Group / Settings | Hover handle or enter/finish Rearrange panes; toggle hover/high-contrast focus | Handles overlay unchanged padded viewports; hover defaults off for new/missing legacy settings and preserves saved choices; explicit mode works with hover disabled; no surface input while manipulating; Escape/focus loss retires transient ownership |
+| `PANE-09` | Moving exact live view | Choose target then Above/Left/Swap/Right/Below or Detach | Revision-checked atomic move/exchange/detach; cross-group/standalone exchange preserves identities and four-member capacity; stale/outside drops do not mutate sources |
+| `PANE-10` | Moving exact live view | Drop/click Close | Gesture retires before shared guarded close; trailing release/drag-end cannot dismiss confirmation; cancellation preserves layout and exact live source |
+
 Local background save completion is enqueued while write admission is held,
 then admission is released before the app is notified. The regression
 `background_completed_save_wakes_after_releasing_write_admission` proves that
@@ -524,6 +539,12 @@ stateDiagram-v2
 
 ## A. Root, Launcher, and surface lifecycle
 
+For interactive macOS evidence, use the
+[branded development launcher](development-handoff.md#macos-interactive-development).
+Its optional `--check` proves native development identity/window readiness and
+Launcher-only Quit, not the complete `ROOT-01` visual oracle, live-session
+teardown, or signed-package acceptance (`NP-03`/`CP-09` remain broader).
+
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `ROOT-01` | `K0 → K1` | Start with no workspace. | Exactly one ordinary Launcher; no wizard, promotion, telemetry prompt, disabled future transport, or blank root. Local is initially highlighted; footer footprint is stable and empty. | `ROOT-02` or quit to `K0`. | H,V,N,U |
@@ -747,7 +768,7 @@ Serial session creation is implemented. Linux virtual-loopback automation now co
 | `CHIP-03` | `K3 → Rename` | Double-click session primary label; also open Rename via inactive-chip context menu. | Double-click activates target first; inline field does not resize chip; current user name selected; no maximize/terminal gesture; Copy/Cut/Paste remain widget-owned without terminal delivery; intentional global bindings retain precedence. | `CHIP-04` or `CHIP-05`. | H,N |
 | `CHIP-04` | Rename → `K3` | Enter or valid focus loss. | Sanitized nonempty bounded explicit logical-view alias commits; empty/sanitized-empty edits cancel, while nonempty validation rejection shows a bounded content-free app notice and changes/saves nothing. Reusable profile, provider attachment identity, dynamic title and terminal content/input unchanged; other current views remain independent even when they share a native backend; target terminal regains focus. | `CHIP-12` or rename back to fixture name. | P,H,N |
 | `CHIP-05` | Rename → `K3` | Escape, whitespace-only commit, or invalid focus loss. | Prior name restored; Escape never reaches terminal; inactive target is not spuriously activated by context-menu route. | Reenter Rename. | H,N |
-| `CHIP-06` | `K3 → K3` | Drag reorder and Move left/right menu actions. | Same session objects/state; live sibling preview; edge-inapplicable menu items absent; background title drag not triggered. | Apply inverse move/reorder to canonical A,B,Launcher,Settings order. | P,H,N,U |
+| `CHIP-06` | `K3 → K3` | Drag reorder and Move left/right menu actions. | Same session objects/state; groups move as units and remain contiguous after pane swaps; live sibling preview; edge-inapplicable menu items absent; background title drag not triggered. | Apply inverse move/reorder to canonical A,B,Launcher,Settings order. | P,H,N,U |
 | `CHIP-07` | ManySessions → same | Progressively narrow a single row; wheel/trackpad row; activate first/middle/last hidden chip. | Focused chip retains natural width while inactive chips water-fill toward a 72 px floor; Search then Inspector collapse before scrolling; scrolling begins only below the exact focused-plus-minimum budget, retains compact widths, keeps New Session fixed, and reveals the active chip fully. Bottom outlines and vertical baselines remain intact at both chip densities; trailing controls never overlap; palette—not overflow—is the searchable switcher. | Close extras; return `K3`. | H,V,N,U |
 | `CHIP-08` | `K3 → Wrapped` | Settings: Wrap to multiple rows. | Complete 34 px rows resize terminal honestly; ordering unchanged; no overlay/fragmentation. | Select Single scrolling row. | P,H,V,N,U |
 | `CHIP-09` | Long/duplicate identities | Supply long, path-like, duplicate labels/titles. | Reduction order is secondary removal, width reduction, stable ellipsis; full sanitized accessible name/hover; no numeric suffix invention. | Restore fixture names. | H,V,N,accessibility |
@@ -775,10 +796,10 @@ Serial session creation is implemented. Linux virtual-loopback automation now co
 
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
-| `PAL-01` | Any surface → Palette | Open via icon, shortcut, native menu. | Overlay does not resize terminal; width/margins responsive; search focused; applicable implemented commands only. | Escape through `PAL-04`. | H,V,N |
-| `PAL-02` | `Palette → TargetSurface` | Empty query, navigate Sessions then Commands; select each route. | Sessions in chip order with active identified; command routes converge on semantic policy; no Copy/Paste/native controls/trust/auth duplication. Selecting any terminal-scoped command (e.g. Reset Terminal, Clear Terminal) closes the palette and restores terminal focus/input exactly like `PAL-04`, leaving no stray selection or swallowed next keystroke. | Return with inverse action or checkpoint rebuild. | P,H,N |
-| `PAL-03` | Palette → filtered | Search stable identity, dynamic secondary, command names, no-match. | Stable identity ranks first; empty groups disappear; result list scrolls while field/context remain; query never persists/logs. | Clear query. | P,H,V |
-| `PAL-04` | Palette → prior | Escape or select no action. | Query clears; exact viable prior focus restored; no terminal Escape byte. | Reopen `PAL-01`. | H,N |
+| `PAL-01` | Any surface → Palette | Open via icon, shortcut, native menu. | Larger root-bounded overlay does not resize terminal; search focused; category sidebar or narrow dropdown; both sidebar and results scroll in short windows; applicable implemented commands only. | Escape through `PAL-04`. | H,V,N |
+| `PAL-02` | `Palette → TargetSurface` | Navigate Open views, Sessions & connections, Terminal, Panes, Files & documents, Application; select each route. | Views retain chip order with active identified; quick-switch labels match presented chip positions and the focused group member actually activated. Existing opaque command routes converge on semantic policy; trust/auth remain on owned surfaces. Standalone views omit group-only pane commands; Rearrange/Finish follows mode. Category Enter cannot execute a result; Up/Down/Page Up/Down scroll the selected result into view. Terminal-scoped commands restore terminal focus/input like `PAL-04`, without a stray selection or swallowed next keystroke. | Return with inverse action or checkpoint rebuild. | P,H,N |
+| `PAL-03` | Palette → filtered | Select a category; search words across stable identity, dynamic secondary, command and category names; no-match. | Category scope is explicit; empty groups disappear; result list scrolls while field/context remain. Selection follows stable ID across reorder/removal; a removed result cannot retarget Enter. Query never persists/logs. | Clear query or choose All categories. | P,H,V |
+| `PAL-04` | Palette → prior | Escape or select no action. | Category popup Escape closes only the popup first; palette dismissal clears query/category and restores exact viable prior focus; no terminal Escape byte. | Reopen `PAL-01`. | H,N |
 | `PAL-05` | `K5/K6 → Editor/Save As` | From the command palette, choose **Open Terminal History in Editor** or **Save Terminal History As…**. | The active terminal tab is the only snapshot source. The action freezes retained primary history plus the currently applicable visible screen into an independent plain-text snapshot with no ANSI/control-sequence export and no PTY input. **Open…** activates a new untitled dirty editor tab; **Save As…** opens that same snapshot and immediately continues into the ordinary Save As sheet; later plain **Save** / `:w` / `:wq` on that untitled snapshot also route through Save As until a destination exists. If the retained text exceeds the editor's declared bounds, the action refuses without opening a document and says which limit stopped it. Exited/disconnected retained history works the same way. | Close the snapshot editor, or complete/cancel Save As. | P,H,N |
 | `PAL-06` | `K5/K6 → same` | Choose **Redraw Terminal** from the palette; no new shortcut. | Typed active-terminal presentation is rebuilt in full, including unchanged native retained regions. Core state, selection, history offset and zoom stay unchanged; no input, resize or recovery control is sent. Ordinary cache reuse resumes afterwards; Ctrl+L/Ctrl+R still reach the TUI. Non-terminal surfaces omit the command. | Continue in the same terminal. | P,H,N |
 | `KEY-01` | `K2/K4` | Exercise all documented shortcuts, plain Ctrl+T/C/W, and Page Up/Down in terminal-program fixtures. | Reserved physical modifiers act once; plain terminal chords reach PTY; Page presses/repeats emit exact VT sequences in primary/alternate and cursor modes, releases emit none, Shift remains local history and other modified Page chords stay unsupported; foreground/read-only suppression and bounded input admission remain intact; same-batch actions retain event order and current target; IME suppression ends on owner loss; menu/palette routes exist. | Exit fixture TUI and rebuild `K2`. | P,H,N |
@@ -1013,7 +1034,9 @@ the current Wayland backend publishes only text.
 the owning viewport scrolls while the original anchor remains selected, in
 either direction, and stops at its bounds or when the drag ends. Source and
 editor selections offer plain **Copy** on right-click; Preview retains its rich
-menu. Other viewports do not acquire the drag.
+menu. Other viewports do not acquire the drag. An unfocused editor keeps its
+selection for Copy when another pane is focused, but drops that selection if
+its shared text changes.
 
 `MD-04`, `MD-05`, `EDIT-09` and `EDIT-18` share ADR 0048's static SVG and
 native HTML anchor projection. Source/Find retain exact document bytes.

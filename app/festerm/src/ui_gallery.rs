@@ -83,7 +83,105 @@ struct Scenario {
 }
 fn scenarios() -> Vec<Scenario> {
     let mut scenarios = vec![
+        Scenario {
+            id:"desktop-panes-four",
+            section:"desktop-panes",
+            title:"Four live desktop panes",
+            caption:"Production composition with controlled fake SSH surfaces; full-opacity siblings, focused inset and shared one-physical-pixel dividers. Not native qualification.",
+            capture:|| crate::app::panes_tests::pane_gallery_frame(false),
+        },
+        Scenario {
+            id:"desktop-panes-details",
+            section:"desktop-panes",
+            title:"Pinned pane details and unread member",
+            caption:"The production group chip opens themed, keyboard-accessible member details with an unread build pane; no real sessions, secrets or user configuration.",
+            capture:|| crate::app::panes_tests::pane_gallery_frame(true),
+        },
+        Scenario {
+            id:"desktop-panes-single",
+            section:"desktop-panes",
+            title:"Single terminal without a split",
+            caption:"The production single-view terminal retains its normal content padding; controlled synthetic SSH session.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Single),
+        },
+        Scenario {
+            id:"desktop-panes-equal",
+            section:"desktop-panes",
+            title:"Equal 1:1 split",
+            caption:"Two live terminal panes at equal width with the same content padding and one physical-pixel divider.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Equal),
+        },
+        Scenario {
+            id:"desktop-panes-unequal",
+            section:"desktop-panes",
+            title:"Unequal 2:1 width split",
+            caption:"Two live terminal panes with a 2:1 width ratio; padding is reserved inside each pane.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Unequal),
+        },
+        Scenario {
+            id:"desktop-panes-three",
+            section:"desktop-panes",
+            title:"Two panes beside one",
+            caption:"Three live terminal panes: two stacked on the left beside one full-height pane on the right.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Three),
+        },
+        Scenario {
+            id:"desktop-panes-layout",
+            section:"desktop-panes",
+            title:"Pane configuration dialog",
+            caption:"Compact production Pane Layout: selectable members, visual presets, rearrange/equalize/zoom, grouped actions and a separate guarded-close footer.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Layout),
+        },
+        Scenario {
+            id:"desktop-panes-hover-equal",
+            section:"desktop-panes",
+            title:"Equal-split hover details",
+            caption:"Actual pointer-hover member details, not the pinned popup, over an equal split with an unread member.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HoverEqual),
+        },
+        Scenario {
+            id:"desktop-panes-hover-unequal",
+            section:"desktop-panes",
+            title:"Unequal-split hover details",
+            caption:"Actual pointer-hover member details over a 2:1 width split with an unread member.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HoverUnequal),
+        },
+        Scenario {
+            id:"desktop-panes-hover-three",
+            section:"desktop-panes",
+            title:"Three-pane hover details",
+            caption:"Actual pointer-hover member details over two panes beside one, with focused and unread members distinguished.",
+            capture:|| crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HoverThree),
+        },
         // -- new-session ------------------------------------------------
+        Scenario {
+            id:"desktop-panes-handles",
+            section:"desktop-panes",
+            title:"Transient hover handle",
+            caption:"A real top-edge pointer hover reveals only the compact grip/name/menu; terminal geometry and padding are unchanged.",
+            capture:||crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Handles),
+        },
+        Scenario {
+            id:"desktop-panes-rearrange",
+            section:"desktop-panes",
+            title:"Explicit pane rearrangement",
+            caption:"Window-local manipulation mode shows all handles and Done without allocating a title row.",
+            capture:||crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Rearrange),
+        },
+        Scenario {
+            id:"desktop-panes-moving",
+            section:"desktop-panes",
+            title:"Source-specific destination picker",
+            caption:"Click-grip reveals an accessible target chooser, directional/Swap cross and separated source Detach/Close actions.",
+            capture:||crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::Moving),
+        },
+        Scenario {
+            id:"desktop-panes-handle-menu",
+            section:"desktop-panes",
+            title:"Compact pane action menu",
+            caption:"The hovered member menu keeps Move/Detach and guarded Close distinct from neighboring panes.",
+            capture:||crate::app::panes_tests::pane_gallery_scene_frame(crate::app::panes_tests::PaneGalleryScene::HandleMenu),
+        },
         Scenario {
             id: "launcher-populated",
             section: "new-session",
@@ -504,9 +602,9 @@ fn scenarios() -> Vec<Scenario> {
         Scenario {
             id: "palette-command-menu",
             section: "surface-probes",
-            title: "Production command palette over Launcher",
+            title: "Grouped production command palette",
             caption: "The real application-owned command list and its initial search focus, \
-                      over synthetic Launcher metadata. This gallery-only fixture is not \
+                      over a synthetic SSH terminal with all applicable categories. This gallery-only fixture is not \
                       included in the bounded performance batch.",
             capture: capture_palette_normal,
         },
@@ -563,7 +661,13 @@ fn selected_gallery_scenarios(selection: Option<&str>) -> Result<Vec<Scenario>, 
 
 #[test]
 fn surface_gallery_selection_preserves_default_and_limits_curated_captures() {
-    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 125);
+    assert_eq!(selected_gallery_scenarios(None).unwrap().len(), 139);
+    assert_eq!(
+        selected_gallery_scenarios(Some("desktop-panes-four,desktop-panes-details"))
+            .unwrap()
+            .len(),
+        2
+    );
     let curated = selected_gallery_scenarios(Some("style-review")).unwrap();
     assert_eq!(curated.len(), 23);
     assert_eq!(
@@ -749,7 +853,7 @@ fn surface_catalog_matches_reconciled_matrix_without_dropping_controls() {
     let gallery = scenarios();
     let ids: std::collections::BTreeSet<_> = gallery.iter().map(|scene| scene.id).collect();
     assert_eq!(ids.len(), gallery.len());
-    assert_eq!(gallery.len(), 48 + 52 + 2 + 23);
+    assert_eq!(gallery.len(), 50 + 52 + 10 + 27);
     let gallery_only: std::collections::BTreeSet<_> = matrix["gallery_only_states"]
         .as_array()
         .unwrap()
@@ -1298,6 +1402,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         chip_layout: ChipLayout::Wrap,
         status_bar_visible: true,
         show_session_details: true,
+        show_pane_handles: false,
+        pane_high_contrast: false,
         confirm_session_close: true,
         prefer_powershell: true,
         extend_dev_tunnel_lifetime: false,
@@ -2946,6 +3052,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
     vec![
         ChipViewModel {
             id: ChipId(1),
+            panes: Vec::new(),
             primary: "New Session".to_owned(),
             secondary: None,
             status: ChipStatus::Neutral,
@@ -2958,6 +3065,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
         },
         ChipViewModel {
             id: ChipId(2),
+            panes: Vec::new(),
             primary: "Staging web-1".to_owned(),
             secondary: Some("web-1.staging.example.com".to_owned()),
             status: ChipStatus::Connected,
@@ -2970,6 +3078,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
         },
         ChipViewModel {
             id: ChipId(3),
+            panes: Vec::new(),
             primary: "deploy-watch".to_owned(),
             secondary: Some("tmux session".to_owned()),
             status: ChipStatus::Connected,
@@ -2982,6 +3091,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
         },
         ChipViewModel {
             id: ChipId(4),
+            panes: Vec::new(),
             primary: "Bastion host".to_owned(),
             secondary: Some("Reconnecting…".to_owned()),
             status: ChipStatus::Reconnecting,
@@ -2994,6 +3104,7 @@ fn synthetic_chip_view_models() -> Vec<ChipViewModel> {
         },
         ChipViewModel {
             id: ChipId(5),
+            panes: Vec::new(),
             primary: "NOTES.md".to_owned(),
             secondary: Some("Markdown".to_owned()),
             status: ChipStatus::Neutral,
@@ -5122,7 +5233,7 @@ pub(crate) fn surface_probe_provenance() -> serde_json::Value {
 }
 
 fn palette_gallery_harness(narrow: bool) -> Harness<'static, crate::app::FesTermApp> {
-    let mut app = crate::app::FesTermApp::for_test_with_configuration(synthetic_configuration());
+    let (mut app, _, _) = crate::app::FesTermApp::for_test_with_fake_ssh_session([]);
     app.open_palette_for_gallery(&egui::Context::default());
     let size = if narrow {
         egui::vec2(360.0, 516.0)

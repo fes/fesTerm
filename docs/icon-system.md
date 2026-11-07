@@ -59,6 +59,7 @@ The intended first enum surface is:
 | `Search` | `search.svg` | Literal search/filter operation |
 | `CommandPalette` | `command-palette.svg` | Searchable application command surface |
 | `Overflow` | `overflow.svg` | Compact overflow menu |
+| `PaneHandle` | `pane-handle.svg` | Grip for moving an existing pane without restarting it |
 | `Close`, `Minimize`, `Maximize`, `Restore` | matching filename | Window/chip control |
 | `Reconnect`, `Disconnect` | matching filename | Connection action or state |
 | `AuthRequired` | `auth-required.svg` | Authentication or credential input required |

@@ -39,6 +39,8 @@ const TERMINAL_ZOOM_STEP: f32 = 1.0;
 const CONTEXT_MENU_MAX_WIDTH: f32 = 320.0;
 const CONTEXT_TARGET_TOOLTIP_MAX_WIDTH: f32 = 480.0;
 const SMART_SELECTION_FEEDBACK_DURATION: Duration = Duration::from_secs(4);
+const TERMINAL_CONTENT_MARGIN: egui::Margin =
+    egui::Margin::same(crate::chrome::CHROME_SIDE_INSET as i8);
 
 /// Application-owned terminal capabilities that affect local viewport
 /// commands without exposing a session backend to the presentation crate.
@@ -944,20 +946,7 @@ impl TerminalView {
         let painter = ui.painter().clone();
         let background = painter.add(egui::Shape::Noop);
         let panel = egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    // Share the chrome row's own inset
-                    // (`crate::chrome::CHROME_SIDE_INSET`, equal on every
-                    // side) so the terminal viewport reserves the same
-                    // handful of border pixels on all four edges that
-                    // Windows Terminal/Terminus/the mockup do, instead of
-                    // running flush to the window edges on top/bottom while
-                    // only the sides were inset.
-                    .inner_margin(egui::Margin::symmetric(
-                        crate::chrome::CHROME_SIDE_INSET as i8,
-                        crate::chrome::CHROME_SIDE_INSET as i8,
-                    )),
-            )
+            .frame(egui::Frame::default().inner_margin(TERMINAL_CONTENT_MARGIN))
             .show(ui, |ui| {
                 self.show_in_ui_with_options(ui, terminal, sink, options);
             });
@@ -975,6 +964,63 @@ impl TerminalView {
         sink: &mut impl EncodedInputSink,
     ) {
         self.show_in_ui_with_options(ui, terminal, sink, TerminalViewOptions::default());
+    }
+
+    pub fn show_in_pane_with_options(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut Terminal,
+        sink: &mut impl EncodedInputSink,
+        options: TerminalViewOptions,
+    ) {
+        let painter = ui.painter().clone();
+        let background = painter.add(egui::Shape::Noop);
+        let frame = egui::Frame::default()
+            .inner_margin(TERMINAL_CONTENT_MARGIN)
+            .show(ui, |ui| {
+                self.show_in_ui_with_options(ui, terminal, sink, options);
+            });
+        painter.set(
+            background,
+            crate::background::background_shape(&painter, frame.response.rect),
+        );
+    }
+
+    /// Paint and resize a non-focused pane without reading or consuming the
+    /// focused surface's events. Modal blackout alone intentionally consumes
+    /// events, so it cannot be used directly for a sibling pane.
+    pub fn show_passive_in_ui(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut Terminal,
+        sink: &mut impl EncodedInputSink,
+    ) {
+        let events = ui.input_mut(|input| std::mem::take(&mut input.events));
+        ui.scope(|ui| {
+            ui.visuals_mut().disabled_alpha = 1.0;
+            ui.disable();
+            self.show_in_pane_with_options(
+                ui,
+                terminal,
+                sink,
+                TerminalViewOptions {
+                    terminal_input_enabled: false,
+                    keyboard_input_enabled: false,
+                    paste_available: false,
+                    ..Default::default()
+                },
+            );
+        });
+        ui.input_mut(|input| input.events = events);
+    }
+
+    pub fn minimum_pane_size(&self, ui: &Ui) -> egui::Vec2 {
+        let glyph = ui.painter().layout_no_wrap(
+            "M".to_owned(),
+            self.fonts.regular_font_id(),
+            DEFAULT_FOREGROUND,
+        );
+        egui::vec2(glyph.size().x * 52.0, glyph.size().y * 12.0) + TERMINAL_CONTENT_MARGIN.sum()
     }
 
     pub fn show_in_ui_with_options(
@@ -5679,6 +5725,41 @@ mod tests {
                 assert!(harness.state().sink.0.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn pane_minimum_preserves_terminal_cell_budget_after_padding() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    if crate::terminal_font_installation(ui.ctx()).is_none() {
+                        crate::install_terminal_fonts(ui.ctx());
+                        ui.ctx().request_repaint();
+                        return;
+                    }
+                    let minimum = state.view.minimum_pane_size(ui);
+                    let rect = Rect::from_min_size(ui.next_widget_position(), minimum);
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                        state.view.show_in_pane_with_options(
+                            ui,
+                            &mut state.terminal,
+                            &mut state.sink,
+                            TerminalViewOptions::default(),
+                        );
+                    });
+                },
+                HeadlessViewState::new(),
+            );
+        harness.run();
+        let dimensions = harness
+            .state()
+            .view
+            .diagnostics()
+            .calculated_dimensions
+            .unwrap();
+        assert_eq!(dimensions.columns(), 52);
+        assert_eq!(dimensions.rows(), 12);
     }
 
     #[test]

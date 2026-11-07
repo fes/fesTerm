@@ -152,6 +152,10 @@ evidence remains validation pending under
   store package.
 - Adding MSIX, MSI, RPM, Homebrew, or store distribution later is additive as
   long as GitHub Releases and the package-ownership rule remain authoritative.
+- Local interactive macOS testing uses the same packager and canonical payload
+  in an ad-hoc-signed, distinctly identified development bundle with updates
+  disabled. This is not a distribution channel or release qualification; see
+  [the development handoff](../development-handoff.md#macos-interactive-development).
 
 ## Validation impact
 
@@ -183,4 +187,9 @@ evidence remains validation pending under
   signature rejection on each platform. Windows evidence must include
   SmartScreen and the ConPTY sidecar; macOS evidence must include Gatekeeper
   and notarization.
+  `scripts/run-macos-development.py --check` separately verifies an isolated
+  development bundle's native identity, branded icon, visible Launcher window,
+  normal Quit and absence of surviving owned helpers. Its script unit tests
+  cover environment isolation, identity guards and lifecycle failures; neither
+  check replaces signed-package or live-session evidence.
 - **Coverage superseded:** None.

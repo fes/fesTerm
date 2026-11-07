@@ -652,6 +652,13 @@ if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
 Write-OptionalResult "`nsuite=android-native status=skipped reason=use-posix-runner-with-selected-emulator"
 
 if ($IsMacOS) {
+    Invoke-NativeCommand { python3 "$PSScriptRoot/run-macos-development.py" --check }
+    if ($LASTEXITCODE -eq 0) {
+        Write-OptionalResult "`nsuite=macos-development-launch status=pass"
+    } else {
+        Write-OptionalResult "`nsuite=macos-development-launch status=fail"
+        $status = 'fail'
+    }
     Invoke-NativeCommand { python3 "$PSScriptRoot/smoke-ios-simulator.py" --run --build }
     if ($LASTEXITCODE -eq 0) {
         Write-OptionalResult "`nsuite=ios-simulator status=pass"
@@ -660,6 +667,7 @@ if ($IsMacOS) {
         $status = 'fail'
     }
 } else {
+    Write-OptionalResult "`nsuite=macos-development-launch status=skipped reason=macos-required"
     Write-OptionalResult "`nsuite=ios-simulator status=skipped reason=macos-required"
 }
 

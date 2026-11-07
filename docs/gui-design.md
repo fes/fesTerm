@@ -207,30 +207,85 @@ launcher instead of showing a blank window or exiting unexpectedly. A possible
 future close-window-with-last-session preference remains a usability-testing
 question, not current configurable behavior.
 
-### One viewport per chip
+### Desktop pane groups
 
-One chip owns one session lifecycle and one terminal viewport. Split panes are
-not planned: fesTerm adds no split controls, pane keybindings, workspace pane
-trees, or speculative architecture for them. Terminal-native multiplexers are
-the appropriate composition mechanism unless a compelling unmet need later
-justifies reopening this product decision.
+Issue #65 and ADR 0078 reopen the former one-viewport-per-chip restriction.
+A chip can present a short independently named group of at most four live
+views. A bounded binary tree owns presentation only; existing window-owned
+tabs retain their terminal/controller or document-view state. Combine and
+Separate must not restart any session, transfer or document.
 
-This prohibition applies to splitting terminal viewports. A graphical file
-transfer tool may use a local/remote split inside its own non-terminal
-application surface without introducing terminal pane trees or changing a
-session's one-viewport ownership. The proposed SFTP interaction model and
-reviewable workflow mockups are specified in
-[`sftp-ui-design.md`](sftp-ui-design.md).
+Single/group chips remain in the integrated upper chrome. Adjacent panes
+share one physical-pixel rule with no gutter; focused panes have a subtle
+inset edge. Each terminal retains the single-view eight-point content padding
+on all four sides, inside its pane; this does not add a divider gutter.
+Resize uses the inset viewport and real cell metrics (52 columns by 12 rows
+minimum, excluding padding).
+A narrow window temporarily presents the focused member without changing the
+saved tree. Focus acknowledges only that member's unread output.
+
+Current implementation: **Pane Layout…** in a chip context menu or command
+palette moves an existing live view left/right/above/below the focused pane.
+The compact dialog offers selectable members, visual two-column/two-row/2×2
+presets, equalize/zoom, explicit **Rearrange panes**, grouped member/keyboard
+sizing actions, an existing-view destination picker and a separate destructive
+footer. Details use compact name/status columns and one quiet horizontal footer.
+Hover reveals a grip/name/menu handle in the top edge of each pane, not a
+permanent header row. The reveal strip does not capture terminal clicks outside
+the actual handle. **Settings > Panes** defaults hover handles off (also for
+legacy settings without a saved choice); an explicit saved choice is preserved.
+Disabling hover never disables explicit rearrangement.
+The pane-only high-contrast setting strengthens the focused inset edge without
+changing global control borders. Handles do not change the eight-point inset,
+cell dimensions, status geometry or physical-pixel dividers.
+
+Grip dragging or click-grip then click-target exposes Above/Left/Swap/Right/Below
+and an accessible target picker, plus separated **Moving: source**, Detach and
+guarded Close actions. A temporary owned chip-strip target permits detach when
+space exists without occupying native title-bar dragging or window controls.
+Standalone chips can enter this picker; whole-group chip drags are distinct.
+Atomic center exchanges support standalone↔group and group↔group, including full
+groups, without restarting controllers or changing shared document ownership.
+Stale/outside drops leave presentation unchanged. Handle/menu/movement input is
+window-local and quarantined from both terminal and document bodies; Escape
+first cancels movement/menu, then exits rearrangement. Focus loss cancels it.
+Close retires the gesture before opening the existing exact-source confirmation,
+so drag-end cannot dismiss it and Cancel never changes layout.
+Group labels can be renamed independently of sessions. Group chips retain
+their runtime identity when the first member moves or closes. Their geometry
+icon exposes unread members, hover/keyboard details and a pinned member list.
+When a group remains, detaching a member places its independent chip after it;
+separating a whole group replaces its chip in place without moving other chips.
+Chip reordering keeps every group's members together, including after a pane
+swap. A pane's context menu retains that pane's ownership even when the menu
+extends over a sibling.
+Pinned details and layout/close dialogs cannot send keystrokes to terminals.
+Primary, secondary and middle presses focus the pane they target before that
+pane handles the gesture, including its context menu or middle-click paste.
+Pane clicks respect queued input order: earlier text/paste stays with its
+original owner. Native IME composition is fenced by view, input epoch, session
+generation and viewport. Retired compositions cannot commit into another
+owner; if the native adapter never sends the old commit, the next composed
+attempt is discarded with a re-entry notice. Ordinary input/shortcuts remain
+usable; native IME timing remains PN-01 evidence.
+Close group preflights every member and session generation before teardown,
+including collectively final dirty document views across all windows. Cancel
+closes nothing; every discard requires explicit approval. Save-all failures or
+documents requiring Save As leave every view open.
+The original session registry and application-shared documents are unchanged.
+Workspace capture preserves groups for existing restorable session surfaces;
+untitled/unsaved editors remain excluded by the existing document policy.
+The full target additionally requires named recipes, richer recovery placeholders
+and independently opt-in capture/startup restore; these stages and native
+qualification must not be represented as complete by the initial slice.
 
 ### Window ownership
 
-Initial session management is single-window. One fesTerm process/window owns
-its chip collection. There is no detach-to-window, cross-window chip drag,
-live-session migration, secondary inspector, or speculative IPC/window-manager
-layer. Separate ordinary fesTerm instances may exist when the platform permits,
-but they own independent sessions. A future workspace may open fresh restored
-sessions in a new window; that is launch/restoration, never migration of a live
-PTY, SSH, or serial lifecycle.
+ADRs 0032/0033 govern implemented single-process multi-window ownership,
+live single-view transfer and all-window restoration. Single-view transfers
+continue moving the same runtime object. Grouped transfers refuse without
+mutation and ask the user to Separate first; new cross-window pane composition
+is deferred. Separate fesTerm processes remain independent.
 
 ## Session Launcher
 
@@ -1852,7 +1907,7 @@ profiles follow the same order.
 Settings is a singleton application surface represented by its own chip;
 invoking Settings again focuses it. It currently uses compact cards rather
 than a category sidebar, uniformly widthed and shown in this order:
-**Interface**, **Scrolling**, **Terminal typography**, **Quick switch**,
+**Panes**, **Interface**, **Scrolling**, **Terminal typography**, **Quick switch**,
 **SFTP**, and **Keyboard bindings**. Keyboard bindings sits last because its
 searchable action table is the tallest card. Only implemented controls
 appear.
@@ -2465,7 +2520,7 @@ as those APIs mature.
 | New-session control | `34 × 34`, matching the chip height and `6` corner radius |
 | Trailing chrome controls | Currently `22 × 22` control boxes with `8` spacing. Windows/Linux show six; macOS shows the three application controls and reserves `76` on the left for native traffic lights. The current boxes are a known `2` px shortfall from the icon system's `24 × 24` minimum target and should not become the asset-layer default |
 | Status bar | `24` high with a `1` top rule, `20` leading inset, `8` between items, `7` px status dot, and `1` px downward optical adjustment |
-| Command palette | `420 × 320` when space permits, centered `48` below the top edge with at least `16` side margins when narrow; results scroll region capped at `220` high |
+| Command palette | Up to `840 × 600` content, centered `48` below the top edge (`16` in short roots), bounded by viewport/frame/title margins; category sidebar at `620` content width, dropdown below; remaining-height scrolling results |
 | Connection overlay | Bottom-center, `24` above the bottom anchor, maximum content width `360`, with `6` before its actions |
 | Launcher/settings surfaces | `24` top padding and `12` between primary groups; the current SSH text fields request `220` width |
 
@@ -2747,17 +2802,25 @@ is an application command, and a second nearly identical search surface would
 add a shortcut and mental model without adding capability.
 
 The palette opens with `Ctrl+Shift+P` or `CommandPalette`, overlays without
-resizing the terminal, and uses a 420 px width when space permits with at least
-16 px window margins when narrow. Search matches command names, stable session
-identities, and secondary chip content. Session rows reuse type icon, state
-badge, stable identity, and secondary precedence. Empty result groups disappear.
+resizing the terminal. The owner-approved larger layout supersedes the compact
+mockup above: up to 840 × 600 logical points of content, bounded by the root
+viewport and frame/title margins. At 620 points of content width, a category
+sidebar appears; narrower windows use a category dropdown. Search, category
+context and a keyboard footer stay visible while results scroll. The sidebar
+also scrolls in short windows. Search matches all whitespace-delimited words
+across command names, stable identities, secondary text and category names.
+It is scoped to the selected category; **All categories** is the opening default.
 
 Selecting a session activates it; selecting a command routes through the same
 application command path as every other invocation surface. Only implemented,
 applicable commands and actually bound platform shortcuts appear. Up/Down
-moves selection, Enter activates, and Escape closes and restores previous
-focus. Query text clears on close and is never logged or persisted. Results
-scroll while the search field and group context remain visible.
+moves selection, Page Up/Down moves by a result page, and keyboard selection
+scrolls into view. Active IME composition retains navigation, Enter and Escape
+ownership without palette refocusing. Enter activates the selected command, not a focused category
+control. Escape closes an open category popup first, then the palette, restoring
+previous focus. Query/category state clears on close and is never logged or
+persisted. Selection follows opaque item identity across catalog changes; a
+removed selection cannot silently become a different command.
 
 Current implementation bounds the palette against the full root viewport,
 including frame margins and short-window title/search space. Long row text
@@ -2771,11 +2834,15 @@ order, layout, focus and commands are unchanged. Textured/translucent candidates
 and unsupported roots, transforms, viewports, adapters or formats retain
 ordinary painting; overlays still decline final-terminal copying/retention.
 
-With an empty query, the palette presents a **Sessions** group in chip order,
-with the active surface visibly identified, followed by an applicable
-**Commands** group. Session matching and ranking prefer stable identity over
-secondary terminal-provided content; dynamic text may help find a session but
-never outranks its stable name. Empty groups disappear.
+Results are grouped as **Open views**, **Sessions & connections**, **Terminal**,
+**Panes**, **Files & documents**, and **Application**, retaining catalog order
+within each group. Open views retain chip order and stable identity as their
+primary label; dynamic text is secondary searchable context. Quick-switch
+labels use the presented chip position and appear only on a group's currently
+focused member, matching the view the shortcut activates. Empty groups
+disappear. Standalone composable views offer **Pane Layout…**, not inapplicable
+group focus/resize/separate operations. **Rearrange panes** and **Finish
+rearranging panes** are mutually exclusive according to the current mode.
 
 The initial command inventory, subject to actual implementation and active-
 surface applicability, is:
@@ -2791,10 +2858,11 @@ surface applicability, is:
 
 Labels name the resulting action rather than exposing implementation language
 such as “toggle.” An unfinished command—including Focus mode before it exists—
-is absent. Chip-layout and status-bar controls remain in Settings. Copy, Paste,
-next/previous session, native window controls, host-trust decisions, and
-authentication responses do not clutter the palette; their existing direct or
-owned surfaces remain authoritative. The implementation uses **New Session…**
+is absent. Chip-layout and status-bar controls remain in Settings. Existing
+Copy/Paste commands remain under **Terminal**, and **New Window** under
+**Application**; grouping changes no command authority. Host-trust decisions
+and authentication responses remain on their owned surfaces.
+The implementation uses **New Session…**
 and keeps chip-layout controls in Settings rather than duplicating them in the
 palette.
 

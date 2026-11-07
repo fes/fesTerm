@@ -65,6 +65,16 @@ responder-chain Copy/Paste operate on terminal selection/focus without leaking
 an intercepted keystroke into the PTY. About, Help, Find, and application zoom
 commands remain absent until those capabilities have native menu entries.
 
+The grouped desktop palette (PAL-01 through PAL-04) has headless checks for
+wide/sidebar and narrow/dropdown scope, category-versus-result keyboard
+ownership, layered popup dismissal, short-root fit, stable selection across
+catalog changes, multiword search and page scrolling. Application tests keep
+existing dispatch/input boundaries, synthesized IME ownership and contextual
+pane commands covered.
+`palette-command-menu` and `palette-command-menu-narrow` capture the production
+widget over a synthetic SSH terminal. Native IME, screen-reader delivery and
+usability remain manual evidence, not claims made by these captures.
+
 ## Tier 1: Core Fixtures and Parser Tests
 
 The existing repository-owned fixture format is the primary regression format.

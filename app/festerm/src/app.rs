@@ -1,5 +1,8 @@
 mod automation;
 mod confirmations;
+mod panes;
+#[cfg(test)]
+pub(crate) mod panes_tests;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "profile_hosting.rs"]
 mod profile_hosting;
@@ -338,12 +341,10 @@ impl ApplicationShortcut {
     }
 }
 
-/// The first several open tabs, in tab-bar order, get a quick-switch
+/// The first several presentation chips, in tab-bar order, get a quick-switch
 /// keystroke (`Cmd+1`..`Cmd+9` on macOS, `Ctrl+1`..`Ctrl+9` elsewhere) that
-/// jumps directly to that tab, mirroring the browser/terminal convention of
-/// numbering only the first nine positions. Shared by `palette_items` (to
-/// display the keystroke) and `handle_shortcuts` (to act on it), so the two
-/// never drift out of sync.
+/// jumps directly to the chip's focused view, mirroring the browser/terminal
+/// convention of numbering only the first nine positions.
 const MAX_QUICK_SWITCH_TABS: usize = 9;
 
 /// Pre-formatted display text for the Nth (0-based) quick-switch slot (e.g.
@@ -420,6 +421,14 @@ impl NativeMenuShortcutCache {
 /// driver.
 pub struct FesTermApp {
     state: AppState,
+    pane_rects: Vec<(TabId, egui::Rect)>,
+    pane_layout_menu: Option<TabId>,
+    pane_controls: panes::PaneControls,
+    pane_details_open: bool,
+    pane_close: Option<(
+        crate::tabs::PaneClosePlan,
+        Vec<festerm_document::DocumentId>,
+    )>,
     automation_window: crate::application::WindowId,
     automation_settings: crate::automation::SettingsSnapshot,
     automation_commands: Vec<crate::automation::NativeCommand>,
@@ -788,6 +797,7 @@ impl FesTermApp {
             window.tabs(),
             window.focused_tab_id(),
         );
+        self.state.restore_pane_groups(window.pane_groups());
         self.window_geometry = window.geometry().copied();
     }
 
@@ -921,6 +931,11 @@ impl FesTermApp {
         };
         Self {
             state,
+            pane_rects: Vec::new(),
+            pane_layout_menu: None,
+            pane_controls: panes::PaneControls::default(),
+            pane_details_open: false,
+            pane_close: None,
             image_budget,
             local_persistence_provider: detect_default_local_persistence_provider(),
             primary_tab,
@@ -1717,11 +1732,12 @@ impl FesTermApp {
         if tabs.is_empty() {
             return None;
         }
-        Some(festerm_config::WorkspaceWindow::new(
-            tabs,
-            focused_tab_id,
-            self.window_geometry,
-        ))
+        let pane_groups = self.state.saved_pane_groups(&tabs);
+        Some(
+            festerm_config::WorkspaceWindow::new(tabs, focused_tab_id, self.window_geometry)
+                .with_pane_groups(pane_groups)
+                .expect("captured groups contain only this window's saved views"),
+        )
     }
 
     /// One-shot consumption of this window's "my tab list changed" flag, so
@@ -2822,11 +2838,13 @@ impl FesTermApp {
     }
 
     fn tab_id_for_chip(&self, chip_id: ChipId) -> Option<TabId> {
-        self.state
-            .tabs()
-            .iter()
-            .find(|tab| tab.id.chip_id() == chip_id.0)
-            .map(|tab| tab.id)
+        self.state.pane_view_for_chip(chip_id.0).or_else(|| {
+            self.state
+                .tabs()
+                .iter()
+                .find(|tab| tab.id.chip_id() == chip_id.0)
+                .map(|tab| tab.id)
+        })
     }
 
     /// Translates chrome gestures into `AppCommand`s and dispatches them
@@ -2835,6 +2853,17 @@ impl FesTermApp {
     fn dispatch_chrome_actions(&mut self, actions: Vec<ChromeAction>, context: &egui::Context) {
         for action in actions {
             match action {
+                ChromeAction::FocusPane(chip_id) => {
+                    if let Some(id) = self.tab_id_for_chip(chip_id) {
+                        self.state.dispatch(AppCommand::ActivateTab(id), context);
+                        if let Some(session) = self.state.session_tab_mut(id) {
+                            session.view.request_focus_on_next_frame();
+                        }
+                    }
+                }
+                ChromeAction::PaneLayout(chip_id) => {
+                    self.pane_layout_menu = self.tab_id_for_chip(chip_id);
+                }
                 ChromeAction::NewTab => self.state.dispatch(AppCommand::OpenLauncher, context),
                 ChromeAction::NewTextDocument => {
                     self.state.dispatch(AppCommand::NewTextDocument, context)
@@ -2859,6 +2888,7 @@ impl FesTermApp {
                 ChromeAction::TogglePalette => self.palette.toggle(),
                 ChromeAction::Activate(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
+                        let id = self.state.grouped_view_for_chip(id);
                         self.state.dispatch(AppCommand::ActivateTab(id), context);
                         if self.state.inspector_open() {
                             self.inspector_restore_focus = None;
@@ -2875,7 +2905,11 @@ impl FesTermApp {
                 }
                 ChromeAction::Close(chip_id) => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
-                        self.request_close_tab(id, context);
+                        if let Some(plan) = self.state.pane_close_plan(id) {
+                            self.pane_close = Some((plan, Vec::new()));
+                        } else {
+                            self.request_close_tab(id, context);
+                        }
                     }
                 }
                 ChromeAction::Reorder { moved, before } => {
@@ -2935,8 +2969,15 @@ impl FesTermApp {
                 }
                 ChromeAction::Rename { id: chip_id, name } => {
                     if let Some(id) = self.tab_id_for_chip(chip_id) {
-                        self.state
-                            .dispatch(AppCommand::RenameTab(id, name), context);
+                        let command = if self.state.pane_group(id).is_some() {
+                            AppCommand::RenamePaneGroup {
+                                view: id,
+                                label: name,
+                            }
+                        } else {
+                            AppCommand::RenameTab(id, name)
+                        };
+                        self.state.dispatch(command, context);
                     }
                 }
                 ChromeAction::UseDefaultName {
@@ -2973,6 +3014,7 @@ impl FesTermApp {
     /// `docs/gui-design.md` ("a searchable session switcher keyed primarily
     /// by stable identity").
     fn palette_items(&self) -> Vec<PaletteItem> {
+        use festerm_ui_egui::palette::PaletteCategory as C;
         #[cfg(test)]
         self.palette_build_count
             .set(self.palette_build_count.get() + 1);
@@ -3009,6 +3051,7 @@ impl FesTermApp {
         let mut items = vec![
             PaletteItem {
                 id: NEW_LAUNCHER_TAB,
+                category: C::Sessions,
                 label: "New Session…".to_owned(),
                 hint: binding_label(A::NewSession),
                 is_tab: false,
@@ -3016,6 +3059,7 @@ impl FesTermApp {
             },
             PaletteItem {
                 id: START_LOCAL_SESSION,
+                category: C::Sessions,
                 label: "Start Local Shell".to_owned(),
                 hint: binding_label(A::StartLocalShell),
                 is_tab: false,
@@ -3023,6 +3067,7 @@ impl FesTermApp {
             },
             PaletteItem {
                 id: SET_UP_HOST,
+                category: C::Sessions,
                 label: "Dev Tunnel: Set up a host…".to_owned(),
                 hint: None,
                 is_tab: false,
@@ -3030,6 +3075,7 @@ impl FesTermApp {
             },
             PaletteItem {
                 id: NEW_WINDOW,
+                category: C::Application,
                 label: "New Window".to_owned(),
                 hint: binding_label(A::NewWindow),
                 is_tab: false,
@@ -3040,6 +3086,7 @@ impl FesTermApp {
             items.extend([
                 PaletteItem {
                     id: TOGGLE_FOCUS_MODE,
+                    category: C::Terminal,
                     label: if self.focus_mode {
                         "Exit Focus Mode".to_owned()
                     } else {
@@ -3051,6 +3098,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: ZOOM_IN,
+                    category: C::Terminal,
                     label: "Zoom In".to_owned(),
                     hint: binding_label(A::ZoomIn),
                     is_tab: false,
@@ -3058,6 +3106,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: ZOOM_OUT,
+                    category: C::Terminal,
                     label: "Zoom Out".to_owned(),
                     hint: binding_label(A::ZoomOut),
                     is_tab: false,
@@ -3065,6 +3114,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: RESET_ZOOM,
+                    category: C::Terminal,
                     label: "Reset Zoom".to_owned(),
                     hint: binding_label(A::ZoomReset),
                     is_tab: false,
@@ -3072,6 +3122,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: COPY,
+                    category: C::Terminal,
                     label: "Copy".to_owned(),
                     hint: binding_label(A::Copy),
                     is_tab: false,
@@ -3079,6 +3130,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: 26,
+                    category: C::Terminal,
                     label: "Bounded rectangle copy".to_owned(),
                     hint: binding_label(A::RectangleCopy),
                     is_tab: false,
@@ -3086,6 +3138,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: 27,
+                    category: C::Terminal,
                     label: "Smart Select Sentence".to_owned(),
                     hint: Some(
                         "Select around the cursor or selection end; Copy is separate".to_owned(),
@@ -3095,6 +3148,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: 28,
+                    category: C::Terminal,
                     label: "Smart Select Paragraph".to_owned(),
                     hint: Some(
                         "Select around the cursor or selection end; Copy is separate".to_owned(),
@@ -3104,6 +3158,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: 29,
+                    category: C::Terminal,
                     label: "Smart Select Block".to_owned(),
                     hint: Some(
                         "Select around the cursor or selection end; Copy is separate".to_owned(),
@@ -3113,6 +3168,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: PASTE,
+                    category: C::Terminal,
                     label: "Paste".to_owned(),
                     hint: binding_label(A::Paste),
                     is_tab: false,
@@ -3120,6 +3176,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: FIND_IN_TERMINAL,
+                    category: C::Terminal,
                     label: "Find in Terminal…".to_owned(),
                     hint: binding_label(A::Find),
                     is_tab: false,
@@ -3127,6 +3184,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: OPEN_TERMINAL_HISTORY_IN_EDITOR,
+                    category: C::Files,
                     label: "Open Terminal History in Editor".to_owned(),
                     hint: Some(
                         "Freeze retained terminal text into a new untitled editor snapshot"
@@ -3137,6 +3195,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: SAVE_TERMINAL_HISTORY_AS,
+                    category: C::Files,
                     label: "Save Terminal History As…".to_owned(),
                     hint: Some(
                         "Freeze retained terminal text and choose where to save a snapshot"
@@ -3147,6 +3206,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: PORT_FORWARD_MANAGER,
+                    category: C::Sessions,
                     label: if self.port_forward_manager_open_for_active_tab() {
                         "Hide Port Forward Manager".to_owned()
                     } else {
@@ -3158,6 +3218,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: RESET_TERMINAL,
+                    category: C::Terminal,
                     label: "Reset Terminal".to_owned(),
                     hint: binding_label(A::ResetTerminal),
                     is_tab: false,
@@ -3165,6 +3226,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: REDRAW_TERMINAL,
+                    category: C::Terminal,
                     label: "Redraw Terminal".to_owned(),
                     hint: Some(
                         "Repaint every visible region locally without sending input".to_owned(),
@@ -3174,6 +3236,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: CLEAR_TERMINAL_HISTORY,
+                    category: C::Terminal,
                     label: "Clear Terminal".to_owned(),
                     hint: binding_label(A::ClearTerminal),
                     is_tab: false,
@@ -3187,6 +3250,7 @@ impl FesTermApp {
                 if matches!(session.inspector_transport, InspectorTransport::Ssh { .. }) {
                     items.push(PaletteItem {
                         id: OPEN_SFTP_FILE_MANAGER,
+                        category: C::Files,
                         label: "Open SFTP".to_owned(),
                         hint: Some(
                             "Open the GUI SFTP file manager for this SSH session".to_owned(),
@@ -3204,6 +3268,7 @@ impl FesTermApp {
             items.extend([
                 PaletteItem {
                     id: RELOAD_MARKDOWN,
+                    category: C::Files,
                     label: "Reload Markdown".to_owned(),
                     hint: binding_label(A::MarkdownReload),
                     is_tab: false,
@@ -3211,6 +3276,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: TOGGLE_MARKDOWN_MODE,
+                    category: C::Files,
                     label: "Toggle Preview/Source".to_owned(),
                     hint: binding_label(A::MarkdownPreviewSource),
                     is_tab: false,
@@ -3218,6 +3284,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: FIND_IN_MARKDOWN,
+                    category: C::Files,
                     label: "Find in Markdown…".to_owned(),
                     hint: binding_label(A::MarkdownFind),
                     is_tab: false,
@@ -3225,6 +3292,7 @@ impl FesTermApp {
                 },
                 PaletteItem {
                     id: TOGGLE_MARKDOWN_OUTLINE,
+                    category: C::Files,
                     label: "Toggle Markdown Outline".to_owned(),
                     hint: binding_label(A::MarkdownOutline),
                     is_tab: false,
@@ -3232,8 +3300,56 @@ impl FesTermApp {
                 },
             ]);
         }
+        if self.state.composable(self.state.active()) {
+            let grouped = self.state.pane_group(self.state.active()).is_some();
+            let arranging = self.pane_controls.is_arranging();
+            for (id, label) in [
+                (31, "Pane Layout…"),
+                (32, "Focus Next Pane"),
+                (33, "Focus Previous Pane"),
+                (34, "Zoom / Restore Pane"),
+                (35, "Move Pane to Own Tab"),
+                (36, "Separate All Panes"),
+                (37, "Equalize Panes"),
+                (38, "Focus Pane Left"),
+                (39, "Focus Pane Right"),
+                (40, "Focus Pane Above"),
+                (41, "Focus Pane Below"),
+                (42, "Make Pane Wider"),
+                (43, "Make Pane Narrower"),
+                (44, "Make Pane Taller"),
+                (45, "Make Pane Shorter"),
+                (46, "Rearrange panes"),
+                (47, "Finish rearranging panes"),
+            ] {
+                if (id != 31 && !grouped && !(id == 47 && arranging))
+                    || (id == 46 && arranging)
+                    || (id == 47 && !arranging)
+                {
+                    continue;
+                }
+                items.push(PaletteItem {
+                    id,
+                    category: C::Panes,
+                    label: label.into(),
+                    hint: None,
+                    is_tab: false,
+                    shortcut_label: None,
+                });
+            }
+        }
         items.push(PaletteItem {
             id: CLOSE_ACTIVE_TAB,
+            category: match &self.state.active_tab().content {
+                TabContent::Session(_)
+                | TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_) => C::Sessions,
+                TabContent::TextEditor(_)
+                | TabContent::MarkdownViewer(_)
+                | TabContent::SftpFileManager(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_) => C::Files,
+                _ => C::Application,
+            },
             label: match &self.state.active_tab().content {
                 TabContent::Launcher => "Close Launcher".to_owned(),
                 TabContent::Settings => "Close Settings".to_owned(),
@@ -3250,7 +3366,14 @@ impl FesTermApp {
             is_tab: false,
             shortcut_label: None,
         });
-        for (index, tab) in self.state.tabs().iter().enumerate() {
+        let quick_switch_views = self
+            .state
+            .presentation_tabs()
+            .into_iter()
+            .take(MAX_QUICK_SWITCH_TABS)
+            .map(|view| self.state.grouped_view_for_chip(view))
+            .collect::<Vec<_>>();
+        for tab in self.state.tabs() {
             let (label, hint) = match &tab.content {
                 TabContent::Launcher => ("Launcher".to_owned(), None),
                 TabContent::Settings => ("Settings".to_owned(), None),
@@ -3305,11 +3428,14 @@ impl FesTermApp {
             };
             items.push(PaletteItem {
                 id: TAB_ACTIVATE_OFFSET + tab.id.chip_id(),
+                category: C::Views,
                 label,
                 hint,
                 is_tab: true,
-                shortcut_label: crate::keyboard::QUICK_ACTIONS
-                    .get(index)
+                shortcut_label: quick_switch_views
+                    .iter()
+                    .position(|view| *view == tab.id)
+                    .and_then(|index| crate::keyboard::QUICK_ACTIONS.get(index))
                     .and_then(|action| binding_label(*action)),
             });
         }
@@ -3321,6 +3447,49 @@ impl FesTermApp {
     fn dispatch_palette_selection(&mut self, id: u64, context: &egui::Context) {
         const TAB_ACTIVATE_OFFSET: u64 = 1 << 32;
         match id {
+            38..=41 => self.state.dispatch(
+                AppCommand::FocusPaneDirection(
+                    [
+                        festerm_config::PaneSide::Left,
+                        festerm_config::PaneSide::Right,
+                        festerm_config::PaneSide::Above,
+                        festerm_config::PaneSide::Below,
+                    ][(id - 38) as usize],
+                ),
+                context,
+            ),
+            42..=45 => self.state.dispatch(
+                AppCommand::ResizeFocusedPane {
+                    axis: if id <= 43 {
+                        festerm_config::PaneAxis::X
+                    } else {
+                        festerm_config::PaneAxis::Y
+                    },
+                    increase: id.is_multiple_of(2),
+                },
+                context,
+            ),
+            31 => self.pane_layout_menu = Some(self.state.active()),
+            46 => self.begin_pane_rearrange(context),
+            47 => self.finish_pane_rearrange(context),
+            32 => self
+                .state
+                .dispatch(AppCommand::FocusNextPane { reverse: false }, context),
+            33 => self
+                .state
+                .dispatch(AppCommand::FocusNextPane { reverse: true }, context),
+            34 => self
+                .state
+                .dispatch(AppCommand::ZoomPane(self.state.active()), context),
+            35 => self
+                .state
+                .dispatch(AppCommand::SeparatePane(self.state.active()), context),
+            36 => self
+                .state
+                .dispatch(AppCommand::SeparatePaneGroup(self.state.active()), context),
+            37 => self
+                .state
+                .dispatch(AppCommand::EqualizePanes(self.state.active()), context),
             1 => self.state.dispatch(AppCommand::OpenLauncher, context),
             3 => self.state.dispatch(AppCommand::StartLocalSession, context),
             23 => self.state.dispatch(AppCommand::OpenWindow, context),
@@ -3411,6 +3580,10 @@ impl FesTermApp {
             && !self.palette.is_open()
             && !self.state.inspector_open()
             && self.rename_restore_tab.is_none()
+            && self.pane_layout_menu.is_none()
+            && !self.pane_details_open
+            && self.pane_close.is_none()
+            && !self.pane_controls.blocks_input()
     }
 
     fn shortcut_context(
@@ -3425,8 +3598,7 @@ impl FesTermApp {
             self.overlays.blocks_terminal_input()
         };
         crate::keyboard::ShortcutContext {
-            blocked: blocked
-                || crate::keyboard::composition_active(context, self.state.active().chip_id()),
+            blocked: blocked || crate::keyboard::composition_active(context, self.ime_owner()),
             palette_open: self.palette.is_open(),
             terminal_input: self.terminal_surface_owns_input(),
             markdown_viewer: matches!(
@@ -3449,8 +3621,9 @@ impl FesTermApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        self.palette.set_composition_owns_keys(false);
         self.cancel_invalid_clipboard_paste(ctx);
-        let deferred_id = egui::Id::new("ordered-keyboard-events");
+        let deferred_id = Self::ordered_keyboard_events_id(ctx);
         let mut events = ctx
             .data_mut(|data| data.remove_temp::<Vec<egui::Event>>(deferred_id))
             .unwrap_or_default();
@@ -3544,7 +3717,7 @@ impl FesTermApp {
                 }
             }
             // Deliver earlier widget/terminal input before a later shortcut
-            // can change its owner. Retain only the unprocessed suffix.
+            // or pane click can change its owner. Retain only the suffix.
             if remaining.iter().any(|event| {
                 matches!(
                     event,
@@ -3555,17 +3728,33 @@ impl FesTermApp {
                         | egui::Event::Ime(_)
                         | egui::Event::Key { pressed: true, .. }
                 )
-            }) && self.shortcut_context(ctx, false).activates(
-                &event,
-                self.state.keyboard_bindings(),
-                false,
-            ) {
+            }) && (self.pane_focus_target(&event, ctx).is_some()
+                || self.pane_handle_press(&event, ctx)
+                || self.shortcut_context(ctx, false).activates(
+                    &event,
+                    self.state.keyboard_bindings(),
+                    false,
+                ))
+            {
                 pending.push_front(event);
                 ctx.data_mut(|data| {
                     data.insert_temp(deferred_id, pending.into_iter().collect::<Vec<_>>())
                 });
                 ctx.request_repaint();
                 break;
+            }
+            self.record_pane_pointer_release(&event);
+            if self.pane_handle_press(&event, ctx) {
+                self.own_pane_handle_press(&event);
+                crate::keyboard::retire_composition(ctx);
+                self.cancel_clipboard_paste(ctx);
+            } else if let Some(view) = self.pane_focus_target(&event, ctx) {
+                crate::keyboard::retire_composition(ctx);
+                self.state.dispatch(AppCommand::ActivateTab(view), ctx);
+                self.cancel_invalid_clipboard_paste(ctx);
+                if let Some(session) = self.state.session_tab_mut(view) {
+                    session.view.request_focus_on_next_frame();
+                }
             }
             let mut packet = vec![event];
             // The native adapter's adjacent semantic clipboard event belongs
@@ -3629,6 +3818,21 @@ impl FesTermApp {
         }
     }
 
+    fn ime_owner(&self) -> crate::keyboard::CompositionOwner {
+        crate::keyboard::CompositionOwner {
+            surface: self.state.active().chip_id(),
+            epoch: self.state.input_ownership_epoch(),
+            generation: self
+                .state
+                .session_tab(self.state.active())
+                .map(|session| session.controller.lifecycle_generation()),
+        }
+    }
+
+    fn ordered_keyboard_events_id(context: &egui::Context) -> egui::Id {
+        egui::Id::new(("ordered-keyboard-events", context.viewport_id()))
+    }
+
     fn handle_shortcut_packet(&mut self, ctx: &egui::Context) {
         self.associate_input_recorder(ctx);
         let bindings = self.state.keyboard_bindings().clone();
@@ -3645,7 +3849,16 @@ impl FesTermApp {
                     .unwrap_or_else(|| "Unbound".into()),
             )
         });
-        if crate::keyboard::composition_owns_keys(ctx, self.state.active().chip_id()) {
+        let composition_owns_keys = crate::keyboard::composition_owns_keys(ctx, self.ime_owner());
+        // Packets reunite before palette rendering; a later release must not
+        // clear an earlier composition-owned key in the same frame.
+        if composition_owns_keys {
+            self.palette.set_composition_owns_keys(true);
+        }
+        if crate::keyboard::take_composition_cancellation(ctx) {
+            self.overlays.transient_notice = Some(("IME composition cancelled because its input owner changed. Re-enter the composed text in the intended pane.".into(),Instant::now()+Duration::from_secs(5)));
+        }
+        if composition_owns_keys {
             return;
         }
         let scope = self.shortcut_context(ctx, false);
@@ -3700,7 +3913,7 @@ impl FesTermApp {
         if open_palette {
             self.palette.toggle();
         }
-        // Quick-switch to one of the first `MAX_QUICK_SWITCH_TABS` tabs by
+        // Quick-switch to one of the first `MAX_QUICK_SWITCH_TABS` chips by
         // position (`Cmd+1`..`Cmd+9`/`Ctrl+1`..`Ctrl+9`), matching the
         // keystroke shown next to each tab row in the command palette
         // (`palette_items`). Checked before the palette-open early return
@@ -3708,8 +3921,8 @@ impl FesTermApp {
         // happens to be open.
         for index in 0..MAX_QUICK_SWITCH_TABS {
             if consume(crate::keyboard::QUICK_ACTIONS[index]) {
-                if let Some(tab) = self.state.tabs().get(index) {
-                    let target = tab.id;
+                if let Some(target) = self.state.presentation_tabs().get(index).copied() {
+                    let target = self.state.grouped_view_for_chip(target);
                     self.state.dispatch(AppCommand::ActivateTab(target), ctx);
                 }
                 self.palette.close();
@@ -5403,7 +5616,7 @@ impl FesTermApp {
     /// always leads; a non-empty terminal-provided title is shown only as
     /// secondary metadata (`docs/gui-design.md` "Identity precedence").
     fn chip_view_models(&self) -> (Vec<ChipViewModel>, ChipId) {
-        let chips = self
+        let mut chips: Vec<ChipViewModel> = self
             .state
             .tabs()
             .iter()
@@ -5500,6 +5713,7 @@ impl FesTermApp {
                     );
                 ChipViewModel {
                     id: ChipId(tab.id.chip_id()),
+                    panes: Vec::new(),
                     primary,
                     secondary,
                     status,
@@ -5520,7 +5734,85 @@ impl FesTermApp {
                 }
             })
             .collect();
-        (chips, ChipId(self.state.active().chip_id()))
+        let members: std::collections::HashMap<_, _> = chips
+            .iter()
+            .map(|chip| {
+                (
+                    chip.id,
+                    (chip.primary.clone(), chip.status, chip.has_unread_output),
+                )
+            })
+            .collect();
+        let visible = self.state.presentation_tabs();
+        chips.retain(|chip| visible.iter().any(|id| id.chip_id() == chip.id.0));
+        for (index, chip) in chips.iter_mut().enumerate() {
+            let view = TabId::from_chip_id(chip.id.0);
+            if let Some(group) = self.state.pane_group(view) {
+                chip.id = ChipId(self.state.presentation_chip(view).chip_id());
+                chip.primary = group.label.clone();
+                chip.secondary = Some("Pane group".into());
+                let positions = crate::desktop_panes::geometry(
+                    &group.tree,
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 1000.0)),
+                    1.0,
+                );
+                chip.panes = positions
+                    .into_iter()
+                    .map(|(view, rect)| {
+                        let (label, status, unread) = members
+                            .get(&ChipId(view.chip_id()))
+                            .expect("live group view has a chip model");
+                        let surface = self.state.tabs().iter().find(|tab| tab.id == view).map_or(
+                            "View",
+                            |tab| match &tab.content {
+                                TabContent::Session(session) => {
+                                    match &session.inspector_transport {
+                                        InspectorTransport::Local { .. } => "Local",
+                                        InspectorTransport::Ssh { .. } => "SSH",
+                                        InspectorTransport::Sftp { .. } => "SFTP",
+                                        InspectorTransport::Serial { .. } => "Serial",
+                                        InspectorTransport::DevTunnel { .. } => "Dev Tunnel",
+                                    }
+                                }
+                                TabContent::TextEditor(_) => "Document",
+                                TabContent::MarkdownViewer(_) => "Markdown",
+                                TabContent::SftpFileManager(_) => "Files",
+                                _ => "Authentication",
+                            },
+                        );
+                        chrome::PaneMemberViewModel {
+                            id: ChipId(view.chip_id()),
+                            label: label.clone(),
+                            surface,
+                            status: *status,
+                            focused: group.focused == view,
+                            unread: *unread,
+                            bounds: rect,
+                        }
+                    })
+                    .collect();
+                chip.movable_across_windows = false;
+                chip.renamable = true;
+                chip.has_explicit_alias = false;
+                chip.closable = true;
+                chip.has_unread_output = group.tree.views().iter().any(|id| {
+                    self.state
+                        .session_tab(*id)
+                        .is_some_and(|s| s.has_new_output_since_active)
+                });
+            }
+            chip.quick_switch_number = crate::keyboard::QUICK_ACTIONS
+                .get(index)
+                .filter(|action| {
+                    self.state
+                        .keyboard_bindings()
+                        .effective(**action, cfg!(target_os = "macos"))
+                        == action.default_chord(cfg!(target_os = "macos"))
+                })
+                .map(|_| (index + 1) as u8);
+        }
+        let active = self.state.presentation_chip(self.state.active());
+        (chips, ChipId(active.chip_id()))
     }
 
     /// Right-side session inspector (`docs/gui-design.md` "Application chrome
@@ -6317,13 +6609,31 @@ impl FesTermApp {
         if !cfg!(target_os = "macos") {
             chrome::handle_resize_border(ui);
         }
+        self.pane_details_open = self.state.presentation_tabs().iter().any(|id| {
+            self.state.pane_group(*id).is_some()
+                && chrome::pane_details_open(
+                    ui.ctx(),
+                    ChipId(self.state.presentation_chip(*id).chip_id()),
+                )
+        });
         self.handle_native_menu_commands(ui.ctx());
-        self.handle_shortcuts(ui.ctx());
+        self.prepare_pane_controls(ui.ctx());
+        if self.pane_layout_menu.is_none() && !self.pane_details_open && self.pane_close.is_none() {
+            self.handle_shortcuts(ui.ctx());
+        } else {
+            let deferred_id = Self::ordered_keyboard_events_id(ui.ctx());
+            ui.ctx().data_mut(|data| {
+                data.remove::<Vec<egui::Event>>(deferred_id);
+            });
+        }
+        self.show_pane_layout_menu(ui.ctx());
+        self.show_pane_group_close(ui.ctx());
         let opening_clipboard_confirmation = self.clipboard_confirmation_opening(ui.ctx());
         let terminal_input_target = ((self.terminal_surface_owns_input()
             && !self.overlays.blocks_terminal_input())
             || opening_clipboard_confirmation)
-            .then_some(self.state.active());
+            .then_some(self.state.active())
+            .filter(|_| self.pane_layout_menu.is_none());
         if let Some(smoke) = &mut self.native_smoke {
             smoke.observe_palette(self.palette.is_open());
         }
@@ -6381,6 +6691,13 @@ impl FesTermApp {
                 self.updates.unacknowledged_version(),
             );
             self.dispatch_chrome_actions(actions, &ui.ctx().clone());
+            self.pane_details_open = self.state.presentation_tabs().iter().any(|id| {
+                self.state.pane_group(*id).is_some()
+                    && chrome::pane_details_open(
+                        ui.ctx(),
+                        ChipId(self.state.presentation_chip(*id).chip_id()),
+                    )
+            });
         }
         let inspector_open = self.state.inspector_open();
         // Consume Escape before `TerminalView::show` routes raw input so the
@@ -6419,6 +6736,12 @@ impl FesTermApp {
         }
 
         let content_rect = ui.available_rect_before_wrap();
+        let mut active_pane_rect = self.prepare_pane_geometry(ui, content_rect);
+        let pane_revision = self.state.pane_revision();
+        self.show_pane_controls(ui);
+        if pane_revision != self.state.pane_revision() {
+            active_pane_rect = self.prepare_pane_geometry(ui, content_rect);
+        }
         // Rendered before `TerminalView::show_with_options` below: while the
         // find bar is open that call marks `terminal_input_enabled = false`
         // and strips this frame's keyboard/text events from the shared
@@ -6501,278 +6824,322 @@ impl FesTermApp {
         };
         #[cfg(not(feature = "experimental-dev-tunnels"))]
         let running_tunnel_rows = Vec::new();
-        {
-            let tab = self.state.active_tab_mut();
-            match &mut tab.content {
-                TabContent::Launcher => {
-                    for error in &self.state.discovery.inventory.errors {
-                        ui.colored_label(theme::TEXT_SECONDARY, error);
-                    }
-                    if self.state.native_termination_pending() {
-                        ui.label("Terminating native session...");
-                    }
-                    if let Some(error) = &self.state.resume_error {
-                        ui.colored_label(theme::TEXT_SECONDARY, error);
-                    }
-                    screen_command = screens::show_launcher(
-                        ui,
-                        active_tab_id,
-                        self.state.configuration(),
-                        native_store_available,
-                        secure_storage_status,
-                        self.state.compact_launcher_grid(),
-                        &self.state.discovery.inventory.native,
-                        &self.state.discovery.inventory.tmux,
-                        &self.state.discovery.inventory.screen,
-                        &running_tunnel_rows,
-                    );
+        let pane_content_events = self
+            .pane_controls
+            .blocks_input()
+            .then(|| ui.input_mut(|input| std::mem::take(&mut input.events)));
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt(("surface", active_tab_id.chip_id()))
+                .max_rect(active_pane_rect),
+            |ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(active_pane_rect));
+                if self.pane_controls.blocks_input() {
+                    ui.visuals_mut().disabled_alpha = 1.0;
+                    ui.disable();
                 }
-                TabContent::Settings => {
-                    screen_command = screens::show_settings(
-                        ui,
-                        screens::SettingsViewModel {
-                            keyboard_bindings: self.state.keyboard_bindings().clone(),
-                            chip_layout,
-                            status_bar_visible: self.state.status_bar_visible(),
-                            show_session_details: self.state.show_session_details(),
-                            confirm_session_close: self.state.confirm_session_close(),
-                            prefer_powershell: self.state.prefer_powershell(),
-                            extend_dev_tunnel_lifetime: self.state.extend_dev_tunnel_lifetime(),
-                            show_running_dev_tunnels: self.state.show_running_dev_tunnels(),
-                            dev_tunnel_extension_days: self.state.dev_tunnel_extension_days(),
-                            #[cfg(feature = "experimental-dev-tunnels")]
-                            dev_tunnel_accounts: self.dev_tunnel_account_rows(),
-                            #[cfg(not(feature = "experimental-dev-tunnels"))]
-                            dev_tunnel_accounts: Vec::new(),
-                            customize_local_shell: self.state.customize_local_shell(),
-                            restore_workspace: self.state.restore_workspace(),
-                            terminal_font: self.state.terminal_font(),
-                            font_download_status: self.terminal_font_download_status(),
-                            font_download_failed: self.terminal_font_download_failed(),
-                            terminal_ligatures: self.state.terminal_ligatures(),
-                            emoji_presentation: self.state.emoji_presentation(),
-                            scroll_speed: self.state.scroll_speed(),
-                            rectangle_copy_trim_trailing_spaces: self
-                                .state
-                                .rectangle_copy_trim_trailing_spaces(),
-                            scrollback_limit: self.state.scrollback_limit(),
-                            image_memory_budget: self.image_budget.preference(),
-                            image_memory_over_budget: self.image_budget.is_over_budget(),
-                            quick_switch_overlay: self.state.quick_switch_overlay(),
-                            compact_launcher_grid: self.state.compact_launcher_grid(),
-                            show_resumable_sessions: self.state.show_resumable_sessions(),
-                            show_durable_session_in_status_bar: self
-                                .state
-                                .show_durable_session_in_status_bar(),
-                            automatic_update_checks: self.state.automatic_update_checks(),
-                            mcp_enabled: self.state.mcp_enabled(),
-                            javascript_enabled: self.state.javascript_enabled(),
-                            automation_mcp_enabled: self.automation_mcp_enabled(),
-                            automation_javascript_enabled: self.automation_javascript_enabled(),
-                            automation_mcp_ui_revision: self.automation_preference_ui_revision(
-                                crate::automation::preferences::Feature::Mcp,
-                            ),
-                            automation_javascript_ui_revision: self
-                                .automation_preference_ui_revision(
-                                    crate::automation::preferences::Feature::Javascript,
-                                ),
-                            automation_preference_feedback: self.automation_preference_feedback(),
-                            automation_preference_retry_available: self
-                                .automation_preference_retry_available(),
-                            automation_window: self.automation_window,
-                            automation: self.automation_settings.clone(),
-                            default_sftp_local_directory: self
-                                .state
-                                .default_sftp_local_directory()
-                                .map(|path| path.to_string_lossy().into_owned()),
-                            sftp_pane_order: self.state.sftp_pane_order(),
-                        },
-                    );
-                }
-                TabContent::Profiles => {
-                    if let Some(status) = secure_storage_status.filter(|_| {
-                        cfg!(feature = "experimental-dev-tunnels")
-                            || self
-                                .state
-                                .configuration()
-                                .profiles()
-                                .iter()
-                                .any(|profile| profile.as_dev_tunnel().is_some())
-                    }) {
-                        ui.colored_label(theme::TEXT_SECONDARY, status);
-                    }
-                    let pending_edit = self.state.take_pending_profile_edit();
-                    let pending_create = self.state.take_pending_profile_create();
-                    screen_command = screens::show_profiles(
-                        ui,
-                        active_tab_id,
-                        self.state.configuration(),
-                        pending_edit,
-                        pending_create,
-                        self.local_persistence_provider,
-                    );
-                }
-                TabContent::MarkdownViewer(tab) => {
-                    tab.set_status_bar_visible(status_bar_visible);
-                    screen_command = tab.show(ui, active_tab_id);
-                }
-                TabContent::TextEditor(tab) => {
-                    tab.set_status_bar_visible(status_bar_visible);
-                    screen_command = tab.show(ui, active_tab_id, &documents);
-                }
-                TabContent::SshAuthenticationRequired(tab) => {
-                    screen_command = screens::show_ssh_authentication_required(
-                        ui,
-                        active_tab_id,
-                        &tab.profile,
-                        native_store_available,
-                    );
-                }
-                TabContent::SftpAuthenticationRequired(tab) => {
-                    screen_command = screens::show_sftp_authentication_required(
-                        ui,
-                        active_tab_id,
-                        &tab.profile,
-                        native_store_available,
-                    );
-                }
-                TabContent::SftpFileManagerAuthenticationRequired(tab) => {
-                    screen_command = sftp_file_manager::show_authentication_required(
-                        ui,
-                        &tab.target,
-                        tab.return_to_profiles,
-                        &mut tab.authentication,
-                    );
-                }
-                TabContent::SftpFileManager(tab) => {
-                    tab.set_pane_order(sftp_pane_order);
-                    tab.set_status_bar_visible(status_bar_visible);
-                    screen_command = tab.show(ui, active_tab_id);
-                }
-                TabContent::Session(session) => {
-                    if session.adopt_recovered_terminal() {
-                        session.apply_frontend_terminal_configuration(scrollback_limit);
-                        ui.ctx().request_repaint();
-                    }
-                    session.prepare_terminal_link_context();
-                    session.view.set_font_set(terminal_font_set);
-                    let host_key_prompt = session.host_key_prompt().cloned();
-                    let password_prompt = host_key_prompt
-                        .is_none()
-                        .then(|| session.password_prompt().cloned())
-                        .flatten();
-                    if let Some(prompt) = &host_key_prompt {
-                        screen_command = Self::show_host_key_prompt_ui(ui, active_tab_id, prompt);
-                    } else if let Some(prompt) = &password_prompt {
-                        screen_command =
-                            screens::show_ssh_live_password_prompt(ui, active_tab_id, prompt);
-                    } else {
-                        let options = festerm_ui_egui::TerminalViewOptions {
-                            paste_available: session.accepts_input(),
-                            terminal_input_enabled: terminal_input_target == Some(active_tab_id)
-                                && (!self.overlays.blocks_terminal_input()
-                                    || opening_clipboard_confirmation)
-                                && !self.palette.is_open()
-                                && !inspector_open
-                                && self.rename_restore_tab.is_none()
-                                && !session.search.is_open(),
-                            keyboard_input_enabled: session.accepts_typed_input(),
-                            persistent_keyboard_focus: false,
-                            defer_paste_to_application: true,
-                            scroll_speed_multiplier,
-                            context_menu_action: session.terminal_context_menu_action(),
-                            history_snapshot_actions: true,
-                            expose_text_to_accessibility: false,
-                        };
-                        let rectangle_was_active = session.view.rectangle_copy_active();
-                        session.view.show_with_options(
-                            ui,
-                            &mut session.terminal,
-                            &mut session.controller,
-                            options,
-                        );
-                        if tracing::enabled!(target: "festerm::render", tracing::Level::DEBUG) {
-                            let diagnostics = session.view.diagnostics();
-                            let terminal = &session.terminal;
-                            let dimensions = terminal.dimensions();
-                            let backgrounds = (0..dimensions.rows())
-                                .flat_map(|row| {
-                                    (0..dimensions.columns())
-                                        .filter_map(move |column| terminal.cell(column, row))
-                                })
-                                .filter(|cell| cell.background() != festerm_core::Color::Default)
-                                .count();
-                            tracing::debug!(
-                                target: "festerm::render",
-                                frame = ui.ctx().cumulative_frame_nr(),
-                                reused = diagnostics.retained_rows_reused,
-                                rebuilt = diagnostics.retained_rows_rebuilt,
-                                bytes = diagnostics.retained_row_bytes,
-                                dirty_rows = diagnostics.dirty_rows,
-                                columns = dimensions.columns(),
-                                rows = dimensions.rows(),
-                                backgrounds,
-                                "terminal row paint diagnostics"
-                            );
+                let tab = self.state.active_tab_mut();
+                match &mut tab.content {
+                    TabContent::Launcher => {
+                        for error in &self.state.discovery.inventory.errors {
+                            ui.colored_label(theme::TEXT_SECONDARY, error);
                         }
-                        if session.update_terminal_context_menu(ui.ctx()) {
+                        if self.state.native_termination_pending() {
+                            ui.label("Terminating native session...");
+                        }
+                        if let Some(error) = &self.state.resume_error {
+                            ui.colored_label(theme::TEXT_SECONDARY, error);
+                        }
+                        screen_command = screens::show_launcher(
+                            ui,
+                            active_tab_id,
+                            self.state.configuration(),
+                            native_store_available,
+                            secure_storage_status,
+                            self.state.compact_launcher_grid(),
+                            &self.state.discovery.inventory.native,
+                            &self.state.discovery.inventory.tmux,
+                            &self.state.discovery.inventory.screen,
+                            &running_tunnel_rows,
+                        );
+                    }
+                    TabContent::Settings => {
+                        screen_command = screens::show_settings(
+                            ui,
+                            screens::SettingsViewModel {
+                                keyboard_bindings: self.state.keyboard_bindings().clone(),
+                                chip_layout,
+                                status_bar_visible: self.state.status_bar_visible(),
+                                show_session_details: self.state.show_session_details(),
+                                show_pane_handles: self.state.show_pane_handles(),
+                                pane_high_contrast: self.state.pane_high_contrast(),
+                                confirm_session_close: self.state.confirm_session_close(),
+                                prefer_powershell: self.state.prefer_powershell(),
+                                extend_dev_tunnel_lifetime: self.state.extend_dev_tunnel_lifetime(),
+                                show_running_dev_tunnels: self.state.show_running_dev_tunnels(),
+                                dev_tunnel_extension_days: self.state.dev_tunnel_extension_days(),
+                                #[cfg(feature = "experimental-dev-tunnels")]
+                                dev_tunnel_accounts: self.dev_tunnel_account_rows(),
+                                #[cfg(not(feature = "experimental-dev-tunnels"))]
+                                dev_tunnel_accounts: Vec::new(),
+                                customize_local_shell: self.state.customize_local_shell(),
+                                restore_workspace: self.state.restore_workspace(),
+                                terminal_font: self.state.terminal_font(),
+                                font_download_status: self.terminal_font_download_status(),
+                                font_download_failed: self.terminal_font_download_failed(),
+                                terminal_ligatures: self.state.terminal_ligatures(),
+                                emoji_presentation: self.state.emoji_presentation(),
+                                scroll_speed: self.state.scroll_speed(),
+                                rectangle_copy_trim_trailing_spaces: self
+                                    .state
+                                    .rectangle_copy_trim_trailing_spaces(),
+                                scrollback_limit: self.state.scrollback_limit(),
+                                image_memory_budget: self.image_budget.preference(),
+                                image_memory_over_budget: self.image_budget.is_over_budget(),
+                                quick_switch_overlay: self.state.quick_switch_overlay(),
+                                compact_launcher_grid: self.state.compact_launcher_grid(),
+                                show_resumable_sessions: self.state.show_resumable_sessions(),
+                                show_durable_session_in_status_bar: self
+                                    .state
+                                    .show_durable_session_in_status_bar(),
+                                automatic_update_checks: self.state.automatic_update_checks(),
+                                mcp_enabled: self.state.mcp_enabled(),
+                                javascript_enabled: self.state.javascript_enabled(),
+                                automation_mcp_enabled: self.automation_mcp_enabled(),
+                                automation_javascript_enabled: self.automation_javascript_enabled(),
+                                automation_mcp_ui_revision: self.automation_preference_ui_revision(
+                                    crate::automation::preferences::Feature::Mcp,
+                                ),
+                                automation_javascript_ui_revision: self
+                                    .automation_preference_ui_revision(
+                                        crate::automation::preferences::Feature::Javascript,
+                                    ),
+                                automation_preference_feedback: self
+                                    .automation_preference_feedback(),
+                                automation_preference_retry_available: self
+                                    .automation_preference_retry_available(),
+                                automation_window: self.automation_window,
+                                automation: self.automation_settings.clone(),
+                                default_sftp_local_directory: self
+                                    .state
+                                    .default_sftp_local_directory()
+                                    .map(|path| path.to_string_lossy().into_owned()),
+                                sftp_pane_order: self.state.sftp_pane_order(),
+                            },
+                        );
+                    }
+                    TabContent::Profiles => {
+                        if let Some(status) = secure_storage_status.filter(|_| {
+                            cfg!(feature = "experimental-dev-tunnels")
+                                || self
+                                    .state
+                                    .configuration()
+                                    .profiles()
+                                    .iter()
+                                    .any(|profile| profile.as_dev_tunnel().is_some())
+                        }) {
+                            ui.colored_label(theme::TEXT_SECONDARY, status);
+                        }
+                        let pending_edit = self.state.take_pending_profile_edit();
+                        let pending_create = self.state.take_pending_profile_create();
+                        screen_command = screens::show_profiles(
+                            ui,
+                            active_tab_id,
+                            self.state.configuration(),
+                            pending_edit,
+                            pending_create,
+                            self.local_persistence_provider,
+                        );
+                    }
+                    TabContent::MarkdownViewer(tab) => {
+                        tab.set_status_bar_visible(status_bar_visible);
+                        screen_command = tab.show(ui, active_tab_id);
+                    }
+                    TabContent::TextEditor(tab) => {
+                        tab.set_status_bar_visible(status_bar_visible);
+                        screen_command = tab.show(ui, active_tab_id, &documents);
+                    }
+                    TabContent::SshAuthenticationRequired(tab) => {
+                        screen_command = screens::show_ssh_authentication_required(
+                            ui,
+                            active_tab_id,
+                            &tab.profile,
+                            native_store_available,
+                        );
+                    }
+                    TabContent::SftpAuthenticationRequired(tab) => {
+                        screen_command = screens::show_sftp_authentication_required(
+                            ui,
+                            active_tab_id,
+                            &tab.profile,
+                            native_store_available,
+                        );
+                    }
+                    TabContent::SftpFileManagerAuthenticationRequired(tab) => {
+                        screen_command = sftp_file_manager::show_authentication_required(
+                            ui,
+                            &tab.target,
+                            tab.return_to_profiles,
+                            &mut tab.authentication,
+                        );
+                    }
+                    TabContent::SftpFileManager(tab) => {
+                        tab.set_pane_order(sftp_pane_order);
+                        tab.set_status_bar_visible(status_bar_visible);
+                        screen_command = tab.show(ui, active_tab_id);
+                    }
+                    TabContent::Session(session) => {
+                        if session.adopt_recovered_terminal() {
+                            session.apply_frontend_terminal_configuration(scrollback_limit);
                             ui.ctx().request_repaint();
                         }
-                        if rectangle_was_active && !session.view.rectangle_copy_active() {
-                            // The view consumes its batch on frozen exit. Its
-                            // application-deferred suffix belongs to that same
-                            // batch, not to the newly live terminal or UI.
-                            ui.ctx().data_mut(|data| {
-                                let id = egui::Id::new("ordered-keyboard-events");
-                                if let Some(mut events) = data.remove_temp::<Vec<egui::Event>>(id) {
-                                    events.retain(|event| {
-                                        matches!(
-                                            event,
-                                            egui::Event::Key { pressed: false, .. }
-                                                | egui::Event::PointerButton { pressed: false, .. }
-                                                | egui::Event::WindowFocused(_)
-                                                | egui::Event::PointerGone
-                                        )
-                                    });
-                                    data.insert_temp(id, events);
-                                }
-                            });
+                        session.prepare_terminal_link_context();
+                        session.view.set_font_set(terminal_font_set);
+                        let host_key_prompt = session.host_key_prompt().cloned();
+                        let password_prompt = host_key_prompt
+                            .is_none()
+                            .then(|| session.password_prompt().cloned())
+                            .flatten();
+                        if let Some(prompt) = &host_key_prompt {
+                            screen_command =
+                                Self::show_host_key_prompt_ui(ui, active_tab_id, prompt);
+                        } else if let Some(prompt) = &password_prompt {
+                            screen_command =
+                                screens::show_ssh_live_password_prompt(ui, active_tab_id, prompt);
+                        } else {
+                            let options = festerm_ui_egui::TerminalViewOptions {
+                                paste_available: session.accepts_input(),
+                                terminal_input_enabled: terminal_input_target
+                                    == Some(active_tab_id)
+                                    && (!self.overlays.blocks_terminal_input()
+                                        || opening_clipboard_confirmation)
+                                    && !self.palette.is_open()
+                                    && !inspector_open
+                                    && self.rename_restore_tab.is_none()
+                                    && self.pane_layout_menu.is_none()
+                                    && !self.pane_details_open
+                                    && self.pane_close.is_none()
+                                    && !self.pane_controls.blocks_input()
+                                    && !egui::DragAndDrop::has_any_payload(ui.ctx())
+                                    && !session.search.is_open(),
+                                keyboard_input_enabled: session.accepts_typed_input(),
+                                persistent_keyboard_focus: false,
+                                defer_paste_to_application: true,
+                                scroll_speed_multiplier,
+                                context_menu_action: session.terminal_context_menu_action(),
+                                history_snapshot_actions: true,
+                                expose_text_to_accessibility: false,
+                            };
+                            let rectangle_was_active = session.view.rectangle_copy_active();
+                            if self.pane_rects.len() > 1 {
+                                session.view.show_in_pane_with_options(
+                                    ui,
+                                    &mut session.terminal,
+                                    &mut session.controller,
+                                    options,
+                                );
+                            } else {
+                                session.view.show_with_options(
+                                    ui,
+                                    &mut session.terminal,
+                                    &mut session.controller,
+                                    options,
+                                );
+                            }
+                            if tracing::enabled!(target: "festerm::render", tracing::Level::DEBUG) {
+                                let diagnostics = session.view.diagnostics();
+                                let terminal = &session.terminal;
+                                let dimensions = terminal.dimensions();
+                                let backgrounds = (0..dimensions.rows())
+                                    .flat_map(|row| {
+                                        (0..dimensions.columns())
+                                            .filter_map(move |column| terminal.cell(column, row))
+                                    })
+                                    .filter(|cell| {
+                                        cell.background() != festerm_core::Color::Default
+                                    })
+                                    .count();
+                                tracing::debug!(
+                                    target: "festerm::render",
+                                    frame = ui.ctx().cumulative_frame_nr(),
+                                    reused = diagnostics.retained_rows_reused,
+                                    rebuilt = diagnostics.retained_rows_rebuilt,
+                                    bytes = diagnostics.retained_row_bytes,
+                                    dirty_rows = diagnostics.dirty_rows,
+                                    columns = dimensions.columns(),
+                                    rows = dimensions.rows(),
+                                    backgrounds,
+                                    "terminal row paint diagnostics"
+                                );
+                            }
+                            if session.update_terminal_context_menu(ui.ctx()) {
+                                ui.ctx().request_repaint();
+                            }
+                            if rectangle_was_active && !session.view.rectangle_copy_active() {
+                                // The view consumes its batch on frozen exit. Its
+                                // application-deferred suffix belongs to that same
+                                // batch, not to the newly live terminal or UI.
+                                let id = Self::ordered_keyboard_events_id(ui.ctx());
+                                ui.ctx().data_mut(|data| {
+                                    if let Some(mut events) =
+                                        data.remove_temp::<Vec<egui::Event>>(id)
+                                    {
+                                        events.retain(|event| {
+                                            matches!(
+                                                event,
+                                                egui::Event::Key { pressed: false, .. }
+                                                    | egui::Event::PointerButton {
+                                                        pressed: false,
+                                                        ..
+                                                    }
+                                                    | egui::Event::WindowFocused(_)
+                                                    | egui::Event::PointerGone
+                                            )
+                                        });
+                                        data.insert_temp(id, events);
+                                    }
+                                });
+                            }
+                            deferred_pastes = session.view.take_paste_requests();
+                            clipboard_read_requested = session.view.take_clipboard_read_request();
+                            deferred_find_request = session.view.take_find_request();
+                            deferred_links = session
+                                .view
+                                .take_link_requests()
+                                .into_iter()
+                                .map(|link| (session.controller.lifecycle_generation(), link))
+                                .collect();
+                            if session.view.take_context_action_request() {
+                                deferred_terminal_path_open = Some(active_tab_id);
+                            }
+                            deferred_history_actions = session.view.take_history_actions();
                         }
-                        deferred_pastes = session.view.take_paste_requests();
-                        clipboard_read_requested = session.view.take_clipboard_read_request();
-                        deferred_find_request = session.view.take_find_request();
-                        deferred_links = session
-                            .view
-                            .take_link_requests()
-                            .into_iter()
-                            .map(|link| (session.controller.lifecycle_generation(), link))
-                            .collect();
-                        if session.view.take_context_action_request() {
-                            deferred_terminal_path_open = Some(active_tab_id);
+                        session
+                            .controller
+                            .observe_resize_probe_terminal_state(&session.terminal);
+                        session
+                            .controller
+                            .forward_terminal_replies(&mut session.terminal);
+                        session.controller.flush_pending_writes();
+                        session.controller.flush_pending_resize();
+                        session.pump_session_events();
+                        if session.controller.last_pump_output_received() {
+                            ui.ctx().request_repaint();
                         }
-                        deferred_history_actions = session.view.take_history_actions();
+                        overlay_action = overlay::show(
+                            ui.ctx(),
+                            session.chip_status(),
+                            session.reconnect_available(),
+                            session.recovery_retry_message(),
+                        );
                     }
-                    session
-                        .controller
-                        .observe_resize_probe_terminal_state(&session.terminal);
-                    session
-                        .controller
-                        .forward_terminal_replies(&mut session.terminal);
-                    session.controller.flush_pending_writes();
-                    session.controller.flush_pending_resize();
-                    session.pump_session_events();
-                    if session.controller.last_pump_output_received() {
-                        ui.ctx().request_repaint();
-                    }
-                    overlay_action = overlay::show(
-                        ui.ctx(),
-                        session.chip_status(),
-                        session.reconnect_available(),
-                        session.recovery_retry_message(),
-                    );
                 }
-            }
+            },
+        );
+        if let Some(events) = pane_content_events {
+            ui.input_mut(|input| input.events = events);
         }
+        self.show_passive_panes(ui);
         for command in take_viewer_commands(ui.ctx()) {
             let context = ui.ctx().clone();
             self.state.dispatch(command, &context);
@@ -7124,6 +7491,8 @@ impl FesTermApp {
                 command @ (AppCommand::ToggleChipLayout
                 | AppCommand::ToggleStatusBar
                 | AppCommand::ToggleShowSessionDetails
+                | AppCommand::TogglePaneHandles
+                | AppCommand::TogglePaneHighContrast
                 | AppCommand::ToggleConfirmSessionClose
                 | AppCommand::TogglePreferPowershell
                 | AppCommand::ToggleExtendDevTunnelLifetime
@@ -7749,6 +8118,11 @@ impl FesTermApp {
         let state = AppState::for_test_with_configuration(configuration);
         Self {
             state,
+            pane_rects: Vec::new(),
+            pane_layout_menu: None,
+            pane_controls: panes::PaneControls::default(),
+            pane_details_open: false,
+            pane_close: None,
             image_budget,
             local_persistence_provider: PersistenceProviderKind::FestermSessiond,
             primary_tab: None,
@@ -19183,6 +19557,73 @@ mod tests {
             harness.get_by_label("Terminal viewport").is_focused(),
             "activating a background chip must hand keyboard focus to its terminal, \
              not leave it stranded on the chrome row"
+        );
+    }
+
+    #[test]
+    fn command_palette_same_frame_composition_cancel_keeps_escape_out_of_palette() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(bound_event(festerm_config::KeyboardAction::CommandPalette));
+        harness.run();
+        harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "New Session".into(),
+            active_range_chars: None,
+        }));
+        harness.run();
+        for pressed in [true, false] {
+            harness.input_mut().events.push(egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.step();
+        assert!(
+            harness.state().palette.is_open(),
+            "a later release must not unprotect the composition-owned Escape press"
+        );
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(
+            !harness.state().palette.is_open(),
+            "the next independent Escape can dismiss the palette"
+        );
+    }
+
+    #[test]
+    fn command_palette_composition_keeps_navigation_and_enter_owned_by_query() {
+        let mut harness = harness();
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(bound_event(festerm_config::KeyboardAction::CommandPalette));
+        harness.run();
+        assert!(harness.state().palette.is_open());
+        harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "New Session".into(),
+            active_range_chars: None,
+        }));
+        harness.run();
+        harness.key_press(egui::Key::ArrowDown);
+        harness.run();
+        assert!(!harness
+            .output()
+            .platform_output
+            .ime
+            .as_ref()
+            .is_some_and(|ime| ime.should_interrupt_composition));
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert!(
+            harness.state().palette.is_open(),
+            "IME Enter must not execute a palette command"
         );
     }
 

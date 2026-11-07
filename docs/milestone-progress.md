@@ -1,5 +1,32 @@
 # Milestone Progress Narrative
 
+## Composing live desktop panes
+
+Desktop windows can now arrange two to four existing session or document
+views without moving their controllers out of the window-owned registry.
+Focused input stays with one view, layout edits preserve the live surfaces,
+and group close preflights dirty documents before closing anything. Transient
+handles and explicit rearrangement support atomic swaps; hover handles default
+off. The command palette groups existing actions without adding authority.
+
+Review caught inactive panes missing secondary-click focus, overlapping menus
+retargeting a sibling, groups shifting position after later edits, and palette
+shortcut labels following raw views rather than visible chips. Pointer routing,
+chip placement and labels now follow their corresponding live presentation
+identities.
+
+ADR 0078 records the presentation and metadata-only persistence boundaries.
+Named recipes, independent recovery controls and cross-platform native
+qualification (`PN-01` and `PN-02`) remain open.
+
+## Isolating macOS development launches
+
+A branded development bundle now runs with private data and runtime roots,
+canonical helper binaries, and a tracked supervisor that checks native
+identity and normal shutdown. This is data isolation, not an OS sandbox;
+the previous quit-timeout and installed-app permission-warning causes remain
+unresolved.
+
 ## Mobile accessibility tree and UI automation
 
 VoiceOver and TalkBack could not see any fesTerm mobile control, and no tool

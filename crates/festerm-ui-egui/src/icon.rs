@@ -26,6 +26,7 @@ pub enum Icon {
     /// The same three dots stacked vertically, for the per-row overflow
     /// control in a table whose rows are shorter than they are wide.
     OverflowVertical,
+    PaneHandle,
     Close,
     Minimize,
     Maximize,
@@ -257,6 +258,7 @@ mod tests {
             Icon::FileTransfer,
             Icon::NewProfile,
             Icon::OverflowVertical,
+            Icon::PaneHandle,
             Icon::Proceed,
             Icon::Reattach,
             Icon::RemoteGlobe,
@@ -267,7 +269,7 @@ mod tests {
             Icon::SectionExpanded,
             Icon::SortOrder,
         ];
-        assert_eq!(icons.len(), 62);
+        assert_eq!(icons.len(), 63);
         let sources =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/source");
         assert_eq!(std::fs::read_dir(sources).unwrap().count(), icons.len());

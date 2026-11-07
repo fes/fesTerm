@@ -160,6 +160,11 @@ const fn trailing_controls_reserved_width(show_search: bool, show_inspector: boo
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct ChipId(pub u64);
 
+pub fn pane_details_open(context: &egui::Context, chip: ChipId) -> bool {
+    Popup::is_id_open(context, chip_widget_id(chip).with("pane-details"))
+        || context.memory(|memory| memory.has_focus(chip_widget_id(chip)))
+}
+
 /// Compact, non-color-exclusive connection-state vocabulary
 /// (`docs/gui-design.md` "Connection states").
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -260,8 +265,20 @@ impl ChipStatus {
 /// `primary` is the stable identity (`docs/gui-design.md` "Identity
 /// precedence"); `secondary` is optional transient terminal-provided metadata
 /// that must never replace it.
+#[derive(Clone)]
+pub struct PaneMemberViewModel {
+    pub id: ChipId,
+    pub label: String,
+    pub surface: &'static str,
+    pub status: ChipStatus,
+    pub focused: bool,
+    pub unread: bool,
+    pub bounds: Rect,
+}
+
 pub struct ChipViewModel {
     pub id: ChipId,
+    pub panes: Vec<PaneMemberViewModel>,
     pub primary: String,
     pub secondary: Option<String>,
     pub status: ChipStatus,
@@ -301,6 +318,8 @@ pub struct ChipViewModel {
 /// than hashed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChromeAction {
+    FocusPane(ChipId),
+    PaneLayout(ChipId),
     Activate(ChipId),
     Close(ChipId),
     NewTab,
@@ -398,6 +417,7 @@ pub fn show(
             .iter()
             .map(|chip| ChipViewModel {
                 id: chip.id,
+                panes: chip.panes.clone(),
                 primary: chip.primary.clone(),
                 secondary: None,
                 status: chip.status,
@@ -656,6 +676,25 @@ pub fn show(
         );
     });
     tab_drag::record_footprint(&ui.ctx().clone(), band_rect, &chip_footprints);
+    let pane_strip_id = Id::new(("pane-tab-strip", ui.ctx().viewport_id()));
+    let strip_left = chip_footprints
+        .first()
+        .map_or(band_rect.left() + 96.0, |(_, rect)| rect.left());
+    let strip_right = band_rect.right()
+        - if cfg!(target_os = "macos") {
+            80.0
+        } else {
+            160.0
+        };
+    let after_chips = chip_footprints
+        .last()
+        .map_or(strip_left, |(_, rect)| rect.right() + 8.0);
+    let left = after_chips;
+    let strip = Rect::from_min_size(
+        egui::pos2(left, band_rect.top() + CHROME_TOP_INSET),
+        vec2((strip_right - left).clamp(0.0, 240.0), chip_row_height),
+    );
+    ui.data_mut(|data| data.insert_temp(pane_strip_id, strip));
     show_escaped_drag_ghost(ui, chips);
     if let Some(action) = released_cross_window_drag(ui, chips) {
         actions.push(action);
@@ -673,6 +712,11 @@ pub fn show(
         });
     });
     actions
+}
+
+pub fn pane_tab_strip_target(context: &egui::Context) -> Option<Rect> {
+    let id = Id::new(("pane-tab-strip", context.viewport_id()));
+    context.data(|data| data.get_temp(id))
 }
 
 /// Thin, invisible hit zones along the window's edges/corners that forward
@@ -1084,6 +1128,7 @@ mod tests {
     fn chip(id: u64, primary: &str) -> ChipViewModel {
         ChipViewModel {
             id: ChipId(id),
+            panes: Vec::new(),
             primary: primary.to_owned(),
             secondary: None,
             status: ChipStatus::Connected,
@@ -2649,6 +2694,7 @@ mod tests {
         let mut harness = harness(ChromeHarnessState {
             chips: vec![ChipViewModel {
                 id: ChipId(1),
+                panes: Vec::new(),
                 primary: "Launcher".to_owned(),
                 secondary: None,
                 status: ChipStatus::Neutral,
@@ -2735,6 +2781,7 @@ mod tests {
         // at all, so the overlay must still be able to show their number.
         let neutral_chip = ChipViewModel {
             id: ChipId(1),
+            panes: Vec::new(),
             primary: "Launcher".to_owned(),
             secondary: None,
             status: ChipStatus::Neutral,
@@ -2751,6 +2798,7 @@ mod tests {
             .build_ui(move |ui| {
                 let chip = ChipViewModel {
                     id: neutral_chip.id,
+                    panes: neutral_chip.panes.clone(),
                     primary: neutral_chip.primary.clone(),
                     secondary: neutral_chip.secondary.clone(),
                     status: neutral_chip.status,
