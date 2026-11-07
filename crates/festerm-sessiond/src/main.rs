@@ -1418,6 +1418,16 @@ fn report_attach_state_change(
     }
 }
 
+/// An accepted socket inherits `O_NONBLOCK` from the nonblocking listener on
+/// macOS/BSD, which makes the read timeout a no-op and turns the client I/O
+/// loop into a busy loop. Force blocking mode so the timeouts apply.
+#[cfg(unix)]
+fn configure_accepted_client_stream(stream: &UnixStream) -> io::Result<()> {
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
+    stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))
+}
+
 #[cfg(unix)]
 fn accept_unix_clients(
     listener: &UnixListener,
@@ -1431,8 +1441,7 @@ fn accept_unix_clients(
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
-                stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
-                stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
+                configure_accepted_client_stream(&stream)?;
                 let Some((recovery_limit, kind)) = admit_client(&mut stream, active)? else {
                     continue;
                 };
@@ -6382,6 +6391,38 @@ mod tests {
     #[cfg(unix)]
     fn unique_test_directory(label: &str) -> PathBuf {
         env::temp_dir().join(format!("fsd-{label}-{}-{}", process::id(), now_ms()))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn accepted_client_stream_blocks_for_the_read_timeout_from_a_nonblocking_listener() {
+        let directory = unique_test_directory("blocking");
+        fs::create_dir_all(&directory).unwrap();
+        let socket_path = directory.join("sessiond.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let _client = UnixStream::connect(&socket_path).unwrap();
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(1))
+                }
+                Err(error) => panic!("accept failed: {error}"),
+            }
+        };
+
+        configure_accepted_client_stream(&stream).unwrap();
+
+        let started = Instant::now();
+        let error = (&stream).read(&mut [0u8; 1]).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ));
+        // A nonblocking socket would fail immediately instead of waiting.
+        assert!(started.elapsed() >= CLIENT_POLL_INTERVAL / 2);
+        let _ = fs::remove_dir_all(&directory);
     }
 
     #[test]
