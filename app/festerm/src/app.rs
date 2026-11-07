@@ -4537,7 +4537,7 @@ impl FesTermApp {
                     });
                 });
                 ui.add_space(6.0);
-                ui.label("A compact local, SSH, and serial terminal.");
+                ui.label("An AI-friendly local, SSH, and serial terminal.");
                 ui.label(egui::RichText::new(AI_AUTHORSHIP_SUMMARY).strong());
                 ui.label(
                     egui::RichText::new(AI_AUTHORSHIP_DETAIL)
@@ -17651,7 +17651,7 @@ mod tests {
         harness.get_by_label("About fesTerm");
         let version_label = format!("Version {}", env!("CARGO_PKG_VERSION"));
         harness.get_by_label(&version_label);
-        harness.get_by_label("A compact local, SSH, and serial terminal.");
+        harness.get_by_label("An AI-friendly local, SSH, and serial terminal.");
         harness.get_by_label(AI_AUTHORSHIP_SUMMARY);
         harness.get_by_label(AI_AUTHORSHIP_DETAIL);
         harness.get_by_label("Diagnostics");
