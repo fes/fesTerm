@@ -64,7 +64,8 @@ screen when parser, decoder, charset, insert-mode and hyperlink state make
 per-byte printing unnecessary. The fast path retains scalar handling at wrap
 and scroll boundaries; a 2,000-case differential property test compares the
 complete terminal state with byte-at-a-time ingestion. The resize probe also
-skips ground-state bytes up to the next ESC.
+skips ground-state bytes up to the next ESC and avoids scanning visible cells
+when no resize observation is pending.
 
 Criterion throughput on Apple M-series, release, compared with the #640
 baseline. The benchmark command is

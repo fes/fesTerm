@@ -142,6 +142,9 @@ impl ResizeProbe {
     }
 
     fn record_visible_nonblank_cells(&mut self, terminal: &Terminal) {
+        let Some(generation) = self.generations.back_mut() else {
+            return;
+        };
         let count = (0..terminal.dimensions().rows())
             .flat_map(|row| {
                 (0..terminal.dimensions().columns())
@@ -149,9 +152,7 @@ impl ResizeProbe {
             })
             .filter(|cell| cell.character() != ' ')
             .count();
-        if let Some(generation) = self.generations.back_mut() {
-            generation.visible_nonblank_cells = count;
-        }
+        generation.visible_nonblank_cells = count;
     }
 
     pub const fn observed_output_bytes(&self) -> u64 {
