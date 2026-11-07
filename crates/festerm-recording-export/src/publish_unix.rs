@@ -14,10 +14,9 @@ use nix::unistd::{unlinkat, UnlinkatFlags};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::{ExportError, StagedRecording};
+use crate::{collision_name, ExportError, StagedRecording};
 use std::os::unix::fs::MetadataExt;
 
-const MAX_NAME_BYTES: usize = 255;
 const MAX_COLLISIONS: usize = 10_000;
 
 /// A synchronized directory atomically published under the retained root.
@@ -234,18 +233,6 @@ pub fn delete_source_after_publication(
     staged.source.remove_verified(staged.source_fingerprint)
 }
 
-fn collision_name(base: &str, collision: usize) -> String {
-    if collision == 0 {
-        return base.to_owned();
-    }
-    let suffix = format!("-{}", collision + 1);
-    let mut end = base.len().min(MAX_NAME_BYTES - suffix.len());
-    while !base.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{}", &base[..end], suffix)
-}
-
 fn cleanup(
     root: &File,
     directory: &File,
@@ -283,7 +270,7 @@ mod tests {
     fn collision_suffix_respects_byte_and_unicode_boundaries() {
         let base = "é".repeat(127);
         let name = collision_name(&base, 1);
-        assert!(name.len() <= MAX_NAME_BYTES);
+        assert!(name.len() <= 255);
         assert!(name.ends_with("-2"));
         assert!(name.is_char_boundary(name.len()));
     }

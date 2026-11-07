@@ -240,12 +240,32 @@ impl WindowsEncoder {
                 "video dimensions must be even and between 16x16 and 3840x2160",
             ));
         }
-        let mut path: Vec<u16> = path.as_os_str().encode_wide().collect();
-        if path.contains(&0) {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let name = path
+            .file_name()
+            .ok_or_else(|| VideoError::new("the private video path has no filename"))?;
+        let directory = festerm_windows_security::lock_directory_path_without_delete_sharing(
+            parent,
+        )
+        .map_err(|error| VideoError::new(format!("could not open private staging: {error}")))?;
+        let private =
+            festerm_windows_security::is_current_user_only(&directory).map_err(|error| {
+                VideoError::new(format!("could not verify private staging: {error}"))
+            })?;
+        if !private {
+            return Err(VideoError::new(
+                "video staging is not private to the current user",
+            ));
+        }
+        let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if wide_path.contains(&0) {
             return Err(VideoError::new("the private video path contains a NUL"));
         }
-        path.push(0);
-        let path = PCWSTR(path.as_ptr());
+        wide_path.push(0);
+        let path = PCWSTR(wide_path.as_ptr());
         let context = MfContext::new()?;
         let api = &context.api;
         let output: IMFByteStream = create_object("create a private MP4 file", |out| unsafe {
@@ -257,6 +277,15 @@ impl WindowsEncoder {
                 out,
             )
         })?;
+        let created =
+            festerm_windows_security::open_file_no_reparse_for_capture(&directory, Path::new(name))
+                .map_err(|error| {
+                    VideoError::new(format!("could not secure the new MP4 file: {error}"))
+                })?;
+        festerm_windows_security::restrict_to_current_user(&created).map_err(|error| {
+            VideoError::new(format!("could not secure the new MP4 file: {error}"))
+        })?;
+        drop(created);
         let attributes: IMFAttributes =
             create_object("configure the MP4 container", |out| unsafe {
                 (api.create_attributes)(out, 2)
@@ -500,7 +529,16 @@ mod tests {
     #[ignore = "requires Windows Media Foundation and ffmpeg/ffprobe"]
     fn produces_a_silent_mp4_with_sequential_top_down_frames() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("video.mp4");
+        let parent =
+            festerm_windows_security::lock_directory_path_without_delete_sharing(directory.path())
+                .unwrap();
+        let stage = festerm_windows_security::create_current_user_only_directory(
+            &parent,
+            Path::new("stage"),
+        )
+        .unwrap();
+        drop((stage, parent));
+        let path = directory.path().join("stage").join("video.mp4");
         let mut encoder = WindowsEncoder::new(&path, 320, 180).unwrap();
         let mut frame = vec![255; 320 * 180 * 4];
         for index in 0..90 {
@@ -518,6 +556,17 @@ mod tests {
         }
         encoder.finish().unwrap();
         assert!(encoder.finish().is_err());
+        let parent = festerm_windows_security::lock_directory_path_without_delete_sharing(
+            path.parent().unwrap(),
+        )
+        .unwrap();
+        let output = festerm_windows_security::open_file_no_reparse(
+            &parent,
+            Path::new(path.file_name().unwrap()),
+        )
+        .unwrap();
+        assert!(festerm_windows_security::is_current_user_only(&output).unwrap());
+        drop((output, parent));
         assert!(encoder.append(&frame).is_err());
         assert!(WindowsEncoder::new(&path, 320, 180).is_err());
         let bytes = fs::read(&path).unwrap();

@@ -2314,6 +2314,7 @@ dependencies = [
  "festerm-macos-window",
  "festerm-markdown",
  "festerm-pty",
+ "festerm-recording",
  "festerm-secret-store",
  "festerm-serial",
  "festerm-session",
@@ -2582,6 +2583,7 @@ dependencies = [
  "festerm-mobile-docs",
  "festerm-mobile-profiles",
  "festerm-mobile-tunnels",
+ "festerm-recording",
  "festerm-secret-store",
  "festerm-session",
  "festerm-sftp",
@@ -2593,6 +2595,7 @@ dependencies = [
  "russh",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "tokio",
  "winit",
  "zeroize",
@@ -2667,6 +2670,8 @@ dependencies = [
  "bincode",
  "crc32fast",
  "festerm-core",
+ "festerm-unix-security",
+ "festerm-windows-security",
  "sha2 0.10.9",
  "tempfile",
  "unicode-segmentation",
@@ -2693,6 +2698,7 @@ dependencies = [
  "festerm-recording-windows",
  "festerm-ui-egui",
  "festerm-unix-security",
+ "festerm-windows-security",
  "nix 0.31.3",
  "sha2 0.10.9",
  "tempfile",
@@ -2711,6 +2717,7 @@ dependencies = [
 name = "festerm-recording-windows"
 version = "0.15.0"
 dependencies = [
+ "festerm-windows-security",
  "libloading",
  "tempfile",
  "windows",

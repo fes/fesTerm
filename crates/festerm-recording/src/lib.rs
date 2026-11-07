@@ -6,6 +6,7 @@ mod artifact;
 mod capture;
 mod naming;
 mod playback;
+mod shared;
 
 pub use artifact::{ArtifactError, ArtifactEvent, ArtifactReader, FinishReason, StreamId};
 pub use capture::{CaptureError, Completion, Recorder};
@@ -14,6 +15,7 @@ pub use playback::{
     IdleCompression, LongOutputLimit, OutputRevealRate, Pacing, Playback, PlaybackError,
     PlaybackFrame, PlaybackPlan, PlaybackSpeed, TypingSpeed,
 };
+pub use shared::{RecordingStream, SharedRecording};
 
 /// Maximum number of streams in one synchronized recording.
 pub const MAX_STREAMS: usize = 16;

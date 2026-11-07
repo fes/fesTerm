@@ -1450,6 +1450,11 @@ mod imp {
         ))
     }
 
+    /// Number of names referring to an exact file object.
+    pub fn file_link_count(file: &File) -> io::Result<u32> {
+        Ok(file_information(file)?.nNumberOfLinks)
+    }
+
     fn file_information(file: &File) -> io::Result<BY_HANDLE_FILE_INFORMATION> {
         let mut information = BY_HANDLE_FILE_INFORMATION::default();
         if unsafe {
@@ -1811,6 +1816,27 @@ mod imp {
         } else {
             Ok(file)
         }
+    }
+
+    /// Reopens and pins the same directory with write access for durable flushes.
+    pub fn lock_directory_for_sync(directory: &File) -> io::Result<File> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(opened_file_path(directory)?)?;
+        let information = file_information(&file)?;
+        if information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0
+            || information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || !same_file_identity(directory, &file)?
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the directory changed before it could be synced",
+            ));
+        }
+        Ok(file)
     }
 
     /// Returns the filesystem-maintained change time for an exact file handle.
@@ -3813,9 +3839,9 @@ pub use imp::{
     create_current_user_only_file_exclusive, create_current_user_only_file_exclusive_with_audit,
     create_current_user_only_file_with_audit, current_user_service_context,
     delete_directory_by_handle, disable_std_handle_inheritance, enable_security_privilege,
-    file_change_time, file_identity, is_current_user_only,
-    lock_directory_path_without_delete_sharing, open_directory_no_reparse, open_file_no_reparse,
-    open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
+    file_change_time, file_identity, file_link_count, is_current_user_only,
+    lock_directory_for_sync, lock_directory_path_without_delete_sharing, open_directory_no_reparse,
+    open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
     open_file_no_reparse_for_verification, open_file_read_write_no_reparse,
     open_private_directory_for_move, opened_file_path, remove_private_staging_file,

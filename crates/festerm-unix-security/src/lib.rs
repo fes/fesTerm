@@ -46,11 +46,22 @@ mod imp {
     /// Checks effective write/search access without creating entries or reopening a path.
     pub fn writable_directory(directory: &File) -> io::Result<()> {
         current_user_id()?;
+        // Android's faccessat lacks AT_EACCESS; use real credentials only
+        // after confirming that both real and effective IDs are identical.
+        #[cfg(target_os = "android")]
+        let flags = {
+            if nix::unistd::Gid::current() != nix::unistd::Gid::effective() {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+            nix::fcntl::AtFlags::empty()
+        };
+        #[cfg(not(target_os = "android"))]
+        let flags = nix::fcntl::AtFlags::AT_EACCESS;
         nix::unistd::faccessat(
             directory,
             ".",
             nix::unistd::AccessFlags::W_OK | nix::unistd::AccessFlags::X_OK,
-            nix::fcntl::AtFlags::AT_EACCESS,
+            flags,
         )
         .map_err(io::Error::from)
     }
@@ -164,7 +175,7 @@ mod imp {
         use nix::sys::stat::{fchmod, Mode};
 
         require_private_security_support()?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if file
             .list_xattr()
             .map_err(private_io_error)?
@@ -199,7 +210,7 @@ mod imp {
         use nix::sys::stat::{fchmod, Mode};
 
         require_private_security_support()?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         for attribute in ["system.posix_acl_access", "system.posix_acl_default"] {
             if directory
                 .list_xattr()
@@ -216,7 +227,7 @@ mod imp {
         fchmod(directory, Mode::from_bits_truncate(0o700)).map_err(private_metadata_error)?;
         let private = security_metadata(directory).map_err(private_io_error)?;
         let inherited_acl = {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 private.attributes.iter().any(|(name, _)| {
                     name == "system.posix_acl_access" || name == "system.posix_acl_default"
@@ -226,7 +237,7 @@ mod imp {
             {
                 !private.acl.is_empty()
             }
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
             {
                 false
             }
@@ -271,7 +282,7 @@ mod imp {
     }
 
     /// Verifies an owner-only object without changing an existing access policy.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     pub fn is_current_user_only(file: &File, directory: bool) -> io::Result<bool> {
         let metadata = file.metadata()?;
         let security = security_metadata(file)?;
@@ -280,7 +291,7 @@ mod imp {
             {
                 !security.acl.is_empty()
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 security.attributes.iter().any(|(name, _)| {
                     name == "system.posix_acl_access" || name == "system.posix_acl_default"
@@ -297,12 +308,12 @@ mod imp {
             && !acl)
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
     pub fn is_current_user_only(_file: &File, _directory: bool) -> io::Result<bool> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos", test))]
     pub(crate) const fn private_storage_owner_and_mode(
         actual_uid: u32,
         current_uid: u32,
@@ -431,7 +442,12 @@ mod imp {
 
         // A rejected FIFO must not block, and a terminal must not become controlling.
         let flags = OFlag::O_RDONLY | OFlag::O_NONBLOCK;
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios"
+        ))]
         let flags = flags | OFlag::O_NOCTTY;
         let file = open_nofollow(directory, name, flags)?;
         if file.metadata()?.is_file() {
@@ -860,6 +876,40 @@ mod imp {
         .map_err(rename_error)
     }
 
+    #[cfg(target_os = "android")]
+    pub fn rename_noreplace(
+        source_directory: &File,
+        source: &Path,
+        target_directory: &File,
+        target: &Path,
+    ) -> io::Result<()> {
+        use std::{ffi::CString, os::fd::AsRawFd, os::unix::ffi::OsStrExt};
+
+        one_component(source)?;
+        one_component(target)?;
+        let source = CString::new(source.as_os_str().as_bytes())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let target = CString::new(target.as_os_str().as_bytes())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // The syscall works on API 29, unlike bionic's API 30 renameat2
+        // wrapper. The descriptors and C strings remain valid through it.
+        let renamed = unsafe {
+            nix::libc::syscall(
+                nix::libc::SYS_renameat2,
+                source_directory.as_raw_fd(),
+                source.as_ptr(),
+                target_directory.as_raw_fd(),
+                target.as_ptr(),
+                nix::libc::RENAME_NOREPLACE as nix::libc::c_uint,
+            )
+        };
+        if renamed == 0 {
+            Ok(())
+        } else {
+            Err(rename_error(nix::errno::Errno::last()))
+        }
+    }
+
     #[cfg(target_os = "macos")]
     pub fn rename_noreplace(
         source_directory: &File,
@@ -909,7 +959,10 @@ mod imp {
         }
     }
 
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+    #[cfg(all(
+        unix,
+        not(any(target_os = "linux", target_os = "macos", target_os = "android"))
+    ))]
     pub fn rename_noreplace(
         _source_directory: &File,
         _source: &Path,
@@ -922,7 +975,7 @@ mod imp {
         ))
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android", test))]
     fn rename_error(error: nix::errno::Errno) -> io::Error {
         if [
             nix::errno::Errno::EINVAL,

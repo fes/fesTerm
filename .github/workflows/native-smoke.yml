@@ -26,5 +26,9 @@ jobs:
           ffprobe -version
       - name: Encode and inspect native Windows video
         run: cargo test --locked -p festerm-recording-windows -- --ignored --nocapture
+      - name: Verify private synchronized capture
+        run: cargo test --locked -p festerm-recording -- --nocapture
+      - name: Verify private staging, publication, and retention
+        run: cargo test --locked -p festerm-recording-export --test export -- --nocapture
       - name: Encode synchronized Windows sessions
         run: cargo test --locked -p festerm-recording-export --test export windows_stages_readable_synchronized_mp4s -- --ignored --nocapture

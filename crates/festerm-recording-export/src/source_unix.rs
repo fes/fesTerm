@@ -1,10 +1,15 @@
-use std::{ffi::OsString, fs::File, io::Read, os::unix::fs::MetadataExt, path::Path};
+use std::{ffi::OsString, fs::File, os::unix::fs::MetadataExt, path::Path};
 
 use festerm_recording::MAX_ARTIFACT_BYTES;
 use festerm_unix_security::{is_current_user_only, make_private, open_file_nofollow};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use nix::unistd::{unlinkat, UnlinkatFlags};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::io::Read;
 
-use crate::{fingerprint, ExportError};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::fingerprint;
+use crate::ExportError;
 
 #[derive(Debug)]
 pub(crate) struct SourceBinding {
@@ -71,6 +76,7 @@ impl SourceBinding {
         Ok(file)
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn remove_verified(&self, expected: [u8; 32]) -> Result<(), ExportError> {
         let mut source = self.open_current()?;
         let before = source.metadata().map_err(|error| {

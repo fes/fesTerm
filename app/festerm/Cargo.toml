@@ -32,6 +32,7 @@ festerm-host-setup = { path = "../../crates/festerm-host-setup" }
 festerm-linux-power = { path = "../../crates/festerm-linux-power" }
 festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 festerm-pty = { path = "../../crates/festerm-pty" }
+festerm-recording = { path = "../../crates/festerm-recording" }
 festerm-session = { path = "../../crates/festerm-session" }
 festerm-sessiond = { path = "../../crates/festerm-sessiond" }
 festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional = true, features = ["relay"] }

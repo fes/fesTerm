@@ -10,7 +10,7 @@ publish = false
 
 [features]
 default = []
-live-ssh = ["dep:festerm-session", "dep:festerm-mobile-tunnels", "dep:tokio"]
+live-ssh = ["dep:festerm-session", "dep:festerm-mobile-tunnels", "dep:festerm-recording", "dep:tokio"]
 native-document-smoke = ["festerm-ios-window/native-document-smoke"]
 
 [dependencies]
@@ -23,6 +23,7 @@ festerm-ios-window = { path = "../../crates/festerm-ios-window" }
 festerm-markdown = { path = "../../crates/festerm-markdown" }
 festerm-mobile-docs = { path = "../../crates/festerm-mobile-docs" }
 festerm-mobile-profiles = { path = "../../crates/festerm-mobile-profiles" }
+festerm-recording = { path = "../../crates/festerm-recording", optional = true }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
 festerm-mobile-tunnels = { path = "../../crates/festerm-mobile-tunnels", optional = true }
 festerm-session = { path = "../../crates/festerm-session", optional = true }
@@ -43,6 +44,7 @@ tokio = { version = "1.17.0", default-features = false, features = ["net", "rt",
 egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }
 serde_json = "1"
 sha2 = "0.11"
+tempfile = "3"
 
 # Enables a desktop harness for the same host without adding desktop backends
 # to an iOS package. The production desktop composition root is not imported.

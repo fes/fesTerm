@@ -9,7 +9,7 @@ use std::{
 use festerm_core::{Dimensions, Terminal};
 use festerm_recording::{
     ArtifactEvent, ArtifactReader, Completion, FinishReason, Pacing, Playback, PlaybackPlan,
-    Recorder, MAX_OUTPUT_BYTES,
+    Recorder, SharedRecording, MAX_OUTPUT_BYTES,
 };
 
 fn terminal(columns: usize, rows: usize) -> Terminal {
@@ -173,6 +173,29 @@ fn partial_preconsent_sequences_refuse_start_without_creating_a_source() {
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_recording_source_is_current_user_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let terminal = terminal(20, 2);
+    let (mut recorder, _, ready) = start(directory.path(), &[&terminal]);
+    recorder.stop(FinishReason::User).unwrap();
+    let path = completed_path(completion(&mut recorder, ready));
+    let parent =
+        festerm_windows_security::lock_directory_path_without_delete_sharing(directory.path())
+            .unwrap();
+    let source = festerm_windows_security::open_file_no_reparse(
+        &parent,
+        Path::new(path.file_name().unwrap()),
+    )
+    .unwrap();
+    assert!(festerm_windows_security::is_current_user_only(&source).unwrap());
+    assert_eq!(
+        festerm_windows_security::file_link_count(&source).unwrap(),
+        1
+    );
+}
+
 #[test]
 fn repeat_of_offscreen_preconsent_character_is_checkpointed_after_output() {
     let directory = tempfile::tempdir().unwrap();
@@ -325,4 +348,117 @@ fn corrupt_truncated_and_oversized_frames_are_rejected() {
         Some(ArtifactEvent::Started { .. })
     ));
     assert!(reader.next_event().is_err());
+}
+
+fn shared_completion(recording: &SharedRecording, ready: &Receiver<()>) -> Completion {
+    loop {
+        ready.recv_timeout(Duration::from_secs(10)).unwrap();
+        if let Some(completion) = recording.poll_completion().unwrap() {
+            return completion;
+        }
+    }
+}
+
+#[test]
+fn shared_lifecycle_stop_blocks_later_output_in_every_stream() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut first = terminal(20, 2);
+    let mut second = terminal(20, 2);
+    let (wake, ready) = mpsc::channel();
+    let (recording, streams) =
+        SharedRecording::start(directory.path(), &[&first, &second], move || {
+            let _ = wake.send(());
+        })
+        .unwrap();
+    let generation = first.screen_generation();
+    first.ingest(b"before");
+    streams[0]
+        .observe_output(b"before", generation, &first)
+        .unwrap();
+    let lifecycle = recording.clone();
+    std::thread::spawn(move || lifecycle.stop(FinishReason::Lifecycle).unwrap())
+        .join()
+        .unwrap();
+    let generation = second.screen_generation();
+    second.ingest(b"after");
+    streams[1]
+        .observe_output(b"after", generation, &second)
+        .unwrap();
+    let path = completed_path(shared_completion(&recording, &ready));
+    let mut reader = ArtifactReader::new(fs::File::open(path).unwrap()).unwrap();
+    let mut output = Vec::new();
+    let mut reason = None;
+    while let Some(event) = reader.next_event().unwrap() {
+        match event {
+            ArtifactEvent::Output { bytes, .. } => output.extend(bytes),
+            ArtifactEvent::Finished { reason: value, .. } => reason = Some(value),
+            _ => {}
+        }
+    }
+    assert_eq!(output, b"before");
+    assert_eq!(reason, Some(FinishReason::Lifecycle));
+}
+
+#[test]
+fn closing_one_shared_stream_keeps_the_other_recording() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = terminal(20, 2);
+    let mut second = terminal(20, 2);
+    let (wake, ready) = mpsc::channel();
+    let (recording, mut streams) =
+        SharedRecording::start(directory.path(), &[&first, &second], move || {
+            let _ = wake.send(());
+        })
+        .unwrap();
+    let first_id = streams[0].id();
+    drop(streams.remove(0));
+    assert!(recording.is_recording().unwrap());
+    let generation = second.screen_generation();
+    second.ingest(b"still active");
+    streams[0]
+        .observe_output(b"still active", generation, &second)
+        .unwrap();
+    recording.stop(FinishReason::User).unwrap();
+    let path = completed_path(shared_completion(&recording, &ready));
+    let mut reader = ArtifactReader::new(fs::File::open(path).unwrap()).unwrap();
+    let mut ended_first = false;
+    let mut other_output = false;
+    while let Some(event) = reader.next_event().unwrap() {
+        match event {
+            ArtifactEvent::Ended { stream, .. } if stream == first_id => ended_first = true,
+            ArtifactEvent::Output { stream, bytes, .. } if stream != first_id => {
+                assert!(ended_first);
+                other_output = bytes == b"still active";
+            }
+            _ => {}
+        }
+    }
+    assert!(ended_first && other_output);
+}
+
+#[test]
+fn shared_capture_failure_is_visible_and_stops_every_stream() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = terminal(20, 2);
+    let second = terminal(20, 2);
+    let (wake, ready) = mpsc::channel();
+    let (recording, streams) =
+        SharedRecording::start(directory.path(), &[&first, &second], move || {
+            let _ = wake.send(());
+        })
+        .unwrap();
+    let output = vec![b'x'; MAX_OUTPUT_BYTES + 1];
+    assert!(streams[0]
+        .observe_output(&output, first.screen_generation(), &first)
+        .is_err());
+    assert!(!recording.is_recording().unwrap());
+    assert!(recording.take_failure().unwrap().unwrap().contains("limit"));
+    assert!(recording.take_failure().unwrap().is_none());
+    assert!(matches!(
+        shared_completion(&recording, &ready),
+        Completion::Incomplete {
+            reason: FinishReason::ResourceLimit,
+            ..
+        }
+    ));
 }

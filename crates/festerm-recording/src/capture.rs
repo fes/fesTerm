@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering},
@@ -9,6 +9,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+#[cfg(not(windows))]
+use std::fs::OpenOptions;
 
 use crate::{
     artifact::{ArtifactWriter, CapturedData, CapturedEvent, FinishReason, StreamId},
@@ -23,7 +26,7 @@ const MAX_QUEUED_EVENTS: usize = 512;
 pub struct CaptureError(String);
 
 impl CaptureError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }
 }
@@ -88,6 +91,7 @@ pub struct Recorder {
     completion_taken: bool,
     partial_path: PathBuf,
     next_stream: usize,
+    last_event_at_ns: u64,
     active: [bool; MAX_STREAMS],
     output_parsers: [Parser; MAX_STREAMS],
 }
@@ -169,6 +173,7 @@ impl Recorder {
             completion_taken: false,
             partial_path,
             next_stream: 1,
+            last_event_at_ns: 0,
             active: [false; MAX_STREAMS],
             output_parsers: std::array::from_fn(|_| Parser::new()),
         };
@@ -313,20 +318,33 @@ impl Recorder {
 
     /// Stops all streams together without waiting for disk I/O.
     pub fn stop(&mut self, reason: FinishReason) -> Result<(), CaptureError> {
+        self.stop_at(reason, Instant::now())
+    }
+
+    pub(crate) fn stop_at(
+        &mut self,
+        reason: FinishReason,
+        at: Instant,
+    ) -> Result<(), CaptureError> {
         if self.sender.is_none() {
             return Err(CaptureError::new("recording is already stopped"));
         }
-        let reason = if self.started.elapsed() > MAX_DURATION {
+        let reason = if at.saturating_duration_since(self.started) > MAX_DURATION {
             FinishReason::ResourceLimit
         } else {
             reason
         };
-        self.stop_with_reason(reason);
+        self.stop_with_reason_at(reason, at);
         Ok(())
     }
 
     pub fn is_recording(&self) -> bool {
         self.sender.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn elapsed(&self) -> Duration {
+        self.started.elapsed()
     }
 
     /// Polls without blocking; the supplied wake callback runs on completion.
@@ -411,7 +429,10 @@ impl Recorder {
             }
         };
         match result {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.last_event_at_ns = self.last_event_at_ns.max(at_ns);
+                Ok(())
+            }
             Err(TrySendError::Full(queued)) => {
                 drop(queued);
                 self.stop_with_reason(FinishReason::ResourceLimit);
@@ -426,8 +447,16 @@ impl Recorder {
     }
 
     fn stop_with_reason(&mut self, reason: FinishReason) {
+        self.stop_with_reason_at(reason, Instant::now());
+    }
+
+    fn stop_with_reason_at(&mut self, reason: FinishReason, at: Instant) {
         if self.sender.is_some() {
-            let at_ns = self.started.elapsed().min(MAX_DURATION).as_nanos() as u64;
+            let at_ns = (at
+                .saturating_duration_since(self.started)
+                .min(MAX_DURATION)
+                .as_nanos() as u64)
+                .max(self.last_event_at_ns);
             self.finish.at_ns.store(at_ns, Ordering::Release);
             self.finish.reason.store(reason.code(), Ordering::Release);
             self.sender.take();
@@ -467,16 +496,41 @@ fn event_charge(data: &CapturedData) -> Result<usize, CaptureError> {
 }
 
 fn create_private_file(path: &Path) -> Result<File, CaptureError> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
+    #[cfg(windows)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let name = path
+            .file_name()
+            .ok_or_else(|| CaptureError::new("recording source has no filename"))?;
+        let directory = festerm_windows_security::lock_directory_path_without_delete_sharing(
+            parent,
+        )
+        .map_err(|error| {
+            CaptureError::new(format!(
+                "private recording storage could not be opened: {error}"
+            ))
+        })?;
+        festerm_windows_security::create_current_user_only_file(&directory, Path::new(name))
+            .map_err(|error| {
+                CaptureError::new(format!("private recording could not be created: {error}"))
+            })
     }
-    options.open(path).map_err(|error| {
-        CaptureError::new(format!("private recording could not be created: {error}"))
-    })
+    #[cfg(not(windows))]
+    {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(path).map_err(|error| {
+            CaptureError::new(format!("private recording could not be created: {error}"))
+        })
+    }
 }
 
 fn run_writer(
@@ -514,12 +568,18 @@ fn run_writer(
             reason,
         };
     }
+    #[cfg(target_os = "android")]
+    if let Err((path, message)) = finalize_android_source(partial_path, final_path) {
+        return Completion::Failed { path, message };
+    }
+    #[cfg(not(target_os = "android"))]
     if let Err(error) = fs::hard_link(partial_path, final_path) {
         return Completion::Failed {
             path: partial_path.to_owned(),
             message: format!("recording could not be finalized: {error}"),
         };
     }
+    #[cfg(not(target_os = "android"))]
     if let Err(error) = fs::remove_file(partial_path) {
         return Completion::Failed {
             path: partial_path.to_owned(),
@@ -534,4 +594,42 @@ fn run_writer(
         duration,
         reason,
     }
+}
+
+#[cfg(target_os = "android")]
+fn finalize_android_source(
+    partial_path: &Path,
+    final_path: &Path,
+) -> Result<(), (PathBuf, String)> {
+    let failed = |error: &dyn fmt::Display| {
+        (
+            partial_path.to_owned(),
+            format!("recording could not be finalized: {error}"),
+        )
+    };
+    let directory = partial_path
+        .parent()
+        .filter(|parent| final_path.parent() == Some(*parent))
+        .ok_or_else(|| failed(&"invalid recording storage directory"))?;
+    let partial = partial_path
+        .file_name()
+        .ok_or_else(|| failed(&"invalid recording source name"))?;
+    let final_name = final_path
+        .file_name()
+        .ok_or_else(|| failed(&"invalid recording destination name"))?;
+    let directory = File::open(directory).map_err(|error| failed(&error))?;
+    // Android's app SELinux policy forbids hard links.
+    festerm_unix_security::rename_noreplace(
+        &directory,
+        Path::new(partial),
+        &directory,
+        Path::new(final_name),
+    )
+    .map_err(|error| failed(&error))?;
+    directory.sync_all().map_err(|error| {
+        (
+            final_path.to_owned(),
+            format!("recording was finalized but its storage could not be synced: {error}"),
+        )
+    })
 }

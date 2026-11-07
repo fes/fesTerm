@@ -4087,6 +4087,7 @@ impl FesTermApp {
         } else if !authoritative {
             session.terminal.reset_to_initial_state();
             session.controller.record_local_observation_change();
+            session.controller.record_checkpoint(&session.terminal);
         }
         session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((
@@ -4119,6 +4120,7 @@ impl FesTermApp {
         } else if !authoritative {
             session.terminal.ingest(b"\x1b[2J\x1b[3J\x1b[H");
             session.controller.record_local_observation_change();
+            session.controller.record_checkpoint(&session.terminal);
         }
         session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((
@@ -7031,6 +7033,7 @@ impl FesTermApp {
                                 expose_text_to_accessibility: false,
                             };
                             let rectangle_was_active = session.view.rectangle_copy_active();
+                            let dimensions_before = session.terminal.dimensions();
                             if self.pane_rects.len() > 1 {
                                 session.view.show_in_pane_with_options(
                                     ui,
@@ -7045,6 +7048,9 @@ impl FesTermApp {
                                     &mut session.controller,
                                     options,
                                 );
+                            }
+                            if session.terminal.dimensions() != dimensions_before {
+                                session.controller.record_resize(&session.terminal);
                             }
                             if tracing::enabled!(target: "festerm::render", tracing::Level::DEBUG) {
                                 let diagnostics = session.view.diagnostics();

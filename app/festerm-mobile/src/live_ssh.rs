@@ -49,6 +49,7 @@ pub(super) struct LiveSsh {
     identity: Option<HostIdentity>,
     context: egui::Context,
     session: Option<Arc<dyn Session>>,
+    pub(super) recording_stream: Option<festerm_recording::RecordingStream>,
     host_resolver: Option<HostKeyDecisionResolver>,
     password_resolver: Option<PasswordDecisionResolver>,
     host_prompt: Option<HostKeyPrompt>,
@@ -99,6 +100,7 @@ pub(super) fn disconnected_fixture() -> LiveSsh {
         identity: Some(HostIdentity::new("example.test", 22).expect("reserved fixture host")),
         context: egui::Context::default(),
         session: None,
+        recording_stream: None,
         host_resolver: None,
         password_resolver: None,
         host_prompt: None,
@@ -138,6 +140,7 @@ impl LiveSsh {
             identity: None,
             context: context.clone(),
             session: Some(session),
+            recording_stream: None,
             host_resolver: None,
             password_resolver: None,
             host_prompt: None,
@@ -228,6 +231,7 @@ impl LiveSsh {
             identity: Some(identity),
             context: context.clone(),
             session: Some(Arc::new(session)),
+            recording_stream: None,
             host_resolver,
             password_resolver,
             host_prompt: None,
@@ -267,6 +271,7 @@ impl LiveSsh {
     }
 
     pub(super) fn stop(&mut self, status: &'static str) {
+        drop(self.recording_stream.take());
         self.probe = None;
         self.resume_check = false;
         self.running = false;
@@ -320,7 +325,12 @@ impl LiveSsh {
             match session.try_recv_event() {
                 Ok(SessionEvent::Output(bytes)) => {
                     output |= !bytes.is_empty();
+                    let previous_generation = terminal.screen_generation();
                     terminal.ingest(&bytes);
+                    if let Some(stream) = &self.recording_stream {
+                        // SharedRecording retains any error and wakes its owner.
+                        let _ = stream.observe_output(&bytes, previous_generation, terminal);
+                    }
                     let replies = terminal.drain_replies();
                     // A tunnel host answers terminal queries itself.
                     let own_replies = !session.terminal_replies_owned_by_backend();
@@ -362,12 +372,25 @@ impl LiveSsh {
                 }
                 Ok(SessionEvent::RecoverySync(bytes)) if self.tunnel.is_some() => {
                     if festerm_mobile_tunnels::apply_recovery_sync(terminal, &bytes).is_err() {
+                        if let Some(stream) = &self.recording_stream {
+                            let _ = stream.fail_integrity(
+                                "Recording stopped because terminal recovery data was invalid",
+                            );
+                        }
                         self.stop("Invalid host sync; disconnected");
                         return output;
+                    }
+                    if let Some(stream) = &self.recording_stream {
+                        let _ = stream.observe_checkpoint(terminal);
                     }
                     output = true;
                 }
                 Ok(SessionEvent::RecoverySync(_)) => {
+                    if let Some(stream) = &self.recording_stream {
+                        let _ = stream.fail_integrity(
+                            "Recording stopped because terminal recovery data was unsupported",
+                        );
+                    }
                     self.stop("Unsupported recovery event; disconnected");
                     return output;
                 }
@@ -597,6 +620,7 @@ mod tests {
             identity: Some(HostIdentity::new("example.test", 22).unwrap()),
             context: egui::Context::default(),
             session: Some(session),
+            recording_stream: None,
             host_resolver: None,
             password_resolver: None,
             host_prompt: None,
@@ -615,6 +639,197 @@ mod tests {
 
     fn terminal() -> Terminal {
         Terminal::with_scrollback_limit(Dimensions::new(80, 24).unwrap(), 4096).unwrap()
+    }
+
+    #[test]
+    fn recording_captures_active_and_parked_output_then_stops_on_native_suspension() {
+        use crate::{Lifecycle, NativeLifecycle, SuspensionHandle};
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use std::{cell::Cell, fs, rc::Rc, sync::mpsc};
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut active_terminal = terminal();
+        let mut parked_terminal = terminal();
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) = festerm_recording::SharedRecording::start(
+            directory.path(),
+            &[&active_terminal, &parked_terminal],
+            move || {
+                let _ = wake.send(());
+            },
+        )
+        .unwrap();
+        let active_session = Arc::new(FakeSession::default());
+        let parked_session = Arc::new(FakeSession::default());
+        active_session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"active output".to_vec()));
+        parked_session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"parked output".to_vec()));
+        let mut active = connection(active_session.clone());
+        active.recording_stream = Some(streams.remove(0));
+        let mut parked = connection(parked_session);
+        parked.recording_stream = Some(streams.remove(0));
+        active.send(b"private local input");
+        let context = egui::Context::default();
+        assert!(active.poll(&mut active_terminal, &context));
+        assert!(parked.poll(&mut parked_terminal, &context));
+        assert_eq!(
+            active_session.input.lock().unwrap().concat(),
+            b"private local input"
+        );
+
+        let suspension = SuspensionHandle::default();
+        *suspension.recording.lock().unwrap() = Some(recording.clone());
+        *suspension.connection.borrow_mut() = Some(active);
+        suspension.background.borrow_mut().push((2, parked));
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut native = NativeLifecycle::new(lifecycle, suspension);
+        assert!(native.suspended(false));
+        assert!(!recording.is_recording().unwrap());
+        ready.recv_timeout(Duration::from_secs(10)).unwrap();
+        let Completion::Complete { path, reason, .. } =
+            recording.poll_completion().unwrap().unwrap()
+        else {
+            panic!("expected a completed lifecycle recording");
+        };
+        assert_eq!(reason, FinishReason::Lifecycle);
+        let bytes = fs::read(path).unwrap();
+        assert!(!bytes
+            .windows(b"private local input".len())
+            .any(|window| window == b"private local input"));
+        let mut reader = ArtifactReader::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut outputs = Vec::new();
+        while let Some(event) = reader.next_event().unwrap() {
+            if let ArtifactEvent::Output { stream, bytes, .. } = event {
+                outputs.push((stream.index(), bytes));
+            }
+        }
+        assert_eq!(
+            outputs,
+            vec![
+                (1, b"active output".to_vec()),
+                (2, b"parked output".to_vec())
+            ]
+        );
+    }
+
+    #[test]
+    fn unsupported_recovery_stops_the_whole_recording_as_incomplete() {
+        use festerm_recording::{Completion, FinishReason};
+        use std::sync::mpsc;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut terminal = terminal();
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) =
+            festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        let session = Arc::new(FakeSession::default());
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::RecoverySync(vec![1]));
+        let mut live = connection(session);
+        live.recording_stream = Some(streams.remove(0));
+        live.poll(&mut terminal, &egui::Context::default());
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording
+            .take_failure()
+            .unwrap()
+            .unwrap()
+            .contains("recovery data was unsupported"));
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(
+            completion,
+            Completion::Incomplete {
+                reason: FinishReason::IntegrityFailure,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn app_and_device_locks_stop_recording_without_a_ui_frame() {
+        use crate::SuspensionHandle;
+        use festerm_ios_lock::{
+            AppLock, Availability, BiometryKind, FakeLocker, LifecycleEvent, LockSettings,
+            ManualClock,
+        };
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use std::{fs::File, sync::mpsc};
+
+        for cut in ["app", "device", "background"] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut terminal = terminal();
+            let (wake, ready) = mpsc::channel();
+            let (recording, mut streams) = festerm_recording::SharedRecording::start(
+                directory.path(),
+                &[&terminal],
+                move || {
+                    let _ = wake.send(());
+                },
+            )
+            .unwrap();
+            let suspension = SuspensionHandle::default();
+            *suspension.recording.lock().unwrap() = Some(recording.clone());
+            let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+            let lock = AppLock::new_with_content_lock_callback(
+                None,
+                locker,
+                Arc::new(ManualClock::new()),
+                || {},
+                suspension.content_lock_callback(),
+            );
+            let generation = lock.recording_privacy_generation().unwrap();
+            if cut == "app" {
+                lock.apply_settings(LockSettings {
+                    enabled: true,
+                    ..LockSettings::default()
+                })
+                .unwrap();
+                lock.lock_now();
+            } else if cut == "device" {
+                lock.handle_lifecycle(LifecycleEvent::DeviceLocked);
+            } else {
+                lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+            }
+            assert_ne!(lock.recording_privacy_generation(), Some(generation));
+            assert!(!recording.is_recording().unwrap());
+            let generation = terminal.screen_generation();
+            terminal.ingest(b"after lock");
+            streams[0]
+                .observe_output(b"after lock", generation, &terminal)
+                .unwrap();
+            drop(streams.remove(0));
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            let Completion::Complete { path, reason, .. } =
+                recording.poll_completion().unwrap().unwrap()
+            else {
+                panic!("expected a completed lock recording");
+            };
+            assert_eq!(reason, FinishReason::Lifecycle);
+            let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+            while let Some(event) = reader.next_event().unwrap() {
+                assert!(!matches!(event, ArtifactEvent::Output { .. }));
+            }
+        }
     }
 
     #[test]

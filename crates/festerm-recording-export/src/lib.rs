@@ -18,11 +18,19 @@ use sha2::{Digest, Sha256};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod publish_unix;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "windows")]
+mod publish_windows;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
 mod source_unix;
+#[cfg(target_os = "windows")]
+mod source_windows;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use publish_unix::{delete_source_after_publication, publish_to_directory, PublishedRecording};
+#[cfg(target_os = "windows")]
+pub use publish_windows::{
+    delete_source_after_publication, publish_to_directory, PublishedRecording,
+};
 
 /// A bounded sequential video encoder. Files must be created without replacing
 /// an existing path; an unfinished encoder must release its native resources.
@@ -89,13 +97,15 @@ pub struct StagedRecording {
     videos: Vec<StagedVideo>,
     frames_per_video: u64,
     duration: Duration,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     directory: File,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     source: source_unix::SourceBinding,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    source: source_windows::SourceBinding,
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     source_fingerprint: [u8; 32],
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     stage_id: uuid::Uuid,
 }
 
@@ -146,11 +156,14 @@ pub fn stage_recording<F: EncoderFactory>(
     if !staging_directory.is_dir() {
         return Err(ExportError::new("private video staging is unavailable"));
     }
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
     let staging_handle = File::open(staging_directory)
         .map_err(|error| ExportError::new(format!("could not open video staging: {error}")))?;
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
     source_unix::require_private(&staging_handle, true, "video staging directory")?;
+    #[cfg(target_os = "windows")]
+    let staging_handle =
+        source_windows::open_private_directory(staging_directory, "video staging directory")?;
     let mut existing = fs::read_dir(staging_directory)
         .map_err(|error| ExportError::new(format!("could not inspect video staging: {error}")))?;
     if existing
@@ -166,9 +179,16 @@ pub fn stage_recording<F: EncoderFactory>(
     if cancelled.load(Ordering::Acquire) {
         return Err(ExportError::new("recording export was cancelled"));
     }
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
     let (source_binding, source_file) = source_unix::SourceBinding::open(source)?;
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    let (source_binding, source_file) = source_windows::SourceBinding::open(source)?;
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "android",
+        target_os = "windows"
+    )))]
     let source_file = File::open(source)
         .map_err(|error| ExportError::new(format!("could not open recording source: {error}")))?;
     let plan = PlaybackPlan::inspect(source_file, options.pacing)
@@ -195,9 +215,19 @@ pub fn stage_recording<F: EncoderFactory>(
                 length: 0,
             });
             let path = &paths.last().expect("video path was added").path;
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "android",
+                target_os = "windows"
+            ))]
             let source_file = source_binding.open_current()?;
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "android",
+                target_os = "windows"
+            )))]
             let source_file = File::open(source).map_err(|error| {
                 ExportError::new(format!("could not reopen recording source: {error}"))
             })?;
@@ -239,19 +269,29 @@ pub fn stage_recording<F: EncoderFactory>(
             if cancelled.load(Ordering::Acquire) {
                 return Err(ExportError::new("recording export was cancelled"));
             }
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
             let file = festerm_unix_security::open_file_nofollow(
                 &staging_handle,
                 Path::new(path.file_name().expect("staged video has a filename")),
             );
             #[cfg(target_os = "windows")]
-            let file = fs::OpenOptions::new().read(true).write(true).open(path);
-            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+            let file = festerm_windows_security::open_file_read_write_no_reparse(
+                &staging_handle,
+                Path::new(path.file_name().expect("staged video has a filename")),
+            );
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "android",
+                target_os = "windows"
+            )))]
             let file = File::open(path);
             let mut file = file
                 .map_err(|error| ExportError::new(format!("could not open staged MP4: {error}")))?;
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
             source_unix::make_staged_file_private(&staging_handle, &file)?;
+            #[cfg(target_os = "windows")]
+            source_windows::require_private(&file, false, "staged MP4")?;
             file.sync_all()
                 .map_err(|error| ExportError::new(format!("could not sync staged MP4: {error}")))?;
             let (fingerprint, length) = fingerprint(&mut file).map_err(|error| {
@@ -267,12 +307,22 @@ pub fn stage_recording<F: EncoderFactory>(
     if let Err(error) = result {
         let mut cleanup_errors = Vec::new();
         for video in &paths {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
             let cleanup = festerm_unix_security::remove_private_staging_file(
                 &staging_handle,
                 Path::new(video.path.file_name().expect("staged video has a filename")),
             );
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(target_os = "windows")]
+            let cleanup = source_windows::remove_staged_file(
+                &staging_handle,
+                Path::new(video.path.file_name().expect("staged video has a filename")),
+            );
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "android",
+                target_os = "windows"
+            )))]
             let cleanup = fs::remove_file(&video.path);
             if let Err(cleanup) = cleanup {
                 if cleanup.kind() != std::io::ErrorKind::NotFound {
@@ -293,15 +343,28 @@ pub fn stage_recording<F: EncoderFactory>(
         videos: paths,
         frames_per_video: plan.frame_count(),
         duration: plan.duration(),
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         directory: staging_handle,
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         source: source_binding,
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         source_fingerprint: plan.fingerprint(),
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         stage_id: uuid::Uuid::new_v4(),
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn collision_name(base: &str, collision: usize) -> String {
+    if collision == 0 {
+        return base.to_owned();
+    }
+    let suffix = format!("-{}", collision + 1);
+    let mut end = base.len().min(255 - suffix.len());
+    while !base.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &base[..end], suffix)
 }
 
 fn fingerprint(source: &mut impl Read) -> io::Result<([u8; 32], u64)> {

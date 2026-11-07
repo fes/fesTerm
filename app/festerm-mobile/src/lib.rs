@@ -174,6 +174,7 @@ pub struct SuspensionHandle {
     connection: Rc<RefCell<Option<live_ssh::LiveSsh>>>,
     /// Sessions of parked tabs, keyed by tab id.
     background: Rc<RefCell<Vec<(u64, live_ssh::LiveSsh)>>>,
+    recording: std::sync::Arc<std::sync::Mutex<Option<festerm_recording::SharedRecording>>>,
 }
 
 #[cfg(feature = "live-ssh")]
@@ -182,7 +183,34 @@ const SUSPENDED: &str =
 
 #[cfg(feature = "live-ssh")]
 impl SuspensionHandle {
+    fn stop_recording(&self) {
+        Self::stop_shared_recording(&self.recording);
+    }
+
+    fn stop_shared_recording(
+        holder: &std::sync::Mutex<Option<festerm_recording::SharedRecording>>,
+    ) {
+        let recording = match holder.lock() {
+            Ok(recording) => recording.clone(),
+            Err(poisoned) => {
+                eprintln!("fesTerm: recording lifecycle state was poisoned");
+                poisoned.into_inner().clone()
+            }
+        };
+        if let Some(recording) = recording {
+            if let Err(error) = recording.stop(festerm_recording::FinishReason::Lifecycle) {
+                eprintln!("fesTerm: recording could not be stopped on suspension: {error}");
+            }
+        }
+    }
+
+    fn content_lock_callback(&self) -> impl Fn() + Send + Sync + 'static {
+        let recording = self.recording.clone();
+        move || Self::stop_shared_recording(&recording)
+    }
+
     pub fn suspend(&self) {
+        self.stop_recording();
         if let Some(live) = self.connection.borrow_mut().as_mut() {
             live.suspend();
         }
@@ -1067,6 +1095,14 @@ impl MobileApp {
             self.observed_memory_warnings = lifecycle.memory_warnings;
         }
         #[cfg(feature = "live-ssh")]
+        if self
+            .lock
+            .as_ref()
+            .is_some_and(|lock| !lock.content_available())
+        {
+            self.sink.live.stop_recording();
+        }
+        #[cfg(feature = "live-ssh")]
         if lifecycle.active && self.polled_frame != Some(ui.ctx().cumulative_frame_nr()) {
             self.polled_frame = Some(ui.ctx().cumulative_frame_nr());
             if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
@@ -1257,6 +1293,10 @@ impl MobileApp {
                 ShellAction::Lock(action) => {
                     if let Some(lock) = self.lock.as_mut() {
                         lock.apply(action);
+                        #[cfg(feature = "live-ssh")]
+                        if !lock.content_available() {
+                            self.sink.live.stop_recording();
+                        }
                     }
                 }
                 ShellAction::OpenProfile(id) => {
@@ -2147,6 +2187,8 @@ impl MobileApp {
         }
         let mut terminal_ui = ui.new_child(egui::UiBuilder::new().max_rect(terminal_rect));
         terminal_ui.set_clip_rect(terminal_rect);
+        #[cfg(feature = "live-ssh")]
+        let dimensions_before = self.terminal.dimensions();
         self.view.show_with_options(
             &mut terminal_ui,
             &mut self.terminal,
@@ -2163,6 +2205,19 @@ impl MobileApp {
                 ..Default::default()
             },
         );
+        #[cfg(feature = "live-ssh")]
+        if self.terminal.dimensions() != dimensions_before {
+            if let Some(stream) = self
+                .sink
+                .live
+                .connection
+                .borrow()
+                .as_ref()
+                .and_then(|live| live.recording_stream.as_ref())
+            {
+                let _ = stream.observe_resize(&self.terminal);
+            }
+        }
         self.gestures.paint_helper(&terminal_ui, terminal_rect);
         self.terminal_keyboard_input = input_ready
             && ui.input(|input| input.focused)

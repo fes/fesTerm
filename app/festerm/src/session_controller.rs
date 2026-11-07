@@ -453,6 +453,7 @@ impl AutomationInputFence {
 /// writer mutates a `Terminal` from session output.
 pub struct SessionController<S: Session> {
     pub input_recorder: festerm_ui_egui::routing_trace::SharedRecorder,
+    recording_stream: Option<festerm_recording::RecordingStream>,
     last_input_delivery: &'static str,
     input_event_is_keyboard: bool,
     input_event_human_noted: bool,
@@ -530,6 +531,7 @@ impl<S: Session> SessionController<S> {
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
             native_input_expectation: None,
             input_recorder: Default::default(),
+            recording_stream: None,
             last_input_delivery: "no-delivery",
             input_event_is_keyboard: true,
             input_event_human_noted: false,
@@ -574,6 +576,7 @@ impl<S: Session> SessionController<S> {
             pending_writes: PendingCommandBuffer::new(MAX_PENDING_COMMAND_BYTES),
             native_input_expectation: None,
             input_recorder: Default::default(),
+            recording_stream: None,
             last_input_delivery: "no-delivery",
             input_event_is_keyboard: true,
             input_event_human_noted: false,
@@ -616,6 +619,23 @@ impl<S: Session> SessionController<S> {
 
     pub fn session(&self) -> Option<&S> {
         self.session.as_ref()
+    }
+
+    pub fn attach_recording_stream(&mut self, stream: festerm_recording::RecordingStream) {
+        self.recording_stream = Some(stream);
+    }
+
+    pub fn record_checkpoint(&self, terminal: &Terminal) {
+        if let Some(stream) = &self.recording_stream {
+            // The shared recording retains any error and wakes its owner.
+            let _ = stream.observe_checkpoint(terminal);
+        }
+    }
+
+    pub fn record_resize(&self, terminal: &Terminal) {
+        if let Some(stream) = &self.recording_stream {
+            let _ = stream.observe_resize(terminal);
+        }
     }
 
     /// Returns the last observed session lifecycle, without terminal content.
@@ -782,6 +802,7 @@ impl<S: Session> SessionController<S> {
     }
 
     pub fn advance_lifecycle_generation(&mut self) {
+        drop(self.recording_stream.take());
         let guard = festerm_session::automation_admission_lock();
         self.automation_liveness.store(false, Ordering::Release);
         self.automation_liveness = Arc::new(AtomicBool::new(guard.is_some()));
@@ -903,7 +924,8 @@ impl<S: Session> SessionController<S> {
         };
         let mut observed = Vec::new();
         let resize_probe = &mut self.resize_probe;
-        let result = pump_session_events_with_resize(
+        let recording_stream = &mut self.recording_stream;
+        let result = pump_session_events_with_mutations(
             session,
             terminal,
             MAX_SESSION_EVENTS_PER_FRAME,
@@ -911,6 +933,37 @@ impl<S: Session> SessionController<S> {
             |event| match event {
                 PumpedSessionEvent::Output(bytes) => resize_probe.record_output(bytes),
                 PumpedSessionEvent::Event(event) => observed.push(event.clone()),
+            },
+            |mutation| match mutation {
+                TerminalMutation::Output {
+                    bytes,
+                    previous_generation,
+                    terminal,
+                } => {
+                    if let Some(stream) = recording_stream.as_ref() {
+                        let _ = stream.observe_output(bytes, previous_generation, terminal);
+                    }
+                }
+                TerminalMutation::Checkpoint(terminal) => {
+                    if let Some(stream) = recording_stream.as_ref() {
+                        let _ = stream.observe_checkpoint(terminal);
+                    }
+                }
+                TerminalMutation::Resize(terminal) => {
+                    if let Some(stream) = recording_stream.as_ref() {
+                        let _ = stream.observe_resize(terminal);
+                    }
+                }
+                TerminalMutation::IntegrityFailure => {
+                    if let Some(stream) = recording_stream.as_ref() {
+                        let _ = stream.fail_integrity(
+                            "Recording stopped because terminal recovery data was invalid",
+                        );
+                    }
+                }
+                TerminalMutation::End => {
+                    drop(recording_stream.take());
+                }
             },
         );
         for event in observed {
@@ -1643,6 +1696,18 @@ pub enum PumpedSessionEvent<'a> {
     Event(&'a SessionEvent),
 }
 
+enum TerminalMutation<'a> {
+    Output {
+        bytes: &'a [u8],
+        previous_generation: u64,
+        terminal: &'a Terminal,
+    },
+    Checkpoint(&'a Terminal),
+    Resize(&'a Terminal),
+    IntegrityFailure,
+    End,
+}
+
 pub fn pump_session_events(
     session: &impl Session,
     terminal: &mut Terminal,
@@ -1665,6 +1730,24 @@ fn pump_session_events_with_resize(
     mut resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
     mut observe: impl FnMut(PumpedSessionEvent<'_>),
 ) -> PumpResult {
+    pump_session_events_with_mutations(
+        session,
+        terminal,
+        maximum,
+        &mut resize,
+        &mut observe,
+        |_| {},
+    )
+}
+
+fn pump_session_events_with_mutations(
+    session: &impl Session,
+    terminal: &mut Terminal,
+    maximum: usize,
+    mut resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
+    mut observe: impl FnMut(PumpedSessionEvent<'_>),
+    mut mutation: impl FnMut(TerminalMutation<'_>),
+) -> PumpResult {
     let mut output_received = false;
     let mut ingested_bytes = 0usize;
     for _ in 0..maximum {
@@ -1673,7 +1756,13 @@ fn pump_session_events_with_resize(
                 SessionEvent::Output(bytes) => {
                     output_received = true;
                     observe(PumpedSessionEvent::Output(bytes));
+                    let previous_generation = terminal.screen_generation();
                     terminal.ingest(bytes);
+                    mutation(TerminalMutation::Output {
+                        bytes,
+                        previous_generation,
+                        terminal,
+                    });
                     if session.terminal_replies_owned_by_backend() {
                         let _ = terminal.drain_replies();
                         let _ = terminal.take_reply_queue_overflowed();
@@ -1690,9 +1779,11 @@ fn pump_session_events_with_resize(
                     match festerm_sessiond::decode_recovery_sync_command(payload) {
                         Ok(command) => {
                             apply_recovery_sync(terminal, &command);
+                            mutation(TerminalMutation::Checkpoint(terminal));
                             observe(PumpedSessionEvent::Event(&event));
                         }
                         Err(error) => {
+                            mutation(TerminalMutation::IntegrityFailure);
                             observe(PumpedSessionEvent::Event(&SessionEvent::Error(
                                 SessionError::new(
                                     SessionErrorKind::Output,
@@ -1719,7 +1810,18 @@ fn pump_session_events_with_resize(
                                 "persistent-session resize was rejected",
                             ),
                         )));
+                    } else {
+                        mutation(TerminalMutation::Resize(terminal));
                     }
+                    observe(PumpedSessionEvent::Event(&event));
+                }
+                SessionEvent::Lifecycle(
+                    SessionLifecycle::Disconnected(_)
+                    | SessionLifecycle::Exited(_)
+                    | SessionLifecycle::Failed(_)
+                    | SessionLifecycle::Stopped,
+                ) => {
+                    mutation(TerminalMutation::End);
                     observe(PumpedSessionEvent::Event(&event));
                 }
                 _ => observe(PumpedSessionEvent::Event(&event)),
@@ -2939,6 +3041,116 @@ mod tests {
         assert!(!result.hit_limit);
         assert_eq!(terminal.cell_ref(11, 3).unwrap().text(), "X");
         assert!(session.sent().is_empty());
+    }
+
+    #[test]
+    fn recording_observes_applied_output_resize_and_recovery_without_local_input() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+
+        let recovery = festerm_sessiond::encode_recovery_sync_command(
+            &festerm_sessiond::RecoverySyncCommand::MirrorBytes(b"\x1b[2J\x1b[Hsynced".to_vec()),
+        )
+        .unwrap();
+        let session = FakeSession::new([
+            SessionEvent::Output(b"before".to_vec()),
+            SessionEvent::ResizeApplied(TerminalSize::new(12, 4).unwrap()),
+            SessionEvent::RecoverySync(recovery),
+            SessionEvent::Output(b"!".to_vec()),
+            SessionEvent::Lifecycle(SessionLifecycle::Stopped),
+            SessionEvent::Output(b"after stop".to_vec()),
+        ])
+        .with_backend_owned_terminal();
+        let mut controller = SessionController::for_test(session);
+        let mut terminal = Terminal::new(Dimensions::new(20, 6).unwrap()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let (wake, ready) = std::sync::mpsc::channel();
+        let (recording, mut streams) =
+            festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        controller.attach_recording_stream(streams.remove(0));
+        controller.record_encoded_input(b"PRIVATE-LOCAL-INPUT");
+        controller.pump_events(&mut terminal);
+        recording.stop(FinishReason::User).unwrap();
+        ready.recv_timeout(Duration::from_secs(10)).unwrap();
+        let Completion::Complete { path, .. } = recording.poll_completion().unwrap().unwrap()
+        else {
+            panic!("recording did not complete");
+        };
+        let bytes = std::fs::read(path).unwrap();
+        assert!(!bytes
+            .windows(b"PRIVATE-LOCAL-INPUT".len())
+            .any(|window| window == b"PRIVATE-LOCAL-INPUT"));
+        let mut reader = ArtifactReader::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut events = Vec::new();
+        while let Some(event) = reader.next_event().unwrap() {
+            events.push(match event {
+                ArtifactEvent::Started { .. } => "start",
+                ArtifactEvent::Output { bytes, .. } if bytes == b"before" => "before",
+                ArtifactEvent::Resized { terminal, .. } => {
+                    assert_eq!(terminal.dimensions(), Dimensions::new(12, 4).unwrap());
+                    "resize"
+                }
+                ArtifactEvent::Checkpoint { terminal, .. } => {
+                    assert!(terminal.row_text(0).unwrap().starts_with("synced"));
+                    "recovery"
+                }
+                ArtifactEvent::Output { bytes, .. } if bytes == b"!" => "after recovery",
+                ArtifactEvent::Ended { .. } => "end",
+                ArtifactEvent::Finished { .. } => "finish",
+                _ => panic!("unexpected recorded event"),
+            });
+        }
+        assert_eq!(
+            events,
+            [
+                "start",
+                "before",
+                "resize",
+                "recovery",
+                "after recovery",
+                "end",
+                "finish"
+            ]
+        );
+    }
+
+    #[test]
+    fn invalid_recovery_stops_a_shared_recording_as_incomplete() {
+        use festerm_recording::{Completion, FinishReason};
+
+        let session = FakeSession::new([SessionEvent::RecoverySync(vec![255])]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal = Terminal::new(Dimensions::new(20, 6).unwrap()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let (wake, ready) = std::sync::mpsc::channel();
+        let (recording, mut streams) =
+            festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        controller.attach_recording_stream(streams.remove(0));
+        controller.pump_events(&mut terminal);
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording
+            .take_failure()
+            .unwrap()
+            .unwrap()
+            .contains("recovery data was invalid"));
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(
+            completion,
+            Completion::Incomplete {
+                reason: FinishReason::IntegrityFailure,
+                ..
+            }
+        ));
     }
 
     #[test]

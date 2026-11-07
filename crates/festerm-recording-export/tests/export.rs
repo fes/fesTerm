@@ -14,11 +14,48 @@ use festerm_recording::{Completion, FinishReason, Pacing, Recorder};
 use festerm_recording_export::{stage_recording, EncoderFactory, ExportOptions, VideoEncoder};
 use festerm_ui_egui::RecordingFrameSize;
 
-fn private_dir() -> tempfile::TempDir {
+struct PrivateDir {
+    _directory: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl PrivateDir {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn private_dir() -> PrivateDir {
     let directory = tempfile::tempdir().unwrap();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     festerm_unix_security::make_private_directory(&File::open(directory.path()).unwrap()).unwrap();
-    directory
+    #[cfg(windows)]
+    let path = {
+        let parent =
+            festerm_windows_security::lock_directory_path_without_delete_sharing(directory.path())
+                .unwrap();
+        let child = Path::new("private");
+        festerm_windows_security::create_current_user_only_directory(&parent, child).unwrap();
+        directory.path().join(child)
+    };
+    #[cfg(not(windows))]
+    let path = directory.path().to_owned();
+    PrivateDir {
+        _directory: directory,
+        path,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn directory_handle(path: &Path) -> File {
+    #[cfg(windows)]
+    {
+        festerm_windows_security::lock_directory_path_without_delete_sharing(path).unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(path).unwrap()
+    }
 }
 
 fn source(directory: &Path) -> PathBuf {
@@ -74,8 +111,20 @@ impl EncoderFactory for FakeFactory {
 
     fn create(&mut self, path: &Path, _: RecordingFrameSize) -> Result<Self::Encoder, Self::Error> {
         self.created += 1;
+        #[cfg(not(windows))]
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        #[cfg(windows)]
+        let file = {
+            let parent = festerm_windows_security::lock_directory_path_without_delete_sharing(
+                path.parent().expect("staged video has a parent"),
+            )?;
+            festerm_windows_security::create_current_user_only_file(
+                &parent,
+                Path::new(path.file_name().expect("staged video has a filename")),
+            )?
+        };
         Ok(FakeEncoder {
-            file: OpenOptions::new().write(true).create_new(true).open(path)?,
+            file,
             fail: self.fail_on == Some(self.created),
         })
     }
@@ -246,7 +295,7 @@ fn refuses_to_stage_into_an_existing_directory_of_files() {
     assert!(source.exists());
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[test]
 fn publication_avoids_collisions_and_leaves_existing_exports_untouched() {
     use festerm_recording::{LocalStart, NameTemplates, RecordingId};
@@ -270,7 +319,7 @@ fn publication_avoids_collisions_and_leaves_existing_exports_untouched() {
     fs::write(destination.path().join("demo-2").join("keep"), b"keep").unwrap();
     let published = publish_to_directory(
         &staged,
-        &File::open(destination.path()).unwrap(),
+        &directory_handle(destination.path()),
         &NameTemplates::new("demo", "session-{session_index}.mp4").unwrap(),
         RecordingId::new(),
         LocalStart::new(2026, 2, 28, 9, 6, 5).unwrap(),
@@ -300,7 +349,7 @@ fn publication_avoids_collisions_and_leaves_existing_exports_untouched() {
     assert!(source.exists());
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[test]
 fn publication_rejects_changed_staging_and_keeps_source_for_retry() {
     use festerm_recording::{LocalStart, NameTemplates, RecordingId};
@@ -322,7 +371,7 @@ fn publication_rejects_changed_staging_and_keeps_source_for_retry() {
     fs::write(staged.videos()[1].path(), b"tampered").unwrap();
     let error = publish_to_directory(
         &staged,
-        &File::open(destination.path()).unwrap(),
+        &directory_handle(destination.path()),
         &NameTemplates::default(),
         RecordingId::new(),
         LocalStart::new(2026, 2, 28, 9, 6, 5).unwrap(),
@@ -386,7 +435,7 @@ fn publication_rejects_symlinked_staged_files_and_unsafe_export_roots() {
     assert!(source.exists());
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[test]
 fn source_deletion_requires_the_corresponding_complete_publication() {
     use festerm_recording::{LocalStart, NameTemplates, RecordingId};
@@ -405,7 +454,7 @@ fn source_deletion_requires_the_corresponding_complete_publication() {
         |_| {},
     )
     .unwrap();
-    let root_handle = File::open(destination.path()).unwrap();
+    let root_handle = directory_handle(destination.path());
     let templates = NameTemplates::default();
     let id = RecordingId::new();
     let start = LocalStart::new(2026, 2, 28, 9, 6, 5).unwrap();
@@ -432,6 +481,74 @@ fn source_deletion_requires_the_corresponding_complete_publication() {
     delete_source_after_publication(&staged, &mut published).unwrap();
     assert!(!source.exists());
     assert!(delete_source_after_publication(&staged, &mut published).is_err());
+    for name in &published.video_names {
+        assert!(destination
+            .path()
+            .join(&published.directory_name)
+            .join(name)
+            .exists());
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_staging_refuses_a_multiply_linked_source() {
+    let root = private_dir();
+    let staging = private_dir();
+    let source = source(root.path());
+    let extra_name = root.path().join("additional-source.fstrec");
+    fs::hard_link(&source, &extra_name).unwrap();
+    let error = stage_recording(
+        &source,
+        staging.path(),
+        options(),
+        &mut FakeFactory::default(),
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("private"));
+    assert!(source.exists());
+    assert!(extra_name.exists());
+    assert_eq!(fs::read_dir(staging.path()).unwrap().count(), 0);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_source_deletion_retains_a_changed_source() {
+    use festerm_recording::{LocalStart, NameTemplates, RecordingId};
+    use festerm_recording_export::{delete_source_after_publication, publish_to_directory};
+
+    let root = private_dir();
+    let staging = private_dir();
+    let destination = private_dir();
+    let source = source(root.path());
+    let staged = stage_recording(
+        &source,
+        staging.path(),
+        options(),
+        &mut FakeFactory::default(),
+        &AtomicBool::new(false),
+        |_| {},
+    )
+    .unwrap();
+    let mut published = publish_to_directory(
+        &staged,
+        &directory_handle(destination.path()),
+        &NameTemplates::default(),
+        RecordingId::new(),
+        LocalStart::new(2026, 2, 28, 9, 6, 5).unwrap(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    OpenOptions::new()
+        .append(true)
+        .open(&source)
+        .unwrap()
+        .write_all(b"changed")
+        .unwrap();
+    assert!(delete_source_after_publication(&staged, &mut published).is_err());
+    assert!(source.exists());
     for name in &published.video_names {
         assert!(destination
             .path()
