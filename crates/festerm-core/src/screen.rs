@@ -142,7 +142,18 @@ impl Screen {
     /// index in the ring buffer.
     fn physical_row(&self, logical_row: usize) -> usize {
         let rows = self.dimensions.rows();
-        (self.top + logical_row) % rows
+        let row = self.top + logical_row;
+        // `top < rows` and callers stay in range, so one conditional subtract
+        // replaces the division on this per-character path.
+        if logical_row < rows {
+            if row >= rows {
+                row - rows
+            } else {
+                row
+            }
+        } else {
+            row % rows
+        }
     }
 
     /// The physical cell-array start offset for a logical row.
@@ -307,6 +318,10 @@ impl Screen {
         let background = cell.background;
         let attributes = cell.attributes;
         let hyperlink = cell.hyperlink.clone();
+        // Overwriting a single-width cell with another cannot orphan either
+        // half of a neighbouring wide pair, so the repair sweeps are skipped.
+        let neighbours_intact =
+            cluster_columns == 1 && self.cells[index].width == CellWidth::Single;
         self.cells[index] = cell;
         self.occupied_cells[index] = true;
         if cluster_columns == 2 {
@@ -327,10 +342,18 @@ impl Screen {
             self.occupied_cells[continuation] = true;
         }
         self.mark_dirty(row);
-        let fill = blank_cell();
-        self.repair_neighborhood(row, column, &fill);
-        self.repair_neighborhood(row, column + cluster_columns, &fill);
-        self.extend_occupied_or_recompute(row, column, cluster_columns);
+        if !neighbours_intact {
+            let fill = blank_cell();
+            self.repair_neighborhood(row, column, &fill);
+            self.repair_neighborhood(row, column + cluster_columns, &fill);
+            self.extend_occupied_or_recompute(row, column, cluster_columns);
+        } else {
+            // Nothing else changed, so an occupied cell inside the extent
+            // leaves it as is: no full-row rescan for TUI mid-row redraws.
+            let physical_row = self.physical_row(row);
+            let extent = &mut self.occupied_columns[physical_row];
+            *extent = (*extent).max(column + 1);
+        }
     }
 
     /// Updates `occupied_columns` after writing an occupied cluster at
@@ -649,12 +672,19 @@ impl Screen {
             self.mark_dirty_range(top, bottom);
             return Vec::new();
         }
+        // Every departing row is overwritten below (rotated-in and cleared,
+        // or shifted over), so its occupied cells are moved out rather than
+        // cloned: under sustained output this is once per line.
         let removed = (top..top + count)
             .map(|row| {
                 let start = self.physical_row_start(row);
+                let occupied = self.occupied_columns[self.physical_row(row)];
+                let mut cells = Vec::with_capacity(occupied);
+                for cell in &mut self.cells[start..start + occupied] {
+                    cells.push(std::mem::replace(cell, blank_cell()));
+                }
                 ScreenRow {
-                    cells: self.cells[start..start + self.occupied_columns[self.physical_row(row)]]
-                        .to_vec(),
+                    cells,
                     soft_wrapped: self.soft_wrapped_rows[self.physical_row(row)],
                 }
             })
@@ -666,7 +696,7 @@ impl Screen {
             // cleared, an O(count) operation instead of O(rows*columns).
             let rows = self.dimensions.rows();
             for offset in 0..count {
-                self.fill_row(offset, cell.clone());
+                self.clear_row(offset, &cell);
             }
             self.top = (self.top + count) % rows;
         } else {
@@ -785,6 +815,31 @@ impl Screen {
         let physical_row = self.physical_row(row);
         self.soft_wrapped_rows[physical_row] = false;
         self.occupied_columns[physical_row] = row_extent(occupied, columns);
+    }
+
+    /// [`Self::fill_row`] for a row whose old content is being discarded.
+    ///
+    /// Cells past a row's occupied extent are structural blanks already (every
+    /// writer records `occupied = !is_structural_blank`), so when the fill is
+    /// itself a structural blank only the occupied prefix needs rewriting.
+    fn clear_row(&mut self, row: usize, cell: &Cell) {
+        let physical_row = self.physical_row(row);
+        if !is_structural_blank(cell) {
+            self.fill_row(row, cell.clone());
+            return;
+        }
+        let columns = self.dimensions.columns();
+        let start = self.physical_row_start(row);
+        let extent = self.occupied_columns[physical_row];
+        debug_assert!((extent..columns).all(|offset| {
+            !self.occupied_cells[start + offset] && is_structural_blank(&self.cells[start + offset])
+        }));
+        for index in start..start + extent {
+            self.cells[index].clone_from(cell);
+        }
+        self.occupied_cells[start..start + extent].fill(false);
+        self.soft_wrapped_rows[physical_row] = false;
+        self.occupied_columns[physical_row] = 0;
     }
 
     /// Copies part of one logical row onto the same columns of another.

@@ -2772,6 +2772,33 @@ mod tests {
     }
 
     #[test]
+    fn scrolled_rows_move_into_history_intact_and_leave_a_blank_row() {
+        // Scrolling moves departing cells into history instead of cloning
+        // them and only clears the revealed row's occupied prefix, so check
+        // both sides: history keeps text, style and link, and the reused
+        // row holds nothing of its previous content.
+        let mut terminal = terminal(8, 2);
+        terminal.ingest(
+            b"\x1b]8;;https://e.x\x1b\\\x1b[31mab\x1b[0m\x1b]8;;\x1b\\cdefgh\r\nmid\x1b[1;2HX\r\n\r\n\r\n",
+        );
+        let lines = terminal.scrollback_lines().collect::<Vec<_>>();
+        let row = lines[0].physical_row(0).unwrap();
+        let text = row.iter().map(crate::Cell::character).collect::<String>();
+        assert_eq!(
+            text, "aXcdefgh",
+            "a mid-row overwrite keeps the whole extent"
+        );
+        assert_eq!(row[0].hyperlink(), Some("https://e.x/"));
+        assert_ne!(row[0].foreground(), Color::Default);
+        assert_eq!(row[2].hyperlink(), None);
+        assert_eq!(lines[1].physical_row(0).unwrap().len(), 3);
+        for row in 0..2 {
+            assert_eq!(terminal.screen().row_occupied_columns(row), Some(0));
+            assert!((0..8).all(|column| terminal.screen().cell(column, row).unwrap().text() == " "));
+        }
+    }
+
+    #[test]
     fn reflow_keeps_a_double_width_cell_and_its_continuation_together() {
         let mut terminal = terminal(6, 2);
         // "A" + wide "界" + "B" + wide "界" -> 6 columns at width 6, one row.

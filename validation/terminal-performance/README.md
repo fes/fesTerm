@@ -27,6 +27,36 @@ usable size, native allocations, fragmentation, RSS, GPU retirement, full-frame
 CPU or multi-day growth. Existing Criterion `interaction_rendering` benchmarks
 remain the timing surface; this oracle has no wall-clock acceptance threshold.
 
+## Core ingest throughput
+
+Run `cargo bench -p festerm-core --bench sustained_output`. Each case ingests
+256 KiB into a 120x40 terminal; `sustained_output_full_history` repeats the
+scroll-heavy cases with history already at its byte limit, so every line also
+pays eviction. Cases: `plain_ascii`, `styled_utf8`, `ascii_200_cols`,
+`sgr_dense`, `cjk_emoji`, `osc8_links`, `yes_scroll` (`y\r\n`),
+`tui_overwrite` (cursor-addressed mid-row redraws) and `alternate_repaint`.
+
+Profiling showed scrolling, not parsing, dominated: each scrolled line cloned
+its cells into history, refilled the revealed row cell by cell, and grew then
+shrank the history line. Departing cells are now moved into history as an
+exactly sized row, only the revealed row's occupied prefix is cleared (cells
+past a row's extent are structural blanks by invariant), and a single-width
+cell overwriting a single-width cell skips wide-pair repair and the full-row
+extent rescan. Apple M-series, release, throughput change:
+
+| Case | Before (MiB/s) | Change |
+| --- | --- | --- |
+| `yes_scroll` | 2.6 | +520% |
+| `full_history/yes_scroll` | 2.6 | +345% |
+| `plain_ascii` | 10.4 | +113% |
+| `full_history/plain_ascii` | 10.7 | +79% |
+| `styled_utf8` | 13.1 | +114% |
+| `tui_overwrite` | 21.2 | +153% |
+| `sgr_dense` | 21.0 | +62% |
+| `cjk_emoji` | 13.1 | +59% |
+| `osc8_links` | 18.2 | +96% |
+| `alternate_repaint` | 19.8 | +84% |
+
 ## Automatic WARP composition rollout
 
 PR #281 consolidates the stacked follow-on and reviewed shipping main. At the
