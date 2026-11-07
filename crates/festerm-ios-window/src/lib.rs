@@ -20,7 +20,7 @@ mod field;
 pub use field::{FieldDocument, FieldInput, FieldKey, FieldModel, FieldSync};
 mod dictation;
 pub use dictation::{
-    dictation_permission_prompt_in_flight, Dictation, DictationPhase, DictationText,
+    dictation_permission_prompt_in_flight, Dictation, DictationPhase, DictationText, LevelHistory,
     MAX_DICTATION_BYTES,
 };
 mod document;

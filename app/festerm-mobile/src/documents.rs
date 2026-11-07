@@ -321,6 +321,11 @@ impl DocumentHost {
         snapshot: DocumentFileSnapshot,
         next_tab: &mut u64,
     ) -> Result<(), String> {
+        let previewing = snapshot
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(super::files::is_markdown);
         let origin: DocumentOrigin = LocalOrigin::new(snapshot.path)
             .map_err(|_| "The selected file has no usable text-document identity.".to_owned())?
             .into();
@@ -381,7 +386,7 @@ impl DocumentHost {
         self.views.push(View {
             tab: *next_tab,
             id: view,
-            previewing: false,
+            previewing,
             preview: None,
             preview_revision: None,
             wide_preview: false,

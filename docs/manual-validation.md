@@ -865,7 +865,7 @@ No saved profiles, session switcher, Keychain or app lock is implied by this pas
 The owner's terminal-key update adds one-shot Shift after Alt and changes the
 navigation grid to Home/Up/End/PgUp, Left/Down/Right/PgDn and
 Insert/Delete/Shift+Tab/Return. Actual-widget tests cover that order and narrow
-row fit, local Ctrl+Shift+C selection-copy output, Ctrl+Shift+P clipboard-read
+row fit, local Ctrl+Shift+C selection-copy output, Ctrl+Shift+V clipboard-read
 and paste ordering, and More → Force redraw without terminal input or reset.
 ### Shared iOS documents
 
@@ -923,8 +923,11 @@ Failure of either capture remains a failed attempt with evidence retained.
 |---|---|---|
 | MOB-08 | iPhone/iPad Simulator and physical devices; local, iCloud and an available third-party Files provider | Once the native surface is wired, open/reopen authorized files, revoke permission, move/delete/replace a source, edit across two views and undo/redo. Verify stable accessible saved/unsaved/conflict chip markers, local keyboard ownership with no terminal input, actual safe-area/keyboard occlusion at phone portrait/landscape, iPad and narrow Split View, and no Edit/Preview split panes. Exercise generation-checked saves, concurrent outside writes, simultaneous local transfers, storage denial/full-provider failures, Compare/Reload/Keep edits/Save As and final-dirty-view close. Remote SFTP must remain read-only, with an explicit distinct local copy. Compare real captures against numbered owner mockups using a Claude visual review; classify intentional no-Split/font/keyboard differences separately from true mismatches. Verify VoiceOver, Dynamic Type, hardware/floating keyboard, non-English IME and selection/context menus. A document dictation acceptance must be one Undo and must refuse stale targets; speech/model/privacy qualification is separately MOB-07/#564. |
 
-For the dependent Markdown slice, edit a local `.md` file and switch to Preview:
-verify current content, retained source selection and one shared undo history.
+For the dependent Markdown slice, open a local `.md` file and verify it starts
+in Preview; choose Edit explicitly, then verify current content, retained
+source selection and one shared undo history. Within wide tables, test
+horizontal touch panning and vertical reading gestures across the table,
+including parsed left/center/right alignment.
 Use Contents on phone, with keyboard reservation, in short landscape and on
 iPad; verify heading navigation and dismissal when switching views or after an
 external clean reload. Check the wide Contents rail and that compact More can
@@ -941,7 +944,7 @@ dictation are not part of this Markdown projection slice.
 
 | ID | Environment | Required evidence |
 |---|---|---|
-| MOB-07 | Physical iPhone/iPad with local speech model; Simulator for UI/unsupported state only | On both custom keyboard layouts, confirm Left/Up/Down/Right followed immediately by a microphone icon, then Extended keys; VoiceOver identifies the icon as Mic, and holding it never repeats. Tap it, test denied/restricted and granted speech/microphone permissions, and recognize with networking disabled. Confirm on-device support for the selected language/model; unsupported cases must never fall back to a server. Verify the recording indicator, latest-only revisions, 4096-byte Unicode cap, native 45-second deadline, Stop → brief Finishing → final punctuated transcript in an editable review, first-use permission alerts that keep a connected plain SSH session alive (and backgrounding during an alert still suspends it), single-use Insert with no Return/modifiers and rejection of pasted CR/LF/ESC/other controls. While recording and reviewing, test interruption, app switch/lock/background, session/tab/workspace replacement and reconnect: capture must stop even without another UI frame, text must not be replayed and stale callbacks must not restore it. Cancel leaves terminal bytes unchanged. Inspect app-owned storage/logs for absence of audio/transcripts using non-sensitive fixtures. Exercise actual shell/TUI insertion and VoiceOver/touch targets; remote programs may react to explicitly inserted text. Simulator launch/manual-preview tests do not establish native speech privacy or recognition quality. Tracked in #564; ADR 0066. |
+| MOB-07 | Physical iPhone/iPad with local speech model; Simulator for UI/unsupported state only | On both custom keyboard layouts, confirm Left/Up/Down/Right followed immediately by a microphone icon, then Extended keys; VoiceOver identifies the icon as Mic, and holding it never repeats. Tap it, test denied/restricted and granted speech/microphone permissions, and recognize with networking disabled. Confirm on-device support for the selected language/model; unsupported cases must never fall back to a server. Verify the recording indicator, latest-only revisions, 4096-byte Unicode cap, native 45-second deadline, Stop → brief Finishing → final punctuated transcript in an editable review; tapping the live transcript must stop capture and enter editing. Resume must append, and Send during capture must stop, await final recognition and insert text only, without Return/modifiers. Verify rejection of pasted CR/LF/ESC/other controls and single-use insertion. While recording and reviewing, test interruption, app switch/lock/background, session/tab/workspace replacement and reconnect: capture must stop even without another UI frame, text must not be replayed and stale callbacks must not restore it. Cancel leaves terminal bytes unchanged. Inspect app-owned storage/logs for absence of audio/transcripts using non-sensitive fixtures. Exercise actual shell/TUI insertion and VoiceOver/touch targets; remote programs may react to explicitly inserted text. Simulator launch/manual-preview tests do not establish native speech privacy or recognition quality. Tracked in #564; ADR 0066. |
 
 The November 5 P1–P4 update additionally requires **MOB-02/06/07/08** physical
 acceptance: keep the selected custom/native keyboard through source editing

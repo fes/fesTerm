@@ -379,9 +379,9 @@ success does not establish iOS rendering, touch, keyboard or lifecycle support.
   The regression checks the final platform output after egui completes the
   frame, including accessory taps, keyboard events, geometry changes and resume.
   One-shot Ctrl/Alt/Shift chords and ordinary hardware input use the core encoder.
-  Ctrl+Shift+C copies the terminal selection to the iOS pasteboard; Ctrl+Shift+P
+  Ctrl+Shift+C copies the terminal selection to the iOS pasteboard; Ctrl+Shift+V
   pastes its text through the same ordered, bracketed-paste-aware input path as
-  the Paste button. These two shortcuts are local, not remote control bytes.
+  the Paste button. These shortcuts are local, not remote control bytes.
   The native keyboard's 123 / #+= pages are not replaced by the extra keys.
   Counters
   retain no typed text; nothing executes. More → Reset demo returns to a known fixture.

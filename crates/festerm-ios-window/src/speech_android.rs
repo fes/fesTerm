@@ -20,7 +20,7 @@ impl Speech {
                 let (status, text) = match event {
                     SpeechEvent::Level(level) => {
                         if draft.phase == DictationPhase::Listening {
-                            draft.audio_level = recognizer_level(level);
+                            draft.record_level(recognizer_level(level));
                             drop(draft);
                             repaint();
                         }
