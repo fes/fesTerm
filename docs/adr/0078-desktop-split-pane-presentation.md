@@ -1,6 +1,6 @@
 # ADR 0078: Desktop Split-Pane Presentation
 
-- **Status:** Proposed; owner-directed implementation on feature branch
+- **Status:** Proposed; owner-directed staged implementation
 - **Date:** 2026-11-06
 - **Amends:** ADR 0014's one-viewport-per-chip presentation restriction
 - **Preserves:** ADRs 0002, 0032, 0033, 0034 and 0065

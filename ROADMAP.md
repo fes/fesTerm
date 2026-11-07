@@ -11,7 +11,7 @@ The roadmap is foundation-first. Early milestones may produce little visible UI 
 
 ## Milestone Issue Review
 
-Issue #65 is owner-authorized desktop split-pane work (ADR 0075).
+Issue #65 is owner-authorized desktop split-pane work (ADR 0078).
 The presentation slice adds live composition, bounded layouts, focused input,
 group chrome, transient handles/explicit rearrangement, atomic live-view swaps
 and preflighted close. Complete recovery/named recipes and native
