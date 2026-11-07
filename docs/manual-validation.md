@@ -1522,6 +1522,16 @@ latency.
 
 ### Native platform, appearance, and accessibility
 
+macOS interactive evidence uses
+[`run-macos-development.py`](development-handoff.md#macos-interactive-development).
+Its opt-in `--check` automates exact owned development identity, non-generic icon,
+visible window, normal Launcher-only Quit and surviving-helper detection, with
+retained JSON/log evidence. It does not inspect unrelated windows/process
+arguments, grant permissions, or qualify signed packages, dirty/live-session
+consent, Services, or resolution of background/App Management notifications
+([#631](https://github.com/fes/fesTerm/issues/631)). `NP-03`, `CP-09` and `CP-11`
+retain their remaining native/manual boundaries.
+
 | ID | Workflow and oracle | Evidence class | VM automation candidate |
 | --- | --- | --- | --- |
 | NP-01 | Drag, double-click, minimize, maximize, restore, snap/tile, system-menu, and close custom chrome on each supported compositor. | Native functional | Partly; OS window-state APIs provide oracle |

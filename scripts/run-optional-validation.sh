@@ -37,6 +37,12 @@ else
     printf 'suite=android-native status=skipped reason=explicit-isolated-emulator-required\n' >>"$result_path"
 fi
 if [ "$(uname -s)" = Darwin ]; then
+    if python3 scripts/run-macos-development.py --check; then
+        printf 'suite=macos-development-launch status=pass\n' >>"$result_path"
+    else
+        printf 'suite=macos-development-launch status=fail\n' >>"$result_path"
+        status=fail
+    fi
     if python3 scripts/smoke-ios-simulator.py --run --build; then
         printf 'suite=ios-simulator status=pass\n' >>"$result_path"
     else
@@ -44,6 +50,7 @@ if [ "$(uname -s)" = Darwin ]; then
         status=fail
     fi
 else
+    printf 'suite=macos-development-launch status=skipped reason=macos-required\n' >>"$result_path"
     printf 'suite=ios-simulator status=skipped reason=macos-required\n' >>"$result_path"
 fi
 cargo build --workspace

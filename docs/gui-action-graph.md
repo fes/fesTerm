@@ -535,6 +535,12 @@ stateDiagram-v2
 
 ## A. Root, Launcher, and surface lifecycle
 
+For interactive macOS evidence, use the
+[branded development launcher](development-handoff.md#macos-interactive-development).
+Its optional `--check` proves native development identity/window readiness and
+Launcher-only Quit, not the complete `ROOT-01` visual oracle, live-session
+teardown, or signed-package acceptance (`NP-03`/`CP-09` remain broader).
+
 | ID | From → To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
 | `ROOT-01` | `K0 → K1` | Start with no workspace. | Exactly one ordinary Launcher; no wizard, promotion, telemetry prompt, disabled future transport, or blank root. Local is initially highlighted; footer footprint is stable and empty. | `ROOT-02` or quit to `K0`. | H,V,N,U |

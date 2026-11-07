@@ -104,6 +104,7 @@ release and end-to-end upgrade evidence remain
 ## Bootstrap
 
 The repository pins the stable Rust toolchain in `rust-toolchain.toml`.
+For Windows/Linux, or an intentional low-level executable probe:
 
 ```sh
 cargo build
@@ -117,6 +118,70 @@ an enabled manually authored workspace, its
 saved tab order/focus restores instead and users must authenticate again before
 an SSH destination connects. If local-shell creation fails, the UI shows the
 session error rather than substituting a demo shell.
+
+### macOS interactive development
+
+Use Python 3.11+ and the pinned `cargo-packager` from
+[`packaging/README.md`](../packaging/README.md), from a logged-in GUI session:
+
+```sh
+python3 scripts/run-macos-development.py
+# Bounded, Launcher-only native identity and normal-Quit check:
+python3 scripts/run-macos-development.py --check
+```
+
+The launcher builds the frontend and all three packaged helpers, using Cargo's
+reported artifact paths rather than potentially stale binaries. It packages an
+ad-hoc-signed **fesTerm Development.app**, identifier
+`dev.fes.festerm.development`, with the canonical icons/version. It never
+installs into `/Applications` or modifies the production bundle. The developer
+build marker disables update actions; Apple/updater signing credentials are
+removed from the build/packaging environment.
+
+Each invocation creates a private directory and prints its path. To choose
+the location, pass `--output /existing/parent/new-directory`; an existing
+destination is refused. Default roots use a short private `.fs-dev-*` directory
+under your home. Overly long output paths are refused to preserve macOS
+Unix-socket space for native sessions. Ancestors must be root/user-owned and
+not group/world-writable: even sticky `/tmp` is rejected by native hosting's
+storage policy. The directory contains the bundle, fresh HOME,
+config/data/cache/state/runtime/temp directories, separate `sessiond` state,
+`app.log`, and `launch.json`
+with revision/dirty status, exact owned PID, native identity and shutdown result.
+The application receives an allowlisted environment, not the user's SSH agent,
+cloud credentials, shell startup environment or injected-library settings.
+This is **data isolation, not an OS sandbox**: Keychain, network, OS services,
+system shell startup files, and explicit file/device actions remain real.
+Use disposable credentials and test resources.
+
+The supervisor launches the bundle executable directly, verifies its exact PID,
+executable, bundle identity/path, regular activation policy, visible native
+window and non-generic icon, then remains attached for interactive testing.
+For an agent's user-testing handoff, keep this supervisor in a tracked
+long-lived process and verify `launch.json` says `running`; do not immediately
+quit the app. At the end, quit normally or interrupt the supervisor: it requests
+native Quit only for its owned identity and bounds the exit wait. Normal
+interactive use has no automatic session-duration timeout. `--check` instead
+requests Quit immediately after readiness; do not interact with its probe.
+
+A nonzero exit, timeout, or surviving helper from this unique bundle fails
+shutdown verification. No forced process termination is performed. Inspect the
+recorded PID/log and finish the owned application's confirmation dialogs or
+explicitly end its disposable persistent sessions; never kill by process name
+or stop the installed app/daemons. Data and evidence are retained on both
+success and failure; remove only the printed private directory after verifying
+its owned frontend/helpers are gone and its test data is no longer needed.
+
+The native check is also included in the opt-in aggregate
+`FESTERM_RUN_OPTIONAL_VALIDATION=1 scripts/run-optional-validation.sh`
+(or the PowerShell equivalent). Specialized bounded OS-input/render smoke
+harnesses remain separate; this rule changes interactive launches, not their
+controlled fixtures. Development identity/Launcher-Quit evidence does not
+qualify signed distribution, live-session teardown, dirty-document consent,
+or absence of macOS warnings. A native launch may update macOS identity records.
+Do not grant App Management/Accessibility permissions, edit login items, or
+reset BTM/TCC to silence a warning. The historical quit timeout and the
+App Management trigger remain unresolved under [#631](https://github.com/fes/fesTerm/issues/631).
 
 ## WSL 2 Development and Testing
 

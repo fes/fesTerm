@@ -1898,7 +1898,8 @@
       ],
       "requirements": [
         "docs/gui-design.md#window-chrome-integrated-title-bar-controls",
-        "docs/gui-design.md#responsive-and-narrow-window-behavior"
+        "docs/gui-design.md#responsive-and-narrow-window-behavior",
+        "docs/development-handoff.md#macos-interactive-development"
       ],
       "decisions": [
         "ADR-0007",
@@ -1979,7 +1980,8 @@
       ],
       "status": "partial",
       "prerequisites": [
-        "native update apply, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent"
+        "native update apply, fullscreen, native link handoff, and native DPI branches remain capability/platform dependent",
+        "scripts/tests/test_run_macos_development.py and opt-in scripts/run-macos-development.py --check cover only development environment/identity and Launcher-only Quit; signed-package and live-session teardown evidence remains required"
       ]
     },
     {
