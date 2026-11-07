@@ -2227,6 +2227,8 @@
         "docs/gui-design.md#bounded-rectangle-copy",
         "docs/gui-design.md#terminal-context-menu",
         "docs/gui-design.md#explicit-terminal-hyperlinks",
+        "docs/adr/0079-global-terminal-ingest-budget.md#decision",
+        "validation/terminal-performance/README.md#shared-desktop-update-budget",
         "validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle",
         "validation/terminal-performance/README.md#glyph-layout-retirement-oracle",
         "validation/terminal-performance/README.md#optional-owned-thread-identity-discriminator",
@@ -2243,7 +2245,8 @@
         "ADR-0043",
         "ADR-0045",
         "ADR-0044",
-        "ADR-0052"
+        "ADR-0052",
+        "ADR-0079"
       ],
       "automated_tests": [
         "retained_grid_rows_preserve_exact_meshes_and_skip_unchanged_paint_work",
@@ -2359,6 +2362,11 @@
         "panel_fill_callback_preserves_declined_geometry_and_color",
         "textureless_application_chrome_preserves_pixels_across_dpi_and_clipping",
         "profile_terminal_residual_cpu",
+        "global_ingest_budget_rotates_busy_sessions_between_updates",
+        "ingest_byte_budget_bounds_a_single_session_slice",
+        "ingest_byte_budget_stops_at_the_session_slice_ceiling",
+        "pending_commands_survive_backpressure_and_preserve_reply_input_order",
+        "keyboard_multiline_paste_preserves_source_order_in_both_terminal_modes",
         "profile_six_session_aging",
         "aging_settings_reject_zero_overflow_and_malformed_values",
         "aging_fixture_notifies_and_pumps_all_six_owned_sessions",

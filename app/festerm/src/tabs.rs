@@ -1039,6 +1039,19 @@ impl SessionTab {
             })
     }
 
+    pub(crate) fn pump_session_events_with_slice(
+        &mut self,
+    ) -> crate::session_controller::PumpResult {
+        let view = &mut self.view;
+        self.controller
+            .pump_events_with_resize_slice(&mut self.terminal, |terminal, dimensions| {
+                !matches!(
+                    view.apply_terminal_resize(terminal, dimensions),
+                    festerm_ui_egui::ResizeOutcome::Rejected
+                )
+            })
+    }
+
     /// Starts a fresh default local session. `window_dimensions`, when
     /// supplied, is the currently rendered window's terminal grid size (see
     /// `AppState::current_session_dimensions`); a new tab created from an
