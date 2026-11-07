@@ -580,8 +580,8 @@ mod tests {
             .args([
                 "-vf",
                 "select=eq(n\\,0)+eq(n\\,30)+eq(n\\,60)",
-                "-vsync",
-                "0",
+                "-fps_mode",
+                "passthrough",
                 "-f",
                 "rawvideo",
                 "-pix_fmt",
