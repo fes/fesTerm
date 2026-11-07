@@ -395,13 +395,9 @@ impl WindowsEncoder {
                 .ok_or_else(|| VideoError::new("the video writer is no longer available"))?;
             mf("finalize the MP4", unsafe { writer.Finalize() })?;
             self.writer.take();
-            let output = self
-                .output
-                .take()
-                .ok_or_else(|| VideoError::new("the MP4 file is no longer available"))?;
-            mf("flush the MP4", unsafe { output.Flush() })?;
-            mf("close the MP4", unsafe { output.Close() })?;
-            drop(output);
+            // Finalize closes the sink's byte stream. Staging reopens and
+            // syncs the completed file before it can be published.
+            self.output.take();
             self.context.shutdown()
         })();
         if result.is_err() {
