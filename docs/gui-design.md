@@ -254,7 +254,14 @@ so drag-end cannot dismiss it and Cancel never changes layout.
 Group labels can be renamed independently of sessions. Group chips retain
 their runtime identity when the first member moves or closes. Their geometry
 icon exposes unread members, hover/keyboard details and a pinned member list.
+When a group remains, detaching a member places its independent chip after it;
+separating a whole group replaces its chip in place without moving other chips.
+Chip reordering keeps every group's members together, including after a pane
+swap. A pane's context menu retains that pane's ownership even when the menu
+extends over a sibling.
 Pinned details and layout/close dialogs cannot send keystrokes to terminals.
+Primary, secondary and middle presses focus the pane they target before that
+pane handles the gesture, including its context menu or middle-click paste.
 Pane clicks respect queued input order: earlier text/paste stays with its
 original owner. Native IME composition is fenced by view, input epoch, session
 generation and viewport. Retired compositions cannot commit into another
@@ -1900,7 +1907,7 @@ profiles follow the same order.
 Settings is a singleton application surface represented by its own chip;
 invoking Settings again focuses it. It currently uses compact cards rather
 than a category sidebar, uniformly widthed and shown in this order:
-**Interface**, **Scrolling**, **Terminal typography**, **Quick switch**,
+**Panes**, **Interface**, **Scrolling**, **Terminal typography**, **Quick switch**,
 **SFTP**, and **Keyboard bindings**. Keyboard bindings sits last because its
 searchable action table is the tallest card. Only implemented controls
 appear.
@@ -2830,7 +2837,9 @@ ordinary painting; overlays still decline final-terminal copying/retention.
 Results are grouped as **Open views**, **Sessions & connections**, **Terminal**,
 **Panes**, **Files & documents**, and **Application**, retaining catalog order
 within each group. Open views retain chip order and stable identity as their
-primary label; dynamic text is secondary searchable context. Empty groups
+primary label; dynamic text is secondary searchable context. Quick-switch
+labels use the presented chip position and appear only on a group's currently
+focused member, matching the view the shortcut activates. Empty groups
 disappear. Standalone composable views offer **Pane Layout…**, not inapplicable
 group focus/resize/separate operations. **Rearrange panes** and **Finish
 rearranging panes** are mutually exclusive according to the current mode.

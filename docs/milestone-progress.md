@@ -9,6 +9,12 @@ and group close preflights dirty documents before closing anything. Transient
 handles and explicit rearrangement support atomic swaps; hover handles default
 off. The command palette groups existing actions without adding authority.
 
+Review caught inactive panes missing secondary-click focus, overlapping menus
+retargeting a sibling, groups shifting position after later edits, and palette
+shortcut labels following raw views rather than visible chips. Pointer routing,
+chip placement and labels now follow their corresponding live presentation
+identities.
+
 ADR 0078 records the presentation and metadata-only persistence boundaries.
 Named recipes, independent recovery controls and cross-platform native
 qualification (`PN-01` and `PN-02`) remain open.

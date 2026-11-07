@@ -53,6 +53,12 @@ fn pane_handle_rect(rect: egui::Rect) -> egui::Rect {
     )
 }
 
+fn pointer_over_open_popup(context: &egui::Context, position: egui::Pos2) -> bool {
+    context
+        .layer_id_at(position)
+        .is_some_and(|layer| egui::Popup::is_id_open(context, layer.id))
+}
+
 impl FesTermApp {
     pub(super) fn begin_pane_rearrange(&mut self, context: &egui::Context) {
         self.pane_layout_menu = None;
@@ -73,7 +79,7 @@ impl FesTermApp {
         }
     }
 
-    pub(super) fn pane_handle_press(&self, event: &egui::Event) -> bool {
+    pub(super) fn pane_handle_press(&self, event: &egui::Event, context: &egui::Context) -> bool {
         if self.overlays.blocks_terminal_input()
             || self.palette.is_open()
             || self.pane_layout_menu.is_some()
@@ -86,7 +92,8 @@ impl FesTermApp {
         }
         matches!(event, egui::Event::PointerButton {
             pos, button:egui::PointerButton::Primary, pressed:true, ..
-        } if self.pane_rects.iter().any(|(_, rect)| pane_handle_rect(*rect).contains(*pos)))
+        } if !pointer_over_open_popup(context, *pos)
+            && self.pane_rects.iter().any(|(_, rect)| pane_handle_rect(*rect).contains(*pos)))
     }
 
     pub(super) fn own_pane_handle_press(&mut self, event: &egui::Event) {
@@ -646,7 +653,11 @@ impl FesTermApp {
 }
 
 impl FesTermApp {
-    pub(super) fn pane_focus_target(&self, event: &egui::Event) -> Option<TabId> {
+    pub(super) fn pane_focus_target(
+        &self,
+        event: &egui::Event,
+        context: &egui::Context,
+    ) -> Option<TabId> {
         if self.overlays.blocks_terminal_input()
             || self.palette.is_open()
             || self.pane_layout_menu.is_some()
@@ -658,13 +669,19 @@ impl FesTermApp {
         }
         let egui::Event::PointerButton {
             pos,
-            button: egui::PointerButton::Primary,
+            button:
+                egui::PointerButton::Primary
+                | egui::PointerButton::Secondary
+                | egui::PointerButton::Middle,
             pressed: true,
             ..
         } = event
         else {
             return None;
         };
+        if pointer_over_open_popup(context, *pos) {
+            return None;
+        }
         let (view, _) = self
             .pane_rects
             .iter()

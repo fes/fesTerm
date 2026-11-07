@@ -21,6 +21,10 @@ All edits enter the application's command reducer. Validate a staged edit before
 committing either source or destination. Layout changes never launch or close.
 Group names do not rename sessions. Input belongs to one focused surface only.
 Inactive surfaces continue output/transfer processing without consuming input.
+Primary, secondary and middle presses focus their target before it handles the
+gesture, without redirecting earlier queued input. Detach and separate retain
+the group's position relative to unrelated chips; reordering treats a group
+as one unit. Context menus retain their owning pane when drawn over a sibling.
 
 Use the existing integrated chip band, shared one-device-pixel dividers and a
 subtle focused inset edge. Preserve the underlying tree during temporary zoom
@@ -64,8 +68,10 @@ The desktop command palette groups existing opaque command/view IDs with a
 responsive category sidebar (dropdown at narrow widths) and a larger scrolling
 result area. Categories are presentation only, not a new command registry.
 Standalone views omit group-only pane actions; Rearrange/Finish follows the
-transient mode. Stable selected identity prevents catalog changes from silently
-retargeting Enter. No command, secret, configuration or scripting authority changes.
+transient mode. Quick-switch labels follow presented chip positions and the
+member each shortcut activates. Stable selected identity prevents catalog
+changes from silently retargeting Enter. No command, secret, configuration or
+scripting authority changes.
 
 ## Alternatives considered
 
@@ -84,14 +90,18 @@ Newer metadata is refused by older strict readers rather than misinterpreted.
 
 - **Invariants introduced or changed:** unique placement, four-leaf bound,
   atomic edits, exact input owner, transport continuity, metadata-only recovery.
-- **GUI/action edges affected:** PANE-01 through PANE-10, PAL-01 through PAL-04.
+- **GUI/action edges affected:** PANE-01 through PANE-10, PAL-01 through PAL-04,
+  CHIP-06, EDIT-09.
 - **Automated tests required:** tree/reducer, generation/input continuity,
   geometry including single-view-equivalent terminal padding and minimum
   content cells, hover/mode input boundaries, exact-source drag-close,
   configuration migration, atomic cross-presentation exchanges/staged detach,
+  group/independent chip order, sibling-overlapping context menus, secondary-click
+  focus and selected-editor Copy with stale-selection retirement,
   cross-window refusal, dirty close and workspace roundtrip; default-off/explicit
-  opt-in persistence, grouped palette applicability, category keyboard ownership,
-  stable selection, page scrolling and responsive root fit.
+  opt-in persistence, grouped palette applicability and quick-switch mapping,
+  category keyboard ownership, stable selection, page scrolling and responsive
+  root fit.
 - **Native/manual evidence required:** PN-01 and PN-02 across desktop platforms
   and display scales. Headless checks do not qualify native behavior.
 - **Coverage superseded:** None; existing session/document/transfer tests remain.

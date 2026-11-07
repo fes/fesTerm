@@ -6531,8 +6531,13 @@ impl AppState {
             return;
         }
         let before = before.map(|id| {
-            self.pane_group(id)
-                .map_or(id, |group| group.tree.views()[0])
+            self.pane_group(id).map_or(id, |group| {
+                let members = group.tree.views();
+                self.tabs
+                    .iter()
+                    .find(|tab| members.contains(&tab.id))
+                    .map_or(id, |tab| tab.id)
+            })
         });
         let mut tabs = Vec::new();
         for member in members {

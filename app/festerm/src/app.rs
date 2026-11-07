@@ -341,12 +341,10 @@ impl ApplicationShortcut {
     }
 }
 
-/// The first several open tabs, in tab-bar order, get a quick-switch
+/// The first several presentation chips, in tab-bar order, get a quick-switch
 /// keystroke (`Cmd+1`..`Cmd+9` on macOS, `Ctrl+1`..`Ctrl+9` elsewhere) that
-/// jumps directly to that tab, mirroring the browser/terminal convention of
-/// numbering only the first nine positions. Shared by `palette_items` (to
-/// display the keystroke) and `handle_shortcuts` (to act on it), so the two
-/// never drift out of sync.
+/// jumps directly to the chip's focused view, mirroring the browser/terminal
+/// convention of numbering only the first nine positions.
 const MAX_QUICK_SWITCH_TABS: usize = 9;
 
 /// Pre-formatted display text for the Nth (0-based) quick-switch slot (e.g.
@@ -3368,7 +3366,14 @@ impl FesTermApp {
             is_tab: false,
             shortcut_label: None,
         });
-        for (index, tab) in self.state.tabs().iter().enumerate() {
+        let quick_switch_views = self
+            .state
+            .presentation_tabs()
+            .into_iter()
+            .take(MAX_QUICK_SWITCH_TABS)
+            .map(|view| self.state.grouped_view_for_chip(view))
+            .collect::<Vec<_>>();
+        for tab in self.state.tabs() {
             let (label, hint) = match &tab.content {
                 TabContent::Launcher => ("Launcher".to_owned(), None),
                 TabContent::Settings => ("Settings".to_owned(), None),
@@ -3427,8 +3432,10 @@ impl FesTermApp {
                 label,
                 hint,
                 is_tab: true,
-                shortcut_label: crate::keyboard::QUICK_ACTIONS
-                    .get(index)
+                shortcut_label: quick_switch_views
+                    .iter()
+                    .position(|view| *view == tab.id)
+                    .and_then(|index| crate::keyboard::QUICK_ACTIONS.get(index))
                     .and_then(|action| binding_label(*action)),
             });
         }
@@ -3721,8 +3728,8 @@ impl FesTermApp {
                         | egui::Event::Ime(_)
                         | egui::Event::Key { pressed: true, .. }
                 )
-            }) && (self.pane_focus_target(&event).is_some()
-                || self.pane_handle_press(&event)
+            }) && (self.pane_focus_target(&event, ctx).is_some()
+                || self.pane_handle_press(&event, ctx)
                 || self.shortcut_context(ctx, false).activates(
                     &event,
                     self.state.keyboard_bindings(),
@@ -3737,11 +3744,11 @@ impl FesTermApp {
                 break;
             }
             self.record_pane_pointer_release(&event);
-            if self.pane_handle_press(&event) {
+            if self.pane_handle_press(&event, ctx) {
                 self.own_pane_handle_press(&event);
                 crate::keyboard::retire_composition(ctx);
                 self.cancel_clipboard_paste(ctx);
-            } else if let Some(view) = self.pane_focus_target(&event) {
+            } else if let Some(view) = self.pane_focus_target(&event, ctx) {
                 crate::keyboard::retire_composition(ctx);
                 self.state.dispatch(AppCommand::ActivateTab(view), ctx);
                 self.cancel_invalid_clipboard_paste(ctx);
@@ -3906,7 +3913,7 @@ impl FesTermApp {
         if open_palette {
             self.palette.toggle();
         }
-        // Quick-switch to one of the first `MAX_QUICK_SWITCH_TABS` tabs by
+        // Quick-switch to one of the first `MAX_QUICK_SWITCH_TABS` chips by
         // position (`Cmd+1`..`Cmd+9`/`Ctrl+1`..`Ctrl+9`), matching the
         // keystroke shown next to each tab row in the command palette
         // (`palette_items`). Checked before the palette-open early return
@@ -3915,10 +3922,7 @@ impl FesTermApp {
         for index in 0..MAX_QUICK_SWITCH_TABS {
             if consume(crate::keyboard::QUICK_ACTIONS[index]) {
                 if let Some(target) = self.state.presentation_tabs().get(index).copied() {
-                    let target = self
-                        .state
-                        .pane_group(target)
-                        .map_or(target, |group| group.focused);
+                    let target = self.state.grouped_view_for_chip(target);
                     self.state.dispatch(AppCommand::ActivateTab(target), ctx);
                 }
                 self.palette.close();

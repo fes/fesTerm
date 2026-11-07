@@ -1689,6 +1689,18 @@ impl TextEditorTab {
             }
             if open.text().text() != self.buffer {
                 self.buffer = open.text().text().to_owned();
+                if let Some(context) = &self.widget_context {
+                    let id = self.body_id();
+                    if let Some(mut state) = egui::text_edit::TextEditState::load(context, id) {
+                        state.cursor.set_char_range(
+                            state
+                                .cursor
+                                .char_range()
+                                .map(|range| egui::text::CCursorRange::one(range.primary)),
+                        );
+                        state.store(context, id);
+                    }
+                }
             }
         }
     }
@@ -2795,6 +2807,7 @@ impl TextEditorTab {
                 .desired_width(width)
                 .desired_rows(1)
                 .interactive(!read_only)
+                .preserve_selection_on_focus_loss(true)
                 .margin(egui::Margin::symmetric(BODY_MARGIN_X as i8, 8))
                 .layouter(&mut layouter)
                 .show(ui)

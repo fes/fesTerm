@@ -1,5 +1,5 @@
 use super::*;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use festerm_config::PaneSide;
 
@@ -66,6 +66,47 @@ fn pane_palette_categories_and_actions_follow_active_composition_and_mode() {
     assert!(!actions.iter().any(|item| item.id == 46));
     assert!(actions.iter().any(|item| item.id == 47));
     assert!(actions.iter().any(|item| item.id == 32));
+}
+
+#[test]
+fn panes_palette_shortcuts_follow_presented_chips_and_focused_members() {
+    let (mut app, first, second, _, _) = grouped_app();
+    let context = egui::Context::default();
+    app.state.dispatch(AppCommand::NewTextDocument, &context);
+    let standalone = app.state.active();
+
+    let shortcut = |app: &FesTermApp, view: TabId| {
+        app.palette_items()
+            .into_iter()
+            .find(|item| item.id == (1 << 32) + view.chip_id())
+            .unwrap()
+            .shortcut_label
+    };
+    assert_eq!(shortcut(&app, first), None);
+    assert_eq!(shortcut(&app, second), quick_switch_label(0));
+    assert_eq!(shortcut(&app, standalone), quick_switch_label(1));
+
+    app.state.dispatch(AppCommand::ActivateTab(first), &context);
+    assert_eq!(shortcut(&app, first), quick_switch_label(0));
+    assert_eq!(shortcut(&app, second), None);
+    assert_eq!(shortcut(&app, standalone), quick_switch_label(1));
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness.state_mut().palette.toggle();
+    harness.run();
+    let (modifiers, key) = crate::keyboard::chord("Primary+2").unwrap();
+    harness.input_mut().events.push(egui::Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed: true,
+        repeat: false,
+        modifiers,
+    });
+    harness.run();
+    assert_eq!(harness.state().state.active(), standalone);
+    assert!(!harness.state().palette.is_open());
 }
 
 #[test]
@@ -1070,7 +1111,12 @@ fn panes_retire_ime_when_the_same_view_changes_session_generation() {
 
 #[test]
 fn panes_later_click_cannot_retarget_earlier_text_or_native_paste() {
-    for paste in [false, true] {
+    for (paste, button) in [
+        (false, egui::PointerButton::Primary),
+        (true, egui::PointerButton::Primary),
+        (false, egui::PointerButton::Secondary),
+        (true, egui::PointerButton::Secondary),
+    ] {
         let (app, first, second, first_transport, second_transport) = grouped_app();
         let mut harness = Harness::builder()
             .with_size(egui::vec2(1600.0, 960.0))
@@ -1111,7 +1157,7 @@ fn panes_later_click_cannot_retarget_earlier_text_or_native_paste() {
             egui::Event::PointerMoved(position),
             egui::Event::PointerButton {
                 pos: position,
-                button: egui::PointerButton::Primary,
+                button,
                 pressed: true,
                 modifiers: egui::Modifiers::NONE,
             },
@@ -1130,12 +1176,12 @@ fn panes_later_click_cannot_retarget_earlier_text_or_native_paste() {
         assert_eq!(
             second_transport.sent().concat(),
             b"earlier-secret",
-            "paste={paste}"
+            "paste={paste}, button={button:?}"
         );
         assert_eq!(
             first_transport.sent().concat(),
             b"later-first",
-            "paste={paste}"
+            "paste={paste}, button={button:?}"
         );
     }
 }
@@ -1168,6 +1214,292 @@ fn panes_pointer_focus_binds_same_frame_keyboard_to_only_the_clicked_surface() {
     harness.step();
     assert_eq!(harness.state().state.active(), first);
     assert_eq!(first_transport.sent().concat(), b"clicked-first");
+    assert!(second_transport.sent().is_empty());
+}
+
+#[test]
+fn panes_secondary_click_targets_inactive_surface_and_opens_its_menu() {
+    let (app, first, second, first_transport, second_transport) = grouped_app();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness.run();
+    assert_eq!(harness.state().state.active(), second);
+    let position = harness
+        .state()
+        .state
+        .session_tab(first)
+        .unwrap()
+        .view
+        .diagnostics()
+        .grid_rect
+        .unwrap()
+        .center();
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+    assert_eq!(harness.state().state.active(), first);
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+    assert!(egui::Popup::is_any_open(&harness.ctx));
+    assert!(first_transport.sent().is_empty());
+    assert!(second_transport.sent().is_empty());
+}
+
+#[test]
+fn panes_context_menu_over_sibling_keeps_its_original_owner() {
+    let (mut app, first, second, first_transport, second_transport) = grouped_app();
+    app.state
+        .dispatch(AppCommand::ActivateTab(first), &egui::Context::default());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness.run();
+    let grid = harness
+        .state()
+        .state
+        .session_tab(first)
+        .unwrap()
+        .view
+        .diagnostics()
+        .grid_rect
+        .unwrap();
+    let position = egui::pos2(grid.right() - 2.0, grid.center().y);
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+    let find = harness.get_by_label("Find in Terminal");
+    let sibling = harness
+        .state()
+        .pane_rects
+        .iter()
+        .find(|(view, _)| *view == second)
+        .unwrap()
+        .1;
+    assert!(sibling.contains(find.rect().center()));
+    find.click();
+    harness.run();
+    assert_eq!(harness.state().state.active(), first);
+    assert!(harness
+        .state()
+        .state
+        .session_tab(first)
+        .unwrap()
+        .search
+        .is_open());
+    assert!(!harness
+        .state()
+        .state
+        .session_tab(second)
+        .unwrap()
+        .search
+        .is_open());
+    assert!(first_transport.sent().is_empty());
+    assert!(second_transport.sent().is_empty());
+}
+
+#[test]
+fn panes_middle_click_requests_paste_for_the_targeted_inactive_terminal() {
+    let (app, first, _, first_transport, second_transport) = grouped_app();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness.run();
+    let position = harness
+        .state()
+        .state
+        .session_tab(first)
+        .unwrap()
+        .view
+        .diagnostics()
+        .grid_rect
+        .unwrap()
+        .center();
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Middle,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+    assert_eq!(harness.state().state.active(), first);
+    assert_eq!(harness.state().clipboard_paste.unwrap().tab, first);
+    assert!(first_transport.sent().is_empty());
+    assert!(second_transport.sent().is_empty());
+}
+
+#[test]
+fn panes_secondary_click_restores_inactive_editor_selection_copy() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("selected.txt");
+    std::fs::write(&path, "selected text").unwrap();
+    let (mut app, terminal, _, first_transport, second_transport) = grouped_app();
+    let context = egui::Context::default();
+    app.state
+        .dispatch(AppCommand::OpenTextEditor { path }, &context);
+    let editor = app.state.active();
+    app.state.dispatch(
+        AppCommand::CombinePanes {
+            source: editor,
+            target: terminal,
+            side: PaneSide::Below,
+            expected_revision: app.state.pane_revision(),
+        },
+        &context,
+    );
+    assert!(app.state.take_pane_error().is_none());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1800.0, 1100.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness.run();
+    harness
+        .get_by_role(egui::accesskit::Role::MultilineTextInput)
+        .focus();
+    harness.run();
+    let document = harness.state().state.active_document().unwrap();
+    let position = harness
+        .get_by_role(egui::accesskit::Role::MultilineTextInput)
+        .rect()
+        .center();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.run();
+    let context = harness.ctx.clone();
+    let body_id = egui::Id::new(("text-editor-body", Some(editor)));
+    let selection_size = |context: &egui::Context| {
+        egui::text_edit::TextEditState::load(context, body_id)
+            .and_then(|state| state.cursor.char_range())
+            .map(|selection| {
+                selection
+                    .primary
+                    .index
+                    .0
+                    .abs_diff(selection.secondary.index.0)
+            })
+    };
+    assert_eq!(selection_size(&context), Some("selected text".len()));
+    harness
+        .state_mut()
+        .state
+        .dispatch(AppCommand::ActivateTab(terminal), &context);
+    harness.run();
+    assert_eq!(selection_size(&context), Some("selected text".len()));
+    harness.input_mut().events.extend([
+        egui::Event::PointerMoved(position),
+        egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]);
+    harness.step();
+    assert_eq!(harness.state().state.active(), editor);
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+    assert_eq!(selection_size(&context), Some("selected text".len()));
+    let copy = harness.get_by_label("Copy");
+    assert!(
+        !copy.accesskit_node().is_disabled(),
+        "the inactive editor must retain its selection"
+    );
+    copy.click();
+    let click_commands = harness.output().platform_output.commands.clone();
+    harness.step();
+    assert!(
+        click_commands
+            .iter()
+            .chain(&harness.output().platform_output.commands)
+            .any(|command| matches!(
+                command,
+                egui::OutputCommand::CopyText(text) if text == "selected text"
+            )),
+        "Copy commands: {click_commands:?}, {:?}",
+        harness.output().platform_output.commands
+    );
+    harness
+        .state_mut()
+        .state
+        .dispatch(AppCommand::ActivateTab(terminal), &context);
+    harness.run();
+    assert_eq!(selection_size(&context), Some("selected text".len()));
+    harness
+        .state()
+        .state
+        .documents()
+        .borrow_mut()
+        .get_mut(document)
+        .unwrap()
+        .text_mut()
+        .sync_from_view("replacement text")
+        .unwrap();
+    harness.run();
+    assert_eq!(
+        selection_size(&context),
+        Some(0),
+        "an inactive selection must not silently point into changed text"
+    );
+    harness
+        .state_mut()
+        .state
+        .dispatch(AppCommand::ActivateTab(editor), &context);
+    harness.run();
+    harness
+        .get_by_role(egui::accesskit::Role::MultilineTextInput)
+        .focus();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.run();
+    assert_eq!(selection_size(&context), Some("replacement text".len()));
+    harness
+        .state()
+        .state
+        .documents()
+        .borrow_mut()
+        .get_mut(document)
+        .unwrap()
+        .text_mut()
+        .sync_from_view("another revision")
+        .unwrap();
+    harness.run();
+    assert_eq!(
+        selection_size(&context),
+        Some(0),
+        "a focused selection must not silently point into changed text"
+    );
+    assert!(first_transport.sent().is_empty());
     assert!(second_transport.sent().is_empty());
 }
 

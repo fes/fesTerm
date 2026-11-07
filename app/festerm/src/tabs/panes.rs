@@ -253,6 +253,41 @@ impl AppState {
         self.pane_changed();
     }
 
+    fn separate_pane(&mut self, view: TabId) {
+        if let Some(members) = self
+            .pane_group(view)
+            .map(|group| group.tree.views())
+            .filter(|members| members.len() > 2)
+        {
+            let anchor = self
+                .tabs
+                .iter()
+                .position(|tab| tab.id == members[0])
+                .expect("group contains owned views");
+            let insertion = self.tabs[..anchor]
+                .iter()
+                .filter(|tab| !members.contains(&tab.id))
+                .count();
+            let mut moved = Vec::with_capacity(members.len());
+            for member in members.into_iter().filter(|member| *member != view) {
+                let index = self
+                    .tabs
+                    .iter()
+                    .position(|tab| tab.id == member)
+                    .expect("group contains owned views");
+                moved.push(self.tabs.remove(index));
+            }
+            let index = self
+                .tabs
+                .iter()
+                .position(|tab| tab.id == view)
+                .expect("detached view is owned");
+            moved.push(self.tabs.remove(index));
+            self.tabs.splice(insertion..insertion, moved);
+        }
+        self.remove_pane(view);
+    }
+
     pub(super) fn focus_pane(&mut self, view: TabId) {
         for group in &mut self.pane_groups {
             if group.tree.contains(&view) {
@@ -672,7 +707,7 @@ impl AppState {
                 } else if self.pane_group(view).is_none() {
                     Err("Select a grouped pane first.".into())
                 } else {
-                    self.remove_pane(view);
+                    self.separate_pane(view);
                     self.set_active(view);
                     Ok(())
                 }
@@ -681,7 +716,7 @@ impl AppState {
                 if !self.composable(view) {
                     Err("The view no longer exists.".into())
                 } else {
-                    self.remove_pane(view);
+                    self.separate_pane(view);
                     self.set_active(view);
                     Ok(())
                 }
@@ -695,6 +730,10 @@ impl AppState {
                         .iter()
                         .position(|t| t.id == members[0])
                         .unwrap_or(0);
+                    let position = self.tabs[..position]
+                        .iter()
+                        .filter(|tab| !members.contains(&tab.id))
+                        .count();
                     let mut moved = Vec::new();
                     for member in members {
                         if let Some(index) = self.tabs.iter().position(|t| t.id == member) {
@@ -1093,6 +1132,131 @@ mod tests {
         assert_eq!(state.pane_group(ids[0]).unwrap().focused, ids[0]);
         assert_eq!(state.pane_members(ids[0]), vec![ids[1], ids[0]]);
         assert_eq!(identities(&state), before);
+    }
+
+    #[test]
+    fn panes_detach_keeps_group_chip_order_when_members_swap_or_close() {
+        for direct in [false, true] {
+            let (mut state, context, ids) = state();
+            for source in &ids[1..4] {
+                combine(&mut state, &context, *source, ids[0]);
+            }
+            let identities_before = identities(&state);
+            let command = if direct {
+                AppCommand::SeparatePane(ids[3])
+            } else {
+                AppCommand::DetachPane {
+                    view: ids[3],
+                    expected_revision: state.pane_revision(),
+                }
+            };
+            state.dispatch(command, &context);
+            assert!(state.take_pane_error().is_none());
+            assert_identities(&state, identities_before);
+            let chips = |state: &AppState| {
+                state
+                    .presentation_tabs()
+                    .into_iter()
+                    .map(|view| state.presentation_chip(view))
+                    .collect::<Vec<_>>()
+            };
+            let before = chips(&state);
+            state.set_active(ids[0]);
+            swap(&mut state, &context, ids[0], ids[1]);
+            assert_eq!(chips(&state), before);
+            state.dispatch(AppCommand::CloseTab(ids[1]), &context);
+            assert_eq!(chips(&state), before);
+            assert!(state.tabs().iter().any(|tab| tab.id == ids[3]));
+        }
+    }
+
+    #[test]
+    fn panes_separate_group_preserves_chip_position_after_swap() {
+        let (mut state, context, ids) = state();
+        combine(&mut state, &context, ids[1], ids[0]);
+        combine(&mut state, &context, ids[2], ids[0]);
+        swap(&mut state, &context, ids[0], ids[1]);
+        let members = state.pane_members(ids[0]);
+        let identities_before = identities(&state);
+        let chips_before = state.presentation_tabs();
+        let group_position = chips_before
+            .iter()
+            .position(|view| state.pane_group(*view).is_some())
+            .unwrap();
+        state.dispatch(AppCommand::SeparatePaneGroup(ids[0]), &context);
+        assert!(state.take_pane_error().is_none());
+        let mut expected = chips_before;
+        expected.splice(group_position..=group_position, members);
+        assert_eq!(state.presentation_tabs(), expected);
+        assert_identities(&state, identities_before);
+    }
+
+    #[test]
+    fn panes_detach_normalizes_legacy_interleaved_group_order() {
+        let (mut state, context, ids) = state();
+        for source in &ids[1..4] {
+            combine(&mut state, &context, *source, ids[0]);
+        }
+        let member = state.tabs.iter().position(|tab| tab.id == ids[3]).unwrap();
+        let standalone = state.tabs.iter().position(|tab| tab.id == ids[4]).unwrap();
+        state.tabs.swap(member, standalone);
+        let before = identities(&state);
+        let mut expected = state
+            .presentation_tabs()
+            .into_iter()
+            .map(|view| state.presentation_chip(view))
+            .collect::<Vec<_>>();
+        let group = state.presentation_chip(ids[0]);
+        let position = expected.iter().position(|chip| *chip == group).unwrap();
+        expected.insert(position + 1, ids[2]);
+
+        state.dispatch(AppCommand::SeparatePane(ids[2]), &context);
+        assert!(state.take_pane_error().is_none());
+        assert_eq!(
+            state
+                .presentation_tabs()
+                .into_iter()
+                .map(|view| state.presentation_chip(view))
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_identities(&state, before);
+    }
+
+    #[test]
+    fn panes_reorder_before_swapped_group_keeps_its_members_together() {
+        let (mut state, context, ids) = state();
+        combine(&mut state, &context, ids[1], ids[0]);
+        combine(&mut state, &context, ids[2], ids[0]);
+        swap(&mut state, &context, ids[0], ids[1]);
+        let identities_before = identities(&state);
+        let chips = |state: &AppState| {
+            state
+                .presentation_tabs()
+                .into_iter()
+                .map(|view| state.presentation_chip(view))
+                .collect::<Vec<_>>()
+        };
+        let mut expected = chips(&state);
+        let standalone = expected.iter().position(|chip| *chip == ids[3]).unwrap();
+        expected.remove(standalone);
+        let group = state.presentation_chip(ids[0]);
+        let destination = expected.iter().position(|chip| *chip == group).unwrap();
+        expected.insert(destination, ids[3]);
+        state.dispatch(
+            AppCommand::ReorderTab {
+                moved: ids[3],
+                before: Some(ids[0]),
+            },
+            &context,
+        );
+        assert_eq!(chips(&state), expected);
+        swap(&mut state, &context, ids[0], ids[1]);
+        assert_eq!(chips(&state), expected);
+        assert_identities(&state, identities_before);
+        state.dispatch(AppCommand::CloseTab(ids[0]), &context);
+        assert_eq!(chips(&state), expected);
+        assert!(state.tabs().iter().any(|tab| tab.id == ids[3]));
     }
 
     #[test]
