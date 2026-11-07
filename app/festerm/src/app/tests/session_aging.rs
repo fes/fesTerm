@@ -586,11 +586,14 @@ fn aging_fixture_drop_releases_repaint_owner_with_six_backlogged_sessions() {
         for step in 0..=crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE {
             fixture.feed("all", step);
         }
-        fixture.app.pump_all_sessions(&fixture.context);
-        assert!(fixture
-            .sessions
-            .iter()
-            .all(|(_, transport)| transport.pending_events_for_test() == 1));
+        let now = Instant::now();
+        fixture
+            .app
+            .pump_all_sessions_with_clock(&fixture.context, Duration::ZERO, || now);
+        assert!(fixture.sessions.iter().all(|(_, transport)| {
+            transport.pending_events_for_test()
+                == crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE + 1
+        }));
         drop(fixture);
         assert!(
             owner.upgrade().is_none(),
