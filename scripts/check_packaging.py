@@ -123,7 +123,7 @@ def workspace_version() -> str:
 
 def substituted_linux_desktop_template(template: str, exec_value: str) -> str:
     rendered = template.replace("{{categories}}", "Utility;TerminalEmulator;")
-    rendered = rendered.replace("{{comment}}", "A compact terminal.")
+    rendered = rendered.replace("{{comment}}", "An AI-friendly terminal.")
     rendered = rendered.replace("{{exec}}", exec_value)
     rendered = rendered.replace("{{icon}}", "festerm")
     rendered = rendered.replace("{{name}}", "fesTerm")
