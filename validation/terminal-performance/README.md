@@ -57,6 +57,33 @@ extent rescan. Apple M-series, release, throughput change:
 | `osc8_links` | 18.2 | +96% |
 | `alternate_repaint` | 19.8 | +84% |
 
+## End-to-end output throughput (macOS)
+
+Measured as the wall time for `cat` of a file to finish inside a fesTerm
+window (about 117x40, release build, Apple M-series, shared host).
+
+The faster core did not change these numbers at first. Each macOS PTY read
+returns only about 1 KiB, and `cat` refills the PTY only after a read. Every
+read became its own event, and the UI drains at most 64 events per pump, so
+output was capped near 7 MiB/s by the frame rate, not by the CPU.
+
+The reader now appends further reads to the same chunk, up to 64 KiB:
+- When everything queued has already been consumed, it publishes as soon as
+  the PTY has no more ready data, so interactive echo is never held back.
+- Only while earlier output is still queued does it wait up to 2 ms for more.
+- Queued output is bounded at 2 MiB, the same bound as before.
+
+Each pump still ingests at least 256 KiB of a backlog, and keeps going for up
+to 8 ms (4 MiB at most), so fewer frames are spent waiting for a drawable.
+
+| `cat` workload | Before | After | Change |
+| --- | --- | --- | --- |
+| 100 MB plain ASCII (93-column lines) | 13.8 s | 3.6 s | 3.8x faster |
+| 50 MB SGR-dense | 6.9 s | 1.3 s | 5.4x faster |
+
+The time budget alone accounts for about 3% (plain) and 20% (SGR) of the
+gain.
+
 ## Automatic WARP composition rollout
 
 PR #281 consolidates the stacked follow-on and reviewed shipping main. At the
