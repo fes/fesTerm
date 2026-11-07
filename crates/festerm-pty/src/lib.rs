@@ -1607,7 +1607,7 @@ fn reader_worker(
                 }
                 Ok(read) => {
                     filled += read;
-                    chunk_started.get_or_insert_with(Instant::now);
+                    chunk_started.get_or_insert_with(std::time::Instant::now);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
                     if filled == 0 {
@@ -1626,7 +1626,7 @@ fn reader_worker(
             let wait = if shared.queued_output_bytes.load(Ordering::Acquire) == 0 {
                 Duration::ZERO
             } else {
-                chunk_started.map_or(Duration::ZERO, |started: Instant| {
+                chunk_started.map_or(Duration::ZERO, |started: std::time::Instant| {
                     READ_COALESCE_WINDOW.saturating_sub(started.elapsed())
                 })
             };
