@@ -1,5 +1,52 @@
 # Milestone Progress Narrative
 
+## Coalescing terminal search refresh
+
+The find bar now refreshes after live-screen edits and full-history eviction,
+including when retained row counts do not change. Output-driven rescans are
+coalesced with a maximum delay, while query edits and navigation remain
+immediate. Surviving primary matches retain their content-row coordinate through
+eviction; a replacement terminal cannot inherit an old buffer's row identity.
+Deterministic tests cover the refresh deadline, screen changes and passive
+panes. The growing-history CPU experiment and its shared-host caveat are in
+`validation/terminal-performance/README.md`. Incremental searching and
+reflow-stable match anchors remain separate work.
+
+## Reducing full-history search work
+
+The terminal find bar previously looked up every retained row through the
+history index and allocated lowercase text for each row on every scan. It now
+walks logical lines sequentially and reuses an ASCII text buffer while
+preserving the existing Unicode lowercase behavior and match ordering. A
+differential test covers history eviction, wrapping, resize and alternate
+screen transitions; an isolated allocation check guards the warmed ASCII
+case. Measured search-loop CPU and allocation observations, including
+shared-host caveats, are in `validation/terminal-performance/README.md`.
+
+## Reusing bounded character-input storage
+
+The UI now delivers the terminal's queued input directly to its synchronous
+sink. After delivery, the terminal zeroizes and may reuse an allocation of at
+most 16 bytes; larger allocations are dropped as before. No input bytes are
+retained for reuse, including when a sink panics. Queue admission, ordering,
+keyboard lock and the existing owned drain remain unchanged.
+
+A warmed allocation oracle covers ASCII and four-byte character routing. Its
+scope and paired process-CPU measurements are documented in
+`validation/terminal-performance/README.md`. Application pending-write and
+session transport copies, as well as native input latency, remain separate
+work.
+
+## Reducing character-input allocations
+
+The terminal core now encodes ordinary character input into a short
+stack buffer before admitting it to the existing bounded queue, avoiding a
+temporary heap allocation per character. Keyboard lock, UTF-8 bytes and
+overflow behavior remain unchanged; no logical input bytes are retained for
+reuse between events. A deterministic allocation regression and the core-loop
+CPU observations are documented in `validation/terminal-performance/README.md`.
+Session-queue copies and end-to-end input latency remain separate work.
+
 ## Reusing evicted scrollback storage
 
 Full primary-screen history now transfers an eligible evicted hard line's
@@ -8399,6 +8446,20 @@ This is not a configuration-generation or preference owner. It does not
 establish filesystem namespace/alias safety, external-writer coordination,
 durable restart recovery, or safe retirement of previous credentials after
 successful saves, and does not authorize session creation.
+
+## Repeated-output render reuse
+
+Scrolling marks every live row dirty even when repeated output leaves the
+visible grid unchanged. The presentation cache now retains same-position row
+revisions only after exact whole-grid equality, so ordinary row painting can
+reuse its existing shapes. Cheap mismatch probes and bounded hyperlink-value
+comparisons preserve the rebuild path for changing grids. Selection remains
+independently keyed and the cursor remains separate.
+
+Headless process-CPU samples show lower costs for repeated output, including
+long links, but mixed controls vary under host load. This is not a native
+presentation result or movable scroll-row identity; the broader rendering
+target remains open. See ADR 0044 and the terminal-performance evidence.
 
 ## Avoiding allocations for discarded scroll rows
 

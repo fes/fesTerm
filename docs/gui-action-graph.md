@@ -148,7 +148,7 @@ Unshaped blank-background groups preserve exact instruction order; full-row
 mutation bypasses retention with shaping both on and off, then returns to
 caching when content stabilizes. Native painting, transforms, opacity and emoji retain ordinary paths. This
 changes neither event-driven scheduling nor the terminal/session writer.
-Issue #334's bounded cleanup shares one revision token per nonempty presentation
+Issue #334's bounded cleanup shares one revision token per rebuilt presentation
 update, comparing identities only at the same row position. Capture bookmarks
 are created only for eligible retained rows. Batch/clone/independent-cache
 identity, swapped-row exact meshes and zero full-mutation bookmarks are covered;
@@ -162,6 +162,14 @@ tradeoff for #328 while #334 remains open. Historical matrices and low-first-run
 outliers remain preserved, with no established cause or causal before/after
 speedup claim. External PR review remains required; CP-18, native input,
 mixed-DPI and physical latency are not advanced by these CPU measurements.
+
+For `TERM-01`, an all-dirty live grid may retain same-position revisions only
+after a full cell-and-hyperlink equality check, with cheap rejection and
+bounded long-link comparisons. Changed grids and unsupported comparison cases
+keep the existing rebuild path, dirty-row notifications remain intact, and
+selection and cursor invalidation remain independent. Exact-mesh tests cover
+scrolling and moving regular and smart selections; this is not movable
+content-row identity or native-presentation qualification.
 
 The optional residual-CPU probe separates frozen full-application composition
 from terminal preparation/drawing using completed GPU work and process-wide CPU
@@ -906,7 +914,7 @@ Only the frozen view's owned popup is closed; ordinary live menus remain usable.
 | `HIST-06` | `K6` | Scroll/select/copy/find/link; attempt typing/paste/mouse report/Ctrl+C. | Read-only actions work even with stale remote mouse modes; pointer/focus reporting stays local/suppressed and modes are preserved; input actions absent/ignored; cursor no blink; no unseen-output indicator; compact overlay does not capture viewport. | Clear selection, close to `K1`. | P,H,N |
 | `HIST-07` | `K5/K6 → snapshot` | Open or save a terminal-history snapshot while output continues, after soft-wraps/Unicode, with alternate-screen content visible, and after disconnect/exit. | The exported text is logical plain text only: grapheme clusters preserved, hard newlines preserved, soft wraps not converted into synthetic newlines, and ANSI/control sequences omitted. Primary snapshots include retained primary history plus the visible primary screen; alternate-screen snapshots include retained primary history plus only the visible alternate screen. The snapshot is immutable after creation even if live output continues or the saved copy is edited. Histories that would exceed the editor's declared byte, line, or single-line bounds are refused without truncation or document creation. | Close the snapshot editor or saved file, then return to the terminal. | P,H,N |
 | `SEARCH-01` | `K5/K6 → Search` | Open via `Ctrl+Shift+F`/`Cmd+F` shortcut or command palette ("Find in Terminal…"). | Overlay does not resize the grid; query focus suppresses PTY input (`terminal_input_enabled` blackout); literal case-insensitive search over retained scrollback + primary screen, or alternate-screen content only while alt-screen is active. | Escape via `SEARCH-04`. | P,H,V,N |
-| `SEARCH-02` | Search → match navigation | Type query; Enter/Down, Shift+Enter/Up (both wrap). | `N of M` count/position display and local auto-scroll to the current match (top-of-viewport for scrollback matches, latest position for live-screen matches); current match stable as output arrives (preserved by document row across a rescan). In-grid visual highlight (subtle all-match/strong active) is not yet implemented — see `docs/gui-design.md` "Terminal-content search" known gap. | Reverse navigation or clear query. | P,H,N; partial |
+| `SEARCH-02` | Search → match navigation | Type query; Enter/Down, Shift+Enter/Up (both wrap). | `N of M` count/position display and local auto-scroll to the current match (top-of-viewport for scrollback matches, latest position for live-screen matches); output refresh is coalesced with a bounded delay, navigation flushes pending changes, and a surviving primary match keeps its content row through eviction when the layout is unchanged. Buffer replacement does not reuse an old row identity. In-grid visual highlight (subtle all-match/strong active) is not yet implemented — see `docs/gui-design.md` "Terminal-content search" known gap. | Reverse navigation or clear query. | P,H,N; partial |
 | `SEARCH-03` | Search → no result | Query absent text. | `No matches`, not fabricated `0 of 0`; Copy still requires explicit selection. | Edit/clear query. | H,V |
 | `SEARCH-04` | Search → terminal | Escape. | Query/highlights clear, follow remains suspended if search moved backward, terminal focus restored, no PTY Escape. | Reopen search. | H,N |
 | `GEN-01` | Old history + fresh generation | Reconnect/relaunch/reopen success. | UI boundary cannot be forged/erased/searched/copied; crossing selection contributes one structural break; shared budget evicts oldest predictably. | Close/rebuild checkpoint. | P,H,N; deferred |

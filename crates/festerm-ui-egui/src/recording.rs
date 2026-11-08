@@ -720,6 +720,21 @@ mod tests {
     }
 
     #[test]
+    fn recording_renderer_invalidates_cached_text_when_concealed() {
+        let size = RecordingFrameSize::new(320, 180).unwrap();
+        let mut renderer = RecordingRenderer::new(size, 20.0).unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?25lSECRET");
+        let visible = renderer.render(Some(&terminal)).unwrap().to_vec();
+        terminal.ingest(b"\x1b[H\x1b[8mSECRET");
+        let concealed = renderer.render(Some(&terminal)).unwrap().to_vec();
+        terminal.ingest(b"\x1b[H      ");
+        let blank = renderer.render(Some(&terminal)).unwrap();
+        assert_ne!(visible, concealed);
+        assert_eq!(concealed, blank);
+    }
+
+    #[test]
     fn recording_palette_cannot_reveal_concealed_checkpoint_text() {
         let size = RecordingFrameSize::new(320, 180).unwrap();
         let render = |style: &[u8], text: &[u8]| {

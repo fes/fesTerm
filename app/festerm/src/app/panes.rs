@@ -805,6 +805,13 @@ impl FesTermApp {
                     match &mut tab.content {
                         TabContent::Session(session) => {
                             session.view.set_font_set(fonts);
+                            let observe_search =
+                                session.search.is_open() && session.search.has_query();
+                            if observe_search {
+                                let now = Instant::now();
+                                session.search.observe_screen_dirty(&session.terminal, now);
+                                session.search.observe_layout_change(&session.terminal, now);
+                            }
                             let dimensions_before = session.terminal.dimensions();
                             session.view.show_passive_in_ui(
                                 ui,
@@ -813,6 +820,11 @@ impl FesTermApp {
                             );
                             if session.terminal.dimensions() != dimensions_before {
                                 session.controller.record_resize(&session.terminal);
+                            }
+                            if observe_search {
+                                session
+                                    .search
+                                    .observe_layout_change(&session.terminal, Instant::now());
                             }
                         }
                         TabContent::TextEditor(editor) => {

@@ -2918,12 +2918,19 @@ Search focus prevents input from reaching the PTY (the same
 `terminal_input_enabled` blackout used by confirmation dialogs, so `Ctrl+C`
 and other keystrokes while the bar has focus never leak into the shell).
 Navigation scrolls locally and never sends mouse or keyboard reporting. New
-output may extend the result set without moving the current match
-unexpectedly; the current selection is preserved by document row across a
-rescan whenever that row still matches. Search state (query, matches) is
-never logged or persisted. Search may collapse into overflow at narrow
-widths while remaining available through `Ctrl+Shift+F`/`Cmd+F` and the
-command palette ("Find in Terminal…").
+output may extend or remove results. While the find bar is visible, rescans
+are coalesced until 100 ms after the last observed change, with a maximum
+250 ms delay from the first observed change during continuous output, provided
+the UI continues to update. Query edits scan immediately and navigation
+flushes a pending scan. Live-screen edits and history eviction are included
+even when the number of retained rows stays constant. A surviving selected
+primary match is preserved by content-row coordinate across output and
+eviction while the layout is unchanged; reflow can change its row. Buffer
+transitions and replacement terminals start selection in the new content
+rather than reusing an old buffer's row identity. Search state (query,
+matches) is never logged or persisted. Search may collapse into overflow at
+narrow widths while remaining available through `Ctrl+Shift+F`/`Cmd+F` and
+the command palette ("Find in Terminal…").
 
 **Known implementation gap:** matches do not currently receive an in-grid
 visual highlight (subtle for all matches, stronger for the active one).

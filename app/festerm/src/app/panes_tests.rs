@@ -36,6 +36,60 @@ fn grouped_app() -> (
 }
 
 #[test]
+fn passive_pane_search_sees_output_consumed_by_its_view() {
+    let (app, first, second, _, _) = grouped_app();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness.run();
+    {
+        let session = harness.state_mut().state.session_tab_mut(second).unwrap();
+        session.search.open();
+        session
+            .search
+            .set_query(&session.terminal, "needle".to_owned());
+    }
+    let context = harness.ctx.clone();
+    harness
+        .state_mut()
+        .state
+        .dispatch(AppCommand::ActivateTab(first), &context);
+    harness.run();
+    {
+        let session = harness.state_mut().state.session_tab_mut(second).unwrap();
+        session.terminal.ingest(b"\x1b[Hneedle");
+    }
+    harness.step();
+    {
+        let session = harness.state_mut().state.session_tab_mut(second).unwrap();
+        assert!(session.search.is_open());
+        assert_eq!(session.search.query(), "needle");
+        assert!(session.terminal.row_text(0).unwrap().contains("needle"));
+        assert!((0..session.terminal.dimensions().rows())
+            .all(|row| session.terminal.is_row_dirty(row) == Some(false)));
+        session.search.refresh_pending(&session.terminal);
+        assert_eq!(session.search.match_count(), 1);
+    }
+
+    harness
+        .state_mut()
+        .state
+        .dispatch(AppCommand::ActivateTab(second), &context);
+    harness.step();
+    assert_eq!(harness.state().state.active(), second);
+    assert!(harness
+        .state()
+        .state
+        .session_tab(second)
+        .unwrap()
+        .search
+        .is_open());
+    let search = &harness.state().state.session_tab(second).unwrap().search;
+    assert_eq!(search.match_count(), 1);
+    assert_eq!(search.current_position(), Some(1));
+}
+
+#[test]
 fn pane_palette_categories_and_actions_follow_active_composition_and_mode() {
     use festerm_ui_egui::palette::PaletteCategory as C;
     let (standalone, _, _) = FesTermApp::for_test_with_fake_ssh_session([]);
@@ -886,6 +940,16 @@ fn recording_tracks_a_passive_pane_resize() {
         .unwrap()
         .controller
         .attach_recording_stream(stream);
+    {
+        let session = harness.state_mut().state.session_tab_mut(passive).unwrap();
+        session.search.open();
+        session
+            .search
+            .set_query(&session.terminal, "needle".to_owned());
+        session
+            .controller
+            .ingest_recorded_output(&mut session.terminal, b"\x1b[Hneedle");
+    }
     let context = harness.ctx.clone();
     let revision = harness.state().state.pane_revision();
     harness.state_mut().state.dispatch(
@@ -906,6 +970,11 @@ fn recording_tracks_a_passive_pane_resize() {
         .terminal
         .dimensions();
     assert_ne!(resized, initial);
+    {
+        let session = harness.state_mut().state.session_tab_mut(passive).unwrap();
+        session.search.refresh_pending(&session.terminal);
+        assert_eq!(session.search.match_count(), 1);
+    }
     recording.stop(FinishReason::User).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let path = loop {

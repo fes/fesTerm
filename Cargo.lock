@@ -2348,6 +2348,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "stats_alloc",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -2487,6 +2488,7 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
  "url",
+ "zeroize",
 ]
 
 [[package]]

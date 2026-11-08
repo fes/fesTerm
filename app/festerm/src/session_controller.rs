@@ -3279,7 +3279,22 @@ mod tests {
             })
             .unwrap();
         controller.attach_recording_stream(streams.remove(0));
-        controller.record_encoded_input(b"PRIVATE-LOCAL-INPUT");
+        for character in "PRIVATE-LOCAL-INPUT".chars() {
+            festerm_ui_egui::route_input(
+                &mut terminal,
+                festerm_core::InputEvent::Key(festerm_core::Key::Character(character)),
+                &mut controller,
+            );
+        }
+        festerm_ui_egui::route_input(
+            &mut terminal,
+            festerm_core::InputEvent::Paste("PRIVATE-PASTE".to_owned()),
+            &mut controller,
+        );
+        assert_eq!(
+            controller.session.as_ref().unwrap().sent().concat(),
+            b"PRIVATE-LOCAL-INPUTPRIVATE-PASTE"
+        );
         controller.pump_events(&mut terminal);
         recording.stop(FinishReason::User).unwrap();
         ready.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -3288,9 +3303,11 @@ mod tests {
             panic!("recording did not complete");
         };
         let bytes = std::fs::read(path).unwrap();
-        assert!(!bytes
-            .windows(b"PRIVATE-LOCAL-INPUT".len())
-            .any(|window| window == b"PRIVATE-LOCAL-INPUT"));
+        for private_input in [b"PRIVATE-LOCAL-INPUT".as_slice(), b"PRIVATE-PASTE"] {
+            assert!(!bytes
+                .windows(private_input.len())
+                .any(|window| window == private_input));
+        }
         let mut reader = ArtifactReader::new(std::io::Cursor::new(bytes)).unwrap();
         let mut events = Vec::new();
         while let Some(event) = reader.next_event().unwrap() {
