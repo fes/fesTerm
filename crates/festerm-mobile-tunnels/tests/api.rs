@@ -372,8 +372,10 @@ fn host_refusal_does_not_claim_that_enabled_takeover_is_off() {
         .attach(&id, noop_session_event_notifier(), &CancelToken::new())
         .err()
         .unwrap();
-    assert_eq!(error, TunnelError::AttachRefused);
+    assert_eq!(error, TunnelError::AttachRefusedOrIncompatible);
     assert!(!error.to_string().contains("takeover is off"));
+    assert!(error.to_string().contains("refused"));
+    assert!(error.to_string().contains("incompatible"));
     assert_eq!(*f.script.hellos.lock().unwrap(), [true]);
 }
 

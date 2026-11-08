@@ -5937,6 +5937,33 @@ mod tests {
     }
 
     #[test]
+    fn ris_replaces_cached_content_without_a_resize() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+        harness.state_mut().terminal.ingest(b"old content");
+        harness.run();
+        let dimensions = harness.state().terminal.dimensions();
+        harness.state_mut().terminal.ingest(b"\x1bcnew content");
+        harness.run();
+
+        let state = harness.state();
+        assert_eq!(state.view.cache.dimensions(), Some(dimensions));
+        let rendered = (0..dimensions.rows())
+            .filter_map(|row| state.view.cache.row(row))
+            .flatten()
+            .map(|cell| cell.text())
+            .collect::<String>();
+        assert!(rendered.contains("new content"));
+        assert!(!rendered.contains("old content"));
+    }
+
+    #[test]
     fn ordinary_click_stays_clear_of_selection_even_while_output_streams_between_press_and_release()
     {
         // #94: heavy/streaming PTY output arriving between a press and its

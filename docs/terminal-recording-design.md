@@ -433,7 +433,14 @@ existing parser/allocation bounds and suppresses external side effects. Existing
 `egui_kittest` captures are test-only and are not the production export path.
 
 The manifest records the recording format, core/renderer version and terminal
-geometry. Export settings, including font, theme, cell scale and pixel
+geometry. FSTREC3 artifacts carry terminal-reset semantics per stream, including
+streams attached to older daemons. Existing FSTREC2 artifacts replay with the
+legacy semantics; older readers cannot open FSTREC3 and must be updated.
+Early development builds of the RIS change wrote FSTREC2 without recording
+their different reset behavior. Those prerelease artifacts are indistinguishable
+from released FSTREC2 files and require known provenance; replay them with the
+matching development build rather than assuming legacy playback is accurate.
+Export settings, including font, theme, cell scale and pixel
 dimensions, are chosen recording-wide at export rather than captured from
 per-tab view zoom. The defaults are JetBrains Mono without ligatures, the
 fesTerm dark palette, 20-point text and a 1920×1080 canvas. JetBrains Mono with

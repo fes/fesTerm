@@ -3960,7 +3960,7 @@
         "native_recovery_primary_ui_does_not_promote_raw_disconnect_details",
         "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",
         "native_daemon_snapshot_matches_fresh_terminal_after_large_output",
-        "recovery_encoding_uses_one_wire_buffer_and_preserves_legacy_bytes",
+        "recovery_encoding_uses_one_wire_buffer_and_preserves_bincode_payload",
         "recovery_decoding_retires_wire_before_restoring_capacities",
         "recovery_encoding_refuses_before_owning_an_over_limit_wire_buffer",
         "recovery_encoding_enforces_the_exact_payload_limit",

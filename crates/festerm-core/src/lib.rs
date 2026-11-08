@@ -164,9 +164,9 @@ pub use parser::{CsiParameters, ParameterSeparator, Parser, TerminalOp};
 pub use replies::QueuePushResult;
 pub use screen::Screen;
 pub use terminal::{
-    ContentPosition, RecordingCheckpoint, Terminal, TerminalError, TerminalTextSnapshot,
-    TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen, MAX_RECORDING_CHECKPOINT_BYTES,
-    MAX_RECORDING_SCROLLBACK_BYTES,
+    ContentPosition, RecordingCheckpoint, Terminal, TerminalError, TerminalSemantics,
+    TerminalTextSnapshot, TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen,
+    MAX_RECORDING_CHECKPOINT_BYTES, MAX_RECORDING_SCROLLBACK_BYTES,
 };
 
 #[cfg(test)]
@@ -3644,6 +3644,98 @@ mod tests {
 
             assert_eq!(terminal.row_text(0).unwrap().trim(), "q", "{prefix:?}");
             assert_eq!(terminal.cursor().column(), 1, "{prefix:?}");
+        }
+    }
+
+    #[test]
+    fn ris_preserves_query_order_within_one_output_chunk() {
+        let mut terminal = terminal(12, 4);
+        terminal.ingest(b"\x1b[3;4H\x1b[6n\x1bc\x1b[6nX");
+
+        assert_eq!(terminal.drain_replies(), b"\x1b[3;4R\x1b[1;1R");
+        assert_eq!(terminal.row_text(0).unwrap().trim(), "X");
+    }
+
+    #[test]
+    fn ris_discards_incomplete_hyperlinks_queries_and_overflowed_controls() {
+        let mut prefixes = vec![
+            b"\x1b]8;;https://unfinished.example/".to_vec(),
+            b"\x1b]10;?".to_vec(),
+            b"\x1bP$qm".to_vec(),
+        ];
+        let mut csi = b"\x1b[".to_vec();
+        csi.extend_from_slice("1;".repeat(MAX_CSI_PARAMETERS + 1).as_bytes());
+        prefixes.push(csi);
+        for introducer in [b"\x1b]".as_slice(), b"\x1bP"] {
+            let mut prefix = introducer.to_vec();
+            prefix.extend(vec![b'x'; MAX_STRING_BYTES + 1]);
+            prefixes.push(prefix);
+        }
+
+        for prefix in prefixes {
+            let mut terminal = terminal(12, 3);
+            terminal.ingest(b"\x1b]8;;https://example.com/\x07old");
+            terminal.queue_reply(b"pending");
+            terminal.ingest(&prefix);
+            terminal.ingest(b"\x1b");
+            terminal.ingest(b"cX");
+
+            assert_eq!(terminal.row_text(0).unwrap().trim(), "X");
+            assert!(terminal.cell(0, 0).unwrap().hyperlink().is_none());
+            assert_eq!(terminal.drain_replies(), b"pending");
+        }
+    }
+
+    #[test]
+    fn ris_clears_iso_and_dec_protection_and_both_character_sets() {
+        for (protection, erase) in [
+            (b"\x1b[1\"q".as_slice(), b"\x1b[?2K".as_slice()),
+            (b"\x1bV".as_slice(), b"\x1b[2K".as_slice()),
+        ] {
+            let mut terminal = terminal(8, 2);
+            terminal.ingest(b"\x1b(0\x1b)0\x0eq");
+            terminal.ingest(protection);
+            terminal.ingest(b"\x1bc\x0eq");
+            assert_eq!(terminal.row_text(0).unwrap().trim(), "q");
+            terminal.ingest(erase);
+            assert!(terminal.row_text(0).unwrap().trim().is_empty());
+        }
+    }
+
+    #[test]
+    fn legacy_semantics_preserve_old_ris_and_direct_reset_behavior() {
+        let mut terminal = terminal(12, 2);
+        terminal.set_semantics(super::TerminalSemantics::Legacy);
+        terminal.ingest(b"ABC\x1b");
+        terminal.ingest(b"cXYZ");
+        assert_eq!(terminal.row_text(0).unwrap().trim(), "ABCXYZ");
+
+        terminal.ingest(b"\x1b[1\"qR");
+        terminal.reset_to_initial_state();
+        terminal.ingest(b"x\x1b[?2K");
+        assert_eq!(terminal.row_text(0).unwrap().trim(), "x");
+        assert_eq!(terminal.semantics(), super::TerminalSemantics::Legacy);
+
+        terminal.ingest(b"\x1b(0q\x1bcq");
+        assert!(terminal.row_text(0).unwrap().contains("──"));
+    }
+
+    #[test]
+    fn reset_separates_retained_wrapped_history_from_new_output() {
+        for use_ris in [false, true] {
+            let mut terminal = terminal(4, 2);
+            terminal.ingest(b"abcdefghijk");
+            assert!(!terminal.scrollback_lines().next().unwrap().has_hard_break());
+            if use_ris {
+                terminal.ingest(b"\x1bc");
+            } else {
+                terminal.reset_to_initial_state();
+            }
+            terminal.ingest(b"XYZ");
+            assert_eq!(terminal.text_snapshot().text(), "abcd\nXYZ");
+
+            terminal.resize(Dimensions::new(8, 2).unwrap()).unwrap();
+            assert_eq!(terminal.text_snapshot().text(), "abcd\nXYZ");
         }
     }
 

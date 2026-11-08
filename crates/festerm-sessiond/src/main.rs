@@ -749,7 +749,7 @@ fn run_start(
                     )
                 {
                     return Err(format!(
-                        "session '{name}' uses recovery snapshot schema {}, but this helper supports schemas 2 and {}",
+                        "session '{name}' uses recovery snapshot schema {}, but this helper supports schemas 2, 3 and {}",
                         record.snapshot_schema_version,
                         festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
                     )
@@ -2991,7 +2991,7 @@ fn run_attach(name: String) -> Result<(), Box<dyn std::error::Error>> {
         && !festerm_sessiond::snapshot_schema_is_supported(record.snapshot_schema_version)
     {
         return Err(format!(
-            "session '{name}' uses recovery snapshot schema {}, but this helper supports schemas 2 and {}",
+            "session '{name}' uses recovery snapshot schema {}, but this helper supports schemas 2, 3 and {}",
             record.snapshot_schema_version,
             festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION
         )
