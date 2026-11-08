@@ -960,6 +960,54 @@ mod tests {
     }
 
     #[test]
+    fn a_protected_cell_an_erase_spares_still_scrolls_into_history() {
+        // Leaving a protected cell in place is only half of sparing it: the
+        // row's occupied extent has to keep reaching it too, because a scroll
+        // trusts that extent both to carry the line into history and to clear
+        // the row it recycles. Each erase is aimed to cover the whole first
+        // line, leaving the protected `c` as the last thing on it.
+        let iso = &b"ab\x1bVc\x1bW"[..];
+        let dec = &b"ab\x1b[1\"qc\x1b[0\"q"[..];
+        for (protect, erase) in [
+            (iso, &b"\x1b[1;1H\x1b[K"[..]),
+            (iso, b"\x1b[1;8H\x1b[1K"),
+            (iso, b"\x1b[2K"),
+            (iso, b"\x1b[1;1H\x1b[J"),
+            (iso, b"\x1b[1;8H\x1b[1J"),
+            (iso, b"\x1b[2J"),
+            (iso, b"\x1b[1;1H\x1b[8X"),
+            (dec, b"\x1b[1;1H\x1b[?0K"),
+            (dec, b"\x1b[1;8H\x1b[?1K"),
+            (dec, b"\x1b[?2K"),
+            (dec, b"\x1b[1;1H\x1b[?0J"),
+            (dec, b"\x1b[1;8H\x1b[?1J"),
+            (dec, b"\x1b[?2J"),
+        ] {
+            let mut terminal = terminal(8, 2);
+            terminal.ingest(protect);
+            terminal.ingest(erase);
+            terminal.ingest(b"\x1b[2;1H\n");
+            let erase = String::from_utf8_lossy(erase);
+            let history = terminal.scrollback_lines().collect::<Vec<_>>();
+            assert_eq!(history.len(), 1, "{erase:?}");
+            assert_eq!(
+                history[0]
+                    .cells()
+                    .iter()
+                    .map(|cell| cell.character())
+                    .collect::<String>(),
+                "  c",
+                "{erase:?}"
+            );
+            assert_eq!(
+                terminal.row_text(1).as_deref(),
+                Some("        "),
+                "{erase:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_soft_reset_forgets_both_the_protection_and_who_asked_for_it() {
         // DECSTR returns DECSCA to normal. The source has to go with it:
         // leaving it at ISO would have the next ordinary erase keep sparing
@@ -2799,6 +2847,109 @@ mod tests {
     }
 
     #[test]
+    fn full_history_reuses_cell_storage_for_line_feed_and_explicit_scroll() {
+        for input in [b"row\r\n".as_slice(), b"\x1b[2;1Hrow\x1b[S".as_slice()] {
+            let mut terminal =
+                Terminal::with_scrollback_limit(Dimensions::new(80, 2).unwrap(), 4096).unwrap();
+            for _ in 0..100 {
+                terminal.ingest(input);
+                if terminal.scrollback_stats().evicted_lines() > 0 {
+                    break;
+                }
+            }
+            let before = terminal.scrollback_stats();
+            assert!(before.evicted_lines() > 0);
+            let oldest = terminal.scrollback_lines().next().unwrap();
+            let oldest_id = oldest.id();
+            let oldest_cells = oldest.cells().as_ptr();
+            let surviving_id = terminal.scrollback_lines().nth(1).unwrap().id();
+
+            terminal.ingest(input);
+
+            let after = terminal.scrollback_stats();
+            assert_eq!(after.evicted_lines(), before.evicted_lines() + 1);
+            assert_eq!(after.content_row_origin(), before.content_row_origin() + 1);
+            assert_eq!(after.screen_row_origin(), before.screen_row_origin() + 1);
+            assert_eq!(after.charged_bytes(), before.charged_bytes());
+            assert_eq!(
+                terminal.scrollback_lines().next().unwrap().id(),
+                surviving_id
+            );
+            assert!(terminal
+                .scrollback_lines()
+                .all(|line| line.id() != oldest_id));
+            let inserted = terminal.scrollback_lines().last().unwrap();
+            assert_eq!(inserted.cells().as_ptr(), oldest_cells);
+            assert_eq!(
+                inserted
+                    .cells()
+                    .iter()
+                    .map(crate::Cell::character)
+                    .collect::<String>(),
+                "row"
+            );
+            assert!(inserted.has_hard_break());
+            terminal
+                .recovery_clone()
+                .validate_recovery_snapshot()
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn cell_reuse_skips_different_row_sizes_and_unretained_scrolls() {
+        let mut terminal =
+            Terminal::with_scrollback_limit(Dimensions::new(80, 3).unwrap(), 4096).unwrap();
+        for _ in 0..100 {
+            terminal.ingest(b"row\r\n");
+            if terminal.scrollback_stats().evicted_lines() > 0 {
+                break;
+            }
+        }
+        let before = terminal.scrollback_stats();
+        assert!(before.evicted_lines() > 0);
+
+        terminal.ingest(b"\x1b[H\n");
+        assert_eq!(terminal.scrollback_stats(), before);
+        terminal.ingest(b"\x1b[?1049halt\r\none\r\ntwo\r\nthree\r\n\x1b[?1049l");
+        terminal.ingest(b"\x1b[2;3r\x1b[3;1Hpartial\r\n\x1b[r");
+        assert_eq!(terminal.scrollback_stats(), before);
+
+        let oldest_cells = terminal.scrollback_lines().next().unwrap().cells().as_ptr();
+        terminal.ingest(b"\x1b[1;1Hlonger\x1b[3;1H\x1b[S");
+        let inserted = terminal.scrollback_lines().last().unwrap();
+        assert_ne!(inserted.cells().as_ptr(), oldest_cells);
+        assert_eq!(
+            inserted
+                .cells()
+                .iter()
+                .map(crate::Cell::character)
+                .collect::<String>(),
+            "longer"
+        );
+        assert!(terminal.scrollback_stats().charged_bytes() <= before.limit_bytes());
+        terminal
+            .recovery_clone()
+            .validate_recovery_snapshot()
+            .unwrap();
+    }
+
+    #[test]
+    fn multirow_scroll_preserves_history_order() {
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(b"\x1b[1;1Hone\x1b[2;1Htwo\x1b[3;1Hthree\x1b[4;1Hfour\x1b[3S");
+        let history: Vec<String> = terminal
+            .scrollback_lines()
+            .map(|line| line.cells().iter().map(crate::Cell::character).collect())
+            .collect();
+        assert_eq!(history, ["one", "two", "three"]);
+        assert_eq!(terminal.row_text(0).unwrap().trim_end(), "four");
+        for row in 1..4 {
+            assert_eq!(terminal.screen().row_occupied_columns(row), Some(0));
+        }
+    }
+
+    #[test]
     fn reflow_keeps_a_double_width_cell_and_its_continuation_together() {
         let mut terminal = terminal(6, 2);
         // "A" + wide "界" + "B" + wide "界" -> 6 columns at width 6, one row.
@@ -2868,6 +3019,32 @@ mod tests {
 
         terminal.ingest(b"\x1b[2;3r\x1b[3;1H\n\n");
         assert_eq!(terminal.scrollback_stats().logical_lines(), 0);
+    }
+
+    #[test]
+    fn discarded_scroll_rows_match_extracted_rows() {
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(b"\x1b[4;1Hring\r\n\x1b[1;1H\x1b[31m123456789");
+        terminal.ingest("\x1b[2;3H界".as_bytes());
+        terminal.ingest(b"\x1b[3;2H\x1b]8;;https://example.com/\x1b\\link\x1b]8;;\x1b\\");
+        terminal.ingest(format!("\x1b[4;1Ha{}", "\u{301}".repeat(16)).as_bytes());
+        assert_eq!(terminal.screen().row_soft_wrapped(0), Some(true));
+
+        let blank = crate::cell::blank_cell();
+        let mut colored = blank.clone();
+        colored.background = Color::Indexed(4);
+        let span = crate::screen::ColumnSpan::full(8);
+        for (top, bottom, count) in [(0, 3, 1), (0, 3, 3), (0, 3, 4), (1, 3, 1), (0, 2, 2)] {
+            for fill in [&blank, &colored] {
+                let mut extracted = terminal.screen().clone();
+                let mut discarded = extracted.clone();
+                let rows = extracted.scroll_up(top, bottom, count, fill.clone(), span, true);
+                let none = discarded.scroll_up(top, bottom, count, fill.clone(), span, false);
+                assert_eq!(rows.len(), count);
+                assert!(none.is_empty());
+                assert_eq!(discarded, extracted);
+            }
+        }
     }
 
     #[test]

@@ -694,6 +694,10 @@ pub struct SessionTab {
     /// becomes active. Purely a presentation cue for the chip's static unread
     /// marker — it never changes `ChipStatus`/connection-state semantics.
     pub has_new_output_since_active: bool,
+    /// Whether the latest shared ingest pass ended without draining this
+    /// session's queued transport events (ADR 0079), so terminal modes such
+    /// as bracketed paste may be stale until a later update parses them.
+    pub output_ingest_deferred: bool,
     /// Terminal-content find-bar state (`docs/gui-design.md`
     /// "Terminal-content search"). Never logged or persisted.
     pub search: crate::search::TerminalSearchState,
@@ -1032,6 +1036,19 @@ impl SessionTab {
         let view = &mut self.view;
         self.controller
             .pump_events_with_resize(&mut self.terminal, |terminal, dimensions| {
+                !matches!(
+                    view.apply_terminal_resize(terminal, dimensions),
+                    festerm_ui_egui::ResizeOutcome::Rejected
+                )
+            })
+    }
+
+    pub(crate) fn pump_session_events_with_slice(
+        &mut self,
+    ) -> crate::session_controller::PumpResult {
+        let view = &mut self.view;
+        self.controller
+            .pump_events_with_resize_slice(&mut self.terminal, |terminal, dimensions| {
                 !matches!(
                     view.apply_terminal_resize(terminal, dimensions),
                     festerm_ui_egui::ResizeOutcome::Rejected
@@ -1497,6 +1514,7 @@ impl SessionTab {
             eviction_notice_shown: false,
             ssh_password_retry,
             has_new_output_since_active: false,
+            output_ingest_deferred: false,
             search: crate::search::TerminalSearchState::default(),
             terminal_path: TerminalPathState::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -6788,6 +6806,7 @@ impl SessionTab {
             eviction_notice_shown: false,
             ssh_password_retry: None,
             has_new_output_since_active: false,
+            output_ingest_deferred: false,
             search: crate::search::TerminalSearchState::default(),
             terminal_path: TerminalPathState::default(),
             #[cfg(feature = "experimental-dev-tunnels")]

@@ -1,6 +1,10 @@
 use std::{collections::VecDeque, mem::size_of};
 
-use crate::{cell::CellWidth, screen::ScreenRow, Cell};
+use crate::{
+    cell::{CellWidth, HISTORY_CELL_CHARGE},
+    screen::ScreenRow,
+    Cell,
+};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -255,7 +259,7 @@ impl LogicalLine {
 
     fn recalculate_charge(&mut self) {
         self.charged_bytes = size_of::<Self>()
-            .saturating_add(size_of::<Cell>().saturating_mul(self.cell_capacity))
+            .saturating_add(HISTORY_CELL_CHARGE.saturating_mul(self.cell_capacity))
             .saturating_add(self.cell_owned_bytes)
             .saturating_add(size_of::<usize>().saturating_mul(self.row_end_capacity));
     }
@@ -381,16 +385,74 @@ impl Scrollback {
         self.enforce_limit();
     }
 
-    pub(crate) fn push_rows(&mut self, rows: Vec<ScreenRow>) {
+    pub(crate) fn row_storage_may_need_recycling(&self, columns: usize) -> bool {
+        // A row cannot occupy more than the screen width, so this rules out
+        // the conservative eviction proof before inspecting the departing row.
+        self.charged_bytes
+            .saturating_add(compact_line_charge(columns, 1, 0))
+            > self.limit_bytes
+    }
+
+    pub(crate) fn take_recyclable_row_storage(
+        &mut self,
+        occupied: usize,
+        soft_wrapped: bool,
+    ) -> Option<(Vec<Cell>, Vec<usize>)> {
+        if occupied == 0
+            || soft_wrapped
+            || self
+                .charged_bytes
+                .saturating_add(compact_line_charge(occupied, 1, 0))
+                <= self.limit_bytes
+            || self.active_oversize_line.is_some()
+            || self.lines.back().is_none_or(|line| !line.hard_break)
+            || !self.lines.front().is_some_and(|line| {
+                line.hard_break
+                    && line.physical_rows == 1
+                    && line.cell_capacity == occupied
+                    && line.cells.capacity() == occupied
+                    && line.row_end_capacity == 1
+                    && line.row_ends.len() == 1
+                    && line.row_ends.capacity() == 1
+            })
+        {
+            return None;
+        }
+
+        // Even without charging the incoming cells' owned payloads, the new
+        // line cannot fit. Normal enforcement must evict this same line.
+        let removed = self.evict_oldest_complete_line()?;
+        let mut cells = removed.cells;
+        let mut row_ends = removed.row_ends;
+        cells.clear();
+        row_ends.clear();
+        Some((cells, row_ends))
+    }
+
+    pub(crate) fn push_rows(&mut self, rows: impl IntoIterator<Item = ScreenRow>) {
         for row in rows {
             self.push_row(row);
         }
     }
 
+    pub(crate) fn push_row_reusing_boundary(&mut self, row: ScreenRow, row_ends: Vec<usize>) {
+        self.push_row_with_boundary::<true>(row, Some(row_ends));
+    }
+
     fn push_row(&mut self, row: ScreenRow) {
+        self.push_row_with_boundary::<false>(row, None);
+    }
+
+    // Specialization keeps recycled-boundary plumbing off ordinary insertion.
+    fn push_row_with_boundary<const REUSED: bool>(
+        &mut self,
+        row: ScreenRow,
+        reused: Option<Vec<usize>>,
+    ) {
         self.screen_row_origin = self.screen_row_origin.saturating_add(1);
         let ends_line = !row.soft_wrapped;
         if self.limit_bytes == 0 {
+            debug_assert!(reused.is_none());
             // Nothing is retained; keep `content_row_origin` tracking
             // `screen_row_origin` so the (empty) retained range stays
             // well-defined for callers.
@@ -401,7 +463,42 @@ impl Scrollback {
             return;
         }
 
-        if self.lines.back().is_none_or(|line| line.hard_break) {
+        let starts_line = self.lines.back().is_none_or(|line| line.hard_break);
+        let row_owned_bytes = row
+            .cells
+            .iter()
+            .map(cell_owned_charge)
+            .fold(0usize, usize::saturating_add);
+        let recycled_row_ends = if REUSED {
+            let row_ends = reused.expect("reused row needs its boundary allocation");
+            debug_assert!(starts_line && ends_line && self.active_oversize_line.is_none());
+            debug_assert!(row_ends.is_empty() && row_ends.capacity() == 1);
+            Some(row_ends)
+        } else if starts_line
+            && ends_line
+            && self.active_oversize_line.is_none()
+            && self.lines.front().is_some_and(|line| {
+                line.hard_break && line.row_end_capacity == 1 && line.row_ends.capacity() == 1
+            })
+            && self.charged_bytes.saturating_add(compact_line_charge(
+                row.cells.len(),
+                1,
+                row_owned_bytes,
+            )) > self.limit_bytes
+        {
+            // The new hard-broken line cannot fit even at its minimum
+            // charge, so normal limit enforcement must evict the oldest
+            // completed line. Reuse its one-row boundary vector immediately;
+            // no pool or additional retained capacity survives this call.
+            self.evict_oldest_complete_line().map(|mut line| {
+                line.row_ends.clear();
+                line.row_ends
+            })
+        } else {
+            None
+        };
+
+        if starts_line {
             // This row starts a brand-new retained line, at the absolute
             // physical-row coordinate this row itself occupies (see
             // `line_row_starts`'s doc comment): `screen_row_origin` was
@@ -420,31 +517,29 @@ impl Scrollback {
                 self.next_id = self.next_id.wrapping_add(1);
                 (id, 0)
             });
+            let row_ends = recycled_row_ends.unwrap_or_default();
+            let row_end_capacity = row_ends.capacity();
+            let initial_charge = compact_line_charge(0, row_end_capacity, 0);
             self.lines.push_back(LogicalLine {
                 id,
                 cells: Vec::new(),
                 cell_capacity: 0,
-                row_ends: Vec::new(),
-                row_end_capacity: 0,
+                row_ends,
+                row_end_capacity,
                 physical_rows: 0,
                 hard_break: false,
-                charged_bytes: size_of::<LogicalLine>(),
+                charged_bytes: initial_charge,
                 cell_owned_bytes: 0,
                 trimmed_offset,
             });
-            self.charged_bytes = self.charged_bytes.saturating_add(size_of::<LogicalLine>());
+            self.charged_bytes = self.charged_bytes.saturating_add(initial_charge);
         }
 
         let active_oversize_line = self.active_oversize_line.map(|(id, _)| id);
         let line = self.lines.back_mut().expect("open history line exists");
         let line_id = line.id;
         let prior_charge = line.charged_bytes;
-        line.cell_owned_bytes = line.cell_owned_bytes.saturating_add(
-            row.cells
-                .iter()
-                .map(cell_owned_charge)
-                .fold(0usize, usize::saturating_add),
-        );
+        line.cell_owned_bytes = line.cell_owned_bytes.saturating_add(row_owned_bytes);
         if line.cells.is_empty() {
             // The screen hands over an exactly sized row; adopting it avoids
             // a copy and leaves nothing for the shrink below to reallocate.
@@ -488,20 +583,25 @@ impl Scrollback {
         }
     }
 
+    fn evict_oldest_complete_line(&mut self) -> Option<LogicalLine> {
+        if self.lines.front().is_some_and(|line| !line.hard_break) {
+            return None;
+        }
+        let removed = self.lines.pop_front()?;
+        self.line_row_starts.pop_front();
+        self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
+        self.evicted_lines = self.evicted_lines.saturating_add(1);
+        self.content_row_origin = self
+            .content_row_origin
+            .saturating_add(removed.physical_rows as u64);
+        Some(removed)
+    }
+
     fn evict_complete_lines(&mut self) {
         while self.charged_bytes > self.limit_bytes {
-            if self.lines.front().is_some_and(|line| !line.hard_break) {
+            if self.evict_oldest_complete_line().is_none() {
                 break;
             }
-            let Some(removed) = self.lines.pop_front() else {
-                break;
-            };
-            self.line_row_starts.pop_front();
-            self.charged_bytes = self.charged_bytes.saturating_sub(removed.charged_bytes);
-            self.evicted_lines = self.evicted_lines.saturating_add(1);
-            self.content_row_origin = self
-                .content_row_origin
-                .saturating_add(removed.physical_rows as u64);
         }
     }
 
@@ -1009,7 +1109,7 @@ fn compact_line_charge(
     cell_owned_bytes: usize,
 ) -> usize {
     size_of::<LogicalLine>()
-        .saturating_add(size_of::<Cell>().saturating_mul(cell_capacity))
+        .saturating_add(HISTORY_CELL_CHARGE.saturating_mul(cell_capacity))
         .saturating_add(cell_owned_bytes)
         .saturating_add(size_of::<usize>().saturating_mul(row_end_capacity))
 }
@@ -1308,6 +1408,264 @@ mod tests {
         }
         assert!(scrollback.stats().evicted_lines() > 0);
         assert_indexed_lookup_matches_linear_scan(&scrollback);
+    }
+
+    #[test]
+    fn hard_line_eviction_preserves_surviving_anchors_and_exact_budget() {
+        let row = || ScreenRow {
+            cells: vec![blank_cell(); 3],
+            soft_wrapped: false,
+        };
+        let mut scrollback = Scrollback::new(usize::MAX);
+        scrollback.push_row(row());
+        scrollback.push_row(row());
+        let evicted_anchor = scrollback.line_and_offset_at(0, 0).unwrap();
+        let surviving_anchor = scrollback.line_and_offset_at(1, 0).unwrap();
+        let two_line_charge = scrollback.charged_bytes;
+        scrollback.set_limit_bytes(two_line_charge);
+
+        scrollback.push_row(row());
+
+        assert_eq!(scrollback.resolve_anchor(evicted_anchor), None);
+        assert_eq!(scrollback.resolve_anchor(surviving_anchor), Some((0, 0)));
+        assert_eq!(scrollback.stats().evicted_lines(), 1);
+        assert_eq!(scrollback.stats().content_row_origin(), 1);
+        assert_eq!(scrollback.stats().screen_row_origin(), 3);
+        assert_eq!(scrollback.stats().physical_rows(), 2);
+        assert_eq!(scrollback.stats().charged_bytes(), two_line_charge);
+        assert_indexed_lookup_matches_linear_scan(&scrollback);
+        scrollback.validate_recovery_state(80).unwrap();
+    }
+
+    #[test]
+    fn recycled_cell_storage_releases_payload_and_preserves_anchors() {
+        let target: std::sync::Arc<str> = "https://example.invalid/evicted".into();
+        let weak_target = std::sync::Arc::downgrade(&target);
+        let mut cells = vec![blank_cell(); 3];
+        cells[0].hyperlink = Some(target);
+        let mut scrollback = Scrollback::new(usize::MAX);
+        scrollback.push_row(ScreenRow {
+            cells,
+            soft_wrapped: false,
+        });
+        scrollback.push_row(ScreenRow {
+            cells: vec![blank_cell(); 3],
+            soft_wrapped: false,
+        });
+        let evicted_anchor = scrollback.line_and_offset_at(0, 0).unwrap();
+        let surviving_anchor = scrollback.line_and_offset_at(1, 0).unwrap();
+        let old_cells = scrollback.lines.front().unwrap().cells.as_ptr();
+        let old_boundaries = scrollback.lines.front().unwrap().row_ends.as_ptr();
+        scrollback.set_limit_bytes(scrollback.charged_bytes);
+
+        let (mut cells, boundaries) = scrollback.take_recyclable_row_storage(3, false).unwrap();
+        assert!(weak_target.upgrade().is_none());
+        assert!(cells.is_empty());
+        assert!(boundaries.is_empty());
+        cells.extend([blank_cell(), blank_cell(), blank_cell()]);
+        scrollback.push_row_reusing_boundary(
+            ScreenRow {
+                cells,
+                soft_wrapped: false,
+            },
+            boundaries,
+        );
+
+        let inserted = scrollback.lines.back().unwrap();
+        assert_eq!(inserted.cells.as_ptr(), old_cells);
+        assert_eq!(inserted.row_ends.as_ptr(), old_boundaries);
+        assert!(inserted
+            .cells
+            .iter()
+            .all(|cell| cell.text() == " " && cell.hyperlink().is_none()));
+        assert_eq!(scrollback.resolve_anchor(evicted_anchor), None);
+        assert_eq!(scrollback.resolve_anchor(surviving_anchor), Some((0, 0)));
+        assert_eq!(scrollback.stats().evicted_lines(), 1);
+        assert_eq!(scrollback.stats().content_row_origin(), 1);
+        assert_eq!(scrollback.stats().screen_row_origin(), 3);
+        assert_eq!(scrollback.stats().physical_rows(), 2);
+        assert!(scrollback.stats().charged_bytes() <= scrollback.stats().limit_bytes());
+        assert_indexed_lookup_matches_linear_scan(&scrollback);
+        scrollback.validate_recovery_state(80).unwrap();
+    }
+
+    #[test]
+    fn cell_reuse_preflight_falls_back_without_proven_eviction() {
+        let row = || ScreenRow {
+            cells: vec![blank_cell(); 3],
+            soft_wrapped: false,
+        };
+        let mut scrollback = Scrollback::new(usize::MAX);
+        scrollback.push_row(row());
+        let oldest_anchor = scrollback.line_and_offset_at(0, 0).unwrap();
+        let line_charge = scrollback.charged_bytes;
+        scrollback.set_limit_bytes(line_charge * 2 - 1);
+        let before = scrollback.stats();
+
+        assert!(scrollback.take_recyclable_row_storage(3, false).is_none());
+        assert!(scrollback.take_recyclable_row_storage(4, false).is_none());
+        assert!(scrollback.take_recyclable_row_storage(3, true).is_none());
+        assert!(scrollback.take_recyclable_row_storage(0, false).is_none());
+        assert_eq!(scrollback.stats(), before);
+        assert_eq!(scrollback.resolve_anchor(oldest_anchor), Some((0, 0)));
+
+        scrollback.push_row(row());
+        assert_eq!(scrollback.stats().evicted_lines(), 1);
+        assert_eq!(scrollback.stats().logical_lines(), 1);
+        assert_eq!(scrollback.resolve_anchor(oldest_anchor), None);
+        scrollback.validate_recovery_state(80).unwrap();
+    }
+
+    #[test]
+    fn cell_reuse_preflight_skips_wrapped_and_active_oversize_lines() {
+        let row = |soft_wrapped| ScreenRow {
+            cells: vec![blank_cell(); 3],
+            soft_wrapped,
+        };
+        let mut wrapped = Scrollback::new(usize::MAX);
+        wrapped.push_row(ScreenRow {
+            cells: vec![blank_cell(); 1],
+            soft_wrapped: true,
+        });
+        wrapped.push_row(ScreenRow {
+            cells: vec![blank_cell(); 2],
+            soft_wrapped: false,
+        });
+        wrapped.push_row(row(false));
+        wrapped.set_limit_bytes(wrapped.charged_bytes);
+        assert_eq!(wrapped.lines.front().unwrap().cells.capacity(), 3);
+        let before = wrapped.stats();
+        assert!(wrapped.take_recyclable_row_storage(3, false).is_none());
+        assert_eq!(wrapped.stats(), before);
+
+        let mut open = Scrollback::new(usize::MAX);
+        open.push_row(row(false));
+        open.push_row(row(true));
+        open.set_limit_bytes(open.charged_bytes);
+        let before = open.stats();
+        assert!(open.take_recyclable_row_storage(3, false).is_none());
+        assert_eq!(open.stats(), before);
+
+        let mut oversize = Scrollback::new(1);
+        oversize.push_row(row(true));
+        assert!(oversize.active_oversize_line.is_some());
+        let before = oversize.stats();
+        assert!(oversize.take_recyclable_row_storage(3, false).is_none());
+        assert_eq!(oversize.stats(), before);
+    }
+
+    #[test]
+    fn recycled_cell_storage_handles_an_oversized_incoming_line() {
+        let row = || ScreenRow {
+            cells: vec![blank_cell(); 3],
+            soft_wrapped: false,
+        };
+        let mut scrollback = Scrollback::new(usize::MAX);
+        scrollback.push_row(row());
+        scrollback.push_row(row());
+        scrollback.set_limit_bytes(scrollback.charged_bytes);
+
+        let (mut cells, boundaries) = scrollback.take_recyclable_row_storage(3, false).unwrap();
+        cells.extend([blank_cell(), blank_cell(), blank_cell()]);
+        let target: std::sync::Arc<str> = format!(
+            "https://example.invalid/{}",
+            "x".repeat(scrollback.limit_bytes)
+        )
+        .into();
+        let weak_target = std::sync::Arc::downgrade(&target);
+        cells[0].hyperlink = Some(target);
+        scrollback.push_row_reusing_boundary(
+            ScreenRow {
+                cells,
+                soft_wrapped: false,
+            },
+            boundaries,
+        );
+
+        assert!(weak_target.upgrade().is_none());
+        assert_eq!(scrollback.stats().evicted_lines(), 3);
+        assert_eq!(scrollback.stats().content_row_origin(), 3);
+        assert_eq!(scrollback.stats().screen_row_origin(), 3);
+        assert_eq!(scrollback.stats().physical_rows(), 0);
+        assert_eq!(scrollback.stats().charged_bytes(), 0);
+        scrollback.validate_recovery_state(80).unwrap();
+    }
+
+    #[test]
+    fn hard_line_eviction_does_not_remove_history_with_remaining_capacity() {
+        let row = || ScreenRow {
+            cells: vec![blank_cell(); 3],
+            soft_wrapped: false,
+        };
+        let mut scrollback = Scrollback::new(usize::MAX);
+        scrollback.push_row(row());
+        let oldest_anchor = scrollback.line_and_offset_at(0, 0).unwrap();
+        let line_charge = scrollback.charged_bytes;
+        scrollback.set_limit_bytes(line_charge * 3);
+
+        scrollback.push_row(row());
+        scrollback.push_row(row());
+
+        assert_eq!(scrollback.resolve_anchor(oldest_anchor), Some((0, 0)));
+        assert_eq!(scrollback.stats().evicted_lines(), 0);
+        assert_eq!(scrollback.stats().physical_rows(), 3);
+        assert_eq!(scrollback.stats().charged_bytes(), line_charge * 3);
+        scrollback.validate_recovery_state(80).unwrap();
+    }
+
+    #[test]
+    fn oversized_hard_line_evicts_old_and_new_lines_without_a_coordinate_gap() {
+        let row = || ScreenRow {
+            cells: vec![blank_cell(); 3],
+            soft_wrapped: false,
+        };
+        let mut scrollback = Scrollback::new(usize::MAX);
+        scrollback.push_row(row());
+        scrollback.push_row(row());
+        scrollback.set_limit_bytes(scrollback.charged_bytes);
+
+        scrollback.push_row(ScreenRow {
+            cells: vec![blank_cell(); 100],
+            soft_wrapped: false,
+        });
+
+        assert_eq!(scrollback.stats().evicted_lines(), 3);
+        assert_eq!(scrollback.stats().content_row_origin(), 3);
+        assert_eq!(scrollback.stats().screen_row_origin(), 3);
+        assert_eq!(scrollback.stats().charged_bytes(), 0);
+        assert_eq!(scrollback.stats().physical_rows(), 0);
+        scrollback.validate_recovery_state(100).unwrap();
+    }
+
+    #[test]
+    fn unique_hyperlink_evictions_release_targets_and_stay_bounded() {
+        let mut scrollback = Scrollback::new(usize::MAX);
+        let mut oldest_target = None;
+        for index in 0..100 {
+            let target: std::sync::Arc<str> = format!("https://example.invalid/{index:04}").into();
+            if index == 0 {
+                oldest_target = Some(std::sync::Arc::downgrade(&target));
+            }
+            let mut cell = blank_cell();
+            cell.hyperlink = Some(target);
+            scrollback.push_row(ScreenRow {
+                cells: vec![cell],
+                soft_wrapped: false,
+            });
+            if index == 0 {
+                scrollback.set_limit_bytes(scrollback.charged_bytes * 2);
+            }
+            assert!(scrollback.charged_bytes <= scrollback.limit_bytes);
+        }
+
+        assert!(oldest_target.unwrap().upgrade().is_none());
+        assert_eq!(scrollback.stats().evicted_lines(), 98);
+        assert_eq!(scrollback.stats().logical_lines(), 2);
+        assert_eq!(
+            scrollback.lines.back().unwrap().cells[0].hyperlink(),
+            Some("https://example.invalid/0099")
+        );
+        scrollback.validate_recovery_state(80).unwrap();
     }
 
     #[test]

@@ -2470,6 +2470,8 @@ dependencies = [
  "portable-pty",
  "proptest",
  "serde",
+ "smallvec",
+ "stats_alloc",
  "unicode-segmentation",
  "unicode-width",
  "url",

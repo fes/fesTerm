@@ -92,7 +92,9 @@ impl CellWidth {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Cell {
     pub(crate) text: CompactString,
-    pub(crate) text_capacity_bytes: usize,
+    // Runtime graphemes are bounded; schemas 2 and 3 still encode this as usize.
+    #[serde(with = "legacy_text_capacity")]
+    pub(crate) text_capacity_bytes: u16,
     pub(crate) width: CellWidth,
     pub(crate) foreground: Color,
     pub(crate) background: Color,
@@ -100,7 +102,58 @@ pub struct Cell {
     pub(crate) hyperlink: Option<Arc<str>>,
 }
 
+// Recovery schemas and scrollback accounting charge the original cell layout.
+#[allow(dead_code)]
+struct LegacyCellLayout {
+    text: CompactString,
+    text_capacity_bytes: usize,
+    width: CellWidth,
+    foreground: Color,
+    background: Color,
+    attributes: Attributes,
+    hyperlink: Option<Arc<str>>,
+}
+
+pub(crate) const HISTORY_CELL_CHARGE: usize = std::mem::size_of::<LegacyCellLayout>();
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(
+    HISTORY_CELL_CHARGE == 64,
+    "64-bit history snapshots require the original 64-byte cell charge"
+);
+const _: () = assert!(
+    std::mem::size_of::<Cell>() <= HISTORY_CELL_CHARGE,
+    "cell storage must not exceed its historical history charge"
+);
+const _: () = assert!(
+    MAX_CELL_TEXT_CAPACITY_BYTES <= u16::MAX as usize,
+    "cell text capacity must fit in the compact field"
+);
+
+mod legacy_text_capacity {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S>(capacity: &u16, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        usize::from(*capacity).serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<u16, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let capacity = usize::deserialize(deserializer)?;
+        u16::try_from(capacity).map_err(serde::de::Error::custom)
+    }
+}
+
 impl Cell {
+    pub(crate) fn text_capacity(text: &CompactString) -> u16 {
+        u16::try_from(text.capacity()).expect("cell text capacity must fit in u16")
+    }
+
     /// Returns the leading character, or a space for a continuation.
     pub fn character(&self) -> char {
         self.text.chars().next().unwrap_or(' ')
@@ -145,11 +198,11 @@ impl Cell {
     }
 
     pub(crate) fn refresh_text_capacity_charge(&mut self) {
-        self.text_capacity_bytes = self.text.capacity();
+        self.text_capacity_bytes = Self::text_capacity(&self.text);
     }
 
     pub(crate) fn text_owned_charge(&self) -> usize {
-        self.text_capacity_bytes
+        usize::from(self.text_capacity_bytes)
     }
 
     pub(crate) fn validate_recovery_state(&self) -> Result<(), String> {
@@ -160,14 +213,15 @@ impl Cell {
                 crate::unicode::MAX_GRAPHEME_BYTES
             ));
         }
-        if self.text_capacity_bytes < self.text.len() {
+        let text_capacity = usize::from(self.text_capacity_bytes);
+        if text_capacity < self.text.len() {
             return Err(format!(
                 "cell records {} text capacity bytes for {} bytes of text",
                 self.text_capacity_bytes,
                 self.text.len()
             ));
         }
-        if self.text_capacity_bytes > MAX_CELL_TEXT_CAPACITY_BYTES {
+        if text_capacity > MAX_CELL_TEXT_CAPACITY_BYTES {
             return Err(format!(
                 "cell records {} text capacity bytes above the {}-byte recovery limit",
                 self.text_capacity_bytes, MAX_CELL_TEXT_CAPACITY_BYTES
@@ -177,19 +231,20 @@ impl Cell {
     }
 
     pub(crate) fn restore_recovery_allocation(&mut self) {
-        if self.text_capacity_bytes > self.text.capacity() {
+        let text_capacity = usize::from(self.text_capacity_bytes);
+        if text_capacity > self.text.capacity() {
             self.text
-                .reserve(self.text_capacity_bytes.saturating_sub(self.text.len()));
+                .reserve(text_capacity.saturating_sub(self.text.len()));
         }
-        if self.text.capacity() > self.text_capacity_bytes {
-            self.text.shrink_to(self.text_capacity_bytes);
+        if self.text.capacity() > text_capacity {
+            self.text.shrink_to(text_capacity);
         }
     }
 }
 
 pub(crate) fn blank_cell() -> Cell {
     let text = CompactString::const_new(" ");
-    let text_capacity_bytes = text.capacity();
+    let text_capacity_bytes = Cell::text_capacity(&text);
     Cell {
         text,
         text_capacity_bytes,

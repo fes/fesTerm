@@ -21,6 +21,7 @@ unicode-width = "=0.2.2"
 # every scrolled-up row clones its text.
 compact_str = { version = "0.9", features = ["serde"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
+smallvec = "1.15"
 url = "2.5"
 
 [dev-dependencies]
@@ -34,6 +35,7 @@ festerm-test-support = { path = "../festerm-test-support" }
 # drives the terminal it is *running inside*, so hosting it means owning a pty.
 portable-pty = "0.9.0"
 proptest = "1.11.0"
+stats_alloc = "0.1.10"
 
 [[bench]]
 name = "sustained_output"
@@ -41,4 +43,12 @@ harness = false
 
 [[bench]]
 name = "interaction"
+harness = false
+
+[[bench]]
+name = "scroll_allocations"
+harness = false
+
+[[bench]]
+name = "cell_density"
 harness = false
