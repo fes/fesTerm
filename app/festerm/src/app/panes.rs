@@ -805,11 +805,23 @@ impl FesTermApp {
                     match &mut tab.content {
                         TabContent::Session(session) => {
                             session.view.set_font_set(fonts);
+                            let observe_search =
+                                session.search.is_open() && session.search.has_query();
+                            if observe_search {
+                                let now = Instant::now();
+                                session.search.observe_screen_dirty(&session.terminal, now);
+                                session.search.observe_layout_change(&session.terminal, now);
+                            }
                             session.view.show_passive_in_ui(
                                 ui,
                                 &mut session.terminal,
                                 &mut session.controller,
                             );
+                            if observe_search {
+                                session
+                                    .search
+                                    .observe_layout_change(&session.terminal, Instant::now());
+                            }
                         }
                         TabContent::TextEditor(editor) => {
                             editor.set_status_bar_visible(status_bar);

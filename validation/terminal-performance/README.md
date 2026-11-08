@@ -1,5 +1,139 @@
 # Terminal TUI performance
 
+## Output-driven search refresh
+
+The find bar coalesces output-driven full scans until 100 ms of observed
+quiet, with a 250 ms maximum wait while output continues. Query edits and
+navigation are immediate. Retained-history origins and live dirty rows also
+detect eviction at a constant history size and live-screen-only edits, which
+the previous row-count check missed. Screen transitions and terminal
+replacement invalidate the old row identity. Incremental search and
+reflow-stable match anchors remain separate work.
+
+On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
+single-threaded release samples in A-B-B-A-A-B order measured process user plus
+system CPU for 1,600 simulated 60 Hz output frames. A warmed, growing 32 MiB
+history limit retained 1,977 rows initially and 3,577 at the end, without
+eviction. Each frame ingested one ASCII line, refreshed search and consumed
+dirty-row flags; the final pending refresh was included. Both versions
+finished with identical match counts.
+
+| Fixture | Scans before / after | Before median CPU | After median CPU |
+| --- | ---: | ---: | ---: |
+| No matches | 1,600 / 101 | 1.065 s | 0.072 s |
+| Every line matches | 1,600 / 101 | 1.194 s | 0.085 s |
+
+This is a core/search-loop experiment with simulated frame timestamps, not a
+PTY, native UI, rendering or latency measurement. The shared host's
+one-minute load was about 14.2 to 13.7; contention limits precision even
+though the reported measurement is process CPU rather than elapsed time. The
+old constant-size-eviction path performed no refresh and was incorrect, so no
+CPU speedup is claimed for that case.
+
+## Full-history search
+
+The find bar walks retained logical lines and their physical rows in order
+instead of performing a binary history lookup for each row. It reuses one
+text buffer for retained rows and lowercases ASCII in place; non-ASCII text
+still uses Rust's full string lowercase behavior. Live-screen matching and
+query semantics are unchanged.
+
+On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
+single-threaded release-build samples (A-B-B-A-A-B) measured process user plus
+system CPU only during repeated scans of a warmed, full 32 MiB history in an
+80-by-24 terminal:
+
+| Fixture | Retained rows | Scans | Before median CPU | After median CPU |
+| --- | ---: | ---: | ---: | ---: |
+| ASCII, no matches | 6,647 | 800 | 1.544 s | 0.927 s |
+| ASCII, every history row matches | 6,647 | 800 | 1.585 s | 0.956 s |
+| Unicode, no matches | 9,000 | 400 | 2.941 s | 2.415 s |
+| Wrapped ASCII, no matches | 4,735 | 800 | 1.373 s | 1.000 s |
+
+These are search-loop observations, not end-to-end UI or native
+responsiveness measurements. The shared host's one-minute load decreased from
+about 14.8 to 11.9, so contention still limits precision. With a separately
+instrumented allocator, one no-match ASCII scan requested 13,343 allocations
+before and 50 after; one Unicode scan requested 18,049 and 9,050. These
+allocation counts do not measure total memory or CPU.
+
+`cargo test --locked -p festerm --test terminal_search_allocations` runs an
+isolated allocation check over a warmed, full 8 MiB ASCII history. A
+differential test compares the sequential scan with the former indexed scan
+for Unicode case conversion, wrapping, eviction, resize, and alternate-screen
+transitions. The separate output-refresh change is described above.
+
+## Character input encoding
+
+The core encodes an unmodified character into a four-byte stack buffer before
+copying it to the existing bounded input queue, rather than first allocating a
+temporary UTF-8 `String`. Keyboard lock and queue admission still follow the
+same paths; the temporary buffer is not retained between events.
+
+On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
+single-threaded release samples in A-B-B-A-A-B order measured process user
+plus system CPU during 10 million repetitions of core `handle_input` followed
+by `drain_input`:
+
+| Fixture | Before median CPU | After median CPU |
+| --- | ---: | ---: |
+| ASCII character | 0.566 s | 0.320 s |
+| Four-byte Unicode character | 0.654 s | 0.371 s |
+
+For 4,096 repetitions, a separately instrumented allocator counted
+8,192 allocation calls before and 4,096 after for each fixture. One
+allocation per event remains for the owned terminal input queue. Run
+`cargo test --locked -p festerm-core --test character_input_allocations` for
+the isolated allocation regression.
+
+This is a core-loop measurement, not an end-to-end keystroke or native event
+latency result. The application pending-write buffer and session transport
+still allocate or copy; zero-allocation delivery is not claimed. The shared
+host's one-minute load decreased from about 13.8 to 13.2, so competing work
+limits timing precision.
+
+## Character input routing
+
+The UI delivers queued input synchronously to its sink without transferring
+ownership of the allocation to the sink. After delivery, the terminal
+zeroizes the current allocation and may reuse it if its capacity is at most
+16 bytes.
+Larger allocations are dropped as before. If the sink panics, the queue is
+already empty and a small allocation is zeroized on drop. This wipes the
+current small allocation, not copies elsewhere or any prior reallocations.
+Admission, lock handling, queue order and the owned drain API are unchanged.
+
+Run `cargo test --locked -p festerm-ui-egui --test routed_input_allocations`
+for the isolated allocation regression. Against the #650 baseline, the warmed
+core-and-view route made 4,096 allocation calls for 4,096 ASCII events and
+4,096 calls for four-byte Unicode events. The candidate made no allocations
+or reallocations in either case. The sink in this fixture allocates nothing.
+
+The source for a single-threaded timing probe is
+`crates/festerm-ui-egui/benches/routed_input.rs`. Build it with
+`cargo bench --locked -p festerm-ui-egui --bench routed_input --no-run`, then
+run the executable path printed by Cargo under `/usr/bin/time -p`, passing
+`ascii 50000000` or `emoji 50000000`. Sum `user` and `sys`, rather than using
+`real`. Compare the same build configuration across revisions; older
+revisions need the probe source copied into the benchmark workspace.
+
+On Apple M2, 64-bit macOS and Rust 1.97.1, the same probe source was built as
+a standalone release executable against #650 and the candidate, using
+separate build directories. Three single-threaded paired samples in
+A-B-B-A-A-B order measured process user plus system CPU for 50 million
+events with an allocation-free checksum sink:
+
+| Fixture | #650 median CPU | Candidate median CPU |
+| --- | ---: | ---: |
+| ASCII character | 1.004 s | 0.386 s |
+| Four-byte Unicode character | 1.253 s | 0.728 s |
+
+The shared host's one-minute load decreased from about 6.5 to 5.8 and its
+five-minute load from 10.8 to 10.5; other work limits timing precision. These are
+core-and-view synthetic measurements, not native key-to-PTY latency or
+end-to-end zero-allocation delivery. Application pending writes and session
+transport still allocate or copy.
+
 ## Local PTY output backpressure
 
 On Unix, `cargo bench --locked -p festerm-pty --bench blocked_output -- paused 5`

@@ -3,6 +3,7 @@ use std::{fmt, sync::Arc};
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthChar;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     cell::{blank_cell, Attributes, Cell, CellWidth, Color},
@@ -11,7 +12,7 @@ use crate::{
     input::{
         encode_key, encode_legacy_mouse, encode_modified_key, encode_paste, encode_sgr_mouse,
         mouse_event_is_reported, paste_encoded_length, FocusEvent, InputEvent, InputEventOutcome,
-        MouseEvent,
+        Key, MouseEvent,
     },
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
     parser::{
@@ -1310,6 +1311,25 @@ impl Terminal {
         std::mem::take(&mut self.input_queue)
     }
 
+    /// Delivers queued bytes synchronously, then clears the queue.
+    ///
+    /// A zeroized allocation of at most 16 bytes may be reused; larger
+    /// allocations are dropped. If the consumer panics, the queue is empty
+    /// and a small allocation is zeroized before it is dropped.
+    pub fn drain_input_with<R>(&mut self, consumer: impl FnOnce(&[u8]) -> R) -> R {
+        const REUSABLE_INPUT_CAPACITY: usize = 16;
+        let input = std::mem::take(&mut self.input_queue);
+        if input.capacity() > REUSABLE_INPUT_CAPACITY {
+            return consumer(&input);
+        }
+
+        let mut input = Zeroizing::new(input);
+        let result = consumer(&input);
+        input.zeroize();
+        self.input_queue = std::mem::take(&mut *input);
+        result
+    }
+
     /// Reports and clears whether an input write overflowed since the last call.
     pub fn take_input_queue_overflowed(&mut self) -> bool {
         std::mem::take(&mut self.input_queue_overflowed)
@@ -1362,6 +1382,10 @@ impl Terminal {
     /// Enter (CR), while other payload bytes and line order remain unchanged.
     pub fn handle_input(&mut self, event: InputEvent) -> InputEventOutcome {
         let encoded = match event {
+            InputEvent::Key(Key::Character(character)) if !self.modes.keyboard_locked() => {
+                let mut bytes = [0; 4];
+                return self.queue_encoded_input(character.encode_utf8(&mut bytes).as_bytes());
+            }
             InputEvent::Key(key) => encode_key(key, self.modes),
             InputEvent::ModifiedKey { key, modifiers } => {
                 encode_modified_key(key, modifiers, self.modes)

@@ -5613,7 +5613,12 @@ impl FesTermApp {
         if !session.search.is_open() {
             return;
         }
-        session.search.refresh_if_stale(&session.terminal);
+        if let Some(delay) = session
+            .search
+            .refresh_if_stale(&session.terminal, Instant::now())
+        {
+            ctx.request_repaint_after(delay);
+        }
         let area_id = egui::Id::new(("terminal_find_bar", active));
         let query_id = egui::Id::new(("terminal_find_query", active));
         let mut close_requested = false;
@@ -5647,6 +5652,7 @@ impl FesTermApp {
                         let enter_pressed = response.has_focus()
                             && ui.input(|input| input.key_pressed(egui::Key::Enter));
                         if enter_pressed {
+                            session.search.refresh_pending(&session.terminal);
                             if ui.input(|input| input.modifiers.shift) {
                                 session.search.retreat();
                             } else {
@@ -5673,10 +5679,12 @@ impl FesTermApp {
                             String::new()
                         });
                         if ui.add(egui::Button::new("\u{2191}")).clicked() {
+                            session.search.refresh_pending(&session.terminal);
                             session.search.retreat();
                             jump_to = session.search.current_match_row();
                         }
                         if ui.add(egui::Button::new("\u{2193}")).clicked() {
+                            session.search.refresh_pending(&session.terminal);
                             session.search.advance();
                             jump_to = session.search.current_match_row();
                         }
@@ -7127,6 +7135,14 @@ impl FesTermApp {
                                     &mut session.controller,
                                     options,
                                 );
+                            }
+                            if session.search.is_open()
+                                && session.search.has_query()
+                                && session
+                                    .search
+                                    .observe_layout_change(&session.terminal, Instant::now())
+                            {
+                                ui.ctx().request_repaint();
                             }
                             if tracing::enabled!(target: "festerm::render", tracing::Level::DEBUG) {
                                 let diagnostics = session.view.diagnostics();

@@ -1028,6 +1028,7 @@ impl SessionTab {
             return false;
         };
         self.terminal = recovered;
+        self.search.terminal_replaced(&self.terminal);
         self.view.reset_recovery_layout();
         true
     }

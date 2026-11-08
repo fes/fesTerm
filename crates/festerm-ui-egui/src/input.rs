@@ -127,11 +127,12 @@ fn route_input_with_metadata(
     }
     let outcome = terminal.handle_input(event);
     let queue_depth = terminal.queued_input().len();
-    let bytes = terminal.drain_input();
-    let delivered_bytes = bytes.len();
-    if !bytes.is_empty() {
-        sink.record_encoded_input(&bytes);
-    }
+    let delivered_bytes = terminal.drain_input_with(|bytes| {
+        if !bytes.is_empty() {
+            sink.record_encoded_input(bytes);
+        }
+        bytes.len()
+    });
     let route = InputRoute {
         outcome,
         queue_depth,
@@ -1653,6 +1654,46 @@ mod tests {
         assert_eq!(route.outcome, InputEventOutcome::Encoded { bytes: 3 });
         assert_eq!(route.queue_depth, 3);
         assert_eq!(sink.0, vec![b"\x1bOA".to_vec()]);
+        assert!(terminal.queued_input().is_empty());
+    }
+
+    #[test]
+    fn routed_input_delivers_pending_bytes_once_across_reuse_and_lock() {
+        let mut terminal = terminal(8, 1);
+        let mut sink = Sink::default();
+        terminal.queue_input(b"prefix");
+        let route = route_input(
+            &mut terminal,
+            InputEvent::Key(Key::Character('🙂')),
+            &mut sink,
+        );
+        assert_eq!(route.outcome, InputEventOutcome::Encoded { bytes: 4 });
+        assert_eq!(route.queue_depth, 10);
+        assert_eq!(route.delivered_bytes, 10);
+        assert_eq!(sink.0, vec!["prefix🙂".as_bytes().to_vec()]);
+        assert!(terminal.queued_input().is_empty());
+
+        terminal.ingest(b"\x1b[2h");
+        let route = route_input(
+            &mut terminal,
+            InputEvent::Key(Key::Character('x')),
+            &mut sink,
+        );
+        assert_eq!(route.outcome, InputEventOutcome::Rejected);
+        assert_eq!(route.delivered_bytes, 0);
+        assert_eq!(sink.0.len(), 1);
+        assert!(terminal.queued_input().is_empty());
+
+        terminal.queue_input(b"pending");
+        let route = route_input(
+            &mut terminal,
+            InputEvent::Key(Key::Character('x')),
+            &mut sink,
+        );
+        assert_eq!(route.outcome, InputEventOutcome::Rejected);
+        assert_eq!(route.queue_depth, 7);
+        assert_eq!(route.delivered_bytes, 7);
+        assert_eq!(sink.0.last().unwrap(), b"pending");
         assert!(terminal.queued_input().is_empty());
     }
 

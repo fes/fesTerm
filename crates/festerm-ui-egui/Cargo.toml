@@ -39,3 +39,7 @@ harness = false
 [[bench]]
 name = "dirty_row_cpu"
 harness = false
+
+[[bench]]
+name = "routed_input"
+harness = false
