@@ -35,3 +35,7 @@ harness = false
 [[bench]]
 name = "render_cache_allocations"
 harness = false
+
+[[bench]]
+name = "routed_input"
+harness = false
