@@ -1,5 +1,68 @@
 # Terminal TUI performance
 
+## Output-driven search refresh
+
+The find bar coalesces output-driven full scans until 100 ms of observed
+quiet, with a 250 ms maximum wait while output continues. Query edits and
+navigation are immediate. Retained-history origins and live dirty rows also
+detect eviction at a constant history size and live-screen-only edits, which
+the previous row-count check missed. Screen transitions and terminal
+replacement invalidate the old row identity. Incremental search and
+reflow-stable match anchors remain separate work.
+
+On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
+single-threaded release samples in A-B-B-A-A-B order measured process user plus
+system CPU for 1,600 simulated 60 Hz output frames. A warmed, growing 32 MiB
+history limit retained 1,977 rows initially and 3,577 at the end, without
+eviction. Each frame ingested one ASCII line, refreshed search and consumed
+dirty-row flags; the final pending refresh was included. Both versions
+finished with identical match counts.
+
+| Fixture | Scans before / after | Before median CPU | After median CPU |
+| --- | ---: | ---: | ---: |
+| No matches | 1,600 / 101 | 1.065 s | 0.072 s |
+| Every line matches | 1,600 / 101 | 1.194 s | 0.085 s |
+
+This is a core/search-loop experiment with simulated frame timestamps, not a
+PTY, native UI, rendering or latency measurement. The shared host's
+one-minute load was about 14.2 to 13.7; contention limits precision even
+though the reported measurement is process CPU rather than elapsed time. The
+old constant-size-eviction path performed no refresh and was incorrect, so no
+CPU speedup is claimed for that case.
+
+## Full-history search
+
+The find bar walks retained logical lines and their physical rows in order
+instead of performing a binary history lookup for each row. It reuses one
+text buffer for retained rows and lowercases ASCII in place; non-ASCII text
+still uses Rust's full string lowercase behavior. Live-screen matching and
+query semantics are unchanged.
+
+On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
+single-threaded release-build samples (A-B-B-A-A-B) measured process user plus
+system CPU only during repeated scans of a warmed, full 32 MiB history in an
+80-by-24 terminal:
+
+| Fixture | Retained rows | Scans | Before median CPU | After median CPU |
+| --- | ---: | ---: | ---: | ---: |
+| ASCII, no matches | 6,647 | 800 | 1.544 s | 0.927 s |
+| ASCII, every history row matches | 6,647 | 800 | 1.585 s | 0.956 s |
+| Unicode, no matches | 9,000 | 400 | 2.941 s | 2.415 s |
+| Wrapped ASCII, no matches | 4,735 | 800 | 1.373 s | 1.000 s |
+
+These are search-loop observations, not end-to-end UI or native
+responsiveness measurements. The shared host's one-minute load decreased from
+about 14.8 to 11.9, so contention still limits precision. With a separately
+instrumented allocator, one no-match ASCII scan requested 13,343 allocations
+before and 50 after; one Unicode scan requested 18,049 and 9,050. These
+allocation counts do not measure total memory or CPU.
+
+`cargo test --locked -p festerm --test terminal_search_allocations` runs an
+isolated allocation check over a warmed, full 8 MiB ASCII history. A
+differential test compares the sequential scan with the former indexed scan
+for Unicode case conversion, wrapping, eviction, resize, and alternate-screen
+transitions. The separate output-refresh change is described above.
+
 ## Character input encoding
 
 The core encodes an unmodified character into a four-byte stack buffer before
