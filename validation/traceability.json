@@ -2692,7 +2692,9 @@
         "terminal_search_finds_and_navigates_matches",
         "escape_closes_terminal_search_and_restores_terminal_focus",
         "find_in_terminal_palette_command_opens_the_find_bar",
-        "terminal_context_menu_can_request_find_without_pty_input"
+        "terminal_context_menu_can_request_find_without_pty_input",
+        "sequential_history_scan_matches_indexed_scan",
+        "ascii_history_search_avoids_per_row_allocations"
       ],
       "manual_scenarios": [
         "CP-05",

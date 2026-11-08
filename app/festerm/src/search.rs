@@ -159,12 +159,21 @@ fn scan_matches(terminal: &Terminal, query: &str) -> Vec<usize> {
         terminal.scrollback_stats().physical_rows()
     };
 
-    for row in 0..history_rows {
-        if let Some(cells) = terminal.scrollback_physical_row(row) {
-            if row_text(cells).to_lowercase().contains(&needle) {
-                matches.push(row);
+    let mut row = 0;
+    let mut text = String::new();
+    if history_rows > 0 {
+        for line in terminal.scrollback_lines() {
+            for line_row in 0..line.physical_rows() {
+                let cells = line
+                    .physical_row(line_row)
+                    .expect("retained physical row exists");
+                if row_contains(cells, &needle, &mut text) {
+                    matches.push(row);
+                }
+                row += 1;
             }
         }
+        debug_assert_eq!(row, history_rows);
     }
 
     for row in 0..terminal.screen().dimensions().rows() {
@@ -174,12 +183,18 @@ fn scan_matches(terminal: &Terminal, query: &str) -> Vec<usize> {
             }
         }
     }
-
     matches
 }
 
-fn row_text(cells: &[Cell]) -> String {
-    cells.iter().map(Cell::character).collect()
+fn row_contains(cells: &[Cell], needle: &str, text: &mut String) -> bool {
+    text.clear();
+    text.extend(cells.iter().map(Cell::character));
+    if text.is_ascii() {
+        text.make_ascii_lowercase();
+        text.contains(needle)
+    } else {
+        text.to_lowercase().contains(needle)
+    }
 }
 
 #[cfg(test)]
@@ -192,6 +207,66 @@ mod tests {
         let mut terminal = Terminal::new(dimensions).unwrap();
         terminal.ingest(rows.join("\r\n").as_bytes());
         terminal
+    }
+
+    fn indexed_scan_matches(terminal: &Terminal, query: &str) -> Vec<usize> {
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let needle = query.to_lowercase();
+        let history_rows = if terminal.modes().alternate_screen() {
+            0
+        } else {
+            terminal.scrollback_stats().physical_rows()
+        };
+        let mut matches = Vec::new();
+        for row in 0..history_rows {
+            if let Some(cells) = terminal.scrollback_physical_row(row) {
+                let text: String = cells.iter().map(Cell::character).collect();
+                if text.to_lowercase().contains(&needle) {
+                    matches.push(row);
+                }
+            }
+        }
+        for row in 0..terminal.screen().dimensions().rows() {
+            if let Some(text) = terminal.row_text(row) {
+                if text.to_lowercase().contains(&needle) {
+                    matches.push(history_rows + row);
+                }
+            }
+        }
+        matches
+    }
+
+    fn assert_matches_indexed_scan(terminal: &Terminal) {
+        for query in [
+            "", "alpha", "NEEDLE", "Σ", "ος", "İ", "i", "東京", "🙂", " ", "missing",
+        ] {
+            assert_eq!(
+                scan_matches(terminal, query),
+                indexed_scan_matches(terminal, query),
+                "query {query:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sequential_history_scan_matches_indexed_scan() {
+        let mut terminal =
+            Terminal::with_scrollback_limit(Dimensions::new(12, 4).unwrap(), 16 * 1024).unwrap();
+        for _ in 0..32 {
+            terminal.ingest("alpha NEEDLE wrapped row ΟΣ 東京\r\nİstanbul 🙂\r\n".as_bytes());
+        }
+        assert!(terminal.scrollback_stats().physical_rows() > 0);
+        assert!(terminal.scrollback_stats().evicted_lines() > 0);
+        assert_matches_indexed_scan(&terminal);
+
+        terminal.resize(Dimensions::new(8, 4).unwrap()).unwrap();
+        assert_matches_indexed_scan(&terminal);
+        terminal.ingest("\x1b[?1049halpha ΟΣ 東京\r\nNEEDLE🙂".as_bytes());
+        assert_matches_indexed_scan(&terminal);
+        terminal.ingest(b"\x1b[?1049l");
+        assert_matches_indexed_scan(&terminal);
     }
 
     #[test]

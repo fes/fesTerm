@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Reducing full-history search work
+
+The terminal find bar previously looked up every retained row through the
+history index and allocated lowercase text for each row on every scan. It now
+walks logical lines sequentially and reuses an ASCII text buffer while
+preserving the existing Unicode lowercase behavior and match ordering. A
+differential test covers history eviction, wrapping, resize and alternate
+screen transitions; an isolated allocation check guards the warmed ASCII
+case. Measured search-loop CPU and allocation observations, including
+shared-host caveats, are in `validation/terminal-performance/README.md`.
+Refresh debounce and incremental indexing remain separate work.
+
 ## Composing live desktop panes
 
 Desktop windows can now arrange two to four existing session or document

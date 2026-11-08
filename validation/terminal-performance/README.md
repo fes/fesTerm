@@ -1,5 +1,38 @@
 # Terminal TUI performance
 
+## Full-history search
+
+The find bar walks retained logical lines and their physical rows in order
+instead of performing a binary history lookup for each row. It reuses one
+text buffer for retained rows and lowercases ASCII in place; non-ASCII text
+still uses Rust's full string lowercase behavior. Live-screen matching,
+query semantics, and refresh timing are unchanged.
+
+On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
+single-threaded release-build samples (A-B-B-A-A-B) measured process user plus
+system CPU only during repeated scans of a warmed, full 32 MiB history in an
+80-by-24 terminal:
+
+| Fixture | Retained rows | Scans | Before median CPU | After median CPU |
+| --- | ---: | ---: | ---: | ---: |
+| ASCII, no matches | 6,647 | 800 | 1.544 s | 0.927 s |
+| ASCII, every history row matches | 6,647 | 800 | 1.585 s | 0.956 s |
+| Unicode, no matches | 9,000 | 400 | 2.941 s | 2.415 s |
+| Wrapped ASCII, no matches | 4,735 | 800 | 1.373 s | 1.000 s |
+
+These are search-loop observations, not end-to-end UI or native
+responsiveness measurements. The shared host's one-minute load decreased from
+about 14.8 to 11.9, so contention still limits precision. With a separately
+instrumented allocator, one no-match ASCII scan requested 13,343 allocations
+before and 50 after; one Unicode scan requested 18,049 and 9,050. These
+allocation counts do not measure total memory or CPU.
+
+`cargo test --locked -p festerm --test terminal_search_allocations` runs an
+isolated allocation check over a warmed, full 8 MiB ASCII history. A
+differential test compares the sequential scan with the former indexed scan
+for Unicode case conversion, wrapping, eviction, resize, and alternate-screen
+transitions. Debouncing and incremental refresh remain separate work.
+
 ## CPU presentation-cache allocation oracle
 
 Run `cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check`.
