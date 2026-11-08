@@ -1392,6 +1392,7 @@
         "maximum_output_frame_can_share_a_read_with_the_following_frame",
         "recovered_terminal_keeps_bounded_history_snapshot_semantics",
         "recovered_terminal_preserves_history_accounting_after_future_growth",
+        "recovered_terminal_preserves_recycled_hard_line_evictions",
         "repeated_recovery_preserves_history_during_bounded_terminal_churn",
         "saturated_output_preserves_control_resize_and_exit_order",
         "cli_v2_acknowledges_recovery_and_consumes_frames_without_forwarding_queries",
@@ -2620,7 +2621,8 @@
         "docs/gui-design.md#scrollback-and-follow-output"
       ],
       "decisions": [
-        "ADR-0017"
+        "ADR-0017",
+        "ADR-0080"
       ],
       "automated_tests": [
         "disconnected_session_keeps_selection_copy_and_navigation_but_drops_keystrokes",
@@ -2631,6 +2633,11 @@
         "fully_trimmed_open_line_rejects_stale_anchor_after_recreation",
         "trimmed_end_boundary_does_not_alias_recreated_content",
         "end_boundary_affinity_stays_on_the_preceding_soft_wrapped_row",
+        "hard_line_eviction_preserves_surviving_anchors_and_exact_budget",
+        "hard_line_eviction_does_not_remove_history_with_remaining_capacity",
+        "oversized_hard_line_evicts_old_and_new_lines_without_a_coordinate_gap",
+        "unique_hyperlink_evictions_release_targets_and_stay_bounded",
+        "recovered_terminal_preserves_recycled_hard_line_evictions",
         "large_history_anchor_lookup_avoids_full_line_walks",
         "wrapped_anchor_lookup_avoids_full_row_boundary_walks",
         "indexed_history_anchors_match_linear_oracle_across_layout_mutations",

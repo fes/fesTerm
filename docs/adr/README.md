@@ -20,6 +20,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0015: Startup Load and Transactional Autosave Without External Reload](0015-explicit-transactional-configuration-reload.md)
 - [ADR 0016: Native Secret Store Boundary](0016-native-secret-store-boundary.md) — extended to stored private keys by ADR 0024
 - [ADR 0017: Bounded Logical Scrollback and Anchored Viewports](0017-bounded-logical-scrollback-and-anchored-viewports.md)
+- [ADR 0080: Bounded Scrollback Reuse](0080-bounded-scrollback-reuse.md) - immediate, charged handoff without a retained pool; compact storage remains a separate decision
 - [ADR 0018: SSH Liveness, Reconnect, and Persistent Session Recovery](0018-ssh-liveness-reconnect-and-persistent-session-recovery.md)
 - [ADR 0019: Fingerprint-First SSH Authentication Ordering](0019-fingerprint-first-ssh-authentication-ordering.md)
 - [ADR 0020: Persistent Host-Key Trust](0020-persistent-host-key-trust.md)

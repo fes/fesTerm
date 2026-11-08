@@ -115,9 +115,8 @@ fn main() {
             assert_eq!(stats.reallocations, 0);
         }
         assert_eq!(
-            retained_stats.allocations,
-            2 * SCROLLS,
-            "only retained cells and row boundaries may allocate in this fixture"
+            retained_stats.allocations, SCROLLS,
+            "only retained cells may allocate in this fixture"
         );
         assert_eq!(retained_stats.reallocations, 0);
     }

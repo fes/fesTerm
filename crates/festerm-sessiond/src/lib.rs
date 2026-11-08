@@ -5060,6 +5060,28 @@ mod tests {
     }
 
     #[test]
+    fn recovered_terminal_preserves_recycled_hard_line_evictions() {
+        let dimensions = festerm_core::Dimensions::new(80, 3).unwrap();
+        let mut continuous = Terminal::with_scrollback_limit(dimensions, 2048).unwrap();
+        for index in 0..100 {
+            continuous.ingest(format!("row-{index}\r\n").as_bytes());
+        }
+        assert!(continuous.scrollback_stats().evicted_lines() > 0);
+        let mut recovered = read_recovery_snapshot_for_test(&continuous);
+        assert_recovery_equivalent(&continuous, &recovered);
+
+        for index in 100..200 {
+            let row = format!("row-{index}\r\n");
+            continuous.ingest(row.as_bytes());
+            recovered.ingest(row.as_bytes());
+        }
+
+        assert_recovery_equivalent(&continuous, &recovered);
+        assert_eq!(continuous.recovery_clone(), recovered.recovery_clone());
+        assert_recovery_equivalent(&continuous, &read_recovery_snapshot_for_test(&continuous));
+    }
+
+    #[test]
     fn repeated_recovery_preserves_history_during_bounded_terminal_churn() {
         let mut continuous =
             Terminal::with_scrollback_limit(festerm_core::Dimensions::new(7, 3).unwrap(), 2048)

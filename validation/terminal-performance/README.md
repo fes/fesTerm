@@ -109,10 +109,34 @@ These are 64-bit macOS observations. The zero-allocation checks apply to this
 inline-text fixture, not to arbitrary cell payloads. The retained-history
 control uses a 256 KiB limit, observes an eviction for each measured line, and
 retains 682 logical lines charged at 261,888 bytes before and after the
-change. The retained cell and row-boundary allocations remain; recycling
-them requires separate measurement and bounded-storage design. No throughput
-or end-to-end responsiveness improvement is claimed from allocator counts
-alone.
+change. At this stage the retained cell and row-boundary allocations remained;
+the later boundary handoff is described below. No throughput or end-to-end
+responsiveness improvement is claimed from allocator counts alone.
+
+### Evicted row-boundary handoff
+
+ADR 0080 reuses an eligible evicted hard line's one-element boundary vector
+immediately for an incoming hard line, but only when the incoming line's
+minimum charge makes that eviction inevitable. It retains no free-list and
+keeps the existing history and recovery representation.
+
+Against the inline-row handoff above, the same 4,096-scroll full-history
+fixture fell from 8,192 to 4,096 allocation calls and from 819,200 to 786,432
+requested bytes. Both runs retained 682 logical lines charged at 261,888
+bytes under the 256 KiB limit. The remaining allocation per scroll is the
+retained cell vector; this is not a zero-allocation general scroll path.
+
+On an Apple M2, 64-bit macOS and Rust 1.97.1, three paired release samples
+in A-B-B-A-A-B order measured process user plus system CPU for 40 million
+full-history scrolls. Before samples were 9.632, 8.019 and 7.913 seconds;
+after samples were 8.625, 7.863 and 7.716 seconds. One-minute shared-host
+load fell from about 17.7 to 12.9. The 8.019 versus 7.863 second medians are
+too noisy to establish a CPU speedup, and do not measure native presentation.
+
+Generated mixed output, resize, budget and hyperlink sequences produced the
+same terminal states and recovery-validation outcomes before and after the
+handoff. A pre-existing recovery failure for a completely trimmed open line
+is tracked separately in #651; this handoff does not fix it.
 
 ## End-to-end output throughput (macOS)
 
