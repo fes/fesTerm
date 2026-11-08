@@ -480,6 +480,7 @@
         "watchdog_closure_wins_before_the_exact_commit_claim",
         "watchdog_reaps_at_deadline_while_admission_gate_is_busy",
         "watchdog_drains_worker_output_while_admission_gate_is_busy",
+        "worker_exit_between_empty_read_and_status_check_preserves_final_message",
         "disclosure_guard_refuses_revoked_and_busy_pipe_writes",
         "disclosure_rechecks_after_a_partial_pipe_write",
         "disclosure_write_and_source_revocation_are_serialized",
