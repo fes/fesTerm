@@ -5,10 +5,11 @@
 A separate, job-supervised native probe measures inherited stdout pipe mode
 changes, bounded writes and closure without enabling the automation adapter.
 The prior native run observed initial error 231 and no positive partial write.
-The revised probe drains observed test-harness startup output before the first
-mode attempt, but still fails on any initial refusal or missing positive
-partial. Its revised setup remains unqualified until run natively; exclusive
-ownership, caller liveness and final-recipient privacy remain separate gates.
+The revised [native run](https://github.com/fes/fesTerm/actions/runs/42516446589)
+drained 16 startup bytes and succeeded on the initial mode attempt, but still
+observed no positive partial and failed the probe. It remains unqualified;
+exclusive ownership, caller liveness and final-recipient privacy remain
+separate gates.
 
 ## Coalescing terminal search refresh
 

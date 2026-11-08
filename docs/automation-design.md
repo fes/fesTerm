@@ -1243,8 +1243,11 @@ mode change. An initial refusal still fails the probe even if a diagnostic
 retry succeeds, and a positive partial write must be observed and physically
 accounted for. A previous native run, before this startup synchronization,
 reported `ERROR_PIPE_BUSY`, succeeded on retry after draining 16 bytes, and
-observed full or zero writes but no positive partial. The revised setup has
-not yet been qualified on native Windows.
+observed full or zero writes but no positive partial. In the revised
+[native run](https://github.com/fes/fesTerm/actions/runs/42516446589), the
+initial mode change succeeded after draining 16 startup bytes, but the
+controlled writes still produced no positive partial. The probe failed and
+stdout remains unqualified.
 
 The probe applies only to its controlled pipe and tested environment. It does
 not establish exclusive mode ownership, caller liveness, or a physical

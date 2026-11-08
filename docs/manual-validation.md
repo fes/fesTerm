@@ -3254,7 +3254,10 @@ failure even if a later diagnostic retry succeeds. It requires an actual
 positive partial write, an observed one-byte backpressure condition, and
 physical byte accounting; neither a zero write nor drained occupancy proves a
 partial write. A prior native run failed on initial error 231 and observed no
-positive partial. The revised synchronization still requires a native run.
+positive partial. The revised
+[native run](https://github.com/fes/fesTerm/actions/runs/42516446589) succeeded
+in the initial mode change after draining 16 startup bytes, but also failed to
+observe a positive partial write. It therefore remains unqualified.
 This experiment does not qualify exclusive mode ownership, final-recipient
 privacy fencing, caller liveness, or the production adapter.
 

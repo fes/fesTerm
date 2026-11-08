@@ -821,7 +821,6 @@ fn probe_controller(stop_after_initial: bool) {
     assert_eq!(probe.event("SETUP_READY"), vec![1]);
     let mut observed = Observed::default();
     let startup_bytes = observed.drain(&mut probe);
-    eprintln!("Native stdout startup bytes drained before setup: {startup_bytes}");
     assert_eq!(observed.fill, 0, "unexpected physical fill before setup");
     assert_eq!(
         observed.wait, 0,
@@ -839,6 +838,7 @@ fn probe_controller(stop_after_initial: bool) {
         report("TEST_STOP_AFTER_INITIAL 1");
         panic!("injected failure after the initial mode result");
     }
+    eprintln!("Native stdout startup bytes drained before setup: {startup_bytes}");
     let retry_bytes = observed.drain(&mut probe);
     eprintln!("Native stdout bytes drained before any retry: {retry_bytes}");
     probe.process.send(b"D");
