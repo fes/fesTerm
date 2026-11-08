@@ -2227,6 +2227,9 @@
         "docs/gui-design.md#bounded-rectangle-copy",
         "docs/gui-design.md#terminal-context-menu",
         "docs/gui-design.md#explicit-terminal-hyperlinks",
+        "docs/adr/0079-global-terminal-ingest-budget.md#decision",
+        "validation/terminal-performance/README.md#local-pty-output-backpressure",
+        "validation/terminal-performance/README.md#shared-desktop-update-budget",
         "validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle",
         "validation/terminal-performance/README.md#glyph-layout-retirement-oracle",
         "validation/terminal-performance/README.md#optional-owned-thread-identity-discriminator",
@@ -2243,10 +2246,15 @@
         "ADR-0043",
         "ADR-0045",
         "ADR-0044",
-        "ADR-0052"
+        "ADR-0052",
+        "ADR-0079"
       ],
       "automated_tests": [
         "retained_grid_rows_preserve_exact_meshes_and_skip_unchanged_paint_work",
+        "bounded_output_queue_reports_pressure_before_resuming_output",
+        "queued_output_bytes_apply_backpressure_before_the_event_queue_fills",
+        "output_never_resumes_ahead_of_the_pressure_that_stalled_it",
+        "blocked_reader_delivers_queued_output_then_observes_eof",
         "smart_selection_wraps_sentences_and_preserves_explicit_breaks",
         "smart_selection_never_crosses_borders_or_columns",
         "smart_selection_structured_errors_preserve_indent_and_blank_boundary",
@@ -2359,6 +2367,11 @@
         "panel_fill_callback_preserves_declined_geometry_and_color",
         "textureless_application_chrome_preserves_pixels_across_dpi_and_clipping",
         "profile_terminal_residual_cpu",
+        "global_ingest_budget_rotates_busy_sessions_between_updates",
+        "ingest_byte_budget_bounds_a_single_session_slice",
+        "ingest_byte_budget_stops_at_the_session_slice_ceiling",
+        "pending_commands_survive_backpressure_and_preserve_reply_input_order",
+        "keyboard_multiline_paste_preserves_source_order_in_both_terminal_modes",
         "profile_six_session_aging",
         "aging_settings_reject_zero_overflow_and_malformed_values",
         "aging_fixture_notifies_and_pumps_all_six_owned_sessions",
@@ -2536,9 +2549,12 @@
         "PASTE-*"
       ],
       "requirements": [
-        "docs/gui-design.md#paste-safety"
+        "docs/gui-design.md#paste-safety",
+        "docs/adr/0079-global-terminal-ingest-budget.md#decision"
       ],
-      "decisions": [],
+      "decisions": [
+        "ADR-0079"
+      ],
       "automated_tests": [
         "unbracketed_paste_normalizes_each_line_break_to_one_enter",
         "bracketed_paste_preserves_multiline_payload_and_marker_bytes",
@@ -2576,7 +2592,8 @@
         "keyboard_clipboard_wait_does_not_suppress_focus_or_mouse_reports",
         "keyboard_identified_paste_preserves_confirmation_and_generation_safety",
         "keyboard_native_menu_and_local_gestures_request_identified_clipboard_reads",
-        "paste_palette_command_requests_an_os_clipboard_paste"
+        "paste_palette_command_requests_an_os_clipboard_paste",
+        "multiline_paste_confirms_while_the_ingest_budget_defers_its_target_output"
       ],
       "manual_scenarios": [
         "PS-01",
@@ -4039,7 +4056,9 @@
         "disabled_close_confirmation_closes_live_session_immediately",
         "command_poll_shutdown_preempts_output_before_the_deadline",
         "command_poll_progress_does_not_require_the_sleep_branch_to_win",
-        "live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_queue"
+        "live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_queue",
+        "blocked_output_wakes_on_shutdown_with_a_full_command_queue",
+        "reader_drains_without_publishing_after_blocked_output_is_cancelled"
       ],
       "manual_scenarios": [
         "AS-05",
@@ -4063,7 +4082,9 @@
         "ADR-0017"
       ],
       "automated_tests": [
-        "clicking_a_chip_close_button_emits_a_close_action"
+        "clicking_a_chip_close_button_emits_a_close_action",
+        "blocked_output_wakes_on_shutdown_with_a_full_command_queue",
+        "reader_drains_without_publishing_after_blocked_output_is_cancelled"
       ],
       "manual_scenarios": [
         "TI-06"

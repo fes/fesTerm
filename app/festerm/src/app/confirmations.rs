@@ -992,6 +992,10 @@ impl FesTermApp {
                     ));
                     if !pending.bracketed_paste {
                         ui.label("Bracketed paste is not active; a line may execute immediately.");
+                    } else if pending.deferred_output {
+                        ui.label(
+                            "Earlier output is still being processed, so bracketed paste may not be active; a line may execute immediately.",
+                        );
                     } else {
                         ui.label("This large paste will be sent as one bracketed input operation.");
                     }

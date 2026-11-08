@@ -17,8 +17,9 @@ use festerm_ui_egui::{
 #[cfg(test)]
 use festerm_session::SessionMetrics;
 
-/// Maximum session events drained per frame before yielding for repaint.
-pub const MAX_SESSION_EVENTS_PER_FRAME: usize = 64;
+/// Maximum session events drained for one session before yielding to the
+/// round-robin update scheduler.
+pub const MAX_SESSION_EVENTS_PER_SLICE: usize = 64;
 
 fn next_automation_instance(counter: &AtomicU64) -> Option<u64> {
     counter
@@ -37,31 +38,17 @@ fn automation_instance() -> Option<u64> {
     instance
 }
 
-/// Maximum cumulative bytes synchronously handed to
-/// [`Terminal::ingest`](festerm_core::Terminal::ingest) in a single
-/// [`pump_session_events`] call, even if [`MAX_SESSION_EVENTS_PER_FRAME`]
-/// hasn't been reached yet. `Terminal::ingest` has no internal per-call
-/// budget of its own - it's a tight byte-parsing loop - so without this,
-/// draining up to 64 output events at [`MAX_IO_CHUNK_BYTES`] each could
-/// synchronously parse several megabytes in one frame (e.g. right after a
-/// `dir /s` on a large tree), blocking `update()` long enough that new
-/// keyboard input (including Ctrl+C) couldn't register until it finished.
-/// Bounding by bytes forces a large backlog to drain incrementally across
-/// many frames instead, keeping each frame's parse work - and thus input
-/// latency - low regardless of the size of the retained backlog.
-pub const MAX_INGEST_BYTES_PER_FRAME: usize = MAX_IO_CHUNK_BYTES * 4;
+/// Byte threshold for one session's scheduling slice. An indivisible event
+/// may cross it by at most that event's bounded payload.
+pub const MAX_INGEST_BYTES_PER_SESSION_SLICE: usize = MAX_IO_CHUNK_BYTES * 4;
 
-/// Once [`MAX_INGEST_BYTES_PER_FRAME`] has been ingested, a pump keeps
-/// draining an already-queued backlog until this much wall time has elapsed.
-/// Under sustained output each frame otherwise spends most of its time
-/// blocked acquiring the next drawable, so a fixed byte floor alone caps
-/// throughput at the display rate. The budget still bounds how long `update()`
-/// can be held, keeping keyboard input (including Ctrl+C) responsive.
-pub const INGEST_TIME_BUDGET: Duration = Duration::from_millis(8);
+/// Total synchronous output-ingest time available to all sessions in an
+/// application update.
+pub const GLOBAL_INGEST_TIME_BUDGET: Duration = Duration::from_millis(4);
 
-/// Absolute ceiling on bytes ingested by one pump, regardless of the time
-/// budget, so a very fast parser still yields regularly for repaint.
-pub const MAX_INGEST_BYTES_PER_PUMP: usize = MAX_INGEST_BYTES_PER_FRAME * 16;
+/// Aggregate byte threshold across all sessions in one application update.
+/// The final bounded session slice may cross it by at most one slice.
+pub const MAX_INGEST_BYTES_PER_UPDATE: usize = MAX_INGEST_BYTES_PER_SESSION_SLICE * 64;
 
 /// Maximum bytes retained in the ordered pending-write buffer.
 pub const MAX_PENDING_COMMAND_BYTES: usize = DEFAULT_COMMAND_QUEUE_CAPACITY * MAX_IO_CHUNK_BYTES;
@@ -524,7 +511,7 @@ pub struct SessionController<S: Session> {
     has_requested_resize: bool,
     /// Whether the most recent [`Self::pump_events`] call observed at least
     /// one `SessionEvent::Output` chunk, independent of `hit_limit` (which
-    /// only reports whether the bounded per-frame drain was exhausted -
+    /// only reports whether the bounded session slice was exhausted -
     /// true for backpressure, not for "any output arrived"). Callers that
     /// want to know whether new session output landed this frame (e.g. the
     /// background-tab "new output" chip marker, feature request #68) must
@@ -902,9 +889,9 @@ impl<S: Session> SessionController<S> {
 
     /// Returns whether another frame is required to continue a bounded drain.
     ///
-    /// This reports backpressure (the per-frame event cap was hit), *not*
+    /// This reports backpressure (the per-session slice cap was hit), *not*
     /// "did any output arrive" - a normal, modest burst of output drains
-    /// well under [`MAX_SESSION_EVENTS_PER_FRAME`] and reports `false` here
+    /// well under [`MAX_SESSION_EVENTS_PER_SLICE`] and reports `false` here
     /// even though real output was ingested. Callers that need to know
     /// whether output arrived this call (e.g. the background-tab "new
     /// output" chip marker) must read [`Self::last_pump_output_received`]
@@ -920,17 +907,29 @@ impl<S: Session> SessionController<S> {
         terminal: &mut Terminal,
         resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
     ) -> bool {
+        self.pump_events_with_resize_slice(terminal, resize)
+            .hit_limit
+    }
+
+    pub(crate) fn pump_events_with_resize_slice(
+        &mut self,
+        terminal: &mut Terminal,
+        resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
+    ) -> PumpResult {
         self.last_pump_output_received = false;
         let Some(session) = &self.session else {
-            return false;
+            return PumpResult {
+                hit_limit: false,
+                output_received: false,
+                ingested_bytes: 0,
+            };
         };
         let mut observed = Vec::new();
         let resize_probe = &mut self.resize_probe;
         let result = pump_session_events_with_resize(
             session,
             terminal,
-            MAX_SESSION_EVENTS_PER_FRAME,
-            INGEST_TIME_BUDGET,
+            MAX_SESSION_EVENTS_PER_SLICE,
             resize,
             |event| match event {
                 PumpedSessionEvent::Output(bytes) => resize_probe.record_output(bytes),
@@ -944,7 +943,7 @@ impl<S: Session> SessionController<S> {
             self.last_backpressure = Some(FlowDirection::Output);
         }
         self.last_pump_output_received = result.output_received;
-        result.hit_limit
+        result
     }
 
     /// Whether the most recent [`Self::pump_events`] call observed at least
@@ -1656,6 +1655,7 @@ pub struct PumpResult {
     /// Unlike `hit_limit` (a backpressure signal), this is what callers
     /// should check to learn "did new output arrive this frame".
     pub output_received: bool,
+    pub ingested_bytes: usize,
 }
 
 /// A borrowed session event delivered while the terminal is pumped.
@@ -1677,7 +1677,6 @@ pub fn pump_session_events(
         session,
         terminal,
         maximum,
-        INGEST_TIME_BUDGET,
         |terminal, dimensions| terminal.resize(dimensions).is_ok(),
         observe,
     )
@@ -1687,11 +1686,9 @@ fn pump_session_events_with_resize(
     session: &impl Session,
     terminal: &mut Terminal,
     maximum: usize,
-    time_budget: Duration,
     mut resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
     mut observe: impl FnMut(PumpedSessionEvent<'_>),
 ) -> PumpResult {
-    let started = Instant::now();
     let mut output_received = false;
     let mut ingested_bytes = 0usize;
     for _ in 0..maximum {
@@ -1706,21 +1703,27 @@ fn pump_session_events_with_resize(
                         let _ = terminal.take_reply_queue_overflowed();
                     }
                     ingested_bytes = ingested_bytes.saturating_add(bytes.len());
-                    if ingested_bytes >= MAX_INGEST_BYTES_PER_PUMP
-                        || (ingested_bytes >= MAX_INGEST_BYTES_PER_FRAME
-                            && started.elapsed() >= time_budget)
-                    {
+                    if ingested_bytes >= MAX_INGEST_BYTES_PER_SESSION_SLICE {
                         return PumpResult {
                             hit_limit: true,
                             output_received,
+                            ingested_bytes,
                         };
                     }
                 }
                 SessionEvent::RecoverySync(payload) => {
                     match festerm_sessiond::decode_recovery_sync_command(payload) {
                         Ok(command) => {
-                            apply_recovery_sync(terminal, &command);
+                            ingested_bytes = ingested_bytes
+                                .saturating_add(apply_recovery_sync(terminal, &command));
                             observe(PumpedSessionEvent::Event(&event));
+                            if ingested_bytes >= MAX_INGEST_BYTES_PER_SESSION_SLICE {
+                                return PumpResult {
+                                    hit_limit: true,
+                                    output_received,
+                                    ingested_bytes,
+                                };
+                            }
                         }
                         Err(error) => {
                             observe(PumpedSessionEvent::Event(&SessionEvent::Error(
@@ -1732,6 +1735,7 @@ fn pump_session_events_with_resize(
                             return PumpResult {
                                 hit_limit: false,
                                 output_received,
+                                ingested_bytes,
                             };
                         }
                     }
@@ -1758,6 +1762,7 @@ fn pump_session_events_with_resize(
                 return PumpResult {
                     hit_limit: false,
                     output_received,
+                    ingested_bytes,
                 };
             }
         }
@@ -1765,26 +1770,35 @@ fn pump_session_events_with_resize(
     PumpResult {
         hit_limit: true,
         output_received,
+        ingested_bytes,
     }
 }
 
-fn apply_recovery_sync(terminal: &mut Terminal, command: &festerm_sessiond::RecoverySyncCommand) {
-    match command {
+fn apply_recovery_sync(
+    terminal: &mut Terminal,
+    command: &festerm_sessiond::RecoverySyncCommand,
+) -> usize {
+    let ingested_bytes = match command {
         festerm_sessiond::RecoverySyncCommand::SetScrollbackLimit { limit_bytes } => {
             terminal.set_scrollback_limit(*limit_bytes);
+            0
         }
         festerm_sessiond::RecoverySyncCommand::SetColorScheme(scheme) => {
             terminal.set_color_scheme(*scheme);
+            0
         }
         festerm_sessiond::RecoverySyncCommand::MirrorBytes(bytes) => {
             terminal.ingest(bytes);
+            bytes.len()
         }
         festerm_sessiond::RecoverySyncCommand::ResetToInitialState => {
             terminal.reset_to_initial_state();
+            0
         }
-    }
+    };
     let _ = terminal.drain_replies();
     let _ = terminal.take_reply_queue_overflowed();
+    ingested_bytes
 }
 
 pub fn seed_session_failure(terminal: &mut Terminal, error: &str) {
@@ -2961,7 +2975,6 @@ mod tests {
             &session,
             &mut terminal,
             10,
-            INGEST_TIME_BUDGET,
             |terminal, dimensions| {
                 assert_eq!(terminal.dimensions(), Dimensions::new(20, 6).unwrap());
                 assert_eq!(terminal.cell_ref(0, 0).unwrap().text(), "b");
@@ -3062,7 +3075,7 @@ mod tests {
         let hit_limit = controller.pump_events(&mut terminal);
 
         // `pump_events`'s own return value is a backpressure signal (was it
-        // hit the bounded per-frame drain cap), not "did output arrive" - a
+        // hit the bounded session-slice cap), not "did output arrive" - a
         // modest, single-event burst like this one drains well under the
         // cap and reports `false` here even though real output was
         // ingested. `last_pump_output_received()` is the correct signal for
@@ -3080,11 +3093,11 @@ mod tests {
     fn modest_background_output_is_not_lost_behind_the_backpressure_signal() {
         // Regression test for a bug where the chip "new output" marker
         // (feature request #68) was gated on `pump_events`'s own `bool`
-        // return, which only reports whether the bounded per-frame drain
-        // hit `MAX_SESSION_EVENTS_PER_FRAME` - so any burst under that cap
+        // return, which only reports whether the bounded session slice
+        // hit `MAX_SESSION_EVENTS_PER_SLICE` - so any burst under that cap
         // (i.e. almost all ordinary output) never set the unread flag.
         // `last_pump_output_received()` must report the output regardless
-        // of whether the per-frame cap was hit.
+        // of whether the session-slice cap was hit.
         let session = FakeSession::new([SessionEvent::Output(b"a few lines\r\n".to_vec())]);
         let mut controller = SessionController::for_test(session);
         let mut terminal =
@@ -3094,7 +3107,7 @@ mod tests {
         let hit_limit = controller.pump_events(&mut terminal);
         assert!(
             !hit_limit,
-            "a single modest event never hits the per-frame cap"
+            "a single modest event never hits the session-slice cap"
         );
         assert!(
             controller.last_pump_output_received(),
@@ -3314,15 +3327,15 @@ mod tests {
     }
 
     #[test]
-    fn ingest_byte_budget_bounds_a_single_pump_even_under_the_event_count_cap() {
+    fn ingest_byte_budget_bounds_a_single_session_slice() {
         // A large heavy-output backlog (e.g. a `dir /s` on a big tree) can
-        // arrive as far fewer than `MAX_SESSION_EVENTS_PER_FRAME` chunks
+        // arrive as far fewer than `MAX_SESSION_EVENTS_PER_SLICE` chunks
         // once each chunk is close to `MAX_IO_CHUNK_BYTES`. Without a byte
         // budget, a single `pump_session_events` call would synchronously
         // `Terminal::ingest` all of it - this proves the byte budget kicks
         // in and reports `hit_limit` (so callers keep requesting repaints
         // and draining incrementally) well before the event-count cap.
-        let chunk = vec![b'x'; MAX_INGEST_BYTES_PER_FRAME];
+        let chunk = vec![b'x'; MAX_INGEST_BYTES_PER_SESSION_SLICE];
         let session = FakeSession::new([
             SessionEvent::Output(chunk.clone()),
             SessionEvent::Output(chunk),
@@ -3334,8 +3347,7 @@ mod tests {
         let result = pump_session_events_with_resize(
             &session,
             &mut terminal,
-            MAX_SESSION_EVENTS_PER_FRAME,
-            Duration::ZERO,
+            MAX_SESSION_EVENTS_PER_SLICE,
             |terminal, dimensions| terminal.resize(dimensions).is_ok(),
             |_| observed_events += 1,
         );
@@ -3349,8 +3361,8 @@ mod tests {
     }
 
     #[test]
-    fn ingest_time_budget_drains_past_the_byte_floor_but_stops_at_the_pump_ceiling() {
-        let chunk_count = MAX_INGEST_BYTES_PER_PUMP / MAX_IO_CHUNK_BYTES + 1;
+    fn ingest_byte_budget_stops_at_the_session_slice_ceiling() {
+        let chunk_count = MAX_INGEST_BYTES_PER_SESSION_SLICE / MAX_IO_CHUNK_BYTES + 1;
         let session = FakeSession::new(
             (0..chunk_count).map(|_| SessionEvent::Output(vec![b'x'; MAX_IO_CHUNK_BYTES])),
         );
@@ -3362,19 +3374,18 @@ mod tests {
             &session,
             &mut terminal,
             usize::MAX,
-            Duration::from_secs(3600),
             |terminal, dimensions| terminal.resize(dimensions).is_ok(),
             |_| observed_events += 1,
         );
 
         assert!(
             result.hit_limit,
-            "the pump ceiling must report backpressure"
+            "the session-slice ceiling must report backpressure"
         );
         assert_eq!(
             observed_events,
-            MAX_INGEST_BYTES_PER_PUMP / MAX_IO_CHUNK_BYTES,
-            "an unexpired budget drains past the floor up to the ceiling"
+            MAX_INGEST_BYTES_PER_SESSION_SLICE / MAX_IO_CHUNK_BYTES,
+            "an unexpired budget drains up to the session-slice ceiling"
         );
     }
 
@@ -3724,7 +3735,7 @@ mod tests {
             pump_session_events(
                 &session,
                 &mut terminal,
-                MAX_SESSION_EVENTS_PER_FRAME,
+                MAX_SESSION_EVENTS_PER_SLICE,
                 |_| {},
             );
             let replies = terminal.drain_replies();
@@ -3762,7 +3773,7 @@ mod tests {
                 pump_session_events(
                     &session,
                     &mut terminal,
-                    MAX_SESSION_EVENTS_PER_FRAME,
+                    MAX_SESSION_EVENTS_PER_SLICE,
                     |_| {},
                 );
                 let replies = terminal.drain_replies();
@@ -3782,7 +3793,7 @@ mod tests {
                 let result = pump_session_events(
                     &session,
                     &mut terminal,
-                    MAX_SESSION_EVENTS_PER_FRAME,
+                    MAX_SESSION_EVENTS_PER_SLICE,
                     |_| {},
                 );
                 let replies = terminal.drain_replies();

@@ -61,6 +61,9 @@ pub(crate) struct PendingPasteConfirmation {
     pub(crate) lifecycle_generation: u64,
     pub(crate) input_ownership_epoch: u64,
     pub(crate) bracketed_paste: bool,
+    /// The target still had output deferred by the shared ingest budget, so
+    /// `bracketed_paste` may not reflect the program's current mode.
+    pub(crate) deferred_output: bool,
     pub(crate) cancel_focus_requested: bool,
 }
 
