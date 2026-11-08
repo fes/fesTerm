@@ -20,12 +20,14 @@ rate limit is not a substitute for bounded main-thread work.
 
 ## Decision
 
-Give all desktop sessions one shared **4 ms terminal-ingest budget per
-application update**, checked between bounded session slices. Each slice
-processes at most 64 events or 256 KiB of ingested bytes. A single event may
-cross the slice threshold by at most that event's bounded payload. A 16 MiB
-aggregate byte threshold stops further slices; the final slice may cross it
-by at most one bounded slice.
+Give the sessions in each desktop window one shared **4 ms terminal-ingest
+budget per update**, checked between bounded session slices. Each window's
+update applies its own budget, so an application update with several windows
+can spend up to one budget per window. Each slice processes at most 64 events
+or 256 KiB of ingested bytes. A single event may cross the slice threshold by
+at most that event's bounded payload. A 16 MiB per-window aggregate byte
+threshold stops further slices; the final slice may cross it by at most one
+bounded slice.
 
 Rotate the first session pumped after each slice and update, and continue
 round-robin only for sessions whose slice reports remaining work. When time or
@@ -42,6 +44,13 @@ before keyboard or paste input newly admitted by that frame. Keyboard and
 bracketed-paste encoding uses the terminal modes after that frame's ingested
 prefix, not mode changes still waiting in deferred output. This decision adds
 no priority queue or parallel parser.
+
+Deferred output can still disable bracketed paste, so the cached mode cannot
+waive paste confirmation. If a session's latest slice stopped with queued
+events, or the latest update did not reach it, a multiline paste into it uses
+the existing multiline confirmation even when bracketed paste appears active.
+The modal states that earlier output is still being processed; its existing
+mode check cancels it if the deferred output changes bracketed paste.
 
 For the local PTY backend, a reader blocked by the bounded output event queue
 or byte budget waits for queue space instead of retrying on a timer. Consumption
@@ -61,6 +70,9 @@ automation reservations are unchanged.
   ordering, resize, replies and terminal snapshots.
 - Remove all ingest time limits: maximizes drain throughput but leaves GUI
   responsiveness dependent on backlog size.
+- Hold a paste until its target drains: a sustained producer may never drain,
+  and paste text held outside the ordered input queue could fall behind later
+  keyboard input.
 - Keep retrying a full PTY output queue every 5 ms: that wakes without space
   becoming available and can delay resumption.
 - Use a blocking channel send for output: a full queue could prevent
@@ -80,6 +92,11 @@ This decision does not change terminal rendering, session ownership, transport
 queue capacity, background-output indicators or input encoding. It does not
 cap frame rate or establish physical input-to-display latency.
 
+While other sessions exhaust the budget, a multiline paste into a session the
+update did not reach asks for confirmation even if that session has no pending
+mode change. The budget bounds each window's update, not the total across
+windows.
+
 The PTY reader no longer repeatedly increments the backpressure counter while
 space is unchanged, so that diagnostic count is not comparable to the prior
 timer-retry count. The control worker's existing idle polling remains. If the
@@ -88,14 +105,17 @@ timeout still initiates cancellation and wakes the reader.
 
 ## Validation impact
 
-- **Invariants introduced or changed:** Shared per-update ingest budget,
+- **Invariants introduced or changed:** Per-window shared ingest budget,
   round-robin progress, bounded session slices and continuation repaint;
-  the local PTY reader waits for space or cancellation without changing output
-  bounds or ordering; per-session ordered input/reply semantics remain unchanged.
+  deferred output requires multiline paste confirmation; the local PTY reader
+  waits for space or cancellation without changing output bounds or ordering;
+  per-session ordered input/reply semantics remain unchanged.
 - **GUI/action edges affected:** `TERM-01` and background session progress
-  represented by `CHIP-01`, plus existing `CLOSE-*` and `STOP-01` shutdown;
-  no new user action or indicator is introduced.
+  represented by `CHIP-01`, the `PASTE-02`/`PASTE-03` confirmation rule, and
+  existing `CLOSE-*` and `STOP-01` shutdown; no new user action or indicator is
+  introduced.
 - **Automated tests required:** `global_ingest_budget_rotates_busy_sessions_between_updates`,
+  `multiline_paste_confirms_while_the_ingest_budget_defers_its_target_output`,
   `ingest_byte_budget_bounds_a_single_session_slice`,
   `ingest_byte_budget_stops_at_the_session_slice_ceiling`,
   `pending_commands_survive_backpressure_and_preserve_reply_input_order`,

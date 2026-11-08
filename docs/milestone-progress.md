@@ -13,6 +13,23 @@ The repository's PTY probe measures a deliberately stalled reader and a
 normally draining output stream using process CPU time. These observations do
 not qualify GUI responsiveness or native key-to-PTY latency.
 
+## Sharing one ingest budget across a window's sessions
+
+Each session used to receive its own 8 ms parsing budget per pump, and the
+active session was pumped again after painting, so synchronous parsing grew
+with the number of busy sessions. A desktop window now gives its sessions one
+4 ms budget per update, in bounded round-robin slices. Work that remains is
+kept in its queue and requests another frame. Each window has its own budget,
+so several windows can each spend one per update. ADR 0079 records the
+ordering rules; no throughput or latency improvement is claimed without
+matched measurements.
+
+Review found that the budget could leave a session's queued `ESC[?2004l`
+unparsed while its cached mode still showed bracketed paste, so a multiline
+paste could skip its confirmation. A session whose output remains deferred now
+requires confirmation for multiline text, and the existing mode check cancels
+the dialog if the deferred output changes the mode.
+
 ## Composing live desktop panes
 
 Desktop windows can now arrange two to four existing session or document

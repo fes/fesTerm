@@ -196,10 +196,10 @@ an early repaint until the debounced resize can be sent, without an idle poll.
 Session availability uses egui's single-pass wake API rather than its zero-delay
 two-pass widget-settling policy. Every event still requests a wake, including
 events arriving during a frame. Terminal ingestion now shares a 4 ms budget
-across desktop sessions per application update, with bounded round-robin slices
-and continuation wakes when work remains. This bounds synchronous update work;
-it is not a frame-rate cap or a physical presentation-latency claim. The active
-session is no longer pumped again after painting.
+across each desktop window's sessions per update, with bounded round-robin
+slices and continuation wakes when work remains. This bounds synchronous update
+work per window; it is not a frame-rate cap or a physical presentation-latency
+claim. The active session is no longer pumped again after painting.
 
 For `TERM-01` and session close/stop, a backpressured local PTY reader wakes
 when event space becomes available or cancellation is requested. It still
@@ -869,7 +869,7 @@ Only the frozen view's owned popup is closed; ordinary live menus remain usable.
 | --- | --- | --- | --- | --- | --- |
 | `PASTE-01` | `K2 → K2` | Ordinary mode, one line below threshold, each clipboard route; type Enter/text before or with callback. | Paired payload used without reread; identified read bound to original tab/generation/ownership; clipboard bytes precede following keyboard input using the existing bounded write queue; no dialog or retained clipboard value. | Fixture clears input buffer. | P,H,N |
 | `PASTE-02` | `K2 → K12` | Ordinary mode multiline. | Exact title line count/identity, execution warning, state, exact counts, faithful bounded preview; Cancel focused. | `PASTE-05`. | P,H,V,N,U |
-| `PASTE-03` | Bracketed `K2 → K2` | Ordinary multiline. | One ordered write with bracket markers, no dialog. | Disable bracketed mode/reset fixture. | P,H,N |
+| `PASTE-03` | Bracketed `K2 → K2` | Ordinary multiline. | One ordered write with bracket markers, no dialog. If the shared ingest budget left that session's output queued, the cached mode may be stale: `PASTE-02`'s confirmation opens instead, states that earlier output is still being processed, and cancels if that output changes bracketed paste. | Disable bracketed mode/reset fixture. | P,H,N |
 | `PASTE-04` | Any live mode → `K12` | Exceed character or line threshold. | Large confirmation appears even bracketed; threshold is implementation fact, not safety claim/preference. | Cancel or `PASTE-06`. | P,H,V,N,U |
 | `PASTE-05` | `K12 → K2` | Immediate Enter, inactive Markdown Ctrl+F then Enter, Escape, Cancel, outside click. | Waiting input remains behind the barrier, never activates a new dialog; asynchronous opening-frame controls are inert. Cancellation and dispatch share runtime applicability: inactive scoped/unbound/disabled chords and suppressed app repeats cannot dismiss confirmation. After that frame, Enter targets Cancel until focus is deliberately moved. Escape/Cancel discard waiting keys with feedback; backdrop does not dismiss or touch terminal. | Already `K2`; reopen with risky fixture. | H,N |
 | `PASTE-06` | `K12 → K2` | Deliberately focus Paste, activate once. | Captured normalized original—not preview—is one noninterleaved ordered operation, followed by waiting keyboard input; ordinary-mode line breaks encode Enter (CR) in source order, while bracketed mode preserves the captured payload; modal closes; terminal focus returns. | Fixture resets input. | P,H,N |
