@@ -1,5 +1,16 @@
 # Milestone Progress Narrative
 
+## Reusing evicted scrollback storage
+
+Full primary-screen history now transfers an eligible evicted hard line's
+one-row boundary allocation, and in stricter cases its matching cell
+allocation, directly to an incoming hard line when eviction is already
+unavoidable. The handoff preserves history accounting and does not retain an
+extra pool or old logical content. ADR 0080 records the bounds, recovery and
+ownership constraints, and remaining storage decisions; allocation and CPU
+measurements and their limitations are in
+`validation/terminal-performance/README.md`.
+
 ## Waking a backpressured local PTY reader
 
 The local PTY reader used to retry a full output queue every 5 ms. It now
@@ -8375,3 +8386,31 @@ This is not a configuration-generation or preference owner. It does not
 establish filesystem namespace/alias safety, external-writer coordination,
 durable restart recovery, or safe retirement of previous credentials after
 successful saves, and does not authorize session creation.
+
+## Avoiding allocations for discarded scroll rows
+
+Alternate-screen and partial-region scrolling never add rows to primary
+scrollback, but still built and discarded temporary row vectors. Those paths
+now overwrite departing rows directly; full-screen primary scrolling keeps its
+existing history and accounting path. A warmed allocation oracle observed
+8,192 allocations fall to zero over 4,096 scrolls in each unretained ASCII
+fixture, while the full-history control was unchanged. This measures allocator
+requests, not native throughput, input latency, or total memory.
+
+Single-row primary scrolling now also carries its departing row inline rather
+than allocating a temporary row container; multi-row scrolls still spill when
+needed. With full bounded history, the allocation oracle observed 12,288 calls
+fall to 8,192 over 4,096 scrolls, with the same retained-line count and
+accounted bytes. The cells and row-boundary allocations still require a
+separate bounded-recycling decision.
+
+## Smaller cells without changing recovery or retention
+
+The bounded text-capacity metadata now uses a narrower in-memory field while
+keeping the existing recovery wire value and conservative history charge.
+Eligible ASCII runs replace cell contents in place and still release the old
+text and link. The
+[isolated memory and CPU measurements](../validation/terminal-performance/README.md#compact-cells-with-stable-history-charges)
+depend on terminal width and allocator behavior; they do not establish native
+application RSS or responsiveness. Existing history limits retain the same
+number of lines, so higher retention density remains separate work.
