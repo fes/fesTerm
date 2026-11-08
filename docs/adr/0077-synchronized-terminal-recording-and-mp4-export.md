@@ -50,7 +50,8 @@ Concealed text is replaced with same-width blanks. Admission refuses partial
 control sequences, history viewports, a mismatch between the terminal and
 painted palettes, non-concealed text whose colors make visibility
 ambiguous, and potentially invisible Unicode whitespace or zero-width
-scalars. This can reject visible decomposed accents or joined emoji until
+scalars, as well as Braille pattern blank and Hangul choseong filler. This can
+reject visible decomposed accents or joined emoji until
 they are cleared or replaced. Local selection and focus-dependent overlays
 are not captured; terminal cursor state is retained for non-blinking export.
 The visibility model is conservative and is not a pixel-level legibility

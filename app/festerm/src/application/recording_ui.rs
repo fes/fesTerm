@@ -184,6 +184,9 @@ impl DesktopRecording {
                                 }
                             }
                             ui.checkbox(include_new, "Also include new sessions I open while recording");
+                            if *include_new {
+                                ui.label("If a new session cannot be safely included, the recording stops incomplete.");
+                            }
                             ui.checkbox(&mut draft.delete_source_after_export, "Delete the private source after every MP4 is published");
                             ui.separator();
                             ui.collapsing("One-recording export options", |ui| {

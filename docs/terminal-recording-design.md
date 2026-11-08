@@ -52,7 +52,12 @@ smoke. The remaining native and usability scenarios are `TR-01`–`TR-03` in
 3. Including later user-created sessions is a separate, off-by-default choice.
    Automation-created sessions are not auto-enrolled. The user may explicitly
    add one from its tab. Reconnect or replacement creates a new stream with a
-   fresh checkpoint after explicit inclusion.
+   fresh checkpoint after explicit inclusion. A newly opened session is bound
+   before its first output is applied. For authoritative recovery, enrollment
+   waits for a sanitized initial checkpoint while the backend holds live
+   output. An unresolved enrollment, including a stop during recovery, leaves
+   the recording incomplete. Legacy recovery cannot be auto-enrolled safely;
+   once its screen is ready, start a new recording and include it explicitly.
 4. The confirmation shows the saved export location and a preview of the
    recording subdirectory and MP4 names from **Settings > Recordings**. The
    user configures a location on first use and may override it for this
@@ -221,8 +226,9 @@ scrollback is not copied. Concealed cell text is replaced with same-width
 blanks. Admission refuses a partial control or UTF-8 sequence, a history
 viewport, a terminal palette different from the one actually painted, or
 non-concealed text whose colors make visibility ambiguous. It also refuses
-Unicode whitespace other than plain space and zero-width scalars, which can
-carry invisible content even when the surrounding grapheme is visible. This
+Unicode whitespace other than plain space, zero-width scalars, Braille pattern
+blank and Hangul choseong filler, which can carry invisible content even when
+the surrounding grapheme is visible. This
 can reject decomposed accents or joined emoji as well as genuinely hidden
 text, color emoji, text exposed by a block cursor or selection, and faint text
 whose blending varies by graphics backend; the user can clear or replace that
@@ -352,8 +358,11 @@ annotations and 16 visibility checks; replay history is capped at 8 MiB per
 stream. Export is capped at
 3840x2160 and 30 fps. These are proposed starting limits that require
 measurement and explicit tests before the feature can be enabled. Hitting a
-bound stops and finalizes safely where possible. No live-session failure may
-be presented as a successful recording.
+bound stops and finalizes safely where possible. Unexpected disconnects,
+closed event channels, failed session operations that force disconnection,
+and failed required auto-enrollment stop all streams incomplete. A clean
+session exit instead holds its final frame while the other streams continue.
+No live-session failure may be presented as a successful recording.
 
 When typing normalization, long-output limiting or progressive reveal is
 enabled, planning accepts at most one million source events and an eight-hour

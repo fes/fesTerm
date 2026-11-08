@@ -2787,6 +2787,7 @@ impl FesTermApp {
             if session.adopt_recovered_terminal() {
                 session.controller.record_local_observation_change();
                 session.apply_frontend_terminal_configuration(scrollback_limit);
+                session.complete_recording_auto_enrollment();
                 needs_repaint = true;
             }
             let hit_limit = session.pump_session_events();
@@ -6447,15 +6448,9 @@ impl FesTermApp {
 
     pub(crate) fn set_recording_view(&mut self, view: crate::application::recording::WindowView) {
         self.overlays.recording_modal = view.modal;
-        self.state.set_recording_auto_enrollment(view.auto_include);
+        self.state
+            .set_recording_auto_enrollment(view.auto_include.clone());
         self.recording_view = view;
-    }
-
-    pub(crate) fn take_recording_auto_enrollments(
-        &mut self,
-        recording: Option<festerm_recording::RecordingId>,
-    ) -> Vec<TabId> {
-        self.state.take_recording_auto_enrollments(recording)
     }
 
     pub(crate) fn take_recording_request(
@@ -7128,6 +7123,7 @@ impl FesTermApp {
                     TabContent::Session(session) => {
                         if session.adopt_recovered_terminal() {
                             session.apply_frontend_terminal_configuration(scrollback_limit);
+                            session.complete_recording_auto_enrollment();
                             ui.ctx().request_repaint();
                         }
                         session.prepare_terminal_link_context();

@@ -42,7 +42,7 @@ pub(crate) enum Request {
 #[derive(Clone, Default)]
 pub(crate) struct WindowView {
     pub active: Option<RecordingId>,
-    pub auto_include: Option<RecordingId>,
+    pub auto_include: Option<SharedRecording>,
     pub label: Option<String>,
     pub exporting: bool,
     pub preparing: bool,
@@ -569,7 +569,11 @@ impl DesktopRecording {
         };
         WindowView {
             active,
-            auto_include: active.filter(|id| Some(*id) == self.include_new),
+            auto_include: self
+                .recording
+                .as_ref()
+                .filter(|recording| active == Some(recording.id()) && self.include_new == active)
+                .cloned(),
             label,
             exporting: self.export.is_some(),
             preparing: self.starting.is_some(),
@@ -1445,17 +1449,6 @@ impl FesTermApplication {
         for (window, request) in requests {
             recording.request(self, window, request, context);
             context.request_repaint();
-        }
-        let target = recording
-            .recording_id()
-            .filter(|id| Some(*id) == recording.include_new);
-        let candidates: Vec<_> = self
-            .windows
-            .iter_mut()
-            .flat_map(|window| window.app.take_recording_auto_enrollments(target))
-            .collect();
-        for id in candidates {
-            recording.include(self, id);
         }
         let had_action = recording.action.is_some();
         recording.poll(self, context);

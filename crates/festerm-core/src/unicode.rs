@@ -152,5 +152,8 @@ pub(crate) fn grapheme_width(cluster: &str) -> usize {
 
 pub(crate) fn recording_character_visibility_is_ambiguous(character: char) -> bool {
     character != ' '
-        && (character.is_whitespace() || UnicodeWidthChar::width(character).unwrap_or(0) == 0)
+        && (character.is_whitespace()
+            || UnicodeWidthChar::width(character).unwrap_or(0) == 0
+            // These have terminal width but can be blank in supported fonts.
+            || matches!(character, '\u{115f}' | '\u{2800}'))
 }

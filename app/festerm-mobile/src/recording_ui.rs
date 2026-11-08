@@ -234,6 +234,9 @@ impl MobileApp {
                         &mut self.recording_ui.include_new_draft,
                         "Also include new sessions I open while recording",
                     );
+                    if self.recording_ui.include_new_draft {
+                        ui.label("If a new session cannot be safely included, the recording stops incomplete.");
+                    }
                     ui.label("Reconnecting an existing session still requires explicit inclusion.");
                     ui.separator();
                     ui.strong("Export for this recording");
@@ -516,9 +519,21 @@ impl MobileApp {
             return;
         }
         if let Err(error) = self.include_terminal_in_recording(id) {
-            self.recording_ui.status = Some(format!(
-                "The new session was not added to the recording: {error}"
-            ));
+            let mut status = format!("The new session was not added to the recording: {error}");
+            match self.sink.live.current_recording() {
+                Ok(Some(recording)) if Some(recording.id()) == intended => {
+                    if let Err(stop_error) = recording.fail_integrity(
+                        "Recording stopped because a new session could not be included",
+                    ) {
+                        status.push_str(&format!("; could not stop recording: {stop_error}"));
+                    }
+                }
+                Ok(_) => {}
+                Err(state_error) => {
+                    status.push_str(&format!("; recording state failed: {state_error}"));
+                }
+            }
+            self.recording_ui.status = Some(status);
         }
     }
 

@@ -426,11 +426,20 @@ fn ambiguous_color_text_refuses_start_without_creating_a_source() {
 
 #[test]
 fn invisible_unicode_refuses_start_without_creating_a_source() {
-    for text in ["\u{00a0}", "X\u{034f}", "👩\u{200d}💻"] {
+    for text in [
+        "\u{00a0}",
+        "\u{2800}",
+        "\u{115f}",
+        "X\u{034f}",
+        "👩\u{200d}💻",
+    ] {
         let directory = private_dir();
         let mut live = terminal(20, 2);
         live.ingest(text.as_bytes());
-        assert!(Recorder::start(directory.path(), &[&live], || {}).is_err());
+        assert!(
+            Recorder::start(directory.path(), &[&live], || {}).is_err(),
+            "accepted {text:?}"
+        );
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 }
@@ -447,7 +456,11 @@ fn ordinary_visible_unicode_is_preserved_in_the_initial_checkpoint() {
     let Some(ArtifactEvent::Started { terminal, .. }) = reader.next_event().unwrap() else {
         panic!("expected the initial checkpoint");
     };
-    assert!(terminal.row_text(0).unwrap().contains("é界🧬"));
+    let text = terminal.row_text(0).unwrap();
+    assert_eq!(text, live.row_text(0).unwrap());
+    for character in ["é", "界", "🧬"] {
+        assert!(text.contains(character));
+    }
 }
 
 #[test]
@@ -676,30 +689,32 @@ fn repeat_of_ambiguous_text_stops_before_an_unfaithful_event() {
 
 #[test]
 fn repeat_of_invisible_preconsent_character_stops_before_persisting_it() {
-    let directory = private_dir();
-    let mut live = terminal(20, 2);
-    live.ingest("\u{00a0}".as_bytes());
-    live.ingest(b"\x1b[2J\x1b[H");
-    let (mut recorder, streams, ready) = start(directory.path(), &[&live]);
-    recorder
-        .ingest_output(streams[0], &mut live, b"\x1b[2b")
-        .unwrap();
-    recorder.stop(FinishReason::User).unwrap();
-    let Completion::Incomplete {
-        path,
-        reason: FinishReason::IntegrityFailure,
-        ..
-    } = completion(&mut recorder, ready)
-    else {
-        panic!("an invisible pre-consent repeat must not be persisted");
-    };
-    let mut reader = ArtifactReader::new(fs::File::open(path).unwrap()).unwrap();
-    let Some(ArtifactEvent::Started { terminal, .. }) = reader.next_event().unwrap() else {
-        panic!("expected the safe initial checkpoint");
-    };
-    assert!(!terminal.row_text(0).unwrap().contains('\u{00a0}'));
-    while let Some(event) = reader.next_event().unwrap() {
-        assert!(!matches!(event, ArtifactEvent::Output { .. }));
+    for secret in ["\u{00a0}", "\u{2800}", "\u{115f}"] {
+        let directory = private_dir();
+        let mut live = terminal(20, 2);
+        live.ingest(secret.as_bytes());
+        live.ingest(b"\x1b[2J\x1b[H");
+        let (mut recorder, streams, ready) = start(directory.path(), &[&live]);
+        recorder
+            .ingest_output(streams[0], &mut live, b"\x1b[2b")
+            .unwrap();
+        recorder.stop(FinishReason::User).unwrap();
+        let Completion::Incomplete {
+            path,
+            reason: FinishReason::IntegrityFailure,
+            ..
+        } = completion(&mut recorder, ready)
+        else {
+            panic!("an invisible pre-consent repeat must not be persisted: {secret:?}");
+        };
+        let mut reader = ArtifactReader::new(fs::File::open(path).unwrap()).unwrap();
+        let Some(ArtifactEvent::Started { terminal, .. }) = reader.next_event().unwrap() else {
+            panic!("expected the safe initial checkpoint");
+        };
+        assert!(!terminal.row_text(0).unwrap().contains(secret));
+        while let Some(event) = reader.next_event().unwrap() {
+            assert!(!matches!(event, ArtifactEvent::Output { .. }));
+        }
     }
 }
 

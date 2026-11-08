@@ -16,7 +16,11 @@ use crate::{
 struct State {
     recorder: Recorder,
     failure: Option<String>,
+    pending_enrollments: usize,
 }
+
+const PENDING_ENROLLMENT_FAILURE: &str =
+    "Recording stopped because a new session could not be included";
 
 /// One application-wide recording shared by terminal owners and lifecycle
 /// callbacks. The mutex only protects in-memory capture admission; disk I/O
@@ -106,6 +110,7 @@ impl SharedRecording {
             state: Arc::new(Mutex::new(State {
                 recorder,
                 failure: None,
+                pending_enrollments: 0,
             })),
             admission_closed: loss,
             wake,
@@ -143,19 +148,55 @@ impl SharedRecording {
         })
     }
 
+    /// Reserves a required enrollment while a session's initial screen is
+    /// recovered. Stopping or dropping it unresolved makes the source incomplete.
+    pub fn reserve_enrollment(&self) -> Result<PendingEnrollment, CaptureError> {
+        let mut state = self.lock()?;
+        if self.admission_closed.load(Ordering::Acquire) || !state.recorder.is_recording() {
+            return Err(CaptureError::new("recording is not active"));
+        }
+        state.pending_enrollments = state
+            .pending_enrollments
+            .checked_add(1)
+            .ok_or_else(|| CaptureError::new("too many pending recording sessions"))?;
+        Ok(PendingEnrollment {
+            recording: self.clone(),
+            resolved: false,
+        })
+    }
+
     /// Stops every included stream, including when called by a native
     /// lifecycle callback without a subsequent UI frame.
     pub fn stop(&self, reason: FinishReason) -> Result<bool, CaptureError> {
         let stopped_at = Instant::now();
         self.admission_closed.store(true, Ordering::Release);
-        self.apply(|recorder| {
-            if recorder.is_recording() {
-                recorder.stop_at(reason, stopped_at)?;
-                Ok(true)
+        let mut state = self.lock()?;
+        let mut notify = false;
+        let result = if state.recorder.is_recording() {
+            let reason = if state.pending_enrollments != 0 {
+                if state.failure.is_none() {
+                    state.failure = Some(PENDING_ENROLLMENT_FAILURE.to_owned());
+                    notify = true;
+                }
+                FinishReason::IntegrityFailure
             } else {
-                Ok(false)
+                reason
+            };
+            state.recorder.stop_at(reason, stopped_at).map(|()| true)
+        } else {
+            Ok(false)
+        };
+        if let Err(error) = &result {
+            if state.failure.is_none() {
+                state.failure = Some(error.to_string());
+                notify = true;
             }
-        })
+        }
+        drop(state);
+        if notify {
+            (self.wake)();
+        }
+        result
     }
 
     /// Stops the entire set when the host can no longer establish the
@@ -253,6 +294,92 @@ impl SharedRecording {
             (self.wake)();
         }
         result
+    }
+}
+
+/// A required enrollment that has not yet received its initial terminal state.
+pub struct PendingEnrollment {
+    recording: SharedRecording,
+    resolved: bool,
+}
+
+impl PendingEnrollment {
+    pub fn enroll(mut self, terminal: &Terminal) -> Result<RecordingStream, CaptureError> {
+        let mut state = self.recording.lock()?;
+        if self.recording.admission_closed.load(Ordering::Acquire) || !state.recorder.is_recording()
+        {
+            if !state.recorder.is_recording() {
+                state.pending_enrollments -= 1;
+                self.resolved = true;
+            }
+            return Err(CaptureError::new("recording is not active"));
+        }
+        state.pending_enrollments -= 1;
+        self.resolved = true;
+        let id = match state.recorder.enroll(terminal) {
+            Ok(id) => id,
+            Err(error) => {
+                self.recording
+                    .admission_closed
+                    .store(true, Ordering::Release);
+                let stop_error = if state.recorder.is_recording() {
+                    state
+                        .recorder
+                        .stop_at(FinishReason::IntegrityFailure, Instant::now())
+                        .err()
+                } else {
+                    None
+                };
+                let message = match stop_error {
+                    Some(stop_error) => format!(
+                        "{PENDING_ENROLLMENT_FAILURE}: {error}; could not stop recording: {stop_error}"
+                    ),
+                    None => format!("{PENDING_ENROLLMENT_FAILURE}: {error}"),
+                };
+                if state.failure.is_none() {
+                    state.failure = Some(message.clone());
+                }
+                drop(state);
+                (self.recording.wake)();
+                return Err(CaptureError::new(message));
+            }
+        };
+        Ok(RecordingStream {
+            recording: self.recording.clone(),
+            id,
+            ended: false,
+        })
+    }
+}
+
+impl Drop for PendingEnrollment {
+    fn drop(&mut self) {
+        if self.resolved {
+            return;
+        }
+        self.recording
+            .admission_closed
+            .store(true, Ordering::Release);
+        let Ok(mut state) = self.recording.lock() else {
+            return;
+        };
+        state.pending_enrollments -= 1;
+        if state.recorder.is_recording() {
+            let failure = match state
+                .recorder
+                .stop_at(FinishReason::IntegrityFailure, Instant::now())
+            {
+                Ok(()) => PENDING_ENROLLMENT_FAILURE.to_owned(),
+                Err(error) => {
+                    format!("{PENDING_ENROLLMENT_FAILURE}; could not stop recording: {error}")
+                }
+            };
+            if state.failure.is_none() {
+                state.failure = Some(failure);
+            }
+            drop(state);
+            (self.recording.wake)();
+        }
     }
 }
 
@@ -534,5 +661,101 @@ mod tests {
             }
         }
         assert!(output_at.is_some());
+    }
+
+    #[test]
+    fn unresolved_enrollment_never_finishes_as_a_complete_recording() {
+        for scenario in ["user stop", "session removed", "privacy loss"] {
+            let directory = private_dir();
+            let terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+            let loss = Arc::new(AtomicBool::new(false));
+            let (wake, ready) = mpsc::channel();
+            let (recording, _streams) = SharedRecording::start_with_privacy_loss_flag(
+                directory.path(),
+                &[&terminal],
+                loss.clone(),
+                move || {
+                    let _ = wake.send(());
+                },
+            )
+            .unwrap();
+            let pending = recording.reserve_enrollment().unwrap();
+            match scenario {
+                "user stop" => {
+                    recording.stop(FinishReason::User).unwrap();
+                    drop(pending);
+                }
+                "session removed" => drop(pending),
+                "privacy loss" => {
+                    loss.store(true, Ordering::Release);
+                    assert!(pending.enroll(&terminal).is_err());
+                    recording.stop(FinishReason::Lifecycle).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(recording
+                .take_failure()
+                .unwrap()
+                .unwrap()
+                .contains("new session could not be included"));
+            let completion = loop {
+                ready.recv_timeout(Duration::from_secs(10)).unwrap();
+                if let Some(completion) = recording.poll_completion().unwrap() {
+                    break completion;
+                }
+            };
+            assert!(
+                matches!(
+                    completion,
+                    Completion::Incomplete {
+                        reason: FinishReason::IntegrityFailure,
+                        ..
+                    }
+                ),
+                "{scenario}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolved_enrollment_records_the_recovered_screen_and_live_output() {
+        let directory = private_dir();
+        let terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+        let mut recovered = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+        recovered.ingest(b"visible recovery");
+        let (wake, ready) = mpsc::channel();
+        let (recording, _streams) =
+            SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        let pending = recording.reserve_enrollment().unwrap();
+        let stream = pending.enroll(&recovered).unwrap();
+        stream.ingest_output(&mut recovered, b" live").unwrap();
+        recording.stop(FinishReason::User).unwrap();
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        let Completion::Complete { path, .. } = completion else {
+            panic!("a resolved enrollment should finish normally");
+        };
+        let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+        let mut found_recovery = false;
+        let mut found_live_output = false;
+        while let Some(event) = reader.next_event().unwrap() {
+            match event {
+                ArtifactEvent::Started { terminal, .. } => {
+                    found_recovery |= terminal.row_text(0).unwrap().contains("visible recovery");
+                }
+                ArtifactEvent::Output { bytes, .. } => {
+                    found_live_output |= bytes == b" live";
+                }
+                _ => {}
+            }
+        }
+        assert!(found_recovery && found_live_output);
     }
 }

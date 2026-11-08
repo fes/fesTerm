@@ -31,7 +31,7 @@ pub use settings_store::{
     RecordingLease, RecordingManifest, RecordingSettingsStore, RecordingSource,
     RecordingSourceState,
 };
-pub use shared::{RecordingStream, SharedRecording};
+pub use shared::{PendingEnrollment, RecordingStream, SharedRecording};
 
 /// Maximum number of streams in one synchronized recording.
 pub const MAX_STREAMS: usize = 16;

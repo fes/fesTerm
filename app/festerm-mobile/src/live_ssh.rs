@@ -287,6 +287,17 @@ impl LiveSsh {
         }
     }
 
+    fn stop_failed(&mut self, status: &'static str) {
+        if let Some(stream) = &self.recording_stream {
+            if let Err(error) =
+                stream.fail_integrity("Recording stopped because a terminal session failed")
+            {
+                log::error!("Could not stop recording after a session failure: {error}");
+            }
+        }
+        self.stop(status);
+    }
+
     pub(super) fn send(&mut self, bytes: &[u8]) {
         if !self.input_enabled() || bytes.is_empty() {
             return;
@@ -296,7 +307,7 @@ impl LiveSsh {
                 // Never drop part of a command and then accept its continuation.
                 // The backend admission is atomic; make refusal explicit and
                 // retire this session rather than replay input on a new shell.
-                self.stop(
+                self.stop_failed(
                     "Input rejected; disconnected. Earlier accepted input may have executed.",
                 );
             }
@@ -338,7 +349,7 @@ impl LiveSsh {
                         && !replies.is_empty()
                         && session.try_send_input(&replies).is_err()
                     {
-                        self.stop("Terminal reply rejected; disconnected");
+                        self.stop_failed("Terminal reply rejected; disconnected");
                         return output;
                     }
                 }
@@ -359,14 +370,22 @@ impl LiveSsh {
                     self.running = false;
                     self.status = "Connecting";
                 }
-                Ok(SessionEvent::Lifecycle(_)) | Ok(SessionEvent::Error(_)) => {
-                    if self.tunnel.is_some() {
-                        let status = self.tunnel_end_status();
-                        self.stop(status);
+                Ok(event @ (SessionEvent::Lifecycle(_) | SessionEvent::Error(_))) => {
+                    let status = if self.tunnel.is_some() {
+                        self.tunnel_end_status()
                     } else {
-                        self.stop(
-                            "Session ended or connection lost. Connect again for a fresh shell.",
-                        );
+                        "Session ended or connection lost. Connect again for a fresh shell."
+                    };
+                    if matches!(
+                        event,
+                        SessionEvent::Error(_)
+                            | SessionEvent::Lifecycle(
+                                SessionLifecycle::Failed(_) | SessionLifecycle::Disconnected(_)
+                            )
+                    ) {
+                        self.stop_failed(status);
+                    } else {
+                        self.stop(status);
                     }
                     return output;
                 }
@@ -404,7 +423,7 @@ impl LiveSsh {
                     } else {
                         "SSH worker closed"
                     };
-                    self.stop(status);
+                    self.stop_failed(status);
                     return output;
                 }
             }
@@ -433,7 +452,7 @@ impl LiveSsh {
                     } else {
                         PROBE_FAILED
                     };
-                    self.stop(status);
+                    self.stop_failed(status);
                     return output;
                 }
             }
@@ -445,7 +464,9 @@ impl LiveSsh {
             if self.running {
                 if changed.elapsed() >= Duration::from_millis(100) {
                     let Ok(size) = session_size(dimensions) else {
-                        self.stop("Terminal size cannot be represented by SSH; disconnected");
+                        self.stop_failed(
+                            "Terminal size cannot be represented by SSH; disconnected",
+                        );
                         return output;
                     };
                     if session.try_resize(size).is_ok() {
@@ -623,6 +644,7 @@ mod tests {
         input: Mutex<Vec<Vec<u8>>>,
         resizes: Mutex<Vec<TerminalSize>>,
         rejected: bool,
+        closed: bool,
         shutdowns: Mutex<usize>,
     }
 
@@ -662,7 +684,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .pop_front()
-                .ok_or(SessionTryReceiveError::Empty)
+                .ok_or(if self.closed {
+                    SessionTryReceiveError::Closed
+                } else {
+                    SessionTryReceiveError::Empty
+                })
         }
         fn shutdown(&self, _timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
             panic!("UI must never synchronously wait for shutdown")
@@ -1261,6 +1287,123 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn failed_mobile_session_stops_all_recorded_streams_incomplete() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use festerm_session::{SessionError, SessionErrorKind};
+        use std::{fs::File, sync::mpsc};
+
+        let error = SessionError::new(SessionErrorKind::Output, "synthetic failure");
+        for event in [
+            Some(SessionEvent::Error(error.clone())),
+            Some(SessionEvent::Lifecycle(SessionLifecycle::Failed(
+                error.clone(),
+            ))),
+            Some(SessionEvent::Lifecycle(SessionLifecycle::Disconnected(
+                error.clone(),
+            ))),
+            None,
+        ] {
+            let directory = private_recording_dir();
+            let mut first_terminal = terminal();
+            let mut second_terminal = terminal();
+            let (wake, ready) = mpsc::channel();
+            let (recording, mut streams) = festerm_recording::SharedRecording::start(
+                directory.path(),
+                &[&first_terminal, &second_terminal],
+                move || {
+                    let _ = wake.send(());
+                },
+            )
+            .unwrap();
+            let session = Arc::new(FakeSession {
+                closed: event.is_none(),
+                ..Default::default()
+            });
+            let mut events = session.events.lock().unwrap();
+            events.push_back(SessionEvent::Output(b"before failure".to_vec()));
+            if let Some(event) = event {
+                events.push_back(event);
+            }
+            drop(events);
+            let mut live = connection(session);
+            live.recording_stream = Some(streams.remove(0));
+            let other = streams.remove(0);
+            live.poll(&mut first_terminal, &egui::Context::default());
+            assert!(!recording.is_recording().unwrap());
+            assert!(recording.take_failure().unwrap().is_some());
+            other
+                .ingest_output(&mut second_terminal, b"after failure")
+                .unwrap();
+            assert!(second_terminal
+                .row_text(0)
+                .unwrap()
+                .contains("after failure"));
+            let completion = loop {
+                ready.recv_timeout(Duration::from_secs(10)).unwrap();
+                if let Some(completion) = recording.poll_completion().unwrap() {
+                    break completion;
+                }
+            };
+            let Completion::Incomplete {
+                path,
+                reason: FinishReason::IntegrityFailure,
+                ..
+            } = completion
+            else {
+                panic!("a failed session must make the shared recording incomplete");
+            };
+            let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+            let mut output = Vec::new();
+            while let Some(event) = reader.next_event().unwrap() {
+                if let ArtifactEvent::Output { bytes, .. } = event {
+                    output.extend(bytes);
+                }
+            }
+            assert_eq!(output, b"before failure");
+        }
+    }
+
+    #[test]
+    fn clean_mobile_session_exit_leaves_other_streams_recording() {
+        use festerm_recording::{Completion, FinishReason};
+        use festerm_session::SessionExit;
+        use std::sync::mpsc;
+
+        let directory = private_recording_dir();
+        let mut first_terminal = terminal();
+        let second_terminal = terminal();
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) = festerm_recording::SharedRecording::start(
+            directory.path(),
+            &[&first_terminal, &second_terminal],
+            move || {
+                let _ = wake.send(());
+            },
+        )
+        .unwrap();
+        let session = Arc::new(FakeSession::default());
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Lifecycle(SessionLifecycle::Exited(
+                SessionExit::with_exit_code(0),
+            )));
+        let mut live = connection(session);
+        live.recording_stream = Some(streams.remove(0));
+        live.poll(&mut first_terminal, &egui::Context::default());
+        assert!(recording.is_recording().unwrap());
+        recording.stop(FinishReason::User).unwrap();
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(completion, Completion::Complete { .. }));
     }
 
     #[test]
@@ -1874,6 +2017,7 @@ mod tests {
                 &parked_session
             ));
         }
+
         lock.retry_unlock();
         lock.handle_lifecycle(LifecycleEvent::WillResignActive);
         assert!(!native.suspended(false));
@@ -1906,6 +2050,45 @@ mod tests {
         assert!(!app.dictation_open());
         assert!(first.input.lock().unwrap().is_empty());
         assert!(replacement.input.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn recorded_mobile_session_input_refusal_stops_the_shared_recording() {
+        use festerm_recording::{Completion, FinishReason, SharedRecording};
+        use std::sync::mpsc;
+
+        let directory = private_recording_dir();
+        let first = terminal();
+        let second = terminal();
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) =
+            SharedRecording::start(directory.path(), &[&first, &second], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        let session = Arc::new(FakeSession {
+            rejected: true,
+            ..Default::default()
+        });
+        let mut live = connection(session);
+        live.recording_stream = Some(streams.remove(0));
+        live.send(b"command");
+        assert!(live.session.is_none());
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording.take_failure().unwrap().is_some());
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(
+            completion,
+            Completion::Incomplete {
+                reason: FinishReason::IntegrityFailure,
+                ..
+            }
+        ));
     }
 
     #[test]

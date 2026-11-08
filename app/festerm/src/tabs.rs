@@ -293,7 +293,9 @@ impl ApplicationSession {
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) | Self::TestLocal(_) => None,
+            Self::TestSsh(session) => session.take_recovered_terminal(),
+            #[cfg(test)]
+            Self::TestLocal(_) => None,
         }
     }
 
@@ -304,7 +306,9 @@ impl ApplicationSession {
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => false,
             #[cfg(test)]
-            Self::TestSsh(_) | Self::TestLocal(_) => false,
+            Self::TestSsh(session) => session.recovery_protocol_is_authoritative(),
+            #[cfg(test)]
+            Self::TestLocal(_) => false,
         }
     }
 
@@ -652,11 +656,16 @@ impl Session for ApplicationSession {
 /// A running local-shell or SSH session tab: the terminal, its controller,
 /// and presentation view. `SessionController` remains the sole terminal
 /// writer.
+struct RecordingAutoEnrollment {
+    pending: festerm_recording::PendingEnrollment,
+    generation: u64,
+}
+
 pub struct SessionTab {
     remote_files: Option<crate::remote_files::RemoteFileCapability>,
     pub terminal: Terminal,
     pub controller: SessionController<ApplicationSession>,
-    recording_auto_enrollment: Option<(festerm_recording::RecordingId, u64)>,
+    recording_auto_enrollment: Option<RecordingAutoEnrollment>,
     pub view: TerminalView,
     /// Stable primary identity (`docs/gui-design.md` "Identity precedence").
     /// Transient terminal-provided titles are shown as secondary metadata and
@@ -1031,15 +1040,137 @@ impl SessionTab {
         true
     }
 
+    fn start_recording_auto_enrollment(
+        &mut self,
+        recording: &festerm_recording::SharedRecording,
+        scrollback_limit: ScrollbackLimitPreference,
+    ) {
+        let Some(session) = self.controller.session() else {
+            return;
+        };
+        if matches!(self.inspector_transport, InspectorTransport::Sftp { .. }) {
+            return;
+        }
+        match recording.is_recording() {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                tracing::error!("Could not inspect recording before including a session: {error}");
+                return;
+            }
+        }
+        let authoritative = session.recovery_protocol_is_authoritative();
+        if matches!(
+            session,
+            ApplicationSession::Persistent(_) | ApplicationSession::DevTunnel(_)
+        ) && !authoritative
+        {
+            Self::fail_recording_auto_enrollment(
+                recording,
+                "legacy session recovery cannot be included safely",
+            );
+            return;
+        }
+        if authoritative {
+            match recording.reserve_enrollment() {
+                Ok(pending) => {
+                    self.recording_auto_enrollment = Some(RecordingAutoEnrollment {
+                        pending,
+                        generation: self.controller.lifecycle_generation(),
+                    });
+                    if self.adopt_recovered_terminal() {
+                        self.apply_frontend_terminal_configuration(scrollback_limit);
+                        self.complete_recording_auto_enrollment();
+                    }
+                }
+                Err(error) => Self::fail_recording_auto_enrollment(recording, &error),
+            }
+            return;
+        }
+        if let Err(error) = self.view.validate_recording_view(&self.terminal) {
+            Self::fail_recording_auto_enrollment(recording, error);
+            return;
+        }
+        match recording.enroll(&self.terminal) {
+            Ok(stream) => self.controller.attach_recording_stream(stream),
+            Err(error) => Self::fail_recording_auto_enrollment(recording, &error),
+        }
+    }
+
+    fn fail_recording_auto_enrollment(
+        recording: &festerm_recording::SharedRecording,
+        error: impl std::fmt::Display,
+    ) {
+        tracing::warn!("Could not include a new terminal session in the recording: {error}");
+        match recording.is_recording() {
+            Ok(true) => {
+                if let Err(stop_error) = recording
+                    .fail_integrity("Recording stopped because a new session could not be included")
+                {
+                    tracing::error!(
+                        "Could not stop recording after enrollment failed: {stop_error}"
+                    );
+                }
+            }
+            Ok(false) => {}
+            Err(state_error) => {
+                tracing::error!(
+                    "Could not inspect recording after enrollment failed: {state_error}"
+                );
+            }
+        }
+    }
+
+    pub(crate) fn complete_recording_auto_enrollment(&mut self) {
+        let Some(enrollment) = self.recording_auto_enrollment.take() else {
+            return;
+        };
+        if enrollment.generation != self.controller.lifecycle_generation() {
+            return;
+        }
+        if let Err(error) = self.view.validate_recording_view(&self.terminal) {
+            tracing::warn!("Could not include a recovered terminal in the recording: {error}");
+            return;
+        }
+        match enrollment.pending.enroll(&self.terminal) {
+            Ok(stream) => self.controller.attach_recording_stream(stream),
+            Err(error) => {
+                tracing::warn!("Could not include a recovered terminal in the recording: {error}");
+            }
+        }
+    }
+
     pub fn pump_session_events(&mut self) -> bool {
         let view = &mut self.view;
-        self.controller
-            .pump_events_with_resize(&mut self.terminal, |terminal, dimensions| {
-                !matches!(
-                    view.apply_terminal_resize(terminal, dimensions),
-                    festerm_ui_egui::ResizeOutcome::Rejected
-                )
+        let hit_limit =
+            self.controller
+                .pump_events_with_resize(&mut self.terminal, |terminal, dimensions| {
+                    !matches!(
+                        view.apply_terminal_resize(terminal, dimensions),
+                        festerm_ui_egui::ResizeOutcome::Rejected
+                    )
+                });
+        if self
+            .recording_auto_enrollment
+            .as_ref()
+            .is_some_and(|enrollment| {
+                enrollment.generation != self.controller.lifecycle_generation()
+                    || self.controller.last_pump_output_received()
+                    || self.controller.last_pump_closed()
+                    || matches!(
+                        self.controller.lifecycle(),
+                        Some(
+                            SessionLifecycle::Failed(_)
+                                | SessionLifecycle::Disconnected(_)
+                                | SessionLifecycle::Exited(_)
+                                | SessionLifecycle::Stopped
+                        )
+                    )
             })
+        {
+            self.recording_auto_enrollment = None;
+        }
+        hit_limit
     }
 
     /// Starts a fresh default local session. `window_dimensions`, when
@@ -2972,7 +3103,7 @@ pub struct AppState {
     pub discovery: crate::discovery::Discovery,
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
-    recording_auto_enrollment: Option<festerm_recording::RecordingId>,
+    recording_auto_enrollment: Option<festerm_recording::SharedRecording>,
     pending_native_termination: Option<PendingNativeTermination>,
     #[cfg(feature = "experimental-dev-tunnels")]
     tunnel_reconnects: tunnel_reconnect::TunnelReconnects,
@@ -3942,34 +4073,9 @@ impl AppState {
 
     pub(crate) fn set_recording_auto_enrollment(
         &mut self,
-        recording: Option<festerm_recording::RecordingId>,
+        recording: Option<festerm_recording::SharedRecording>,
     ) {
         self.recording_auto_enrollment = recording;
-    }
-
-    pub(crate) fn take_recording_auto_enrollments(
-        &mut self,
-        recording: Option<festerm_recording::RecordingId>,
-    ) -> Vec<TabId> {
-        let mut ready = Vec::new();
-        for (id, session) in self.session_tabs_with_id_mut() {
-            let Some((target, generation)) = session.recording_auto_enrollment else {
-                continue;
-            };
-            if Some(target) != recording || generation != session.controller.lifecycle_generation()
-            {
-                session.recording_auto_enrollment = None;
-            } else if session.accepts_input() {
-                session.recording_auto_enrollment = None;
-                ready.push(id);
-            } else if !matches!(
-                session.controller.lifecycle(),
-                Some(SessionLifecycle::Starting)
-            ) {
-                session.recording_auto_enrollment = None;
-            }
-        }
-        ready
     }
 
     /// Requests an on-demand SSH-level liveness probe (ADR 0018) on every
@@ -5701,7 +5807,7 @@ impl AppState {
                 tab.remote_files = started.files;
                 tab.tunnel = tunnel;
                 Ok(tab)
-            }, false, self.recording_auto_enrollment);
+            }, false, self.recording_auto_enrollment.as_ref().map(festerm_recording::SharedRecording::id));
     }
 
     pub fn native_termination_pending(&self) -> bool {
@@ -5765,12 +5871,11 @@ impl AppState {
                 && self.active == pending.target
                 && matches!(self.active_tab().content, TabContent::Launcher);
             match pending.receiver.try_recv().unwrap_or_else(|_| Err("Reattach worker failed".into())) {
-                Ok(mut session) if still_requested => {
-                    if let Some(recording) = pending.recording_auto_enrollment {
-                        session.recording_auto_enrollment =
-                            Some((recording, session.controller.lifecycle_generation()));
-                    }
-                    self.place_session(session);
+                Ok(session) if still_requested => {
+                    let recording = self.recording_auto_enrollment.as_ref().filter(|recording| {
+                        Some(recording.id()) == pending.recording_auto_enrollment
+                    }).cloned();
+                    self.place_session_with_recording(session, recording.as_ref());
                 }
                 Err(error) if still_requested => self.resume_error = Some(format!("Could not reattach: {error} No replacement shell was started. Refresh Running Sessions and try again.")),
                 _ => {},
@@ -6310,22 +6415,34 @@ impl AppState {
         }
     }
 
-    fn place_user_session(&mut self, mut session: SessionTab) {
+    fn place_user_session(&mut self, session: SessionTab) {
         let is_replacement = matches!(
             self.active_tab().content,
             TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
         );
-        if let Some(recording) = self.recording_auto_enrollment.filter(|_| !is_replacement) {
-            session.recording_auto_enrollment =
-                Some((recording, session.controller.lifecycle_generation()));
-        }
-        self.place_session(session);
+        let recording = if is_replacement {
+            None
+        } else {
+            self.recording_auto_enrollment.clone()
+        };
+        self.place_session_with_recording(session, recording.as_ref());
     }
 
-    fn place_session(&mut self, mut session: SessionTab) {
+    fn place_session(&mut self, session: SessionTab) {
+        self.place_session_with_recording(session, None);
+    }
+
+    fn place_session_with_recording(
+        &mut self,
+        mut session: SessionTab,
+        recording: Option<&festerm_recording::SharedRecording>,
+    ) {
         session.apply_frontend_terminal_configuration(self.scrollback_limit);
+        if let Some(recording) = recording {
+            session.start_recording_auto_enrollment(recording, self.scrollback_limit);
+        }
         self.workspace_dirty = true;
         // Starting a configured profile also consumes the active Profiles
         // surface, but a synchronous startup failure leaves it available.
@@ -6906,10 +7023,53 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    struct RecordingFixture {
+        _storage: crate::recording_storage::RecordingStorage,
+        _streams: Vec<festerm_recording::RecordingStream>,
+        recording: festerm_recording::SharedRecording,
+        ready: std::sync::mpsc::Receiver<()>,
+        _directory: tempfile::TempDir,
+    }
+
+    impl RecordingFixture {
+        fn new(streams: usize) -> Self {
+            let directory = tempfile::tempdir().unwrap();
+            let path =
+                crate::recording_storage::test_directory_path(directory.path()).join("recordings");
+            let (storage, _) =
+                crate::recording_storage::RecordingStorage::open_for_test(&path).unwrap();
+            let terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+            let terminals = vec![&terminal; streams];
+            let (wake, ready) = std::sync::mpsc::channel();
+            let (recording, streams) =
+                festerm_recording::SharedRecording::start(storage.path(), &terminals, move || {
+                    let _ = wake.send(());
+                })
+                .unwrap();
+            Self {
+                _storage: storage,
+                _streams: streams,
+                recording,
+                ready,
+                _directory: directory,
+            }
+        }
+
+        fn completion(&self) -> festerm_recording::Completion {
+            loop {
+                self.ready.recv_timeout(Duration::from_secs(10)).unwrap();
+                if let Some(completion) = self.recording.poll_completion().unwrap() {
+                    return completion;
+                }
+            }
+        }
+    }
+
     #[test]
     fn recording_auto_enrollment_only_follows_new_user_sessions_and_the_same_generation() {
+        let fixture = RecordingFixture::new(1);
         let mut state = AppState::for_test();
-        let recording = festerm_recording::RecordingId::new();
+        let recording = &fixture.recording;
         let make_session = || {
             SessionTab::for_test_ssh(
                 crate::session_controller::fake::FakeSshSession::new([]),
@@ -6918,39 +7078,204 @@ mod tests {
                 22,
             )
         };
-        state.set_recording_auto_enrollment(Some(recording));
+        state.set_recording_auto_enrollment(Some(recording.clone()));
         state.place_user_session(make_session());
         let user_tab = state.active();
         assert_eq!(
-            state.take_recording_auto_enrollments(Some(recording)),
-            vec![user_tab]
+            state
+                .session_tab(user_tab)
+                .unwrap()
+                .controller
+                .recording_id(),
+            Some(recording.id())
         );
-        assert!(state
-            .take_recording_auto_enrollments(Some(recording))
-            .is_empty());
 
         state.place_session(make_session());
         assert!(state
-            .take_recording_auto_enrollments(Some(recording))
-            .is_empty());
-
-        state.place_user_session(make_session());
-        state
-            .session_tab_mut(state.active())
+            .session_tab(state.active())
             .unwrap()
             .controller
-            .advance_lifecycle_generation();
-        assert!(state
-            .take_recording_auto_enrollments(Some(recording))
-            .is_empty());
+            .recording_id()
+            .is_none());
 
         state.place_user_session(make_session());
+        let session = state.session_tab_mut(state.active()).unwrap();
+        assert_eq!(session.controller.recording_id(), Some(recording.id()));
+        session.controller.advance_lifecycle_generation();
+        assert!(session.controller.recording_id().is_none());
+
+        state.set_recording_auto_enrollment(None);
+        state.place_user_session(make_session());
         assert!(state
-            .take_recording_auto_enrollments(Some(festerm_recording::RecordingId::new()))
-            .is_empty());
+            .session_tab(state.active())
+            .unwrap()
+            .controller
+            .recording_id()
+            .is_none());
+        recording
+            .stop(festerm_recording::FinishReason::User)
+            .unwrap();
+        assert!(matches!(
+            fixture.completion(),
+            festerm_recording::Completion::Complete { .. }
+        ));
+    }
+
+    #[test]
+    fn recording_auto_enrollment_does_not_miss_a_fast_session() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+
+        let fixture = RecordingFixture::new(1);
+        let mut state = AppState::for_test();
+        let session = SessionTab::for_test_ssh(
+            crate::session_controller::fake::FakeSshSession::new([
+                SessionEvent::Lifecycle(SessionLifecycle::Running),
+                SessionEvent::Output(b"short-lived output".to_vec()),
+                SessionEvent::Lifecycle(SessionLifecycle::Exited(
+                    festerm_session::SessionExit::with_exit_code(0),
+                )),
+            ]),
+            "user",
+            "example.test",
+            22,
+        );
+        state.set_recording_auto_enrollment(Some(fixture.recording.clone()));
+        state.place_user_session(session);
+        let tab = state.active();
+        assert_eq!(
+            state.session_tab(tab).unwrap().controller.recording_id(),
+            Some(fixture.recording.id())
+        );
+        state.session_tab_mut(tab).unwrap().pump_session_events();
+        fixture.recording.stop(FinishReason::User).unwrap();
+        let Completion::Complete { path, .. } = fixture.completion() else {
+            panic!("a clean short-lived session should finish normally");
+        };
+        let mut reader = ArtifactReader::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut started = 0;
+        let mut recorded_output = false;
+        while let Some(event) = reader.next_event().unwrap() {
+            match event {
+                ArtifactEvent::Started { .. } => started += 1,
+                ArtifactEvent::Output { bytes, .. } => {
+                    recorded_output |= bytes == b"short-lived output"
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(started, 2);
+        assert!(recorded_output);
+    }
+
+    #[test]
+    fn recording_auto_enrollment_waits_for_a_sanitized_recovery_screen() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+
+        let fixture = RecordingFixture::new(1);
+        let fake = crate::session_controller::fake::FakeSshSession::new([]);
+        fake.enable_authoritative_recovery();
+        let mut state = AppState::for_test();
+        state.set_recording_auto_enrollment(Some(fixture.recording.clone()));
+        state.place_user_session(SessionTab::for_test_ssh(
+            fake.clone(),
+            "user",
+            "example.test",
+            22,
+        ));
+        let tab = state.active();
         assert!(state
-            .take_recording_auto_enrollments(Some(recording))
-            .is_empty());
+            .session_tab(tab)
+            .unwrap()
+            .recording_auto_enrollment
+            .is_some());
+        assert!(state
+            .session_tab(tab)
+            .unwrap()
+            .controller
+            .recording_id()
+            .is_none());
+
+        let mut recovered = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+        recovered.ingest(b"old hidden history\r\nsecond line\r\nvisible recovery");
+        fake.set_recovered_terminal(recovered);
+        let preference = state.scrollback_limit();
+        let session = state.session_tab_mut(tab).unwrap();
+        assert!(session.adopt_recovered_terminal());
+        session.apply_frontend_terminal_configuration(preference);
+        session.complete_recording_auto_enrollment();
+        assert_eq!(
+            session.controller.recording_id(),
+            Some(fixture.recording.id())
+        );
+        fake.push_event(SessionEvent::Output(b" live".to_vec()));
+        session.pump_session_events();
+        fixture.recording.stop(FinishReason::User).unwrap();
+
+        let Completion::Complete { path, .. } = fixture.completion() else {
+            panic!("a recovered session should finish normally");
+        };
+        let mut reader = ArtifactReader::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut found_recovery = false;
+        let mut found_live = false;
+        while let Some(event) = reader.next_event().unwrap() {
+            match event {
+                ArtifactEvent::Started { terminal, .. } => {
+                    let rows = (0..terminal.dimensions().rows())
+                        .map(|row| terminal.row_text(row).unwrap())
+                        .collect::<String>();
+                    assert!(!rows.contains("old hidden history"));
+                    found_recovery |= rows.contains("visible recovery");
+                }
+                ArtifactEvent::Output { bytes, .. } => {
+                    assert!(!bytes
+                        .windows(b"old hidden history".len())
+                        .any(|w| w == b"old hidden history"));
+                    found_live |= bytes == b" live";
+                }
+                _ => {}
+            }
+        }
+        assert!(found_recovery && found_live);
+    }
+
+    #[test]
+    fn recording_auto_enrollment_fails_if_a_pending_session_is_replaced() {
+        let fixture = RecordingFixture::new(1);
+        let fake = crate::session_controller::fake::FakeSshSession::new([]);
+        fake.enable_authoritative_recovery();
+        let mut state = AppState::for_test();
+        state.set_recording_auto_enrollment(Some(fixture.recording.clone()));
+        state.place_user_session(SessionTab::for_test_ssh(fake, "user", "example.test", 22));
+        let session = state.session_tab_mut(state.active()).unwrap();
+        session.controller.advance_lifecycle_generation();
+        session.pump_session_events();
+        assert!(!fixture.recording.is_recording().unwrap());
+        assert!(matches!(
+            fixture.completion(),
+            festerm_recording::Completion::Incomplete {
+                reason: festerm_recording::FinishReason::IntegrityFailure,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn recording_auto_enrollment_failure_stops_the_recording() {
+        let fixture = RecordingFixture::new(festerm_recording::MAX_STREAMS);
+        let mut state = AppState::for_test();
+        state.set_recording_auto_enrollment(Some(fixture.recording.clone()));
+        state.place_user_session(SessionTab::for_test_ssh(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "user",
+            "example.test",
+            22,
+        ));
+        assert!(!fixture.recording.is_recording().unwrap());
+        assert!(fixture.recording.take_failure().unwrap().is_some());
+        assert!(matches!(
+            fixture.completion(),
+            festerm_recording::Completion::Incomplete { .. }
+        ));
     }
 
     fn alias_test_configuration() -> Configuration {

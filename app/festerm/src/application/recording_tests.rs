@@ -121,11 +121,16 @@ fn desktop_consent_requires_an_installed_monitor_and_is_revoked_on_loss() {
 #[cfg(target_os = "linux")]
 #[test]
 fn recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss() {
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     let (mut app, _, _, _, _) = two_windows();
-    let parent = tempfile::tempdir().unwrap();
-    let root = parent.path().join("private");
+    let home = directories::BaseDirs::new().unwrap();
+    let parent = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir_in(home.home_dir())
+        .unwrap();
+    let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
     let (storage, _) = RecordingStorage::open_for_test(&root).unwrap();
     let mut coordinator = DesktopRecording::new(false);
     coordinator.storage = Some(storage);

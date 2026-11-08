@@ -531,6 +531,7 @@ pub struct SessionController<S: Session> {
     /// background-tab "new output" chip marker, feature request #68) must
     /// read this rather than `pump_events`'s own return value.
     last_pump_output_received: bool,
+    last_pump_closed: bool,
 }
 
 impl<S: Session> SessionController<S> {
@@ -580,6 +581,7 @@ impl<S: Session> SessionController<S> {
             resize_probe: ResizeProbe::default(),
             has_requested_resize: false,
             last_pump_output_received: false,
+            last_pump_closed: false,
         }
     }
 
@@ -625,6 +627,7 @@ impl<S: Session> SessionController<S> {
             resize_probe: ResizeProbe::default(),
             has_requested_resize: false,
             last_pump_output_received: false,
+            last_pump_closed: false,
         }
     }
 
@@ -968,6 +971,7 @@ impl<S: Session> SessionController<S> {
         resize: impl FnMut(&mut Terminal, Dimensions) -> bool,
     ) -> bool {
         self.last_pump_output_received = false;
+        self.last_pump_closed = false;
         let Some(session) = &self.session else {
             return false;
         };
@@ -998,7 +1002,11 @@ impl<S: Session> SessionController<S> {
                 }
                 TerminalMutation::IntegrityFailure(message) => {
                     if let Some(stream) = recording_stream.as_ref() {
-                        let _ = stream.fail_integrity(message);
+                        if let Err(error) = stream.fail_integrity(message) {
+                            tracing::error!(
+                                "Could not stop recording after a session failure: {error}"
+                            );
+                        }
                     }
                 }
                 TerminalMutation::End => {
@@ -1013,6 +1021,7 @@ impl<S: Session> SessionController<S> {
             self.last_backpressure = Some(FlowDirection::Output);
         }
         self.last_pump_output_received = result.output_received;
+        self.last_pump_closed = result.closed;
         result.hit_limit
     }
 
@@ -1021,6 +1030,10 @@ impl<S: Session> SessionController<S> {
     /// this is distinct from its own `bool` return value.
     pub const fn last_pump_output_received(&self) -> bool {
         self.last_pump_output_received
+    }
+
+    pub(crate) const fn last_pump_closed(&self) -> bool {
+        self.last_pump_closed
     }
 
     fn observe_session_event(&mut self, event: SessionEvent) {
@@ -1725,6 +1738,7 @@ pub struct PumpResult {
     /// Unlike `hit_limit` (a backpressure signal), this is what callers
     /// should check to learn "did new output arrive this frame".
     pub output_received: bool,
+    closed: bool,
 }
 
 /// A borrowed session event delivered while the terminal is pumped.
@@ -1822,6 +1836,7 @@ fn pump_session_events_with_mutations(
                         return PumpResult {
                             hit_limit: true,
                             output_received,
+                            closed: false,
                         };
                     }
                 }
@@ -1847,6 +1862,7 @@ fn pump_session_events_with_mutations(
                             return PumpResult {
                                 hit_limit: false,
                                 output_received,
+                                closed: false,
                             };
                         }
                     }
@@ -1858,6 +1874,9 @@ fn pump_session_events_with_mutations(
                         Dimensions::new(usize::from(size.columns()), usize::from(size.rows()))
                             .is_ok_and(|dimensions| resize(terminal, dimensions));
                     if !resized {
+                        mutation(TerminalMutation::IntegrityFailure(
+                            "Recording stopped because terminal resize was rejected",
+                        ));
                         observe(PumpedSessionEvent::Event(&SessionEvent::Error(
                             SessionError::new(
                                 SessionErrorKind::Resize,
@@ -1869,7 +1888,9 @@ fn pump_session_events_with_mutations(
                     }
                     observe(PumpedSessionEvent::Event(&event));
                 }
-                SessionEvent::Lifecycle(SessionLifecycle::Failed(_)) => {
+                SessionEvent::Lifecycle(
+                    SessionLifecycle::Failed(_) | SessionLifecycle::Disconnected(_),
+                ) => {
                     mutation(TerminalMutation::IntegrityFailure(
                         "Recording stopped because a terminal session failed",
                     ));
@@ -1877,19 +1898,25 @@ fn pump_session_events_with_mutations(
                     observe(PumpedSessionEvent::Event(&event));
                 }
                 SessionEvent::Lifecycle(
-                    SessionLifecycle::Disconnected(_)
-                    | SessionLifecycle::Exited(_)
-                    | SessionLifecycle::Stopped,
+                    SessionLifecycle::Exited(_) | SessionLifecycle::Stopped,
                 ) => {
                     mutation(TerminalMutation::End);
                     observe(PumpedSessionEvent::Event(&event));
                 }
                 _ => observe(PumpedSessionEvent::Event(&event)),
             },
-            Err(SessionTryReceiveError::Empty | SessionTryReceiveError::Closed) => {
+            Err(error @ (SessionTryReceiveError::Empty | SessionTryReceiveError::Closed)) => {
+                let closed = matches!(error, SessionTryReceiveError::Closed);
+                if closed {
+                    mutation(TerminalMutation::IntegrityFailure(
+                        "Recording stopped because a terminal event stream closed unexpectedly",
+                    ));
+                    mutation(TerminalMutation::End);
+                }
                 return PumpResult {
                     hit_limit: false,
                     output_received,
+                    closed,
                 };
             }
         }
@@ -1897,6 +1924,7 @@ fn pump_session_events_with_mutations(
     PumpResult {
         hit_limit: true,
         output_received,
+        closed: false,
     }
 }
 
@@ -2004,6 +2032,7 @@ pub(crate) mod fake {
         input_results: Mutex<VecDeque<Result<(), SessionSendError>>>,
         sent: Mutex<Vec<Vec<u8>>>,
         backend_owned_terminal: bool,
+        events_closed: bool,
         automation_epoch: Arc<AutomationEpoch>,
     }
 
@@ -2023,6 +2052,7 @@ pub(crate) mod fake {
                 input_results: Mutex::new(input_results.into_iter().collect()),
                 sent: Mutex::new(Vec::new()),
                 backend_owned_terminal: false,
+                events_closed: false,
                 automation_epoch,
             }
         }
@@ -2037,6 +2067,11 @@ pub(crate) mod fake {
 
         pub fn with_backend_owned_terminal(mut self) -> Self {
             self.backend_owned_terminal = true;
+            self
+        }
+
+        pub fn with_closed_events(mut self) -> Self {
+            self.events_closed = true;
             self
         }
     }
@@ -2087,9 +2122,11 @@ pub(crate) mod fake {
         }
 
         fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
-            self.events()
-                .pop_front()
-                .ok_or(SessionTryReceiveError::Empty)
+            self.events().pop_front().ok_or(if self.events_closed {
+                SessionTryReceiveError::Closed
+            } else {
+                SessionTryReceiveError::Empty
+            })
         }
 
         fn shutdown(
@@ -2129,6 +2166,8 @@ pub(crate) mod fake {
         terminal_file_identity: Mutex<(Option<String>, Option<String>)>,
         ordered_test_input: Mutex<Option<VecDeque<TestInput>>>,
         invalidate_after_test_reservation: std::sync::atomic::AtomicBool,
+        authoritative_recovery: std::sync::atomic::AtomicBool,
+        recovered_terminal: Mutex<Option<Terminal>>,
         #[cfg(all(windows, target_arch = "x86_64"))]
         notifier: Mutex<Option<Arc<dyn festerm_session::SessionEventNotifier>>>,
     }
@@ -2159,6 +2198,8 @@ pub(crate) mod fake {
                     terminal_file_identity: Mutex::new((None, None)),
                     ordered_test_input: Mutex::new(None),
                     invalidate_after_test_reservation: std::sync::atomic::AtomicBool::new(false),
+                    authoritative_recovery: std::sync::atomic::AtomicBool::new(false),
+                    recovered_terminal: Mutex::new(None),
                     #[cfg(all(windows, target_arch = "x86_64"))]
                     notifier: Mutex::new(None),
                 }),
@@ -2171,6 +2212,24 @@ pub(crate) mod fake {
                 .lock()
                 .expect("fake ssh operations lock")
                 .clone()
+        }
+
+        pub fn enable_authoritative_recovery(&self) {
+            self.inner
+                .authoritative_recovery
+                .store(true, Ordering::Release);
+        }
+
+        pub fn recovery_protocol_is_authoritative(&self) -> bool {
+            self.inner.authoritative_recovery.load(Ordering::Acquire)
+        }
+
+        pub fn set_recovered_terminal(&self, terminal: Terminal) {
+            *self.inner.recovered_terminal.lock().unwrap() = Some(terminal);
+        }
+
+        pub fn take_recovered_terminal(&self) -> Option<Terminal> {
+            self.inner.recovered_terminal.lock().unwrap().take()
         }
 
         pub fn set_terminal_file_identity(&self, fingerprint: &str, cwd: &str) {
@@ -3410,6 +3469,74 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn disconnected_or_closed_session_stops_the_shared_recording_incomplete() {
+        use festerm_recording::{Completion, FinishReason};
+
+        for session in [
+            FakeSession::new([SessionEvent::Lifecycle(SessionLifecycle::Disconnected(
+                SessionError::new(SessionErrorKind::Output, "connection lost"),
+            ))]),
+            FakeSession::new([]).with_closed_events(),
+        ] {
+            let mut controller = SessionController::for_test(session);
+            let mut terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+            let other = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+            let directory = private_recording_dir();
+            let (wake, ready) = std::sync::mpsc::channel();
+            let (recording, mut streams) = festerm_recording::SharedRecording::start(
+                directory.path(),
+                &[&terminal, &other],
+                move || {
+                    let _ = wake.send(());
+                },
+            )
+            .unwrap();
+            controller.attach_recording_stream(streams.remove(0));
+            controller.pump_events(&mut terminal);
+            assert!(!recording.is_recording().unwrap());
+            assert!(recording.take_failure().unwrap().is_some());
+            let completion = loop {
+                ready.recv_timeout(Duration::from_secs(10)).unwrap();
+                if let Some(completion) = recording.poll_completion().unwrap() {
+                    break completion;
+                }
+            };
+            assert!(matches!(
+                completion,
+                Completion::Incomplete {
+                    reason: FinishReason::IntegrityFailure,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn event_channel_closing_after_clean_exit_does_not_fail_other_streams() {
+        let session = FakeSession::new([SessionEvent::Lifecycle(SessionLifecycle::Exited(
+            festerm_session::SessionExit::with_exit_code(0),
+        ))])
+        .with_closed_events();
+        let mut controller = SessionController::for_test(session);
+        let mut terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+        let other = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+        let directory = private_recording_dir();
+        let (recording, mut streams) = festerm_recording::SharedRecording::start(
+            directory.path(),
+            &[&terminal, &other],
+            || {},
+        )
+        .unwrap();
+        controller.attach_recording_stream(streams.remove(0));
+        controller.pump_events(&mut terminal);
+        assert!(recording.is_recording().unwrap());
+        assert!(recording.take_failure().unwrap().is_none());
+        recording
+            .stop(festerm_recording::FinishReason::User)
+            .unwrap();
     }
 
     #[test]

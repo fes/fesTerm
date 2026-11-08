@@ -10,6 +10,9 @@ jobs:
   recording-windows:
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: dtolnay/rust-toolchain@stable
@@ -32,8 +35,15 @@ jobs:
         run: cargo test --locked -p festerm-windows-power --lib
       - name: Test desktop recording coordinator
         run: cargo test --locked -p festerm --bin festerm application::recording::tests
-      - name: Test recovery palette cut
-        run: cargo test --locked -p festerm --bin festerm recovery_palette_mismatch
+      - name: Test automatic enrollment and session failures
+        run: |
+          cargo test --locked -p festerm --bin festerm recording_auto_enrollment
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p festerm --bin festerm disconnected_or_closed_session
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p festerm --bin festerm event_channel_closing_after_clean_exit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p festerm --bin festerm recovery_palette_mismatch
       - name: Test terminal replay fast paths
         run: cargo test --locked -p festerm-core ascii_run_fast_path_tests
       - name: Test recording visibility rendering
