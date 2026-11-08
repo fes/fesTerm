@@ -3243,6 +3243,21 @@ do not establish independent provenance or native usability.
 Linux CI explicitly runs the unfiltered-only native fault-injection test;
 ordinary filtered-container runs check inconclusive handling, not the holes.
 
+The Windows inherited-stdout probe is a bounded feasibility experiment, not
+AUTO-03 or AUTO-04 acceptance. On native Windows run
+`cargo test --locked -p festerm-windows-security --test windows_stdout_probe -- --test-threads=1 --nocapture`.
+Its control-parser tests also run on other platforms with
+`cargo test --locked -p festerm-windows-security --test windows_stdout_probe_control`.
+The helper is job-contained and the controller drains observed test-harness
+output before attempting the initial pipe mode change; a refusal remains a
+failure even if a later diagnostic retry succeeds. It requires an actual
+positive partial write, an observed one-byte backpressure condition, and
+physical byte accounting; neither a zero write nor drained occupancy proves a
+partial write. A prior native run failed on initial error 231 and observed no
+positive partial. The revised synchronization still requires a native run.
+This experiment does not qualify exclusive mode ownership, final-recipient
+privacy fencing, caller liveness, or the production adapter.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts; exercise the multi-window preference and failure scenarios above. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, frozen-workflow binding components, and shared preference/failure handling. Deterministic preference regressions do not replace native warning, retry or multi-window usability evidence. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. A future direct-input approval must explicitly explain the target, remote-state uncertainty, expiry/budgets and that the approved action may be intentionally repeated throughout the live grant; obtain native handoff rather than accepting a device's claimed gesture, and distinguish approval from an explicit ownership cut. No native evidence collected for intake or workflow approval. |

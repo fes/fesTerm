@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Investigating Windows inherited stdout
+
+A separate, job-supervised native probe measures inherited stdout pipe mode
+changes, bounded writes and closure without enabling the automation adapter.
+The prior native run observed initial error 231 and no positive partial write.
+The revised probe drains observed test-harness startup output before the first
+mode attempt, but still fails on any initial refusal or missing positive
+partial. Its revised setup remains unqualified until run natively; exclusive
+ownership, caller liveness and final-recipient privacy remain separate gates.
+
 ## Coalescing terminal search refresh
 
 The find bar now refreshes after live-screen edits and full-history eviction,
