@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Coalescing terminal search refresh
+
+The find bar now refreshes after live-screen edits and full-history eviction,
+including when retained row counts do not change. Output-driven rescans are
+coalesced with a maximum delay, while query edits and navigation remain
+immediate. Surviving primary matches retain their content-row coordinate through
+eviction; a replacement terminal cannot inherit an old buffer's row identity.
+Deterministic tests cover the refresh deadline, screen changes and passive
+panes. The growing-history CPU experiment and its shared-host caveat are in
+`validation/terminal-performance/README.md`. Incremental searching and
+reflow-stable match anchors remain separate work.
+
 ## Reducing full-history search work
 
 The terminal find bar previously looked up every retained row through the
@@ -10,7 +22,6 @@ differential test covers history eviction, wrapping, resize and alternate
 screen transitions; an isolated allocation check guards the warmed ASCII
 case. Measured search-loop CPU and allocation observations, including
 shared-host caveats, are in `validation/terminal-performance/README.md`.
-Refresh debounce and incremental indexing remain separate work.
 
 ## Composing live desktop panes
 

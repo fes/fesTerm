@@ -2694,11 +2694,21 @@
         "find_in_terminal_palette_command_opens_the_find_bar",
         "terminal_context_menu_can_request_find_without_pty_input",
         "sequential_history_scan_matches_indexed_scan",
-        "ascii_history_search_avoids_per_row_allocations"
+        "ascii_history_search_avoids_per_row_allocations",
+        "output_refresh_coalesces_but_never_starves",
+        "full_history_refresh_preserves_a_retained_match_through_eviction",
+        "passive_view_dirty_rows_refresh_live_screen_matches",
+        "screen_switch_and_navigation_refresh_without_delay",
+        "screen_switch_does_not_alias_old_selection",
+        "query_resize_and_reset_refresh_without_delay",
+        "replacement_does_not_alias_old_terminal_rows",
+        "passive_resize_is_remembered_even_if_dimensions_return",
+        "passive_pane_search_sees_output_consumed_by_its_view"
       ],
       "manual_scenarios": [
         "CP-05",
-        "TI-15"
+        "TI-15",
+        "SRCH-05"
       ],
       "status": "partial",
       "prerequisites": [

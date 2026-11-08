@@ -145,6 +145,7 @@ impl SessionTab {
         self.inspector_transport = fresh.inspector_transport;
         self.remote_files = replacement.files;
         self.apply_frontend_terminal_configuration(scrollback_limit);
+        self.search.terminal_replaced(&self.terminal);
         self.view.request_focus_on_next_frame();
     }
 }

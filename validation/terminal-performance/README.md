@@ -1,12 +1,42 @@
 # Terminal TUI performance
 
+## Output-driven search refresh
+
+The find bar coalesces output-driven full scans until 100 ms of observed
+quiet, with a 250 ms maximum wait while output continues. Query edits and
+navigation are immediate. Retained-history origins and live dirty rows also
+detect eviction at a constant history size and live-screen-only edits, which
+the previous row-count check missed. Screen transitions and terminal
+replacement invalidate the old row identity. Incremental search and
+reflow-stable match anchors remain separate work.
+
+On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
+single-threaded release samples in A-B-B-A-A-B order measured process user plus
+system CPU for 1,600 simulated 60 Hz output frames. A warmed, growing 32 MiB
+history limit retained 1,977 rows initially and 3,577 at the end, without
+eviction. Each frame ingested one ASCII line, refreshed search and consumed
+dirty-row flags; the final pending refresh was included. Both versions
+finished with identical match counts.
+
+| Fixture | Scans before / after | Before median CPU | After median CPU |
+| --- | ---: | ---: | ---: |
+| No matches | 1,600 / 101 | 1.065 s | 0.072 s |
+| Every line matches | 1,600 / 101 | 1.194 s | 0.085 s |
+
+This is a core/search-loop experiment with simulated frame timestamps, not a
+PTY, native UI, rendering or latency measurement. The shared host's
+one-minute load was about 14.2 to 13.7; contention limits precision even
+though the reported measurement is process CPU rather than elapsed time. The
+old constant-size-eviction path performed no refresh and was incorrect, so no
+CPU speedup is claimed for that case.
+
 ## Full-history search
 
 The find bar walks retained logical lines and their physical rows in order
 instead of performing a binary history lookup for each row. It reuses one
 text buffer for retained rows and lowercases ASCII in place; non-ASCII text
-still uses Rust's full string lowercase behavior. Live-screen matching,
-query semantics, and refresh timing are unchanged.
+still uses Rust's full string lowercase behavior. Live-screen matching and
+query semantics are unchanged.
 
 On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
 single-threaded release-build samples (A-B-B-A-A-B) measured process user plus
@@ -31,7 +61,7 @@ allocation counts do not measure total memory or CPU.
 isolated allocation check over a warmed, full 8 MiB ASCII history. A
 differential test compares the sequential scan with the former indexed scan
 for Unicode case conversion, wrapping, eviction, resize, and alternate-screen
-transitions. Debouncing and incremental refresh remain separate work.
+transitions. The separate output-refresh change is described above.
 
 ## CPU presentation-cache allocation oracle
 
