@@ -421,6 +421,7 @@ impl NativeMenuShortcutCache {
 /// driver.
 pub struct FesTermApp {
     state: AppState,
+    last_session_pump: Option<TabId>,
     pane_rects: Vec<(TabId, egui::Rect)>,
     pane_layout_menu: Option<TabId>,
     pane_controls: panes::PaneControls,
@@ -931,6 +932,7 @@ impl FesTermApp {
         };
         Self {
             state,
+            last_session_pump: None,
             pane_rects: Vec::new(),
             pane_layout_menu: None,
             pane_controls: panes::PaneControls::default(),
@@ -1293,11 +1295,14 @@ impl FesTermApp {
             return;
         }
         let bracketed_paste = session.terminal.modes().bracketed_paste();
+        // Deferred output may still disable bracketed paste, so the cached
+        // mode cannot exempt multiline text from confirmation.
+        let deferred_output = session.output_ingest_deferred;
         let line_count = paste_line_count(&text);
         let character_count = text.chars().count();
         let requires_confirmation = character_count >= LARGE_PASTE_CHARACTER_THRESHOLD
             || line_count >= LARGE_PASTE_LINE_THRESHOLD
-            || (!bracketed_paste && line_count > 1);
+            || ((!bracketed_paste || deferred_output) && line_count > 1);
         if !requires_confirmation {
             self.deliver_ordered_paste(tab, text, clipboard_token, context);
             return;
@@ -1313,6 +1318,7 @@ impl FesTermApp {
             lifecycle_generation: session.controller.lifecycle_generation(),
             input_ownership_epoch,
             bracketed_paste,
+            deferred_output,
             cancel_focus_requested: false,
         });
     }
@@ -2776,24 +2782,100 @@ impl FesTermApp {
     /// object with its own identity and state" (`docs/gui-design.md`) that
     /// must keep making progress while another tab is focused.
     fn pump_all_sessions(&mut self, context: &egui::Context) {
+        self.pump_all_sessions_with_clock(
+            context,
+            crate::session_controller::GLOBAL_INGEST_TIME_BUDGET,
+            Instant::now,
+        );
+    }
+
+    fn pump_all_sessions_with_clock(
+        &mut self,
+        context: &egui::Context,
+        time_budget: Duration,
+        mut now: impl FnMut() -> Instant,
+    ) {
         let mut needs_repaint = false;
         let active = self.state.active();
         let scrollback_limit = self.state.scrollback_limit();
-        for (id, session) in self.state.session_tabs_with_id_mut() {
+        let session_ids: Vec<_> = self
+            .state
+            .session_tabs_with_id_mut()
+            .map(|(id, _)| id)
+            .collect();
+        for id in session_ids.iter().copied() {
+            let Some(session) = self.state.session_tab_mut(id) else {
+                continue;
+            };
+            session.output_ingest_deferred = true;
             if session.adopt_recovered_terminal() {
                 session.controller.record_local_observation_change();
                 session.apply_frontend_terminal_configuration(scrollback_limit);
                 needs_repaint = true;
             }
-            let hit_limit = session.pump_session_events();
-            // Backend availability already woke this frame, and pumping runs
-            // before painting. Request another frame only for an incomplete
-            // drain, not for output this frame will already display.
-            needs_repaint |= hit_limit;
-            let output_received = session.controller.last_pump_output_received();
-            if output_received && id != active {
-                session.has_new_output_since_active = true;
+        }
+
+        if !session_ids.is_empty() {
+            let started = now();
+            let deadline = started + time_budget;
+            let mut next_index = self
+                .last_session_pump
+                .and_then(|last| session_ids.iter().position(|id| *id == last))
+                .map_or(0, |last_index| (last_index + 1) % session_ids.len());
+            let mut pending = session_ids.clone();
+            pending.rotate_left(next_index);
+            let mut ingested_bytes = 0usize;
+            while !pending.is_empty()
+                && ingested_bytes < crate::session_controller::MAX_INGEST_BYTES_PER_UPDATE
+            {
+                let mut next_pending = Vec::new();
+                let mut deadline_reached = false;
+                for id in pending {
+                    let remaining_time = deadline.saturating_duration_since(now());
+                    if remaining_time.is_zero() {
+                        deadline_reached = true;
+                        needs_repaint = true;
+                        break;
+                    }
+                    let Some(session) = self.state.session_tab_mut(id) else {
+                        continue;
+                    };
+                    let result = session.pump_session_events_with_slice();
+                    session.output_ingest_deferred = result.hit_limit;
+                    ingested_bytes = ingested_bytes.saturating_add(result.ingested_bytes);
+                    self.last_session_pump = Some(id);
+                    if result.hit_limit {
+                        next_pending.push(id);
+                        needs_repaint = true;
+                    }
+                    if result.output_received && id != active {
+                        session.has_new_output_since_active = true;
+                    }
+                    if ingested_bytes >= crate::session_controller::MAX_INGEST_BYTES_PER_UPDATE {
+                        deadline_reached = true;
+                        needs_repaint = true;
+                        break;
+                    }
+                }
+                if deadline_reached || next_pending.is_empty() {
+                    break;
+                }
+                next_index = self
+                    .last_session_pump
+                    .and_then(|last| session_ids.iter().position(|id| *id == last))
+                    .map_or(0, |last_index| (last_index + 1) % session_ids.len());
+                pending = session_ids
+                    .iter()
+                    .cycle()
+                    .skip(next_index)
+                    .take(session_ids.len())
+                    .copied()
+                    .filter(|id| next_pending.contains(id))
+                    .collect();
             }
+        }
+
+        for (_, session) in self.state.session_tabs_with_id_mut() {
             session
                 .controller
                 .forward_terminal_replies(&mut session.terminal);
@@ -7138,10 +7220,6 @@ impl FesTermApp {
                             .forward_terminal_replies(&mut session.terminal);
                         session.controller.flush_pending_writes();
                         session.controller.flush_pending_resize();
-                        session.pump_session_events();
-                        if session.controller.last_pump_output_received() {
-                            ui.ctx().request_repaint();
-                        }
                         overlay_action = overlay::show(
                             ui.ctx(),
                             session.chip_status(),
@@ -8134,6 +8212,7 @@ impl FesTermApp {
         let state = AppState::for_test_with_configuration(configuration);
         Self {
             state,
+            last_session_pump: None,
             pane_rects: Vec::new(),
             pane_layout_menu: None,
             pane_controls: panes::PaneControls::default(),
@@ -9827,6 +9906,11 @@ mod tests {
             .count()
     }
 
+    fn run_frame(ui: &mut egui::Ui, app: &mut FesTermApp) {
+        app.frame_logic(ui.ctx());
+        app.ui_content(ui);
+    }
+
     fn keyboard_harness() -> (
         Harness<'static, FesTermApp>,
         crate::session_controller::fake::FakeSshSession,
@@ -9836,7 +9920,7 @@ mod tests {
             .with_size(egui::vec2(800.0, 600.0))
             .build_ui_state(
                 |ui, app: &mut FesTermApp| {
-                    app.ui_content(ui);
+                    run_frame(ui, app);
                     let copied = ui.ctx().output(|output| {
                         output
                             .commands
@@ -14703,7 +14787,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
-            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            .build_ui_state(run_frame, app);
         harness.run();
         harness.get_by_label("Open Diagnostics");
         let generation = harness
@@ -14773,7 +14857,7 @@ mod tests {
             let mut harness = Harness::builder()
                 .with_size(egui::vec2(900.0, 800.0))
                 .with_max_steps(16)
-                .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+                .build_ui_state(run_frame, app);
             harness.run();
             assert_eq!(
                 harness
@@ -14848,7 +14932,7 @@ mod tests {
         );
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 800.0))
-            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            .build_ui_state(run_frame, app);
         harness.run();
         assert!(harness.query_by_label(&message).is_none());
         assert!(harness
@@ -14955,7 +15039,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
-            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            .build_ui_state(run_frame, app);
         harness.run();
 
         for label in [
@@ -15188,7 +15272,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
-            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            .build_ui_state(run_frame, app);
         harness.run();
         harness
             .get_by_label("Remove forward 127.0.0.1:15432")
@@ -15274,7 +15358,7 @@ mod tests {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(900.0, 600.0))
             .with_max_steps(16)
-            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+            .build_ui_state(run_frame, app);
         harness.run();
         assert!(harness.query_by_label("127.0.0.1:15432").is_some());
 
@@ -15496,28 +15580,16 @@ mod tests {
             .controller
             .record_encoded_input(b"synthetic-foreground-input");
         for (_, transport) in &sessions {
-            for _ in 0..crate::session_controller::MAX_SESSION_EVENTS_PER_FRAME + 1 {
+            for _ in 0..crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE + 1 {
                 transport.push_event(SessionEvent::Output(b"x".to_vec()));
             }
             transport.push_event(SessionEvent::Lifecycle(SessionLifecycle::Stopped));
         }
         let mut output = context.run_ui(Default::default(), |ui| app.pump_all_sessions(ui.ctx()));
         output.textures_delta.clear();
-        assert!(output.viewport_output[&egui::ViewportId::ROOT]
-            .repaint_delay
-            .is_zero());
-        for (tab, _) in &sessions {
-            let session = app.state.session_tab(*tab).unwrap();
-            assert_eq!(
-                session.controller.lifecycle(),
-                Some(SessionLifecycle::Running)
-            );
-            assert_eq!(
-                session.terminal.row_text(0).unwrap().trim_end().len(),
-                crate::session_controller::MAX_SESSION_EVENTS_PER_FRAME
-            );
+        for _ in 0..8 {
+            app.pump_all_sessions(&context);
         }
-        app.pump_all_sessions(&context);
         for (tab, transport) in &sessions {
             let session = app.state.session_tab(*tab).unwrap();
             assert_eq!(
@@ -15526,7 +15598,7 @@ mod tests {
             );
             assert_eq!(
                 session.terminal.row_text(0).unwrap().trim_end().len(),
-                crate::session_controller::MAX_SESSION_EVENTS_PER_FRAME + 1
+                crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE + 1
             );
             assert_eq!(session.has_new_output_since_active, *tab != active);
             assert!(!session.accepts_typed_input());
@@ -15539,6 +15611,140 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn global_ingest_budget_rotates_busy_sessions_between_updates() {
+        use festerm_session::SessionEvent;
+
+        let context = egui::Context::default();
+        let (mut app, sessions) = background_efficiency_fixture(2, &context);
+        for (_, transport) in &sessions {
+            for _ in 0..crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE + 1 {
+                transport.push_event(SessionEvent::Output(b"x".to_vec()));
+            }
+        }
+
+        let first = Instant::now();
+        let first_tick = Cell::new(0_u64);
+        app.pump_all_sessions_with_clock(&context, Duration::from_millis(2), || {
+            let tick = first_tick.get();
+            first_tick.set(tick + 1);
+            first + Duration::from_millis(tick)
+        });
+        assert_eq!(
+            app.state
+                .session_tab(sessions[0].0)
+                .unwrap()
+                .controller
+                .resize_probe()
+                .observed_output_bytes(),
+            crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE as u64
+        );
+        assert_eq!(
+            app.state
+                .session_tab(sessions[1].0)
+                .unwrap()
+                .controller
+                .resize_probe()
+                .observed_output_bytes(),
+            0
+        );
+
+        let second = Instant::now();
+        let second_tick = Cell::new(0_u64);
+        app.pump_all_sessions_with_clock(&context, Duration::from_millis(2), || {
+            let tick = second_tick.get();
+            second_tick.set(tick + 1);
+            second + Duration::from_millis(tick)
+        });
+        for (tab, _) in &sessions {
+            assert_eq!(
+                app.state
+                    .session_tab(*tab)
+                    .unwrap()
+                    .controller
+                    .resize_probe()
+                    .observed_output_bytes(),
+                crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE as u64
+            );
+        }
+    }
+
+    #[test]
+    fn multiline_paste_confirms_while_the_ingest_budget_defers_its_target_output() {
+        use festerm_session::SessionEvent;
+
+        fn settle(app: &mut FesTermApp, context: &egui::Context) {
+            let frozen = Instant::now();
+            app.pump_all_sessions_with_clock(context, Duration::from_millis(2), || frozen);
+        }
+        fn expire_after_one_slice(app: &mut FesTermApp, context: &egui::Context) {
+            let start = Instant::now();
+            let tick = Cell::new(0_u64);
+            app.pump_all_sessions_with_clock(context, Duration::from_millis(2), || {
+                let current = tick.get();
+                tick.set(current + 1);
+                start + Duration::from_millis(current)
+            });
+        }
+        fn bracketed(app: &FesTermApp, tab: TabId) -> bool {
+            app.state
+                .session_tab(tab)
+                .unwrap()
+                .terminal
+                .modes()
+                .bracketed_paste()
+        }
+
+        // A busy session exhausts the shared budget before the target's
+        // queued mode change is parsed.
+        let context = egui::Context::default();
+        let (mut app, sessions) = background_efficiency_fixture(2, &context);
+        let (target, transport) = sessions[1].clone();
+        assert_eq!(app.state.active(), target);
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004h".to_vec()));
+        settle(&mut app, &context);
+        assert!(bracketed(&app, target));
+        for _ in 0..crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE {
+            sessions[0]
+                .1
+                .push_event(SessionEvent::Output(b"x".to_vec()));
+        }
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004l".to_vec()));
+        expire_after_one_slice(&mut app, &context);
+        assert!(bracketed(&app, target), "the mode change stays deferred");
+        app.handle_paste_request(target, "one\ntwo".to_owned(), None, &context);
+        assert!(app.overlays.pending_paste.as_ref().unwrap().deferred_output);
+        assert!(transport.sent().is_empty());
+        app.cancel_paste_confirmation();
+
+        // The target's own slice can also stop before its mode change.
+        let (mut app, sessions) = background_efficiency_fixture(1, &context);
+        let (target, transport) = sessions[0].clone();
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004h".to_vec()));
+        settle(&mut app, &context);
+        for _ in 0..crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE {
+            transport.push_event(SessionEvent::Output(b"x".to_vec()));
+        }
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004l".to_vec()));
+        expire_after_one_slice(&mut app, &context);
+        assert!(bracketed(&app, target), "the mode change stays deferred");
+        app.handle_paste_request(target, "one\ntwo".to_owned(), None, &context);
+        assert!(app.overlays.pending_paste.is_some());
+        assert!(transport.sent().is_empty());
+        app.cancel_paste_confirmation();
+
+        // Once the target drains, its current mode decides again.
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004h".to_vec()));
+        settle(&mut app, &context);
+        assert!(bracketed(&app, target));
+        app.handle_paste_request(target, "one\ntwo".to_owned(), None, &context);
+        assert!(app.overlays.pending_paste.is_none());
+        assert_eq!(
+            transport.sent(),
+            vec![b"\x1b[200~one\ntwo\x1b[201~".to_vec()]
+        );
     }
 
     #[test]
@@ -15588,7 +15794,7 @@ mod tests {
         // Regression test for a bug where `pump_all_sessions` gated `has_new_output_since_active`
         // on `SessionController::pump_events`'s own `bool` return value -
         // which only reports whether the bounded per-frame drain hit
-        // `MAX_SESSION_EVENTS_PER_FRAME` (a backpressure signal), not "did
+        // `MAX_SESSION_EVENTS_PER_SLICE` (a backpressure signal), not "did
         // output arrive". A real local shell's startup banner/prompt is a
         // few dozen bytes across a handful of events - nowhere near that
         // cap - so the flag was essentially never set for ordinary output.

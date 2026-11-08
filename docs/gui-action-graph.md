@@ -195,7 +195,17 @@ background unread state remain independent. Pending resize deadlines re-arm
 an early repaint until the debounced resize can be sent, without an idle poll.
 Session availability uses egui's single-pass wake API rather than its zero-delay
 two-pass widget-settling policy. Every event still requests a wake, including
-events arriving during a frame; no output/frame-rate budget is introduced.
+events arriving during a frame. Terminal ingestion now shares a 4 ms budget
+across each desktop window's sessions per update, with bounded round-robin
+slices and continuation wakes when work remains. This bounds synchronous update
+work per window; it is not a frame-rate cap or a physical presentation-latency
+claim. The active session is no longer pumped again after painting.
+
+For `TERM-01` and session close/stop, a backpressured local PTY reader wakes
+when event space becomes available or cancellation is requested. It still
+reports pressure before resumed output, and cancellation still drains the PTY
+without publishing. The command queue, reservations and output byte bound
+remain unchanged.
 
 For `KEY-01` and `TERM-01`, exact Shift+Tab remains a typed modified key and
 emits Backtab (`ESC[Z`) through the ordinary bounded terminal queue. Presses
@@ -240,6 +250,11 @@ hyperlinks, width-two continuations, selection, shaping runs and dirty-row
 revision semantics remain unchanged. A CPU-only system-allocator oracle
 measures this copy stage separately from painted-row reuse, native GPU work,
 process residency and frame time.
+
+For `TERM-01`, ADR 0081's ASCII-run overwrite preserves the existing
+single-width proof, releases replaced text and hyperlinks, and applies the
+current rendition. Runs touching wide cells retain the per-cell repair path.
+The storage change does not alter output or selection behavior.
 
 For `TYPE-01` and `TERM-01`, the glyph-layout cache retains its 4,096-entry
 bound but retires only the least-recently-used entry on a capacity-crossing
@@ -859,7 +874,7 @@ Only the frozen view's owned popup is closed; ordinary live menus remain usable.
 | --- | --- | --- | --- | --- | --- |
 | `PASTE-01` | `K2 → K2` | Ordinary mode, one line below threshold, each clipboard route; type Enter/text before or with callback. | Paired payload used without reread; identified read bound to original tab/generation/ownership; clipboard bytes precede following keyboard input using the existing bounded write queue; no dialog or retained clipboard value. | Fixture clears input buffer. | P,H,N |
 | `PASTE-02` | `K2 → K12` | Ordinary mode multiline. | Exact title line count/identity, execution warning, state, exact counts, faithful bounded preview; Cancel focused. | `PASTE-05`. | P,H,V,N,U |
-| `PASTE-03` | Bracketed `K2 → K2` | Ordinary multiline. | One ordered write with bracket markers, no dialog. | Disable bracketed mode/reset fixture. | P,H,N |
+| `PASTE-03` | Bracketed `K2 → K2` | Ordinary multiline. | One ordered write with bracket markers, no dialog. If the shared ingest budget left that session's output queued, the cached mode may be stale: `PASTE-02`'s confirmation opens instead, states that earlier output is still being processed, and cancels if that output changes bracketed paste. | Disable bracketed mode/reset fixture. | P,H,N |
 | `PASTE-04` | Any live mode → `K12` | Exceed character or line threshold. | Large confirmation appears even bracketed; threshold is implementation fact, not safety claim/preference. | Cancel or `PASTE-06`. | P,H,V,N,U |
 | `PASTE-05` | `K12 → K2` | Immediate Enter, inactive Markdown Ctrl+F then Enter, Escape, Cancel, outside click. | Waiting input remains behind the barrier, never activates a new dialog; asynchronous opening-frame controls are inert. Cancellation and dispatch share runtime applicability: inactive scoped/unbound/disabled chords and suppressed app repeats cannot dismiss confirmation. After that frame, Enter targets Cancel until focus is deliberately moved. Escape/Cancel discard waiting keys with feedback; backdrop does not dismiss or touch terminal. | Already `K2`; reopen with risky fixture. | H,N |
 | `PASTE-06` | `K12 → K2` | Deliberately focus Paste, activate once. | Captured normalized original—not preview—is one noninterleaved ordered operation, followed by waiting keyboard input; ordinary-mode line breaks encode Enter (CR) in source order, while bracketed mode preserves the captured payload; modal closes; terminal focus returns. | Fixture resets input. | P,H,N |
@@ -947,6 +962,9 @@ validating/restoring owned terminal state. Invalid, trailing, truncated or
 over-limit payloads never reach adoption. The managed wire observations do
 not establish a total attach/process-memory budget or signed-package/native
 visual acceptance; acknowledgement and old-client rollback remain unchanged.
+ADR 0081's smaller in-memory cells preserve the original history charges and
+schema-2/3 cell encoding for `PROF-06` and `TUNNEL-02`; `HIST-04` eviction
+decisions remain unchanged.
 
 ## N. Terminal typography, scheme, zoom, cursor, and focus mode
 

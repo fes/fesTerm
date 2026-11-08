@@ -86,6 +86,12 @@ else
     printf 'suite=presentation-cache-allocations status=fail\n' >>"$result_path"
     status=fail
 fi
+if cargo bench --locked -p festerm-core --bench scroll_allocations -- --check; then
+    printf 'suite=scroll-allocations status=pass\n' >>"$result_path"
+else
+    printf 'suite=scroll-allocations status=fail\n' >>"$result_path"
+    status=fail
+fi
 if python3 scripts/check_keyboard_routing.py; then
     printf 'suite=keyboard-routing-synthesized status=pass\n' >>"$result_path"
 else

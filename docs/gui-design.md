@@ -3101,15 +3101,19 @@ the platform composition state rather than duplicated terminal output.
 
 If bracketed-paste mode is enabled, paste uses the protocol markers. Without
 it, a single line pastes directly; multiline text requires confirmation because
-line breaks may immediately execute commands. Very large pastes require
-confirmation even in bracketed-paste mode because they may flood queues. The
-initial large-paste threshold remains an implementation constant pending the
-usability testing specified below, not a user-facing preference or a fabricated
-safety boundary.
+line breaks may immediately execute commands. While the shared terminal-ingest
+budget still holds earlier output for the target session, a mode change in
+that output may not be applied yet, so multiline text requires the same
+confirmation even when bracketed-paste mode appears enabled. Very large pastes
+require confirmation even in bracketed-paste mode because they may flood
+queues. The initial large-paste threshold remains an implementation constant
+pending the usability testing specified below, not a user-facing preference or
+a fabricated safety boundary.
 
 The modal title is `Paste <exact line count> into “<stable identity>”?` and its
 body explains that a line may execute immediately when bracketed paste is not
-active. It shows an exact plain-text preview bounded by both lines and
+active, or may not be active because earlier output is still being processed.
+It shows an exact plain-text preview bounded by both lines and
 characters, states the exact total line and character counts, and explicitly
 counts omitted content. Spaces and tabs remain faithful; non-tab/newline control
 characters use an unambiguous escaped representation. The dialog also exposes

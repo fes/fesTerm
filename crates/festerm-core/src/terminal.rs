@@ -1655,7 +1655,7 @@ impl Terminal {
 
     fn erase_cell(&self) -> Cell {
         let text = CompactString::const_new(" ");
-        let text_capacity_bytes = text.capacity();
+        let text_capacity_bytes = Cell::text_capacity(&text);
         Cell {
             text,
             text_capacity_bytes,
@@ -1741,7 +1741,7 @@ impl Terminal {
         }
         let buffer = self.active_buffer_mut();
         let text = CompactString::new(character.encode_utf8(&mut [0; 4]));
-        let text_capacity_bytes = text.capacity();
+        let text_capacity_bytes = Cell::text_capacity(&text);
         buffer.screen.replace_cluster(
             cursor.column,
             cursor.row,
@@ -1915,15 +1915,58 @@ impl Terminal {
             if !within_margins {
                 return;
             }
-            let removed =
-                buffer
-                    .screen
-                    .scroll_up(buffer.scroll_top, buffer.scroll_bottom, 1, fill, span);
-            if retain_history {
-                self.scrollback.push_rows(removed);
-            }
         } else if buffer.cursor.row + 1 < dimensions.rows() {
             buffer.cursor.row += 1;
+            return;
+        } else {
+            return;
+        }
+        self.scroll_active_region_up(1, fill, span, retain_history);
+    }
+
+    // Keep the common no-eviction path in the scrolling callers.
+    #[inline(always)]
+    fn scroll_active_region_up(
+        &mut self,
+        count: usize,
+        fill: Cell,
+        span: ColumnSpan,
+        retain_history: bool,
+    ) {
+        let reusable = if retain_history
+            && count == 1
+            && self
+                .scrollback
+                .row_storage_may_need_recycling(self.primary.screen.dimensions().columns())
+        {
+            let screen = &self.primary.screen;
+            let occupied = screen
+                .row_occupied_columns(0)
+                .expect("primary screen always has a first row");
+            let soft_wrapped = screen
+                .row_soft_wrapped(0)
+                .expect("primary screen always has a first row");
+            self.scrollback
+                .take_recyclable_row_storage(occupied, soft_wrapped)
+        } else {
+            None
+        };
+        if let Some((cells, row_ends)) = reusable {
+            let row = self.primary.screen.scroll_up_reusing(cells, fill);
+            self.scrollback.push_row_reusing_boundary(row, row_ends);
+            return;
+        }
+        let buffer = self.active_buffer_mut();
+        let removed = buffer.screen.scroll_up(
+            buffer.scroll_top,
+            buffer.scroll_bottom,
+            count,
+            fill,
+            span,
+            retain_history,
+        );
+        if retain_history {
+            self.scrollback.push_rows(removed);
         }
     }
 
@@ -2627,14 +2670,7 @@ impl Terminal {
             && self.primary.scroll_bottom + 1 == dimensions.rows()
             && span.left == 0
             && span.right + 1 == dimensions.columns();
-        let buffer = self.active_buffer_mut();
-        let removed =
-            buffer
-                .screen
-                .scroll_up(buffer.scroll_top, buffer.scroll_bottom, count, cell, span);
-        if retain_history {
-            self.scrollback.push_rows(removed);
-        }
+        self.scroll_active_region_up(count, cell, span, retain_history);
     }
 
     fn scroll_down(&mut self, parameters: CsiParameters) {
@@ -3500,7 +3536,7 @@ impl Terminal {
         };
         let text = CompactString::const_new("E");
         let cell = Cell {
-            text_capacity_bytes: text.capacity(),
+            text_capacity_bytes: Cell::text_capacity(&text),
             text,
             width: CellWidth::Single,
             foreground: Color::Default,
@@ -3701,6 +3737,34 @@ fn resized_tab_stops(existing: &[bool], dimensions: Dimensions) -> Vec<bool> {
 mod ascii_run_fast_path_tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn ascii_run_replaces_heap_text_hyperlink_and_rendition() {
+        let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"\x1b]8;;https://example.invalid/link\x1b\\");
+        terminal.ingest(b"e");
+        for _ in 0..15 {
+            terminal.ingest("\u{301}".as_bytes());
+        }
+        terminal.ingest(b"\x1b]8;;\x1b\\");
+        let link = Arc::downgrade(&terminal.cell(0, 0).unwrap().hyperlink_target().unwrap());
+        assert!(terminal.cell(0, 0).unwrap().text().len() > 24);
+
+        terminal.ingest(b"\r\x1b[31;44;1m\x1b[1\"qAB");
+        let cell = terminal.cell(0, 0).unwrap();
+        assert_eq!(cell.text(), "A");
+        assert_eq!(cell.width(), CellWidth::Single);
+        assert_eq!(cell.foreground(), Color::Indexed(1));
+        assert_eq!(cell.background(), Color::Indexed(4));
+        assert!(cell.attributes().contains(Attributes::BOLD));
+        assert!(cell.attributes().contains(Attributes::PROTECTED));
+        assert!(cell.hyperlink().is_none());
+        assert!(link.upgrade().is_none());
+        assert!(terminal
+            .recovery_clone()
+            .validate_recovery_snapshot()
+            .is_ok());
+    }
 
     fn fragment() -> impl Strategy<Value = Vec<u8>> {
         prop_oneof![

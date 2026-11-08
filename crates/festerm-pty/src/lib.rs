@@ -13,7 +13,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread,
     time::Duration,
@@ -48,7 +48,6 @@ pub use festerm_windows_runtime::{
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
-const BACKPRESSURE_RETRY: Duration = Duration::from_millis(5);
 /// Output bytes the reader may have queued but the consumer not yet taken.
 ///
 /// The reader coalesces consecutive reads into chunks of up to
@@ -918,6 +917,8 @@ struct Shared {
     lifecycle_transition: Mutex<()>,
     lifecycle: Mutex<SessionLifecycle>,
     metrics: Mutex<SessionMetrics>,
+    output_available: Condvar,
+    output_waiting: AtomicBool,
     event_sender: SyncSender<SessionEvent>,
     event_notifier: Arc<dyn SessionEventNotifier>,
     cancel: AtomicBool,
@@ -975,7 +976,7 @@ impl Shared {
         self.set_lifecycle(SessionLifecycle::Failed(error));
     }
 
-    fn try_emit(&self, event: SessionEvent) -> bool {
+    fn try_emit(&self, event: SessionEvent) -> Result<(), TrySendError<SessionEvent>> {
         let mut metrics = self
             .metrics
             .lock()
@@ -988,13 +989,67 @@ impl Shared {
                     .max(metrics.event_queue_depth);
                 drop(metrics);
                 self.event_notifier.notify();
-                true
+                Ok(())
             }
-            Err(TrySendError::Full(_)) => {
+            Err(TrySendError::Full(event)) => {
                 metrics.backpressure_count = metrics.backpressure_count.saturating_add(1);
-                false
+                Err(TrySendError::Full(event))
             }
-            Err(TrySendError::Disconnected(_)) => false,
+            Err(TrySendError::Disconnected(event)) => Err(TrySendError::Disconnected(event)),
+        }
+    }
+
+    fn wait_for_output_room(&self, output_len: Option<usize>) -> bool {
+        let mut metrics = self
+            .metrics
+            .lock()
+            .expect("session metrics lock is not poisoned");
+        loop {
+            if self.cancel.load(Ordering::Acquire) {
+                return false;
+            }
+            let queue_full = metrics.event_queue_depth >= metrics.event_queue_capacity;
+            let bytes_full = output_len.is_some_and(|len| {
+                let queued = self.queued_output_bytes.load(Ordering::Acquire);
+                queued != 0 && queued.saturating_add(len) > MAX_QUEUED_OUTPUT_BYTES
+            });
+            if !queue_full && !bytes_full {
+                return true;
+            }
+            // Consumers and cancellation signal under this same lock, so a
+            // freed slot cannot be missed between the check and the wait.
+            self.output_waiting.store(true, Ordering::Relaxed);
+            metrics = self
+                .output_available
+                .wait(metrics)
+                .expect("session metrics lock is not poisoned");
+            self.output_waiting.store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn event_received(&self, event: &SessionEvent) {
+        let mut metrics = self
+            .metrics
+            .lock()
+            .expect("session metrics lock is not poisoned");
+        metrics.event_queue_depth = metrics.event_queue_depth.saturating_sub(1);
+        if let SessionEvent::Output(bytes) = event {
+            self.queued_output_bytes
+                .fetch_sub(bytes.len(), Ordering::AcqRel);
+        }
+        if self.output_waiting.load(Ordering::Relaxed) {
+            self.output_available.notify_one();
+        }
+    }
+
+    fn cancel_and_wake_reader(&self) {
+        let _metrics = self
+            .metrics
+            .lock()
+            .expect("session metrics lock is not poisoned");
+        self.cancel.store(true, Ordering::Release);
+        if self.output_waiting.load(Ordering::Relaxed) {
+            self.output_available.notify_one();
         }
     }
 
@@ -1010,20 +1065,24 @@ impl Shared {
 
             if backpressure_pending && !backpressure_event_sent {
                 let metrics = self.metrics();
-                if self.try_emit(SessionEvent::Backpressure {
+                match self.try_emit(SessionEvent::Backpressure {
                     direction: FlowDirection::Output,
                     queued: metrics.event_queue_depth,
                     capacity: metrics.event_queue_capacity,
                 }) {
-                    backpressure_event_sent = true;
-                    continue;
+                    Ok(()) => backpressure_event_sent = true,
+                    Err(TrySendError::Full(_)) => {
+                        if !self.wait_for_output_room(None) {
+                            return false;
+                        }
+                    }
+                    Err(TrySendError::Disconnected(_)) => return false,
                 }
                 // The notice has to win the first slot that frees. Falling
                 // through to the output send here lets the consumer drain
                 // between the two attempts, which resumes output while the
                 // stall that held it up goes unreported - the consumer then
                 // sees an unexplained gap rather than backpressure.
-                thread::sleep(BACKPRESSURE_RETRY);
                 continue;
             }
 
@@ -1061,8 +1120,13 @@ impl Shared {
                     output_event = event;
                     metrics.backpressure_count = metrics.backpressure_count.saturating_add(1);
                     drop(metrics);
-                    backpressure_pending = true;
-                    thread::sleep(BACKPRESSURE_RETRY);
+                    if backpressure_event_sent {
+                        if !self.wait_for_output_room(Some(output_len)) {
+                            return false;
+                        }
+                    } else {
+                        backpressure_pending = true;
+                    }
                 }
                 Err(TrySendError::Disconnected(_)) => return false,
             }
@@ -1087,7 +1151,7 @@ impl Shared {
         ) {
             self.set_lifecycle(SessionLifecycle::Stopping);
         }
-        self.cancel.store(true, Ordering::Release);
+        self.cancel_and_wake_reader();
         self.terminate_process_tree();
     }
 
@@ -1207,6 +1271,8 @@ impl LocalPtySession {
                 event_queue_capacity: DEFAULT_EVENT_QUEUE_CAPACITY,
                 ..SessionMetrics::default()
             }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
             event_sender,
             event_notifier,
             cancel: AtomicBool::new(false),
@@ -1385,17 +1451,7 @@ impl Session for LocalPtySession {
             .try_recv()
         {
             Ok(event) => {
-                let mut metrics = self
-                    .shared
-                    .metrics
-                    .lock()
-                    .expect("session metrics lock is not poisoned");
-                metrics.event_queue_depth = metrics.event_queue_depth.saturating_sub(1);
-                if let SessionEvent::Output(bytes) = &event {
-                    self.shared
-                        .queued_output_bytes
-                        .fetch_sub(bytes.len(), Ordering::AcqRel);
-                }
+                self.shared.event_received(&event);
                 Ok(event)
             }
             Err(TryRecvError::Empty) => Err(SessionTryReceiveError::Empty),
@@ -1664,7 +1720,7 @@ fn reader_worker(
                 );
                 shared.invalidate_automation_epoch();
                 shared.record_error(error.clone());
-                shared.cancel.store(true, Ordering::Release);
+                shared.cancel_and_wake_reader();
                 let _ = done_sender.send(Err(error));
                 return;
             }
@@ -1734,7 +1790,7 @@ fn control_worker(
                     );
                     shared.fail(error.clone());
                     worker_failure = Some(error);
-                    shared.cancel.store(true, Ordering::Release);
+                    shared.cancel_and_wake_reader();
                     stopping = true;
                     shared.terminate_process_tree();
                 } else {
@@ -1764,14 +1820,14 @@ fn control_worker(
             }
             Ok(SessionCommand::Shutdown) => {
                 stopping = true;
-                shared.cancel.store(true, Ordering::Release);
+                shared.cancel_and_wake_reader();
                 shared.terminate_process_tree();
             }
             Ok(_) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 stopping = true;
                 shared.invalidate_automation_epoch();
-                shared.cancel.store(true, Ordering::Release);
+                shared.cancel_and_wake_reader();
                 shared.terminate_process_tree();
             }
         }
@@ -1828,7 +1884,7 @@ fn control_worker(
                     format!("could not observe local child exit: {error}"),
                 );
                 shared.fail(error.clone());
-                shared.cancel.store(true, Ordering::Release);
+                shared.cancel_and_wake_reader();
                 shared.terminate_process_tree();
                 drop(writer);
                 drop(master);
@@ -1855,7 +1911,7 @@ fn control_worker(
                 Err(error)
             }
             Err(RecvTimeoutError::Timeout) => {
-                shared.cancel.store(true, Ordering::Release);
+                shared.cancel_and_wake_reader();
                 let error = SessionError::new(
                     SessionErrorKind::Shutdown,
                     "local PTY reader did not stop within the bounded shutdown interval",
@@ -2359,6 +2415,8 @@ mod tests {
                 event_queue_capacity: 1,
                 ..SessionMetrics::default()
             }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
             event_sender,
             event_notifier: notifier.clone(),
             cancel: AtomicBool::new(false),
@@ -2378,18 +2436,19 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(shared.metrics().backpressure_count > 0);
+        let first = event_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(&first, SessionEvent::Output(bytes) if bytes == b"first"));
+        shared.event_received(&first);
+        let notice = event_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(matches!(
-            event_receiver.recv_timeout(Duration::from_secs(1)),
-            Ok(SessionEvent::Output(bytes)) if bytes == b"first"
-        ));
-        assert!(matches!(
-            event_receiver.recv_timeout(Duration::from_secs(1)),
-            Ok(SessionEvent::Backpressure {
+            &notice,
+            SessionEvent::Backpressure {
                 direction: FlowDirection::Output,
-                queued: 1,
                 capacity: 1,
-            })
+                ..
+            }
         ));
+        shared.event_received(&notice);
         assert!(matches!(
             event_receiver.recv_timeout(Duration::from_secs(1)),
             Ok(SessionEvent::Output(bytes)) if bytes == b"second"
@@ -2413,6 +2472,8 @@ mod tests {
                 event_queue_capacity: 1,
                 ..SessionMetrics::default()
             }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
             event_sender,
             event_notifier: noop_session_event_notifier(),
             cancel: AtomicBool::new(false),
@@ -2461,6 +2522,8 @@ mod tests {
                 event_queue_capacity: 1,
                 ..SessionMetrics::default()
             }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
             event_sender,
             event_notifier: noop_session_event_notifier(),
             cancel: AtomicBool::new(false),
@@ -2499,6 +2562,8 @@ mod tests {
                 event_queue_capacity: 8,
                 ..SessionMetrics::default()
             }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
             event_sender,
             event_notifier: noop_session_event_notifier(),
             cancel: AtomicBool::new(false),
@@ -2518,26 +2583,25 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(shared.metrics().backpressure_count > 0);
+        let first = event_receiver.try_recv().unwrap();
+        assert!(
+            matches!(&first, SessionEvent::Output(bytes) if bytes.len() == MAX_QUEUED_OUTPUT_BYTES)
+        );
+        let notice = event_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
         assert!(matches!(
-            event_receiver.try_recv(),
-            Ok(SessionEvent::Output(bytes)) if bytes.len() == MAX_QUEUED_OUTPUT_BYTES
-        ));
-        assert!(matches!(
-            event_receiver.recv_timeout(Duration::from_secs(1)),
-            Ok(SessionEvent::Backpressure {
+            &notice,
+            SessionEvent::Backpressure {
                 direction: FlowDirection::Output,
                 ..
-            })
+            }
         ));
+        shared.event_received(&notice);
         assert!(
             event_receiver.try_recv().is_err(),
             "byte bound must hold output back"
         );
 
-        // What `try_recv_event` releases once the consumer takes the chunk.
-        shared
-            .queued_output_bytes
-            .fetch_sub(MAX_QUEUED_OUTPUT_BYTES, Ordering::AcqRel);
+        shared.event_received(&first);
         assert!(matches!(
             event_receiver.recv_timeout(Duration::from_secs(1)),
             Ok(SessionEvent::Output(bytes)) if bytes == b"b"
@@ -2572,6 +2636,8 @@ mod tests {
                     event_queue_capacity: 4,
                     ..SessionMetrics::default()
                 }),
+                output_available: Condvar::new(),
+                output_waiting: AtomicBool::new(false),
                 event_sender,
                 event_notifier: noop_session_event_notifier(),
                 cancel: AtomicBool::new(false),
@@ -2636,6 +2702,8 @@ mod tests {
                     event_queue_capacity: 1,
                     ..SessionMetrics::default()
                 }),
+                output_available: Condvar::new(),
+                output_waiting: AtomicBool::new(false),
                 event_sender,
                 event_notifier: Arc::new(CountingNotifier::default()),
                 cancel: AtomicBool::new(false),
@@ -2650,30 +2718,33 @@ mod tests {
             let producer_shared = Arc::clone(&shared);
             let producer = thread::spawn(move || producer_shared.emit_output(b"second".to_vec()));
 
-            // Each retry that cannot place the notice bumps the count, so a
-            // second increment means the producer is inside the retry loop
-            // with a notice still owed.
+            // The second increment means the notice could not be queued and
+            // is still owed when the consumer frees a slot.
             let deadline = Instant::now() + Duration::from_secs(5);
             while shared.metrics().backpressure_count < 2 && Instant::now() < deadline {
                 std::hint::spin_loop();
             }
             assert!(
                 shared.metrics().backpressure_count >= 2,
-                "attempt {attempt}: the producer never retried a blocked notice"
+                "attempt {attempt}: the producer never encountered a blocked notice"
             );
             // Drain with a bare `try_recv` rather than a blocking receive so
             // the slot frees as close as possible to the failure that was
             // just observed, which is where the window is.
-            while event_receiver.try_recv().is_err() {
+            let first = loop {
+                if let Ok(event) = event_receiver.try_recv() {
+                    break event;
+                }
                 std::hint::spin_loop();
-            }
+            };
+            shared.event_received(&first);
 
             let second = event_receiver
                 .recv_timeout(Duration::from_secs(5))
                 .expect("the stalled producer makes progress once a slot frees");
             assert!(
                 matches!(
-                    second,
+                    &second,
                     SessionEvent::Backpressure {
                         direction: FlowDirection::Output,
                         ..
@@ -2681,8 +2752,174 @@ mod tests {
                 ),
                 "attempt {attempt}: output resumed before the stall was reported: {second:?}"
             );
+            shared.event_received(&second);
             assert!(producer.join().expect("producer joins"));
         }
+    }
+
+    fn output_test_session(
+        event_capacity: usize,
+    ) -> (Arc<Shared>, LocalPtySession, Receiver<SessionCommand>) {
+        let (event_sender, event_receiver) = mpsc::sync_channel(event_capacity);
+        let (command_sender, command_receiver) = mpsc::sync_channel(1);
+        let (_completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared {
+            id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
+            lifecycle: Mutex::new(SessionLifecycle::Running),
+            metrics: Mutex::new(SessionMetrics {
+                event_queue_capacity: event_capacity,
+                ..SessionMetrics::default()
+            }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
+            event_sender,
+            event_notifier: noop_session_event_notifier(),
+            cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
+            termination_requested: AtomicBool::new(false),
+            process_tree: None,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        });
+        let session = LocalPtySession {
+            process_id: None,
+            terminal_device: None,
+            shared: Arc::clone(&shared),
+            command_sender,
+            event_receiver: Mutex::new(event_receiver),
+        };
+        (shared, session, command_receiver)
+    }
+
+    fn wait_for_blocked_output(shared: &Shared) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !shared.output_waiting.load(Ordering::Relaxed) {
+            assert!(Instant::now() < deadline, "output did not block");
+            thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn blocked_output_wakes_on_shutdown_with_a_full_command_queue() {
+        for bytes_full in [false, true] {
+            let (shared, session, _command_receiver) =
+                output_test_session(if bytes_full { 8 } else { 1 });
+            let first = if bytes_full {
+                vec![b'a'; MAX_QUEUED_OUTPUT_BYTES]
+            } else {
+                b"first".to_vec()
+            };
+            assert!(shared.emit_output(first));
+            session.try_send_input(b"occupied").unwrap();
+
+            let producer_shared = Arc::clone(&shared);
+            let (finished, result) = mpsc::sync_channel(1);
+            let producer = thread::spawn(move || {
+                finished
+                    .send(producer_shared.emit_output(b"second".to_vec()))
+                    .unwrap();
+            });
+            wait_for_blocked_output(&shared);
+            assert!(matches!(
+                session.try_shutdown(),
+                Err(SessionSendError::Full {
+                    operation: SessionOperation::Shutdown,
+                    ..
+                })
+            ));
+            assert_eq!(result.recv_timeout(Duration::from_secs(5)), Ok(false));
+            producer.join().unwrap();
+        }
+    }
+
+    struct TestChunks {
+        chunks: std::collections::VecDeque<&'static [u8]>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl Read for TestChunks {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            let chunk = self.chunks.pop_front().unwrap_or_default();
+            buffer[..chunk.len()].copy_from_slice(chunk);
+            Ok(chunk.len())
+        }
+    }
+
+    #[test]
+    fn reader_drains_without_publishing_after_blocked_output_is_cancelled() {
+        let (shared, session, _command_receiver) = output_test_session(1);
+        let reads = Arc::new(AtomicUsize::new(0));
+        let reader = TestChunks {
+            chunks: [b"first".as_slice(), b"blocked", b"after"].into(),
+            reads: Arc::clone(&reads),
+        };
+        let (done_sender, done_receiver) = mpsc::sync_channel(1);
+        let reader_shared = Arc::clone(&shared);
+        let worker = thread::spawn(move || {
+            reader_worker(reader_shared, Box::new(reader), |_| false, done_sender);
+        });
+        wait_for_blocked_output(&shared);
+        session.try_shutdown().unwrap();
+        assert_eq!(
+            done_receiver.recv_timeout(Duration::from_secs(5)),
+            Ok(Ok(()))
+        );
+        worker.join().unwrap();
+        assert_eq!(reads.load(Ordering::Relaxed), 4);
+        assert!(matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Output(bytes)) if bytes == b"first"
+        ));
+        assert_eq!(session.try_recv_event(), Err(SessionTryReceiveError::Empty));
+    }
+
+    #[test]
+    fn blocked_reader_delivers_queued_output_then_observes_eof() {
+        let (shared, session, _command_receiver) = output_test_session(1);
+        shared.automation_epoch.transition(true);
+        let reads = Arc::new(AtomicUsize::new(0));
+        let reader = TestChunks {
+            chunks: [b"first".as_slice(), b"last"].into(),
+            reads: Arc::clone(&reads),
+        };
+        let (done_sender, done_receiver) = mpsc::sync_channel(1);
+        let reader_shared = Arc::clone(&shared);
+        let worker = thread::spawn(move || {
+            reader_worker(reader_shared, Box::new(reader), |_| false, done_sender);
+        });
+        wait_for_blocked_output(&shared);
+
+        let next_event = || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match session.try_recv_event() {
+                    Ok(event) => break event,
+                    Err(SessionTryReceiveError::Empty) if Instant::now() < deadline => {
+                        thread::yield_now();
+                    }
+                    other => panic!("expected output event, got {other:?}"),
+                }
+            }
+        };
+        assert!(matches!(next_event(), SessionEvent::Output(bytes) if bytes == b"first"));
+        assert!(matches!(
+            next_event(),
+            SessionEvent::Backpressure {
+                direction: FlowDirection::Output,
+                ..
+            }
+        ));
+        assert!(matches!(next_event(), SessionEvent::Output(bytes) if bytes == b"last"));
+        assert_eq!(
+            done_receiver.recv_timeout(Duration::from_secs(5)),
+            Ok(Ok(()))
+        );
+        worker.join().unwrap();
+        assert_eq!(reads.load(Ordering::Relaxed), 3);
+        assert_eq!(shared.automation_epoch.capture(), None);
     }
 
     #[derive(Default)]

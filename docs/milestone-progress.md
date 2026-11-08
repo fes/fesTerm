@@ -23,6 +23,47 @@ screen transitions; an isolated allocation check guards the warmed ASCII
 case. Measured search-loop CPU and allocation observations, including
 shared-host caveats, are in `validation/terminal-performance/README.md`.
 
+## Reusing evicted scrollback storage
+
+Full primary-screen history now transfers an eligible evicted hard line's
+one-row boundary allocation, and in stricter cases its matching cell
+allocation, directly to an incoming hard line when eviction is already
+unavoidable. The handoff preserves history accounting and does not retain an
+extra pool or old logical content. ADR 0080 records the bounds, recovery and
+ownership constraints, and remaining storage decisions; allocation and CPU
+measurements and their limitations are in
+`validation/terminal-performance/README.md`.
+
+## Waking a backpressured local PTY reader
+
+The local PTY reader used to retry a full output queue every 5 ms. It now
+waits for consumed event space or cancellation, while preserving the ordered
+backpressure notice, the output byte limit and draining without publishing
+after cancellation. Cancellation wakes a blocked reader even if the command
+queue is full. ADR 0079 records the synchronization boundary and the changed
+meaning of the retry counter.
+
+The repository's PTY probe measures a deliberately stalled reader and a
+normally draining output stream using process CPU time. These observations do
+not qualify GUI responsiveness or native key-to-PTY latency.
+
+## Sharing one ingest budget across a window's sessions
+
+Each session used to receive its own 8 ms parsing budget per pump, and the
+active session was pumped again after painting, so synchronous parsing grew
+with the number of busy sessions. A desktop window now gives its sessions one
+4 ms budget per update, in bounded round-robin slices. Work that remains is
+kept in its queue and requests another frame. Each window has its own budget,
+so several windows can each spend one per update. ADR 0079 records the
+ordering rules; no throughput or latency improvement is claimed without
+matched measurements.
+
+Review found that the budget could leave a session's queued `ESC[?2004l`
+unparsed while its cached mode still showed bracketed paste, so a multiline
+paste could skip its confirmation. A session whose output remains deferred now
+requires confirmation for multiline text, and the existing mode check cancels
+the dialog if the deferred output changes the mode.
+
 ## Composing live desktop panes
 
 Desktop windows can now arrange two to four existing session or document
@@ -5393,6 +5434,23 @@ fuzzer now share a frame-by-frame CSI/DCS/OSC oracle, with mixed-reply and
 queue-overflow regressions. Valid concatenated replies pass; truncated frames
 anywhere in the stream still fail.
 
+## Keeping protected cells when their line scrolls
+
+The scheduled parser fuzzer later found a screen defect. An erase that spares
+protected cells (`DECSEL` or `DECSED` after `DECSCA`, or an ordinary `ED`, `EL`
+or `ECH` inside an ISO guarded area) left those cells in place but recorded
+them as empty. That broke ADR 0017's rule that only structurally unused padding
+lies outside a row's occupied extent. A full-screen scroll trusts that extent,
+so it neither carried the surviving text into history nor cleared it from the
+row it recycled. Debug builds failed the assertion guarding the extent; release
+builds dropped the character from history and drew it again on the new bottom
+line.
+
+Sparing erases now keep the occupancy of every cell they leave alone, as the
+rectangular selective erase already did. The minimised fifteen-byte crash input
+is a named property-test regression, and a unit test scrolls the surviving cell
+out of each sparing erase form.
+
 ## Freezing terminal history without lying about size
 
 Terminal history snapshots now follow the same rule as ordinary editor files:
@@ -8351,3 +8409,31 @@ This is not a configuration-generation or preference owner. It does not
 establish filesystem namespace/alias safety, external-writer coordination,
 durable restart recovery, or safe retirement of previous credentials after
 successful saves, and does not authorize session creation.
+
+## Avoiding allocations for discarded scroll rows
+
+Alternate-screen and partial-region scrolling never add rows to primary
+scrollback, but still built and discarded temporary row vectors. Those paths
+now overwrite departing rows directly; full-screen primary scrolling keeps its
+existing history and accounting path. A warmed allocation oracle observed
+8,192 allocations fall to zero over 4,096 scrolls in each unretained ASCII
+fixture, while the full-history control was unchanged. This measures allocator
+requests, not native throughput, input latency, or total memory.
+
+Single-row primary scrolling now also carries its departing row inline rather
+than allocating a temporary row container; multi-row scrolls still spill when
+needed. With full bounded history, the allocation oracle observed 12,288 calls
+fall to 8,192 over 4,096 scrolls, with the same retained-line count and
+accounted bytes. The cells and row-boundary allocations still require a
+separate bounded-recycling decision.
+
+## Smaller cells without changing recovery or retention
+
+The bounded text-capacity metadata now uses a narrower in-memory field while
+keeping the existing recovery wire value and conservative history charge.
+Eligible ASCII runs replace cell contents in place and still release the old
+text and link. The
+[isolated memory and CPU measurements](../validation/terminal-performance/README.md#compact-cells-with-stable-history-charges)
+depend on terminal width and allocator behavior; they do not establish native
+application RSS or responsiveness. Existing history limits retain the same
+number of lines, so higher retention density remains separate work.
