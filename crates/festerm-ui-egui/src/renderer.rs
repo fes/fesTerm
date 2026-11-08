@@ -2934,8 +2934,13 @@ mod tests {
             shaped,
             ..Default::default()
         };
+        let full_frame = |frame: usize| {
+            (0..12)
+                .map(|row| format!("\x1b[{};1Hframe {frame:06}", row + 1))
+                .collect::<String>()
+        };
         for frame in 0..4 {
-            terminal.ingest(format!("\x1b[2J\x1b[Hframe {frame:06}").as_bytes());
+            terminal.ingest(full_frame(frame).as_bytes());
             let dirty = terminal.take_dirty_rows();
             cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
             row_cache_frame(
@@ -2964,7 +2969,7 @@ mod tests {
         }
         assert_eq!(glyphs.rows.reused, 12);
         for frame in 0..4 {
-            terminal.ingest(format!("\x1b[2J\x1b[Hframe {frame:06}").as_bytes());
+            terminal.ingest(full_frame(frame).as_bytes());
             let dirty = terminal.take_dirty_rows();
             cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
             let reference = row_cache_frame(
@@ -3022,6 +3027,164 @@ mod tests {
         );
         assert_eq!(glyphs.rows.rebuilt, 12);
         assert_eq!(glyphs.rows.capture_bookmarks, 12);
+    }
+
+    #[test]
+    fn retained_rows_reuse_equal_scrolling_with_exact_meshes() {
+        for (shaped, smart) in [(false, false), (true, false), (false, true), (true, true)] {
+            let context = egui::Context::default();
+            crate::install_terminal_fonts(&context);
+            warm_row_context(&context);
+            let mut terminal = terminal(48, 5);
+            terminal.ingest(b"\x1b[?25l");
+            for _ in 0..16 {
+                terminal.ingest(b"row.\r\n");
+            }
+            let mut cache = TerminalRenderCache::default();
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            let mut ordinary = GlyphCache::default();
+            ordinary.rows.disable();
+            let mut optimized = GlyphCache::default();
+            let mut selection = Selection::default();
+            let fonts = FontSettings::default();
+            let options = RowFrameOptions {
+                shaped,
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+            }
+            for frame in 0..6 {
+                let selected_before = if frame == 3 {
+                    let snapshot = TerminalSnapshot::from_terminal(&terminal);
+                    let anchor = CellPosition { column: 0, row: 2 };
+                    if smart {
+                        assert!(selection.infer_smart(
+                            snapshot,
+                            anchor,
+                            crate::SmartSelectionScope::Sentence
+                        ));
+                    } else {
+                        let head = CellPosition { column: 2, row: 3 };
+                        selection.begin_at(anchor, snapshot.content_position(anchor).unwrap());
+                        selection.extend_at(head, snapshot.content_position(head).unwrap());
+                        selection.finish();
+                    }
+                    selection.row_range(snapshot, 2)
+                } else {
+                    None
+                };
+                terminal.ingest(b"row.\r\n");
+                let dirty = terminal.take_dirty_rows();
+                assert_eq!(dirty, [0, 1, 2, 3, 4]);
+                cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+                if frame == 3 {
+                    assert_ne!(
+                        selection.row_range(TerminalSnapshot::from_terminal(&terminal), 2),
+                        selected_before
+                    );
+                }
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                assert_same_row_primitives(&actual, &reference);
+                if frame < 3 {
+                    assert_eq!(optimized.rows.reused, 5);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_rows_bypass_mostly_changed_scrolling_with_exact_meshes() {
+        for shaped in [false, true] {
+            let context = egui::Context::default();
+            crate::install_terminal_fonts(&context);
+            warm_row_context(&context);
+            let mut terminal = terminal(48, 5);
+            terminal.ingest(b"\x1b[?25l");
+            for frame in 0..16 {
+                terminal.ingest(format!("row {frame:02}\r\n").as_bytes());
+            }
+            let mut cache = TerminalRenderCache::default();
+            let dirty = terminal.take_dirty_rows();
+            cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+            let mut ordinary = GlyphCache::default();
+            ordinary.rows.disable();
+            let mut optimized = GlyphCache::default();
+            let selection = Selection::default();
+            let fonts = FontSettings::default();
+            let options = RowFrameOptions {
+                shaped,
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+            }
+            for frame in 12..15 {
+                terminal.ingest(format!("row {frame:02}\r\n").as_bytes());
+                let dirty = terminal.take_dirty_rows();
+                assert_eq!(dirty, [0, 1, 2, 3, 4]);
+                cache.update(TerminalSnapshot::from_terminal(&terminal), &dirty);
+                let reference = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut ordinary,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                assert_eq!(
+                    optimized.font_revision,
+                    Some(context.fonts_mut(|fonts| fonts.image_revision()))
+                );
+                let actual = row_cache_frame(
+                    &context,
+                    &terminal,
+                    &cache,
+                    &mut optimized,
+                    &selection,
+                    &fonts,
+                    options,
+                );
+                assert_same_row_primitives(&actual, &reference);
+                assert_eq!(optimized.rows.diagnostics(), (0, 0, 0));
+                assert_eq!(optimized.rows.capture_bookmarks, 0);
+            }
+        }
     }
 
     #[test]

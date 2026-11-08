@@ -138,7 +138,7 @@ Unshaped blank-background groups preserve exact instruction order; full-row
 mutation bypasses retention with shaping both on and off, then returns to
 caching when content stabilizes. Native painting, transforms, opacity and emoji retain ordinary paths. This
 changes neither event-driven scheduling nor the terminal/session writer.
-Issue #334's bounded cleanup shares one revision token per nonempty presentation
+Issue #334's bounded cleanup shares one revision token per rebuilt presentation
 update, comparing identities only at the same row position. Capture bookmarks
 are created only for eligible retained rows. Batch/clone/independent-cache
 identity, swapped-row exact meshes and zero full-mutation bookmarks are covered;
@@ -152,6 +152,14 @@ tradeoff for #328 while #334 remains open. Historical matrices and low-first-run
 outliers remain preserved, with no established cause or causal before/after
 speedup claim. External PR review remains required; CP-18, native input,
 mixed-DPI and physical latency are not advanced by these CPU measurements.
+
+For `TERM-01`, an all-dirty live grid may retain same-position revisions only
+after a full cell-and-hyperlink equality check, with cheap rejection and
+bounded long-link comparisons. Changed grids and unsupported comparison cases
+keep the existing rebuild path, dirty-row notifications remain intact, and
+selection and cursor invalidation remain independent. Exact-mesh tests cover
+scrolling and moving regular and smart selections; this is not movable
+content-row identity or native-presentation qualification.
 
 The optional residual-CPU probe separates frozen full-application composition
 from terminal preparation/drawing using completed GPU work and process-wide CPU

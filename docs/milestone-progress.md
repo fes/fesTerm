@@ -8434,6 +8434,20 @@ establish filesystem namespace/alias safety, external-writer coordination,
 durable restart recovery, or safe retirement of previous credentials after
 successful saves, and does not authorize session creation.
 
+## Repeated-output render reuse
+
+Scrolling marks every live row dirty even when repeated output leaves the
+visible grid unchanged. The presentation cache now retains same-position row
+revisions only after exact whole-grid equality, so ordinary row painting can
+reuse its existing shapes. Cheap mismatch probes and bounded hyperlink-value
+comparisons preserve the rebuild path for changing grids. Selection remains
+independently keyed and the cursor remains separate.
+
+Headless process-CPU samples show lower costs for repeated output, including
+long links, but mixed controls vary under host load. This is not a native
+presentation result or movable scroll-row identity; the broader rendering
+target remains open. See ADR 0044 and the terminal-performance evidence.
+
 ## Avoiding allocations for discarded scroll rows
 
 Alternate-screen and partial-region scrolling never add rows to primary

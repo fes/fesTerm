@@ -194,6 +194,59 @@ usable size, native allocations, fragmentation, RSS, GPU retirement, full-frame
 CPU or multi-day growth. Existing Criterion `interaction_rendering` benchmarks
 remain the timing surface; this oracle has no wall-clock acceptance threshold.
 
+## Unchanged all-dirty grids
+
+Run, for example,
+`cargo bench --locked -p festerm-ui-egui --bench dirty_row_cpu -- repeated_scroll 4000`.
+The headless fixture ingests output into a 152-by-44 grid, paints with egui and
+tessellates the resulting shapes. It reports frame and render signatures; the
+exact-mesh tests separately verify content and selection correctness. It does
+not exercise a native window, GPU presentation or Windows Direct2D.
+
+On Apple M2, macOS 27.2 and Rust 1.97.1 in release mode, the table compares
+`209e494cd93311d9ec505c59de26dbb20b643e15` with unchanged-grid reuse. Separate
+build targets used identical benchmark sources. Each median is six process
+user-plus-system CPU samples, in A-B-B-A-A-B-B-A-A-B-B-A order. One-minute
+host load ranged approximately 5.0-14.4, with other processes active. The
+1,200-frame wide/long-row, 6,000-frame short mixed, 12,000-frame TUI and
+8,000-frame short repeated cases are not directly comparable to each other.
+
+| Workload | Before CPU (s) | After CPU (s) | Change |
+| --- | ---: | ---: | ---: |
+| `repeated_scroll` | 0.966355 | 0.843218 | -12.7% |
+| `linked_repeated_scroll` | 1.058647 | 1.008941 | -4.7% |
+| `wide_repeated_scroll` | 1.034285 | 0.697465 | -32.6% |
+| `linked_wide_repeated_scroll` | 1.049981 | 0.712203 | -32.2% |
+| `linked_multi_wide_repeated_scroll` | 1.020090 | 1.042404 | +2.2% |
+| `mostly_repeated_scroll` | 0.758740 | 0.769085 | +1.4% |
+| `eighty_percent_repeated_scroll` | 0.803798 | 0.825745 | +2.7% |
+| `three_quarter_repeated_scroll` | 0.863342 | 0.845349 | -2.1% |
+| `half_repeated_scroll` | 0.974776 | 0.970449 | -0.4% |
+| `mostly_changing_scroll` | 1.047570 | 1.058521 | +1.0% |
+| `changing_scroll` | 1.397619 | 1.396083 | -0.1% |
+| `late_change_scroll` | 1.074995 | 1.052584 | -2.1% |
+| `linked_late_change_scroll` | 0.796703 | 0.784855 | -1.5% |
+| `linked_wide_changing_scroll` | 1.018051 | 1.064098 | +4.5% |
+| `interior_change_scroll` | 1.044253 | 1.036720 | -0.7% |
+| `interior_mixed_scroll` | 1.045809 | 1.078774 | +3.2% |
+| `late_change_tui` | 0.467713 | 0.471298 | +0.8% |
+
+These are synthetic process-CPU observations, not end-to-end speedups; the
+loaded host and short control runs do not exclude modest regressions. Longer
+six-pair rechecks at one-minute load 4.1-4.7 found changing wide links +2.8%,
+interior mixed changes +0.3%, 80%-repeated rows -0.9%, and the two-link
+fallback +0.9%. In an
+earlier round at load 5.0-6.1, the short repeated and long-link-wide cases
+were 9.8% and 30.1% lower, while the half-repeated and linked-late controls
+were +3.1% and -5.8%; the reversals illustrate control variability. That
+round preceded the benchmark's final CLI and texture-delta cleanup. A later
+full round before the dirty-row order and generation guards is also preserved.
+An earlier unpublished prototype compared long link values per cell and was
+7.7% slower on `linked_wide_repeated_scroll`; bounding those comparisons
+eliminated that regression in the subsequent samples. Raw samples, including
+that adverse control, are in `equal-dirty-grid-2026-11-07.json`. General
+scrolling with distinct row contents and Direct2D remain separate questions.
+
 ## Core ingest throughput
 
 Run `cargo bench -p festerm-core --bench sustained_output`. Each case ingests

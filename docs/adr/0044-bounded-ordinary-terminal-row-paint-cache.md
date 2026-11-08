@@ -25,6 +25,20 @@ old token and independent updates/caches receive distinct tokens. Empty updates
 allocate no batch revision. Capture bookmarks are acquired only for eligible
 rows, so the non-retaining fallback avoids that graphics-list lock.
 
+For an all-dirty live grid with unchanged dimensions, viewport and screen
+generation, retain the revisions only when every presentation cell at the
+same row and column is equal, including text, width, colors, attributes and
+hyperlink value. The fast path requires the complete dirty-row list in row
+order; duplicates and unordered lists use the existing rebuild path. Empty or
+partial updates do not consume a screen-generation change. First-cell and
+occupied-tail probes may reject a comparison;
+they never replace the full-cell check. The full-cell pass compares at most
+one pair of distinct hyperlink storage identities per row by value; a further
+distinct pair falls back to rebuilding. The tail probe may compare another
+pair. This bounds work for long targets. Returned dirty-row IDs are unchanged.
+This does not assign movable identities to scrolling rows, and selection
+remains independently keyed while the cursor remains outside rows.
+
 Compare a persistent previous-paint-end font-image identity before any glyph
 lookup/replay. A changed image conservatively clears glyph layouts and retained
 rows; an image change during painting clears newly retained entries too.
@@ -112,7 +126,7 @@ required.
   `retained_row_payload_rejects_foreign_textures_and_counts_mesh_capacity`,
   `retained_row_clear_releases_owned_meshes`,
   `row_revisions_change_only_for_rebuilt_rows_without_changing_value_equality`.
-  `row_revisions_share_one_token_per_nonempty_update` covers batch identity,
+  `row_revisions_share_one_token_per_rebuilt_update` covers batch identity,
   separate caches, unchanged/empty/invalid/duplicate dirty rows and clone
   independence. `retained_rows_keep_shared_revision_batches_bound_to_row_positions`
   compares swapped distinct rows with ordinary meshes for both shaping modes.
@@ -120,6 +134,15 @@ required.
   and `retained_shaped_rows_bypass_full_mutation_and_recover_exact_meshes`
   cover full-mutation bypass, zero capture bookmarks, quiet recovery and
   explicit redraw.
+  `all_dirty_equal_grid_keeps_revisions_but_changes_and_generations_invalidate`,
+  `all_dirty_changed_grid_invalidates_all_revisions`,
+  `equal_grid_reuse_requires_complete_ordered_dirty_rows`,
+  `incomplete_update_does_not_consume_a_screen_generation_change` and
+  `equal_grid_reuse_bounds_distinct_hyperlink_comparisons_per_row` cover
+  exact equality, fallback and bounded hyperlink comparisons.
+  `retained_rows_reuse_equal_scrolling_with_exact_meshes` and
+  `retained_rows_bypass_mostly_changed_scrolling_with_exact_meshes` compare
+  scrolling and moving selection with ordinary painting in both shaping modes.
   `retained_rows_and_glyph_layouts_refresh_atlas_resets_without_manual_clear`
   compares actual atlas contents and GPU framebuffers with fresh glyph layouts
   after font-definition/text-option replacement; no manual invalidation is used.
