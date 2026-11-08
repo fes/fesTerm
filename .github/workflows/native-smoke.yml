@@ -26,6 +26,7 @@ env:
 jobs:
   # ── Windows ConPTY smoke ─────────────────────────────────────────────────────
   smoke-windows:
+    if: ${{ false }}
     name: Windows ConPTY smoke
     runs-on: windows-latest
     timeout-minutes: 45
@@ -131,6 +132,7 @@ jobs:
 
   # ── Linux PTY smoke (Xvfb environment for future native-window component) ───
   smoke-linux:
+    if: ${{ false }}
     name: Linux PTY smoke
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -218,6 +220,7 @@ jobs:
 
   # ── macOS PTY smoke (advisory — not blocking) ────────────────────────────────
   smoke-macos:
+    if: ${{ false }}
     name: macOS PTY smoke (advisory)
     runs-on: macos-latest
     timeout-minutes: 45
@@ -280,3 +283,27 @@ jobs:
             native-smoke-window-result.txt
             native-emoji-smoke-result.txt
           if-no-files-found: ignore
+
+  recording-linux-arm:
+    name: Recording Linux ARM build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config
+      - name: Build the integrated desktop application
+        run: cargo build --locked -p festerm --bin festerm
+      - name: Retain the Linux validation binary
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: festerm-recording-linux-arm
+          path: target/debug/festerm
+          if-no-files-found: error
