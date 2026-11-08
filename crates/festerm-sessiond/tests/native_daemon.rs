@@ -7,6 +7,7 @@ use std::{
 };
 
 use festerm_core::{MouseTrackingMode, Terminal};
+use fs2::FileExt;
 
 #[cfg(unix)]
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
@@ -171,6 +172,690 @@ fn native_start_failure_removes_generation_artifacts_before_root_cleanup() {
         }),
         "failed startup left generation artifacts"
     );
+}
+
+#[test]
+fn native_capabilities_json_is_exact_and_read_only() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("capabilities");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["capabilities", "--json"])
+        .output()
+        .unwrap();
+    assert_success("capabilities --json", &output);
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "schema_version": festerm_sessiond::MACHINE_READABLE_SCHEMA_VERSION,
+            "package_version": env!("CARGO_PKG_VERSION"),
+            "platform": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "daemon_protocol": {
+                "minimum": festerm_sessiond::MIN_SUPPORTED_PROTOCOL_VERSION,
+                "maximum": festerm_sessiond::PROTOCOL_VERSION
+            },
+            "recovery_snapshot_schema": {
+                "supported_versions": [2, festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION]
+            },
+            "remote_attachment": true
+        })
+    );
+    assert!(!runtime_registry_root(&runtime).exists());
+}
+
+#[test]
+fn native_discover_json_is_empty_and_read_only_without_a_registry() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-empty");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+    assert_success("discover --json", &output);
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "schema_version": festerm_sessiond::MACHINE_READABLE_SCHEMA_VERSION,
+            "package_version": env!("CARGO_PKG_VERSION"),
+            "inventory": {
+                "record_count": 0,
+                "serialized_bytes": 0,
+                "status_counts": {}
+            },
+            "sessions": []
+        })
+    );
+    assert!(!runtime_registry_root(&runtime).exists());
+}
+
+#[test]
+fn native_discover_json_reports_session_statuses_without_leaking_sensitive_fields() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-metadata");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+
+    let pid = std::process::id();
+    let live_generation = 700_u128;
+    let attached_generation = 701_u128;
+    let stale_generation = 702_u128;
+    let live_endpoint = discovery_endpoint(&registry, pid, live_generation);
+    let attached_endpoint = discovery_endpoint(&registry, pid, attached_generation);
+    let stale_endpoint = discovery_endpoint(&registry, pid, stale_generation);
+    create_discovery_endpoint(&live_endpoint);
+    create_discovery_endpoint(&attached_endpoint);
+    create_discovery_endpoint(&stale_endpoint);
+    let live_lease = lock_discovery_lease(&registry, pid, live_generation);
+    let attached_lease = lock_discovery_lease(&registry, pid, attached_generation);
+    #[cfg(unix)]
+    fs::remove_file(&stale_endpoint).unwrap();
+    let registry_bytes = serde_json::to_vec(&serde_json::json!({
+        "sessions": {
+            "available": {
+                "name": "available",
+                "pid": pid,
+                "socket": live_endpoint,
+                "created_at_unix_ms": live_generation,
+                "attached": false,
+                "protocol_version": festerm_sessiond::PROTOCOL_VERSION,
+                "snapshot_schema_version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                "shell": "/bin/echo",
+                "arguments": ["--token=secret-token"],
+                "working_directory": "/very/secret",
+            },
+            "attached": {
+                "name": "attached",
+                "pid": pid,
+                "socket": attached_endpoint,
+                "created_at_unix_ms": attached_generation,
+                "attached": true,
+                "protocol_version": festerm_sessiond::PROTOCOL_VERSION,
+                "snapshot_schema_version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            },
+            "future": {
+                "protocol_version": festerm_sessiond::PROTOCOL_VERSION + 9,
+                "snapshot_schema_version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1,
+                "pid": pid,
+                "created_at_unix_ms": 703_u128,
+                "attached": true,
+                "secret": "hunter2",
+            },
+            "stale": {
+                "name": "stale",
+                "pid": pid,
+                "socket": stale_endpoint,
+                "created_at_unix_ms": stale_generation,
+                "attached": false,
+                "protocol_version": festerm_sessiond::PROTOCOL_VERSION,
+                "snapshot_schema_version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            }
+        }
+    }))
+    .unwrap();
+    fs::write(registry.join("registry.json"), &registry_bytes).unwrap();
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+    drop((live_lease, attached_lease));
+    assert_success("discover --json", &output);
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["inventory"]["record_count"], 4);
+    assert_eq!(parsed["inventory"]["status_counts"]["available"], 1);
+    assert_eq!(parsed["inventory"]["status_counts"]["attached"], 1);
+    assert_eq!(parsed["inventory"]["status_counts"]["stale"], 1);
+    assert_eq!(parsed["inventory"]["status_counts"]["unreadable"], 1);
+    assert_eq!(
+        parsed["sessions"],
+        serde_json::json!([
+            {
+                "name": "attached",
+                "validated_name": true,
+                "pid": pid,
+                "created_at_unix_ms": attached_generation,
+                "attached": true,
+                "status": "attached",
+                "daemon_protocol": {
+                    "version": festerm_sessiond::PROTOCOL_VERSION,
+                    "supported": true
+                },
+                "recovery_snapshot_schema": {
+                    "version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    "supported": true
+                }
+            },
+            {
+                "name": "available",
+                "validated_name": true,
+                "pid": pid,
+                "created_at_unix_ms": live_generation,
+                "attached": false,
+                "status": "available",
+                "daemon_protocol": {
+                    "version": festerm_sessiond::PROTOCOL_VERSION,
+                    "supported": true
+                },
+                "recovery_snapshot_schema": {
+                    "version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    "supported": true
+                }
+            },
+            {
+                "name": "future",
+                "validated_name": true,
+                "pid": pid,
+                "created_at_unix_ms": 703_u128,
+                "attached": true,
+                "status": "unreadable",
+                "daemon_protocol": {
+                    "version": festerm_sessiond::PROTOCOL_VERSION + 9,
+                    "supported": false
+                },
+                "recovery_snapshot_schema": {
+                    "version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION + 1,
+                    "supported": false
+                }
+            },
+            {
+                "name": "stale",
+                "validated_name": true,
+                "pid": pid,
+                "created_at_unix_ms": stale_generation,
+                "attached": false,
+                "status": "stale",
+                "daemon_protocol": {
+                    "version": festerm_sessiond::PROTOCOL_VERSION,
+                    "supported": true
+                },
+                "recovery_snapshot_schema": {
+                    "version": festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                    "supported": true
+                }
+            }
+        ])
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("secret-token"));
+    assert!(!stdout.contains("hunter2"));
+    assert!(!stdout.contains("/very/secret"));
+    assert!(!stdout.contains("socket"));
+    assert!(!stdout.contains("working_directory"));
+    assert!(!stdout.contains("arguments"));
+    assert!(!stdout.contains("shell"));
+    assert_eq!(
+        fs::read(registry.join("registry.json")).unwrap(),
+        registry_bytes
+    );
+}
+
+#[test]
+fn native_discover_json_rejects_unsupported_flags_and_bounded_failures_emit_no_json() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-failures");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+
+    let bad_flag = daemon_command(&executable, &runtime)
+        .args(["discover", "--bogus"])
+        .output()
+        .unwrap();
+    assert!(!bad_flag.status.success());
+    assert!(String::from_utf8_lossy(&bad_flag.stderr)
+        .contains("usage: festerm-sessiond discover --json"));
+
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+
+    let oversized_registry = registry.join("registry.json");
+    fs::write(&oversized_registry, vec![b'a'; 4 * 1024 * 1024 + 1]).unwrap();
+    let oversized = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+    assert!(!oversized.status.success());
+    assert!(oversized.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&oversized.stderr).contains("exceeds 4194304 bytes"));
+
+    let mut sessions = serde_json::Map::new();
+    for index in 0..=4096 {
+        sessions.insert(
+            format!("session-{index:04}"),
+            serde_json::json!({
+                "pid": 1_u32,
+                "socket": format!("legacy-{index}"),
+            }),
+        );
+    }
+    fs::write(
+        &oversized_registry,
+        serde_json::to_vec(&serde_json::json!({ "sessions": sessions })).unwrap(),
+    )
+    .unwrap();
+    let count_limited = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+    assert!(!count_limited.status.success());
+    assert!(count_limited.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&count_limited.stderr);
+    assert!(stderr.contains("contains 4097 records"));
+    assert!(stderr.contains("limit is 4096"));
+}
+
+#[test]
+fn native_discover_json_rejects_zero_byte_registry_without_success_shaped_output() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-zero");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+    fs::write(registry.join("registry.json"), []).unwrap();
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("could not parse session registry at line"));
+}
+
+#[test]
+fn native_discover_json_parse_errors_do_not_echo_registry_contents() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-redacted");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+    let sentinel = r#"{"sessions":"secret-token"}"#;
+    fs::write(registry.join("registry.json"), sentinel).unwrap();
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("could not parse session registry at line"));
+    assert!(!stderr.contains("secret-token"));
+    assert!(!stderr.contains(sentinel));
+}
+
+#[test]
+fn native_discover_json_enforces_serialized_output_cap_without_partial_json() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("discover-output-cap");
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: Vec::new(),
+    };
+    let registry = runtime_registry_root(&runtime);
+    fs::create_dir_all(&registry).unwrap();
+
+    let mut sessions = serde_json::Map::new();
+    for index in 0..4096 {
+        let name = format!("session-{index:04}");
+        sessions.insert(
+            name.clone(),
+            serde_json::json!({
+                "name": name,
+                "pid": 1_u32,
+                "socket": format!("legacy-{index}"),
+                "created_at_unix_ms": index,
+                "attached": false,
+                "protocol_version": 1,
+                "snapshot_schema_version": 0,
+            }),
+        );
+    }
+    fs::write(
+        registry.join("registry.json"),
+        serde_json::to_vec(&serde_json::json!({ "sessions": sessions })).unwrap(),
+    )
+    .unwrap();
+
+    let output = daemon_command(&executable, &runtime)
+        .args(["discover", "--json"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("machine-readable response exceeds 524288 bytes"));
+}
+
+#[test]
+#[cfg_attr(windows, ignore = "native named-pipe bridge; run in CI")]
+fn native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_session() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("bridge-validation");
+    let name = format!("bridge-validation-{}", std::process::id());
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.clone(),
+    };
+    let shell = pty_test_child(&executable);
+    #[cfg(unix)]
+    launch_session_with(
+        &executable,
+        &runtime,
+        &name,
+        &shell,
+        &["emit:READY", "read-line", "echo:INPUT", "spin"],
+    );
+    #[cfg(windows)]
+    let _daemon = launch_session_with(
+        &executable,
+        &runtime,
+        &name,
+        &shell,
+        &["emit:READY", "read-line", "echo:INPUT", "spin"],
+    );
+    let selection = bridge_selection(&runtime, &name);
+
+    let missing_takeover = bridge_command(&executable, &runtime, &selection, true)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!missing_takeover.status.success());
+    assert!(missing_takeover.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&missing_takeover.stderr).contains("--allow-takeover"));
+
+    let mut stale = selection.clone();
+    stale.generation += 1;
+    let stale_output = bridge_command(&executable, &runtime, &stale, false)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!stale_output.status.success());
+    assert!(stale_output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&stale_output.stderr).contains("generation changed"));
+
+    let mut client = connect(
+        &selection.endpoint,
+        Admission {
+            pid: selection.pid,
+            generation: selection.generation,
+            takeover: true,
+        },
+    );
+    #[cfg(windows)]
+    assert_windows_ready(&mut client);
+    #[cfg(unix)]
+    assert!(terminal_contains(&client.snapshot, b"READY"));
+    send_input(&mut client, &test_input("still-alive")).unwrap();
+    assert_contains(&mut client, b"INPUT:still-alive");
+}
+
+#[test]
+#[cfg_attr(windows, ignore = "native named-pipe bridge; run in CI")]
+fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("bridge-protocol");
+    let name = format!("bridge-protocol-{}", std::process::id());
+    let _cleanup = SessionCleanup {
+        executable: executable.clone(),
+        runtime_root: runtime.clone(),
+        name: name.clone(),
+    };
+    let shell = pty_test_child(&executable);
+    #[cfg(unix)]
+    launch_session_with(
+        &executable,
+        &runtime,
+        &name,
+        &shell,
+        &[
+            "emit:READY",
+            "read-line",
+            "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
+            "spin",
+        ],
+    );
+    #[cfg(windows)]
+    let _daemon = launch_session_with(
+        &executable,
+        &runtime,
+        &name,
+        &shell,
+        &[
+            "emit:READY",
+            "read-line",
+            "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
+            "spin",
+        ],
+    );
+    let selection = bridge_selection(&runtime, &name);
+
+    let mut old = connect(
+        &selection.endpoint,
+        Admission {
+            pid: selection.pid,
+            generation: selection.generation,
+            takeover: true,
+        },
+    );
+    #[cfg(windows)]
+    assert_windows_ready(&mut old);
+    #[cfg(unix)]
+    assert!(terminal_contains(&old.snapshot, b"READY"));
+    bounded_poll(
+        || {
+            festerm_sessiond::list_running_sessions_in(&runtime_registry_root(&runtime))
+                .unwrap()
+                .iter()
+                .any(|session| {
+                    session.session.name == name
+                        && session.attached_by == Some(festerm_sessiond::AttachKind::Local)
+                })
+        },
+        "original local attachment kind",
+    );
+
+    let mut premature = spawn_bridge(&executable, &runtime, &selection);
+    let premature_snapshot = read_bridge_snapshot(premature.stdout.as_mut().unwrap());
+    assert!(terminal_contains(&premature_snapshot, b"READY"));
+    let still_attached =
+        festerm_sessiond::list_running_sessions_in(&runtime_registry_root(&runtime))
+            .unwrap()
+            .into_iter()
+            .find(|session| session.session.name == name)
+            .unwrap();
+    assert_eq!(
+        still_attached.attached_by,
+        Some(festerm_sessiond::AttachKind::Local)
+    );
+    write_bridge_client_frame(
+        premature.stdin.as_mut().unwrap(),
+        FRAME_INPUT,
+        &test_input("too-early"),
+    )
+    .unwrap();
+    let premature_output = premature.wait_with_output().unwrap();
+    assert!(!premature_output.status.success());
+    assert!(premature_output.stdout.is_empty());
+
+    send_input(&mut old, &test_input("old-still-attached")).unwrap();
+    assert_contains(&mut old, b"INPUT:old-still-attached");
+
+    let mut bridge = spawn_bridge(&executable, &runtime, &selection);
+    let snapshot = read_bridge_snapshot(bridge.stdout.as_mut().unwrap());
+    assert!(terminal_contains(&snapshot, b"INPUT:old-still-attached"));
+    acknowledge_bridge_recovery(bridge.stdin.as_mut().unwrap()).unwrap();
+    assert_contains(&mut old, STOLEN_NOTICE);
+    bounded_poll(
+        || {
+            festerm_sessiond::list_running_sessions_in(&runtime_registry_root(&runtime))
+                .unwrap()
+                .iter()
+                .any(|session| {
+                    session.session.name == name
+                        && session.attached_by == Some(festerm_sessiond::AttachKind::Remote)
+                })
+        },
+        "remote bridge attachment kind",
+    );
+
+    write_resize_frame(bridge.stdin.as_mut().unwrap(), 100, 30).unwrap();
+    read_bridge_frame_until(bridge.stdout.as_mut().unwrap(), |kind, _| kind == 5);
+
+    write_bridge_client_frame(
+        bridge.stdin.as_mut().unwrap(),
+        FRAME_INPUT,
+        &test_input("bridge-one"),
+    )
+    .unwrap();
+    let output = read_bridge_frame_until(bridge.stdout.as_mut().unwrap(), |kind, payload| {
+        kind == 1
+            && payload
+                .windows(b"INPUT:bridge-one".len())
+                .any(|w| w == b"INPUT:bridge-one")
+    });
+    assert!(output
+        .windows(b"INPUT:bridge-one".len())
+        .any(|w| w == b"INPUT:bridge-one"));
+    drop(bridge.stdin.take());
+    assert!(bridge.wait().unwrap().success());
+
+    let mut reattached = spawn_bridge(&executable, &runtime, &selection);
+    let snapshot = read_bridge_snapshot(reattached.stdout.as_mut().unwrap());
+    assert!(terminal_contains(&snapshot, b"INPUT:bridge-one"));
+    acknowledge_bridge_recovery(reattached.stdin.as_mut().unwrap()).unwrap();
+    write_bridge_client_frame(
+        reattached.stdin.as_mut().unwrap(),
+        FRAME_INPUT,
+        &test_input("bridge-two"),
+    )
+    .unwrap();
+    let output = read_bridge_frame_until(reattached.stdout.as_mut().unwrap(), |kind, payload| {
+        kind == 1
+            && payload
+                .windows(b"INPUT:bridge-two".len())
+                .any(|w| w == b"INPUT:bridge-two")
+    });
+    assert!(output
+        .windows(b"INPUT:bridge-two".len())
+        .any(|w| w == b"INPUT:bridge-two"));
+    drop(reattached.stdin.take());
+    assert!(reattached.wait().unwrap().success());
+}
+
+#[cfg(unix)]
+#[test]
+fn native_bridge_drains_exit_and_takeover_final_frames_before_success() {
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_festerm-sessiond"));
+    let runtime = short_runtime_root("bridge-final");
+    let exit_name = format!("bridge-exit-{}", std::process::id());
+    let takeover_name = format!("bridge-takeover-{}", std::process::id());
+    let _cleanup = BatchCleanup {
+        executable: executable.clone(),
+        runtime: runtime.clone(),
+        names: vec![exit_name.clone(), takeover_name.clone()],
+    };
+    let shell = pty_test_child(&executable);
+
+    launch_session_with(
+        &executable,
+        &runtime,
+        &exit_name,
+        &shell,
+        &["emit:READY", "read-line", "echo:INPUT", "exit:0"],
+    );
+    let exit_selection = bridge_selection(&runtime, &exit_name);
+    let mut exit_bridge = spawn_bridge(&executable, &runtime, &exit_selection);
+    assert!(terminal_contains(
+        &read_bridge_snapshot(exit_bridge.stdout.as_mut().unwrap()),
+        b"READY"
+    ));
+    acknowledge_bridge_recovery(exit_bridge.stdin.as_mut().unwrap()).unwrap();
+    write_bridge_client_frame(
+        exit_bridge.stdin.as_mut().unwrap(),
+        FRAME_INPUT,
+        &test_input("goodbye"),
+    )
+    .unwrap();
+    let output = read_bridge_frame_until(exit_bridge.stdout.as_mut().unwrap(), |kind, payload| {
+        kind == 1
+            && payload
+                .windows(b"INPUT:goodbye".len())
+                .any(|w| w == b"INPUT:goodbye")
+    });
+    assert!(output
+        .windows(b"INPUT:goodbye".len())
+        .any(|w| w == b"INPUT:goodbye"));
+    read_bridge_frame_until(exit_bridge.stdout.as_mut().unwrap(), |kind, _| kind == 4);
+    assert!(exit_bridge.wait().unwrap().success());
+
+    launch_session_with(
+        &executable,
+        &runtime,
+        &takeover_name,
+        &shell,
+        &["emit:READY", "spin"],
+    );
+    let takeover_selection = bridge_selection(&runtime, &takeover_name);
+    let mut first = spawn_bridge(&executable, &runtime, &takeover_selection);
+    assert!(terminal_contains(
+        &read_bridge_snapshot(first.stdout.as_mut().unwrap()),
+        b"READY"
+    ));
+    acknowledge_bridge_recovery(first.stdin.as_mut().unwrap()).unwrap();
+    let mut second = spawn_bridge(&executable, &runtime, &takeover_selection);
+    assert!(terminal_contains(
+        &read_bridge_snapshot(second.stdout.as_mut().unwrap()),
+        b"READY"
+    ));
+    acknowledge_bridge_recovery(second.stdin.as_mut().unwrap()).unwrap();
+    read_bridge_frame_until(first.stdout.as_mut().unwrap(), |kind, _| kind == 3);
+    assert!(first.wait().unwrap().success());
+    drop(second.stdin.take());
+    assert!(second.wait().unwrap().success());
 }
 
 fn assert_generation_artifacts_removed(
@@ -2004,6 +2689,107 @@ fn registry_endpoint(path: &Path, name: &str) -> String {
         .to_owned()
 }
 
+#[derive(Clone)]
+struct BridgeSelection {
+    name: String,
+    pid: u32,
+    generation: u128,
+    endpoint: String,
+}
+
+fn bridge_selection(runtime_root: &Path, name: &str) -> BridgeSelection {
+    let registry = runtime_registry_root(runtime_root).join("registry.json");
+    let document: serde_json::Value = serde_json::from_slice(&fs::read(registry).unwrap()).unwrap();
+    let record = &document["sessions"][name];
+    BridgeSelection {
+        name: name.to_owned(),
+        pid: record["pid"].as_u64().unwrap().try_into().unwrap(),
+        generation: record["created_at_unix_ms"].as_u64().unwrap().into(),
+        endpoint: record["socket"].as_str().unwrap().to_owned(),
+    }
+}
+
+fn bridge_command(
+    executable: &Path,
+    runtime_root: &Path,
+    selection: &BridgeSelection,
+    omit_takeover: bool,
+) -> Command {
+    let mut command = daemon_command(executable, runtime_root);
+    command.args([
+        "bridge",
+        "--name",
+        &selection.name,
+        "--pid",
+        &selection.pid.to_string(),
+        "--generation",
+        &selection.generation.to_string(),
+        "--protocol",
+        &festerm_sessiond::PROTOCOL_VERSION.to_string(),
+        "--snapshot-schema",
+        &festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION.to_string(),
+    ]);
+    if !omit_takeover {
+        command.arg("--allow-takeover");
+    }
+    command
+}
+
+fn spawn_bridge(
+    executable: &Path,
+    runtime_root: &Path,
+    selection: &BridgeSelection,
+) -> std::process::Child {
+    bridge_command(executable, runtime_root, selection, false)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+fn runtime_registry_root(runtime_root: &Path) -> PathBuf {
+    runtime_root
+        .join(if cfg!(windows) { "fesTerm" } else { "festerm" })
+        .join("sessiond")
+}
+
+fn discovery_endpoint(registry: &Path, pid: u32, generation: u128) -> String {
+    #[cfg(unix)]
+    {
+        registry
+            .join(format!("{pid}-{generation}.sock"))
+            .to_string_lossy()
+            .into_owned()
+    }
+    #[cfg(windows)]
+    {
+        let _ = registry;
+        format!(r"\\.\pipe\festerm-sessiond-{pid}-{generation}")
+    }
+}
+
+fn create_discovery_endpoint(endpoint: &str) {
+    #[cfg(unix)]
+    {
+        fs::write(endpoint, b"").unwrap();
+    }
+    #[cfg(windows)]
+    {
+        let _ = endpoint;
+    }
+}
+
+fn lock_discovery_lease(registry: &Path, pid: u32, generation: u128) -> fs::File {
+    let lease = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(registry.join(format!("lease-{pid}-{generation}")))
+        .unwrap();
+    lease.lock_exclusive().unwrap();
+    lease
+}
+
 fn hex_encode_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -2016,6 +2802,61 @@ fn read_recovery_terminal(stream: &mut dyn ClientStream) -> Terminal {
     let mut payload = vec![0; length];
     stream.read_exact(&mut payload).unwrap();
     bincode::deserialize(&payload).unwrap()
+}
+
+fn read_bridge_snapshot(stream: &mut impl Read) -> Terminal {
+    let mut header = [0u8; 12];
+    stream.read_exact(&mut header).unwrap();
+    assert_eq!(&header[..4], b"FSD2");
+    let length = usize::try_from(u64::from_be_bytes(header[4..12].try_into().unwrap())).unwrap();
+    assert!(length <= 768 * 1024 * 1024);
+    let mut payload = vec![0; length];
+    stream.read_exact(&mut payload).unwrap();
+    bincode::deserialize(&payload).unwrap()
+}
+
+fn write_resize_frame(stream: &mut impl Write, cols: u16, rows: u16) -> io::Result<()> {
+    let payload: Vec<_> = [cols, rows, 0, 0]
+        .into_iter()
+        .flat_map(u16::to_be_bytes)
+        .collect();
+    write_bridge_client_frame(stream, 2, &payload)
+}
+
+fn acknowledge_bridge_recovery(stream: &mut impl Write) -> io::Result<()> {
+    write_bridge_client_frame(stream, 4, &[])
+}
+
+fn write_bridge_client_frame(stream: &mut impl Write, kind: u8, payload: &[u8]) -> io::Result<()> {
+    stream.write_all(FRAME_MAGIC)?;
+    stream.write_all(&[kind])?;
+    stream.write_all(&(payload.len() as u32).to_be_bytes())?;
+    stream.write_all(payload)?;
+    stream.flush()
+}
+
+fn read_bridge_frame_until(
+    stream: &mut impl Read,
+    mut accept: impl FnMut(u8, &[u8]) -> bool,
+) -> Vec<u8> {
+    let mut retained = Vec::new();
+    for _ in 0..128 {
+        let mut header = [0u8; 9];
+        stream.read_exact(&mut header).unwrap();
+        assert_eq!(&header[..4], b"FSO1");
+        let kind = header[4];
+        let length = usize::try_from(u32::from_be_bytes(header[5..9].try_into().unwrap())).unwrap();
+        assert!(length <= 64 * 1024);
+        let mut payload = vec![0; length];
+        stream.read_exact(&mut payload).unwrap();
+        if kind == 1 {
+            retained.extend_from_slice(&payload);
+        }
+        if accept(kind, &payload) || (kind == 1 && accept(kind, &retained)) {
+            return if kind == 1 { retained } else { payload };
+        }
+    }
+    panic!("expected bridge frame did not arrive");
 }
 
 fn terminal_contains(terminal: &Terminal, expected: &[u8]) -> bool {

@@ -1,5 +1,7 @@
 /target
 /vendor/*/target/
+/crates/festerm-powershell/target
+/psrp-interop-result.txt
 /fuzz/target
 /fuzz/corpus/
 /fuzz/artifacts/

@@ -574,6 +574,112 @@ ordinary failed-session presentation. This deliberately does not implement
 server-driven keyboard-interactive prompts or 2FA; that remains a separate,
 larger feature (see the SSH keyboard-interactive/2FA follow-up issue).
 
+### Local source address selection
+
+SSH and SFTP profiles may select **Automatic**, a fixed **Local source
+address**, or **Ask on first connection**. Automatic preserves the OS-selected
+source address and route. This is an advanced connection option, separate
+from the listening addresses used by SSH port forwarding.
+
+Ask requires an explicit choice before opening that session's connection.
+The chooser may show adapter names alongside their current addresses, but
+selects an IP address, not an adapter enforcement policy. Discovery happens
+when requested, not on every repaint; Refresh obtains a new snapshot. Cancel
+must not connect. A fixed address may be saved while offline, but malformed,
+unspecified, multicast, or unsupported scoped IPv6 addresses are rejected.
+IPv6 link-local addresses are not supported until scope identifiers are
+carried through the whole transport path. IPv4-mapped IPv6 sources are rejected;
+use the ordinary IPv4 spelling instead, so wildcard aliases cannot evade
+source validation.
+
+The chosen source belongs to the new session. It survives authentication
+retries, manual/automatic reconnect, and SFTP connections opened from that
+session, including separate transfer connections. An Ask choice is not
+silently written back to the profile or workspace; a new session asks again.
+Editing the profile does not change an already-running session's source.
+Closing or switching away from a pending chooser cannot retarget its
+confirmation to another tab. If a remembered-credential save finishes after
+the setup context changes, the credential may still be saved, but the deferred
+connection is cancelled without changing focus. A profile changed during the
+save is not linked to the new credential; the unlinked secret is removed.
+
+If an explicitly selected source becomes unavailable, connecting fails with
+an actionable error; the client never silently falls back to Automatic.
+Source binding does not guarantee a VPN-only path, bind DNS requests, enforce
+an adapter, repair routing, or bypass network policy. The UI must say so.
+Native PSRP exposes the same fixed-source/Automatic transport distinction
+through its endpoint API, CLI and explicit PowerShell profile source policy.
+
+### Native PowerShell sessions
+
+The experimental native PowerShell connection is a structured PSRP session,
+not an SSH shell or a VT terminal. Its chip uses the same independent-session
+chrome as other connections, but its content is a command editor and bounded
+result view. Local PowerShell launched through a PTY remains a separate
+existing capability.
+
+Saved profiles contain endpoint metadata, username/domain, the selected
+PowerShell configuration, optional trusted-CA file path, local source policy,
+and an opaque native-store credential reference. They never contain passwords,
+commands, output objects, or runspace contents. Explicit SSH profiles instead
+carry a pinned host key and exact subsystem name. HTTPS/NTLM remains the
+backward-compatible default; neither transport is presented as Entra login. Configuration
+selection is exact: an unavailable or unauthorized PowerShell 7 or restricted
+configuration must not fall back to Windows PowerShell.
+
+Connecting, starting a pipeline, consuming protocol messages, loading trust
+files or native credentials, and closing the runspace are background work.
+One pipeline runs at a time. Run and Stop are application commands;
+cancellation remains pending until the backend acknowledges termination or
+reports uncertain/invalidated state. A command failure does not by itself
+authorize rebuilding the runspace. Network loss is explicit; reconnect,
+resumption and continuity must not be implied.
+
+Output, Error, Warning, Verbose, Debug, Information and Progress remain
+distinguishable. Structured values retain their types/properties through the
+backend-to-presentation boundary. Rendering must not evaluate remote content,
+interpret it as VT, or allocate an unbounded formatted representation.
+Command input, queues, retained output and per-frame work have finite limits.
+Reaching a limit is visible; it cannot silently discard a terminal lifecycle
+message or make a failed command look successful. Unsupported host prompts and
+native interactive console applications are rejected explicitly.
+
+Closing a tab cancels active work and requests bounded remote cleanup without
+blocking a GUI frame. An in-flight connection that finishes after its tab was
+closed is cleaned up rather than installed into a different tab. Restoring a
+workspace restores only its saved profile reference and a disconnected setup
+surface; no password is read and no network connection is made automatically.
+Ask source selection is resolved anew for each connection, never restored
+from a previous runtime choice.
+
+Application/window teardown waits asynchronously for owned PowerShell workers,
+including workers from recently closed tabs, within a finite cleanup deadline.
+Expiry reports unconfirmed remote state, not successful termination. Pending
+cleanup counts toward the connection-worker limit so repeatedly opening and
+closing tabs cannot accumulate unbounded background sessions.
+
+### Remote and enterprise discovery
+
+Launcher cards open ephemeral **Remote Sessions** and **Enterprise** tabs.
+Merely opening either surface performs no network or credential operation.
+Typed actions route through the active tab identity; cancellation remains
+available when the shared background-worker limit is reached. Closed tabs
+retain worker cleanup ownership until completion, including at window exit.
+Neither surface restores secrets, account sessions, inventories or pending
+network actions from workspace metadata.
+
+Remote discovery requires a pinned SSH host key and exact endpoint/source
+selection. Selecting a live daemon generation still requires explicit takeover
+consent and fresh authentication. Attachment opens an ordinary terminal backed
+by the remote PersistentSession, not a second terminal model. Snapshot adoption
+precedes input, and closing detaches rather than terminating the daemon.
+
+Enterprise discovery uses configured public-client PKCE sign-in and read-only
+Dev Center APIs. Changing configuration or account invalidates old results.
+Account tokens stay transient, discovered connection URLs are not executable
+actions, and the UI never equates discovery with corporate shell authority or
+broker/device compliance.
+
 ### Launcher as a tab
 
 The launcher should use the same tab model as sessions.

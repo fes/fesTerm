@@ -41,7 +41,9 @@ festerm-mobile-profiles = { path = "../festerm-mobile-profiles" }
 festerm-mobile-tunnels = { path = "../festerm-mobile-tunnels", features = ["testing"] }
 festerm-secret-store = { path = "../festerm-secret-store" }
 festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge" }
-tokio = { version = "1", features = ["rt-multi-thread", "io-util"] }
+rpassword = "7"
+russh = { version = "0.62.5", default-features = false, features = ["ring"] }
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "time", "net", "sync", "macros", "process"] }
 
 [lints]
 workspace = true

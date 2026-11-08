@@ -414,6 +414,8 @@ pub enum WorkspaceTab {
     SftpFileManager(SessionTabConfiguration),
     /// A serial session recreated from a serial profile.
     SerialSession(SessionTabConfiguration),
+    /// A native PowerShell setup tab recreated from a PowerShell profile.
+    PowerShellSession(SessionTabConfiguration),
 }
 
 impl WorkspaceTab {
@@ -514,6 +516,21 @@ impl WorkspaceTab {
         Ok(tab)
     }
 
+    /// Creates a native PowerShell tab which restores metadata only and does
+    /// not reconnect implicitly.
+    pub fn powershell_session(
+        identifier: impl Into<String>,
+        profile_id: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let tab = Self::PowerShellSession(SessionTabConfiguration {
+            id: identifier.into(),
+            profile_id: profile_id.into(),
+            alias: None,
+        });
+        tab.validate_metadata()?;
+        Ok(tab)
+    }
+
     /// Returns this tab's stable, serialized application identifier.
     pub fn identifier(&self) -> &str {
         match self {
@@ -524,7 +541,8 @@ impl WorkspaceTab {
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
             | Self::SftpFileManager(tab)
-            | Self::SerialSession(tab) => tab.identifier(),
+            | Self::SerialSession(tab)
+            | Self::PowerShellSession(tab) => tab.identifier(),
         }
     }
 
@@ -535,7 +553,8 @@ impl WorkspaceTab {
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
             | Self::SftpFileManager(tab)
-            | Self::SerialSession(tab) => Some(tab.profile_id()),
+            | Self::SerialSession(tab)
+            | Self::PowerShellSession(tab) => Some(tab.profile_id()),
             Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => None,
         }
     }
@@ -556,7 +575,7 @@ impl WorkspaceTab {
     }
 
     fn validate_metadata(&self) -> Result<(), ConfigError> {
-        if let Self::SftpFileManager(tab) = self {
+        if let Self::SftpFileManager(tab) | Self::PowerShellSession(tab) = self {
             if tab.alias.is_some() {
                 return Err(ConfigError::new(ConfigErrorKind::InvalidSessionAlias));
             }
@@ -569,7 +588,8 @@ impl WorkspaceTab {
             | Self::SshSession(tab)
             | Self::SftpSession(tab)
             | Self::SftpFileManager(tab)
-            | Self::SerialSession(tab) => tab.validate(),
+            | Self::SerialSession(tab)
+            | Self::PowerShellSession(tab) => tab.validate(),
         }
     }
 
@@ -594,6 +614,11 @@ impl WorkspaceTab {
             Self::SerialSession(tab) => {
                 validate_session_profile(profiles, tab.profile_id(), ExpectedProfileKind::Serial)
             }
+            Self::PowerShellSession(tab) => validate_session_profile(
+                profiles,
+                tab.profile_id(),
+                ExpectedProfileKind::PowerShell,
+            ),
             Self::Launcher(_) | Self::Settings(_) | Self::Profiles(_) => Ok(()),
         }
     }
@@ -687,6 +712,7 @@ enum ExpectedProfileKind {
     SshShell,
     SftpTransport,
     Serial,
+    PowerShell,
 }
 
 fn validate_session_profile(
@@ -715,6 +741,7 @@ fn validate_session_profile(
             )
             | (ExpectedProfileKind::SftpTransport, Profile::Ssh(_))
             | (ExpectedProfileKind::Serial, Profile::Serial(_))
+            | (ExpectedProfileKind::PowerShell, Profile::PowerShell(_))
     );
     if kind_matches {
         Ok(())

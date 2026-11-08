@@ -8488,3 +8488,121 @@ text and link. The
 depend on terminal width and allocator behavior; they do not establish native
 application RSS or responsiveness. Existing history limits retain the same
 number of lines, so higher retention density remains separate work.
+## Separating enterprise discovery from a remote shell
+
+The PowerShell work began with three boundaries that are easy to conflate:
+signing into Entra, discovering a Dev Box, and authenticating to a shell on
+that box. None grants the next. A fourth boundary appears when the destination
+already has a durable terminal: the remoting account must actually own that
+daemon, and selecting a stale name must not start a replacement session.
+
+ADR 0082 records those contracts before adding new transports. The first
+daemon slice is a versioned, bounded JSON capability/inventory interface. It
+reuses current-user registry and generation checks, preserves unknown records,
+omits command arguments and IPC paths, and does not attach or clean up as a
+side effect. Helper package version, wire protocol and recovery schema are
+reported independently rather than pretending that matching version strings
+prove compatibility.
+
+The next backends remain separate from terminal bytes and GUI ownership.
+Public-client PKCE and Dev Center discovery can be exercised against bounded
+local protocol fixtures, but actual tenant consent, broker/device compliance
+and Windows-logon evidence are separate gates. Native PSRP also needs limits
+inside protocol decoding and streaming consumption, not just truncation after
+an unbounded library collector has already allocated its results. The branch
+does not advertise a completed PowerShell tab or remote daemon bridge from
+these foundations alone.
+
+The first native backends made that distinction concrete. The PSRP adapter
+retains one runspace and consumes typed events, while a pinned vendor patch
+bounds wire assembly and CLIXML reference expansion before large clones.
+Review found that merely noticing cancellation after the next event arrived
+did not bound a stalled receive; the cancellation deadline now governs the
+already-pending wait. Even the CLI example must escape remote control
+characters rather than passing structured PowerShell strings into a terminal.
+
+The enterprise client uses public-client PKCE with a loopback callback and
+read-only Dev Center APIs. A cancellation check before a request was not
+enough: an accepted idle callback socket, stalled response, or blocking DNS
+lookup could still hold it up. Its deadlines now cover those in-flight
+operations; async DNS is explicitly enabled, and the client owns the runtime
+used by its resolver across requests. Tokens carry immutable sign-in scope
+and expiry, and owned sensitive buffers are wiped on failure as well as success.
+Listing permission remains distinct from connection permission, and the CLI
+bounds its total output across projects rather than multiplying per-project
+limits into an oversized result.
+
+These are usable backend examples, not accepted graphical connection types.
+The existing Windows lab could not be reached and its local Parallels
+executable was unavailable; no host trust or corporate policy was bypassed
+to turn that missing evidence into a pass.
+
+Workspace validation also exposed a pre-existing picker fixture using a
+Cancel-button position from before submitting a path cleared its error rows.
+A controlled prior error reproduced the same failure without relying on
+timing. The fixture now owns an isolated directory and renders the changed
+layout before looking up Cancel; its original cancellation and stale-result
+assertions remain intact. No production picker behavior was changed.
+
+The new loopback fixtures also needed portable socket setup: accepted sockets
+can inherit a listener's nonblocking mode on macOS, so fixture readers now
+explicitly use blocking sockets with bounded I/O. Callback deadline scenarios
+connect their peers before starting the short read deadline, rather than
+racing HTTP-client construction and a newly scheduled connector thread.
+
+The unavailable Parallels lab was not the last automation route. A dedicated
+GitHub-hosted Windows runner can supply a real, isolated Windows PowerShell
+endpoint without touching a corporate machine. The opt-in harness therefore
+uses temporary loopback-only HTTPS, explicit CA trust and a non-admin account,
+and restores the resources it changes. This narrows the native evidence gap;
+it does not turn same-host NTLM into cross-host, PowerShell 7, or Entra/broker
+qualification. Normal optional runs record a skip unless isolated provisioning
+is explicitly requested.
+
+Native run [36355786297](https://github.com/fes/fesTerm/actions/runs/36355786297)
+at `a7b0d12ef203f4b113c55d4fb2b282712c69c389` now passes all five cases,
+including confirmed cancellation followed by the retained pre-cancellation
+runspace variable. Cleanup also succeeded. This closes the isolated native
+cancellation failure described below, not the cross-host, PowerShell 7,
+corporate authentication, GUI or remote-attachment gates.
+
+The hosted runner made the distinction between fixtures and interoperability
+concrete. Windows required range syntax even for single-address WinRM filters,
+and its `New-Item` listener provider raised a null reference; the explicit
+WSMan resource API created the same tightly scoped listener successfully.
+The first native run then preserved state across commands, rejected an
+unsupported prompt and closed idempotently. It also exposed two failures that
+the mock suites had missed: an empty decoded warning message and a protocol
+failure during in-flight cancellation. Those failures are recorded rather
+than treating successful setup or three passing cases as complete acceptance.
+
+The stream fix reads the actual `InformationalRecord_Message` field for
+warning, verbose and debug messages. Cancellation required more than changing
+an error label: the WinRM dependency was routing a PSRP shell's Ctrl+C signal
+to the CMD plugin's ResourceURI. Signals now retain their shell's resource
+identity. The native acceptance case requires a confirmed stop and surviving
+runspace state afterward, while separate regressions retain fail-closed
+invalidation for genuinely uncertain outcomes. Invalidation is published
+before its terminal failure message, avoiding an observable status race.
+
+The stricter cancellation case required another protocol distinction: the
+generic WinRS Ctrl+C operation is not PowerShell's pipeline-stop signal.
+Content-minimal native diagnostics identified the subsequent invalid-selector
+fault. Cancellation now uses PowerShell's specific
+signal code and the active pipeline UUID rather than the receive cursor.
+The temporary diagnostic switch was removed instead of leaving debug output
+enabled in production.
+
+A deterministic follow-up fixture also exposed repeated cancellation: the
+incremental API reset its stop-sent flag on each event read, so an error record
+followed by the stopped-state record caused two signals for one cancellation.
+That state now belongs to the pipeline handle, including explicit stop calls,
+and the fixture requires exactly one signal while both records are drained.
+
+Microsoft's client handles a successful Signal response as a stopped
+acknowledgement; pypsrp does the same rather than receiving again from the
+stopped command. The adapter now models that acknowledgement explicitly,
+instead of requiring a second state message after the server has removed the
+command. Failed signals still fail, and transports that need a later state
+event retain that requirement. The native oracle still requires the same
+runspace's marker to survive cancellation.

@@ -51,6 +51,12 @@ Discovery test synchronization observes retirement of the specific requested
 worker, including completion between inspection and update; it must not wait
 for the replacement periodic worker in the same generation.
 
+The machine-readable sessiond helper in ADR-0082 shares the registry/liveness
+contracts covered alongside `LAUNCH-12`; CP-19 adds read-only capability and
+metadata oracles. Remote discovery and PowerShell/enterprise application
+commands are separately covered below; these paths do not change local resume
+policy or implement remote PSRP attachment.
+
 For `SET-07`, unread background output always shows a static ring-and-dot
 marker with no animation repaint scheduling. There is no setting, and older
 saved pulse booleans are accepted but ignored. Activation clears the marker.
@@ -570,6 +576,27 @@ stateDiagram-v2
     Sessions --> Launcher: close final surface
 ```
 
+## PowerShell and enterprise workflows
+
+The following IDs track experimental backend and desktop contracts under
+ADR-0082. Headless fixtures do not establish native GUI or endpoint acceptance;
+real PSRP, sign-in and tenant access remain CP-20/CP-21/CP-23.
+
+| ID | From -> To | Action / guard | Oracle | Return | Layer |
+| --- | --- | --- | --- | --- | --- |
+| `PSRP-01` | Configured native client -> structured command events or explicit failure | Connect to an approved HTTPS/NTLM endpoint, execute in one persistent runspace, consume events, cancel or close. | No external remoting client or VT decoding; bounded transport/expanded values/events; cancellation tightens the pending wait and invalidates unconfirmed state; CLI display escapes controls in every stream. | Cancel the command and explicitly close; never silently recreate or claim continuity. | P,N |
+| `PSRP-02` | Launcher/Profiles -> PowerShell setup -> connecting/ready or failure | Create or select a secret-free profile, resolve source policy, supply a transient or native-stored password and connect explicitly. | Experimental HTTPS/NTLM scope is visible. Native credential/file/network work stays off the UI thread. Invalid source, trust or credentials fail without downgrade; cancelled/stale completion cannot attach elsewhere. | Cancel setup or close the connection. | P,H,N,U; partial |
+| `PSRP-03` | Ready PowerShell tab -> running -> ready/invalidated/closed | Run one script, inspect typed/separate streams, stop a pipeline or close its tab/window. | Bounded input, queues and retained output; no VT interpretation or unbounded formatting. Stop waits for backend outcome. Close cancels and cleans up in background; no automatic replacement runspace or false continuity. | Explicit new connection after invalidation. | P,H,N,U; partial |
+| `PSRP-04` | Saved PowerShell workspace -> disconnected setup | Save/reorder/close/restart a profile-backed PowerShell tab. | Only the profile reference is restored: no network, native secret read, command, returned value, runspace state or prompted source is restored. Ask requires a fresh explicit choice. | Cancel setup or connect explicitly. | P,H,N; partial |
+| `PSRP-05` | Named PowerShell configuration -> exact endpoint or failure | Choose default Windows PowerShell, PowerShell 7 or an approved custom configuration. | The requested resource URI persists through open, pipeline, receive, stop and close. Missing/denied configurations never fall back. Selection does not claim JEA permissions or interactive-host support. | Correct the configured name/permissions and start a new connection explicitly. | P,N; partial |
+| `PSRP-06` | Explicit PowerShell SSH transport -> structured runspace or failure | Connect to an approved named PowerShell SSH subsystem using pinned native SSH authentication and local source policy. | No PTY, shell/exec substitution, duplicate SSH client or implicit WSMan fallback; structured streams remain separate from VT; bounded framing, cancellation and close; old profiles retain HTTPS defaults. | Correct the endpoint/trust/authentication and explicitly reconnect; no continuity claim. | P,H,N,U; partial |
+| `ENTRA-01` | Configured public client -> transient token or explicit denial | Begin system-browser PKCE with an approved tenant/application and loopback redirect. | Bind loopback before browser launch; validate callback/state; bound pending sockets and HTTP; cancellation/deadline releases the attempt; no client secret, token persistence, broker claim or weaker fallback. | Cancel/drop the authorization attempt; start a new independent attempt explicitly. | P,N |
+| `ENTRA-02` | Authorized Dev Center client -> bounded owned-resource inventory | Query projects and permitted current-user Dev Boxes at the configured endpoint; fetch a connection URL only as a separate authorized operation. | Token scope/lifetime stays with its client; no cross-origin redirects/continuations; bounds/cycles/errors are explicit; listing does not require connection permission; sensitive handoff URLs are not logged or auto-launched. | Cancel the operation or drop the client/token; no resource mutation to undo. | P,N |
+| `RSD-01` | Pinned SSH endpoint -> current-user session inventory | Run the trusted installed helper's bounded JSON discovery using native SSH exec without a PTY. | Host key, account and source policy stay fixed; no registry mutation, terminal execution, automatic trust or replacement session. | Drop the transport; retry discovery explicitly. | P,N; backend only |
+| `RSD-02` | Selected remote generation -> adopted persistent terminal or failure | Explicitly authorize takeover of the exact name/PID/creation generation and protocol/schema. | Binary snapshot/framing is separate from stderr; revalidate owned endpoint and live generation; no input/resize before adoption; transport loss detaches without killing the daemon or automatically reconnecting. | Discover and attach explicitly; no fallback to a new shell. | P,N; backend only |
+| `RSD-03` | Launcher -> remote-session picker -> ordinary terminal tab | Enter a pinned SSH destination, discover in a cancellable worker, select a generation and explicitly confirm takeover. | Endpoint/source edits invalidate inventory; stale results cannot attach elsewhere; terminal adopts the authoritative snapshot; close detaches without killing the shell; no automatic workspace restoration or reconnect. | Cancel discovery, close the picker, or detach the terminal. | P,H,N,U; partial |
+| `ENTRA-03` | Launcher -> enterprise sign-in/discovery tab -> owned Dev Box inventory | Enter approved public-client configuration, sign in explicitly, inspect resources or sign out. | Token/listener/network ownership stays off the UI thread; bounded results; account/config changes invalidate old outcomes; no token persistence, automatic connection URL launch, Windows-logon or broker claims. | Cancel, sign out or close; cleanup ownership survives the tab. | P,H,N,U; partial |
+
 ## A. Root, Launcher, and surface lifecycle
 
 For interactive macOS evidence, use the
@@ -778,6 +805,14 @@ exact authenticated connection and retires on expiry/disconnect/replacement,
 without terminal admission or reconnect replay. Per-caller/root MCP disclosure
 is a separate stacked native-enrollment/broker slice, not implied by hosting.
 Native DT-05/07 and external-controller qualification remain open.
+
+## D3. Local source address selection
+
+| ID | From -> to | Action / stimulus | Required oracle | Reverse / recovery | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| `NET-01` | SSH/SFTP profile or session setup -> configured connection | Leave Automatic selected or enter/select a fixed local source IP; use the equivalent native PSRP endpoint option. | Automatic preserves OS selection. Explicit source binds every outer transport socket before connect, retains hostname trust/TLS identity, rejects unsupported addresses, and never falls back unbound. Port-forward listener/target policy is separate. | Edit the future connection's source or explicitly select Automatic. | P,H,N; partial |
+| `NET-02` | Ask profile -> source chooser -> connection or unchanged tab | Launch an Ask profile, refresh available addresses, choose a source or Automatic explicitly, or cancel. | No connection before selection; adapter labels identify addresses only. Choice is bound to the originating request; closing/switching cannot retarget it. Cancel makes no connection. A new session asks again; the resolved choice is not silently persisted. | Cancel and relaunch the profile. | P,H,N,U; partial |
+| `NET-03` | Bound SSH/SFTP session -> retry/reconnect/related SFTP | Retry authentication, reconnect after loss, or open SFTP/transfer connections from the session; remove the selected address or edit the saved profile. | Every new outer connection retains the session's resolved source. An unavailable source fails visibly without automatic fallback; saved profile edits do not alter existing sessions. Source selection is not DNS, adapter or VPN-only enforcement. | Restore the source or explicitly start a new connection with another choice. | P,H,N; partial |
 
 ## E. Serial lifecycle
 

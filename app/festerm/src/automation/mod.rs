@@ -3242,6 +3242,7 @@ fn target_label(apps: &[&FesTermApp], reference: TargetRef) -> Option<String> {
                 username,
                 host,
                 port,
+                ..
             } => format!(
                 "{}@{}:{}",
                 approval_label(username),

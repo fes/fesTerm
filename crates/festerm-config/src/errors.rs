@@ -40,6 +40,7 @@ pub enum ConfigErrorKind {
     InvalidLocalTunnelHosting,
     InvalidSshProfile,
     InvalidDevTunnelProfile,
+    InvalidPowerShellProfile,
     InvalidSshPortForwardConfiguration,
     DuplicateSshPortForward,
     InvalidSerialProfile,
@@ -134,6 +135,9 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::InvalidSshProfile => formatter.write_str(
                 "SSH profile metadata must contain a host, nonzero port, safe username and terminal type, and at least 2 columns by 1 row",
             ),
+            ConfigErrorKind::InvalidPowerShellProfile => formatter.write_str(
+                "PowerShell profile metadata must contain transport-specific safe HTTPS or SSH endpoint metadata, source-address policy, and opaque credential reference only",
+            ),
             ConfigErrorKind::InvalidSshPortForwardConfiguration => formatter.write_str(
                 "SSH port forwards must use non-empty, safe bind and destination hosts with nonzero ports",
             ),
@@ -150,7 +154,7 @@ impl fmt::Display for ConfigError {
                 "SSH credential_id must be a canonical opaque UUID-v4 reference",
             ),
             ConfigErrorKind::CredentialReferenceRequiresSshProfile => formatter.write_str(
-                "opaque credential references may be attached only to SSH profiles",
+                "opaque credential references may be attached only to SSH or PowerShell profiles",
             ),
             ConfigErrorKind::PersistenceRequiresLocalOrSshProfile => formatter.write_str(
                 "durable-session persistence may only be attached to local or SSH profiles",

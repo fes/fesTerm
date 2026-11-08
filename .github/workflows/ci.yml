@@ -147,6 +147,7 @@ jobs:
       # Native receipts use module offsets when local symbols are unavailable.
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@stable
@@ -216,6 +217,19 @@ jobs:
         run: .\scripts\run-windows-tests.ps1 -CargoArguments @('test', '--workspace')
         env:
           FESTERM_REQUIRE_WINDOWS_SYMLINKS: '1'
+      - name: Test native PowerShell and enterprise CLI boundaries
+        run: cargo test -p festerm-powershell -p festerm-enterprise --examples --locked
+      - name: Qualify native SSH PSRP against the installed PowerShell runtime
+        timeout-minutes: 5
+        env:
+          FESTERM_PSRP_SSH_PWSH_INTEROP: "1"
+        run: cargo test -p festerm-powershell --test psrp_ssh_pwsh --locked -- --nocapture
+      - name: Test the pinned PSRP dependency patches
+        timeout-minutes: 15
+        run: cargo test --manifest-path vendor/psrp-rs/Cargo.toml --tests --locked
+      - name: Test the pinned WinRM dependency patches
+        timeout-minutes: 15
+        run: cargo test --manifest-path vendor/winrm-rs/Cargo.toml --tests --locked
       - name: Run the example JavaScript workflow through the contained worker
         shell: bash
         run: |

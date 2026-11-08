@@ -155,6 +155,37 @@ a graphics-only optional fill callback; the app retains device/format,
 opacity and transform policy, shader resources, and egui's exact feathered
 geometry. There is no new terminal state or presentation backend in this hook.
 
+### PowerShell and enterprise development boundaries
+
+Owner-authorized development under
+[ADR 0082](docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md)
+adds separate backend foundations rather than changing the terminal byte
+contract. `festerm-enterprise` owns transient public-client identity and bounded
+Dev Center queries; `festerm-powershell` owns native structured PSRP operations.
+The experimental desktop PowerShell tab is separate from terminal sessions:
+typed application actions control a background worker, structured output has
+bounded retention, and per-worker cleanup handles gate asynchronous teardown.
+Profiles/workspaces contain endpoint metadata and opaque credential references,
+never passwords, tokens, command history or live runspace identity.
+Ephemeral enterprise and remote-session discovery tabs share the typed action,
+bounded background-worker and retained cleanup model. The remote picker opens
+the existing PersistentSession terminal path for an exact SSH-pinned daemon
+generation, while enterprise discovery remains read-only account metadata.
+Neither surface enters workspace restoration or implicitly authorizes a shell.
+Both reuse the secret-byte boundary. Neither makes the terminal core depend on
+cloud identity, nor feeds PSRP/CLIXML through the VT parser.
+
+Enterprise accounts and remote-daemon selection are not yet GUI surfaces or
+automatic workspace connections. Future GUI integration must use typed
+application commands and keep network operations off the frame thread.
+Entra discovery does not authenticate a Windows shell. Sessiond's versioned
+JSON helper is read-only; its separate binary stdio bridge revalidates an
+exact owned daemon generation and requires explicit takeover authorization.
+`festerm-ssh` supplies bounded native binary exec without a PTY, while
+`festerm-sessiond` retains snapshot decoding/adoption and terminal ownership.
+There is no reverse SSH-to-sessiond dependency or new network listener.
+Native interoperability and broker/compliance gates remain CP-19 through CP-21.
+
 ## Current and Target Workspace Layout
 
 The repository is a Cargo workspace. The initial core, test-support, and

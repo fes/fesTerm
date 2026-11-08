@@ -68,6 +68,7 @@ pub(super) struct DesktopRecording {
     recording: Option<SharedRecording>,
     duration_watch: Option<DurationWatch>,
     quit_waiting_until: Option<std::time::Instant>,
+    quit_blocked: bool,
     include_new: Option<RecordingId>,
     manifest: Option<RecordingManifest>,
     lease: Option<Arc<RecordingLease>>,
@@ -205,6 +206,7 @@ impl DesktopRecording {
             recording: None,
             duration_watch: None,
             quit_waiting_until: None,
+            quit_blocked: false,
             include_new: None,
             manifest: None,
             lease: None,
@@ -899,8 +901,10 @@ impl DesktopRecording {
 
     pub(super) fn defer_quit(&mut self, context: &egui::Context) {
         let Some(recording) = &self.recording else {
+            self.quit_blocked = false;
             return;
         };
+        self.quit_blocked = true;
         context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         if self.quit_waiting_until.is_some() {
             return;
@@ -918,6 +922,16 @@ impl DesktopRecording {
                 ));
             }
         }
+    }
+
+    pub(super) fn prepare_accepted_quit(&mut self, context: &egui::Context) {
+        if self.recording.is_some() && !self.quit_blocked {
+            self.defer_quit(context);
+        }
+    }
+
+    pub(super) fn blocks_quit(&self) -> bool {
+        self.quit_blocked
     }
 
     fn poll_capture(&mut self, app: &mut FesTermApplication, context: &egui::Context) {
@@ -965,14 +979,15 @@ impl DesktopRecording {
         app.detach_recording(id);
         let manifest = self.manifest.take();
         let lease = self.lease.take();
-        if self.quit_waiting_until.take().is_some() {
+        self.quit_waiting_until = None;
+        if self.quit_blocked {
             match completion {
                 Completion::Complete { .. } => {
+                    self.quit_blocked = false;
                     self.status = Some(
                         "Recording was saved privately; export it from the library after restarting"
                             .to_owned(),
                     );
-                    context.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 Completion::Incomplete { reason, detail, .. } => {
                     let detail = detail

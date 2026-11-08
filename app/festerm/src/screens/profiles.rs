@@ -6,6 +6,7 @@ use super::destination::{
 };
 use super::path_autocomplete::{local_executable_field, local_working_directory_field};
 use super::*;
+use crate::secret_input::{clear_secret_widget, new_secret_widget_id, SecretText};
 use festerm_ui_egui::controls::{action_button, action_button_enabled, ActionButtonRole};
 
 /// Which staged view the Profiles surface is currently showing. Multi-field
@@ -16,12 +17,13 @@ enum ProfilesScreenMode {
     #[default]
     List,
     EditLocal(LocalProfileDraft),
-    EditSsh(SshProfileDraft),
+    EditSsh(Box<SshProfileDraft>),
     EditSerial(SerialProfileDraft),
     EditDevTunnel(DevTunnelProfileDraft),
     #[cfg(feature = "experimental-dev-tunnels")]
     ImportPublicDevTunnel(PublicTunnelImportDraft),
     HostSetup(HostSetupDraft),
+    EditPowerShell(Box<PowerShellProfileDraft>),
     ConfirmDelete {
         identifier: String,
         references: usize,
@@ -251,6 +253,49 @@ fn profiles_state_id(tab_id: TabId) -> egui::Id {
     egui::Id::new(("profiles_state", tab_id))
 }
 
+fn clear_powershell_editor_secret(context: &egui::Context, mode: &mut ProfilesScreenMode) {
+    if let ProfilesScreenMode::EditPowerShell(draft) = mode {
+        draft.password.clear();
+        clear_secret_widget(context, draft.password_widget_id);
+    }
+}
+
+pub(crate) fn clear_profiles_screen_state(context: &egui::Context, tab_id: TabId) {
+    let mut state =
+        context.data_mut(|data| data.remove_temp::<ProfilesScreenState>(profiles_state_id(tab_id)));
+    if let Some(state) = &mut state {
+        clear_powershell_editor_secret(context, &mut state.mode);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_profile_secret_for_test(context: &egui::Context, tab_id: TabId) -> egui::Id {
+    let draft = PowerShellProfileDraft {
+        password: SecretText::new("secondary-window-sentinel"),
+        ..PowerShellProfileDraft::default()
+    };
+    let widget_id = draft.password_widget_id;
+    context.data_mut(|data| {
+        data.insert_temp(
+            profiles_state_id(tab_id),
+            ProfilesScreenState {
+                mode: ProfilesScreenMode::EditPowerShell(Box::new(draft)),
+                ..ProfilesScreenState::default()
+            },
+        );
+    });
+    egui::text_edit::TextEditState::default().store(context, widget_id);
+    widget_id
+}
+
+#[cfg(test)]
+pub(crate) fn has_profile_screen_state_for_test(context: &egui::Context, tab_id: TabId) -> bool {
+    context.data(|data| {
+        data.get_temp::<ProfilesScreenState>(profiles_state_id(tab_id))
+            .is_some()
+    })
+}
+
 fn profile_table_item(profile: &Profile, configuration: &Configuration) -> ProfileTableItem {
     let (kind, location, subtitle) = match profile {
         Profile::DevTunnel(tunnel) => (
@@ -306,6 +351,22 @@ fn profile_table_item(profile: &Profile, configuration: &Configuration) -> Profi
                 ),
             )
         }
+        Profile::PowerShell(powershell) => (
+            ProfileTableKind::PowerShell,
+            powershell.host().to_owned(),
+            match powershell.transport() {
+                festerm_config::PowerShellTransport::Https => format!(
+                    "{} · HTTPS · {}",
+                    powershell.username(),
+                    powershell.configuration_name()
+                ),
+                festerm_config::PowerShellTransport::Ssh => format!(
+                    "{} · SSH subsystem {}",
+                    powershell.username(),
+                    powershell.ssh_subsystem()
+                ),
+            },
+        ),
     };
     ProfileTableItem {
         identifier: profile.identifier().to_owned(),
@@ -441,6 +502,7 @@ struct SshProfileDraft {
     quick_connect: String,
     destination_expanded: bool,
     profile_kind: RemoteProfileKind,
+    local_bind: LocalBindDraft,
     sftp_gui_mode: bool,
     /// Which credential kind the editor's authentication section is
     /// currently showing entry fields for. Independent of
@@ -471,6 +533,133 @@ struct SshProfileDraft {
     error: Option<String>,
 }
 
+#[derive(Clone)]
+struct PowerShellProfileDraft {
+    original_id: Option<String>,
+    transport: festerm_config::PowerShellTransport,
+    name: String,
+    host: String,
+    port: String,
+    username: String,
+    domain: String,
+    configuration_name: String,
+    trusted_ca_file: String,
+    ssh_host_key_fingerprint: String,
+    ssh_subsystem: String,
+    local_bind: LocalBindDraft,
+    credential_reference: Option<std::sync::Arc<festerm_secret_store::SecretReference>>,
+    password: SecretText,
+    password_widget_id: egui::Id,
+    error: Option<String>,
+}
+
+impl Default for PowerShellProfileDraft {
+    fn default() -> Self {
+        Self {
+            original_id: None,
+            transport: festerm_config::PowerShellTransport::Https,
+            name: String::new(),
+            host: String::new(),
+            port: "5986".to_owned(),
+            username: String::new(),
+            domain: String::new(),
+            configuration_name: festerm_powershell::PowerShellEndpoint::DEFAULT_CONFIGURATION_NAME
+                .to_owned(),
+            trusted_ca_file: String::new(),
+            ssh_host_key_fingerprint: String::new(),
+            ssh_subsystem: festerm_powershell::PowerShellSshSession::DEFAULT_SUBSYSTEM_NAME
+                .to_owned(),
+            local_bind: LocalBindDraft::default(),
+            credential_reference: None,
+            password: SecretText::default(),
+            password_widget_id: new_secret_widget_id(),
+            error: None,
+        }
+    }
+}
+
+impl PowerShellProfileDraft {
+    fn from_profile(profile: &festerm_config::PowerShellProfileConfiguration) -> Self {
+        Self {
+            original_id: Some(profile.identifier().to_owned()),
+            transport: profile.transport(),
+            name: profile.identifier().to_owned(),
+            host: profile.host().to_owned(),
+            port: profile.port().to_string(),
+            username: profile.username().to_owned(),
+            domain: profile.domain().unwrap_or_default().to_owned(),
+            configuration_name: profile.configuration_name().to_owned(),
+            trusted_ca_file: profile
+                .trusted_ca_file()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            ssh_host_key_fingerprint: profile
+                .ssh_host_key_fingerprint()
+                .unwrap_or_default()
+                .to_owned(),
+            ssh_subsystem: profile.ssh_subsystem().to_owned(),
+            local_bind: LocalBindDraft::from_policy(profile.local_bind_policy()),
+            credential_reference: profile
+                .credential_reference()
+                .map(|reference| std::sync::Arc::new(reference.duplicate_for_transport())),
+            password: SecretText::default(),
+            password_widget_id: new_secret_widget_id(),
+            error: None,
+        }
+    }
+
+    fn build(&self) -> Result<Profile, String> {
+        let port = self
+            .port
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| "Enter a valid PowerShell HTTPS port.".to_owned())?;
+        let profile = Profile::powershell(
+            self.name.trim(),
+            self.host.trim(),
+            port,
+            self.username.trim(),
+        )
+        .map_err(|error| error.to_string())?;
+        let Profile::PowerShell(profile) = profile else {
+            unreachable!("PowerShell constructor returns PowerShell profile");
+        };
+        let profile = match self.transport {
+            festerm_config::PowerShellTransport::Https => profile
+                .with_https_transport()
+                .map_err(|error| error.to_string())?
+                .with_domain(
+                    (!self.domain.trim().is_empty()).then(|| self.domain.trim().to_owned()),
+                )
+                .map_err(|error| error.to_string())?
+                .with_configuration_name(self.configuration_name.trim())
+                .map_err(|error| error.to_string())?
+                .with_trusted_ca_file(
+                    (!self.trusted_ca_file.trim().is_empty())
+                        .then(|| self.trusted_ca_file.trim().to_owned()),
+                )
+                .map_err(|error| error.to_string())?,
+            festerm_config::PowerShellTransport::Ssh => profile
+                .with_ssh_transport(
+                    self.ssh_host_key_fingerprint.trim(),
+                    self.ssh_subsystem.trim(),
+                )
+                .map_err(|error| error.to_string())?,
+        }
+        .with_port(port)
+        .map_err(|error| error.to_string())?
+        .with_local_bind_policy(self.local_bind.saved_policy()?)
+        .map_err(|error| error.to_string())?;
+        let mut profile = Profile::PowerShell(profile);
+        if let Some(reference) = &self.credential_reference {
+            profile = profile
+                .with_powershell_credential_reference(reference.duplicate_for_transport())
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(profile)
+    }
+}
+
 impl Default for SshProfileDraft {
     /// A brand-new SSH profile defaults its port to "22" in the text box
     /// (matching Quick Connect's `SshLauncherForm::DEFAULT_PORT`) rather
@@ -486,6 +675,7 @@ impl Default for SshProfileDraft {
             quick_connect: String::new(),
             destination_expanded: false,
             profile_kind: RemoteProfileKind::Ssh,
+            local_bind: LocalBindDraft::default(),
             sftp_gui_mode: true,
             auth_method: SshAuthenticationMethod::Password,
             password: String::new(),
@@ -543,6 +733,7 @@ impl SshProfileDraft {
                 session_name_touched: true,
                 ..Default::default()
             },
+            local_bind: LocalBindDraft::from_policy(seed.local_bind_policy),
             ..Self::default()
         }
     }
@@ -563,6 +754,7 @@ impl SshProfileDraft {
             quick_connect: format!("{}@{}:{}", ssh.username(), ssh.host(), ssh.port()),
             destination_expanded: false,
             profile_kind: ssh.profile_kind(),
+            local_bind: LocalBindDraft::from_policy(ssh.local_bind_policy()),
             sftp_gui_mode: ssh.sftp_gui_mode(),
             auth_method: match stored_credential_kind {
                 CredentialKind::Password => SshAuthenticationMethod::Password,
@@ -600,7 +792,8 @@ impl SshProfileDraft {
             "xterm-256color",
             TerminalSize::new(80, 24).expect("profile-editor probe terminal size is valid"),
         )
-        .ok()?;
+        .ok()
+        .and_then(|profile| self.local_bind.apply_to_profile(profile).ok())?;
         let known_host_fingerprint = configuration
             .known_host_fingerprint(profile.identity().host(), profile.identity().port())?
             .to_owned();
@@ -686,7 +879,22 @@ impl SshProfileDraft {
                     .map_err(|error| error.to_string())?,
             ),
             Profile::Ssh(ssh) => Profile::Ssh(ssh),
-            Profile::Local(_) | Profile::Serial(_) | Profile::DevTunnel(_) => {
+            Profile::Local(_)
+            | Profile::Serial(_)
+            | Profile::DevTunnel(_)
+            | Profile::PowerShell(_) => {
+                unreachable!("Profile::ssh returns SSH")
+            }
+        };
+        let profile = match profile {
+            Profile::Ssh(ssh) => Profile::Ssh(
+                ssh.with_local_bind_policy(self.local_bind.saved_policy()?)
+                    .map_err(|error| error.to_string())?,
+            ),
+            Profile::Local(_)
+            | Profile::Serial(_)
+            | Profile::DevTunnel(_)
+            | Profile::PowerShell(_) => {
                 unreachable!("Profile::ssh returns SSH")
             }
         };
@@ -1001,6 +1209,7 @@ pub(crate) fn show_profiles(
 
     if let Some(identifier) = pending_edit {
         if let Some(profile) = configuration.profile(&identifier) {
+            clear_powershell_editor_secret(ui.ctx(), &mut state.mode);
             state.mode = match profile {
                 Profile::DevTunnel(tunnel) => {
                     ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::from_profile(tunnel))
@@ -1009,16 +1218,20 @@ pub(crate) fn show_profiles(
                     ProfilesScreenMode::EditLocal(LocalProfileDraft::from_profile(local))
                 }
                 Profile::Ssh(ssh) => {
-                    ProfilesScreenMode::EditSsh(SshProfileDraft::from_profile(ssh))
+                    ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::from_profile(ssh)))
                 }
                 Profile::Serial(serial) => {
                     ProfilesScreenMode::EditSerial(SerialProfileDraft::from_profile(serial))
                 }
+                Profile::PowerShell(powershell) => ProfilesScreenMode::EditPowerShell(Box::new(
+                    PowerShellProfileDraft::from_profile(powershell),
+                )),
             };
         }
     }
 
     if let Some(kind) = pending_create {
+        clear_powershell_editor_secret(ui.ctx(), &mut state.mode);
         state.mode = match kind {
             NewProfileKind::DevTunnel => {
                 ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())
@@ -1027,11 +1240,14 @@ pub(crate) fn show_profiles(
             NewProfileKind::Local => {
                 ProfilesScreenMode::EditLocal(LocalProfileDraft::new(local_default_provider))
             }
-            NewProfileKind::Ssh => ProfilesScreenMode::EditSsh(SshProfileDraft::default()),
-            NewProfileKind::Sftp => ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp()),
+            NewProfileKind::Ssh => ProfilesScreenMode::EditSsh(Box::default()),
+            NewProfileKind::Sftp => {
+                ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::new_sftp()))
+            }
             NewProfileKind::Serial => ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
+            NewProfileKind::PowerShell => ProfilesScreenMode::EditPowerShell(Box::default()),
             NewProfileKind::SshFromDraft(draft) => {
-                ProfilesScreenMode::EditSsh(SshProfileDraft::from_seed(draft))
+                ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::from_seed(draft)))
             }
         };
     }
@@ -1389,13 +1605,14 @@ pub(crate) fn show_profiles(
                                     local_default_provider,
                                 )),
                             ),
-                            ("SSH", ProfilesScreenMode::EditSsh(SshProfileDraft::default())),
+                            ("SSH", ProfilesScreenMode::EditSsh(Box::default())),
                             ("Dev Tunnel · Experimental", ProfilesScreenMode::EditDevTunnel(DevTunnelProfileDraft::default())),
-                            ("SFTP", ProfilesScreenMode::EditSsh(SshProfileDraft::new_sftp())),
+                            ("SFTP", ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::new_sftp()))),
                             (
                                 "Serial",
                                 ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
                             ),
+                            ("PowerShell", ProfilesScreenMode::EditPowerShell(Box::default())),
                         ] {
                             if matches!(mode, ProfilesScreenMode::EditDevTunnel(_))
                                 && !cfg!(feature = "experimental-dev-tunnels")
@@ -1476,11 +1693,18 @@ pub(crate) fn show_profiles(
                                                 LocalProfileDraft::from_profile(local),
                                             ),
                                             Profile::Ssh(ssh) => ProfilesScreenMode::EditSsh(
-                                                SshProfileDraft::from_profile(ssh),
+                                               Box::new(SshProfileDraft::from_profile(ssh)),
                                             ),
                                             Profile::Serial(serial) => ProfilesScreenMode::EditSerial(
                                                 SerialProfileDraft::from_profile(serial),
                                             ),
+                                            Profile::PowerShell(powershell) => {
+                                                ProfilesScreenMode::EditPowerShell(Box::new(
+                                                    PowerShellProfileDraft::from_profile(
+                                                        powershell,
+                                                    ),
+                                                ))
+                                            }
                                         });
                                     }
                                     ProfileTableAction::Duplicate => {
@@ -1507,13 +1731,21 @@ pub(crate) fn show_profiles(
                                                 let mut draft = SshProfileDraft::from_profile(ssh);
                                                 draft.original_id = None;
                                                 draft.name = duplicate_name;
-                                                ProfilesScreenMode::EditSsh(draft)
+                                                ProfilesScreenMode::EditSsh(Box::new(draft))
                                             }
                                             Profile::Serial(serial) => {
                                                 let mut draft = SerialProfileDraft::from_profile(serial);
                                                 draft.original_id = None;
                                                 draft.name = duplicate_name;
                                                 ProfilesScreenMode::EditSerial(draft)
+                                            }
+                                            Profile::PowerShell(powershell) => {
+                                                let mut draft =
+                                                    PowerShellProfileDraft::from_profile(powershell);
+                                                draft.original_id = None;
+                                                draft.name = duplicate_name;
+                                                draft.credential_reference = None;
+                                                ProfilesScreenMode::EditPowerShell(Box::new(draft))
                                             }
                                         });
                                     }
@@ -1822,6 +2054,14 @@ pub(crate) fn show_profiles(
                                     FieldStyle::Inline,
                                 )
                                 .show(ui, false);
+                                ui.add_space(10.0);
+                                ssh_section_heading(ui, "Source address");
+                                show_local_bind_draft(
+                                    ui,
+                                    &mut draft.local_bind,
+                                    true,
+                                    ("profiles_source", tab_id),
+                                );
                                 if draft.profile_kind == RemoteProfileKind::Sftp {
                                     ui.add_space(10.0);
                                     ui.checkbox(
@@ -2039,6 +2279,185 @@ pub(crate) fn show_profiles(
                     });
             });
         }
+        ProfilesScreenMode::EditPowerShell(draft) => {
+            let credential_target = (
+                draft.transport,
+                draft.host.clone(),
+                draft.port.clone(),
+                draft.username.clone(),
+                draft.domain.clone(),
+                draft.configuration_name.clone(),
+                draft.trusted_ca_file.clone(),
+                draft.ssh_host_key_fingerprint.clone(),
+                draft.ssh_subsystem.clone(),
+            );
+            show_bounded_content_scroll(ui, (tab_id, "powershell_profile_editor"), |ui| {
+              ui.vertical(|ui| {
+                    ui.add_space(24.0);
+                    ui.heading(if draft.original_id.is_some() {
+                        "Edit PowerShell Profile"
+                    } else {
+                        "New PowerShell Profile"
+                    });
+                    ui.label("Experimental native PSRP profile. HTTPS/NTLM is the default; SSH requires an explicit pinned host key.");
+                    ui.add_space(16.0);
+                    egui::Frame::new()
+                        .fill(theme::SURFACE_TAB_INACTIVE)
+                        .stroke(Stroke::new(1.0, theme::BORDER_SUBTLE))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.set_max_width(520.0_f32.min(ui.available_width()));
+                            profile_text_edit(ui, tab_id, "ps_name", "Name", &mut draft.name);
+                            ui.horizontal(|ui| {
+                                let was = draft.transport;
+                                ui.radio_value(
+                                    &mut draft.transport,
+                                    festerm_config::PowerShellTransport::Https,
+                                    "HTTPS/NTLM",
+                                );
+                                ui.radio_value(
+                                    &mut draft.transport,
+                                    festerm_config::PowerShellTransport::Ssh,
+                                    "SSH subsystem",
+                                );
+                                if draft.transport != was {
+                                    match draft.transport {
+                                        festerm_config::PowerShellTransport::Https => {
+                                            draft.port = "5986".to_owned();
+                                        }
+                                        festerm_config::PowerShellTransport::Ssh => {
+                                            draft.port = "22".to_owned();
+                                        }
+                                    }
+                                }
+                            });
+                            let host_label = match draft.transport {
+                                festerm_config::PowerShellTransport::Https => "HTTPS host",
+                                festerm_config::PowerShellTransport::Ssh => "SSH host",
+                            };
+                            profile_text_edit(ui, tab_id, "ps_host", host_label, &mut draft.host);
+                            profile_text_edit(ui, tab_id, "ps_port", "Port", &mut draft.port);
+                            profile_text_edit(ui, tab_id, "ps_user", "Username", &mut draft.username);
+                            match draft.transport {
+                                festerm_config::PowerShellTransport::Https => {
+                                    profile_text_edit(ui, tab_id, "ps_domain", "Domain (optional)", &mut draft.domain);
+                                    profile_text_edit(
+                                        ui,
+                                        tab_id,
+                                        "ps_config",
+                                        "Configuration",
+                                        &mut draft.configuration_name,
+                                    );
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("Windows PowerShell").clicked() {
+                                            draft.configuration_name =
+                                                festerm_powershell::PowerShellEndpoint::WINDOWS_POWERSHELL_CONFIGURATION_NAME
+                                                    .to_owned();
+                                        }
+                                        if ui.small_button("PowerShell 7").clicked() {
+                                            draft.configuration_name =
+                                                festerm_powershell::PowerShellEndpoint::POWERSHELL_7_CONFIGURATION_NAME
+                                                    .to_owned();
+                                        }
+                                    });
+                                    ssh_paragraph(
+                                        ui,
+                                        "PowerShell 7 and custom/JEA names are exact HTTPS endpoint selections: the target must have registered them; there is no fallback.",
+                                    );
+                                    profile_text_edit(
+                                        ui,
+                                        tab_id,
+                                        "ps_ca",
+                                        "Trusted CA PEM file (optional)",
+                                        &mut draft.trusted_ca_file,
+                                    );
+                                }
+                                festerm_config::PowerShellTransport::Ssh => {
+                                    profile_text_edit(
+                                        ui,
+                                        tab_id,
+                                        "ps_ssh_pin",
+                                        "Pinned host key (SHA256)",
+                                        &mut draft.ssh_host_key_fingerprint,
+                                    );
+                                    profile_text_edit(
+                                        ui,
+                                        tab_id,
+                                        "ps_ssh_subsystem",
+                                        "Subsystem",
+                                        &mut draft.ssh_subsystem,
+                                    );
+                                    ssh_paragraph(
+                                        ui,
+                                        "SSH mode opens the exact subsystem over native SSH with a pinned host key. It does not prompt for unknown hosts, reconnect, or enable remote listeners.",
+                                    );
+                                }
+                            }
+                            ui.add_space(8.0);
+                            show_local_bind_draft(ui, &mut draft.local_bind, true, (tab_id, "ps"));
+                            ui.add_space(8.0);
+                            let target_changed = credential_target != (
+                                draft.transport,
+                                draft.host.clone(),
+                                draft.port.clone(),
+                                draft.username.clone(),
+                                draft.domain.clone(),
+                                draft.configuration_name.clone(),
+                                draft.trusted_ca_file.clone(),
+                                draft.ssh_host_key_fingerprint.clone(),
+                                draft.ssh_subsystem.clone(),
+                            );
+                            if target_changed && !draft.password.is_empty() {
+                                draft.password.clear();
+                                clear_secret_widget(ui.ctx(), draft.password_widget_id);
+                                draft.error = Some("Endpoint changed; enter the password again.".to_owned());
+                            }
+                            ui.label(if draft.credential_reference.is_some() {
+                                "A password is stored in native secure storage. Leave blank to keep it."
+                            } else {
+                                "Optionally save a password in native secure storage; blank means prompt on connect."
+                            });
+                            let label = ui.label("Password to save");
+                            let response = ui.add(egui::TextEdit::singleline(&mut draft.password)
+                                .password(true).sensitive(true).id(draft.password_widget_id)
+                                .char_limit(4096)).labelled_by(label.id);
+                            if response.changed()
+                                && draft.error.as_deref() == Some("Endpoint changed; enter the password again.")
+                            {
+                                draft.error = None;
+                            }
+                            if let Some(error) = &draft.error {
+                                ui.colored_label(theme::STATUS_ERROR, error);
+                            }
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("Cancel").clicked() {
+                                    next_mode = Some(ProfilesScreenMode::List);
+                                }
+                                if ui.button("Save").clicked() {
+                                    match draft.build() {
+                                        Ok(profile) => {
+                                            command = Some(if draft.password.is_empty() {
+                                                AppCommand::SaveProfile { profile }
+                                            } else {
+                                                AppCommand::SaveProfileWithCredential {
+                                                    profile,
+                                                    credential: crate::tabs::ProfileCredentialToStore::Password(
+                                                        PasswordToStore::new(draft.password.take()),
+                                                    ),
+                                                }
+                                            });
+                                            next_mode = Some(ProfilesScreenMode::List);
+                                        }
+                                        Err(error) => draft.error = Some(error),
+                                    }
+                                }
+                            });
+                        });
+            });
+            });
+        }
         ProfilesScreenMode::EditSerial(draft) => {
             show_bounded_content_scroll(ui, (tab_id, "serial_profile_editor"), |ui| {
             ui.vertical(|ui| {
@@ -2119,6 +2538,7 @@ pub(crate) fn show_profiles(
         });
     });
     if let Some(mode) = next_mode {
+        clear_powershell_editor_secret(ui.ctx(), &mut state.mode);
         state.mode = mode;
     }
 
@@ -3282,6 +3702,7 @@ mod tests {
             durable_session_enabled: false,
             durable_session_provider: PersistenceProviderKind::Tmux,
             durable_session_name: "main".to_owned(),
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let configuration =
             festerm_config::Configuration::new(Vec::new()).expect("empty configuration is valid");
@@ -3323,6 +3744,316 @@ mod tests {
         assert_eq!(profile.port(), 2222);
         assert_eq!(profile.username(), "deploy");
         assert!(profile.credential_reference().is_none());
+    }
+
+    #[test]
+    fn powershell_profile_edit_preserves_stored_reference_and_new_password_is_transient() {
+        let reference = festerm_secret_store::SecretReference::generate();
+        let profile = Profile::powershell("ps", "win.example.test", 5986, "fixture")
+            .unwrap()
+            .with_powershell_credential_reference(reference.duplicate_for_transport())
+            .unwrap();
+        let mut draft = PowerShellProfileDraft::from_profile(profile.as_powershell().unwrap());
+        draft.configuration_name = "PowerShell.7".to_owned();
+        draft.password = SecretText::new("replacement-secret");
+        let edited = draft.build().unwrap();
+        assert!(edited.credential_reference() == Some(&reference));
+        let serialized = Configuration::new(vec![edited]).unwrap().to_toml().unwrap();
+        assert!(!serialized.contains("replacement-secret"));
+    }
+
+    #[test]
+    fn powershell_profile_password_state_cannot_cross_editor_lifetimes() {
+        let mut harness = profiles_harness(festerm_config::Configuration::empty());
+        harness.run();
+        open_new_profile(&mut harness, "PowerShell");
+        harness.get_by_label("Password to save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Password to save").focus();
+        harness.run();
+        harness
+            .get_by_label("Password to save")
+            .type_text("profile-sentinel");
+        harness.run();
+        let first_id = harness.ctx.memory(|memory| memory.focused()).unwrap();
+        let text_state = egui::TextEdit::load_state(&harness.ctx, first_id).unwrap();
+        let cursor = egui::text::CCursorRange::one(egui::text::CCursor::new(0));
+        assert!(!text_state.undoer().has_undo(&(cursor, "other".to_owned())));
+        assert!(!text_state.undoer().is_in_flux());
+
+        harness.get_by_label("Cancel").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(egui::TextEdit::load_state(&harness.ctx, first_id).is_none());
+        open_new_profile(&mut harness, "PowerShell");
+        harness.get_by_label("Password to save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Password to save").focus();
+        harness.run();
+        let second_id = harness.ctx.memory(|memory| memory.focused()).unwrap();
+        assert_ne!(first_id, second_id);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        harness.run();
+        let state = harness
+            .ctx
+            .data(|data| {
+                data.get_temp::<ProfilesScreenState>(profiles_state_id(harness.state().tab_id))
+            })
+            .unwrap();
+        let ProfilesScreenMode::EditPowerShell(draft) = state.mode else {
+            panic!("PowerShell editor should remain open");
+        };
+        assert!(draft.password.is_empty());
+    }
+
+    #[test]
+    fn replacing_a_powershell_editor_clears_its_password_and_widget_state() {
+        struct ReplacementState {
+            tab_id: TabId,
+            configuration: Configuration,
+            edit: Option<String>,
+            create: Option<NewProfileKind>,
+        }
+
+        for edit_existing in [false, true] {
+            let profile = Profile::powershell("saved", "win.example.test", 5986, "alice").unwrap();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(560.0, 640.0))
+                .build_ui_state(
+                    |ui, state: &mut ReplacementState| {
+                        let _ = show_profiles(
+                            ui,
+                            state.tab_id,
+                            &state.configuration,
+                            state.edit.take(),
+                            state.create.take(),
+                            PersistenceProviderKind::FestermSessiond,
+                        );
+                    },
+                    ReplacementState {
+                        tab_id: AppState::for_test().active(),
+                        configuration: Configuration::new(vec![profile]).unwrap(),
+                        edit: None,
+                        create: Some(NewProfileKind::PowerShell),
+                    },
+                );
+            harness.run();
+            harness.get_by_label("Password to save").scroll_to_me();
+            harness.run();
+            harness.get_by_label("Password to save").focus();
+            harness.run();
+            harness
+                .get_by_label("Password to save")
+                .type_text("profile-sentinel");
+            harness.run();
+            let old_id = harness.ctx.memory(|memory| memory.focused()).unwrap();
+            assert!(egui::TextEdit::load_state(&harness.ctx, old_id).is_some());
+
+            if edit_existing {
+                harness.state_mut().edit = Some("saved".to_owned());
+            } else {
+                harness.state_mut().create = Some(NewProfileKind::PowerShell);
+            }
+            harness.run();
+            assert!(egui::TextEdit::load_state(&harness.ctx, old_id).is_none());
+            let state = harness
+                .ctx
+                .data(|data| {
+                    data.get_temp::<ProfilesScreenState>(profiles_state_id(harness.state().tab_id))
+                })
+                .unwrap();
+            let ProfilesScreenMode::EditPowerShell(draft) = state.mode else {
+                panic!("PowerShell replacement editor should be open");
+            };
+            assert!(draft.password.is_empty());
+            assert_ne!(draft.password_widget_id, old_id);
+        }
+    }
+
+    #[test]
+    fn powershell_profile_endpoint_change_and_tab_close_clear_password() {
+        let mut harness = profiles_harness(festerm_config::Configuration::empty());
+        let mut app = AppState::for_test();
+        app.dispatch(AppCommand::OpenProfiles, &harness.ctx);
+        let tab_id = app.active();
+        harness.state_mut().tab_id = tab_id;
+        harness.run();
+        open_new_profile(&mut harness, "PowerShell");
+        harness.get_by_label("Password to save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Password to save").focus();
+        harness.run();
+        harness
+            .get_by_label("Password to save")
+            .type_text("profile-sentinel");
+        harness.run();
+        let state = harness
+            .ctx
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab_id)))
+            .unwrap();
+        let ProfilesScreenMode::EditPowerShell(draft) = state.mode else {
+            panic!("PowerShell editor should remain open");
+        };
+        assert_eq!(draft.password.as_str(), "profile-sentinel");
+        harness.get_by_label("HTTPS host").scroll_to_me();
+        harness.run();
+        harness.get_by_label("HTTPS host").focus();
+        harness.run();
+        harness.get_by_label("HTTPS host").type_text("other.test");
+        harness.run();
+        let state = harness
+            .ctx
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab_id)))
+            .unwrap();
+        let ProfilesScreenMode::EditPowerShell(draft) = state.mode else {
+            panic!("PowerShell editor should remain open");
+        };
+        assert!(draft.password.is_empty());
+        assert!(draft
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("enter the password again"));
+
+        harness.get_by_label("Password to save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Password to save").focus();
+        harness.run();
+        harness
+            .get_by_label("Password to save")
+            .type_text("second-sentinel");
+        harness.run();
+        let widget_id = harness.ctx.memory(|memory| memory.focused()).unwrap();
+        app.dispatch(AppCommand::CloseTab(tab_id), &harness.ctx);
+        assert!(harness
+            .ctx
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab_id)))
+            .is_none());
+        assert!(egui::TextEdit::load_state(&harness.ctx, widget_id).is_none());
+    }
+
+    #[test]
+    fn powershell_profile_editor_click_flow_dispatches_secret_free_save() {
+        let configuration = festerm_config::Configuration::empty();
+        let mut harness = profiles_harness(configuration);
+        harness.run_ok();
+
+        open_new_profile(&mut harness, "PowerShell");
+        assert!(harness.query_by_label("New PowerShell Profile").is_some());
+        harness.get_by_label("Name").click();
+        harness.get_by_label("Name").type_text("ops-ps");
+        harness.get_by_label("HTTPS host").click();
+        harness
+            .get_by_label("HTTPS host")
+            .type_text("win.example.test");
+        harness.get_by_label("Username").click();
+        harness.get_by_label("Username").type_text("alice");
+        harness.get_by_label("Domain (optional)").click();
+        harness
+            .get_by_label("Domain (optional)")
+            .type_text("CONTOSO");
+        harness.get_by_label("PowerShell 7").click();
+        harness.run_ok();
+        harness.get_by_label("Save").click();
+        harness.run_ok();
+
+        let Some(AppCommand::SaveProfile {
+            profile: Profile::PowerShell(profile),
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("PowerShell profile editor must dispatch a typed SaveProfile command");
+        };
+        assert_eq!(profile.identifier(), "ops-ps");
+        assert_eq!(profile.host(), "win.example.test");
+        assert_eq!(profile.port(), 5986);
+        assert_eq!(profile.username(), "alice");
+        assert_eq!(profile.domain(), Some("CONTOSO"));
+        assert_eq!(profile.configuration_name(), "PowerShell.7");
+        assert!(profile.credential_reference().is_none());
+    }
+
+    #[test]
+    fn powershell_profile_editor_routes_explicit_ssh_metadata() {
+        let configuration = festerm_config::Configuration::empty();
+        let mut harness = profiles_harness(configuration);
+        harness.run_ok();
+
+        open_new_profile(&mut harness, "PowerShell");
+        harness.get_by_label("Name").click();
+        harness.get_by_label("Name").type_text("ops-ssh");
+        harness.get_by_label("SSH subsystem").click();
+        harness.run_ok();
+        harness.get_by_label("SSH host").click();
+        harness
+            .get_by_label("SSH host")
+            .type_text("linux.example.test");
+        assert_eq!(harness.get_by_label("Port").value().as_deref(), Some("22"));
+        harness.get_by_label("Username").click();
+        harness.get_by_label("Username").type_text("alice");
+        harness.get_by_label("Pinned host key (SHA256)").click();
+        harness
+            .get_by_label("Pinned host key (SHA256)")
+            .type_text("SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        harness.get_by_label("Save").click();
+        harness.run_ok();
+
+        let Some(AppCommand::SaveProfile {
+            profile: Profile::PowerShell(profile),
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("PowerShell SSH profile editor must dispatch a typed SaveProfile command");
+        };
+        assert_eq!(
+            profile.transport(),
+            festerm_config::PowerShellTransport::Ssh
+        );
+        assert_eq!(profile.host(), "linux.example.test");
+        assert_eq!(profile.port(), 22);
+        assert_eq!(profile.username(), "alice");
+        assert_eq!(profile.ssh_subsystem(), "powershell");
+        assert_eq!(
+            profile.ssh_host_key_fingerprint(),
+            Some("SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        );
+        assert!(profile.domain().is_none());
+        assert!(profile.trusted_ca_file().is_none());
+    }
+
+    #[test]
+    fn profile_editor_remote_tmux_probe_uses_fixed_source_and_skips_ask() {
+        let configuration = Configuration::empty()
+            .with_known_host_trust(
+                "ssh.example.test",
+                22,
+                "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ",
+            )
+            .expect("known host should validate");
+        let mut draft = SshProfileDraft {
+            name: "production".to_owned(),
+            host: "ssh.example.test".to_owned(),
+            port: "22".to_owned(),
+            username: "deploy".to_owned(),
+            password: "transient-password".to_owned(),
+            local_bind: LocalBindDraft::from_policy(LocalBindPolicy::Address(
+                "127.0.0.1".parse().unwrap(),
+            )),
+            ..Default::default()
+        };
+
+        let request = draft
+            .remote_tmux_probe_request(&configuration)
+            .expect("fixed source should permit the profile-editor probe");
+        assert_eq!(
+            request.profile.local_bind_address(),
+            Some("127.0.0.1".parse().unwrap())
+        );
+
+        draft.local_bind = LocalBindDraft::from_policy(LocalBindPolicy::Ask);
+        assert!(
+            draft.remote_tmux_probe_request(&configuration).is_none(),
+            "unresolved Ask must not fall through to an automatic profile-editor probe"
+        );
     }
 
     #[test]

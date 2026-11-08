@@ -28,6 +28,8 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 > assets were written entirely by GitHub Copilot under human guidance. The
 > human project owner defines the product direction, requirements, priorities,
 > acceptance decisions, and release authorization.
+> Third-party dependencies, including vendored crates, retain their upstream
+> authorship and licenses.
 
 ## Status
 
@@ -159,6 +161,11 @@ for the supported subset and limits.
 
 ## Documentation
 
+- [PowerShell and enterprise development](docs/powershell-enterprise.md) -
+  experimental desktop PSRP profiles, structured sessions, enterprise discovery
+  and generation-pinned remote sessiond attachment over SSH; not yet a supported corporate
+  connection type.
+
 - [Keyboard bindings and routing](docs/keyboard-shortcuts.md) — persistent
   Settings editor, terminal-tool overlap inventory, clipboard provenance and
   bounded opt-in redacted input recording.
@@ -243,16 +250,18 @@ for the supported subset and limits.
 
 ## Building
 
-Requires a Rust toolchain (via [rustup](https://rustup.rs/)).
+The PowerShell development workspace requires Rust 1.98 or newer (via
+[rustup](https://rustup.rs/)) for its native PSRP dependencies. A named
+toolchain can be used with `cargo +1.98.0` without changing the global default.
 
 ```sh
-cargo build
-cargo run
+cargo build --workspace
+cargo run -p festerm
 ```
 
 ### Speeding up local builds
 
-The workspace has 18 crates and a large GUI/GPU dependency graph (`eframe`,
+The workspace has a large GUI/GPU dependency graph (`eframe`,
 `egui`, `wgpu`, `naga`, Windows bindings, SSH dependencies), so cold and
 repeated full-validation builds can be slow, especially on native Windows
 ARM64. CI already caches Cargo registry/target artifacts via

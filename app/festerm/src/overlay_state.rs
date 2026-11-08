@@ -24,6 +24,8 @@ use crate::{
 pub(crate) enum CloseConsequence {
     TerminateLocalProcess,
     DisconnectSsh,
+    DetachRemoteSession,
+    ClosePowerShell,
 }
 
 impl CloseConsequence {
@@ -34,6 +36,12 @@ impl CloseConsequence {
             }
             Self::DisconnectSsh => {
                 "The SSH connection will be disconnected and its terminal history discarded."
+            }
+            Self::DetachRemoteSession => {
+                "This frontend will detach. The remote daemon, shell and retained recovery history will keep running; reconnect requires a new explicit attachment."
+            }
+            Self::ClosePowerShell => {
+                "The PowerShell runspace will be closed. A running command is cancelled first; no terminal history is involved."
             }
         }
     }
@@ -193,6 +201,11 @@ impl PendingQuitConfirmation {
             phrase(self.counts.local, "local process", "local processes"),
             phrase(self.counts.ssh, "SSH connection", "SSH connections"),
             phrase(self.counts.serial, "serial device", "serial devices"),
+            phrase(
+                self.counts.powershell,
+                "PowerShell session",
+                "PowerShell sessions",
+            ),
         ]
         .into_iter()
         .flatten()
@@ -242,6 +255,13 @@ impl PendingSecret {
             .take()
             .expect("pending secret has not been released")
     }
+
+    #[cfg(test)]
+    pub(crate) fn reference(&self) -> &SecretReference {
+        self.reference
+            .as_ref()
+            .expect("pending secret has not been released")
+    }
 }
 
 impl Drop for PendingSecret {
@@ -270,11 +290,19 @@ pub(crate) struct PendingPasswordStore {
     /// Which kind of secret was just stored, so the saved profile's
     /// `credential_kind` metadata matches what was actually written.
     pub(crate) credential_kind: festerm_config::CredentialKind,
+    /// A changed tab, input owner, or profile cancels the deferred connection.
+    pub(crate) launch_tab: TabId,
+    pub(crate) launch_epoch: u64,
 }
 
 pub(crate) enum StoredCredentialLaunch {
-    Ssh(festerm_ssh::SshSessionOptions),
-    Sftp,
+    Ssh {
+        options: festerm_ssh::SshSessionOptions,
+        local_bind: crate::local_bind::ResolvedLocalBind,
+    },
+    Sftp {
+        local_bind: crate::local_bind::ResolvedLocalBind,
+    },
 }
 
 /// A file that could not be opened, named so the reader can tell which of
@@ -525,6 +553,7 @@ mod tests {
                     local: 1,
                     ssh: 0,
                     serial: 0,
+                    powershell: 0,
                 },
                 cancel_focus_requested: false,
                 purpose: QuitConfirmationPurpose::Quit,
@@ -552,6 +581,7 @@ mod tests {
                 local: 1,
                 ssh: 0,
                 serial: 0,
+                powershell: 0,
             },
             cancel_focus_requested: false,
             purpose: QuitConfirmationPurpose::Quit,
@@ -566,6 +596,7 @@ mod tests {
                 local: 1,
                 ssh: 2,
                 serial: 1,
+                powershell: 0,
             },
             cancel_focus_requested: false,
             purpose: QuitConfirmationPurpose::Quit,
@@ -583,6 +614,7 @@ mod tests {
                 local: 0,
                 ssh: 3,
                 serial: 1,
+                powershell: 0,
             },
             cancel_focus_requested: false,
             purpose: QuitConfirmationPurpose::Quit,
@@ -590,6 +622,24 @@ mod tests {
         assert_eq!(
             pending.summary_message(),
             "3 SSH connections and 1 serial device are still open."
+        );
+    }
+
+    #[test]
+    fn quit_summary_includes_active_powershell_sessions() {
+        let pending = PendingQuitConfirmation {
+            counts: crate::tabs::LiveSessionCounts {
+                local: 0,
+                ssh: 0,
+                serial: 0,
+                powershell: 2,
+            },
+            cancel_focus_requested: false,
+            purpose: QuitConfirmationPurpose::Quit,
+        };
+        assert_eq!(
+            pending.summary_message(),
+            "2 PowerShell sessions are still open."
         );
     }
 

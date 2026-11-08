@@ -78,32 +78,46 @@ impl FesTermApp {
                 .tabs()
                 .iter()
                 .find(|tab| tab.id == id)
-                .and_then(|tab| {
-                    let TabContent::Session(session) = &tab.content else {
-                        return None;
-                    };
-                    session
+                .and_then(|tab| match &tab.content {
+                    TabContent::Session(session) => {
+                        session
+                            .close_requires_confirmation()
+                            .then(|| PendingCloseConfirmation {
+                                tab: id,
+                                identity: session.label.clone(),
+                                consequence: if session.is_remote_persistent() {
+                                    CloseConsequence::DetachRemoteSession
+                                } else {
+                                    match session.inspector_transport {
+                                        InspectorTransport::Local { .. } => {
+                                            CloseConsequence::TerminateLocalProcess
+                                        }
+                                        InspectorTransport::Ssh { .. }
+                                        | InspectorTransport::DevTunnel { .. }
+                                        | InspectorTransport::Sftp { .. } => {
+                                            CloseConsequence::DisconnectSsh
+                                        }
+                                        InspectorTransport::Serial { .. } => {
+                                            CloseConsequence::TerminateLocalProcess
+                                        }
+                                    }
+                                },
+                                lifecycle_generation: session.controller.lifecycle_generation(),
+                                restore_tab: self.state.active(),
+                                cancel_focus_requested: false,
+                            })
+                    }
+                    TabContent::PowerShell(powershell) => powershell
                         .close_requires_confirmation()
                         .then(|| PendingCloseConfirmation {
                             tab: id,
-                            identity: session.label.clone(),
-                            consequence: match session.inspector_transport {
-                                InspectorTransport::Local { .. } => {
-                                    CloseConsequence::TerminateLocalProcess
-                                }
-                                InspectorTransport::Ssh { .. }
-                                | InspectorTransport::DevTunnel { .. }
-                                | InspectorTransport::Sftp { .. } => {
-                                    CloseConsequence::DisconnectSsh
-                                }
-                                InspectorTransport::Serial { .. } => {
-                                    CloseConsequence::TerminateLocalProcess
-                                }
-                            },
-                            lifecycle_generation: session.controller.lifecycle_generation(),
+                            identity: powershell.title(),
+                            consequence: CloseConsequence::ClosePowerShell,
+                            lifecycle_generation: powershell.lifecycle_generation(),
                             restore_tab: self.state.active(),
                             cancel_focus_requested: false,
-                        })
+                        }),
+                    _ => None,
                 })
         } else {
             None
@@ -341,17 +355,36 @@ impl FesTermApp {
             .tabs()
             .iter()
             .find(|tab| tab.id == pending.tab)
-            .is_some_and(|tab| {
-                matches!(&tab.content, TabContent::Session(session)
-                if session.close_requires_confirmation()
-                    && session.controller.lifecycle_generation() == pending.lifecycle_generation
-                    && matches!(
-                        (&session.inspector_transport, pending.consequence),
-                        (InspectorTransport::Local { persistence: None }, CloseConsequence::TerminateLocalProcess)
-                            | (InspectorTransport::Ssh { .. }, CloseConsequence::DisconnectSsh)
-                            | (InspectorTransport::Sftp { .. }, CloseConsequence::DisconnectSsh)
-                            | (InspectorTransport::Serial { .. }, CloseConsequence::TerminateLocalProcess)
-                    ))
+            .is_some_and(|tab| match &tab.content {
+                TabContent::Session(session) => {
+                    session.close_requires_confirmation()
+                        && session.controller.lifecycle_generation() == pending.lifecycle_generation
+                        && ((session.is_remote_persistent()
+                            && pending.consequence == CloseConsequence::DetachRemoteSession)
+                            || (!session.is_remote_persistent()
+                                && matches!(
+                                    (&session.inspector_transport, pending.consequence),
+                                    (
+                                        InspectorTransport::Local { persistence: None },
+                                        CloseConsequence::TerminateLocalProcess
+                                    ) | (
+                                        InspectorTransport::Ssh { .. },
+                                        CloseConsequence::DisconnectSsh
+                                    ) | (
+                                        InspectorTransport::Sftp { .. },
+                                        CloseConsequence::DisconnectSsh
+                                    ) | (
+                                        InspectorTransport::Serial { .. },
+                                        CloseConsequence::TerminateLocalProcess
+                                    )
+                                )))
+                }
+                TabContent::PowerShell(powershell) => {
+                    powershell.close_requires_confirmation()
+                        && pending.consequence == CloseConsequence::ClosePowerShell
+                        && powershell.lifecycle_generation() == pending.lifecycle_generation
+                }
+                _ => false,
             });
         if !still_live {
             self.cancel_close_confirmation();
