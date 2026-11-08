@@ -48,6 +48,7 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(5);
 const OUTER_TIMEOUT: Duration = Duration::from_secs(25);
 const IO_LIMIT: Duration = Duration::from_secs(2);
 const CHUNK: usize = 64 * 1024;
+const DIRECT_REQUEST: usize = CHUNK * 2 + 1;
 const MAX_PIPE_BYTES: usize = CHUNK * (2 * MAX_WRITES + 1) + MAX_CONTROL;
 const FILL_BYTE: u8 = 0xa5;
 const WAIT_BYTE: u8 = 0xb6;
@@ -636,6 +637,21 @@ fn probe_child() {
     let (known, mode) = query_pipe_mode(stdout);
     report(&format!("READY {} {known} {mode}", stdout as usize));
 
+    command_byte(b'Q');
+    let direct = raw_write(stdout, &vec![FILL_BYTE; DIRECT_REQUEST]);
+    report_write("DIRECT_WRITE", direct);
+    assert_prompt_success(direct);
+    assert!((direct.count as usize) <= DIRECT_REQUEST);
+    let wake = if direct.count == 0 {
+        let wake = raw_write(stdout, &[FILL_BYTE]);
+        assert_prompt_success(wake);
+        assert_eq!(wake.count, 1, "pending reader was not woken");
+        1
+    } else {
+        0
+    };
+    report(&format!("DIRECT_WAKE {wake}"));
+
     command_byte(b'F');
     let bytes = [FILL_BYTE; CHUNK];
     let mut fill = FillEvidence::default();
@@ -863,6 +879,53 @@ fn probe_controller(stop_after_initial: bool) {
     assert_mode_if_queryable(ready[1], ready[2], PIPE_NOWAIT);
     let writer = probe.duplicate(ready[0]);
 
+    // Test a real pending reader as well as a buffered, stalled recipient.
+    // The controller is job-owned, so an unexpectedly stuck read is bounded.
+    // SAFETY: the current-process pseudo handle is valid for duplication.
+    let current_process = unsafe { GetCurrentProcess() };
+    let reader = duplicate_from_process(
+        current_process,
+        probe.stdout.as_ref().unwrap().as_raw_handle(),
+    )
+    .unwrap();
+    let (read_tx, read_rx) = mpsc::sync_channel(1);
+    let read_thread = thread::spawn(move || {
+        let mut reader = std::fs::File::from(reader);
+        let mut byte = [0];
+        let result = reader.read_exact(&mut byte).map(|()| byte);
+        let _ = read_tx.send(result);
+    });
+    let pending_thread =
+        duplicate_from_process(current_process, read_thread.as_raw_handle()).unwrap();
+    wait_for_pending_io(&pending_thread, &mut probe.process);
+    probe.process.send(b"Q");
+    let direct = probe.event("DIRECT_WRITE");
+    let direct_count = u32::try_from(direct[1]).expect("direct write count does not fit u32");
+    assert_write_event(&direct, true, direct_count);
+    assert!((direct_count as usize) <= DIRECT_REQUEST);
+    let wake = probe.event("DIRECT_WAKE");
+    assert_eq!(wake, vec![u64::from(direct_count == 0)]);
+    let byte = read_rx
+        .recv_timeout(STEP_TIMEOUT)
+        .expect("pending reader did not finish")
+        .expect("pending physical read failed");
+    read_thread.join().expect("pending reader panicked");
+    drop(pending_thread);
+    observed.add(&byte);
+    observed.drain(&mut probe);
+    assert_eq!(
+        observed.fill,
+        direct_count as usize + wake[0] as usize,
+        "physical direct-read bytes differ from WriteFile counts"
+    );
+    observed.fill = 0;
+    let direct_partial = direct_count > 0 && (direct_count as usize) < DIRECT_REQUEST;
+    eprintln!(
+        "Native stdout pending-reader write requested={DIRECT_REQUEST}, observed={direct:?}, \
+         wake={}, partial_observed={direct_partial}",
+        wake[0]
+    );
+
     probe.process.send(b"F");
     let mut fill = FillEvidence::default();
     for _ in 0..MAX_WRITES {
@@ -907,7 +970,7 @@ fn probe_controller(stop_after_initial: bool) {
     assert_eq!(refilled.len(), 1);
     assert_eq!(usize::try_from(refilled[0]).unwrap(), refill.total);
     let mut total = fill.total.checked_add(refill.total).unwrap();
-    let partial = fill.partial || refill.partial;
+    let partial = direct_partial || fill.partial || refill.partial;
 
     set_pipe_mode(writer.as_raw_handle(), PIPE_WAIT).unwrap();
     probe.process.send(b"W");

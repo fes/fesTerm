@@ -3261,7 +3261,8 @@ observe a positive partial write. A subsequent
 [request-size experiment](https://github.com/fes/fesTerm/actions/runs/42520044762)
 observed no positive partial at 4,097 or 8,193 bytes; initial requests of
 65,537 and 131,073 bytes returned zero before the remaining scenario ran. It
-therefore remains unqualified.
+therefore remains unqualified. The probe also tries an oversized write while
+an actual one-byte read is pending; that additional case needs native evidence.
 This experiment does not qualify exclusive mode ownership, final-recipient
 privacy fencing, caller liveness, or the production adapter.
 
