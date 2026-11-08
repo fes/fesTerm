@@ -1,0 +1,29 @@
+name: Temporary stdout probe repeatability
+
+on:
+  push:
+    branches: [handoff/windows-stdout-repeat-249b]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repeat:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Repeat the exact inherited stdout probe
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 5; $i++) {
+            Write-Host "Native stdout repeat $i of 5"
+            cargo test --locked -p festerm-windows-security --test windows_stdout_probe windows_stdout_inherited_pipe_nowait_probe -- --exact --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
