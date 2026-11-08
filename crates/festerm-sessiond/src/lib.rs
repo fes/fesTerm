@@ -5082,6 +5082,36 @@ mod tests {
     }
 
     #[test]
+    fn recovered_terminal_reuses_evicted_cell_storage() {
+        let dimensions = festerm_core::Dimensions::new(80, 3).unwrap();
+        let mut continuous = Terminal::with_scrollback_limit(dimensions, 4096).unwrap();
+        for _ in 0..100 {
+            continuous.ingest(b"row\r\n");
+        }
+        assert!(continuous.scrollback_stats().evicted_lines() > 0);
+        let mut recovered = read_recovery_snapshot_for_test(&continuous);
+        assert_recovery_equivalent(&continuous, &recovered);
+
+        for terminal in [&mut continuous, &mut recovered] {
+            let old_cells = terminal.scrollback_lines().next().unwrap().cells().as_ptr();
+            let before = terminal.scrollback_stats();
+            terminal.ingest(b"row\r\n");
+            assert_eq!(
+                terminal.scrollback_lines().last().unwrap().cells().as_ptr(),
+                old_cells
+            );
+            assert_eq!(
+                terminal.scrollback_stats().evicted_lines(),
+                before.evicted_lines() + 1
+            );
+        }
+
+        assert_recovery_equivalent(&continuous, &recovered);
+        assert_eq!(continuous.recovery_clone(), recovered.recovery_clone());
+        assert_recovery_equivalent(&continuous, &read_recovery_snapshot_for_test(&continuous));
+    }
+
+    #[test]
     fn repeated_recovery_preserves_history_during_bounded_terminal_churn() {
         let mut continuous =
             Terminal::with_scrollback_limit(festerm_core::Dimensions::new(7, 3).unwrap(), 2048)

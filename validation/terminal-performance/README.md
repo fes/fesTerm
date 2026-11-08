@@ -123,8 +123,9 @@ keeps the existing history and recovery representation.
 Against the inline-row handoff above, the same 4,096-scroll full-history
 fixture fell from 8,192 to 4,096 allocation calls and from 819,200 to 786,432
 requested bytes. Both runs retained 682 logical lines charged at 261,888
-bytes under the 256 KiB limit. The remaining allocation per scroll is the
-retained cell vector; this is not a zero-allocation general scroll path.
+bytes under the 256 KiB limit. At this stage the remaining allocation per
+scroll was the retained cell vector; this was not a zero-allocation general
+scroll path.
 
 On an Apple M2, 64-bit macOS and Rust 1.97.1, three paired release samples
 in A-B-B-A-A-B order measured process user plus system CPU for 40 million
@@ -137,6 +138,39 @@ Generated mixed output, resize, budget and hyperlink sequences produced the
 same terminal states and recovery-validation outcomes before and after the
 handoff. A pre-existing recovery failure for a completely trimmed open line
 is tracked separately in #651; this handoff does not fix it.
+
+### Evicted cell-buffer handoff
+
+The stricter ADR 0080 path can also transfer an evicted single-row line's
+matching cell buffer before a full-primary-screen, single-row scroll. It
+requires the incoming hard line's minimum charge without owned payloads to
+prove that eviction is inevitable. Old cells are dropped, including text and
+hyperlink ownership, before their slots are filled with the departing screen
+row; no pool is kept. Ineligible cases retain the boundary-only fallback.
+
+Against #652, each warmed 80-by-24, 256 KiB full-history fixture made 4,096
+allocations requesting 786,432 bytes before and zero allocations afterward,
+for both line-feed and explicit-scroll operations. Each run retained 682
+logical lines charged at 261,888 bytes. The oracle checks only this inline
+three-cell workload; arbitrary payloads, different capacities, wrapped lines
+and non-evicting operations can still allocate.
+
+On Apple M2, 64-bit macOS and Rust 1.97.1, three paired release samples in
+A-B-B-A-A-B order measured process user plus system CPU against #652:
+
+| Workload | Iterations | Before CPU seconds | After CPU seconds | Median change |
+| --- | ---: | --- | --- | ---: |
+| Full history, `row` | 40 million scrolls | 6.044, 6.341, 6.163 | 5.170, 5.282, 5.194 | -15.7% |
+| Full history, alternating `row`/`longer` | 10 million pairs | 3.469, 3.451, 3.433 | 2.861, 2.964, 2.908 | -15.7% |
+| Unfilled history, `row` | 10 million writes | 1.565, 1.563, 1.540 | 1.576, 1.659, 1.591 | +1.8% |
+
+The unfilled fixture starts a new 16 MiB history every 4,096 writes and
+does not evict. One-minute shared-host load ranged from about 5.1 to 4.6;
+other processes were active. The observed pre-fill regression and sample
+variation are material limitations, and these synthetic core measurements
+do not establish native or end-to-end throughput or latency. The original
+280 generated mixed-state comparisons and another 1,604 saturated-history
+snapshots matched the parent, including recovery-validation results.
 
 ## End-to-end output throughput (macOS)
 

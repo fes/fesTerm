@@ -1,13 +1,14 @@
 # Milestone Progress Narrative
 
-## Reusing evicted scrollback metadata
+## Reusing evicted scrollback storage
 
 Full primary-screen history now transfers an eligible evicted hard line's
-one-row boundary allocation directly to an incoming hard line when that
-eviction is already unavoidable. The handoff keeps the same byte charge and
-does not retain an extra pool or old terminal content. ADR 0080 records the
-bound, recovery compatibility, and the remaining storage decisions; the
-allocation measurements and their CPU limitations are in
+one-row boundary allocation, and in stricter cases its matching cell
+allocation, directly to an incoming hard line when eviction is already
+unavoidable. The handoff preserves history accounting and does not retain an
+extra pool or old logical content. ADR 0080 records the bounds, recovery and
+ownership constraints, and remaining storage decisions; allocation and CPU
+measurements and their limitations are in
 `validation/terminal-performance/README.md`.
 
 ## Composing live desktop panes

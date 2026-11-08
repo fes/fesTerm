@@ -2799,6 +2799,94 @@ mod tests {
     }
 
     #[test]
+    fn full_history_reuses_cell_storage_for_line_feed_and_explicit_scroll() {
+        for input in [b"row\r\n".as_slice(), b"\x1b[2;1Hrow\x1b[S".as_slice()] {
+            let mut terminal =
+                Terminal::with_scrollback_limit(Dimensions::new(80, 2).unwrap(), 4096).unwrap();
+            for _ in 0..100 {
+                terminal.ingest(input);
+                if terminal.scrollback_stats().evicted_lines() > 0 {
+                    break;
+                }
+            }
+            let before = terminal.scrollback_stats();
+            assert!(before.evicted_lines() > 0);
+            let oldest = terminal.scrollback_lines().next().unwrap();
+            let oldest_id = oldest.id();
+            let oldest_cells = oldest.cells().as_ptr();
+            let surviving_id = terminal.scrollback_lines().nth(1).unwrap().id();
+
+            terminal.ingest(input);
+
+            let after = terminal.scrollback_stats();
+            assert_eq!(after.evicted_lines(), before.evicted_lines() + 1);
+            assert_eq!(after.content_row_origin(), before.content_row_origin() + 1);
+            assert_eq!(after.screen_row_origin(), before.screen_row_origin() + 1);
+            assert_eq!(after.charged_bytes(), before.charged_bytes());
+            assert_eq!(
+                terminal.scrollback_lines().next().unwrap().id(),
+                surviving_id
+            );
+            assert!(terminal
+                .scrollback_lines()
+                .all(|line| line.id() != oldest_id));
+            let inserted = terminal.scrollback_lines().last().unwrap();
+            assert_eq!(inserted.cells().as_ptr(), oldest_cells);
+            assert_eq!(
+                inserted
+                    .cells()
+                    .iter()
+                    .map(crate::Cell::character)
+                    .collect::<String>(),
+                "row"
+            );
+            assert!(inserted.has_hard_break());
+            terminal
+                .recovery_clone()
+                .validate_recovery_snapshot()
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn cell_reuse_skips_different_row_sizes_and_unretained_scrolls() {
+        let mut terminal =
+            Terminal::with_scrollback_limit(Dimensions::new(80, 3).unwrap(), 4096).unwrap();
+        for _ in 0..100 {
+            terminal.ingest(b"row\r\n");
+            if terminal.scrollback_stats().evicted_lines() > 0 {
+                break;
+            }
+        }
+        let before = terminal.scrollback_stats();
+        assert!(before.evicted_lines() > 0);
+
+        terminal.ingest(b"\x1b[H\n");
+        assert_eq!(terminal.scrollback_stats(), before);
+        terminal.ingest(b"\x1b[?1049halt\r\none\r\ntwo\r\nthree\r\n\x1b[?1049l");
+        terminal.ingest(b"\x1b[2;3r\x1b[3;1Hpartial\r\n\x1b[r");
+        assert_eq!(terminal.scrollback_stats(), before);
+
+        let oldest_cells = terminal.scrollback_lines().next().unwrap().cells().as_ptr();
+        terminal.ingest(b"\x1b[1;1Hlonger\x1b[3;1H\x1b[S");
+        let inserted = terminal.scrollback_lines().last().unwrap();
+        assert_ne!(inserted.cells().as_ptr(), oldest_cells);
+        assert_eq!(
+            inserted
+                .cells()
+                .iter()
+                .map(crate::Cell::character)
+                .collect::<String>(),
+            "longer"
+        );
+        assert!(terminal.scrollback_stats().charged_bytes() <= before.limit_bytes());
+        terminal
+            .recovery_clone()
+            .validate_recovery_snapshot()
+            .unwrap();
+    }
+
+    #[test]
     fn multirow_scroll_preserves_history_order() {
         let mut terminal = terminal(8, 4);
         terminal.ingest(b"\x1b[1;1Hone\x1b[2;1Htwo\x1b[3;1Hthree\x1b[4;1Hfour\x1b[3S");

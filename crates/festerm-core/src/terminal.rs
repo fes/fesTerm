@@ -1915,19 +1915,58 @@ impl Terminal {
             if !within_margins {
                 return;
             }
-            let removed = buffer.screen.scroll_up(
-                buffer.scroll_top,
-                buffer.scroll_bottom,
-                1,
-                fill,
-                span,
-                retain_history,
-            );
-            if retain_history {
-                self.scrollback.push_rows(removed);
-            }
         } else if buffer.cursor.row + 1 < dimensions.rows() {
             buffer.cursor.row += 1;
+            return;
+        } else {
+            return;
+        }
+        self.scroll_active_region_up(1, fill, span, retain_history);
+    }
+
+    // Keep the common no-eviction path in the scrolling callers.
+    #[inline(always)]
+    fn scroll_active_region_up(
+        &mut self,
+        count: usize,
+        fill: Cell,
+        span: ColumnSpan,
+        retain_history: bool,
+    ) {
+        let reusable = if retain_history
+            && count == 1
+            && self
+                .scrollback
+                .row_storage_may_need_recycling(self.primary.screen.dimensions().columns())
+        {
+            let screen = &self.primary.screen;
+            let occupied = screen
+                .row_occupied_columns(0)
+                .expect("primary screen always has a first row");
+            let soft_wrapped = screen
+                .row_soft_wrapped(0)
+                .expect("primary screen always has a first row");
+            self.scrollback
+                .take_recyclable_row_storage(occupied, soft_wrapped)
+        } else {
+            None
+        };
+        if let Some((cells, row_ends)) = reusable {
+            let row = self.primary.screen.scroll_up_reusing(cells, fill);
+            self.scrollback.push_row_reusing_boundary(row, row_ends);
+            return;
+        }
+        let buffer = self.active_buffer_mut();
+        let removed = buffer.screen.scroll_up(
+            buffer.scroll_top,
+            buffer.scroll_bottom,
+            count,
+            fill,
+            span,
+            retain_history,
+        );
+        if retain_history {
+            self.scrollback.push_rows(removed);
         }
     }
 
@@ -2631,18 +2670,7 @@ impl Terminal {
             && self.primary.scroll_bottom + 1 == dimensions.rows()
             && span.left == 0
             && span.right + 1 == dimensions.columns();
-        let buffer = self.active_buffer_mut();
-        let removed = buffer.screen.scroll_up(
-            buffer.scroll_top,
-            buffer.scroll_bottom,
-            count,
-            cell,
-            span,
-            retain_history,
-        );
-        if retain_history {
-            self.scrollback.push_rows(removed);
-        }
+        self.scroll_active_region_up(count, cell, span, retain_history);
     }
 
     fn scroll_down(&mut self, parameters: CsiParameters) {

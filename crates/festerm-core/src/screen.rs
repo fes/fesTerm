@@ -725,20 +725,12 @@ impl Screen {
             return SmallVec::new();
         }
         let removed = if retain_history {
-            // Departing cells are moved into history before their rows are
-            // overwritten below; unretained rows can simply be overwritten.
+            // Departing cells move into history before their rows are
+            // overwritten; discarded rows can simply be overwritten.
             (top..top + count)
                 .map(|row| {
-                    let start = self.physical_row_start(row);
                     let occupied = self.occupied_columns[self.physical_row(row)];
-                    let mut cells = Vec::with_capacity(occupied);
-                    for cell in &mut self.cells[start..start + occupied] {
-                        cells.push(std::mem::replace(cell, blank_cell()));
-                    }
-                    ScreenRow {
-                        cells,
-                        soft_wrapped: self.soft_wrapped_rows[self.physical_row(row)],
-                    }
+                    self.take_row_into(row, occupied, Vec::with_capacity(occupied))
                 })
                 .collect()
         } else {
@@ -769,6 +761,34 @@ impl Screen {
         }
         self.mark_dirty_range(top, bottom);
         removed
+    }
+
+    pub(crate) fn scroll_up_reusing(&mut self, cells: Vec<Cell>, fill: Cell) -> ScreenRow {
+        let occupied = self.occupied_columns[self.physical_row(0)];
+        let row = self.take_row_into(0, occupied, cells);
+        let removed = self.scroll_up(
+            0,
+            self.dimensions.rows() - 1,
+            1,
+            fill,
+            ColumnSpan::full(self.dimensions.columns()),
+            false,
+        );
+        debug_assert!(removed.is_empty());
+        row
+    }
+
+    #[inline]
+    fn take_row_into(&mut self, row: usize, occupied: usize, mut cells: Vec<Cell>) -> ScreenRow {
+        debug_assert!(cells.is_empty() && cells.capacity() >= occupied);
+        let start = self.physical_row_start(row);
+        for cell in &mut self.cells[start..start + occupied] {
+            cells.push(std::mem::replace(cell, blank_cell()));
+        }
+        ScreenRow {
+            cells,
+            soft_wrapped: self.soft_wrapped_rows[self.physical_row(row)],
+        }
     }
 
     pub(crate) fn scroll_down(
