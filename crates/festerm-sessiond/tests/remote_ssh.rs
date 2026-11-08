@@ -43,21 +43,32 @@ impl Fixture {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos();
+            .as_millis();
         let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root = if let Some(base) = std::env::var_os("FESTERM_SESSIOND_TEST_RUNTIME_ROOT") {
-            PathBuf::from(base).join(format!("r{:x}-{sequence:x}", std::process::id()))
-        } else {
-            PathBuf::from("/tmp").join(format!(
-                "fs-rssh-{}-{stamp:x}-{sequence:x}",
-                std::process::id()
-            ))
-        };
+        let base = std::env::var_os("FESTERM_SESSIOND_TEST_RUNTIME_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .and_then(std::path::Path::parent)
+                    .and_then(std::path::Path::parent)
+                    .expect("sessiond crate has a workspace parent")
+                    .join(".f")
+            });
+        std::fs::create_dir_all(&base).expect("native test runtime base can be created");
+        let root = base.join(format!("r{:x}-{sequence:x}-{stamp:x}", std::process::id()));
+        let socket = root.join(format!("festerm/sessiond/{}-{stamp}.sock", u32::MAX));
+        std::os::unix::net::SocketAddr::from_pathname(&socket).unwrap_or_else(|error| {
+            panic!(
+                "remote SSH test runtime {} cannot fit a generation socket: {error}; set FESTERM_SESSIOND_TEST_RUNTIME_ROOT to a short private directory",
+                root.display()
+            )
+        });
         use std::os::unix::fs::DirBuilderExt;
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&root)
-            .unwrap();
+            .expect("remote SSH test runtime must be a new private directory");
         let output = helper_command(
             &root,
             &[
@@ -189,6 +200,7 @@ impl Drop for Fixture {
 fn helper_command(root: &std::path::Path, args: &[&str]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_festerm-sessiond"))
         .env("XDG_STATE_HOME", root)
+        .env_remove("FESTERM_SESSIOND_RUNTIME_ROOT")
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -286,6 +298,7 @@ impl russh::server::Handler for Handler {
         let channel = self.channel.take().unwrap();
         let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_festerm-sessiond"))
             .env("XDG_STATE_HOME", &self.root)
+            .env_remove("FESTERM_SESSIOND_RUNTIME_ROOT")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
