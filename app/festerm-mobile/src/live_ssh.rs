@@ -792,6 +792,35 @@ mod tests {
     }
 
     #[test]
+    fn mobile_inactivity_cancels_export_and_invalidates_consent() {
+        use festerm_ios_lock::{AppLock, Availability, FakeLocker, LifecycleEvent, ManualClock};
+        use std::sync::atomic::Ordering;
+
+        let suspension = crate::SuspensionHandle::default();
+        let lock = AppLock::new_with_content_lock_callback(
+            None,
+            FakeLocker::new(Availability::Unavailable),
+            Arc::new(ManualClock::new()),
+            || {},
+            suspension.content_lock_callback(),
+        );
+        let generation = lock.recording_privacy_generation().unwrap();
+        let cancellation = suspension
+            .foreground_export_cancellation(|| {
+                lock.recording_privacy_generation()
+                    .ok_or_else(|| "Inactive".to_owned())
+            })
+            .unwrap();
+
+        lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+        assert!(cancellation.flag().load(Ordering::Acquire));
+        assert_eq!(lock.recording_privacy_generation(), None);
+        lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+        assert_ne!(lock.recording_privacy_generation(), Some(generation));
+        assert!(!cancellation.commit_retention());
+    }
+
+    #[test]
     fn foreground_export_rejects_a_privacy_cut_during_registration() {
         use std::cell::Cell;
 
@@ -1407,7 +1436,7 @@ mod tests {
     }
 
     #[test]
-    fn app_and_device_locks_stop_recording_without_a_ui_frame() {
+    fn mobile_inactivity_and_locks_stop_recording_without_a_ui_frame() {
         use crate::SuspensionHandle;
         use festerm_ios_lock::{
             AppLock, Availability, BiometryKind, FakeLocker, LifecycleEvent, LockSettings,
@@ -1416,7 +1445,7 @@ mod tests {
         use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
         use std::{fs::File, sync::mpsc};
 
-        for cut in ["app", "device", "background"] {
+        for cut in ["app", "device", "background", "inactive"] {
             let directory = private_recording_dir();
             let mut terminal = terminal();
             let (wake, ready) = mpsc::channel();
@@ -1448,8 +1477,10 @@ mod tests {
                 lock.lock_now();
             } else if cut == "device" {
                 lock.handle_lifecycle(LifecycleEvent::DeviceLocked);
-            } else {
+            } else if cut == "background" {
                 lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+            } else {
+                lock.handle_lifecycle(LifecycleEvent::WillResignActive);
             }
             assert_ne!(lock.recording_privacy_generation(), Some(generation));
             assert!(!recording.is_recording().unwrap());

@@ -69,7 +69,10 @@ smoke. The remaining native and usability scenarios are `TR-01`–`TR-03` in
    every stream.
 5. App privacy lock, app deactivation/backgrounding that can suspend the
    process, a qualified OS lock/suspend signal, or a capture safety failure
-   stops all streams and finalizes the source artifact where possible.
+   stops all streams and finalizes the source artifact where possible. On iOS
+   and Android, becoming inactive stops capture and requests export
+   cancellation synchronously, even for system permission or authentication
+   dialogs that do not suspend the underlying sessions.
    Abrupt process termination may leave an incomplete artifact. At the next
    launch, the library can offer an explicitly labelled export of its validated
    prefix while retaining the original.

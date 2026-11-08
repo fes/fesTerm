@@ -1461,7 +1461,7 @@ impl Terminal {
                     .is_some_and(|(cursor, cell)| {
                         cursor_before
                             .as_ref()
-                            .is_none_or(|(before, text)| *before != cursor || text != &cell.text)
+                            .is_none_or(|(before, text)| *before != cursor || text != cell.text)
                     });
             if self.screen_generation != generation
                 || cursor_changed

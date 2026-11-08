@@ -5383,6 +5383,23 @@ fuzzer now share a frame-by-frame CSI/DCS/OSC oracle, with mixed-reply and
 queue-overflow regressions. Valid concatenated replies pass; truncated frames
 anywhere in the stream still fail.
 
+## Keeping protected cells when their line scrolls
+
+The scheduled parser fuzzer later found a screen defect. An erase that spares
+protected cells (`DECSEL` or `DECSED` after `DECSCA`, or an ordinary `ED`, `EL`
+or `ECH` inside an ISO guarded area) left those cells in place but recorded
+them as empty. That broke ADR 0017's rule that only structurally unused padding
+lies outside a row's occupied extent. A full-screen scroll trusts that extent,
+so it neither carried the surviving text into history nor cleared it from the
+row it recycled. Debug builds failed the assertion guarding the extent; release
+builds dropped the character from history and drew it again on the new bottom
+line.
+
+Sparing erases now keep the occupancy of every cell they leave alone, as the
+rectangular selective erase already did. The minimised fifteen-byte crash input
+is a named property-test regression, and a unit test scrolls the surviving cell
+out of each sparing erase form.
+
 ## Freezing terminal history without lying about size
 
 Terminal history snapshots now follow the same rule as ordinary editor files:

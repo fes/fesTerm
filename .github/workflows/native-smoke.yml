@@ -1,59 +1,282 @@
 name: Native Smoke
 
+# Nightly and on-demand native-platform smoke flows (Tier 6).
+#
+# NOT part of the PR-blocking CI matrix — this workflow is intentionally
+# separate from ci.yml and is triggered only on a schedule and manually.
+# See docs/native-smoke-policy.md for the rationale.
+
 on:
+  schedule:
+    # Runs every night at 02:17 UTC (off-peak to avoid runner contention).
+    - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      verbose:
+        description: "Set RUST_LOG=debug for the smoke run"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
 
+env:
+  FESTERM_SMOKE_SCREENSHOT_ON_FAIL: "1"
+
 jobs:
-  recording-windows:
+  # ── Windows ConPTY smoke ─────────────────────────────────────────────────────
+  smoke-windows:
+    name: Windows ConPTY smoke
     runs-on: windows-latest
-    timeout-minutes: 90
-    env:
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Verify private staging, publication, and retention
-        run: cargo test --locked -p festerm-recording-export --test export -- --nocapture
-      - name: Ensure video inspection tools exist
+
+      # The inbox test runs before the staging script builds and stages the
+      # pinned sidecar, but still needs the repository-owned test child.
+      - name: Build inbox smoke child
+        run: cargo build -p festerm-pty-test-child
+
+      - name: Run Windows inbox ConPTY fallback smoke
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          cargo test -p festerm windows_inbox_conpty_fallback_starts_resizes_and_resumes_output -- --include-ignored --nocapture
+
+      - name: Stage verified pinned ConPTY runtime and run retention smoke
         shell: pwsh
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
         run: |
-          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or
-              -not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg --no-progress -y
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $env:PATH = "$env:ChocolateyInstall\bin;$env:PATH"
+          & .\scripts\stage-conpty.ps1 -RunSmoke
+
+      # Run the remaining ignored smoke explicitly with --include-ignored.
+      # No retries — one run, one result (see docs/native-smoke-policy.md).
+      - name: Run Windows ConPTY bounded-shutdown smoke
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          cargo test -p festerm windows_conpty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+
+      - name: Run Windows session daemon smoke
+        shell: pwsh
+        env:
+          FESTERM_SESSIOND_TRACE_FILE: ${{ inputs.verbose == 'true' && format('{0}\sessiond-trace.log', github.workspace) || '' }}
+        run: |
+          $traceFile = "$env:GITHUB_WORKSPACE\sessiond-trace.log"
+          Remove-Item $traceFile -ErrorAction Ignore
+          cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+          $exitCode = $LASTEXITCODE
+          if (Test-Path $traceFile) {
+            Write-Host "::group::festerm-sessiond trace"
+            Get-Content $traceFile
+            Write-Host "::endgroup::"
           }
-          ffmpeg -version
-          ffprobe -version
-      - name: Check Windows desktop
-        run: cargo check --locked -p festerm --bin festerm
-      - name: Test shared Windows privacy
-        run: cargo test --locked -p festerm-windows-power --lib
-      - name: Test desktop recording coordinator
-        run: cargo test --locked -p festerm --bin festerm application::recording::tests
-      - name: Test automatic enrollment and session failures
+          exit $exitCode
+
+      - name: Run Windows Credential Manager lifecycle
+        env:
+          FESTERM_RUN_NATIVE_SECRET_STORE_TESTS: "1"
         run: |
-          cargo test --locked -p festerm --bin festerm recording_auto_enrollment
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked -p festerm --bin festerm disconnected_or_closed_session
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked -p festerm --bin festerm event_channel_closing_after_clean_exit
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked -p festerm --bin festerm recovery_palette_mismatch
-      - name: Test terminal replay fast paths
-        run: cargo test --locked -p festerm-core ascii_run_fast_path_tests
-      - name: Test recording visibility rendering
+          cargo test -p festerm-secret-store --test native_secret_store -- --ignored --nocapture
+
+      - name: Run Windows native-window smoke
+        timeout-minutes: 2
+        shell: pwsh
+        env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-window-config.toml
+          FESTERM_NATIVE_WINDOW_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
         run: |
-          cargo test --locked -p festerm-ui-egui color_emoji_and_block_cursor_can_reveal_equal_color_text
+          Remove-Item native-smoke-window-result.txt -ErrorAction Ignore
+          & .\target\debug\festerm.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked -p festerm-ui-egui --test recording_visibility
-      - name: Encode and inspect native Windows video
-        run: cargo test --locked -p festerm-recording-windows -- --ignored --nocapture
-      - name: Verify private synchronized capture
-        run: cargo test --locked -p festerm-recording -- --nocapture
-      - name: Encode synchronized Windows sessions
-        run: cargo test --locked -p festerm-recording-export --test export windows_stages_readable_synchronized_mp4s -- --ignored --nocapture
+          if (-not (Test-Path native-smoke-window-result.txt)) {
+            throw "native-window smoke did not write a result"
+          }
+          if ((Get-Content native-smoke-window-result.txt -TotalCount 1) -ne 'status=pass') {
+            Get-Content native-smoke-window-result.txt
+            throw "native-window smoke failed"
+          }
+
+      - name: Run Windows native emoji smoke
+        timeout-minutes: 2
+        shell: pwsh
+        env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-emoji-config.toml
+          FESTERM_NATIVE_EMOJI_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
+        run: |
+          Remove-Item native-emoji-smoke-result.txt -ErrorAction Ignore
+          & .\target\debug\festerm.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-Content native-emoji-smoke-result.txt -TotalCount 1) -ne 'status=pass') {
+            Get-Content native-emoji-smoke-result.txt
+            throw "native emoji smoke failed"
+          }
+
+      - name: Upload failure artifacts
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: native-smoke-artifacts-windows
+          path: |
+            native-smoke-artifacts/
+            native-smoke-window-result.txt
+            native-emoji-smoke-result.txt
+            sessiond-trace.log
+          if-no-files-found: ignore
+
+  # ── Linux PTY smoke (Xvfb environment for future native-window component) ───
+  smoke-linux:
+    name: Linux PTY smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb socat pkg-config libudev-dev dbus-x11 \
+            gnome-keyring libxkbcommon-x11-0
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run Linux serial loopback smoke
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          cargo test -p festerm-serial --test socat_loopback -- --ignored --nocapture
+
+      - name: Run Linux Secret Service lifecycle
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            mkdir -p "$HOME/.local/share/keyrings"
+            printf "\n" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            FESTERM_RUN_NATIVE_SECRET_STORE_TESTS=1 \
+              cargo test -p festerm-secret-store --test native_secret_store -- --ignored --nocapture
+          '
+
+      # Run with a virtual display available (DISPLAY=:99) even though the
+      # current PTY tests don't require it.
+      - name: Run Linux PTY smoke tests
+        env:
+          DISPLAY: ":99"
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          Xvfb :99 -screen 0 1024x768x24 &
+          sleep 1
+          cargo test -p festerm unix_pty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+          cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+          cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+
+      - name: Run Linux native-window smoke
+        timeout-minutes: 2
+        env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-window-config.toml
+          FESTERM_NATIVE_WINDOW_SMOKE: "1"
+          # Xvfb has no window manager to assign focus. The self-smoke still
+          # proves a real viewport, resize, and PTY flow; real-desktop focus
+          # evidence remains a separate P4 requirement.
+          FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          rm -f native-smoke-window-result.txt
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" ./target/debug/festerm
+          test -f native-smoke-window-result.txt
+          grep -qx 'status=pass' native-smoke-window-result.txt
+
+      - name: Run Linux native emoji smoke
+        timeout-minutes: 2
+        env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-emoji-config.toml
+          FESTERM_NATIVE_EMOJI_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_ALLOW_UNFOCUSED: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
+        run: |
+          rm -f native-emoji-smoke-result.txt
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" ./target/debug/festerm
+          test -f native-emoji-smoke-result.txt
+          grep -qx 'status=pass' native-emoji-smoke-result.txt
+
+      - name: Upload failure artifacts
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: native-smoke-artifacts-linux
+          path: |
+            native-smoke-artifacts/
+            native-smoke-window-result.txt
+            native-emoji-smoke-result.txt
+          if-no-files-found: ignore
+
+  # ── macOS PTY smoke (advisory — not blocking) ────────────────────────────────
+  smoke-macos:
+    name: macOS PTY smoke (advisory)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    # Advisory: macOS failure does not block a release decision.  See
+    # docs/ui-test-plan.md platform matrix and docs/native-smoke-policy.md.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run macOS PTY smoke tests (advisory)
+        env:
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          cargo test -p festerm unix_pty_smoke_flow_with_test_child_and_issue3_resizes -- --include-ignored --nocapture
+          cargo test -p festerm unix_pty_bounded_shutdown_terminates_process_tree -- --include-ignored --nocapture
+          cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture
+
+      - name: Run macOS Keychain lifecycle (advisory)
+        env:
+          FESTERM_RUN_NATIVE_SECRET_STORE_TESTS: "1"
+        run: |
+          cargo test -p festerm-secret-store --test native_secret_store -- --ignored --nocapture
+
+      - name: Run macOS native-window smoke (advisory)
+        timeout-minutes: 2
+        env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-window-config.toml
+          FESTERM_NATIVE_WINDOW_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-smoke-window-result.txt
+          RUST_LOG: ${{ inputs.verbose == 'true' && 'debug' || 'info' }}
+        run: |
+          rm -f native-smoke-window-result.txt
+          ./target/debug/festerm
+          test -f native-smoke-window-result.txt
+          grep -qx 'status=pass' native-smoke-window-result.txt
+
+      - name: Run macOS native emoji smoke (advisory)
+        timeout-minutes: 2
+        env:
+          FESTERM_CONFIG_PATH: ${{ runner.temp }}/native-emoji-config.toml
+          FESTERM_NATIVE_EMOJI_SMOKE: "1"
+          FESTERM_NATIVE_SMOKE_RESULT_PATH: native-emoji-smoke-result.txt
+        run: |
+          rm -f native-emoji-smoke-result.txt
+          ./target/debug/festerm
+          test -f native-emoji-smoke-result.txt
+          grep -qx 'status=pass' native-emoji-smoke-result.txt
+
+      - name: Upload failure artifacts
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: native-smoke-artifacts-macos
+          path: |
+            native-smoke-artifacts/
+            native-smoke-window-result.txt
+            native-emoji-smoke-result.txt
+          if-no-files-found: ignore

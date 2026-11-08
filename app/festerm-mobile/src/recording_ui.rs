@@ -206,6 +206,7 @@ impl MobileApp {
                 close = widgets::sheet_title(ui, "Record terminal sessions", Some("Close"));
                 ui.label("The selected sessions start and stop together and export as separate silent MP4 files.");
                 ui.label("The visible screen and later terminal output are recorded, including background tabs. Echoed passwords, pasted text, and control sequences can be stored. Local keyboard and clipboard input are not read.");
+                ui.label("Recording stops and export cancellation is requested when the app becomes inactive, including for system dialogs.");
                 ui.label("Export folders can be synced or copied by other software. Private source files may also be copied by third-party backup software.");
                 #[cfg(target_os = "android")]
                 ui.label(

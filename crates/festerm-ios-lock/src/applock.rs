@@ -74,8 +74,9 @@ impl AppLock {
         Self::new_with_content_lock_callback(store, locker, clock, repaint, || {})
     }
 
-    /// The callback runs synchronously when content becomes locked or the
-    /// device locks, before another caller can observe the new policy state.
+    /// The callback runs synchronously when the app becomes inactive, content
+    /// becomes locked or the device locks, before another caller can observe
+    /// the new policy state.
     /// It must not call back into this `AppLock`.
     pub fn new_with_content_lock_callback(
         store: Option<SettingsStore>,
@@ -246,7 +247,9 @@ impl AppLock {
             };
             if matches!(
                 event,
-                LifecycleEvent::DeviceLocked | LifecycleEvent::DidEnterBackground
+                LifecycleEvent::WillResignActive
+                    | LifecycleEvent::DeviceLocked
+                    | LifecycleEvent::DidEnterBackground
             ) || (content_was_available && !inner.policy.should_draw_content())
             {
                 inner.privacy_generation = inner.privacy_generation.saturating_add(1);

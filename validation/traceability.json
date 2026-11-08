@@ -118,7 +118,9 @@
       "decisions": ["ADR-0077"],
       "automated_tests": [
         "recording_start_refuses_a_privacy_cut_before_the_recorder_exists",
-        "app_and_device_locks_stop_recording_without_a_ui_frame",
+        "mobile_inactivity_and_locks_stop_recording_without_a_ui_frame",
+        "mobile_inactivity_cancels_export_and_invalidates_consent",
+        "inactive_authentication_dialog_revokes_recording_consent",
         "shared_lifecycle_stop_blocks_later_output_in_every_stream",
         "lifecycle_closes_admission_before_waiting_for_the_capture_lock",
         "a_brief_shield_transition_revokes_consent_once",
@@ -2815,7 +2817,9 @@
         "local_wheel_anchors_history_and_ctrl_end_resumes_following",
         "scrollbar_thumb_maps_oldest_and_latest_without_consuming_grid_width",
         "sub_row_point_wheel_tail_does_not_force_a_delayed_jump",
-        "wheel_units_preserve_fractional_movement_before_accumulation"
+        "wheel_units_preserve_fractional_movement_before_accumulation",
+        "a_protected_cell_an_erase_spares_still_scrolls_into_history",
+        "a_guarded_cell_an_erase_spared_scrolls_away_with_its_line"
       ],
       "manual_scenarios": [
         "TI-04",
