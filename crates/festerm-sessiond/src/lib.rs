@@ -3509,6 +3509,53 @@ mod recovery_wire_tests {
     }
 
     #[test]
+    fn schema3_recovery_preserves_legacy_cell_wire_and_history_charges() {
+        let mut expected =
+            Terminal::with_scrollback_limit(festerm_core::Dimensions::new(8, 3).unwrap(), 4096)
+                .unwrap();
+        expected.ingest(b"old0\r\nold1\r\nold2\r\nold3\r\nold4\r\n");
+        expected.ingest(b"\x1b]2;schema3 fixture\x07\x1b[?2004h");
+        expected.ingest("\x1b]8;;https://example.invalid/\x07e".as_bytes());
+        for _ in 0..15 {
+            expected.ingest("\u{301}".as_bytes());
+        }
+        expected.ingest(b"\x1b]8;;\x07\x1b[?1049h\x1b[2;3H\x1b[1;32mALT \xe2\x98");
+
+        // Produced by the pre-compaction schema-3 encoder.
+        let wire = include_bytes!("../tests/fixtures/schema3-legacy-cell.bin");
+        assert_eq!(encode_recovery_snapshot(&expected).unwrap(), wire);
+        let mut recovered = read_snapshot(&mut io::Cursor::new(wire)).unwrap().unwrap();
+        assert_eq!(recovered.recovery_clone(), expected.recovery_clone());
+
+        for terminal in [&mut recovered, &mut expected] {
+            terminal.ingest(b"\x83\x1b[?1049l");
+            terminal
+                .resize(festerm_core::Dimensions::new(6, 4).unwrap())
+                .unwrap();
+            terminal.set_scrollback_limit(2048);
+            terminal.ingest("future-e\u{301}-\u{1f642}\r\n".repeat(100).as_bytes());
+        }
+        assert_eq!(recovered.recovery_clone(), expected.recovery_clone());
+    }
+
+    #[test]
+    fn schema3_cell_capacity_overflow_is_rejected_without_truncation() {
+        let legacy_cell = (
+            " ",
+            usize::from(u16::MAX) + 1,
+            festerm_core::CellWidth::Single,
+            festerm_core::Color::Default,
+            festerm_core::Color::Default,
+            festerm_core::Attributes::NONE,
+            Option::<&str>::None,
+        );
+        let wire = bincode_options().serialize(&legacy_cell).unwrap();
+        assert!(bincode_options()
+            .deserialize::<festerm_core::Cell>(&wire)
+            .is_err());
+    }
+
+    #[test]
     fn schema2_recovery_keeps_validation_bounds_and_rejects_mislabelled_payloads() {
         let valid = include_bytes!("../tests/fixtures/schema2-primary.bin");
         let invalid = include_bytes!("../tests/fixtures/schema2-queued-reply.bin");

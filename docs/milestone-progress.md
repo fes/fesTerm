@@ -8356,3 +8356,14 @@ needed. With full bounded history, the allocation oracle observed 12,288 calls
 fall to 8,192 over 4,096 scrolls, with the same retained-line count and
 accounted bytes. The cells and row-boundary allocations still require a
 separate bounded-recycling decision.
+
+## Smaller cells without changing recovery or retention
+
+The bounded text-capacity metadata now uses a narrower in-memory field while
+keeping the existing recovery wire value and conservative history charge.
+Eligible ASCII runs replace cell contents in place and still release the old
+text and link. The
+[isolated memory and CPU measurements](../validation/terminal-performance/README.md#compact-cells-with-stable-history-charges)
+depend on terminal width and allocator behavior; they do not establish native
+application RSS or responsiveness. Existing history limits retain the same
+number of lines, so higher retention density remains separate work.

@@ -964,9 +964,12 @@
         "ADR-0066",
         "ADR-0067",
         "ADR-0070",
-        "ADR-0071"
+        "ADR-0071",
+        "ADR-0081"
       ],
       "automated_tests": [
+        "schema3_recovery_preserves_legacy_cell_wire_and_history_charges",
+        "schema3_cell_capacity_overflow_is_rejected_without_truncation",
         "managed_observation_consent_is_independent_bounded_and_transactional",
         "managed_daemon_recovery_cannot_overwrite_concurrent_policy_revocation",
         "managed_session_repair_is_explicit_and_cannot_change_policy",
@@ -2230,6 +2233,7 @@
         "docs/gui-design.md#terminal-context-menu",
         "docs/gui-design.md#explicit-terminal-hyperlinks",
         "validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle",
+        "validation/terminal-performance/README.md#compact-cells-with-stable-history-charges",
         "validation/terminal-performance/README.md#glyph-layout-retirement-oracle",
         "validation/terminal-performance/README.md#optional-owned-thread-identity-discriminator",
         "validation/direct2d/README.md#native-quad-scratch-allocation-control",
@@ -2245,9 +2249,12 @@
         "ADR-0043",
         "ADR-0045",
         "ADR-0044",
-        "ADR-0052"
+        "ADR-0052",
+        "ADR-0081"
       ],
       "automated_tests": [
+        "ascii_run_replaces_heap_text_hyperlink_and_rendition",
+        "ascii_runs_match_byte_at_a_time_printing",
         "retained_grid_rows_preserve_exact_meshes_and_skip_unchanged_paint_work",
         "smart_selection_wraps_sentences_and_preserves_explicit_breaks",
         "smart_selection_never_crosses_borders_or_columns",
@@ -2623,7 +2630,8 @@
       ],
       "decisions": [
         "ADR-0017",
-        "ADR-0080"
+        "ADR-0080",
+        "ADR-0081"
       ],
       "automated_tests": [
         "disconnected_session_keeps_selection_copy_and_navigation_but_drops_keystrokes",
@@ -2646,6 +2654,7 @@
         "full_history_reuses_cell_storage_for_line_feed_and_explicit_scroll",
         "cell_reuse_skips_different_row_sizes_and_unretained_scrolls",
         "recovered_terminal_reuses_evicted_cell_storage",
+        "schema3_recovery_preserves_legacy_cell_wire_and_history_charges",
         "large_history_anchor_lookup_avoids_full_line_walks",
         "wrapped_anchor_lookup_avoids_full_row_boundary_walks",
         "indexed_history_anchors_match_linear_oracle_across_layout_mutations",
@@ -3701,7 +3710,8 @@
         "ADR-0002",
         "ADR-0025",
         "ADR-0029",
-        "ADR-0038"
+        "ADR-0038",
+        "ADR-0081"
       ],
       "automated_tests": [
         "open_profiles_is_a_singleton_and_reactivates_the_existing_tab",
@@ -3759,6 +3769,8 @@
         "recovery_wire_refuses_trailing_truncated_and_oversized_payloads",
         "schema2_recovery_migrates_released_snapshots_and_preserves_live_state",
         "schema2_recovery_keeps_validation_bounds_and_rejects_mislabelled_payloads",
+        "schema3_recovery_preserves_legacy_cell_wire_and_history_charges",
+        "schema3_cell_capacity_overflow_is_rejected_without_truncation",
         "schema2_registry_record_remains_attachable_without_relabelling",
         "native_windows_packaged_helper_can_be_replaced_while_staged_daemon_remains_usable",
         "native_windows_versioned_helper_installs_beside_a_live_legacy_daemon",

@@ -1,6 +1,10 @@
 use std::{collections::VecDeque, mem::size_of};
 
-use crate::{cell::CellWidth, screen::ScreenRow, Cell};
+use crate::{
+    cell::{CellWidth, HISTORY_CELL_CHARGE},
+    screen::ScreenRow,
+    Cell,
+};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -255,7 +259,7 @@ impl LogicalLine {
 
     fn recalculate_charge(&mut self) {
         self.charged_bytes = size_of::<Self>()
-            .saturating_add(size_of::<Cell>().saturating_mul(self.cell_capacity))
+            .saturating_add(HISTORY_CELL_CHARGE.saturating_mul(self.cell_capacity))
             .saturating_add(self.cell_owned_bytes)
             .saturating_add(size_of::<usize>().saturating_mul(self.row_end_capacity));
     }
@@ -1105,7 +1109,7 @@ fn compact_line_charge(
     cell_owned_bytes: usize,
 ) -> usize {
     size_of::<LogicalLine>()
-        .saturating_add(size_of::<Cell>().saturating_mul(cell_capacity))
+        .saturating_add(HISTORY_CELL_CHARGE.saturating_mul(cell_capacity))
         .saturating_add(cell_owned_bytes)
         .saturating_add(size_of::<usize>().saturating_mul(row_end_capacity))
 }

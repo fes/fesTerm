@@ -330,7 +330,7 @@ impl Screen {
                 .cell_index(column + 1, row)
                 .expect("wide terminal character must fit in the screen");
             let text = CompactString::const_new("");
-            let text_capacity_bytes = text.capacity();
+            let text_capacity_bytes = Cell::text_capacity(&text);
             self.cells[continuation] = Cell {
                 text,
                 text_capacity_bytes,
@@ -372,7 +372,7 @@ impl Screen {
     ) {
         let cell = |byte: u8| {
             let text = CompactString::new(char::from(byte).encode_utf8(&mut [0; 4]));
-            let text_capacity_bytes = text.capacity();
+            let text_capacity_bytes = Cell::text_capacity(&text);
             Cell {
                 text,
                 text_capacity_bytes,
@@ -398,7 +398,23 @@ impl Screen {
             return;
         }
         for (existing, &byte) in self.cells[start..end].iter_mut().zip(text) {
-            *existing = cell(byte);
+            let Cell {
+                text: existing_text,
+                text_capacity_bytes,
+                width,
+                foreground: existing_foreground,
+                background: existing_background,
+                attributes: existing_attributes,
+                hyperlink,
+            } = existing;
+            debug_assert_eq!(*width, CellWidth::Single);
+            let new_text = CompactString::new(char::from(byte).encode_utf8(&mut [0; 4]));
+            *text_capacity_bytes = Cell::text_capacity(&new_text);
+            *existing_text = new_text;
+            *existing_foreground = foreground;
+            *existing_background = background;
+            *existing_attributes = attributes;
+            *hyperlink = None;
         }
         self.occupied_cells[start..end].fill(true);
         let physical_row = self.physical_row(row);

@@ -1655,7 +1655,7 @@ impl Terminal {
 
     fn erase_cell(&self) -> Cell {
         let text = CompactString::const_new(" ");
-        let text_capacity_bytes = text.capacity();
+        let text_capacity_bytes = Cell::text_capacity(&text);
         Cell {
             text,
             text_capacity_bytes,
@@ -1741,7 +1741,7 @@ impl Terminal {
         }
         let buffer = self.active_buffer_mut();
         let text = CompactString::new(character.encode_utf8(&mut [0; 4]));
-        let text_capacity_bytes = text.capacity();
+        let text_capacity_bytes = Cell::text_capacity(&text);
         buffer.screen.replace_cluster(
             cursor.column,
             cursor.row,
@@ -3536,7 +3536,7 @@ impl Terminal {
         };
         let text = CompactString::const_new("E");
         let cell = Cell {
-            text_capacity_bytes: text.capacity(),
+            text_capacity_bytes: Cell::text_capacity(&text),
             text,
             width: CellWidth::Single,
             foreground: Color::Default,
@@ -3737,6 +3737,34 @@ fn resized_tab_stops(existing: &[bool], dimensions: Dimensions) -> Vec<bool> {
 mod ascii_run_fast_path_tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn ascii_run_replaces_heap_text_hyperlink_and_rendition() {
+        let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"\x1b]8;;https://example.invalid/link\x1b\\");
+        terminal.ingest(b"e");
+        for _ in 0..15 {
+            terminal.ingest("\u{301}".as_bytes());
+        }
+        terminal.ingest(b"\x1b]8;;\x1b\\");
+        let link = Arc::downgrade(&terminal.cell(0, 0).unwrap().hyperlink_target().unwrap());
+        assert!(terminal.cell(0, 0).unwrap().text().len() > 24);
+
+        terminal.ingest(b"\r\x1b[31;44;1m\x1b[1\"qAB");
+        let cell = terminal.cell(0, 0).unwrap();
+        assert_eq!(cell.text(), "A");
+        assert_eq!(cell.width(), CellWidth::Single);
+        assert_eq!(cell.foreground(), Color::Indexed(1));
+        assert_eq!(cell.background(), Color::Indexed(4));
+        assert!(cell.attributes().contains(Attributes::BOLD));
+        assert!(cell.attributes().contains(Attributes::PROTECTED));
+        assert!(cell.hyperlink().is_none());
+        assert!(link.upgrade().is_none());
+        assert!(terminal
+            .recovery_clone()
+            .validate_recovery_snapshot()
+            .is_ok());
+    }
 
     fn fragment() -> impl Strategy<Value = Vec<u8>> {
         prop_oneof![

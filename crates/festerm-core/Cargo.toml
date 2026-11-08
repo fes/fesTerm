@@ -48,3 +48,7 @@ harness = false
 [[bench]]
 name = "scroll_allocations"
 harness = false
+
+[[bench]]
+name = "cell_density"
+harness = false

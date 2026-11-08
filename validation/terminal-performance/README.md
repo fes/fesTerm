@@ -172,6 +172,55 @@ do not establish native or end-to-end throughput or latency. The original
 280 generated mixed-state comparisons and another 1,604 saturated-history
 snapshots matched the parent, including recovery-validation results.
 
+### Compact cells with stable history charges
+
+ADR 0081 narrows the in-memory text-capacity field while retaining its legacy
+wire integer and charging history at the old cell size. Eligible ASCII runs
+also overwrite single-width cells in place, releasing old text and links and
+applying the new rendition. Runs touching wide cells still use the repair
+path. On the measured 64-bit target the cell is 56 rather than 64 bytes, but
+the configured history limit retains the same lines as before.
+
+Run `cargo bench --locked -p festerm-core --bench cell_density -- 1000000 120`
+for a one-million-line, 32 MiB full-history fixture; replace `120` with `80`
+or `200` for the other widths. The row contains three fewer printable cells
+than the column count. Three paired release samples in A-B-B-A-A-B order
+compared the parent of this change with the combined candidate, using separate
+build directories. Process user plus system CPU and peak RSS were measured
+with macOS `wait4` on an Apple M2, 64-bit macOS and Rust 1.97.1:
+
+| Columns | Median CPU seconds, before / after | Median peak RSS bytes, before / after | Retained lines, both |
+| --- | ---: | ---: | ---: |
+| 80 | 1.157 / 1.135 | 29,523,968 / 29,491,200 | 4,865 |
+| 120 | 1.643 / 1.595 | 29,425,664 / 26,427,392 | 3,221 |
+| 200 | 2.639 / 2.588 | 30,851,072 / 28,000,256 | 1,922 |
+
+These are synthetic process peaks, not the native application's RSS. The
+120- and 200-column fixtures decreased by about 10.2% and 9.2%; the 80-column
+fixture barely changed. On this allocator the respective 4,928- and
+4,312-byte cell-vector requests for a 77-cell row both occupy 5,120 bytes.
+Allocator classes, occupancy and other platforms can change the result.
+One-minute shared-host load decreased from 10.5 to 8.0 and five-minute load
+from 8.2 to 7.8 during the table; competing processes were active.
+
+The same benchmark accepts `styled_utf8`, `osc8_links`, and `tui_overwrite`
+after the column count. At 120 columns, 1.5 million styled UTF-8 iterations,
+1.5 million linked-output iterations and six million TUI overwrites had
+respective before/after median CPU seconds of 1.518/1.537, 1.851/1.868 and
+1.522/1.570. Their one-minute load decreased from 8.0 to 6.9. Small CPU
+differences and the 3.2% TUI increase are not conclusive; a modest regression
+cannot be ruled out. A separate 64-byte in-place-only control measured
+1.448/1.445 seconds at 120 columns and 2.555/2.466 at 200 columns against the
+compact candidate; sample variation also prevents a CPU attribution.
+
+An earlier compact-only prototype without in-place overwrites increased the
+80-, 120- and 200-column median CPU by 6.2%, 7.7% and 3.2% respectively in
+separate paired samples. The combined candidate mitigated that observed
+regression in the measurements above, but neither a general CPU speedup nor
+native presentation latency is established. Generated mixed-state and
+saturated-history comparisons matched the parent, including the same
+pre-existing recovery-validation failures tracked in #651.
+
 ## End-to-end output throughput (macOS)
 
 Measured as the wall time for `cat` of a file to finish inside a fesTerm

@@ -241,6 +241,11 @@ revision semantics remain unchanged. A CPU-only system-allocator oracle
 measures this copy stage separately from painted-row reuse, native GPU work,
 process residency and frame time.
 
+For `TERM-01`, ADR 0081's ASCII-run overwrite preserves the existing
+single-width proof, releases replaced text and hyperlinks, and applies the
+current rendition. Runs touching wide cells retain the per-cell repair path.
+The storage change does not alter output or selection behavior.
+
 For `TYPE-01` and `TERM-01`, the glyph-layout cache retains its 4,096-entry
 bound but retires only the least-recently-used entry on a capacity-crossing
 miss. Indexed recency touches do not scan arrays or copy keys; font/atlas and
@@ -947,6 +952,9 @@ validating/restoring owned terminal state. Invalid, trailing, truncated or
 over-limit payloads never reach adoption. The managed wire observations do
 not establish a total attach/process-memory budget or signed-package/native
 visual acceptance; acknowledgement and old-client rollback remain unchanged.
+ADR 0081's smaller in-memory cells preserve the original history charges and
+schema-2/3 cell encoding for `PROF-06` and `TUNNEL-02`; `HIST-04` eviction
+decisions remain unchanged.
 
 ## N. Terminal typography, scheme, zoom, cursor, and focus mode
 
