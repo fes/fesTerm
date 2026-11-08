@@ -119,7 +119,9 @@ it refuses symbolic links and Windows reparse points at those state paths. It
 removes the release updater key and `APPLE_*`/`CARGO_PACKAGER_SIGN_*` values
 from the child environment. Persistent development sessions intentionally
 survive the frontend and can be reattached by a later invocation from this
-worktree.
+worktree. On Windows, the state directory inherits its workspace ACL; the
+launcher does not verify or change it, so use a workspace restricted to your
+account.
 The user's OS credential store, shell environment and desktop session are
 still shared; this is not a full sandbox or native qualification.
 
