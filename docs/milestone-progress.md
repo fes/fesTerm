@@ -23,6 +23,30 @@ screen transitions; an isolated allocation check guards the warmed ASCII
 case. Measured search-loop CPU and allocation observations, including
 shared-host caveats, are in `validation/terminal-performance/README.md`.
 
+## Reusing bounded character-input storage
+
+The UI now delivers the terminal's queued input directly to its synchronous
+sink. After delivery, the terminal zeroizes and may reuse an allocation of at
+most 16 bytes; larger allocations are dropped as before. No input bytes are
+retained for reuse, including when a sink panics. Queue admission, ordering,
+keyboard lock and the existing owned drain remain unchanged.
+
+A warmed allocation oracle covers ASCII and four-byte character routing. Its
+scope and paired process-CPU measurements are documented in
+`validation/terminal-performance/README.md`. Application pending-write and
+session transport copies, as well as native input latency, remain separate
+work.
+
+## Reducing character-input allocations
+
+The terminal core now encodes ordinary character input into a short
+stack buffer before admitting it to the existing bounded queue, avoiding a
+temporary heap allocation per character. Keyboard lock, UTF-8 bytes and
+overflow behavior remain unchanged; no logical input bytes are retained for
+reuse between events. A deterministic allocation regression and the core-loop
+CPU observations are documented in `validation/terminal-performance/README.md`.
+Session-queue copies and end-to-end input latency remain separate work.
+
 ## Reusing evicted scrollback storage
 
 Full primary-screen history now transfers an eligible evicted hard line's
