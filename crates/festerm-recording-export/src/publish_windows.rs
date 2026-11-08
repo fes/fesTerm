@@ -139,6 +139,8 @@ pub fn publish_to_directory(
             )?;
         created_names.push(APPEARANCE_FILE_NAME.to_owned());
         crate::write_and_verify_appearance(&mut appearance, staged, cancelled)?;
+        // Windows cannot rename a directory while a file inside it is open.
+        drop(appearance);
         directory.sync_all().map_err(|error| {
             ExportError::new(format!("could not sync destination staging: {error}"))
         })?;

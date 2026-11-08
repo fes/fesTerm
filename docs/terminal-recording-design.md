@@ -220,10 +220,13 @@ pre-consent output, so the start confirmation names that explicitly; older
 scrollback is not copied. Concealed cell text is replaced with same-width
 blanks. Admission refuses a partial control or UTF-8 sequence, a history
 viewport, a terminal palette different from the one actually painted, or
-non-concealed text whose colors make visibility ambiguous. This can refuse
-genuinely hidden text as well as color emoji, text exposed by a block cursor
-or selection, and faint text whose blending varies by graphics backend; the
-user can clear or change that text and retry. Local selection and
+non-concealed text whose colors make visibility ambiguous. It also refuses
+Unicode whitespace other than plain space and zero-width scalars, which can
+carry invisible content even when the surrounding grapheme is visible. This
+can reject decomposed accents or joined emoji as well as genuinely hidden
+text, color emoji, text exposed by a block cursor or selection, and faint text
+whose blending varies by graphics backend; the user can clear or replace that
+text and retry. Local selection and
 focus-dependent overlays are not recorded; terminal cursor state is retained
 and exported without blinking. Color visibility is a conservative model, not
 a pixel-for-pixel guarantee of glyph legibility on every renderer.
@@ -231,7 +234,8 @@ a pixel-for-pixel guarantee of glyph legibility on every renderer.
 The cached last graphic character used by `REP` is omitted because it may no
 longer be visible. Output events carry bounded repeat annotations: a
 character that becomes visible through post-consent output can be replayed,
-while concealed repeats use same-width blanks. Capture compares transient
+while concealed or potentially invisible repeats use same-width blanks.
+Capture compares transient
 in-memory fingerprints at potentially ambiguous repeats, hidden grapheme
 extensions, screen transitions, resizes and configuration changes. These
 fingerprints are never written to the source. If replay would diverge because

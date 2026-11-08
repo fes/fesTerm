@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify private staging, publication, and retention
+        run: cargo test --locked -p festerm-recording-export --test export -- --nocapture
       - name: Ensure video inspection tools exist
         shell: pwsh
         run: |
@@ -35,12 +37,13 @@ jobs:
       - name: Test terminal replay fast paths
         run: cargo test --locked -p festerm-core ascii_run_fast_path_tests
       - name: Test recording visibility rendering
-        run: cargo test --locked -p festerm-ui-egui color_emoji_and_block_cursor_can_reveal_equal_color_text
+        run: |
+          cargo test --locked -p festerm-ui-egui color_emoji_and_block_cursor_can_reveal_equal_color_text
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p festerm-ui-egui --test recording_visibility
       - name: Encode and inspect native Windows video
         run: cargo test --locked -p festerm-recording-windows -- --ignored --nocapture
       - name: Verify private synchronized capture
         run: cargo test --locked -p festerm-recording -- --nocapture
-      - name: Verify private staging, publication, and retention
-        run: cargo test --locked -p festerm-recording-export --test export -- --nocapture
       - name: Encode synchronized Windows sessions
         run: cargo test --locked -p festerm-recording-export --test export windows_stages_readable_synchronized_mp4s -- --ignored --nocapture

@@ -73,6 +73,8 @@
         "reopened_sheet_remains_interactive_after_scrim_dismissal",
         "partial_preconsent_sequences_refuse_start_without_creating_a_source",
         "ambiguous_color_text_refuses_start_without_creating_a_source",
+        "invisible_unicode_refuses_start_without_creating_a_source",
+        "invisible_unicode_cannot_enter_the_initial_checkpoint",
         "recording_checkpoint_refuses_faint_text_with_ambiguous_blending",
         "recording_refuses_a_palette_that_does_not_match_the_visible_view",
         "color_emoji_and_block_cursor_can_reveal_equal_color_text"
@@ -121,6 +123,7 @@
         "resizing_into_preconsent_history_stops_before_the_unfaithful_event",
         "a_brief_switch_to_a_preconsent_screen_is_checked_before_switching_back",
         "concealed_preconsent_grapheme_cannot_change_replay_geometry",
+        "repeat_of_invisible_preconsent_character_stops_before_persisting_it",
         "recovery_palette_mismatch_stops_recording_before_later_output",
         "recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss",
         "a_new_ambiguous_graphical_session_revokes_existing_consent"

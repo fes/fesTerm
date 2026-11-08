@@ -23,7 +23,10 @@ use crate::{
         deserialize_recording_vec, recording_text_is_hidden, ColumnSpan, RecordingScreen,
         Rectangle, Screen,
     },
-    unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
+    unicode::{
+        extends_grapheme, grapheme_width, recording_character_visibility_is_ambiguous, Utf8Advance,
+        Utf8Decoder, MAX_GRAPHEME_BYTES,
+    },
     Cursor, Dimensions, TRANSPORT_QUEUE_HIGH_WATERMARK,
 };
 
@@ -1516,12 +1519,14 @@ impl Terminal {
 
     fn recording_repeat_character(&self) -> Option<char> {
         self.last_graphic_character.map(|character| {
-            if recording_text_is_hidden(
-                self.current_foreground,
-                self.current_background,
-                self.current_attributes,
-                &self.color_scheme,
-            ) {
+            if recording_character_visibility_is_ambiguous(character)
+                || recording_text_is_hidden(
+                    self.current_foreground,
+                    self.current_background,
+                    self.current_attributes,
+                    &self.color_scheme,
+                )
+            {
                 if UnicodeWidthChar::width(character).unwrap_or(0) > 1 {
                     '\u{3000}'
                 } else {
@@ -1534,15 +1539,17 @@ impl Terminal {
     }
 
     fn recording_repeat_visibility_is_ambiguous(&self) -> bool {
-        self.last_graphic_character
-            .is_some_and(|character| character != ' ')
-            && !self.current_attributes.contains(Attributes::CONCEALED)
-            && recording_text_is_hidden(
-                self.current_foreground,
-                self.current_background,
-                self.current_attributes,
-                &self.color_scheme,
-            )
+        self.last_graphic_character.is_some_and(|character| {
+            recording_character_visibility_is_ambiguous(character)
+                || (character != ' '
+                    && !self.current_attributes.contains(Attributes::CONCEALED)
+                    && recording_text_is_hidden(
+                        self.current_foreground,
+                        self.current_background,
+                        self.current_attributes,
+                        &self.color_scheme,
+                    ))
+        })
     }
 
     fn recording_block_cursor(&self) -> Option<Cursor> {
@@ -1697,13 +1704,23 @@ impl Terminal {
                 let cell = self
                     .cell_ref(column, row)
                     .expect("recording screen dimensions are valid");
-                if !cell.attributes.contains(Attributes::CONCEALED)
-                    && cell.text.bytes().any(|byte| byte != b' ')
-                    && cell.recording_text_is_redacted(&self.color_scheme)
-                {
-                    return Err(TerminalError::invalid_snapshot(
-                        "text visibility is ambiguous; change its colors or clear it before recording",
-                    ));
+                if !cell.attributes.contains(Attributes::CONCEALED) {
+                    if cell
+                        .text
+                        .chars()
+                        .any(recording_character_visibility_is_ambiguous)
+                    {
+                        return Err(TerminalError::invalid_snapshot(
+                            "screen contains potentially invisible Unicode; clear or replace it before recording",
+                        ));
+                    }
+                    if cell.text.bytes().any(|byte| byte != b' ')
+                        && cell.recording_text_is_redacted(&self.color_scheme)
+                    {
+                        return Err(TerminalError::invalid_snapshot(
+                            "text visibility is ambiguous; change its colors or clear it before recording",
+                        ));
+                    }
                 }
             }
         }

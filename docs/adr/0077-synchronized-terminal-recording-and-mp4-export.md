@@ -48,11 +48,13 @@ window title and other non-rendering metadata. It also excludes the cached
 last graphic character used by `REP`, which may no longer be visible.
 Concealed text is replaced with same-width blanks. Admission refuses partial
 control sequences, history viewports, a mismatch between the terminal and
-painted palettes, and non-concealed text whose colors make visibility
-ambiguous. Local selection and focus-dependent overlays are not captured;
-terminal cursor state is retained for non-blinking export. The visibility
-model is conservative and is not a pixel-level legibility guarantee on every
-renderer.
+painted palettes, non-concealed text whose colors make visibility
+ambiguous, and potentially invisible Unicode whitespace or zero-width
+scalars. This can reject visible decomposed accents or joined emoji until
+they are cleared or replaced. Local selection and focus-dependent overlays
+are not captured; terminal cursor state is retained for non-blinking export.
+The visibility model is conservative and is not a pixel-level legibility
+guarantee on every renderer.
 
 Output events carry bounded `REP` annotations instead of post-mutation
 checkpoints. Replay is compared with transient, memory-only visible-state
@@ -226,6 +228,8 @@ existing exports are never merged with or overwritten.
   `recovery_stops_before_corrupt_truncated_or_semantically_invalid_frames`,
   `recovery_omits_a_truncated_annotated_output_frame`,
   `ambiguous_color_text_refuses_start_without_creating_a_source`,
+  `invisible_unicode_refuses_start_without_creating_a_source`,
+  `repeat_of_invisible_preconsent_character_stops_before_persisting_it`,
   `resizing_into_preconsent_history_stops_before_the_unfaithful_event`,
   `recovered_prefix_is_labeled_and_never_deletes_the_original`, and
   `worker_retains_source_on_encoding_and_publication_failure`.
