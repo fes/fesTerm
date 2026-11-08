@@ -47,6 +47,7 @@ struct PrivacyRevocation {
     callback: std::sync::Arc<dyn Fn() + Send + Sync>,
     revoked: std::sync::atomic::AtomicBool,
     loss: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    shared: Option<std::sync::Arc<privacy_shared::SharedSignals>>,
 }
 
 #[cfg(any(windows, test))]
@@ -66,11 +67,32 @@ impl PrivacyRevocation {
             callback,
             revoked: std::sync::atomic::AtomicBool::new(false),
             loss,
+            shared: None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn with_shared(
+        callback: std::sync::Arc<dyn Fn() + Send + Sync>,
+        shared: std::sync::Arc<privacy_shared::SharedSignals>,
+    ) -> Self {
+        Self {
+            callback,
+            revoked: std::sync::atomic::AtomicBool::new(false),
+            loss: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shared: Some(shared),
+        }
+    }
+
+    fn mark_loss(&self) {
+        self.loss.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(shared) = &self.shared {
+            shared.revoke();
         }
     }
 
     fn revoke(&self) {
-        self.loss.store(true, std::sync::atomic::Ordering::Release);
+        self.mark_loss();
         if !self.revoked.swap(true, std::sync::atomic::Ordering::AcqRel) {
             (self.callback)();
         }
@@ -79,6 +101,12 @@ impl PrivacyRevocation {
 
 #[cfg(any(windows, test))]
 mod privacy_lifecycle;
+
+#[cfg(any(windows, test))]
+mod privacy_shared;
+
+#[cfg(windows)]
+pub use privacy_shared::SharedPrivacyMonitor;
 
 #[cfg(windows)]
 pub use privacy_lifecycle::{
@@ -407,14 +435,14 @@ mod privacy {
 
     thread_local! {
         static CALLBACK: RefCell<Option<Callback>> = const { RefCell::new(None) };
-        static LOSS: OnceCell<Arc<AtomicBool>> = const { OnceCell::new() };
+        static LOSS: OnceCell<Arc<PrivacyRevocation>> = const { OnceCell::new() };
         static FAILED: Cell<bool> = const { Cell::new(false) };
     }
 
     fn note_loss() {
         let _ = LOSS.try_with(|loss| {
             if let Some(loss) = loss.get() {
-                loss.store(true, Ordering::Release);
+                loss.mark_loss();
             }
         });
         let _ = FAILED.try_with(|failed| failed.set(true));
@@ -813,7 +841,7 @@ mod privacy {
         ready: mpsc::SyncSender<bool>,
     ) -> bool {
         if !matches!(
-            LOSS.try_with(|slot| slot.set(revocation.loss.clone())),
+            LOSS.try_with(|slot| slot.set(revocation.clone())),
             Ok(Ok(()))
         ) {
             let _ = ready.try_send(false);
@@ -914,6 +942,14 @@ mod privacy {
             Self::start(revocation)
         }
 
+        pub(super) fn install_shared(
+            callback: Arc<dyn Fn() + Send + Sync>,
+            shared: Arc<super::privacy_shared::SharedSignals>,
+        ) -> io::Result<Self> {
+            let revocation = Arc::new(PrivacyRevocation::with_shared(callback, shared));
+            Self::start(revocation)
+        }
+
         fn start(revocation: Arc<PrivacyRevocation>) -> io::Result<Self> {
             let (ready, started) = mpsc::sync_channel(1);
             let cleanup = privacy_lifecycle::launch(revocation, move |lifecycle, revocation| {
@@ -970,7 +1006,7 @@ mod privacy {
             let revocation = Arc::new(PrivacyRevocation::new(Arc::new(move || {
                 counter.fetch_add(1, Ordering::SeqCst);
             })));
-            LOSS.with(|slot| assert!(slot.set(revocation.loss.clone()).is_ok()));
+            LOSS.with(|slot| assert!(slot.set(revocation.clone()).is_ok()));
             CALLBACK.with(|slot| {
                 *slot.borrow_mut() = Some(Callback {
                     lifecycle: lifecycle.clone(),

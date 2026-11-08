@@ -735,6 +735,24 @@ impl TerminalView {
         self.history.offset_rows == 0
     }
 
+    /// Whether this viewport displays the terminal's live screen, not history.
+    pub fn shows_live_screen(&self, terminal: &Terminal) -> bool {
+        terminal.modes().alternate_screen() || self.follows_latest_output()
+    }
+
+    /// Validates frontend state that cannot be inferred by the recording core.
+    pub fn validate_recording_view(&self, terminal: &Terminal) -> Result<(), &'static str> {
+        if !self.shows_live_screen(terminal) {
+            return Err("Return the terminal to its live screen before recording");
+        }
+        if terminal.color_scheme() != &crate::renderer::terminal_color_scheme() {
+            return Err(
+                "Terminal colors do not match the visible view; retry after colors synchronize",
+            );
+        }
+        Ok(())
+    }
+
     /// Marks this view as needing keyboard focus again on its next frame.
     /// Chip/tab activation switches which session's `show`/`show_in_ui` is
     /// called each frame (inactive tabs render nothing at all), so the
@@ -1993,6 +2011,7 @@ impl TerminalView {
                         cache: &self.cache,
                         selection: &self.selection,
                         fonts: &self.fonts,
+                        color_scheme: None,
                         shape_cell_runs: self.force_cell_run_shaping
                             || self.fonts.font_set().ligatures(),
                         focused: response.has_focus(),
@@ -2421,6 +2440,7 @@ impl TerminalView {
                 cache: &self.cache,
                 selection: &self.selection,
                 fonts: &self.fonts,
+                color_scheme: None,
                 shape_cell_runs: self.force_cell_run_shaping || self.fonts.font_set().ligatures(),
                 focused: false,
                 suppress_cursor: true,
@@ -3082,6 +3102,37 @@ mod history_overlay_tests {
             history.offset_rows <= rows_after,
             "an anchored offset must clamp to retained history after eviction"
         );
+    }
+
+    #[test]
+    fn live_screen_visibility_distinguishes_history_and_alternate_screen() {
+        let mut terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"old\r\nscreen\r\nsecret");
+        let mut view = TerminalView::default();
+        assert!(view.shows_live_screen(&terminal));
+        view.reveal_document_row(&terminal, 0);
+        assert!(!view.shows_live_screen(&terminal));
+        terminal.ingest(b"\x1b[?1049h");
+        assert!(view.shows_live_screen(&terminal));
+    }
+
+    #[test]
+    fn recording_refuses_a_palette_that_does_not_match_the_visible_view() {
+        let mut terminal = Terminal::new(Dimensions::new(12, 2).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[38;2;17;22;30msecret");
+        let view = TerminalView::default();
+        assert!(view.validate_recording_view(&terminal).is_ok());
+
+        terminal.set_color_scheme(festerm_core::ColorScheme::new(
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::Rgb::new(0, 0, 0),
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::ColorScheme::DEFAULT_ANSI,
+        ));
+        assert!(view
+            .validate_recording_view(&terminal)
+            .unwrap_err()
+            .contains("colors do not match"));
     }
 
     #[test]

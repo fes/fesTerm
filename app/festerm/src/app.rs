@@ -422,6 +422,8 @@ impl NativeMenuShortcutCache {
 pub struct FesTermApp {
     state: AppState,
     last_session_pump: Option<TabId>,
+    recording_view: crate::application::recording::WindowView,
+    recording_request: Option<crate::application::recording::Request>,
     pane_rects: Vec<(TabId, egui::Rect)>,
     pane_layout_menu: Option<TabId>,
     pane_controls: panes::PaneControls,
@@ -933,6 +935,8 @@ impl FesTermApp {
         Self {
             state,
             last_session_pump: None,
+            recording_view: Default::default(),
+            recording_request: None,
             pane_rects: Vec::new(),
             pane_layout_menu: None,
             pane_controls: panes::PaneControls::default(),
@@ -2811,6 +2815,7 @@ impl FesTermApp {
             if session.adopt_recovered_terminal() {
                 session.controller.record_local_observation_change();
                 session.apply_frontend_terminal_configuration(scrollback_limit);
+                session.complete_recording_auto_enrollment();
                 needs_repaint = true;
             }
         }
@@ -2953,6 +2958,9 @@ impl FesTermApp {
                 ChromeAction::OpenMarkdownFile => self.open_markdown_file_picker(context),
                 ChromeAction::OpenSettings => {
                     self.state.dispatch(AppCommand::OpenSettings, context)
+                }
+                ChromeAction::OpenRecording => {
+                    self.dispatch_recording_command(AppCommand::OpenRecording);
                 }
                 ChromeAction::OpenProfiles => {
                     self.state.dispatch(AppCommand::OpenProfiles, context)
@@ -4169,6 +4177,7 @@ impl FesTermApp {
         } else if !authoritative {
             session.terminal.reset_to_initial_state();
             session.controller.record_local_observation_change();
+            session.controller.record_reset();
         }
         session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((
@@ -4199,7 +4208,9 @@ impl FesTermApp {
                 .record_operation_error("terminal clear", error);
             return;
         } else if !authoritative {
-            session.terminal.ingest(b"\x1b[2J\x1b[3J\x1b[H");
+            session
+                .controller
+                .ingest_recorded_output(&mut session.terminal, b"\x1b[2J\x1b[3J\x1b[H");
             session.controller.record_local_observation_change();
         }
         session.view.cancel_rectangle_copy();
@@ -5797,6 +5808,12 @@ impl FesTermApp {
                     id: ChipId(tab.id.chip_id()),
                     panes: Vec::new(),
                     primary,
+                    recording: matches!(
+                        &tab.content,
+                        TabContent::Session(session)
+                            if self.recording_view.active.is_some()
+                                && session.controller.recording_id() == self.recording_view.active
+                    ),
                     secondary,
                     status,
                     closable: true,
@@ -5821,7 +5838,12 @@ impl FesTermApp {
             .map(|chip| {
                 (
                     chip.id,
-                    (chip.primary.clone(), chip.status, chip.has_unread_output),
+                    (
+                        chip.primary.clone(),
+                        chip.status,
+                        chip.has_unread_output,
+                        chip.recording,
+                    ),
                 )
             })
             .collect();
@@ -5841,7 +5863,7 @@ impl FesTermApp {
                 chip.panes = positions
                     .into_iter()
                     .map(|(view, rect)| {
-                        let (label, status, unread) = members
+                        let (label, status, unread, recording) = members
                             .get(&ChipId(view.chip_id()))
                             .expect("live group view has a chip model");
                         let surface = self.state.tabs().iter().find(|tab| tab.id == view).map_or(
@@ -5865,6 +5887,7 @@ impl FesTermApp {
                         chrome::PaneMemberViewModel {
                             id: ChipId(view.chip_id()),
                             label: label.clone(),
+                            recording: *recording,
                             surface,
                             status: *status,
                             focused: group.focused == view,
@@ -5873,6 +5896,7 @@ impl FesTermApp {
                         }
                     })
                     .collect();
+                chip.recording = chip.panes.iter().any(|pane| pane.recording);
                 chip.movable_across_windows = false;
                 chip.renamable = true;
                 chip.has_explicit_alias = false;
@@ -6494,6 +6518,112 @@ impl eframe::App for FesTermApp {
 }
 
 impl FesTermApp {
+    fn dispatch_recording_command(&mut self, command: AppCommand) {
+        use crate::application::recording::Request;
+        self.recording_request = Some(match command {
+            AppCommand::OpenRecording => Request::Open,
+            AppCommand::OpenRecordingSettings => Request::Settings,
+            AppCommand::OpenRecordingLibrary => Request::Library,
+            _ => unreachable!("only recording commands are routed here"),
+        });
+    }
+
+    pub(crate) fn set_recording_view(&mut self, view: crate::application::recording::WindowView) {
+        self.overlays.recording_modal = view.modal;
+        self.state
+            .set_recording_auto_enrollment(view.auto_include.clone());
+        self.recording_view = view;
+    }
+
+    pub(crate) fn take_recording_request(
+        &mut self,
+    ) -> Option<crate::application::recording::Request> {
+        self.recording_request.take()
+    }
+
+    pub(crate) fn recording_choices(&self) -> Vec<(TabId, String, bool)> {
+        self.state
+            .tabs()
+            .iter()
+            .filter_map(|tab| match &tab.content {
+                TabContent::Session(session) if session.recording_eligible() => {
+                    Some((tab.id, session.label.clone(), tab.id == self.state.active()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn recording_session(&self, id: TabId) -> Option<&crate::tabs::SessionTab> {
+        self.state
+            .session_tab(id)
+            .filter(|session| session.recording_eligible())
+    }
+
+    pub(crate) fn recording_active_tab(&self) -> TabId {
+        self.state.active()
+    }
+
+    pub(crate) fn attach_recording(
+        &mut self,
+        id: TabId,
+        stream: festerm_recording::RecordingStream,
+    ) -> bool {
+        let Some(session) = self.state.session_tab_mut(id) else {
+            return false;
+        };
+        if !session.recording_eligible() || session.controller.recording_id().is_some() {
+            return false;
+        }
+        session.controller.attach_recording_stream(stream);
+        true
+    }
+
+    pub(crate) fn detach_recording(&mut self, id: festerm_recording::RecordingId) {
+        for (_, session) in self.state.session_tabs_with_id_mut() {
+            session.controller.detach_recording_stream(id);
+        }
+    }
+
+    fn show_recording_status(&mut self, ui: &mut egui::Ui) {
+        let Some(label) = self.recording_view.label.clone() else {
+            return;
+        };
+        use crate::application::recording::Request;
+        egui::Panel::bottom("recording_status")
+            .resizable(false)
+            .show_separator_line(true)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(&label);
+                    if let Some(recording) = self.recording_view.active {
+                        if ui.button("Stop recording").clicked() {
+                            self.recording_request = Some(Request::Stop);
+                        }
+                        if self
+                            .recording_session(self.state.active())
+                            .is_some_and(|session| {
+                                session.controller.recording_id() != Some(recording)
+                            })
+                            && ui.button("Include this session").clicked()
+                        {
+                            self.recording_request = Some(Request::IncludeActive);
+                        }
+                    } else if self.recording_view.exporting {
+                        if ui.button("Cancel export").clicked() {
+                            self.recording_request = Some(Request::CancelExport);
+                        }
+                    } else if self.recording_view.preparing {
+                        if ui.button("Cancel preparation").clicked() {
+                            self.recording_request = Some(Request::Stop);
+                        }
+                    } else if !self.recording_view.busy && ui.button("Dismiss").clicked() {
+                        self.recording_request = Some(Request::Dismiss);
+                    }
+                });
+            });
+    }
+
     /// The per-frame, pre-paint work every window does, regardless of whether
     /// it is the root viewport or an additional one (ADR 0032). Split out of
     /// [`eframe::App::logic`] because a secondary window has no
@@ -6730,7 +6860,8 @@ impl FesTermApp {
         // intentionally ignored. The key is only consumed when some modal
         // overlay is actually open, so other Escape handlers (inspector,
         // chip rename) still see the event when neither applies.
-        let modal_owns_escape = self.overlays.blocks_terminal_input();
+        let modal_owns_escape =
+            self.overlays.blocks_terminal_input() && !self.overlays.recording_modal;
         let escape_pressed = modal_owns_escape
             && ui
                 .ctx()
@@ -6800,6 +6931,7 @@ impl FesTermApp {
         if self.state.status_bar_visible() && !self.focus_mode {
             self.show_status_bar(ui);
         }
+        self.show_recording_status(ui);
 
         if let Some(decision) = self
             .palette
@@ -7073,6 +7205,7 @@ impl FesTermApp {
                     TabContent::Session(session) => {
                         if session.adopt_recovered_terminal() {
                             session.apply_frontend_terminal_configuration(scrollback_limit);
+                            session.complete_recording_auto_enrollment();
                             ui.ctx().request_repaint();
                         }
                         session.prepare_terminal_link_context();
@@ -7113,6 +7246,7 @@ impl FesTermApp {
                                 expose_text_to_accessibility: false,
                             };
                             let rectangle_was_active = session.view.rectangle_copy_active();
+                            let dimensions_before = session.terminal.dimensions();
                             if self.pane_rects.len() > 1 {
                                 session.view.show_in_pane_with_options(
                                     ui,
@@ -7127,6 +7261,9 @@ impl FesTermApp {
                                     &mut session.controller,
                                     options,
                                 );
+                            }
+                            if session.terminal.dimensions() != dimensions_before {
+                                session.controller.record_resize(&session.terminal);
                             }
                             if tracing::enabled!(target: "festerm::render", tracing::Level::DEBUG) {
                                 let diagnostics = session.view.diagnostics();
@@ -7306,6 +7443,9 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                command @ (AppCommand::OpenRecording
+                | AppCommand::OpenRecordingSettings
+                | AppCommand::OpenRecordingLibrary) => self.dispatch_recording_command(command),
                 #[cfg(feature = "experimental-dev-tunnels")]
                 AppCommand::ImportPublicDevTunnelProfile { import } => {
                     self.import_public_tunnel_profile(import);
@@ -8197,6 +8337,8 @@ impl FesTermApp {
         Self {
             state,
             last_session_pump: None,
+            recording_view: Default::default(),
+            recording_request: None,
             pane_rects: Vec::new(),
             pane_layout_menu: None,
             pane_controls: panes::PaneControls::default(),

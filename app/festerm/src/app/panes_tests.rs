@@ -847,6 +847,86 @@ fn panes_preserve_terminal_padding_and_resize_only_the_inset_content() {
 }
 
 #[test]
+fn recording_tracks_a_passive_pane_resize() {
+    use festerm_recording::{
+        ArtifactEvent, ArtifactReader, Completion, FinishReason, SharedRecording,
+    };
+    use std::{fs::File, thread, time::Duration};
+
+    let (app, first, second, _, _) = grouped_app();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1600.0, 960.0))
+        .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+    harness.run();
+    let active = harness.state().state.active();
+    let passive = if active == first { second } else { first };
+    let directory = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    festerm_unix_security::make_private_directory(&File::open(directory.path()).unwrap()).unwrap();
+    #[cfg(windows)]
+    let private_path = {
+        let parent =
+            festerm_windows_security::lock_directory_path_without_delete_sharing(directory.path())
+                .unwrap();
+        let child = std::path::Path::new("private");
+        festerm_windows_security::create_current_user_only_directory(&parent, child).unwrap();
+        directory.path().join(child)
+    };
+    #[cfg(not(windows))]
+    let private_path = directory.path().to_owned();
+    let terminal = &harness.state().state.session_tab(passive).unwrap().terminal;
+    let initial = terminal.dimensions();
+    let (recording, mut streams) =
+        SharedRecording::start(&private_path, &[terminal], || {}).unwrap();
+    let stream = streams.remove(0);
+    harness
+        .state_mut()
+        .state
+        .session_tab_mut(passive)
+        .unwrap()
+        .controller
+        .attach_recording_stream(stream);
+    let context = harness.ctx.clone();
+    let revision = harness.state().state.pane_revision();
+    harness.state_mut().state.dispatch(
+        AppCommand::ResizePaneSplit {
+            view: active,
+            path: Vec::new(),
+            ratio: 7000,
+            expected_revision: revision,
+        },
+        &context,
+    );
+    harness.run();
+    let resized = harness
+        .state()
+        .state
+        .session_tab(passive)
+        .unwrap()
+        .terminal
+        .dimensions();
+    assert_ne!(resized, initial);
+    recording.stop(FinishReason::User).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let path = loop {
+        match recording.poll_completion().unwrap() {
+            Some(Completion::Complete { path, .. }) => break path,
+            Some(other) => panic!("unexpected recording completion: {other:?}"),
+            None if std::time::Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            None => panic!("recording writer did not finish"),
+        }
+    };
+    let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+    let mut observed = None;
+    while let Some(event) = reader.next_event().unwrap() {
+        if let ArtifactEvent::Resized { dimensions, .. } = event {
+            observed = Some(dimensions);
+        }
+    }
+    assert_eq!(observed, Some(resized));
+}
+
+#[test]
 fn panes_pinned_details_and_layout_dialog_block_terminal_input() {
     let (app, _, second, first_transport, second_transport) = grouped_app();
     let mut harness = Harness::builder()
