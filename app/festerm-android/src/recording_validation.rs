@@ -117,10 +117,8 @@ fn stage_fixture(directory: &Path) -> Result<(StagedRecording, PathBuf), String>
             b"\x1b[32mGREEN TWO\x1b[0m".as_slice(),
         ),
     ] {
-        let generation = terminal.screen_generation();
-        terminal.ingest(bytes);
         recorder
-            .observe_output(stream, bytes, generation, terminal)
+            .ingest_output(stream, terminal, bytes)
             .map_err(|error| error.to_string())?;
     }
     thread::sleep(Duration::from_millis(150));

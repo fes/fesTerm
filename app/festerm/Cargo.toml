@@ -65,6 +65,8 @@ zip = { version = "4", default-features = false, features = ["deflate"], optiona
 
 [target.'cfg(target_os = "macos")'.dependencies]
 festerm-recording-apple = { path = "../../crates/festerm-recording-apple" }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 raw-window-handle = "0.6"
 
 [target.'cfg(unix)'.dependencies]

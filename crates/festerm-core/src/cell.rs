@@ -3,6 +3,9 @@ use std::sync::Arc;
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
 
+/// Foreground opacity used to render the SGR faint attribute.
+pub const FAINT_OPACITY: f32 = 0.6;
+
 const MAX_CELL_TEXT_CAPACITY_BYTES: usize = crate::unicode::MAX_GRAPHEME_BYTES * 2;
 
 /// A color value used by a cell.

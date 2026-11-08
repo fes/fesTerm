@@ -970,20 +970,23 @@ pub fn sessions_sheet(ctx: &egui::Context, bounds: Rect, data: &ShellData<'_>) -
 mod recording_appearance_tests {
     use super::*;
     use egui::accesskit::Role;
-    use egui_kittest::{Harness, kittest::Queryable};
+    use egui_kittest::{kittest::Queryable, Harness};
     use festerm_recording::{RecordingFont, RecordingSettings};
 
     #[test]
     fn appearance_controls_have_accessible_labels() {
-        let mut harness = Harness::builder().with_size((800.0, 1000.0)).build_ui_state(
-            recording_export_controls,
-            RecordingSettings::default(),
-        );
+        let mut harness = Harness::builder()
+            .with_size((800.0, 1000.0))
+            .build_ui_state(recording_export_controls, RecordingSettings::default());
         harness.run();
 
-        harness.get_by_role_and_label(Role::ComboBox, "Font").click();
+        harness
+            .get_by_role_and_label(Role::ComboBox, "Font")
+            .click();
         harness.run();
-        harness.get_by_label("JetBrains Mono with ligatures").click();
+        harness
+            .get_by_label("JetBrains Mono with ligatures")
+            .click();
         harness.run();
         assert_eq!(
             harness.state().appearance.font,

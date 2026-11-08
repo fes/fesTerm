@@ -76,14 +76,14 @@ fn desktop_consent_requires_an_installed_monitor_and_is_revoked_on_loss() {
 
     let (mut app, first, _, _, _) = two_windows();
     let parent = tempfile::tempdir().unwrap();
-    let root = parent.path().canonicalize().unwrap().join("private");
+    let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
     let destination = tempfile::tempdir().unwrap();
     let (storage, _) = RecordingStorage::open_for_test(&root).unwrap();
     let mut coordinator = DesktopRecording::new(false);
     coordinator.storage = Some(storage);
     let settings = RecordingSettings {
         destination: Some(ExportDestination::DesktopPath(
-            destination.path().canonicalize().unwrap(),
+            crate::recording_storage::test_directory_path(destination.path()),
         )),
         ..RecordingSettings::default()
     };
@@ -116,6 +116,34 @@ fn desktop_consent_requires_an_installed_monitor_and_is_revoked_on_loss() {
     assert!(festerm_recording::RecordingSource::recover(&root, &lease)
         .unwrap()
         .is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (mut app, _, _, _, _) = two_windows();
+    let parent = tempfile::tempdir().unwrap();
+    let root = parent.path().join("private");
+    let (storage, _) = RecordingStorage::open_for_test(&root).unwrap();
+    let mut coordinator = DesktopRecording::new(false);
+    coordinator.storage = Some(storage);
+    coordinator.request(
+        &mut app,
+        WindowId::PRIMARY,
+        Request::Open,
+        &egui::Context::default(),
+    );
+    assert!(coordinator.privacy_task.is_none());
+    assert!(coordinator.status.as_deref().unwrap().contains("Wayland"));
+
+    let loss = Arc::new(AtomicBool::new(false));
+    coordinator.set_wayland_backend(true);
+    coordinator.privacy = Some(PrivacyGuard::for_test(loss.clone()));
+    coordinator.set_wayland_backend(false);
+    assert!(loss.load(Ordering::Acquire));
+    assert!(coordinator.privacy.is_none());
 }
 
 #[test]
@@ -176,12 +204,12 @@ fn desktop_quit_waits_for_a_finalized_private_recording() {
 fn desktop_stop_requires_a_current_duration_preview_and_export_confirmation() {
     let (mut app, first, _, _, _) = two_windows();
     let parent = tempfile::tempdir().unwrap();
-    let root = parent.path().canonicalize().unwrap().join("private");
+    let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
     let destination = tempfile::tempdir().unwrap();
     let (storage, _) = RecordingStorage::open_for_test(&root).unwrap();
     let settings = RecordingSettings {
         destination: Some(ExportDestination::DesktopPath(
-            destination.path().canonicalize().unwrap(),
+            crate::recording_storage::test_directory_path(destination.path()),
         )),
         ..RecordingSettings::default()
     };

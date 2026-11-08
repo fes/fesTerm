@@ -13,8 +13,9 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     advanced_pacing::{AdvancedTimeline, EventTiming, SplitKind},
+    replay::{ReplayError, ReplayTerminal},
     ArtifactError, ArtifactEvent, ArtifactReader, FinishReason, RecoveryPrefix, RecoveryReader,
-    StreamId, MAX_DURATION,
+    StreamId, MAX_DURATION, MAX_STREAMS,
 };
 
 const FRAMES_PER_SECOND: u64 = 30;
@@ -181,6 +182,12 @@ impl From<ArtifactError> for PlaybackError {
     }
 }
 
+impl From<ReplayError> for PlaybackError {
+    fn from(error: ReplayError) -> Self {
+        Self::new(error.to_string())
+    }
+}
+
 pub(crate) fn check_cancelled(cancelled: &impl Fn() -> bool) -> Result<(), PlaybackError> {
     if cancelled() {
         return Err(PlaybackError::new("recording planning was cancelled"));
@@ -275,6 +282,7 @@ impl PlaybackPlan {
         }
         let mut reader = ArtifactReader::new(source)?;
         let mut warp = TimeWarp::new(pacing);
+        let mut terminals: [Option<ReplayTerminal>; MAX_STREAMS] = std::array::from_fn(|_| None);
         let mut stream_count = 0;
         let duration = loop {
             check_cancelled(cancelled)?;
@@ -283,7 +291,65 @@ impl PlaybackPlan {
                 .ok_or_else(|| PlaybackError::new("recording ended without a finish frame"))?;
             let mapped = warp.advance(event.timestamp())?;
             match event {
-                ArtifactEvent::Started { .. } => stream_count += 1,
+                ArtifactEvent::Started {
+                    stream,
+                    terminal,
+                    history_capped,
+                    ..
+                } => {
+                    terminals[stream.index() - 1] =
+                        Some(ReplayTerminal::new(terminal, history_capped));
+                    stream_count += 1;
+                }
+                ArtifactEvent::Output {
+                    stream,
+                    bytes,
+                    repeats,
+                    ..
+                } => {
+                    let terminal = terminals[stream.index() - 1]
+                        .as_mut()
+                        .ok_or_else(|| PlaybackError::new("recording output has no screen"))?;
+                    for start in (0..bytes.len()).step_by(4096) {
+                        check_cancelled(cancelled)?;
+                        terminal.ingest(
+                            &bytes,
+                            &repeats,
+                            start,
+                            (start + 4096).min(bytes.len()),
+                        )?;
+                    }
+                    terminal.finish_output()?;
+                }
+                ArtifactEvent::Resized {
+                    stream, dimensions, ..
+                } => {
+                    terminals[stream.index() - 1]
+                        .as_mut()
+                        .ok_or_else(|| PlaybackError::new("recording resize has no screen"))?
+                        .resize(dimensions)?;
+                }
+                ArtifactEvent::Reset { stream, .. } => {
+                    terminals[stream.index() - 1]
+                        .as_mut()
+                        .ok_or_else(|| PlaybackError::new("recording reset has no screen"))?
+                        .reset();
+                }
+                ArtifactEvent::Configured {
+                    stream,
+                    color_scheme,
+                    scrollback_limit_bytes,
+                    history_capped,
+                    ..
+                } => {
+                    terminals[stream.index() - 1]
+                        .as_mut()
+                        .ok_or_else(|| PlaybackError::new("recording configuration has no screen"))?
+                        .configure(color_scheme, scrollback_limit_bytes, history_capped)?;
+                }
+                ArtifactEvent::Ended { stream, .. } => {
+                    terminals[stream.index() - 1] = None;
+                }
                 ArtifactEvent::Finished { reason, .. } => {
                     if !finish_policy.accepts(reason) {
                         return Err(PlaybackError::new(
@@ -292,7 +358,6 @@ impl PlaybackPlan {
                     }
                     break Duration::from_nanos(mapped);
                 }
-                _ => {}
             }
         };
         check_cancelled(cancelled)?;
@@ -354,7 +419,7 @@ pub struct Playback<R> {
     warp: TimeWarp,
     pending: Option<PendingEvent>,
     event_index: usize,
-    terminal: Option<Terminal>,
+    terminal: Option<ReplayTerminal>,
     next_frame: u64,
     finished: bool,
 }
@@ -473,18 +538,49 @@ impl<R: Read> Playback<R> {
             } = self.pending.take().expect("pending event was populated");
             match event {
                 ArtifactEvent::Started {
-                    stream, terminal, ..
-                }
-                | ArtifactEvent::Checkpoint {
-                    stream, terminal, ..
-                }
-                | ArtifactEvent::Resized {
-                    stream, terminal, ..
+                    stream,
+                    terminal,
+                    history_capped,
+                    ..
                 } if stream == self.stream => {
-                    self.terminal = Some(terminal);
+                    self.terminal = Some(ReplayTerminal::new(terminal, history_capped));
                     changed = true;
                 }
-                ArtifactEvent::Output { at, stream, bytes } if stream == self.stream => {
+                ArtifactEvent::Resized {
+                    stream, dimensions, ..
+                } if stream == self.stream => {
+                    let terminal = self.terminal.as_mut().ok_or_else(|| {
+                        PlaybackError::new("recording resize precedes its checkpoint")
+                    })?;
+                    terminal.resize(dimensions)?;
+                    changed = true;
+                }
+                ArtifactEvent::Reset { stream, .. } if stream == self.stream => {
+                    let terminal = self.terminal.as_mut().ok_or_else(|| {
+                        PlaybackError::new("recording reset precedes its checkpoint")
+                    })?;
+                    terminal.reset();
+                    changed = true;
+                }
+                ArtifactEvent::Configured {
+                    stream,
+                    color_scheme,
+                    scrollback_limit_bytes,
+                    history_capped,
+                    ..
+                } if stream == self.stream => {
+                    let terminal = self.terminal.as_mut().ok_or_else(|| {
+                        PlaybackError::new("recording configuration precedes its checkpoint")
+                    })?;
+                    terminal.configure(color_scheme, scrollback_limit_bytes, history_capped)?;
+                    changed = true;
+                }
+                ArtifactEvent::Output {
+                    at,
+                    stream,
+                    bytes,
+                    repeats,
+                } if stream == self.stream => {
                     let terminal = self.terminal.as_mut().ok_or_else(|| {
                         PlaybackError::new("recording output precedes its checkpoint")
                     })?;
@@ -500,14 +596,20 @@ impl<R: Read> Playback<R> {
                             .map_or(bytes.len(), |position| offset + position + 1),
                         None => bytes.len(),
                     };
-                    terminal.ingest(&bytes[offset..end]);
-                    let _ = terminal.drain_replies();
-                    let _ = terminal.take_reply_queue_overflowed();
+                    terminal.ingest(&bytes, &repeats, offset, end)?;
+                    if end == bytes.len() {
+                        terminal.finish_output()?;
+                    }
                     changed = true;
                     if end < bytes.len() {
                         self.pending = Some(PendingEvent {
                             timing,
-                            event: ArtifactEvent::Output { at, stream, bytes },
+                            event: ArtifactEvent::Output {
+                                at,
+                                stream,
+                                bytes,
+                                repeats,
+                            },
                             offset: end,
                             piece: piece + 1,
                         });
@@ -543,7 +645,7 @@ impl<R: Read> Playback<R> {
             index,
             at: Duration::from_nanos(target_ns),
             changed,
-            terminal: self.terminal.as_ref(),
+            terminal: self.terminal.as_ref().map(ReplayTerminal::terminal),
         }))
     }
 }
@@ -552,8 +654,9 @@ fn event_stream(event: &ArtifactEvent) -> Option<StreamId> {
     match event {
         ArtifactEvent::Started { stream, .. }
         | ArtifactEvent::Output { stream, .. }
-        | ArtifactEvent::Checkpoint { stream, .. }
         | ArtifactEvent::Resized { stream, .. }
+        | ArtifactEvent::Reset { stream, .. }
+        | ArtifactEvent::Configured { stream, .. }
         | ArtifactEvent::Ended { stream, .. } => Some(*stream),
         ArtifactEvent::Finished { .. } => None,
     }
@@ -632,7 +735,10 @@ mod tests {
             CapturedEvent {
                 at_ns: NANOS_PER_SECOND,
                 stream: one,
-                data: CapturedData::Output(b"A".to_vec()),
+                data: CapturedData::Output {
+                    bytes: b"A".to_vec(),
+                    repeats: Vec::new(),
+                },
             },
             CapturedEvent {
                 at_ns: NANOS_PER_SECOND,
@@ -646,7 +752,10 @@ mod tests {
             CapturedEvent {
                 at_ns: 2 * NANOS_PER_SECOND,
                 stream: two,
-                data: CapturedData::Output(b"B\x1b[6n".to_vec()),
+                data: CapturedData::Output {
+                    bytes: b"B\x1b[6n".to_vec(),
+                    repeats: Vec::new(),
+                },
             },
             CapturedEvent {
                 at_ns: 2 * NANOS_PER_SECOND,
@@ -656,7 +765,10 @@ mod tests {
             CapturedEvent {
                 at_ns: 7 * NANOS_PER_SECOND,
                 stream: one,
-                data: CapturedData::Output(final_output.to_vec()),
+                data: CapturedData::Output {
+                    bytes: final_output.to_vec(),
+                    repeats: Vec::new(),
+                },
             },
         ];
         for event in events {
@@ -688,7 +800,10 @@ mod tests {
                 .write_event(&CapturedEvent {
                     at_ns: at_ms * 1_000_000,
                     stream: StreamId::from_index(index).unwrap(),
-                    data: CapturedData::Output(bytes.to_vec()),
+                    data: CapturedData::Output {
+                        bytes: bytes.to_vec(),
+                        repeats: Vec::new(),
+                    },
                 })
                 .unwrap();
         }

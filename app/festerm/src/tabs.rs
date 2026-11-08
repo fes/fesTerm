@@ -998,7 +998,7 @@ impl SessionTab {
     pub fn apply_frontend_terminal_configuration(&mut self, preference: ScrollbackLimitPreference) {
         self.set_scrollback_limit(preference);
         self.apply_color_scheme();
-        self.controller.record_checkpoint(&self.terminal);
+        self.controller.record_configuration(&self.terminal);
     }
 
     pub fn sync_recovery_clear(&self) -> Result<(), PersistentSessionError> {
@@ -1027,7 +1027,7 @@ impl SessionTab {
         };
         self.terminal = recovered;
         self.view.reset_recovery_layout();
-        self.controller.record_checkpoint(&self.terminal);
+        self.controller.end_recording_on_replacement();
         true
     }
 

@@ -6,19 +6,36 @@ use std::{
 };
 
 use bincode::Options;
-use festerm_core::{RecordingCheckpoint, Terminal, MAX_RECORDING_CHECKPOINT_BYTES};
+use festerm_core::{
+    ColorScheme, Dimensions, RecordingCheckpoint, Terminal, MAX_RECORDING_CHECKPOINT_BYTES,
+    MAX_RECORDING_SCROLLBACK_BYTES,
+};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{MAX_ARTIFACT_BYTES, MAX_DURATION, MAX_OUTPUT_BYTES, MAX_STREAMS};
+use crate::{MAX_ARTIFACT_BYTES, MAX_DURATION, MAX_OUTPUT_BYTES, MAX_OUTPUT_REPEATS, MAX_STREAMS};
 
-const MAGIC: &[u8; 8] = b"FSTREC1\0";
+const MAGIC: &[u8; 8] = b"FSTREC2\0";
 const HEADER_BYTES: usize = 18;
 const START: u8 = 1;
 const OUTPUT: u8 = 2;
-const CHECKPOINT: u8 = 3;
 const RESIZE: u8 = 4;
 const END: u8 = 5;
 const FINISH: u8 = 6;
+const RESET: u8 = 7;
+const CONFIGURE: u8 = 8;
+const MAX_CONFIG_BYTES: usize = 256;
+const NO_REPEAT_CHARACTER: u32 = 0x11_0000;
+
+/// Byte offset of a REP's final byte and its privacy-projected character.
+pub type RepeatHint = (usize, Option<char>);
+
+#[derive(Deserialize, Serialize)]
+struct RecordedConfiguration {
+    color_scheme: ColorScheme,
+    scrollback_limit_bytes: usize,
+    history_capped: bool,
+}
 
 /// A recording-local session index, assigned in enrollment order.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -83,21 +100,29 @@ pub enum ArtifactEvent {
         at: Duration,
         stream: StreamId,
         terminal: Terminal,
+        history_capped: bool,
     },
     Output {
         at: Duration,
         stream: StreamId,
         bytes: Vec<u8>,
-    },
-    Checkpoint {
-        at: Duration,
-        stream: StreamId,
-        terminal: Terminal,
+        repeats: Vec<RepeatHint>,
     },
     Resized {
         at: Duration,
         stream: StreamId,
-        terminal: Terminal,
+        dimensions: Dimensions,
+    },
+    Reset {
+        at: Duration,
+        stream: StreamId,
+    },
+    Configured {
+        at: Duration,
+        stream: StreamId,
+        color_scheme: ColorScheme,
+        scrollback_limit_bytes: usize,
+        history_capped: bool,
     },
     Ended {
         at: Duration,
@@ -114,8 +139,9 @@ impl ArtifactEvent {
         match self {
             Self::Started { at, .. }
             | Self::Output { at, .. }
-            | Self::Checkpoint { at, .. }
             | Self::Resized { at, .. }
+            | Self::Reset { at, .. }
+            | Self::Configured { at, .. }
             | Self::Ended { at, .. }
             | Self::Finished { at, .. } => *at,
         }
@@ -209,9 +235,17 @@ impl<R: Read> Read for RecoveryReader<R> {
 
 pub(crate) enum CapturedData {
     Start(RecordingCheckpoint),
-    Output(Vec<u8>),
-    Checkpoint(RecordingCheckpoint),
-    Resize(RecordingCheckpoint),
+    Output {
+        bytes: Vec<u8>,
+        repeats: Vec<RepeatHint>,
+    },
+    Resize(Dimensions),
+    Reset,
+    Configure {
+        color_scheme: ColorScheme,
+        scrollback_limit_bytes: usize,
+        history_capped: bool,
+    },
     End,
 }
 
@@ -251,26 +285,50 @@ impl ArtifactWriter {
                 event.at_ns,
                 &encode_checkpoint(checkpoint)?,
             ),
-            CapturedData::Output(bytes) => {
-                if bytes.is_empty() || bytes.len() > MAX_OUTPUT_BYTES {
+            CapturedData::Output { bytes, repeats } => self.write_frame(
+                OUTPUT,
+                event.stream.0,
+                event.at_ns,
+                &encode_output(bytes, repeats)?,
+            ),
+            CapturedData::Resize(dimensions) => {
+                Terminal::validate_recording_dimensions(*dimensions)
+                    .map_err(|error| ArtifactError::new(error.to_string()))?;
+                let columns = u32::try_from(dimensions.columns())
+                    .map_err(|_| ArtifactError::new("recording columns overflow"))?;
+                let rows = u32::try_from(dimensions.rows())
+                    .map_err(|_| ArtifactError::new("recording rows overflow"))?;
+                let mut payload = [0; 8];
+                payload[..4].copy_from_slice(&columns.to_le_bytes());
+                payload[4..].copy_from_slice(&rows.to_le_bytes());
+                self.write_frame(RESIZE, event.stream.0, event.at_ns, &payload)
+            }
+            CapturedData::Reset => self.write_frame(RESET, event.stream.0, event.at_ns, &[]),
+            CapturedData::Configure {
+                color_scheme,
+                scrollback_limit_bytes,
+                history_capped,
+            } => {
+                if *scrollback_limit_bytes > MAX_RECORDING_SCROLLBACK_BYTES {
                     return Err(ArtifactError::new(
-                        "recorded output exceeds its event limit",
+                        "recording history limit exceeds its bound",
                     ));
                 }
-                self.write_frame(OUTPUT, event.stream.0, event.at_ns, bytes)
+                let configuration = RecordedConfiguration {
+                    color_scheme: *color_scheme,
+                    scrollback_limit_bytes: *scrollback_limit_bytes,
+                    history_capped: *history_capped,
+                };
+                let payload =
+                    configuration_options()
+                        .serialize(&configuration)
+                        .map_err(|error| {
+                            ArtifactError::new(format!(
+                                "recording configuration encoding failed: {error}"
+                            ))
+                        })?;
+                self.write_frame(CONFIGURE, event.stream.0, event.at_ns, &payload)
             }
-            CapturedData::Checkpoint(checkpoint) => self.write_frame(
-                CHECKPOINT,
-                event.stream.0,
-                event.at_ns,
-                &encode_checkpoint(checkpoint)?,
-            ),
-            CapturedData::Resize(checkpoint) => self.write_frame(
-                RESIZE,
-                event.stream.0,
-                event.at_ns,
-                &encode_checkpoint(checkpoint)?,
-            ),
             CapturedData::End => self.write_frame(END, event.stream.0, event.at_ns, &[]),
         }
     }
@@ -331,6 +389,80 @@ fn encode_checkpoint(checkpoint: &RecordingCheckpoint) -> Result<Vec<u8>, Artifa
         .map_err(|error| ArtifactError::new(format!("checkpoint encoding failed: {error}")))
 }
 
+fn configuration_options() -> impl Options {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(MAX_CONFIG_BYTES as u64)
+        .reject_trailing_bytes()
+}
+
+fn encode_output(bytes: &[u8], repeats: &[RepeatHint]) -> Result<Vec<u8>, ArtifactError> {
+    if bytes.is_empty() || bytes.len() > MAX_OUTPUT_BYTES || repeats.len() > MAX_OUTPUT_REPEATS {
+        return Err(ArtifactError::new(
+            "recorded output exceeds its event limit",
+        ));
+    }
+    let mut payload = Vec::with_capacity(4 + repeats.len() * 8 + bytes.len());
+    payload.extend_from_slice(&(repeats.len() as u32).to_le_bytes());
+    let mut previous = None;
+    for &(offset, character) in repeats {
+        if offset >= bytes.len()
+            || bytes[offset] != b'b'
+            || previous.is_some_and(|last| offset <= last)
+        {
+            return Err(ArtifactError::new("recording repeat hints are invalid"));
+        }
+        payload.extend_from_slice(&(offset as u32).to_le_bytes());
+        payload.extend_from_slice(
+            &character
+                .map_or(NO_REPEAT_CHARACTER, u32::from)
+                .to_le_bytes(),
+        );
+        previous = Some(offset);
+    }
+    payload.extend_from_slice(bytes);
+    Ok(payload)
+}
+
+fn decode_output(mut payload: Vec<u8>) -> Result<(Vec<u8>, Vec<RepeatHint>), ArtifactError> {
+    if payload.len() < 5 {
+        return Err(ArtifactError::new("recorded output is truncated"));
+    }
+    let count = u32::from_le_bytes(payload[..4].try_into().expect("fixed count")) as usize;
+    if count > MAX_OUTPUT_REPEATS {
+        return Err(ArtifactError::new("recording has too many repeat hints"));
+    }
+    let start = 4 + count * 8;
+    if start >= payload.len() || payload.len() - start > MAX_OUTPUT_BYTES {
+        return Err(ArtifactError::new(
+            "recorded output exceeds its event limit",
+        ));
+    }
+    let mut repeats = Vec::with_capacity(count);
+    for entry in payload[4..start].chunks_exact(8) {
+        let offset = u32::from_le_bytes(entry[..4].try_into().expect("fixed offset")) as usize;
+        let code = u32::from_le_bytes(entry[4..].try_into().expect("fixed character"));
+        let character = if code == NO_REPEAT_CHARACTER {
+            None
+        } else {
+            Some(
+                char::from_u32(code)
+                    .ok_or_else(|| ArtifactError::new("recording repeat character is invalid"))?,
+            )
+        };
+        if offset >= payload.len() - start
+            || payload[start + offset] != b'b'
+            || repeats
+                .last()
+                .is_some_and(|(previous, _)| offset <= *previous)
+        {
+            return Err(ArtifactError::new("recording repeat hints are invalid"));
+        }
+        repeats.push((offset, character));
+    }
+    Ok((payload.split_off(start), repeats))
+}
+
 /// Streams a bounded, integrity-checked source without loading it into memory.
 ///
 /// Incomplete sources can be inspected, but a caller must not treat one as a
@@ -349,6 +481,11 @@ impl<R: Read> ArtifactReader<R> {
     pub fn new(mut input: R) -> Result<Self, ArtifactError> {
         let mut magic = [0; MAGIC.len()];
         input.read_exact(&mut magic)?;
+        if &magic == b"FSTREC1\0" {
+            return Err(ArtifactError::new(
+                "legacy recording format cannot be safely exported",
+            ));
+        }
         if &magic != MAGIC {
             return Err(ArtifactError::new("unsupported recording format"));
         }
@@ -389,14 +526,16 @@ impl<R: Read> ArtifactReader<R> {
             return Err(ArtifactError::new("recording timestamps are out of range"));
         }
         let maximum = match kind {
-            START | CHECKPOINT | RESIZE => MAX_RECORDING_CHECKPOINT_BYTES,
-            OUTPUT => MAX_OUTPUT_BYTES,
-            END => 0,
+            START => MAX_RECORDING_CHECKPOINT_BYTES,
+            OUTPUT => MAX_OUTPUT_BYTES + 4 + MAX_OUTPUT_REPEATS * 8,
+            RESIZE => 8,
+            END | RESET => 0,
+            CONFIGURE => MAX_CONFIG_BYTES,
             FINISH => 1,
             _ => return Err(ArtifactError::new("unknown recording frame type")),
         };
         if length > maximum
-            || (matches!(kind, START | CHECKPOINT | RESIZE | OUTPUT | FINISH) && length == 0)
+            || (matches!(kind, START | RESIZE | OUTPUT | CONFIGURE | FINISH) && length == 0)
         {
             return Err(ArtifactError::new("recording frame exceeds its size limit"));
         }
@@ -447,34 +586,68 @@ impl<R: Read> ArtifactReader<R> {
                         "recording streams are not in enrollment order",
                     ));
                 }
-                let terminal = decode_checkpoint(&payload)?;
+                let (terminal, history_capped) = decode_checkpoint(&payload)?;
                 self.next_stream += 1;
                 self.active[slot] = true;
                 ArtifactEvent::Started {
                     at,
                     stream,
                     terminal,
+                    history_capped,
                 }
             } else {
                 if !self.active[slot] {
                     return Err(ArtifactError::new("recording event has no active stream"));
                 }
                 match kind {
-                    OUTPUT => ArtifactEvent::Output {
-                        at,
-                        stream,
-                        bytes: payload,
-                    },
-                    CHECKPOINT => ArtifactEvent::Checkpoint {
-                        at,
-                        stream,
-                        terminal: decode_checkpoint(&payload)?,
-                    },
-                    RESIZE => ArtifactEvent::Resized {
-                        at,
-                        stream,
-                        terminal: decode_checkpoint(&payload)?,
-                    },
+                    OUTPUT => {
+                        let (bytes, repeats) = decode_output(payload)?;
+                        ArtifactEvent::Output {
+                            at,
+                            stream,
+                            bytes,
+                            repeats,
+                        }
+                    }
+                    RESIZE => {
+                        if payload.len() != 8 {
+                            return Err(ArtifactError::new("recording resize is invalid"));
+                        }
+                        let columns =
+                            u32::from_le_bytes(payload[..4].try_into().expect("fixed columns"));
+                        let rows = u32::from_le_bytes(payload[4..].try_into().expect("fixed rows"));
+                        let dimensions = Dimensions::new(columns as usize, rows as usize)
+                            .map_err(|error| ArtifactError::new(error.to_string()))?;
+                        Terminal::validate_recording_dimensions(dimensions)
+                            .map_err(|error| ArtifactError::new(error.to_string()))?;
+                        ArtifactEvent::Resized {
+                            at,
+                            stream,
+                            dimensions,
+                        }
+                    }
+                    RESET => ArtifactEvent::Reset { at, stream },
+                    CONFIGURE => {
+                        let configuration: RecordedConfiguration = configuration_options()
+                            .deserialize(&payload)
+                            .map_err(|error| {
+                                ArtifactError::new(format!(
+                                    "invalid recording configuration: {error}"
+                                ))
+                            })?;
+                        if configuration.scrollback_limit_bytes > MAX_RECORDING_SCROLLBACK_BYTES {
+                            return Err(ArtifactError::new(
+                                "recording history limit exceeds its bound",
+                            ));
+                        }
+                        ArtifactEvent::Configured {
+                            at,
+                            stream,
+                            color_scheme: configuration.color_scheme,
+                            scrollback_limit_bytes: configuration.scrollback_limit_bytes,
+                            history_capped: configuration.history_capped,
+                        }
+                    }
                     END => {
                         self.active[slot] = false;
                         ArtifactEvent::Ended { at, stream }
@@ -514,11 +687,13 @@ impl<R: Read> ArtifactReader<R> {
     }
 }
 
-fn decode_checkpoint(payload: &[u8]) -> Result<Terminal, ArtifactError> {
+fn decode_checkpoint(payload: &[u8]) -> Result<(Terminal, bool), ArtifactError> {
     let checkpoint: RecordingCheckpoint = checkpoint_options()
         .deserialize(payload)
         .map_err(|error| ArtifactError::new(format!("invalid recording checkpoint: {error}")))?;
+    let history_capped = checkpoint.history_capped();
     checkpoint
         .into_terminal()
+        .map(|terminal| (terminal, history_capped))
         .map_err(|error| ArtifactError::new(format!("invalid recording checkpoint: {error}")))
 }

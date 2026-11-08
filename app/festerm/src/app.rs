@@ -4094,7 +4094,7 @@ impl FesTermApp {
         } else if !authoritative {
             session.terminal.reset_to_initial_state();
             session.controller.record_local_observation_change();
-            session.controller.record_checkpoint(&session.terminal);
+            session.controller.record_reset();
         }
         session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((
@@ -4125,9 +4125,10 @@ impl FesTermApp {
                 .record_operation_error("terminal clear", error);
             return;
         } else if !authoritative {
-            session.terminal.ingest(b"\x1b[2J\x1b[3J\x1b[H");
+            session
+                .controller
+                .ingest_recorded_output(&mut session.terminal, b"\x1b[2J\x1b[3J\x1b[H");
             session.controller.record_local_observation_change();
-            session.controller.record_checkpoint(&session.terminal);
         }
         session.view.cancel_rectangle_copy();
         self.overlays.transient_notice = Some((

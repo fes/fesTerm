@@ -6,6 +6,7 @@ mod artifact;
 mod capture;
 mod naming;
 mod playback;
+mod replay;
 mod settings;
 #[cfg(any(unix, windows))]
 mod settings_store;
@@ -13,7 +14,7 @@ mod shared;
 
 pub use artifact::{
     ArtifactError, ArtifactEvent, ArtifactReader, FinishReason, RecoveryPrefix, RecoveryReader,
-    StreamId,
+    RepeatHint, StreamId,
 };
 pub use capture::{CaptureError, Completion, PreparedRecording, Recorder};
 pub use naming::{LocalStart, NameError, NameTemplates, RecordingId};
@@ -40,5 +41,7 @@ pub const MAX_DURATION: std::time::Duration = std::time::Duration::from_secs(2 *
 pub const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
 /// Maximum output bytes in a single mutation event.
 pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+/// Maximum repeat-character annotations in one output mutation.
+pub const MAX_OUTPUT_REPEATS: usize = 4096;
 /// Maximum queued capture memory, including checkpoints.
 pub const MAX_QUEUE_BYTES: usize = 16 * 1024 * 1024;

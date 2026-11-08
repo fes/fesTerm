@@ -19,7 +19,10 @@ use crate::{
         RecordingParser, StringTerminator, TerminalOp,
     },
     replies::{queue_transport_bytes, QueuePushResult},
-    screen::{deserialize_recording_vec, ColumnSpan, RecordingScreen, Rectangle, Screen},
+    screen::{
+        deserialize_recording_vec, recording_text_is_hidden, ColumnSpan, RecordingScreen,
+        Rectangle, Screen,
+    },
     unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
     Cursor, Dimensions, TRANSPORT_QUEUE_HIGH_WATERMARK,
 };
@@ -372,9 +375,9 @@ impl BufferState {
         })
     }
 
-    fn recording_copy(&self) -> RecordingBufferState {
+    fn recording_copy(&self, scheme: &ColorScheme) -> RecordingBufferState {
         RecordingBufferState {
-            screen: self.screen.recording_copy(),
+            screen: self.screen.recording_copy(scheme),
             cursor: self.cursor,
             scroll_top: self.scroll_top,
             scroll_bottom: self.scroll_bottom,
@@ -780,12 +783,21 @@ pub struct RecordingCheckpoint {
     current_foreground: Color,
     current_background: Color,
     color_scheme: ColorScheme,
+    scrollback_limit_bytes: usize,
+    history_capped: bool,
 }
 
 /// Maximum estimated allocation for one recording checkpoint.
 pub const MAX_RECORDING_CHECKPOINT_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum post-consent history retained by one recording replay.
+pub const MAX_RECORDING_SCROLLBACK_BYTES: usize = 8 * 1024 * 1024;
 
 impl RecordingCheckpoint {
+    /// Whether replay retains less history than the live terminal.
+    pub const fn history_capped(&self) -> bool {
+        self.history_capped
+    }
+
     /// Returns the conservative allocation charge used by the recording queue.
     pub fn estimated_allocation_bytes(&self) -> Result<usize, TerminalError> {
         validate_recording_size(
@@ -798,6 +810,11 @@ impl RecordingCheckpoint {
     /// Validates and restores a checkpoint into an isolated terminal with no history.
     pub fn into_terminal(self) -> Result<Terminal, TerminalError> {
         self.estimated_allocation_bytes()?;
+        if self.scrollback_limit_bytes > MAX_RECORDING_SCROLLBACK_BYTES {
+            return Err(TerminalError::invalid_snapshot(
+                "recording history limit exceeds its bound",
+            ));
+        }
         if self.modes.alternate_screen() != (self.active_screen == ActiveScreen::Alternate) {
             return Err(TerminalError::invalid_snapshot(
                 "recording screen and alternate-screen mode disagree",
@@ -838,7 +855,7 @@ impl RecordingCheckpoint {
             input_queue: Vec::new(),
             reply_queue_overflowed: false,
             input_queue_overflowed: false,
-            scrollback: Scrollback::new(0),
+            scrollback: Scrollback::new(self.scrollback_limit_bytes),
         };
         terminal.validate_recovery_snapshot()?;
         terminal.restore_recovery_snapshot_allocations();
@@ -1203,6 +1220,35 @@ impl Terminal {
         self.scrollback.set_limit_bytes(limit_bytes);
     }
 
+    /// Validates a recording resize before a replay allocates its screen.
+    pub fn validate_recording_dimensions(dimensions: Dimensions) -> Result<(), TerminalError> {
+        let screen_bytes = dimensions
+            .cell_count()
+            .checked_mul(std::mem::size_of::<Cell>() + 32)
+            .and_then(|bytes| {
+                dimensions
+                    .rows()
+                    .checked_mul(std::mem::size_of::<usize>() + 3)
+                    .and_then(|rows| bytes.checked_add(rows))
+            });
+        validate_recording_size(
+            screen_bytes,
+            dimensions.columns(),
+            MAX_RECORDING_CHECKPOINT_BYTES,
+        )
+        .map(drop)
+    }
+
+    /// Checks the live visible screen's allocation without copying its contents.
+    pub fn validate_recording_screen(&self) -> Result<(), TerminalError> {
+        validate_recording_size(
+            self.active_buffer().screen.recording_allocation_bound(),
+            self.tab_stops.len(),
+            MAX_RECORDING_CHECKPOINT_BYTES,
+        )
+        .map(drop)
+    }
+
     /// Borrows one retained physical row by its oldest-first history index.
     pub fn scrollback_physical_row(&self, row: usize) -> Option<&[Cell]> {
         self.scrollback.physical_row(row)
@@ -1263,6 +1309,81 @@ impl Terminal {
     }
 
     fn ingest_byte(&mut self, byte: u8) {
+        self.ingest_byte_observing_repeats(byte, &mut |_| {});
+    }
+
+    /// Applies output while reporting the character actually used by each REP.
+    ///
+    /// A character that would be concealed in the live terminal is replaced
+    /// with a same-width blank, so pre-consent hidden text is not copied.
+    pub fn ingest_observing_recording(
+        &mut self,
+        bytes: &[u8],
+        mut observe_repeat: impl FnMut(usize, Option<char>),
+        mut observe_screen: impl FnMut(usize, &Terminal),
+    ) {
+        for (offset, &byte) in bytes.iter().enumerate() {
+            let generation = self.screen_generation;
+            self.ingest_byte_observing_repeats(byte, &mut |terminal| {
+                observe_repeat(offset, terminal.recording_repeat_character());
+            });
+            if self.screen_generation != generation {
+                observe_screen(offset, self);
+            }
+        }
+    }
+
+    /// Applies recorded output, requiring one ordered hint for every REP.
+    pub fn ingest_recorded_output(
+        &mut self,
+        bytes: &[u8],
+        hints: impl IntoIterator<Item = (usize, Option<char>)>,
+    ) -> Result<(), TerminalError> {
+        let mut hints = hints.into_iter().peekable();
+        let mut invalid = false;
+        for (offset, &byte) in bytes.iter().enumerate() {
+            if hints.peek().is_some_and(|(position, _)| *position < offset) {
+                invalid = true;
+            }
+            self.ingest_byte_observing_repeats(byte, &mut |terminal| {
+                if hints
+                    .peek()
+                    .is_some_and(|(position, _)| *position == offset)
+                {
+                    terminal.last_graphic_character = hints.next().expect("hint was present").1;
+                } else {
+                    invalid = true;
+                }
+            });
+        }
+        if invalid || hints.next().is_some() {
+            return Err(TerminalError::invalid_snapshot(
+                "recording repeat hints do not match terminal output",
+            ));
+        }
+        Ok(())
+    }
+
+    fn recording_repeat_character(&self) -> Option<char> {
+        self.last_graphic_character.map(|character| {
+            if recording_text_is_hidden(
+                self.current_foreground,
+                self.current_background,
+                self.current_attributes,
+                &self.color_scheme,
+            ) {
+                if UnicodeWidthChar::width(character).unwrap_or(0) > 1 {
+                    '\u{3000}'
+                } else {
+                    ' '
+                }
+            } else {
+                character
+            }
+        })
+    }
+
+    fn ingest_byte_observing_repeats(&mut self, byte: u8, observe: &mut impl FnMut(&mut Self)) {
         if self.utf8.pending() {
             match self.utf8.advance(byte) {
                 Utf8Advance::Pending => return,
@@ -1272,7 +1393,7 @@ impl Terminal {
                 }
                 Utf8Advance::Invalid => {
                     self.print(char::REPLACEMENT_CHARACTER);
-                    self.ingest_byte(byte);
+                    self.ingest_byte_observing_repeats(byte, observe);
                     return;
                 }
             }
@@ -1286,6 +1407,9 @@ impl Terminal {
         }
 
         let operation = self.parser.advance(byte);
+        if matches!(operation, TerminalOp::RepeatPrecedingCharacter(_)) {
+            observe(self);
+        }
         self.apply(operation);
         let action = self.parser.take_osc_action();
         self.apply_osc_action(action);
@@ -1357,7 +1481,7 @@ impl Terminal {
     /// A partial protocol or UTF-8 sequence must finish before capture starts:
     /// its buffered bytes may contain pre-consent output not visible on screen.
     /// The last character used by `REP` is omitted because it can have scrolled
-    /// offscreen; recording must checkpoint again after applying `REP`.
+    /// offscreen; later applied repeats must carry their own safe hints.
     pub fn recording_checkpoint(
         &self,
         maximum_bytes: usize,
@@ -1379,7 +1503,7 @@ impl Terminal {
         )?;
         let checkpoint = RecordingCheckpoint {
             parser,
-            visible: self.active_buffer().recording_copy(),
+            visible: self.active_buffer().recording_copy(&self.color_scheme),
             active_screen: self.active_screen,
             screen_generation: self.screen_generation,
             modes: self.modes,
@@ -1392,6 +1516,12 @@ impl Terminal {
             current_foreground: self.current_foreground,
             current_background: self.current_background,
             color_scheme: self.color_scheme,
+            scrollback_limit_bytes: self
+                .scrollback
+                .stats()
+                .limit_bytes()
+                .min(MAX_RECORDING_SCROLLBACK_BYTES),
+            history_capped: self.scrollback.stats().limit_bytes() > MAX_RECORDING_SCROLLBACK_BYTES,
         };
         validate_recording_size(
             checkpoint.visible.screen.allocation_bound(),
@@ -1399,6 +1529,15 @@ impl Terminal {
             maximum_bytes,
         )?;
         Ok(checkpoint)
+    }
+
+    /// An ephemeral, sanitized projection for comparing recording replay
+    /// with the current visible buffer, even during a partial input sequence.
+    pub fn recording_visible_state(&self) -> impl Serialize {
+        (
+            self.active_screen,
+            self.active_buffer().recording_copy(&self.color_scheme),
+        )
     }
 
     /// Queues an atomic input write for the session transport.

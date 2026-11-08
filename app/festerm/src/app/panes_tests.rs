@@ -919,8 +919,8 @@ fn recording_tracks_a_passive_pane_resize() {
     let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
     let mut observed = None;
     while let Some(event) = reader.next_event().unwrap() {
-        if let ArtifactEvent::Resized { terminal, .. } = event {
-            observed = Some(terminal.dimensions());
+        if let ArtifactEvent::Resized { dimensions, .. } = event {
+            observed = Some(dimensions);
         }
     }
     assert_eq!(observed, Some(resized));

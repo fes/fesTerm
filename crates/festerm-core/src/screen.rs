@@ -6,10 +6,10 @@ use serde::{
 use std::{fmt, marker::PhantomData};
 
 use crate::{
-    cell::{blank_cell, Attributes, Cell, CellWidth},
+    cell::{blank_cell, Attributes, Cell, CellWidth, FAINT_OPACITY},
     terminal::{TerminalError, MAX_RECORDING_CHECKPOINT_BYTES},
     unicode::MAX_GRAPHEME_BYTES,
-    Color, Dimensions,
+    Color, ColorScheme, Dimensions, Rgb,
 };
 
 /// A visible grid and its redraw state.
@@ -46,9 +46,15 @@ struct RecordingCell {
 }
 
 impl RecordingCell {
-    fn from_cell(cell: &Cell) -> Self {
+    fn from_cell(cell: &Cell, scheme: &ColorScheme) -> Self {
+        let hidden =
+            recording_text_is_hidden(cell.foreground, cell.background, cell.attributes, scheme);
         Self {
-            text: cell.text.clone(),
+            text: if hidden && cell.width != CellWidth::Continuation {
+                CompactString::const_new(" ")
+            } else {
+                cell.text.clone()
+            },
             width: cell.width,
             foreground: cell.foreground,
             background: cell.background,
@@ -68,6 +74,57 @@ impl RecordingCell {
             hyperlink: None,
         }
     }
+}
+
+pub(crate) fn recording_text_is_hidden(
+    foreground: Color,
+    background: Color,
+    attributes: Attributes,
+    scheme: &ColorScheme,
+) -> bool {
+    if attributes.contains(Attributes::CONCEALED) {
+        return true;
+    }
+    let mut foreground = scheme.resolve(foreground, scheme.foreground());
+    let mut background = scheme.resolve(background, scheme.background());
+    if attributes.contains(Attributes::INVERSE) {
+        std::mem::swap(&mut foreground, &mut background);
+    }
+    foreground == background
+        || (attributes.contains(Attributes::FAINT)
+            && faint_can_match_background(foreground, background))
+}
+
+fn faint_can_match_background(foreground: Rgb, background: Rgb) -> bool {
+    // Both gamma and sRGB framebuffer blending can round faint ink into its background.
+    let foreground = [foreground.red, foreground.green, foreground.blue];
+    let background = [background.red, background.green, background.blue];
+    let opacity = f64::from((255.0 * FAINT_OPACITY + 0.5) as u8) / 255.0;
+    let mut gamma_matches = true;
+    let mut linear_matches = true;
+    for (foreground, background) in foreground.into_iter().zip(background) {
+        let premultiplied = f64::from((f32::from(foreground) * FAINT_OPACITY + 0.5) as u8);
+        let background = f64::from(background);
+        let gamma = premultiplied + background * (1.0 - opacity);
+        gamma_matches &= (gamma.round() - background).abs() <= 1.0;
+
+        let to_linear = |value: f64| {
+            let value = value / 255.0;
+            if value < 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let linear = to_linear(premultiplied) + to_linear(background) * (1.0 - opacity);
+        let gamma = if linear < 0.0031308 {
+            linear * 12.92
+        } else {
+            1.055 * linear.powf(1.0 / 2.4) - 0.055
+        };
+        linear_matches &= ((gamma * 255.0).round() - background).abs() <= 1.0;
+    }
+    gamma_matches || linear_matches
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -314,11 +371,15 @@ impl Screen {
             })
     }
 
-    pub(crate) fn recording_copy(&self) -> RecordingScreen {
+    pub(crate) fn recording_copy(&self, scheme: &ColorScheme) -> RecordingScreen {
         RecordingScreen {
             dimensions: self.dimensions,
             top: self.top,
-            cells: self.cells.iter().map(RecordingCell::from_cell).collect(),
+            cells: self
+                .cells
+                .iter()
+                .map(|cell| RecordingCell::from_cell(cell, scheme))
+                .collect(),
             occupied_cells: self.occupied_cells.clone(),
             soft_wrapped_rows: self.soft_wrapped_rows.clone(),
             occupied_columns: self.occupied_columns.clone(),

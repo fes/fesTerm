@@ -608,6 +608,68 @@ mod tests {
     }
 
     #[test]
+    fn recording_renderer_never_draws_concealed_text() {
+        let size = RecordingFrameSize::new(320, 180).unwrap();
+        for ligatures in [false, true] {
+            for (prefix, suffix) in [
+                (b"\x1b[8m".as_slice(), b"\x1b[0m\x1b[H\x1b[2 q".as_slice()),
+                (b"\x1b[?25l\x1b[2;4;9;8m".as_slice(), b"\x1b[0m".as_slice()),
+            ] {
+                let render = |text: &[u8]| {
+                    let mut renderer = RecordingRenderer::with_appearance(
+                        size,
+                        20.0,
+                        TerminalFontFamily::JetBrainsMono,
+                        ligatures,
+                        None,
+                        RecordingPalette::Dark,
+                    )
+                    .unwrap();
+                    let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+                    terminal.ingest(prefix);
+                    terminal.ingest(text);
+                    terminal.ingest(suffix);
+                    renderer.render(Some(&terminal)).unwrap().to_vec()
+                };
+                assert_eq!(render(b"X"), render(b" "), "ligatures: {ligatures}");
+            }
+        }
+    }
+
+    #[test]
+    fn recording_palette_cannot_reveal_invisible_checkpoint_text() {
+        let size = RecordingFrameSize::new(320, 180).unwrap();
+        let render = |style: &[u8], text: &[u8]| {
+            let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+            terminal.ingest(b"\x1b[?25l");
+            terminal.ingest(style);
+            terminal.ingest(text);
+            let recorded = terminal
+                .recording_checkpoint(festerm_core::MAX_RECORDING_CHECKPOINT_BYTES)
+                .unwrap()
+                .into_terminal()
+                .unwrap();
+            let mut renderer = RecordingRenderer::with_appearance(
+                size,
+                20.0,
+                TerminalFontFamily::JetBrainsMono,
+                false,
+                None,
+                RecordingPalette::Light,
+            )
+            .unwrap();
+            renderer.render(Some(&recorded)).unwrap().to_vec()
+        };
+        for style in [
+            b"\x1b[38;2;17;22;30m".as_slice(),
+            b"\x1b[2;38;2;16;22;30m".as_slice(),
+            b"\x1b[2;38;2;130;130;130;48;2;100;100;100m".as_slice(),
+        ] {
+            assert_eq!(render(style, b"SECRET"), render(style, b"      "));
+        }
+    }
+
+    #[test]
     fn recording_rejects_missing_or_invalid_selected_fonts() {
         let size = RecordingFrameSize::new(320, 180).unwrap();
         assert!(RecordingRenderer::with_appearance(

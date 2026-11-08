@@ -122,7 +122,8 @@ impl RecordingPrivacyMonitor {
             ));
         }
         let gnome = gnome::GnomePrivacyMonitor::install(callback.clone())?;
-        let logind = PrivacyMonitor::install(callback.clone())?;
+        let logind =
+            PrivacyMonitor::install_for_session(callback.clone(), gnome.session().clone())?;
         if lost.load(Ordering::Acquire) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -153,6 +154,29 @@ impl PrivacyMonitor {
         C: FnOnce() -> F + Send + 'static,
         F: Future<Output = zbus::Result<Connection>>,
     {
+        Self::install_with_session(callback, connect, None)
+    }
+
+    fn install_for_session(
+        callback: Arc<dyn Fn() + Send + Sync>,
+        session: OwnedObjectPath,
+    ) -> io::Result<Self> {
+        Self::install_with_session(
+            callback,
+            || async { Connection::system().await },
+            Some(session),
+        )
+    }
+
+    fn install_with_session<C, F>(
+        callback: Arc<dyn Fn() + Send + Sync>,
+        connect: C,
+        session: Option<OwnedObjectPath>,
+    ) -> io::Result<Self>
+    where
+        C: FnOnce() -> F + Send + 'static,
+        F: Future<Output = zbus::Result<Connection>>,
+    {
         let shared = Arc::new(Shared {
             lost: AtomicBool::new(false),
             callback: Mutex::new(Some(callback)),
@@ -167,7 +191,7 @@ impl PrivacyMonitor {
         };
         let started = thread::Builder::new()
             .name("festerm-privacy-monitor".into())
-            .spawn(move || run(thread_shared, connect, stop, ready_send));
+            .spawn(move || run(thread_shared, connect, session, stop, ready_send));
         let result = match started {
             Ok(thread) => {
                 monitor.thread = Some(thread);
@@ -225,6 +249,7 @@ fn other(error: zbus::Error) -> io::Error {
 fn run<C, F>(
     shared: Arc<Shared>,
     connect: C,
+    session: Option<OwnedObjectPath>,
     mut stop: watch::Receiver<bool>,
     ready: mpsc::SyncSender<io::Result<()>>,
 ) where
@@ -251,7 +276,7 @@ fn run<C, F>(
     };
     let ready_on_cancel = ready.clone();
     let monitor = async move {
-        let mut watched = match bounded(Watched::start(connect)).await {
+        let mut watched = match bounded(Watched::start(connect, session)).await {
             Ok(watched) => watched,
             Err(error) => {
                 let _ = ready.send(Err(error));
@@ -320,13 +345,16 @@ struct Watched {
 }
 
 impl Watched {
-    async fn start<C, F>(connect: C) -> io::Result<Self>
+    async fn start<C, F>(connect: C, session: Option<OwnedObjectPath>) -> io::Result<Self>
     where
         C: FnOnce() -> F,
         F: Future<Output = zbus::Result<Connection>>,
     {
         let connection = connect().await.map_err(other)?;
-        let session = resolve_session(&connection).await?;
+        let session = match session {
+            Some(session) => session,
+            None => resolve_session(&connection).await?,
+        };
         let watched_session = WatchedSession {
             connection: &connection,
             session: &session,

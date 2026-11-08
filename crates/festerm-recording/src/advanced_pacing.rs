@@ -5,11 +5,11 @@ use std::{
     time::Duration,
 };
 
-use festerm_core::Terminal;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     playback::{check_cancelled, FinishPolicy},
+    replay::ReplayTerminal,
     ArtifactEvent, ArtifactReader, Pacing, PlaybackError, PlaybackSpeed, StreamId, MAX_STREAMS,
 };
 
@@ -79,7 +79,7 @@ impl AdvancedTimeline {
     ) -> Result<Self, PlaybackError> {
         let mut reader = ArtifactReader::new(source)?;
         let mut entries = Vec::new();
-        let mut terminals: [Option<Terminal>; MAX_STREAMS] = std::array::from_fn(|_| None);
+        let mut terminals: [Option<ReplayTerminal>; MAX_STREAMS] = std::array::from_fn(|_| None);
         let mut stream_count = 0;
         loop {
             check_cancelled(cancelled)?;
@@ -97,34 +97,63 @@ impl AdvancedTimeline {
             let at = nanos(event.timestamp())?;
             let (stream, kind) = match event {
                 ArtifactEvent::Started {
-                    stream, terminal, ..
+                    stream,
+                    terminal,
+                    history_capped,
+                    ..
                 } => {
-                    terminals[stream.index() - 1] = Some(terminal);
+                    terminals[stream.index() - 1] =
+                        Some(ReplayTerminal::new(terminal, history_capped));
                     stream_count += 1;
                     (Some(stream), EntryKind::Boundary)
                 }
-                ArtifactEvent::Checkpoint {
-                    stream, terminal, ..
-                }
-                | ArtifactEvent::Resized {
-                    stream, terminal, ..
+                ArtifactEvent::Resized {
+                    stream, dimensions, ..
                 } => {
-                    terminals[stream.index() - 1] = Some(terminal);
+                    let terminal = terminals[stream.index() - 1]
+                        .as_mut()
+                        .ok_or_else(|| PlaybackError::new("recording resize has no screen"))?;
+                    terminal.resize(dimensions)?;
                     (Some(stream), EntryKind::Boundary)
                 }
-                ArtifactEvent::Output { stream, bytes, .. } => {
+                ArtifactEvent::Reset { stream, .. } => {
+                    let terminal = terminals[stream.index() - 1]
+                        .as_mut()
+                        .ok_or_else(|| PlaybackError::new("recording reset has no screen"))?;
+                    terminal.reset();
+                    (Some(stream), EntryKind::Boundary)
+                }
+                ArtifactEvent::Configured {
+                    stream,
+                    color_scheme,
+                    scrollback_limit_bytes,
+                    history_capped,
+                    ..
+                } => {
+                    let terminal = terminals[stream.index() - 1].as_mut().ok_or_else(|| {
+                        PlaybackError::new("recording configuration has no screen")
+                    })?;
+                    terminal.configure(color_scheme, scrollback_limit_bytes, history_capped)?;
+                    (Some(stream), EntryKind::Boundary)
+                }
+                ArtifactEvent::Output {
+                    stream,
+                    bytes,
+                    repeats,
+                    ..
+                } => {
                     let terminal = terminals[stream.index() - 1]
                         .as_mut()
                         .ok_or_else(|| PlaybackError::new("recording output has no screen"))?;
-                    let before = terminal.cursor();
+                    let before = terminal.terminal().cursor();
                     let pieces = echo_pieces(&bytes);
-                    for chunk in bytes.chunks(INGEST_CHUNK_BYTES) {
+                    for start in (0..bytes.len()).step_by(INGEST_CHUNK_BYTES) {
                         check_cancelled(cancelled)?;
-                        terminal.ingest(chunk);
+                        let end = (start + INGEST_CHUNK_BYTES).min(bytes.len());
+                        terminal.ingest(&bytes, &repeats, start, end)?;
                     }
-                    let _ = terminal.drain_replies();
-                    let _ = terminal.take_reply_queue_overflowed();
-                    let after = terminal.cursor();
+                    terminal.finish_output()?;
+                    let after = terminal.terminal().cursor();
                     let simple_pieces = pieces.filter(|pieces| {
                         before.row() == after.row()
                             && after

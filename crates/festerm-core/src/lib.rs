@@ -153,7 +153,7 @@ impl Cursor {
     }
 }
 
-pub use cell::{Attributes, Cell, CellWidth, Color};
+pub use cell::{Attributes, Cell, CellWidth, Color, FAINT_OPACITY};
 pub use colors::{ColorScheme, Rgb};
 pub use input::{
     FocusEvent, InputEvent, InputEventOutcome, InputPreparationError, Key, KeypadKey, Modifiers,
@@ -166,6 +166,7 @@ pub use screen::Screen;
 pub use terminal::{
     ContentPosition, RecordingCheckpoint, Terminal, TerminalError, TerminalTextSnapshot,
     TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen, MAX_RECORDING_CHECKPOINT_BYTES,
+    MAX_RECORDING_SCROLLBACK_BYTES,
 };
 
 #[cfg(test)]
@@ -1973,6 +1974,53 @@ mod tests {
                     .is_none());
             }
         }
+    }
+
+    #[test]
+    fn recording_checkpoint_redacts_text_invisible_in_the_live_palette() {
+        let mut terminal = terminal(32, 3);
+        terminal.ingest(b"visible ");
+        terminal.ingest(b"\x1b[38;2;17;22;30mCOLOR-PRIVATE\x1b[0m\r\n");
+        terminal.ingest("\x1b[8mCONCEALED界\x1b[0m".as_bytes());
+
+        let restored = terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap()
+            .into_terminal()
+            .unwrap();
+        assert!(restored.row_text(0).unwrap().starts_with("visible "));
+        for row in 0..3 {
+            let text = restored.row_text(row).unwrap();
+            assert!(!text.contains("COLOR-PRIVATE"));
+            assert!(!text.contains("CONCEALED"));
+            assert!(!text.contains('界'));
+        }
+        assert_eq!(
+            restored.screen().cell_ref(9, 1).unwrap().width(),
+            super::CellWidth::Double
+        );
+        assert_eq!(
+            restored.screen().cell_ref(10, 1).unwrap().width(),
+            super::CellWidth::Continuation
+        );
+    }
+
+    #[test]
+    fn recording_checkpoint_redacts_faint_text_that_can_blend_into_its_background() {
+        let mut terminal = terminal(48, 4);
+        terminal.ingest(b"\x1b[2;38;2;16;22;30mGAMMA-PRIVATE\x1b[0m\r\n");
+        terminal.ingest(b"\x1b[2;38;2;130;130;130;48;2;100;100;100mLINEAR-PRIVATE\x1b[0m\r\n");
+        terminal.ingest(b"\x1b[2;7;38;2;100;100;100;48;2;130;130;130mINVERSE-PRIVATE\x1b[0m\r\n");
+        terminal.ingest(b"\x1b[2;38;2;255;255;255;48;2;0;0;0mFAINT-VISIBLE");
+
+        let checkpoint = terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap();
+        let restored = checkpoint.into_terminal().unwrap();
+        for row in 0..3 {
+            assert!(restored.row_text(row).unwrap().trim().is_empty());
+        }
+        assert!(restored.row_text(3).unwrap().contains("FAINT-VISIBLE"));
     }
 
     #[test]

@@ -2548,6 +2548,8 @@ name = "festerm-linux-power"
 version = "0.15.0"
 dependencies = [
  "futures-util",
+ "nix 0.31.3",
+ "tempfile",
  "tokio",
  "zbus",
 ]
@@ -4673,6 +4675,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.2",
  "libc",
+ "memoffset",
 ]
 
 [[package]]

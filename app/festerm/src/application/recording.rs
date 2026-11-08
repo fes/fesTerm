@@ -62,6 +62,8 @@ pub(super) struct DesktopRecording {
     prepare: Option<PrepareTask>,
     privacy_task: Option<PrivacyTask>,
     privacy: Option<PrivacyGuard>,
+    #[cfg(target_os = "linux")]
+    wayland_backend: bool,
     starting: Option<Start>,
     recording: Option<SharedRecording>,
     duration_watch: Option<DurationWatch>,
@@ -157,6 +159,33 @@ impl Default for DesktopRecording {
 }
 
 impl DesktopRecording {
+    #[cfg(target_os = "linux")]
+    pub(super) fn set_wayland_backend(&mut self, available: bool) {
+        if self.wayland_backend == available {
+            return;
+        }
+        self.wayland_backend = available;
+        if available {
+            return;
+        }
+        if let Some(task) = &self.privacy_task {
+            task.cancel();
+        }
+        if let Some(task) = &self.prepare {
+            task.cancel();
+        }
+        if let Some(start) = &mut self.starting {
+            start.error = Some("The Wayland display is unavailable".to_owned());
+        }
+        self.privacy = None;
+        if self.recording.is_some()
+            || self.starting.is_some()
+            || matches!(self.dialog, Some(Dialog::Start { .. }))
+        {
+            self.status = Some("Recording requires a verified GNOME Wayland display".to_owned());
+        }
+    }
+
     pub(super) fn new(auto_open: bool) -> Self {
         Self {
             auto_open,
@@ -170,6 +199,8 @@ impl DesktopRecording {
             prepare: None,
             privacy_task: None,
             privacy: None,
+            #[cfg(target_os = "linux")]
+            wayland_backend: false,
             starting: None,
             recording: None,
             duration_watch: None,
@@ -475,6 +506,12 @@ impl DesktopRecording {
                             self.defaults.clone(),
                             app.recording_choices(self.recording_id(), owner),
                         ));
+                        #[cfg(target_os = "linux")]
+                        if !self.wayland_backend {
+                            self.status =
+                                Some("Recording requires a verified GNOME Wayland display".into());
+                            return;
+                        }
                         match PrivacyTask::start(Self::wake(context)) {
                             Ok(task) => {
                                 self.privacy_task = Some(task);
@@ -927,9 +964,12 @@ impl DesktopRecording {
                     );
                     context.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                Completion::Incomplete { reason, .. } => {
+                Completion::Incomplete { reason, detail, .. } => {
+                    let detail = detail
+                        .map(|detail| format!(": {detail}"))
+                        .unwrap_or_default();
                     self.status = Some(format!(
-                        "Recording ended incompletely ({reason:?}); inspect its source in the recording library before quitting"
+                        "Recording ended incompletely ({reason:?}{detail}); inspect its source in the recording library before quitting"
                     ));
                 }
                 Completion::Failed { message, .. } => {
@@ -949,11 +989,13 @@ impl DesktopRecording {
                 });
                 self.status = Some("Recording is ready for export".to_owned());
             }
-            (Completion::Incomplete { reason, .. }, _, _) => {
+            (Completion::Incomplete { reason, detail, .. }, _, _) => {
+                let detail = detail
+                    .map(|detail| format!(": {detail}"))
+                    .unwrap_or_default();
                 self.status = Some(format!(
-                "Recording ended incompletely ({:?}); inspect its source in the recording library",
-                reason
-            ))
+                    "Recording ended incompletely ({reason:?}{detail}); inspect its source in the recording library"
+                ))
             }
             (Completion::Failed { message, .. }, _, _) => {
                 self.status = Some(format!(

@@ -945,7 +945,8 @@ fn paint_grid_with_clip_override(
                         },
                     );
                 }
-                if !paint.shape_cell_runs && has_glyph_ink(&cell.text) {
+                let concealed = cell.attributes.contains(Attributes::CONCEALED);
+                if !paint.shape_cell_runs && !concealed && has_glyph_ink(&cell.text) {
                     // Clip to this cell's rect. Some glyphs (notably box-drawing
                     // corners/dots in certain bundled faces) can measure taller
                     // than the "M"-derived cell height, so an unclipped paint can
@@ -987,7 +988,9 @@ fn paint_grid_with_clip_override(
                     }
                 }
                 let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
-                if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
+                if !concealed
+                    && (cell.attributes.contains(Attributes::UNDERLINE) || double_underline)
+                {
                     let underline_y = rect.bottom() - if double_underline { 3.0 } else { 2.0 };
                     painter.line_segment(
                         [
@@ -1007,7 +1010,7 @@ fn paint_grid_with_clip_override(
                         );
                     }
                 }
-                if cell.attributes.contains(Attributes::STRIKETHROUGH) {
+                if !concealed && cell.attributes.contains(Attributes::STRIKETHROUGH) {
                     let strikethrough_y = rect.center().y;
                     painter.line_segment(
                         [
@@ -1021,7 +1024,7 @@ fn paint_grid_with_clip_override(
         }
         if paint.shape_cell_runs {
             for run in glyph_runs_with_scheme(cells, row, dimensions, selection_range, &scheme) {
-                if !has_glyph_ink(&run.text) {
+                if run.attributes.contains(Attributes::CONCEALED) || !has_glyph_ink(&run.text) {
                     continue;
                 }
                 let rect = grid_cell_rect(paint.layout, run.position, run.columns);
@@ -1102,11 +1105,11 @@ fn paint_grid_with_clip_override(
                 // underneath; redraw it inverted (background-colored) on
                 // top, matching every other terminal emulator's filled
                 // block-cursor convention.
-                if let Some(cell) = paint
-                    .cache
-                    .row(cursor_row)
-                    .and_then(|row| row.get(cursor_column).filter(|cell| !cell.text.is_empty()))
-                {
+                if let Some(cell) = paint.cache.row(cursor_row).and_then(|row| {
+                    row.get(cursor_column).filter(|cell| {
+                        !cell.text.is_empty() && !cell.attributes.contains(Attributes::CONCEALED)
+                    })
+                }) {
                     let galley = glyphs.layout(
                         &painter,
                         &cell.text,
@@ -1200,11 +1203,11 @@ fn cell_colors_with_scheme(cell: &RenderedCell, scheme: &ColorScheme) -> (Color3
     if cell.attributes.contains(Attributes::INVERSE) {
         std::mem::swap(&mut foreground, &mut background);
     }
+    if cell.attributes.contains(Attributes::FAINT) {
+        foreground = foreground.gamma_multiply(festerm_core::FAINT_OPACITY);
+    }
     if cell.attributes.contains(Attributes::CONCEALED) {
         foreground = background;
-    }
-    if cell.attributes.contains(Attributes::FAINT) {
-        foreground = foreground.gamma_multiply(0.6);
     }
     (foreground, background)
 }

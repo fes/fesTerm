@@ -1140,6 +1140,16 @@ impl FesTermApplication {
     }
 
     fn ui_inner(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(target_os = "linux")]
+        {
+            use raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+
+            self.recording.set_wayland_backend(
+                frame
+                    .display_handle()
+                    .is_ok_and(|handle| matches!(handle.as_raw(), RawDisplayHandle::Wayland(_))),
+            );
+        }
         self.poll_recording(ui.ctx());
         ui.ctx()
             .input(|input| self.ime_admission.observe(WindowId::PRIMARY, &input.events));

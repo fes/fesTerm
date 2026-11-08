@@ -649,11 +649,25 @@ impl<S: Session> SessionController<S> {
         }
     }
 
-    pub fn record_checkpoint(&self, terminal: &Terminal) {
+    pub fn record_configuration(&self, terminal: &Terminal) {
         if let Some(stream) = &self.recording_stream {
             // The shared recording retains any error and wakes its owner.
-            let _ = stream.observe_checkpoint(terminal);
+            let _ = stream.observe_configuration(terminal);
         }
+    }
+
+    pub fn record_reset(&self) {
+        if let Some(stream) = &self.recording_stream {
+            let _ = stream.observe_reset();
+        }
+    }
+
+    pub fn ingest_recorded_output(&self, terminal: &mut Terminal, bytes: &[u8]) {
+        apply_recording_output(terminal, bytes, self.recording_stream.as_ref());
+    }
+
+    pub fn end_recording_on_replacement(&mut self) {
+        drop(self.recording_stream.take());
     }
 
     pub fn record_resize(&self, terminal: &Terminal) {
@@ -960,30 +974,20 @@ impl<S: Session> SessionController<S> {
                 PumpedSessionEvent::Event(event) => observed.push(event.clone()),
             },
             |mutation| match mutation {
-                TerminalMutation::Output {
-                    bytes,
-                    previous_generation,
-                    terminal,
-                } => {
-                    if let Some(stream) = recording_stream.as_ref() {
-                        let _ = stream.observe_output(bytes, previous_generation, terminal);
-                    }
+                TerminalMutation::Output { bytes, terminal } => {
+                    apply_recording_output(terminal, bytes, recording_stream.as_ref());
                 }
-                TerminalMutation::Checkpoint(terminal) => {
-                    if let Some(stream) = recording_stream.as_ref() {
-                        let _ = stream.observe_checkpoint(terminal);
-                    }
+                TerminalMutation::Recovery { command, terminal } => {
+                    apply_recovery_sync(terminal, command, recording_stream.as_ref());
                 }
                 TerminalMutation::Resize(terminal) => {
                     if let Some(stream) = recording_stream.as_ref() {
                         let _ = stream.observe_resize(terminal);
                     }
                 }
-                TerminalMutation::IntegrityFailure => {
+                TerminalMutation::IntegrityFailure(message) => {
                     if let Some(stream) = recording_stream.as_ref() {
-                        let _ = stream.fail_integrity(
-                            "Recording stopped because terminal recovery data was invalid",
-                        );
+                        let _ = stream.fail_integrity(message);
                     }
                 }
                 TerminalMutation::End => {
@@ -1724,12 +1728,14 @@ pub enum PumpedSessionEvent<'a> {
 enum TerminalMutation<'a> {
     Output {
         bytes: &'a [u8],
-        previous_generation: u64,
-        terminal: &'a Terminal,
+        terminal: &'a mut Terminal,
     },
-    Checkpoint(&'a Terminal),
+    Recovery {
+        command: &'a festerm_sessiond::RecoverySyncCommand,
+        terminal: &'a mut Terminal,
+    },
     Resize(&'a Terminal),
-    IntegrityFailure,
+    IntegrityFailure(&'static str),
     End,
 }
 
@@ -1764,7 +1770,13 @@ fn pump_session_events_with_resize(
         time_budget,
         &mut resize,
         &mut observe,
-        |_| {},
+        |mutation| match mutation {
+            TerminalMutation::Output { bytes, terminal } => terminal.ingest(bytes),
+            TerminalMutation::Recovery { command, terminal } => {
+                apply_recovery_sync(terminal, command, None);
+            }
+            _ => {}
+        },
     )
 }
 
@@ -1786,13 +1798,7 @@ fn pump_session_events_with_mutations(
                 SessionEvent::Output(bytes) => {
                     output_received = true;
                     observe(PumpedSessionEvent::Output(bytes));
-                    let previous_generation = terminal.screen_generation();
-                    terminal.ingest(bytes);
-                    mutation(TerminalMutation::Output {
-                        bytes,
-                        previous_generation,
-                        terminal,
-                    });
+                    mutation(TerminalMutation::Output { bytes, terminal });
                     if session.terminal_replies_owned_by_backend() {
                         let _ = terminal.drain_replies();
                         let _ = terminal.take_reply_queue_overflowed();
@@ -1811,12 +1817,16 @@ fn pump_session_events_with_mutations(
                 SessionEvent::RecoverySync(payload) => {
                     match festerm_sessiond::decode_recovery_sync_command(payload) {
                         Ok(command) => {
-                            apply_recovery_sync(terminal, &command);
-                            mutation(TerminalMutation::Checkpoint(terminal));
+                            mutation(TerminalMutation::Recovery {
+                                command: &command,
+                                terminal,
+                            });
                             observe(PumpedSessionEvent::Event(&event));
                         }
                         Err(error) => {
-                            mutation(TerminalMutation::IntegrityFailure);
+                            mutation(TerminalMutation::IntegrityFailure(
+                                "Recording stopped because terminal recovery data was invalid",
+                            ));
                             observe(PumpedSessionEvent::Event(&SessionEvent::Error(
                                 SessionError::new(
                                     SessionErrorKind::Output,
@@ -1848,10 +1858,16 @@ fn pump_session_events_with_mutations(
                     }
                     observe(PumpedSessionEvent::Event(&event));
                 }
+                SessionEvent::Lifecycle(SessionLifecycle::Failed(_)) => {
+                    mutation(TerminalMutation::IntegrityFailure(
+                        "Recording stopped because a terminal session failed",
+                    ));
+                    mutation(TerminalMutation::End);
+                    observe(PumpedSessionEvent::Event(&event));
+                }
                 SessionEvent::Lifecycle(
                     SessionLifecycle::Disconnected(_)
                     | SessionLifecycle::Exited(_)
-                    | SessionLifecycle::Failed(_)
                     | SessionLifecycle::Stopped,
                 ) => {
                     mutation(TerminalMutation::End);
@@ -1873,19 +1889,44 @@ fn pump_session_events_with_mutations(
     }
 }
 
-fn apply_recovery_sync(terminal: &mut Terminal, command: &festerm_sessiond::RecoverySyncCommand) {
+fn apply_recording_output(
+    terminal: &mut Terminal,
+    bytes: &[u8],
+    stream: Option<&festerm_recording::RecordingStream>,
+) {
+    if let Some(stream) = stream {
+        let _ = stream.ingest_output(terminal, bytes);
+    } else {
+        terminal.ingest(bytes);
+    }
+}
+
+fn apply_recovery_sync(
+    terminal: &mut Terminal,
+    command: &festerm_sessiond::RecoverySyncCommand,
+    stream: Option<&festerm_recording::RecordingStream>,
+) {
     match command {
         festerm_sessiond::RecoverySyncCommand::SetScrollbackLimit { limit_bytes } => {
             terminal.set_scrollback_limit(*limit_bytes);
+            if let Some(stream) = stream {
+                let _ = stream.observe_configuration(terminal);
+            }
         }
         festerm_sessiond::RecoverySyncCommand::SetColorScheme(scheme) => {
             terminal.set_color_scheme(*scheme);
+            if let Some(stream) = stream {
+                let _ = stream.observe_configuration(terminal);
+            }
         }
         festerm_sessiond::RecoverySyncCommand::MirrorBytes(bytes) => {
-            terminal.ingest(bytes);
+            apply_recording_output(terminal, bytes, stream);
         }
         festerm_sessiond::RecoverySyncCommand::ResetToInitialState => {
             terminal.reset_to_initial_state();
+            if let Some(stream) = stream {
+                let _ = stream.observe_reset();
+            }
         }
     }
     let _ = terminal.drain_replies();
@@ -3158,12 +3199,11 @@ mod tests {
             events.push(match event {
                 ArtifactEvent::Started { .. } => "start",
                 ArtifactEvent::Output { bytes, .. } if bytes == b"before" => "before",
-                ArtifactEvent::Resized { terminal, .. } => {
-                    assert_eq!(terminal.dimensions(), Dimensions::new(12, 4).unwrap());
+                ArtifactEvent::Resized { dimensions, .. } => {
+                    assert_eq!(dimensions, Dimensions::new(12, 4).unwrap());
                     "resize"
                 }
-                ArtifactEvent::Checkpoint { terminal, .. } => {
-                    assert!(terminal.row_text(0).unwrap().starts_with("synced"));
+                ArtifactEvent::Output { bytes, .. } if bytes == b"\x1b[2J\x1b[Hsynced" => {
                     "recovery"
                 }
                 ArtifactEvent::Output { bytes, .. } if bytes == b"!" => "after recovery",
@@ -3220,6 +3260,67 @@ mod tests {
                 reason: FinishReason::IntegrityFailure,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn terminal_failure_keeps_prior_output_but_marks_recording_incomplete() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+
+        let session = FakeSession::new([
+            SessionEvent::Output(b"last reliable output".to_vec()),
+            SessionEvent::Lifecycle(SessionLifecycle::Failed(SessionError::new(
+                SessionErrorKind::Output,
+                "reader failed",
+            ))),
+            SessionEvent::Output(b"after failure".to_vec()),
+        ]);
+        let mut controller = SessionController::for_test(session);
+        let mut terminal = Terminal::new(Dimensions::new(30, 2).unwrap()).unwrap();
+        let directory = private_recording_dir();
+        let (wake, ready) = std::sync::mpsc::channel();
+        let (recording, mut streams) =
+            festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        controller.attach_recording_stream(streams.remove(0));
+        controller.pump_events(&mut terminal);
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording
+            .take_failure()
+            .unwrap()
+            .unwrap()
+            .contains("terminal session failed"));
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        let Completion::Incomplete {
+            path,
+            reason: FinishReason::IntegrityFailure,
+            ..
+        } = completion
+        else {
+            panic!("terminal failure must make the recording incomplete");
+        };
+        let mut reader = ArtifactReader::new(std::fs::File::open(path).unwrap()).unwrap();
+        assert!(matches!(
+            reader.next_event().unwrap(),
+            Some(ArtifactEvent::Started { .. })
+        ));
+        assert!(matches!(
+            reader.next_event().unwrap(),
+            Some(ArtifactEvent::Output { bytes, .. }) if bytes == b"last reliable output"
+        ));
+        assert!(matches!(
+            reader.next_event().unwrap(),
+            Some(ArtifactEvent::Finished {
+                reason: FinishReason::IntegrityFailure,
+                ..
+            })
         ));
     }
 
@@ -3644,6 +3745,7 @@ mod tests {
                     bytes, terminal, ..
                 } = mutation
                 {
+                    terminal.ingest(bytes);
                     assert_eq!(
                         terminal.cell_ref(0, 0).unwrap().text(),
                         std::str::from_utf8(&bytes[..1]).unwrap()

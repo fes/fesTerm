@@ -10,10 +10,9 @@ use sha2::{Digest, Sha256};
 
 use super::{platform, RecordingLease, Snapshot};
 use crate::{
-    ArtifactEvent, ArtifactReader, FinishReason, RecordingId, RecoveryPrefix, MAX_ARTIFACT_BYTES,
-    MAX_STREAMS,
+    replay::ReplayTerminal, ArtifactEvent, ArtifactReader, FinishReason, RecordingId,
+    RecoveryPrefix, MAX_ARTIFACT_BYTES, MAX_STREAMS,
 };
-use festerm_core::{Parser, Terminal};
 
 const MAX_SOURCES: usize = 4096;
 const INSPECT_OUTPUT_CHUNK: usize = 16 * 1024;
@@ -302,10 +301,8 @@ fn inspect(input: impl Read, cancelled: Option<&AtomicBool>) -> io::Result<Recor
             });
         }
     };
-    let mut terminals: [Option<Terminal>; MAX_STREAMS] = std::array::from_fn(|_| None);
-    let mut parsers: [Parser; MAX_STREAMS] = std::array::from_fn(|_| Parser::new());
+    let mut terminals: [Option<ReplayTerminal>; MAX_STREAMS] = std::array::from_fn(|_| None);
     let mut prefix = None;
-    let mut required_checkpoint = None;
     loop {
         if let Some(cancelled) = cancelled {
             check_cancelled(cancelled)?;
@@ -325,34 +322,60 @@ fn inspect(input: impl Read, cancelled: Option<&AtomicBool>) -> io::Result<Recor
                 });
             }
         };
-        if let Some((expected_stream, expected_at)) = required_checkpoint {
-            if !matches!(
-                &event,
-                ArtifactEvent::Checkpoint { stream, at, .. }
-                    if *stream == expected_stream && *at == expected_at
-            ) {
-                return Ok(RecordingSourceState::Incomplete {
-                    detail: "A required post-output checkpoint is missing".to_owned(),
-                    prefix,
-                });
-            }
-            required_checkpoint = None;
-        }
         match event {
             ArtifactEvent::Started {
-                stream, terminal, ..
-            }
-            | ArtifactEvent::Checkpoint {
-                stream, terminal, ..
-            }
-            | ArtifactEvent::Resized {
-                stream, terminal, ..
+                stream,
+                terminal,
+                history_capped,
+                ..
             } => {
                 let slot = stream.index() - 1;
-                terminals[slot] = Some(terminal);
-                parsers[slot] = Parser::new();
+                terminals[slot] = Some(ReplayTerminal::new(terminal, history_capped));
             }
-            ArtifactEvent::Output { at, stream, bytes } => {
+            ArtifactEvent::Resized {
+                stream, dimensions, ..
+            } => {
+                let terminal = terminals[stream.index() - 1]
+                    .as_mut()
+                    .expect("active stream has a terminal");
+                if let Err(error) = terminal.resize(dimensions) {
+                    return Ok(RecordingSourceState::Incomplete {
+                        detail: error.to_string(),
+                        prefix,
+                    });
+                }
+            }
+            ArtifactEvent::Reset { stream, .. } => {
+                terminals[stream.index() - 1]
+                    .as_mut()
+                    .expect("active stream has a terminal")
+                    .reset();
+            }
+            ArtifactEvent::Configured {
+                stream,
+                color_scheme,
+                scrollback_limit_bytes,
+                history_capped,
+                ..
+            } => {
+                let terminal = terminals[stream.index() - 1]
+                    .as_mut()
+                    .expect("active stream has a terminal");
+                if let Err(error) =
+                    terminal.configure(color_scheme, scrollback_limit_bytes, history_capped)
+                {
+                    return Ok(RecordingSourceState::Incomplete {
+                        detail: error.to_string(),
+                        prefix,
+                    });
+                }
+            }
+            ArtifactEvent::Output {
+                stream,
+                bytes,
+                repeats,
+                ..
+            } => {
                 let slot = stream.index() - 1;
                 let Some(terminal) = terminals[slot].as_mut() else {
                     return Ok(RecordingSourceState::Incomplete {
@@ -360,25 +383,28 @@ fn inspect(input: impl Read, cancelled: Option<&AtomicBool>) -> io::Result<Recor
                         prefix,
                     });
                 };
-                let generation = terminal.screen_generation();
-                let mut repeated = false;
-                for chunk in bytes.chunks(INSPECT_OUTPUT_CHUNK) {
+                for start in (0..bytes.len()).step_by(INSPECT_OUTPUT_CHUNK) {
                     if let Some(cancelled) = cancelled {
                         check_cancelled(cancelled)?;
                     }
-                    repeated |= parsers[slot].observe_recording_output(chunk);
-                    terminal.ingest(chunk);
+                    let end = (start + INSPECT_OUTPUT_CHUNK).min(bytes.len());
+                    if let Err(error) = terminal.ingest(&bytes, &repeats, start, end) {
+                        return Ok(RecordingSourceState::Incomplete {
+                            detail: error.to_string(),
+                            prefix,
+                        });
+                    }
                 }
-                let _ = terminal.drain_replies();
-                let _ = terminal.take_reply_queue_overflowed();
-                if repeated || terminal.screen_generation() != generation {
-                    required_checkpoint = Some((stream, at));
+                if let Err(error) = terminal.finish_output() {
+                    return Ok(RecordingSourceState::Incomplete {
+                        detail: error.to_string(),
+                        prefix,
+                    });
                 }
             }
             ArtifactEvent::Ended { stream, .. } => {
                 let slot = stream.index() - 1;
                 terminals[slot] = None;
-                parsers[slot] = Parser::new();
             }
             ArtifactEvent::Finished { at, reason } => {
                 return Ok(if reason.is_complete() {
@@ -394,9 +420,7 @@ fn inspect(input: impl Read, cancelled: Option<&AtomicBool>) -> io::Result<Recor
                 });
             }
         }
-        if required_checkpoint.is_none() {
-            prefix = reader.recovery_prefix();
-        }
+        prefix = reader.recovery_prefix();
     }
 }
 
@@ -470,10 +494,8 @@ mod tests {
         })
         .unwrap();
         for bytes in outputs {
-            let generation = terminal.screen_generation();
-            terminal.ingest(bytes);
             recorder
-                .observe_output(streams[0], bytes, generation, &terminal)
+                .ingest_output(streams[0], &mut terminal, bytes)
                 .unwrap();
         }
         recorder.stop(FinishReason::User).unwrap();
@@ -588,13 +610,13 @@ mod tests {
     }
 
     #[test]
-    fn recovery_omits_output_without_its_required_post_mutation_checkpoint() {
+    fn recovery_omits_a_truncated_annotated_output_frame() {
         let root = private_root();
         let path = source_with_output(root.path(), &[b"first", b"\x1b[3b"]);
         let mut bytes = fs::read(&path).unwrap();
         let offsets = frame_offsets(&bytes);
-        assert_eq!(offsets.len(), 5);
-        bytes.truncate(offsets[3]);
+        assert_eq!(offsets.len(), 4);
+        bytes.truncate(offsets[2] + 20);
         fs::write(&path, &bytes).unwrap();
         let lease = RecordingLease::acquire(root.path()).unwrap();
         let source = RecordingSource::recover(root.path(), &lease)
@@ -602,6 +624,54 @@ mod tests {
             .remove(0);
         let prefix = recovered_prefix(&source);
         assert_eq!(prefix.length(), offsets[2] as u64);
+    }
+
+    #[test]
+    fn recovery_rejects_output_with_missing_repeat_annotations() {
+        let root = private_root();
+        let path = source_with_output(root.path(), &[b"first", b"\x1b[3b"]);
+        let mut bytes = fs::read(&path).unwrap();
+        let offsets = frame_offsets(&bytes);
+        let start = offsets[2];
+        bytes[start + 18..start + 22].copy_from_slice(&0u32.to_le_bytes());
+        let mut checksum = crc32fast::Hasher::new();
+        checksum.update(&bytes[start..start + 14]);
+        checksum.update(&bytes[start + 18..offsets[3]]);
+        bytes[start + 14..start + 18].copy_from_slice(&checksum.finalize().to_le_bytes());
+        fs::write(&path, &bytes).unwrap();
+        let lease = RecordingLease::acquire(root.path()).unwrap();
+        let source = RecordingSource::recover(root.path(), &lease)
+            .unwrap()
+            .remove(0);
+        assert_eq!(recovered_prefix(&source).length(), start as u64);
+        for advanced in [false, true] {
+            let pacing = Pacing {
+                typing: advanced.then(|| TypingSpeed::new(15).unwrap()),
+                ..Pacing::default()
+            };
+            let error = PlaybackPlan::inspect(Cursor::new(&bytes), pacing).unwrap_err();
+            assert!(error.to_string().contains("repeat hints"));
+        }
+    }
+
+    #[test]
+    fn legacy_live_checkpoint_sources_are_not_recovered_or_exported() {
+        let root = private_root();
+        let path = complete_source(root.path());
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[..8].copy_from_slice(b"FSTREC1\0");
+        fs::write(&path, bytes).unwrap();
+        let lease = RecordingLease::acquire(root.path()).unwrap();
+        let source = RecordingSource::recover(root.path(), &lease)
+            .unwrap()
+            .remove(0);
+        assert!(matches!(
+            source.state(),
+            RecordingSourceState::Incomplete {
+                detail,
+                prefix: None,
+            } if detail.contains("legacy")
+        ));
     }
 
     #[test]

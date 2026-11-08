@@ -77,15 +77,11 @@ fn source_with_first(directory: &Path, text: &[u8]) -> PathBuf {
         wake.send(()).unwrap()
     })
     .unwrap();
-    let generation = first.screen_generation();
-    first.ingest(b" output");
     recorder
-        .observe_output(streams[0], b" output", generation, &first)
+        .ingest_output(streams[0], &mut first, b" output")
         .unwrap();
-    let generation = second.screen_generation();
-    second.ingest(b" output");
     recorder
-        .observe_output(streams[1], b" output", generation, &second)
+        .ingest_output(streams[1], &mut second, b" output")
         .unwrap();
     recorder.stop(FinishReason::User).unwrap();
     ready.recv_timeout(Duration::from_secs(10)).unwrap();

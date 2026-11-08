@@ -273,19 +273,18 @@ impl RecordingStream {
         self.id
     }
 
-    pub fn observe_output(
-        &self,
-        bytes: &[u8],
-        previous_generation: u64,
-        terminal_after: &Terminal,
-    ) -> Result<(), CaptureError> {
-        self.observe(|recorder, id| {
-            recorder.observe_output(id, bytes, previous_generation, terminal_after)
-        })
+    /// Applies output even if the recording has already stopped.
+    pub fn ingest_output(&self, terminal: &mut Terminal, bytes: &[u8]) -> Result<(), CaptureError> {
+        let output = crate::capture::observe_terminal_output(terminal, bytes);
+        self.observe(|recorder, id| recorder.observe_output(id, bytes, output))
     }
 
-    pub fn observe_checkpoint(&self, terminal: &Terminal) -> Result<(), CaptureError> {
-        self.observe(|recorder, id| recorder.observe_checkpoint(id, terminal))
+    pub fn observe_reset(&self) -> Result<(), CaptureError> {
+        self.observe(|recorder, id| recorder.observe_reset(id))
+    }
+
+    pub fn observe_configuration(&self, terminal: &Terminal) -> Result<(), CaptureError> {
+        self.observe(|recorder, id| recorder.observe_configuration(id, terminal))
     }
 
     pub fn observe_resize(&self, terminal: &Terminal) -> Result<(), CaptureError> {
@@ -420,10 +419,8 @@ mod tests {
         .unwrap();
         loss.store(true, Ordering::Release);
         assert!(!recording.is_recording().unwrap());
-        let generation = terminal.screen_generation();
-        terminal.ingest(b"after native privacy loss");
         streams[0]
-            .observe_output(b"after native privacy loss", generation, &terminal)
+            .ingest_output(&mut terminal, b"after native privacy loss")
             .unwrap();
         recording.stop(FinishReason::Lifecycle).unwrap();
         ready.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -464,10 +461,8 @@ mod tests {
         assert!(!recording.is_recording().unwrap());
         let stream = streams.remove(0);
         let output = thread::spawn(move || {
-            let generation = terminal.screen_generation();
-            terminal.ingest(b"after lifecycle cut");
             stream
-                .observe_output(b"after lifecycle cut", generation, &terminal)
+                .ingest_output(&mut terminal, b"after lifecycle cut")
                 .unwrap();
         });
         thread::sleep(Duration::from_millis(50));
@@ -502,8 +497,6 @@ mod tests {
             })
             .unwrap();
         let mut guard = recording.state.lock().unwrap();
-        let generation = terminal.screen_generation();
-        terminal.ingest(b"before cut");
         let lifecycle = recording.clone();
         let stop = thread::spawn(move || lifecycle.stop(FinishReason::Lifecycle).unwrap());
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -513,7 +506,7 @@ mod tests {
         }
         guard
             .recorder
-            .observe_output(streams[0].id(), b"before cut", generation, &terminal)
+            .ingest_output(streams[0].id(), &mut terminal, b"before cut")
             .unwrap();
         drop(guard);
         stop.join().unwrap();

@@ -586,10 +586,13 @@ impl MobileApp {
                     "{detail}; recording was not exported and its source was retained"
                 ));
             }
-            Completion::Incomplete { reason, .. } => {
-                let detail = self.recording_ui.status.take().unwrap_or_default();
+            Completion::Incomplete { reason, detail, .. } => {
+                let error = detail
+                    .map(|detail| format!(": {detail}"))
+                    .unwrap_or_default();
+                let status = self.recording_ui.status.take().unwrap_or_default();
                 self.recording_ui.status = Some(format!(
-                    "Recording is incomplete ({reason:?}); the source was retained. {detail}"
+                    "Recording is incomplete ({reason:?}{error}); the source was retained. {status}"
                 ));
             }
             Completion::Failed { message, .. } => {

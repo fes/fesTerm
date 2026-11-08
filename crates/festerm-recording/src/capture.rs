@@ -16,10 +16,13 @@ use std::fs;
 use std::fs::OpenOptions;
 
 use crate::{
-    artifact::{ArtifactWriter, CapturedData, CapturedEvent, FinishReason, StreamId},
-    RecordingId, MAX_DURATION, MAX_OUTPUT_BYTES, MAX_QUEUE_BYTES, MAX_STREAMS,
+    artifact::{ArtifactWriter, CapturedData, CapturedEvent, FinishReason, RepeatHint, StreamId},
+    replay::{verify_visible, visible_fingerprint, ReplayError, ReplayTerminal, VisibleCheck},
+    RecordingId, MAX_DURATION, MAX_OUTPUT_BYTES, MAX_OUTPUT_REPEATS, MAX_QUEUE_BYTES, MAX_STREAMS,
 };
-use festerm_core::{Parser, RecordingCheckpoint, Terminal, MAX_RECORDING_CHECKPOINT_BYTES};
+use festerm_core::{
+    RecordingCheckpoint, Terminal, MAX_RECORDING_CHECKPOINT_BYTES, MAX_RECORDING_SCROLLBACK_BYTES,
+};
 
 #[cfg(unix)]
 #[path = "source_unix.rs"]
@@ -29,6 +32,7 @@ mod private_source;
 mod private_source;
 
 const MAX_QUEUED_EVENTS: usize = 512;
+const MAX_SCREEN_CHECKS: usize = 16;
 const WRITER_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// A content-free failure to start or continue capture.
@@ -61,6 +65,7 @@ pub enum Completion {
         path: PathBuf,
         duration: Duration,
         reason: FinishReason,
+        detail: Option<String>,
     },
     Failed {
         path: PathBuf,
@@ -76,6 +81,8 @@ struct FinishState {
 
 struct Queued {
     event: CapturedEvent,
+    expected_visible: Option<[u8; 32]>,
+    screen_checks: Vec<VisibleCheck>,
     charge: usize,
     budget: Arc<AtomicUsize>,
 }
@@ -168,7 +175,6 @@ pub struct Recorder {
     next_stream: usize,
     last_event_at_ns: u64,
     active: [bool; MAX_STREAMS],
-    output_parsers: [Parser; MAX_STREAMS],
 }
 
 impl Recorder {
@@ -302,7 +308,6 @@ impl Recorder {
             next_stream: 1,
             last_event_at_ns: 0,
             active: [false; MAX_STREAMS],
-            output_parsers: std::array::from_fn(|_| Parser::new()),
         };
         let mut streams = Vec::with_capacity(initial.len());
         for checkpoint in initial {
@@ -341,92 +346,119 @@ impl Recorder {
         Ok(stream)
     }
 
-    /// Observes output after it has been applied by the live terminal owner.
-    ///
-    /// `previous_generation` is the screen generation immediately before the
-    /// mutation. A screen switch or repeat-character command additionally
-    /// requires a fresh visible-state checkpoint, because the initial
-    /// projection omits the inactive screen and the last printed character.
-    pub fn observe_output(
+    /// Applies and records output. The live terminal is updated even if capture fails.
+    pub fn ingest_output(
+        &mut self,
+        stream: StreamId,
+        terminal: &mut Terminal,
+        bytes: &[u8],
+    ) -> Result<(), CaptureError> {
+        let output = observe_terminal_output(terminal, bytes);
+        self.observe_output(stream, bytes, output)
+    }
+
+    pub(crate) fn observe_output(
         &mut self,
         stream: StreamId,
         bytes: &[u8],
-        previous_generation: u64,
-        terminal_after: &Terminal,
+        output: ObservedOutput,
     ) -> Result<(), CaptureError> {
         self.require_active(stream)?;
         if bytes.is_empty() {
             return Ok(());
         }
-        if bytes.len() > MAX_OUTPUT_BYTES {
+        if bytes.len() > MAX_OUTPUT_BYTES || output.too_many_repeats || output.too_many_screens {
             self.stop_with_reason(FinishReason::ResourceLimit);
             return Err(CaptureError::new(
                 "terminal output exceeds the recording event limit",
             ));
         }
-        let at_ns = self.timestamp()?;
-        let switched = terminal_after.screen_generation() != previous_generation;
-        let repeated = self.output_parsers[stream.index() - 1].observe_recording_output(bytes);
-        let post_mutation = if switched || repeated {
-            match checkpoint(terminal_after) {
-                Ok(checkpoint) => Some(checkpoint),
-                Err(error) => {
-                    self.stop_with_reason(FinishReason::IntegrityFailure);
-                    return Err(error);
-                }
-            }
-        } else {
-            None
-        };
-        self.enqueue(stream, at_ns, CapturedData::Output(bytes.to_vec()))?;
-        if let Some(checkpoint) = post_mutation {
-            self.enqueue(stream, at_ns, CapturedData::Checkpoint(checkpoint))?;
-            self.output_parsers[stream.index() - 1] = Parser::new();
+        if let Some(error) = output.screen_check_error {
+            self.stop_with_reason(FinishReason::IntegrityFailure);
+            return Err(CaptureError::new(error));
         }
-        Ok(())
+        let at_ns = self.timestamp()?;
+        self.enqueue_verified(
+            stream,
+            at_ns,
+            CapturedData::Output {
+                bytes: bytes.to_vec(),
+                repeats: output.repeats,
+            },
+            None,
+            output.screen_checks,
+        )
     }
 
-    /// Observes a completed mutation that is not represented by output bytes.
-    pub fn observe_checkpoint(
-        &mut self,
-        stream: StreamId,
-        terminal: &Terminal,
-    ) -> Result<(), CaptureError> {
-        self.observe_snapshot(stream, terminal, false)
-    }
-
-    /// Observes an applied resize and its post-reflow visible screen.
+    /// Records geometry without importing the live terminal's retained history.
     pub fn observe_resize(
         &mut self,
         stream: StreamId,
         terminal: &Terminal,
     ) -> Result<(), CaptureError> {
-        self.observe_snapshot(stream, terminal, true)
+        self.require_active(stream)?;
+        let validation = Terminal::validate_recording_dimensions(terminal.dimensions())
+            .and_then(|_| terminal.validate_recording_screen());
+        if let Err(error) = validation {
+            self.stop_with_reason(FinishReason::ResourceLimit);
+            return Err(CaptureError::new(format!(
+                "resized terminal cannot be recorded: {error}"
+            )));
+        }
+        let expected_visible = match visible_fingerprint(terminal) {
+            Ok(expected) => expected,
+            Err(error) => {
+                self.stop_with_reason(FinishReason::IntegrityFailure);
+                return Err(CaptureError::new(error.to_string()));
+            }
+        };
+        let at_ns = self.timestamp()?;
+        self.enqueue_verified(
+            stream,
+            at_ns,
+            CapturedData::Resize(terminal.dimensions()),
+            Some(expected_visible),
+            Vec::new(),
+        )
     }
 
-    fn observe_snapshot(
+    /// Records a reset already applied to the live terminal.
+    pub fn observe_reset(&mut self, stream: StreamId) -> Result<(), CaptureError> {
+        self.require_active(stream)?;
+        let at_ns = self.timestamp()?;
+        self.enqueue(stream, at_ns, CapturedData::Reset)
+    }
+
+    /// Records non-content terminal configuration already applied by the host.
+    pub fn observe_configuration(
         &mut self,
         stream: StreamId,
         terminal: &Terminal,
-        resized: bool,
     ) -> Result<(), CaptureError> {
         self.require_active(stream)?;
-        let at_ns = self.timestamp()?;
-        let checkpoint = match checkpoint(terminal) {
-            Ok(checkpoint) => checkpoint,
+        let expected_visible = match visible_fingerprint(terminal) {
+            Ok(expected) => expected,
             Err(error) => {
                 self.stop_with_reason(FinishReason::IntegrityFailure);
-                return Err(error);
+                return Err(CaptureError::new(error.to_string()));
             }
         };
-        let data = if resized {
-            CapturedData::Resize(checkpoint)
-        } else {
-            CapturedData::Checkpoint(checkpoint)
-        };
-        self.enqueue(stream, at_ns, data)?;
-        self.output_parsers[stream.index() - 1] = Parser::new();
-        Ok(())
+        let at_ns = self.timestamp()?;
+        self.enqueue_verified(
+            stream,
+            at_ns,
+            CapturedData::Configure {
+                color_scheme: *terminal.color_scheme(),
+                scrollback_limit_bytes: terminal
+                    .scrollback_stats()
+                    .limit_bytes()
+                    .min(MAX_RECORDING_SCROLLBACK_BYTES),
+                history_capped: terminal.scrollback_stats().limit_bytes()
+                    > MAX_RECORDING_SCROLLBACK_BYTES,
+            },
+            Some(expected_visible),
+            Vec::new(),
+        )
     }
 
     /// Ends one stream; export holds its last frame until the shared stop.
@@ -521,7 +553,22 @@ impl Recorder {
         at_ns: u64,
         data: CapturedData,
     ) -> Result<(), CaptureError> {
-        let charge = match event_charge(&data) {
+        self.enqueue_verified(stream, at_ns, data, None, Vec::new())
+    }
+
+    fn enqueue_verified(
+        &mut self,
+        stream: StreamId,
+        at_ns: u64,
+        data: CapturedData,
+        expected_visible: Option<[u8; 32]>,
+        screen_checks: Vec<VisibleCheck>,
+    ) -> Result<(), CaptureError> {
+        let charge = match event_charge(&data).and_then(|charge| {
+            charge
+                .checked_add(screen_checks.len() * std::mem::size_of::<VisibleCheck>())
+                .ok_or_else(|| CaptureError::new("recording queue size overflows"))
+        }) {
             Ok(charge) => charge,
             Err(error) => {
                 self.stop_with_reason(FinishReason::IntegrityFailure);
@@ -545,6 +592,8 @@ impl Recorder {
                 stream,
                 data,
             },
+            expected_visible,
+            screen_checks,
             charge,
             budget: Arc::clone(&self.budget),
         };
@@ -646,19 +695,69 @@ fn checkpoint(terminal: &Terminal) -> Result<RecordingCheckpoint, CaptureError> 
         .map_err(|error| CaptureError::new(format!("visible screen cannot be recorded: {error}")))
 }
 
+pub(crate) struct ObservedOutput {
+    repeats: Vec<RepeatHint>,
+    too_many_repeats: bool,
+    screen_checks: Vec<VisibleCheck>,
+    too_many_screens: bool,
+    screen_check_error: Option<String>,
+}
+
+pub(crate) fn observe_terminal_output(terminal: &mut Terminal, bytes: &[u8]) -> ObservedOutput {
+    let mut output = ObservedOutput {
+        repeats: Vec::new(),
+        too_many_repeats: false,
+        screen_checks: Vec::new(),
+        too_many_screens: false,
+        screen_check_error: None,
+    };
+    if bytes.len() > MAX_OUTPUT_BYTES {
+        terminal.ingest(bytes);
+        return output;
+    }
+    terminal.ingest_observing_recording(
+        bytes,
+        |offset, character| {
+            if output.repeats.len() < MAX_OUTPUT_REPEATS {
+                output.repeats.push((offset, character));
+            } else {
+                output.too_many_repeats = true;
+            }
+        },
+        |offset, terminal| {
+            if output.screen_checks.len() >= MAX_SCREEN_CHECKS {
+                output.too_many_screens = true;
+            } else if output.screen_check_error.is_none() {
+                match visible_fingerprint(terminal) {
+                    Ok(fingerprint) => output.screen_checks.push(VisibleCheck {
+                        end: offset + 1,
+                        fingerprint,
+                    }),
+                    Err(error) => output.screen_check_error = Some(error.to_string()),
+                }
+            }
+        },
+    );
+    output
+}
+
 fn event_overhead() -> usize {
     std::mem::size_of::<CapturedEvent>() + 128
 }
 
 fn event_charge(data: &CapturedData) -> Result<usize, CaptureError> {
     let payload = match data {
-        CapturedData::Start(checkpoint)
-        | CapturedData::Checkpoint(checkpoint)
-        | CapturedData::Resize(checkpoint) => checkpoint
+        CapturedData::Start(checkpoint) => checkpoint
             .estimated_allocation_bytes()
             .map_err(|error| CaptureError::new(error.to_string()))?,
-        CapturedData::Output(bytes) => bytes.len(),
-        CapturedData::End => 0,
+        CapturedData::Output { bytes, repeats } => bytes
+            .len()
+            .checked_add(repeats.len() * std::mem::size_of::<RepeatHint>())
+            .ok_or_else(|| CaptureError::new("recording queue size overflows"))?,
+        CapturedData::Resize(_)
+        | CapturedData::Reset
+        | CapturedData::Configure { .. }
+        | CapturedData::End => 0,
     };
     payload
         .checked_add(event_overhead())
@@ -684,10 +783,46 @@ fn run_writer(
 ) -> Completion {
     let result = (|| {
         let mut writer = ArtifactWriter::new(file)?;
+        let mut terminals: [Option<ReplayTerminal>; MAX_STREAMS] = std::array::from_fn(|_| None);
         let mut flush_at = Instant::now() + WRITER_FLUSH_INTERVAL;
         loop {
             match receiver.recv_timeout(flush_at.saturating_duration_since(Instant::now())) {
-                Ok(queued) => writer.write_event(&queued.event)?,
+                Ok(queued) => {
+                    if let Err(error) = ReplayTerminal::apply_captured_event(
+                        &mut terminals,
+                        &queued.event,
+                        &queued.screen_checks,
+                    ) {
+                        let reason = match &error {
+                            ReplayError::Invalid(_) => FinishReason::IntegrityFailure,
+                            ReplayError::ResourceLimit(_) => FinishReason::ResourceLimit,
+                        };
+                        let at_ns = queued.event.at_ns;
+                        writer.finish(at_ns, reason)?;
+                        return Ok((Duration::from_nanos(at_ns), reason, Some(error.to_string())));
+                    }
+                    if let Some(expected) = queued.expected_visible {
+                        let actual = terminals[queued.event.stream.index() - 1]
+                            .as_ref()
+                            .ok_or_else(|| {
+                                ReplayError::Invalid(
+                                    "verified recording event has no screen".to_owned(),
+                                )
+                            })
+                            .and_then(|terminal| verify_visible(terminal.terminal(), expected));
+                        if let Err(error) = actual {
+                            let at_ns = queued.event.at_ns;
+                            let reason = FinishReason::IntegrityFailure;
+                            writer.finish(at_ns, reason)?;
+                            return Ok((
+                                Duration::from_nanos(at_ns),
+                                reason,
+                                Some(error.to_string()),
+                            ));
+                        }
+                    }
+                    writer.write_event(&queued.event)?;
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
@@ -700,10 +835,10 @@ fn run_writer(
         let reason = FinishReason::from_code(finish.reason.load(Ordering::Acquire))
             .unwrap_or(FinishReason::Interrupted);
         writer.finish(at_ns, reason)?;
-        Ok::<_, crate::ArtifactError>((Duration::from_nanos(at_ns), reason))
+        Ok::<_, crate::ArtifactError>((Duration::from_nanos(at_ns), reason, None))
     })();
 
-    let (duration, reason) = match result {
+    let (duration, reason, detail) = match result {
         Ok(result) => result,
         Err(error) => {
             return Completion::Failed {
@@ -717,6 +852,7 @@ fn run_writer(
             path: partial_path.to_owned(),
             duration,
             reason,
+            detail,
         };
     }
     #[cfg(any(unix, windows))]

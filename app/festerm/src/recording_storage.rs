@@ -126,6 +126,18 @@ impl RecordingStorage {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn test_directory_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        path.to_owned()
+    }
+    #[cfg(not(windows))]
+    {
+        path.canonicalize().unwrap()
+    }
+}
+
 fn open_default() -> OpenResult {
     let path = directories::ProjectDirs::from("com", "fes", "fesTerm")
         .ok_or_else(|| "The device-local data directory is unavailable".to_owned())?
@@ -213,10 +225,7 @@ mod tests {
     #[test]
     fn creates_private_nested_storage_and_reopens_settings() {
         let parent = tempfile::tempdir().unwrap();
-        let path = parent
-            .path()
-            .canonicalize()
-            .unwrap()
+        let path = test_directory_path(parent.path())
             .join("app")
             .join("recordings");
         let (mut storage, settings) = open_at(&path).unwrap();

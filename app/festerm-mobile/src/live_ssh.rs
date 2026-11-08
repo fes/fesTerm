@@ -325,11 +325,11 @@ impl LiveSsh {
             match session.try_recv_event() {
                 Ok(SessionEvent::Output(bytes)) => {
                     output |= !bytes.is_empty();
-                    let previous_generation = terminal.screen_generation();
-                    terminal.ingest(&bytes);
                     if let Some(stream) = &self.recording_stream {
                         // SharedRecording retains any error and wakes its owner.
-                        let _ = stream.observe_output(&bytes, previous_generation, terminal);
+                        let _ = stream.ingest_output(terminal, &bytes);
+                    } else {
+                        terminal.ingest(&bytes);
                     }
                     let replies = terminal.drain_replies();
                     // A tunnel host answers terminal queries itself.
@@ -371,18 +371,47 @@ impl LiveSsh {
                     return output;
                 }
                 Ok(SessionEvent::RecoverySync(bytes)) if self.tunnel.is_some() => {
-                    if festerm_mobile_tunnels::apply_recovery_sync(terminal, &bytes).is_err() {
-                        if let Some(stream) = &self.recording_stream {
-                            let _ = stream.fail_integrity(
-                                "Recording stopped because terminal recovery data was invalid",
-                            );
+                    let command = match festerm_mobile_tunnels::decode_recovery_sync(&bytes) {
+                        Ok(command) => command,
+                        Err(_) => {
+                            if let Some(stream) = &self.recording_stream {
+                                let _ = stream.fail_integrity(
+                                    "Recording stopped because terminal recovery data was invalid",
+                                );
+                            }
+                            self.stop("Invalid host sync; disconnected");
+                            return output;
                         }
-                        self.stop("Invalid host sync; disconnected");
-                        return output;
+                    };
+                    match command {
+                        festerm_mobile_tunnels::RecoverySync::Scrollback(limit) => {
+                            terminal.set_scrollback_limit(limit);
+                            if let Some(stream) = &self.recording_stream {
+                                let _ = stream.observe_configuration(terminal);
+                            }
+                        }
+                        festerm_mobile_tunnels::RecoverySync::Colors(colors) => {
+                            terminal.set_color_scheme(colors);
+                            if let Some(stream) = &self.recording_stream {
+                                let _ = stream.observe_configuration(terminal);
+                            }
+                        }
+                        festerm_mobile_tunnels::RecoverySync::Bytes(bytes) => {
+                            if let Some(stream) = &self.recording_stream {
+                                let _ = stream.ingest_output(terminal, &bytes);
+                            } else {
+                                terminal.ingest(&bytes);
+                            }
+                        }
+                        festerm_mobile_tunnels::RecoverySync::Reset => {
+                            terminal.reset_to_initial_state();
+                            if let Some(stream) = &self.recording_stream {
+                                let _ = stream.observe_reset();
+                            }
+                        }
                     }
-                    if let Some(stream) = &self.recording_stream {
-                        let _ = stream.observe_checkpoint(terminal);
-                    }
+                    let _ = terminal.drain_replies();
+                    let _ = terminal.take_reply_queue_overflowed();
                     output = true;
                 }
                 Ok(SessionEvent::RecoverySync(_)) => {
@@ -1199,10 +1228,8 @@ mod tests {
             }
             assert_ne!(lock.recording_privacy_generation(), Some(generation));
             assert!(!recording.is_recording().unwrap());
-            let generation = terminal.screen_generation();
-            terminal.ingest(b"after lock");
             streams[0]
-                .observe_output(b"after lock", generation, &terminal)
+                .ingest_output(&mut terminal, b"after lock")
                 .unwrap();
             drop(streams.remove(0));
             ready.recv_timeout(Duration::from_secs(10)).unwrap();
