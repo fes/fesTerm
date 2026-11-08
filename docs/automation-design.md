@@ -1247,7 +1247,12 @@ observed full or zero writes but no positive partial. In the revised
 [native run](https://github.com/fes/fesTerm/actions/runs/42516446589), the
 initial mode change succeeded after draining 16 startup bytes, but the
 controlled writes still produced no positive partial. The probe failed and
-stdout remains unqualified.
+stdout remained unqualified. A later
+[run](https://github.com/fes/fesTerm/actions/runs/42523996156/job/128863387770)
+observed and accounted for one byte from a 131,073-byte write with a pending
+one-byte reader; [five repeats](https://github.com/fes/fesTerm/actions/runs/42525773510)
+also passed that case. The stalled-reader cases did not establish a positive
+partial write, and production stdout remains unqualified.
 
 The probe applies only to its controlled pipe and tested environment. It does
 not establish exclusive mode ownership, caller liveness, or a physical
