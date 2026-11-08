@@ -1,5 +1,24 @@
 # Milestone Progress Narrative
 
+## Investigating Windows inherited stdout
+
+A separate, job-supervised native probe measures inherited stdout pipe mode
+changes, bounded writes and closure without enabling the automation adapter.
+The prior native run observed initial error 231 and no positive partial write.
+The revised [native run](https://github.com/fes/fesTerm/actions/runs/42516446589)
+drained 16 startup bytes and succeeded on the initial mode attempt, but still
+observed no positive partial and failed the probe. A separate
+[request-size experiment](https://github.com/fes/fesTerm/actions/runs/42520044762)
+also observed no positive partial for 4,097- and 8,193-byte writes; 65,537-
+and 131,073-byte initial writes returned zero and stopped before the full
+backpressure scenario. A later
+[run](https://github.com/fes/fesTerm/actions/runs/42523996156/job/128863387770)
+and [five repeats](https://github.com/fes/fesTerm/actions/runs/42525773510)
+observed a one-byte partial of a 131,073-byte write with a pending reader.
+This does not establish a partial write to a stalled reader. The production
+adapter remains unqualified; exclusive ownership, caller liveness and
+final-recipient privacy remain separate gates.
+
 ## Coalescing terminal search refresh
 
 The find bar now refreshes after live-screen edits and full-history eviction,

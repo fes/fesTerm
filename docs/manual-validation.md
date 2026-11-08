@@ -3243,6 +3243,32 @@ do not establish independent provenance or native usability.
 Linux CI explicitly runs the unfiltered-only native fault-injection test;
 ordinary filtered-container runs check inconclusive handling, not the holes.
 
+The Windows inherited-stdout probe is a bounded feasibility experiment, not
+AUTO-03 or AUTO-04 acceptance. On native Windows run
+`cargo test --locked -p festerm-windows-security --test windows_stdout_probe -- --test-threads=1 --nocapture`.
+Its control-parser tests also run on other platforms with
+`cargo test --locked -p festerm-windows-security --test windows_stdout_probe_control`.
+The helper is job-contained and the controller drains observed test-harness
+output before attempting the initial pipe mode change; a refusal remains a
+failure even if a later diagnostic retry succeeds. It requires an actual
+positive partial write, an observed one-byte backpressure condition, and
+physical byte accounting; neither a zero write nor drained occupancy proves a
+partial write. A prior native run failed on initial error 231 and observed no
+positive partial. The revised
+[native run](https://github.com/fes/fesTerm/actions/runs/42516446589) succeeded
+in the initial mode change after draining 16 startup bytes, but also failed to
+observe a positive partial write. A subsequent
+[request-size experiment](https://github.com/fes/fesTerm/actions/runs/42520044762)
+observed no positive partial at 4,097 or 8,193 bytes; initial requests of
+65,537 and 131,073 bytes returned zero before the remaining scenario ran. In a
+later [native run](https://github.com/fes/fesTerm/actions/runs/42523996156/job/128863387770),
+a pending one-byte read yielded one physically accounted byte from a
+131,073-byte request; [five repeats](https://github.com/fes/fesTerm/actions/runs/42525773510)
+passed the same case. That is evidence for this specific pending-reader case,
+not a positive partial write to a stalled recipient. The experiment remains
+unqualified for exclusive mode ownership, final-recipient privacy fencing,
+caller liveness, or the production adapter.
+
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
 | AUTO-01 | On each supported desktop, review native caller/workflow/target/recipient scopes, malicious display names, cancellation, pairing/unpairing and keyboard ownership during grant prompts; exercise the multi-window preference and failure scenarios above. | Deferred native + usability | Partial implementation: observation pairing/native grant UI, desktop file selection and non-authorizing captured-source review, frozen-workflow binding components, and shared preference/failure handling. Deterministic preference regressions do not replace native warning, retry or multi-window usability evidence. Desktop source-view usability, iOS security-scoped access, pending-approval invalidation and platform path behavior still need qualification. Confirm disclosure, all-source/all-sink combinations and eventual shell control authority are understandable; pairing/import alone has no effects. A future direct-input approval must explicitly explain the target, remote-state uncertainty, expiry/budgets and that the approved action may be intentionally repeated throughout the live grant; obtain native handoff rather than accepting a device's claimed gesture, and distinguish approval from an explicit ownership cut. No native evidence collected for intake or workflow approval. |
