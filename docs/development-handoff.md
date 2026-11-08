@@ -104,7 +104,28 @@ release and end-to-end upgrade evidence remain
 ## Bootstrap
 
 The repository pins the stable Rust toolchain in `rust-toolchain.toml`.
-For Windows/Linux, or an intentional low-level executable probe:
+On Linux or Windows, launch a development build with separate configuration
+and native-session registry state:
+
+```sh
+python3 scripts/run-development.py
+# Windows: python scripts/run-development.py
+```
+
+The launcher builds the local daemon and tunnel helpers before starting the
+frontend. It uses `target/festerm-dev` for a reusable development config and
+sessiond root, overriding even an inherited `FESTERM_SESSIOND_RUNTIME_ROOT`;
+it refuses symbolic links and Windows reparse points at those state paths. It
+removes the release updater key and `APPLE_*`/`CARGO_PACKAGER_SIGN_*` values
+from the child environment. Persistent development sessions intentionally
+survive the frontend and can be reattached by a later invocation from this
+worktree. On Windows, the state directory inherits its workspace ACL; the
+launcher does not verify or change it, so use a workspace restricted to your
+account.
+The user's OS credential store, shell environment and desktop session are
+still shared; this is not a full sandbox or native qualification.
+
+For an intentional low-level executable probe:
 
 ```sh
 cargo build
