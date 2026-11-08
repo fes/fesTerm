@@ -3,6 +3,7 @@ use std::{fmt, sync::Arc};
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthChar;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     cell::{blank_cell, Attributes, Cell, CellWidth, Color},
@@ -1308,6 +1309,25 @@ impl Terminal {
 
     pub fn drain_input(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.input_queue)
+    }
+
+    /// Delivers queued bytes synchronously, then clears the queue.
+    ///
+    /// A zeroized allocation of at most 16 bytes may be reused; larger
+    /// allocations are dropped. If the consumer panics, the queue is empty
+    /// and a small allocation is zeroized before it is dropped.
+    pub fn drain_input_with<R>(&mut self, consumer: impl FnOnce(&[u8]) -> R) -> R {
+        const REUSABLE_INPUT_CAPACITY: usize = 16;
+        let input = std::mem::take(&mut self.input_queue);
+        if input.capacity() > REUSABLE_INPUT_CAPACITY {
+            return consumer(&input);
+        }
+
+        let mut input = Zeroizing::new(input);
+        let result = consumer(&input);
+        input.zeroize();
+        self.input_queue = std::mem::take(&mut *input);
+        result
     }
 
     /// Reports and clears whether an input write overflowed since the last call.

@@ -1091,6 +1091,35 @@ mod tests {
     }
 
     #[test]
+    fn borrowed_input_drain_is_bounded_and_empty_after_consumer_panics() {
+        let mut terminal = terminal(8, 3);
+        terminal.queue_input(b"short");
+        assert_eq!(terminal.drain_input_with(|bytes| bytes.to_vec()), b"short");
+        assert!(terminal.queued_input().is_empty());
+        let reusable = terminal.drain_input();
+        assert!(reusable.is_empty());
+        assert!((1..=16).contains(&reusable.capacity()));
+
+        let large = vec![b'x'; 64];
+        terminal.queue_input(&large);
+        terminal.drain_input_with(|bytes| assert_eq!(bytes, large));
+        assert_eq!(terminal.drain_input().capacity(), 0);
+
+        for expected in [b"prefix".as_slice(), large.as_slice()] {
+            terminal.queue_input(expected);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                terminal.drain_input_with(|bytes| {
+                    assert_eq!(bytes, expected);
+                    panic!("consumer failed");
+                });
+            }));
+            assert!(result.is_err());
+            assert!(terminal.queued_input().is_empty());
+            assert_eq!(terminal.drain_input().capacity(), 0);
+        }
+    }
+
+    #[test]
     fn form_feed_and_vertical_tab_index_exactly_as_a_line_feed_does() {
         // FF and VT are LF under different names: they move down a line and
         // scroll at the bottom of the region, and they leave the column

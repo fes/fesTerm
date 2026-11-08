@@ -29,6 +29,48 @@ still allocate or copy; zero-allocation delivery is not claimed. The shared
 host's one-minute load decreased from about 13.8 to 13.2, so competing work
 limits timing precision.
 
+## Character input routing
+
+The UI delivers queued input synchronously to its sink without transferring
+ownership of the allocation to the sink. After delivery, the terminal
+zeroizes the current allocation and may reuse it if its capacity is at most
+16 bytes.
+Larger allocations are dropped as before. If the sink panics, the queue is
+already empty and a small allocation is zeroized on drop. This wipes the
+current small allocation, not copies elsewhere or any prior reallocations.
+Admission, lock handling, queue order and the owned drain API are unchanged.
+
+Run `cargo test --locked -p festerm-ui-egui --test routed_input_allocations`
+for the isolated allocation regression. Against the #650 baseline, the warmed
+core-and-view route made 4,096 allocation calls for 4,096 ASCII events and
+4,096 calls for four-byte Unicode events. The candidate made no allocations
+or reallocations in either case. The sink in this fixture allocates nothing.
+
+The source for a single-threaded timing probe is
+`crates/festerm-ui-egui/benches/routed_input.rs`. Build it with
+`cargo bench --locked -p festerm-ui-egui --bench routed_input --no-run`, then
+run the executable path printed by Cargo under `/usr/bin/time -p`, passing
+`ascii 50000000` or `emoji 50000000`. Sum `user` and `sys`, rather than using
+`real`. Compare the same build configuration across revisions; older
+revisions need the probe source copied into the benchmark workspace.
+
+On Apple M2, 64-bit macOS and Rust 1.97.1, the same probe source was built as
+a standalone release executable against #650 and the candidate, using
+separate build directories. Three single-threaded paired samples in
+A-B-B-A-A-B order measured process user plus system CPU for 50 million
+events with an allocation-free checksum sink:
+
+| Fixture | #650 median CPU | Candidate median CPU |
+| --- | ---: | ---: |
+| ASCII character | 1.004 s | 0.386 s |
+| Four-byte Unicode character | 1.253 s | 0.728 s |
+
+The shared host's one-minute load decreased from about 6.5 to 5.8 and its
+five-minute load from 10.8 to 10.5; other work limits timing precision. These are
+core-and-view synthetic measurements, not native key-to-PTY latency or
+end-to-end zero-allocation delivery. Application pending writes and session
+transport still allocate or copy.
+
 ## CPU presentation-cache allocation oracle
 
 Run `cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check`.
