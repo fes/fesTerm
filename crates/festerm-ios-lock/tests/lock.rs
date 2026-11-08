@@ -261,6 +261,37 @@ fn short_absence_keeps_content_and_dialogs_dont_count() {
 }
 
 #[test]
+fn inactive_authentication_dialog_revokes_recording_consent() {
+    let locker = FakeLocker::new(FACE);
+    let callbacks = Arc::new(AtomicUsize::new(0));
+    let observed = callbacks.clone();
+    let lock = AppLock::new_with_content_lock_callback(
+        None,
+        locker.clone(),
+        Arc::new(ManualClock::new()),
+        || {},
+        move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+        },
+    );
+    lock.apply_settings(enabled(BackgroundGrace::Never))
+        .unwrap();
+    locker.set_deferred(true);
+    assert_eq!(
+        lock.apply_settings(LockSettings::default()),
+        Err(SettingsError::AuthenticationStarted)
+    );
+    let generation = lock.recording_privacy_generation().unwrap();
+
+    lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+    assert!(lock.authentication_prompt_in_flight());
+    assert_eq!(callbacks.load(Ordering::SeqCst), 1);
+    assert_eq!(lock.recording_privacy_generation(), None);
+    lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+    assert_ne!(lock.recording_privacy_generation(), Some(generation));
+}
+
+#[test]
 fn enabling_requires_a_passcode_and_disabling_requires_authentication() {
     let locker = FakeLocker::new(Availability::PasscodeNotSet);
     let (lock, _c, _r, dir) = app(LockSettings::default(), &locker);

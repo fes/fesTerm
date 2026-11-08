@@ -32,6 +32,8 @@ festerm-host-setup = { path = "../../crates/festerm-host-setup" }
 festerm-linux-power = { path = "../../crates/festerm-linux-power" }
 festerm-macos-window = { path = "../../crates/festerm-macos-window" }
 festerm-pty = { path = "../../crates/festerm-pty" }
+festerm-recording = { path = "../../crates/festerm-recording" }
+festerm-recording-export = { path = "../../crates/festerm-recording-export" }
 festerm-session = { path = "../../crates/festerm-session" }
 festerm-sessiond = { path = "../../crates/festerm-sessiond" }
 festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional = true, features = ["relay"] }
@@ -47,6 +49,7 @@ mermaid-svg = "=0.7.0"
 resvg = { version = "0.48.1", default-features = false, features = ["text"] }
 roxmltree = "0.21"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+rfd = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.11"
@@ -61,6 +64,9 @@ uuid = { version = "1", features = ["v4"] }
 zip = { version = "4", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+festerm-recording-apple = { path = "../../crates/festerm-recording-apple" }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 raw-window-handle = "0.6"
 
 [target.'cfg(unix)'.dependencies]

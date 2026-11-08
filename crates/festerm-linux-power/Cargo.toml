@@ -11,7 +11,9 @@ description = "Linux resume-from-suspend wake and automation privacy monitoring 
 zbus = { version = "5.18", default-features = false, features = ["async-io"] }
 tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+nix = { version = "0.31", default-features = false, features = ["socket", "user"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = { version = "5.18", default-features = false, features = ["async-io", "p2p"] }
 tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"] }
+tempfile = "3"

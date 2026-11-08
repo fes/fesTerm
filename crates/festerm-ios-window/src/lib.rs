@@ -31,12 +31,18 @@ mod document;
 ))]
 pub use document::DocumentSmoke;
 mod document_writer;
+#[cfg(target_os = "ios")]
+mod recording_folder_ios;
 pub use document::{
     DocumentFile, DocumentFileError, DocumentFileEvent, DocumentFileSnapshot, DocumentPicker,
     MAX_DOCUMENT_BYTES, MAX_NATIVE_DOCUMENTS,
 };
 pub use document_writer::{
     local_file_mutation_epoch, try_local_file_mutation, DocumentWritePermit,
+};
+#[cfg(target_os = "ios")]
+pub use recording_folder_ios::{
+    with_recording_folder, RecordingFolderError, RecordingFolderPicker, RecordingFolderSelection,
 };
 
 #[cfg(target_os = "ios")]

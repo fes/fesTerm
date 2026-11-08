@@ -1,10 +1,15 @@
 use compact_str::CompactString;
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{Error as _, SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
+use std::{fmt, marker::PhantomData};
 
 use crate::{
-    cell::{blank_cell, Attributes, Cell, CellWidth},
-    terminal::TerminalError,
-    Dimensions,
+    cell::{blank_cell, Attributes, Cell, CellWidth, FAINT_OPACITY},
+    terminal::{TerminalError, MAX_RECORDING_CHECKPOINT_BYTES},
+    unicode::MAX_GRAPHEME_BYTES,
+    Color, ColorScheme, Dimensions, Rgb,
 };
 
 /// A visible grid and its redraw state.
@@ -25,6 +30,218 @@ pub struct Screen {
     dirty_rows: Vec<bool>,
     soft_wrapped_rows: Vec<bool>,
     occupied_columns: Vec<usize>,
+}
+
+const RECORDING_CELL_LIMIT: usize =
+    (MAX_RECORDING_CHECKPOINT_BYTES - 4096) / (std::mem::size_of::<Cell>() + 32);
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct RecordingCell {
+    #[serde(deserialize_with = "deserialize_recording_text")]
+    text: CompactString,
+    width: CellWidth,
+    foreground: Color,
+    background: Color,
+    attributes: Attributes,
+}
+
+impl RecordingCell {
+    fn from_cell(cell: &Cell, scheme: &ColorScheme, compare_text: bool) -> Self {
+        let hidden =
+            recording_text_is_hidden(cell.foreground, cell.background, cell.attributes, scheme);
+        Self {
+            text: if hidden && !compare_text && cell.width != CellWidth::Continuation {
+                CompactString::const_new(" ")
+            } else {
+                cell.text.clone()
+            },
+            width: cell.width,
+            foreground: cell.foreground,
+            background: cell.background,
+            attributes: cell.attributes,
+        }
+    }
+
+    fn into_cell(self) -> Cell {
+        let text_capacity_bytes = self.text.capacity();
+        Cell {
+            text: self.text,
+            text_capacity_bytes,
+            width: self.width,
+            foreground: self.foreground,
+            background: self.background,
+            attributes: self.attributes,
+            hyperlink: None,
+        }
+    }
+}
+
+pub(crate) fn recording_text_is_hidden(
+    foreground: Color,
+    background: Color,
+    attributes: Attributes,
+    scheme: &ColorScheme,
+) -> bool {
+    if attributes.contains(Attributes::CONCEALED) {
+        return true;
+    }
+    let mut foreground = scheme.resolve(foreground, scheme.foreground());
+    let mut background = scheme.resolve(background, scheme.background());
+    if attributes.contains(Attributes::INVERSE) {
+        std::mem::swap(&mut foreground, &mut background);
+    }
+    foreground == background
+        || (attributes.contains(Attributes::FAINT)
+            && faint_can_match_background(foreground, background))
+}
+
+fn faint_can_match_background(foreground: Rgb, background: Rgb) -> bool {
+    // Both gamma and sRGB framebuffer blending can round faint ink into its background.
+    let foreground = [foreground.red, foreground.green, foreground.blue];
+    let background = [background.red, background.green, background.blue];
+    let opacity = f64::from((255.0 * FAINT_OPACITY + 0.5) as u8) / 255.0;
+    let mut gamma_matches = true;
+    let mut linear_matches = true;
+    for (foreground, background) in foreground.into_iter().zip(background) {
+        let premultiplied = f64::from((f32::from(foreground) * FAINT_OPACITY + 0.5) as u8);
+        let background = f64::from(background);
+        let gamma = premultiplied + background * (1.0 - opacity);
+        gamma_matches &= (gamma.round() - background).abs() <= 1.0;
+
+        let to_linear = |value: f64| {
+            let value = value / 255.0;
+            if value < 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let linear = to_linear(premultiplied) + to_linear(background) * (1.0 - opacity);
+        let gamma = if linear < 0.0031308 {
+            linear * 12.92
+        } else {
+            1.055 * linear.powf(1.0 / 2.4) - 0.055
+        };
+        linear_matches &= ((gamma * 255.0).round() - background).abs() <= 1.0;
+    }
+    gamma_matches || linear_matches
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct RecordingScreen {
+    dimensions: Dimensions,
+    top: usize,
+    #[serde(deserialize_with = "deserialize_recording_vec")]
+    cells: Vec<RecordingCell>,
+    #[serde(deserialize_with = "deserialize_recording_vec")]
+    occupied_cells: Vec<bool>,
+    #[serde(deserialize_with = "deserialize_recording_vec")]
+    soft_wrapped_rows: Vec<bool>,
+    #[serde(deserialize_with = "deserialize_recording_vec")]
+    occupied_columns: Vec<usize>,
+}
+
+pub(crate) fn deserialize_recording_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct BoundedVec<T>(PhantomData<T>);
+
+    impl<'de, T: Deserialize<'de>> Visitor<'de> for BoundedVec<T> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a bounded recording sequence")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Vec<T>, A::Error> {
+            let capacity = sequence.size_hint().unwrap_or(0);
+            if capacity > RECORDING_CELL_LIMIT {
+                return Err(A::Error::custom("recording sequence exceeds its limit"));
+            }
+            let mut values = Vec::with_capacity(capacity);
+            while let Some(value) = sequence.next_element()? {
+                if values.len() == RECORDING_CELL_LIMIT {
+                    return Err(A::Error::custom("recording sequence exceeds its limit"));
+                }
+                values.push(value);
+            }
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_seq(BoundedVec(PhantomData))
+}
+
+fn deserialize_recording_text<'de, D>(deserializer: D) -> Result<CompactString, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BoundedText;
+
+    impl Visitor<'_> for BoundedText {
+        type Value = CompactString;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("bounded terminal cell text")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<Self::Value, E> {
+            if text.len() > MAX_GRAPHEME_BYTES {
+                return Err(E::custom("recording cell text exceeds its limit"));
+            }
+            Ok(CompactString::new(text))
+        }
+    }
+
+    deserializer.deserialize_str(BoundedText)
+}
+
+impl RecordingScreen {
+    pub(crate) fn allocation_bound(&self) -> Option<usize> {
+        let cells = self
+            .cells
+            .len()
+            .checked_mul(std::mem::size_of::<Cell>() + 32)?;
+        let rows = self
+            .dimensions
+            .rows()
+            .checked_mul(std::mem::size_of::<usize>() + 3)?;
+        self.cells
+            .iter()
+            .try_fold(cells.checked_add(rows)?, |bytes, cell| {
+                bytes.checked_add(cell.text.capacity())
+            })
+    }
+
+    pub(crate) fn into_screen(self) -> Result<Screen, String> {
+        let dimensions = Dimensions::new(self.dimensions.columns(), self.dimensions.rows())
+            .map_err(|error| format!("recording screen has invalid dimensions: {error}"))?;
+        if dimensions != self.dimensions
+            || self.cells.len() != dimensions.cell_count()
+            || self.occupied_cells.len() != dimensions.cell_count()
+            || self.soft_wrapped_rows.len() != dimensions.rows()
+            || self.occupied_columns.len() != dimensions.rows()
+        {
+            return Err("recording screen dimensions and stored lengths do not match".to_owned());
+        }
+        let screen = Screen {
+            dimensions,
+            top: self.top,
+            cells: self
+                .cells
+                .into_iter()
+                .map(RecordingCell::into_cell)
+                .collect(),
+            occupied_cells: self.occupied_cells,
+            dirty_rows: vec![true; dimensions.rows()],
+            soft_wrapped_rows: self.soft_wrapped_rows,
+            occupied_columns: self.occupied_columns,
+        };
+        screen.validate_recovery_state()?;
+        Ok(screen)
+    }
 }
 
 impl Eq for Screen {}
@@ -136,6 +353,45 @@ impl Screen {
 
     pub const fn dimensions(&self) -> Dimensions {
         self.dimensions
+    }
+
+    pub(crate) fn recording_allocation_bound(&self) -> Option<usize> {
+        let cells = self
+            .cells
+            .len()
+            .checked_mul(std::mem::size_of::<Cell>() + 32)?;
+        let rows = self
+            .dimensions
+            .rows()
+            .checked_mul(std::mem::size_of::<usize>() + 3)?;
+        self.cells
+            .iter()
+            .try_fold(cells.checked_add(rows)?, |bytes, cell| {
+                bytes.checked_add(cell.text_owned_charge())
+            })
+    }
+
+    pub(crate) fn recording_copy(
+        &self,
+        scheme: &ColorScheme,
+        compare_ambiguous: bool,
+    ) -> RecordingScreen {
+        RecordingScreen {
+            dimensions: self.dimensions,
+            top: self.top,
+            cells: self
+                .cells
+                .iter()
+                .map(|cell| {
+                    let compare_text =
+                        compare_ambiguous && !cell.attributes.contains(Attributes::CONCEALED);
+                    RecordingCell::from_cell(cell, scheme, compare_text)
+                })
+                .collect(),
+            occupied_cells: self.occupied_cells.clone(),
+            soft_wrapped_rows: self.soft_wrapped_rows.clone(),
+            occupied_columns: self.occupied_columns.clone(),
+        }
     }
 
     /// Maps a logical row (0 = the top visible row) to its physical row

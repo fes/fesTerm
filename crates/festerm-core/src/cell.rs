@@ -3,6 +3,9 @@ use std::sync::Arc;
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
 
+/// Foreground opacity used to render the SGR faint attribute.
+pub const FAINT_OPACITY: f32 = 0.6;
+
 const MAX_CELL_TEXT_CAPACITY_BYTES: usize = crate::unicode::MAX_GRAPHEME_BYTES * 2;
 
 /// A color value used by a cell.
@@ -129,6 +132,15 @@ impl Cell {
 
     pub const fn attributes(&self) -> Attributes {
         self.attributes
+    }
+
+    pub(crate) fn recording_text_is_redacted(&self, scheme: &crate::ColorScheme) -> bool {
+        crate::screen::recording_text_is_hidden(
+            self.foreground,
+            self.background,
+            self.attributes,
+            scheme,
+        )
     }
 
     /// Returns the trusted-for-display OSC 8 target attached to this cell.

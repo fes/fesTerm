@@ -18,6 +18,7 @@ mod input;
 mod native_painter;
 pub mod overlay;
 pub mod palette;
+mod recording;
 mod rectangle_copy;
 mod renderer;
 pub mod routing_trace;
@@ -54,6 +55,9 @@ pub use native_painter::{
     install_root_terminal_painter, install_root_terminal_painter_with_admission,
     install_root_terminal_painter_with_options, remove_root_terminal_painter, FontAtlasCapture,
     NativePainterOptions, TerminalPaintFrame,
+};
+pub use recording::{
+    RecordingFrameSize, RecordingPalette, RecordingRenderError, RecordingRenderer,
 };
 pub use rectangle_copy::RectangleCopyError;
 pub use renderer::{resolve_color, terminal_color_scheme, FontSettings};
