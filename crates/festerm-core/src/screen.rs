@@ -528,6 +528,7 @@ impl Screen {
         let last_row = (end - 1) / columns;
         let first_column = start % columns;
         let last_column = end - last_row * columns;
+        let occupied = !is_structural_blank(&cell);
         // Successive logical rows are only contiguous in the cell array while
         // the ring is unrotated, so each row's span is mapped through the ring
         // on its own: a single mapped span would run off the end of the array
@@ -545,15 +546,23 @@ impl Screen {
             let physical_start = self.logical_linear_to_physical(row * columns + row_start);
             let physical_end = physical_start + (row_end - row_start);
             if spare_protected {
-                for existing in &mut self.cells[physical_start..physical_end] {
+                // A spared cell keeps its occupancy along with its content.
+                // Taking the fill's would let the row's extent stop short of
+                // it, and a scroll trusts the extent both to carry the row
+                // into history and to clear the row it recycles.
+                for (existing, existing_occupied) in self.cells[physical_start..physical_end]
+                    .iter_mut()
+                    .zip(&mut self.occupied_cells[physical_start..physical_end])
+                {
                     if !existing.attributes.contains(Attributes::PROTECTED) {
                         *existing = cell.clone();
+                        *existing_occupied = occupied;
                     }
                 }
             } else {
                 self.cells[physical_start..physical_end].fill(cell.clone());
+                self.occupied_cells[physical_start..physical_end].fill(occupied);
             }
-            self.occupied_cells[physical_start..physical_end].fill(!is_structural_blank(&cell));
         }
         self.mark_dirty_range(first_row, last_row);
         // A contiguous fill can split a pair only at either range boundary.

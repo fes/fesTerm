@@ -2681,7 +2681,9 @@
         "local_wheel_anchors_history_and_ctrl_end_resumes_following",
         "scrollbar_thumb_maps_oldest_and_latest_without_consuming_grid_width",
         "sub_row_point_wheel_tail_does_not_force_a_delayed_jump",
-        "wheel_units_preserve_fractional_movement_before_accumulation"
+        "wheel_units_preserve_fractional_movement_before_accumulation",
+        "a_protected_cell_an_erase_spares_still_scrolls_into_history",
+        "a_guarded_cell_an_erase_spared_scrolls_away_with_its_line"
       ],
       "manual_scenarios": [
         "TI-04",
