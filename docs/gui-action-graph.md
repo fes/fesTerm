@@ -201,6 +201,12 @@ and continuation wakes when work remains. This bounds synchronous update work;
 it is not a frame-rate cap or a physical presentation-latency claim. The active
 session is no longer pumped again after painting.
 
+For `TERM-01` and session close/stop, a backpressured local PTY reader wakes
+when event space becomes available or cancellation is requested. It still
+reports pressure before resumed output, and cancellation still drains the PTY
+without publishing. The command queue, reservations and output byte bound
+remain unchanged.
+
 For `KEY-01` and `TERM-01`, exact Shift+Tab remains a typed modified key and
 emits Backtab (`ESC[Z`) through the ordinary bounded terminal queue. Presses
 and repeats encode; releases do not. Plain Tab, Ctrl+Tab session switching,

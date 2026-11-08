@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Waking a backpressured local PTY reader
+
+The local PTY reader used to retry a full output queue every 5 ms. It now
+waits for consumed event space or cancellation, while preserving the ordered
+backpressure notice, the output byte limit and draining without publishing
+after cancellation. Cancellation wakes a blocked reader even if the command
+queue is full. ADR 0079 records the synchronization boundary and the changed
+meaning of the retry counter.
+
+The repository's PTY probe measures a deliberately stalled reader and a
+normally draining output stream using process CPU time. These observations do
+not qualify GUI responsiveness or native key-to-PTY latency.
+
 ## Composing live desktop panes
 
 Desktop windows can now arrange two to four existing session or document

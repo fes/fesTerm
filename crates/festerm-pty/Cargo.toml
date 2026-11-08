@@ -15,9 +15,16 @@ portable-pty = "0.9.0"
 filedescriptor = "0.8.3"
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.31", default-features = false, features = ["resource"] }
+
 [target.'cfg(windows)'.dependencies]
 festerm-windows-job = { path = "../festerm-windows-job" }
 festerm-windows-runtime = { path = "../festerm-windows-runtime" }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "blocked_output"
+harness = false

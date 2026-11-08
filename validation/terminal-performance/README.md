@@ -1,5 +1,38 @@
 # Terminal TUI performance
 
+## Local PTY output backpressure
+
+On Unix, `cargo bench --locked -p festerm-pty --bench blocked_output -- paused 5`
+starts an owned `/usr/bin/yes` child, waits until the bounded event/byte queue
+stalls, and leaves it undrained for five seconds. The `draining 32` and
+`draining 128` cases warm one MiB and then consume at least the named number
+of MiB using the session event notifier.
+Both cases shut the child down and report `getrusage(RUSAGE_SELF)` user and
+system CPU for the measured interval, excluding the child's CPU and startup
+and shutdown. The draining result can overshoot by one output event, so compare
+CPU per delivered MiB.
+
+On Apple M2, 64-bit macOS and Rust 1.97.1, three paired release samples in
+A-B-B-A-A-B order compared #645 with this change, using separate target
+directories:
+
+| Fixture | #645 median process CPU | Candidate median process CPU |
+| --- | ---: | ---: |
+| Queue stalled for 5 s | 3.921 ms | 0.801 ms |
+| Normally draining 32 MiB | 8.771 ms/MiB | 9.312 ms/MiB |
+| Normally draining 128 MiB | 9.248 ms/MiB | 9.380 ms/MiB |
+
+During the stalled interval, the median recorded failed backpressure attempts
+fell from 676 to zero after the initial stall; the command thread still polls.
+The 32-MiB control increased 6.2% by median, so a separate 128-MiB control
+was run; its median increased 1.4%. Before/after samples ranged from
+8.617–9.647 / 8.560–10.063 ms/MiB for 32 MiB and 9.243–9.571 /
+8.977–9.967 ms/MiB for 128 MiB. This variation cannot rule out a modest
+normal-path regression. The host's one-minute load decreased from about 8.7
+to 7.4 and five-minute load from 18.1 to 16.3, with competing processes
+active. These are PTY-only observations, not GUI throughput, physical latency
+or total system CPU claims.
+
 ## CPU presentation-cache allocation oracle
 
 Run `cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check`.

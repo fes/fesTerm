@@ -2228,6 +2228,7 @@
         "docs/gui-design.md#terminal-context-menu",
         "docs/gui-design.md#explicit-terminal-hyperlinks",
         "docs/adr/0079-global-terminal-ingest-budget.md#decision",
+        "validation/terminal-performance/README.md#local-pty-output-backpressure",
         "validation/terminal-performance/README.md#shared-desktop-update-budget",
         "validation/terminal-performance/README.md#cpu-presentation-cache-allocation-oracle",
         "validation/terminal-performance/README.md#glyph-layout-retirement-oracle",
@@ -2250,6 +2251,10 @@
       ],
       "automated_tests": [
         "retained_grid_rows_preserve_exact_meshes_and_skip_unchanged_paint_work",
+        "bounded_output_queue_reports_pressure_before_resuming_output",
+        "queued_output_bytes_apply_backpressure_before_the_event_queue_fills",
+        "output_never_resumes_ahead_of_the_pressure_that_stalled_it",
+        "blocked_reader_delivers_queued_output_then_observes_eof",
         "smart_selection_wraps_sentences_and_preserves_explicit_breaks",
         "smart_selection_never_crosses_borders_or_columns",
         "smart_selection_structured_errors_preserve_indent_and_blank_boundary",
@@ -4045,7 +4050,9 @@
         "disabled_close_confirmation_closes_live_session_immediately",
         "command_poll_shutdown_preempts_output_before_the_deadline",
         "command_poll_progress_does_not_require_the_sleep_branch_to_win",
-        "live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_queue"
+        "live_shell_control_and_shutdown_progress_with_busy_output_and_a_full_event_queue",
+        "blocked_output_wakes_on_shutdown_with_a_full_command_queue",
+        "reader_drains_without_publishing_after_blocked_output_is_cancelled"
       ],
       "manual_scenarios": [
         "AS-05",
@@ -4069,7 +4076,9 @@
         "ADR-0017"
       ],
       "automated_tests": [
-        "clicking_a_chip_close_button_emits_a_close_action"
+        "clicking_a_chip_close_button_emits_a_close_action",
+        "blocked_output_wakes_on_shutdown_with_a_full_command_queue",
+        "reader_drains_without_publishing_after_blocked_output_is_cancelled"
       ],
       "manual_scenarios": [
         "TI-06"
