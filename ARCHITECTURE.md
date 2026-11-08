@@ -184,7 +184,7 @@ exact owned daemon generation and requires explicit takeover authorization.
 `festerm-ssh` supplies bounded native binary exec without a PTY, while
 `festerm-sessiond` retains snapshot decoding/adoption and terminal ownership.
 There is no reverse SSH-to-sessiond dependency or new network listener.
-Native interoperability and broker/compliance gates remain CP-19 through CP-21.
+Native interoperability and broker/compliance gates remain CP-24, CP-25 and CP-21.
 
 ## Current and Target Workspace Layout
 

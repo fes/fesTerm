@@ -1,7 +1,7 @@
 # PowerShell and enterprise integration
 
-**Status:** Owner-authorized development on `feat/powershell`, not a supported
-remote connection type.
+**Status:** Experimental desktop feature, not a generally supported remote
+connection type.
 
 [ADR 0082](adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md)
 defines the boundaries for [native PSRP](https://github.com/fes/fesTerm/issues/256),
@@ -53,7 +53,7 @@ host calls terminate correctly, and close releases the runspace. SSH
 subsystem cancellation, Kerberos, CredSSP, reconnect and brokered enterprise
 authentication have separate qualification gates.
 
-The feature branch includes experimental native PowerShell profiles and a
+The experimental implementation includes native PowerShell profiles and a
 dedicated structured-session tab, a remote-session desktop picker backed by
 native SSH, and an enterprise sign-in/discovery tab. A PSRP daemon bridge and
 broker/device-claim integration remain separate implementation work, not
@@ -147,7 +147,7 @@ are not workspace members; their test dependencies have separate lockfiles.
 The HTTPS mode uses explicit NTLM credentials. Kerberos, CredSSP/delegation,
 brokered logon, interactive credential prompts and reconnect/continuity are not
 supported connection modes here. The separate SSH mode is described below. Corporate
-qualification still requires CP-20; NTLM being implemented does not mean the
+qualification still requires CP-25; NTLM being implemented does not mean the
 organization permits it or that an Entra-only Dev Box accepts it.
 
 ### Native PSRP over SSH
@@ -249,12 +249,12 @@ Neither aggregate silently enables remoting on a local or corporate machine.
 
 The workflow is dispatched manually and also runs for relevant pull-request
 changes and changes on `feat/powershell`; it does not add a recurring schedule.
-The existing evidence is limited to same-host Windows
-PowerShell/HTTPS/NTLM. It does not qualify PowerShell 7, cross-host macOS/Linux
+The existing HTTPS/NTLM evidence is limited to same-host Windows PowerShell
+and an owned PowerShell 7 endpoint. It does not qualify cross-host macOS/Linux
 clients, domain authentication, a corporate Dev Box, or enrolled-device policy.
-CP-20 remains partial until those separately claimed combinations have evidence.
+CP-25 remains partial until those separately claimed combinations have evidence.
 
-#### Current Core 7 blocker
+#### Core 7 endpoint and limited native evidence
 
 The extended harness requires an owned Core 7 configuration rather than
 silently skipping it. Hosted PowerShell 7.6.6 initially lacked the staged WinRM
@@ -268,8 +268,7 @@ In [run 36369262032](https://github.com/fes/fesTerm/actions/runs/36369262032),
 Windows PowerShell readiness succeeded, but the owned Core 7 endpoint rejected
 the generated non-admin identity with WSMan provider fault `2689860592`
 (`0xa05403f0`, `pwrshplugin.dll`). This occurs with Microsoft's `New-PSSession`,
-before fesTerm's Rust client cases run. The eight-case extended suite therefore
-remains blocked, not passed or successfully skipped.
+before fesTerm's Rust client cases ran. That run did not pass the Core 7 case.
 
 Upstream reports [#14274](https://github.com/PowerShell/PowerShell/issues/14274)
 and [#18741](https://github.com/PowerShell/PowerShell/issues/18741) describe the
@@ -287,18 +286,22 @@ has not been qualified here.
 
 The harness does not grant write access to installed plugin/runtime configuration,
 switch the test account to administrator, or weaken TLS to conceal the failure.
-The harness now attempts the upstream-discussed alternative of pointing only
+The harness uses the upstream-discussed alternative of pointing only
 its uniquely owned endpoint at the installation's plugin in Program Files,
 without changing file ACLs. It requires the test identity to be non-admin and
-unable to write the plugin or its directory. This alternative still requires
-native validation; it does not qualify the default copied System32 plugin or
-constitute evidence of native Core 7 interoperability by itself.
+unable to write the plugin or its directory. In
+[run 42525629625](https://github.com/fes/fesTerm/actions/runs/42525629625)
+at `fc23553c`, eight Windows PowerShell cases passed, including certificate
+and credential refusals; the required Core 7 case separately verified its
+edition, retained state across a confirmed cancellation, and closed cleanly.
+This same-host result does not qualify the default copied System32 plugin or
+the other platforms and deployments.
 
 Desktop/configuration and protocol regressions are independently covered by
 full CI [36367985241](https://github.com/fes/fesTerm/actions/runs/36367985241)
 and [36368810721](https://github.com/fes/fesTerm/actions/runs/36368810721), with
-all five jobs passing in each run. They do not turn the blocked native Core 7
-gate or corporate/phone prerequisites into accepted capabilities.
+all five jobs passing in each run. They do not turn the corporate/phone
+prerequisites into accepted capabilities.
 
 The first passing run with strict cancellation continuity is
 [36355786297](https://github.com/fes/fesTerm/actions/runs/36355786297), at
@@ -470,7 +473,7 @@ persistence, including the existing 768 MiB serialized snapshot ceiling.
 SSH queues and discovery are separately bounded; this is not a small-memory
 mobile snapshot protocol. The host/account pin extends the owner-scoped
 snapshot trust boundary; it does not make arbitrary snapshot files trusted.
-Cross-host and Windows OpenSSH/named-pipe interoperability remain CP-19.
+Cross-host and Windows OpenSSH/named-pipe interoperability remain CP-24.
 PSRP attachment, Entra sign-in and broker/device claims are not implemented by
 this SSH path.
 

@@ -52,7 +52,7 @@ worker, including completion between inspection and update; it must not wait
 for the replacement periodic worker in the same generation.
 
 The machine-readable sessiond helper in ADR-0082 shares the registry/liveness
-contracts covered alongside `LAUNCH-12`; CP-19 adds read-only capability and
+contracts covered alongside `LAUNCH-12`; CP-24 adds read-only capability and
 metadata oracles. Remote discovery and PowerShell/enterprise application
 commands are separately covered below; these paths do not change local resume
 policy or implement remote PSRP attachment.
@@ -580,7 +580,7 @@ stateDiagram-v2
 
 The following IDs track experimental backend and desktop contracts under
 ADR-0082. Headless fixtures do not establish native GUI or endpoint acceptance;
-real PSRP, sign-in and tenant access remain CP-20/CP-21/CP-23.
+real PSRP, sign-in and tenant access remain CP-25/CP-21/CP-23.
 
 | ID | From -> To | Action / guard | Oracle | Return | Layer |
 | --- | --- | --- | --- | --- | --- |
