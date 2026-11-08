@@ -11,7 +11,7 @@ use crate::{
     input::{
         encode_key, encode_legacy_mouse, encode_modified_key, encode_paste, encode_sgr_mouse,
         mouse_event_is_reported, paste_encoded_length, FocusEvent, InputEvent, InputEventOutcome,
-        MouseEvent,
+        Key, MouseEvent,
     },
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
     parser::{
@@ -1362,6 +1362,10 @@ impl Terminal {
     /// Enter (CR), while other payload bytes and line order remain unchanged.
     pub fn handle_input(&mut self, event: InputEvent) -> InputEventOutcome {
         let encoded = match event {
+            InputEvent::Key(Key::Character(character)) if !self.modes.keyboard_locked() => {
+                let mut bytes = [0; 4];
+                return self.queue_encoded_input(character.encode_utf8(&mut bytes).as_bytes());
+            }
             InputEvent::Key(key) => encode_key(key, self.modes),
             InputEvent::ModifiedKey { key, modifiers } => {
                 encode_modified_key(key, modifiers, self.modes)

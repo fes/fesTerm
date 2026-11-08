@@ -2125,6 +2125,8 @@
         "platform_new_tab_shortcut_focuses_the_singleton_launcher_end_to_end",
         "page_keys_encode_exact_sequences_in_primary_alternate_and_cursor_modes",
         "page_keys_obey_keyboard_lock_and_atomic_queue_limits",
+        "character_input_matches_prepared_utf8_and_preserves_queue_bounds",
+        "character_input_avoids_temporary_allocations",
         "terminal_page_keys_route_plain_presses_repeats_and_not_releases",
         "terminal_page_keys_preserve_shift_history_and_other_modified_chords",
         "terminal_page_keys_obey_foreground_readonly_and_ime_suppression",

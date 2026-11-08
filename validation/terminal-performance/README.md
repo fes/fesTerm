@@ -1,5 +1,34 @@
 # Terminal TUI performance
 
+## Character input encoding
+
+The core encodes an unmodified character into a four-byte stack buffer before
+copying it to the existing bounded input queue, rather than first allocating a
+temporary UTF-8 `String`. Keyboard lock and queue admission still follow the
+same paths; the temporary buffer is not retained between events.
+
+On an Apple M2 with 64-bit macOS and Rust 1.97.1, three paired,
+single-threaded release samples in A-B-B-A-A-B order measured process user
+plus system CPU during 10 million repetitions of core `handle_input` followed
+by `drain_input`:
+
+| Fixture | Before median CPU | After median CPU |
+| --- | ---: | ---: |
+| ASCII character | 0.566 s | 0.320 s |
+| Four-byte Unicode character | 0.654 s | 0.371 s |
+
+For 4,096 repetitions, a separately instrumented allocator counted
+8,192 allocation calls before and 4,096 after for each fixture. One
+allocation per event remains for the owned terminal input queue. Run
+`cargo test --locked -p festerm-core --test character_input_allocations` for
+the isolated allocation regression.
+
+This is a core-loop measurement, not an end-to-end keystroke or native event
+latency result. The application pending-write buffer and session transport
+still allocate or copy; zero-allocation delivery is not claimed. The shared
+host's one-minute load decreased from about 13.8 to 13.2, so competing work
+limits timing precision.
+
 ## CPU presentation-cache allocation oracle
 
 Run `cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check`.

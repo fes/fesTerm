@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Reducing character-input allocations
+
+The terminal core now encodes ordinary character input into a short
+stack buffer before admitting it to the existing bounded queue, avoiding a
+temporary heap allocation per character. Keyboard lock, UTF-8 bytes and
+overflow behavior remain unchanged; no reusable buffer retains input between
+events. A deterministic allocation regression and the core-loop CPU
+observations are documented in `validation/terminal-performance/README.md`.
+Session-queue copies and end-to-end input latency remain separate work.
+
 ## Composing live desktop panes
 
 Desktop windows can now arrange two to four existing session or document

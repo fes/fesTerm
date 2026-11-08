@@ -1054,6 +1054,43 @@ mod tests {
     }
 
     #[test]
+    fn character_input_matches_prepared_utf8_and_preserves_queue_bounds() {
+        let mut terminal = terminal(8, 3);
+        for character in ['\0', 'a', 'é', '漢', '🙂', '\u{10ffff}'] {
+            let event = InputEvent::Key(Key::Character(character));
+            let prepared = terminal
+                .prepare_input(std::slice::from_ref(&event), 4)
+                .unwrap();
+            let expected = prepared.bytes().to_vec();
+            assert_eq!(
+                terminal.handle_input(event),
+                InputEventOutcome::Encoded {
+                    bytes: expected.len()
+                }
+            );
+            assert_eq!(terminal.drain_input(), expected);
+        }
+
+        terminal.queue_input(b"prefix");
+        terminal.ingest(b"\x1b[2h");
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Character('a'))),
+            InputEventOutcome::Rejected
+        );
+        assert_eq!(terminal.drain_input(), b"prefix");
+        terminal.ingest(b"\x1b[2l");
+
+        let prefix = vec![b'x'; TRANSPORT_QUEUE_HIGH_WATERMARK - 3];
+        terminal.queue_input(&prefix);
+        assert_eq!(
+            terminal.handle_input(InputEvent::Key(Key::Character('🙂'))),
+            InputEventOutcome::QueueOverflow
+        );
+        assert_eq!(terminal.drain_input(), prefix);
+        assert!(terminal.take_input_queue_overflowed());
+    }
+
+    #[test]
     fn form_feed_and_vertical_tab_index_exactly_as_a_line_feed_does() {
         // FF and VT are LF under different names: they move down a line and
         // scroll at the bottom of the region, and they leave the column
