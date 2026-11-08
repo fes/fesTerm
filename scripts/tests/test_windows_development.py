@@ -3,8 +3,10 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -61,6 +63,27 @@ class DevelopmentLaunchTests(unittest.TestCase):
             except OSError:
                 self.skipTest("symbolic links are unavailable")
             with self.assertRaisesRegex(launcher.LaunchError, "symbolic link"):
+                launcher.prepare_state(root)
+
+    def test_reparse_point_is_detected_even_when_not_a_symbolic_link(self):
+        metadata = SimpleNamespace(
+            st_mode=stat.S_IFDIR, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT
+        )
+        with patch.object(Path, "lstat", return_value=metadata):
+            self.assertTrue(launcher.is_link_or_reparse_point(Path("junction")))
+
+    @unittest.skipUnless(os.name == "nt", "Windows junctions")
+    def test_state_refuses_windows_junction(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "target").mkdir()
+            redirect = root / "redirect"
+            redirect.mkdir()
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(root / "target/festerm-dev"), str(redirect)],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            with self.assertRaisesRegex(launcher.LaunchError, "reparse point"):
                 launcher.prepare_state(root)
 
     @unittest.skipIf(os.name == "nt", "Unix mode bits")

@@ -17,12 +17,24 @@ class LaunchError(RuntimeError):
     pass
 
 
+def is_link_or_reparse_point(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
 def prepare_state(root: Path) -> None:
     target = root / "target"
     state = target / "festerm-dev"
     for path in (target, state, state / "config.toml", state / "sessiond", state / "state"):
-        if path.is_symlink():
-            raise LaunchError(f"Refusing a symbolic link in development state: {path}")
+        if is_link_or_reparse_point(path):
+            raise LaunchError(
+                f"Refusing a symbolic link or reparse point in development state: {path}"
+            )
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     if os.name != "nt":
         metadata = state.stat()

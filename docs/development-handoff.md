@@ -115,10 +115,11 @@ python3 scripts/run-development.py
 The launcher builds the local daemon and tunnel helpers before starting the
 frontend. It uses `target/festerm-dev` for a reusable development config and
 sessiond root, overriding even an inherited `FESTERM_SESSIOND_RUNTIME_ROOT`;
-it refuses symbolic links at those state paths. It disables release-update
-configuration for the build and removes release-signing credentials from the
-child environment. Persistent development sessions intentionally survive the
-frontend and can be reattached by a later invocation from this worktree.
+it refuses symbolic links and Windows reparse points at those state paths. It
+removes the release updater key and `APPLE_*`/`CARGO_PACKAGER_SIGN_*` values
+from the child environment. Persistent development sessions intentionally
+survive the frontend and can be reattached by a later invocation from this
+worktree.
 The user's OS credential store, shell environment and desktop session are
 still shared; this is not a full sandbox or native qualification.
 
