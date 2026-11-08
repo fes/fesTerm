@@ -66,15 +66,15 @@ async fn host(mut stream: tokio::io::DuplexStream, script: Arc<Script>) {
     assert_eq!(kind, HELLO);
     let hello: Hello = serde_json::from_slice(&bytes).unwrap();
     script.clients.lock().unwrap().push(hello.client);
+    write_frame(&mut stream, CAPABILITIES, &[0, 0])
+        .await
+        .unwrap();
     // Like the real host: a held session needs takeover (no holder record
     // here, so nothing is reclaimable).
     if script.attached_by.is_some() && !hello.takeover {
         let _ = write_frame(&mut stream, REFUSED, &[]).await;
         return;
     }
-    write_frame(&mut stream, CAPABILITIES, &[0, 0])
-        .await
-        .unwrap();
     let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
     terminal.ingest(b"recovered line\r\n");
     write_frame(

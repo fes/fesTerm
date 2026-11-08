@@ -1604,6 +1604,13 @@ impl SessionTab {
         terminal.set_color_scheme(festerm_ui_egui::terminal_color_scheme());
         let controller = match result {
             Ok(session) => {
+                if matches!(
+                    &session,
+                    ApplicationSession::Persistent(_) | ApplicationSession::DevTunnel(_)
+                ) && !session.recovery_protocol_is_authoritative()
+                {
+                    terminal.set_semantics(festerm_core::TerminalSemantics::Legacy);
+                }
                 tracing::info!(
                     target: "festerm::session",
                     session = %session.id(),

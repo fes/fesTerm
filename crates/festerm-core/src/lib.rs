@@ -164,9 +164,9 @@ pub use parser::{CsiParameters, ParameterSeparator, Parser, TerminalOp};
 pub use replies::QueuePushResult;
 pub use screen::Screen;
 pub use terminal::{
-    ContentPosition, RecordingCheckpoint, Terminal, TerminalError, TerminalTextSnapshot,
-    TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen, MAX_RECORDING_CHECKPOINT_BYTES,
-    MAX_RECORDING_SCROLLBACK_BYTES,
+    ContentPosition, RecordingCheckpoint, Terminal, TerminalError, TerminalSemantics,
+    TerminalTextSnapshot, TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen,
+    MAX_RECORDING_CHECKPOINT_BYTES, MAX_RECORDING_SCROLLBACK_BYTES,
 };
 
 #[cfg(test)]
@@ -3584,6 +3584,187 @@ mod tests {
                 .contains("five"),
             "output after reset should scroll normally"
         );
+    }
+
+    #[test]
+    fn ris_restores_display_modes_and_charset_without_discarding_history_or_input() {
+        let mut terminal = terminal(12, 4);
+        terminal.ingest(b"first\r\nsecond\r\nthird\r\nfourth\r\n");
+        let history_before = terminal.scrollback_stats().logical_lines();
+        assert!(history_before > 0);
+        terminal.queue_input(b"queued input");
+        terminal.ingest(
+            b"\x1b[3;4H\x1b7\x1b[s\x1b[3g\x1b[?1049h\x1b[2;3r\x1b[?69h\x1b[3;8s\
+              \x1b[?6;1000;2004h\x1b[?25l\x1b[3 q\x1b[31m\x1b[1\"q\x1b)0\x0eq",
+        );
+        let generation = terminal.screen_generation();
+
+        terminal.ingest(b"\x1bc");
+
+        assert_eq!(terminal.modes(), super::TerminalModes::default());
+        assert_eq!(terminal.cursor().column(), 0);
+        assert_eq!(terminal.cursor().row(), 0);
+        assert_eq!(terminal.cursor_style(), super::CursorStyle::default());
+        assert!(!terminal.cursor_style_requested_by_program());
+        assert_eq!(terminal.foreground(), Color::Default);
+        assert_eq!(terminal.attributes(), Attributes::NONE);
+        assert_eq!(terminal.alternate_screen(), None);
+        assert_ne!(terminal.screen_generation(), generation);
+        assert_eq!(terminal.scrollback_stats().logical_lines(), history_before);
+        assert_eq!(terminal.drain_input(), b"queued input");
+        for row in 0..terminal.dimensions().rows() {
+            assert!(terminal.row_text(row).unwrap().trim().is_empty());
+        }
+
+        terminal.ingest(b"\x1b[2b\x1b8\x1b[uq");
+        assert_eq!(terminal.row_text(0).unwrap().trim(), "q");
+        terminal.ingest(b"\x1b[?2K");
+        assert!(terminal.row_text(0).unwrap().trim().is_empty());
+        terminal.ingest(b"\r\t");
+        assert_eq!(terminal.cursor().column(), 8);
+    }
+
+    #[test]
+    fn ris_recovers_from_incomplete_controls_and_utf8_across_chunks() {
+        for prefix in [
+            b"".as_slice(),
+            b"\x1b[".as_slice(),
+            b"\x1b[12;".as_slice(),
+            b"\x1b]0;unfinished".as_slice(),
+            b"\x1bPunfinished".as_slice(),
+            b"\x1b_unfinished".as_slice(),
+            b"\xf0\x9f".as_slice(),
+        ] {
+            let mut terminal = terminal(12, 3);
+            terminal.ingest(b"\x1b)0\x0eq");
+            terminal.ingest(prefix);
+            terminal.ingest(b"\x1b");
+            terminal.ingest(b"c");
+            terminal.ingest(b"\x1b[2bq");
+
+            assert_eq!(terminal.row_text(0).unwrap().trim(), "q", "{prefix:?}");
+            assert_eq!(terminal.cursor().column(), 1, "{prefix:?}");
+        }
+    }
+
+    #[test]
+    fn ris_preserves_query_order_within_one_output_chunk() {
+        let mut terminal = terminal(12, 4);
+        terminal.ingest(b"\x1b[3;4H\x1b[6n\x1bc\x1b[6nX");
+
+        assert_eq!(terminal.drain_replies(), b"\x1b[3;4R\x1b[1;1R");
+        assert_eq!(terminal.row_text(0).unwrap().trim(), "X");
+    }
+
+    #[test]
+    fn ris_discards_incomplete_hyperlinks_queries_and_overflowed_controls() {
+        let mut prefixes = vec![
+            b"\x1b]8;;https://unfinished.example/".to_vec(),
+            b"\x1b]10;?".to_vec(),
+            b"\x1bP$qm".to_vec(),
+        ];
+        let mut csi = b"\x1b[".to_vec();
+        csi.extend_from_slice("1;".repeat(MAX_CSI_PARAMETERS + 1).as_bytes());
+        prefixes.push(csi);
+        for introducer in [b"\x1b]".as_slice(), b"\x1bP"] {
+            let mut prefix = introducer.to_vec();
+            prefix.extend(vec![b'x'; MAX_STRING_BYTES + 1]);
+            prefixes.push(prefix);
+        }
+
+        for prefix in prefixes {
+            let mut terminal = terminal(12, 3);
+            terminal.ingest(b"\x1b]8;;https://example.com/\x07old");
+            terminal.queue_reply(b"pending");
+            terminal.ingest(&prefix);
+            terminal.ingest(b"\x1b");
+            terminal.ingest(b"cX");
+
+            assert_eq!(terminal.row_text(0).unwrap().trim(), "X");
+            assert!(terminal.cell(0, 0).unwrap().hyperlink().is_none());
+            assert_eq!(terminal.drain_replies(), b"pending");
+        }
+    }
+
+    #[test]
+    fn ris_clears_iso_and_dec_protection_and_both_character_sets() {
+        for (protection, erase) in [
+            (b"\x1b[1\"q".as_slice(), b"\x1b[?2K".as_slice()),
+            (b"\x1bV".as_slice(), b"\x1b[2K".as_slice()),
+        ] {
+            let mut terminal = terminal(8, 2);
+            terminal.ingest(b"\x1b(0\x1b)0\x0eq");
+            terminal.ingest(protection);
+            terminal.ingest(b"\x1bc\x0eq");
+            assert_eq!(terminal.row_text(0).unwrap().trim(), "q");
+            terminal.ingest(erase);
+            assert!(terminal.row_text(0).unwrap().trim().is_empty());
+        }
+    }
+
+    #[test]
+    fn legacy_semantics_preserve_old_ris_and_direct_reset_behavior() {
+        let mut terminal = terminal(12, 2);
+        terminal.set_semantics(super::TerminalSemantics::Legacy);
+        terminal.ingest(b"ABC\x1b");
+        terminal.ingest(b"cXYZ");
+        assert_eq!(terminal.row_text(0).unwrap().trim(), "ABCXYZ");
+
+        terminal.ingest(b"\x1b[1\"qR");
+        terminal.reset_to_initial_state();
+        terminal.ingest(b"x\x1b[?2K");
+        assert_eq!(terminal.row_text(0).unwrap().trim(), "x");
+        assert_eq!(terminal.semantics(), super::TerminalSemantics::Legacy);
+
+        terminal.ingest(b"\x1b(0q\x1bcq");
+        assert!(terminal.row_text(0).unwrap().contains("──"));
+    }
+
+    #[test]
+    fn reset_separates_retained_wrapped_history_from_new_output() {
+        for use_ris in [false, true] {
+            let mut terminal = terminal(4, 2);
+            terminal.ingest(b"abcdefghijk");
+            assert!(!terminal.scrollback_lines().next().unwrap().has_hard_break());
+            if use_ris {
+                terminal.ingest(b"\x1bc");
+            } else {
+                terminal.reset_to_initial_state();
+            }
+            terminal.ingest(b"XYZ");
+            assert_eq!(terminal.text_snapshot().text(), "abcd\nXYZ");
+
+            terminal.resize(Dimensions::new(8, 2).unwrap()).unwrap();
+            assert_eq!(terminal.text_snapshot().text(), "abcd\nXYZ");
+        }
+    }
+
+    #[test]
+    fn ris_recording_replay_does_not_repeat_pre_reset_characters() {
+        let mut live = terminal(12, 3);
+        live.ingest(b"\x1b[?1049hsecret");
+        let mut replay = live
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap()
+            .into_terminal()
+            .unwrap();
+        let mut repeats = Vec::new();
+        let mut visible_changes = Vec::new();
+        let output = b"\x1bc\x1b[2bX";
+        live.ingest_observing_recording(
+            output,
+            |offset, character| repeats.push((offset, character)),
+            |offset, _| visible_changes.push(offset),
+        );
+        replay
+            .ingest_recorded_output(output, repeats.clone())
+            .unwrap();
+
+        assert_eq!(repeats, vec![(5, None)]);
+        assert!(visible_changes.contains(&1));
+        assert_eq!(live.row_text(0).unwrap().trim(), "X");
+        assert_eq!(live.row_text(0), replay.row_text(0));
+        assert_eq!(live.modes(), replay.modes());
     }
 
     #[test]

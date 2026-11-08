@@ -86,6 +86,8 @@ pub enum AttachError {
     /// The host declined: the session is held and takeover is not allowed or
     /// not requested, or the pinned target no longer exists.
     Refused,
+    /// An older host may refuse a newer hello before identifying its protocol.
+    RefusedOrIncompatible,
     /// The host spoke an unexpected protocol.
     Protocol,
     /// The stream failed or timed out.
@@ -97,6 +99,9 @@ impl fmt::Display for AttachError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Refused => "The host refused the attachment.",
+            Self::RefusedOrIncompatible => {
+                "The host refused the attachment or uses an incompatible protocol. Verify the session and update both devices."
+            }
             Self::Protocol => "Unexpected host response.",
             Self::Connection => "Connection failed.",
             Self::Cancelled => "Cancelled.",
@@ -134,7 +139,7 @@ pub async fn establish(
             files: FileAccess::default(),
             takeover,
             version: VERSION,
-            snapshot_schema: 3,
+            snapshot_schema: SNAPSHOT_SCHEMA_VERSION,
             target,
             client,
         })
@@ -143,8 +148,8 @@ pub async fn establish(
             .await
             .map_err(|_| AttachError::Connection)?;
         let (kind, capabilities) = read(&mut stream).await?;
-        if kind == REFUSED {
-            return Err(AttachError::Refused);
+        if kind == REFUSED || kind == INCOMPATIBLE {
+            return Err(AttachError::RefusedOrIncompatible);
         }
         if kind != CAPABILITIES || capabilities.len() != 2 || capabilities[0] != 0 {
             return Err(AttachError::Protocol);
@@ -659,6 +664,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_snapshot_is_not_acknowledged_until_mobile_adopts_it() {
+        let (client, mut host) = tokio::io::duplex(1 << 16);
+        let task = tokio::spawn(async move {
+            establish(
+                Box::new(client),
+                target(),
+                false,
+                None,
+                &CancellationToken::new(),
+            )
+            .await
+        });
+        assert_eq!(read_frame(&mut host).await.unwrap().0, HELLO);
+        write_frame(&mut host, CAPABILITIES, &[0, 0]).await.unwrap();
+        let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        terminal.set_semantics(festerm_core::TerminalSemantics::Legacy);
+        terminal.ingest(b"ABC");
+        write_frame(&mut host, SNAPSHOT, &encode_snapshot(&terminal).unwrap())
+            .await
+            .unwrap();
+        let handshake = task.await.unwrap().unwrap();
+        let session = TunnelSession::spawn(
+            &tokio::runtime::Handle::current(),
+            handshake,
+            noop_session_event_notifier(),
+        );
+        assert!(session.try_send_input(b"premature").is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(80), read_frame(&mut host))
+                .await
+                .is_err()
+        );
+        let mut recovered = session.take_recovered_terminal().unwrap();
+        assert_eq!(
+            recovered.semantics(),
+            festerm_core::TerminalSemantics::Legacy
+        );
+        recovered.ingest(b"\x1bcXYZ");
+        assert!(recovered.row_text(0).unwrap().starts_with("ABCXYZ"));
+        assert_eq!(read_frame(&mut host).await.unwrap(), (ADOPTED, vec![]));
+    }
+
+    #[tokio::test]
+    async fn malformed_or_truncated_snapshots_never_acknowledge_adoption() {
+        for truncated in [false, true] {
+            let (client, mut host) = tokio::io::duplex(4096);
+            let cancel = CancellationToken::new();
+            let task = tokio::spawn(async move {
+                establish(Box::new(client), target(), false, None, &cancel).await
+            });
+            assert_eq!(read_frame(&mut host).await.unwrap().0, HELLO);
+            write_frame(&mut host, CAPABILITIES, &[0, 0]).await.unwrap();
+            if truncated {
+                use tokio::io::AsyncWriteExt;
+                host.write_all(&[SNAPSHOT, 0, 0, 0, 2, 1]).await.unwrap();
+                host.shutdown().await.unwrap();
+            } else {
+                write_frame(&mut host, SNAPSHOT, &[1, b'{', b'}'])
+                    .await
+                    .unwrap();
+            }
+            assert!(task.await.unwrap().is_err());
+            assert!(read_frame(&mut host).await.is_err());
+        }
+    }
+
+    #[tokio::test]
     async fn displacement_ends_the_session_without_reattaching() {
         for (code, expected) in [
             (0, Displacer::Local),
@@ -726,20 +798,22 @@ mod tests {
 
     #[tokio::test]
     async fn refusal_and_malformed_hosts_fail_the_handshake_with_typed_errors() {
-        let (client, mut host) = tokio::io::duplex(4096);
-        tokio::spawn(async move {
-            read_frame(&mut host).await.unwrap();
-            write_frame(&mut host, REFUSED, &[]).await.unwrap();
-        });
-        let result = establish(
-            Box::new(client),
-            target(),
-            false,
-            None,
-            &CancellationToken::new(),
-        )
-        .await;
-        assert_eq!(result.err(), Some(AttachError::Refused));
+        for refusal in [REFUSED, INCOMPATIBLE] {
+            let (client, mut host) = tokio::io::duplex(4096);
+            tokio::spawn(async move {
+                read_frame(&mut host).await.unwrap();
+                write_frame(&mut host, refusal, &[]).await.unwrap();
+            });
+            let result = establish(
+                Box::new(client),
+                target(),
+                false,
+                None,
+                &CancellationToken::new(),
+            )
+            .await;
+            assert_eq!(result.err(), Some(AttachError::RefusedOrIncompatible));
+        }
 
         let (client, mut host) = tokio::io::duplex(4096);
         tokio::spawn(async move {

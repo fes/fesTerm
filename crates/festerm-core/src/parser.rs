@@ -384,6 +384,8 @@ pub enum TerminalOp {
     /// reach from here and is ignored.
     WindowOperation(CsiParameters),
     Ignored,
+    /// `ESC c` (RIS): reset the terminal to its initial display state.
+    ResetToInitialState,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -438,6 +440,8 @@ enum ParserState {
 /// A bounded state-machine parser for ESC and CSI input.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Parser {
+    #[serde(skip)]
+    semantics: crate::TerminalSemantics,
     state: ParserState,
     parameters: CsiParameters,
     parameter_digits: u8,
@@ -460,14 +464,21 @@ pub struct Parser {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct RecordingParser {
+    #[serde(skip)]
+    semantics: crate::TerminalSemantics,
     g0_charset: Charset,
     g1_charset: Charset,
     shifted_to_g1: bool,
 }
 
 impl RecordingParser {
+    pub(crate) fn semantics(&self) -> crate::TerminalSemantics {
+        self.semantics
+    }
+
     pub(crate) fn into_parser(self) -> Parser {
         let mut parser = Parser::new();
+        parser.semantics = self.semantics;
         parser.g0_charset = self.g0_charset;
         parser.g1_charset = self.g1_charset;
         parser.shifted_to_g1 = self.shifted_to_g1;
@@ -527,6 +538,7 @@ impl Default for Parser {
 impl Parser {
     pub const fn new() -> Self {
         Self {
+            semantics: crate::TerminalSemantics::Current,
             state: ParserState::Ground,
             parameters: CsiParameters {
                 values: [0; MAX_CSI_PARAMETERS],
@@ -545,6 +557,14 @@ impl Parser {
             g1_charset: Charset::Ascii,
             shifted_to_g1: false,
         }
+    }
+
+    pub(crate) fn semantics(&self) -> crate::TerminalSemantics {
+        self.semantics
+    }
+
+    pub(crate) fn set_semantics(&mut self, semantics: crate::TerminalSemantics) {
+        self.semantics = semantics;
     }
 
     pub(crate) fn is_ground(&self) -> bool {
@@ -566,6 +586,7 @@ impl Parser {
             return None;
         }
         Some(RecordingParser {
+            semantics: self.semantics,
             g0_charset: self.g0_charset,
             g1_charset: self.g1_charset,
             shifted_to_g1: self.shifted_to_g1,
@@ -726,6 +747,10 @@ impl Parser {
             },
             b'=' => TerminalOp::SetApplicationKeypad(true),
             b'>' => TerminalOp::SetApplicationKeypad(false),
+            b'c' if self.semantics == crate::TerminalSemantics::Current => {
+                *self = Self::new();
+                TerminalOp::ResetToInitialState
+            }
             _ => TerminalOp::Ignored,
         }
     }

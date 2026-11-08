@@ -623,8 +623,23 @@ daemon with the remote bridge as the same unelevated OS user. No firewall
 change, service installation or inbound TCP listener is involved. Keep the
 daemon executable while its session lives; bridge replacement is not daemon
 hot-upgrade. Existing protocol-1/2 daemons and schema-2/3 local recovery remain
-supported by local clients; **remote export requires protocol 3**. Older
-frontends that support only protocol 2 must refuse a new protocol-3 daemon.
+supported by local clients; **remote export requires protocol 3**. Local
+recovery schema 4 preserves each session's terminal-reset semantics; older
+schema-2/3 snapshots retain the behavior of their original daemons. Reconnect
+across the protocol-1 versus snapshot-protocol boundary is refused: open the
+selected session in a new tab instead. Older frontends must refuse a daemon
+whose recovery schema they do not understand.
+
+Early development builds of the RIS change advertised schema 3 while using the
+new reset behavior. Their running sessions are indistinguishable from released
+schema-3 sessions and need a matching development frontend or termination;
+schema 3 is otherwise interpreted using released legacy behavior.
+
+The experimental terminal bridge uses protocol 4 with schema-4 snapshots.
+Update the bridge host and desktop/mobile clients together: protocol-1 bridge
+peers cannot safely exchange reset semantics and are not attach-compatible.
+Bridge refusal before protocol negotiation can also mean the selected session
+changed; it must not be interpreted as proof that another client took it over.
 
 The build also produces `festerm-tunnel-setup`. With an official CLI already
 installed, run it directly as your normal user with an existing private parent

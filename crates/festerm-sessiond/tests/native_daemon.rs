@@ -2008,14 +2008,15 @@ fn hex_encode_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn read_recovery_terminal(stream: &mut dyn ClientStream) -> Terminal {
-    let mut header = [0u8; 12];
-    stream.read_exact(&mut header).unwrap();
-    assert_eq!(&header[..4], b"FSD2");
-    let length = usize::try_from(u64::from_be_bytes(header[4..12].try_into().unwrap())).unwrap();
-    let mut payload = vec![0; length];
-    stream.read_exact(&mut payload).unwrap();
-    bincode::deserialize(&payload).unwrap()
+fn read_recovery_terminal(mut stream: &mut dyn ClientStream) -> Terminal {
+    festerm_sessiond::read_attach_recovery_terminal(
+        &mut stream,
+        festerm_sessiond::PROTOCOL_VERSION,
+        festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        std::time::Instant::now() + Duration::from_secs(5),
+    )
+    .unwrap()
+    .expect("current protocol carries a recovery snapshot")
 }
 
 fn terminal_contains(terminal: &Terminal, expected: &[u8]) -> bool {

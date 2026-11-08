@@ -310,6 +310,13 @@ impl Scrollback {
         }
     }
 
+    pub(crate) fn finish_open_line(&mut self) {
+        if let Some(line) = self.lines.back_mut() {
+            line.hard_break = true;
+        }
+        self.active_oversize_line = None;
+    }
+
     pub(crate) fn validate_recovery_state(&self, columns: usize) -> Result<(), String> {
         if self.line_row_starts.len() != self.lines.len() {
             return Err(format!(
