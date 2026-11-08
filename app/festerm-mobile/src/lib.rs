@@ -3636,13 +3636,13 @@ mod tests {
                 .normalize_typing
         );
         harness.get_by_label("Save recording settings").click();
-        harness.run();
+        harness.run_steps(4);
         for _ in 0..100 {
             if !harness.state().shell.recording_busy {
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
-            harness.run();
+            harness.step();
         }
         assert!(!harness.state().shell.recording_busy);
         assert!(harness.state().shell.recording_error.is_none());
