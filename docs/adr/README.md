@@ -46,6 +46,7 @@ Architecture decision records preserve decisions that affect the project across 
 - [ADR 0048: Bounded Native SVG and HTML Anchors in Markdown](0048-bounded-native-svg-and-html-anchors.md) - owner accepted 2026-10-14 after pre-parser marker refusal and actual named-target scrolling repairs; narrowly amends ADR 0030, native fidelity/accessibility/DPI qualification remains CP-06/CP-15
 - [ADR 0049: Downloadable Optional Terminal Fonts](0049-downloadable-terminal-fonts.md) - application-owned pinned acquisition and automatic upgrade reconciliation; native released-asset qualification pending
 - [ADR 0051: Adaptive Exact Document Prefix Retention](0051-adaptive-exact-document-prefix.md) - owner accepted the renderer-wide exact-prefix policy on 2026-10-28 after matched Markdown and plain Edit WARP measurements; broader CP-18 gates remain open
+- [ADR 0079: Global Terminal Ingest Budget](0079-global-terminal-ingest-budget.md) - owner-directed shared per-update budget and round-robin session slices; end-to-end performance qualification remains separate
 
 ## Superseded Decisions
 

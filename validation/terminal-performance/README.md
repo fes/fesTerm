@@ -1,5 +1,38 @@
 # Terminal TUI performance
 
+## Local PTY output backpressure
+
+On Unix, `cargo bench --locked -p festerm-pty --bench blocked_output -- paused 5`
+starts an owned `/usr/bin/yes` child, waits until the bounded event/byte queue
+stalls, and leaves it undrained for five seconds. The `draining 32` and
+`draining 128` cases warm one MiB and then consume at least the named number
+of MiB using the session event notifier.
+Both cases shut the child down and report `getrusage(RUSAGE_SELF)` user and
+system CPU for the measured interval, excluding the child's CPU and startup
+and shutdown. The draining result can overshoot by one output event, so compare
+CPU per delivered MiB.
+
+On Apple M2, 64-bit macOS and Rust 1.97.1, three paired release samples in
+A-B-B-A-A-B order compared #645 with this change, using separate target
+directories:
+
+| Fixture | #645 median process CPU | Candidate median process CPU |
+| --- | ---: | ---: |
+| Queue stalled for 5 s | 3.921 ms | 0.801 ms |
+| Normally draining 32 MiB | 8.771 ms/MiB | 9.312 ms/MiB |
+| Normally draining 128 MiB | 9.248 ms/MiB | 9.380 ms/MiB |
+
+During the stalled interval, the median recorded failed backpressure attempts
+fell from 676 to zero after the initial stall; the command thread still polls.
+The 32-MiB control increased 6.2% by median, so a separate 128-MiB control
+was run; its median increased 1.4%. Before/after samples ranged from
+8.617–9.647 / 8.560–10.063 ms/MiB for 32 MiB and 9.243–9.571 /
+8.977–9.967 ms/MiB for 128 MiB. This variation cannot rule out a modest
+normal-path regression. The host's one-minute load decreased from about 8.7
+to 7.4 and five-minute load from 18.1 to 16.3, with competing processes
+active. These are PTY-only observations, not GUI throughput, physical latency
+or total system CPU claims.
+
 ## CPU presentation-cache allocation oracle
 
 Run `cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check`.
@@ -237,8 +270,10 @@ The reader now appends further reads to the same chunk, up to 64 KiB:
 - Only while earlier output is still queued does it wait up to 2 ms for more.
 - Queued output is bounded at 2 MiB, the same bound as before.
 
-Each pump still ingests at least 256 KiB of a backlog, and keeps going for up
-to 8 ms (4 MiB at most), so fewer frames are spent waiting for a drawable.
+The #640 baseline pump ingested at least 256 KiB of a backlog, and continued
+for up to 8 ms per pump (4 MiB at most), so fewer frames were spent waiting for
+a drawable. The desktop scheduler policy was subsequently revised as described
+below.
 
 | `cat` workload | Before | After | Change |
 | --- | --- | --- | --- |
@@ -247,6 +282,24 @@ to 8 ms (4 MiB at most), so fewer frames are spent waiting for a drawable.
 
 The time budget alone accounts for about 3% (plain) and 20% (SGR) of the
 gain.
+
+## Shared desktop update budget
+
+Each desktop window now shares one 4 ms terminal-ingest budget across its
+sessions per update. Each round-robin session slice is capped at 64 events or
+256 KiB of ingested bytes, with a 16 MiB per-window aggregate byte threshold;
+the final bounded slice can cross the threshold. An application update with
+several windows can spend up to one budget per window. Remaining work requests
+a continuation frame; the active session is not pumped a second time after
+painting. This replaces #640's per-pump budget and bounds each window's
+synchronous ingest work as its number of live sessions grows.
+
+The scheduler has deterministic fake-clock fairness coverage. A qualified
+before/after end-to-end throughput comparison is not yet available: shared-host
+load made the recent wall-time runs inconsistent. The 4 ms budget may trade
+single-session bulk throughput for multi-session fairness and bounded update
+work; no throughput or input-latency improvement is claimed until stable
+matched measurements are recorded.
 
 ## Automatic WARP composition rollout
 

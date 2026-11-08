@@ -960,6 +960,54 @@ mod tests {
     }
 
     #[test]
+    fn a_protected_cell_an_erase_spares_still_scrolls_into_history() {
+        // Leaving a protected cell in place is only half of sparing it: the
+        // row's occupied extent has to keep reaching it too, because a scroll
+        // trusts that extent both to carry the line into history and to clear
+        // the row it recycles. Each erase is aimed to cover the whole first
+        // line, leaving the protected `c` as the last thing on it.
+        let iso = &b"ab\x1bVc\x1bW"[..];
+        let dec = &b"ab\x1b[1\"qc\x1b[0\"q"[..];
+        for (protect, erase) in [
+            (iso, &b"\x1b[1;1H\x1b[K"[..]),
+            (iso, b"\x1b[1;8H\x1b[1K"),
+            (iso, b"\x1b[2K"),
+            (iso, b"\x1b[1;1H\x1b[J"),
+            (iso, b"\x1b[1;8H\x1b[1J"),
+            (iso, b"\x1b[2J"),
+            (iso, b"\x1b[1;1H\x1b[8X"),
+            (dec, b"\x1b[1;1H\x1b[?0K"),
+            (dec, b"\x1b[1;8H\x1b[?1K"),
+            (dec, b"\x1b[?2K"),
+            (dec, b"\x1b[1;1H\x1b[?0J"),
+            (dec, b"\x1b[1;8H\x1b[?1J"),
+            (dec, b"\x1b[?2J"),
+        ] {
+            let mut terminal = terminal(8, 2);
+            terminal.ingest(protect);
+            terminal.ingest(erase);
+            terminal.ingest(b"\x1b[2;1H\n");
+            let erase = String::from_utf8_lossy(erase);
+            let history = terminal.scrollback_lines().collect::<Vec<_>>();
+            assert_eq!(history.len(), 1, "{erase:?}");
+            assert_eq!(
+                history[0]
+                    .cells()
+                    .iter()
+                    .map(|cell| cell.character())
+                    .collect::<String>(),
+                "  c",
+                "{erase:?}"
+            );
+            assert_eq!(
+                terminal.row_text(1).as_deref(),
+                Some("        "),
+                "{erase:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_soft_reset_forgets_both_the_protection_and_who_asked_for_it() {
         // DECSTR returns DECSCA to normal. The source has to go with it:
         // leaving it at ISO would have the next ordinary erase keep sparing
