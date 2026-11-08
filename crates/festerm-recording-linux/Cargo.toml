@@ -1,0 +1,21 @@
+[package]
+name = "festerm-recording-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Optional system GStreamer MP4 encoding for fesTerm."
+publish = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "warn"

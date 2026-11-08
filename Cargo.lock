@@ -1823,6 +1823,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.13.1",
+ "block2 0.6.2",
+ "libc",
  "objc2 0.6.4",
 ]
 
@@ -2314,6 +2316,9 @@ dependencies = [
  "festerm-macos-window",
  "festerm-markdown",
  "festerm-pty",
+ "festerm-recording",
+ "festerm-recording-apple",
+ "festerm-recording-export",
  "festerm-secret-store",
  "festerm-serial",
  "festerm-session",
@@ -2336,6 +2341,7 @@ dependencies = [
  "raw-window-handle",
  "reqwest 0.12.28",
  "resvg",
+ "rfd",
  "rmcp",
  "roxmltree",
  "russh",
@@ -2364,7 +2370,12 @@ name = "festerm-android"
 version = "0.15.0"
 dependencies = [
  "festerm-android-platform",
+ "festerm-core",
  "festerm-mobile",
+ "festerm-recording",
+ "festerm-recording-export",
+ "festerm-ui-egui",
+ "jni 0.21.1",
  "winit",
 ]
 
@@ -2471,6 +2482,7 @@ dependencies = [
  "portable-pty",
  "proptest",
  "serde",
+ "serde_json",
  "smallvec",
  "stats_alloc",
  "unicode-segmentation",
@@ -2540,6 +2552,8 @@ name = "festerm-linux-power"
 version = "0.15.0"
 dependencies = [
  "futures-util",
+ "nix 0.31.3",
+ "tempfile",
  "tokio",
  "zbus",
 ]
@@ -2580,17 +2594,22 @@ dependencies = [
  "festerm-mobile-docs",
  "festerm-mobile-profiles",
  "festerm-mobile-tunnels",
+ "festerm-recording",
+ "festerm-recording-apple",
+ "festerm-recording-export",
  "festerm-secret-store",
  "festerm-session",
  "festerm-sftp",
  "festerm-ssh",
  "festerm-tunnel-bridge",
  "festerm-ui-egui",
+ "festerm-unix-security",
  "log",
  "raw-window-handle",
  "russh",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "tokio",
  "winit",
  "zeroize",
@@ -2656,6 +2675,72 @@ dependencies = [
  "serde_json",
  "tempfile",
  "terminal_size",
+]
+
+[[package]]
+name = "festerm-recording"
+version = "0.15.0"
+dependencies = [
+ "bincode",
+ "crc32fast",
+ "festerm-core",
+ "festerm-unix-security",
+ "festerm-windows-security",
+ "fs2",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "unicode-segmentation",
+ "uuid",
+]
+
+[[package]]
+name = "festerm-recording-apple"
+version = "0.15.0"
+dependencies = [
+ "cc",
+ "tempfile",
+]
+
+[[package]]
+name = "festerm-recording-export"
+version = "0.15.0"
+dependencies = [
+ "festerm-android-platform",
+ "festerm-core",
+ "festerm-recording",
+ "festerm-recording-apple",
+ "festerm-recording-linux",
+ "festerm-recording-windows",
+ "festerm-ui-egui",
+ "festerm-unix-security",
+ "festerm-windows-security",
+ "nix 0.31.3",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "festerm-recording-linux"
+version = "0.15.0"
+dependencies = [
+ "libloading",
+ "tempfile",
+]
+
+[[package]]
+name = "festerm-recording-windows"
+version = "0.15.0"
+dependencies = [
+ "festerm-windows-security",
+ "libloading",
+ "tempfile",
+ "windows",
 ]
 
 [[package]]
@@ -3975,10 +4060,12 @@ dependencies = [
  "defmt",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb-platform",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "windows-link",
 ]
 
 [[package]]
@@ -4001,6 +4088,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa8377070c6bae868759445e5a77f66d84f0b72f3a054bfb00e6d038b8282da7"
+
+[[package]]
+name = "jiff-tzdb-platform"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875a5a69ac2bab1a891711cf5eccbec1ce0341ea805560dcd90b7a2e925132e8"
+dependencies = [
+ "jiff-tzdb",
 ]
 
 [[package]]
@@ -4577,6 +4679,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.2",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -4812,6 +4915,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
+ "objc2-uniform-type-identifiers 0.3.2",
 ]
 
 [[package]]
@@ -6287,6 +6391,34 @@ checksum = "b4a459cddafb3fe76b31fd8f1108007566c40301feb64dc7b54656eb7388172b"
 dependencies = [
  "crypto-bigint",
  "hmac 0.13.0",
+]
+
+[[package]]
+name = "rfd"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4b9d4857b10297ffb0f64cae711e983a7aeaee561848d56d429d3858bd8ed93"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "js-sys",
+ "libc",
+ "log",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-uniform-type-identifiers 0.3.2",
+ "percent-encoding",
+ "pollster",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "web-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -88,6 +88,19 @@ paste could skip its confirmation. A session whose output remains deferred now
 requires confirmation for multiline text, and the existing mode check cancels
 the dialog if the deferred output changes the mode.
 
+## Synchronizing terminal recordings
+
+One explicitly selected set of desktop or mobile terminal sessions now shares
+a capture clock and exports separate silent MP4s. Capture observes visible
+terminal state and applied output, not local input events; private source
+artifacts remain available when encoding or publication fails. Android Files
+providers publish sequentially and can expose a partial folder, while other
+supported directory backends publish a staged set.
+
+ADR 0077 records the privacy, lifecycle and storage boundaries. Shared tests
+and isolated Linux and Android encoder/provider smoke do not close the native
+recording, usability or physical-device evidence in `TR-01`–`TR-03`.
+
 ## Composing live desktop panes
 
 Desktop windows can now arrange two to four existing session or document

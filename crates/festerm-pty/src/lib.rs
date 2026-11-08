@@ -911,11 +911,19 @@ impl ProcessTree {
     }
 }
 
+#[derive(Default)]
+struct TerminalDelivery {
+    closed: bool,
+    error: Option<SessionError>,
+    lifecycle: Option<SessionLifecycle>,
+}
+
 struct Shared {
     id: SessionId,
     automation_epoch: Arc<AutomationEpoch>,
     lifecycle_transition: Mutex<()>,
     lifecycle: Mutex<SessionLifecycle>,
+    terminal_delivery: Mutex<TerminalDelivery>,
     metrics: Mutex<SessionMetrics>,
     output_available: Condvar,
     output_waiting: AtomicBool,
@@ -938,6 +946,24 @@ impl Shared {
     }
 
     fn set_lifecycle(&self, lifecycle: SessionLifecycle) {
+        let delivery = self
+            .terminal_delivery
+            .lock()
+            .expect("terminal delivery lock is not poisoned");
+        if delivery.closed {
+            return;
+        }
+        self.update_lifecycle(lifecycle.clone());
+        let sent = self
+            .enqueue_event(SessionEvent::Lifecycle(lifecycle))
+            .is_ok();
+        drop(delivery);
+        if sent {
+            self.event_notifier.notify();
+        }
+    }
+
+    fn update_lifecycle(&self, lifecycle: SessionLifecycle) {
         {
             let transition = self.lifecycle_transition.lock();
             let healthy = transition.is_ok();
@@ -947,9 +973,28 @@ impl Shared {
             *self
                 .lifecycle
                 .lock()
-                .expect("session lifecycle lock is not poisoned") = lifecycle.clone();
+                .expect("session lifecycle lock is not poisoned") = lifecycle;
         }
-        let _ = self.try_emit(SessionEvent::Lifecycle(lifecycle));
+    }
+
+    fn publish_terminal(&self, lifecycle: SessionLifecycle) {
+        let mut delivery = self
+            .terminal_delivery
+            .lock()
+            .expect("terminal delivery lock is not poisoned");
+        delivery.closed = true;
+        if let SessionLifecycle::Failed(error) = &lifecycle {
+            let mut metrics = self
+                .metrics
+                .lock()
+                .expect("session metrics lock is not poisoned");
+            metrics.error_count = metrics.error_count.saturating_add(1);
+            delivery.error = Some(error.clone());
+        }
+        self.update_lifecycle(lifecycle.clone());
+        delivery.lifecycle = Some(lifecycle);
+        drop(delivery);
+        self.event_notifier.notify();
     }
 
     fn invalidate_automation_epoch(&self) {
@@ -971,12 +1016,23 @@ impl Shared {
         let _ = self.try_emit(SessionEvent::Error(error));
     }
 
-    fn fail(&self, error: SessionError) {
-        self.record_error(error.clone());
-        self.set_lifecycle(SessionLifecycle::Failed(error));
+    fn try_emit(&self, event: SessionEvent) -> bool {
+        let delivery = self
+            .terminal_delivery
+            .lock()
+            .expect("terminal delivery lock is not poisoned");
+        if delivery.closed {
+            return false;
+        }
+        let sent = self.enqueue_event(event).is_ok();
+        drop(delivery);
+        if sent {
+            self.event_notifier.notify();
+        }
+        sent
     }
 
-    fn try_emit(&self, event: SessionEvent) -> Result<(), TrySendError<SessionEvent>> {
+    fn enqueue_event(&self, event: SessionEvent) -> Result<(), TrySendError<SessionEvent>> {
         let mut metrics = self
             .metrics
             .lock()
@@ -987,8 +1043,6 @@ impl Shared {
                 metrics.event_queue_high_watermark = metrics
                     .event_queue_high_watermark
                     .max(metrics.event_queue_depth);
-                drop(metrics);
-                self.event_notifier.notify();
                 Ok(())
             }
             Err(TrySendError::Full(event)) => {
@@ -1059,18 +1113,27 @@ impl Shared {
         let mut backpressure_pending = false;
         let mut backpressure_event_sent = false;
         loop {
-            if self.cancel.load(Ordering::Acquire) {
+            let delivery = self
+                .terminal_delivery
+                .lock()
+                .expect("terminal delivery lock is not poisoned");
+            if delivery.closed || self.cancel.load(Ordering::Acquire) {
                 return false;
             }
 
             if backpressure_pending && !backpressure_event_sent {
                 let metrics = self.metrics();
-                match self.try_emit(SessionEvent::Backpressure {
+                let sent = self.enqueue_event(SessionEvent::Backpressure {
                     direction: FlowDirection::Output,
                     queued: metrics.event_queue_depth,
                     capacity: metrics.event_queue_capacity,
-                }) {
-                    Ok(()) => backpressure_event_sent = true,
+                });
+                drop(delivery);
+                match sent {
+                    Ok(()) => {
+                        backpressure_event_sent = true;
+                        self.event_notifier.notify();
+                    }
                     Err(TrySendError::Full(_)) => {
                         if !self.wait_for_output_room(None) {
                             return false;
@@ -1113,6 +1176,7 @@ impl Shared {
                         .event_queue_high_watermark
                         .max(metrics.event_queue_depth);
                     drop(metrics);
+                    drop(delivery);
                     self.event_notifier.notify();
                     return true;
                 }
@@ -1120,6 +1184,7 @@ impl Shared {
                     output_event = event;
                     metrics.backpressure_count = metrics.backpressure_count.saturating_add(1);
                     drop(metrics);
+                    drop(delivery);
                     if backpressure_event_sent {
                         if !self.wait_for_output_room(Some(output_len)) {
                             return false;
@@ -1267,6 +1332,7 @@ impl LocalPtySession {
             automation_epoch: Arc::new(AutomationEpoch::new()),
             lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: DEFAULT_EVENT_QUEUE_CAPACITY,
                 ..SessionMetrics::default()
@@ -1444,6 +1510,11 @@ impl Session for LocalPtySession {
     }
 
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
+        let mut delivery = self
+            .shared
+            .terminal_delivery
+            .lock()
+            .expect("terminal delivery lock is not poisoned");
         match self
             .event_receiver
             .lock()
@@ -1454,8 +1525,18 @@ impl Session for LocalPtySession {
                 self.shared.event_received(&event);
                 Ok(event)
             }
-            Err(TryRecvError::Empty) => Err(SessionTryReceiveError::Empty),
-            Err(TryRecvError::Disconnected) => Err(SessionTryReceiveError::Closed),
+            Err(error) => {
+                if let Some(error) = delivery.error.take() {
+                    Ok(SessionEvent::Error(error))
+                } else if let Some(lifecycle) = delivery.lifecycle.take() {
+                    Ok(SessionEvent::Lifecycle(lifecycle))
+                } else {
+                    Err(match error {
+                        TryRecvError::Empty => SessionTryReceiveError::Empty,
+                        TryRecvError::Disconnected => SessionTryReceiveError::Closed,
+                    })
+                }
+            }
         }
     }
 
@@ -1719,7 +1800,6 @@ fn reader_worker(
                     format!("local PTY read failed: {error}"),
                 );
                 shared.invalidate_automation_epoch();
-                shared.record_error(error.clone());
                 shared.cancel_and_wake_reader();
                 let _ = done_sender.send(Err(error));
                 return;
@@ -1771,6 +1851,7 @@ fn control_worker(
 ) {
     let mut stopping = false;
     let mut worker_failure = None;
+    let mut exited = None;
     let mut pending_automation_input = None;
     #[cfg(unix)]
     let mut hangup_progress = None;
@@ -1788,7 +1869,7 @@ fn control_worker(
                         SessionErrorKind::Input,
                         format!("local PTY write failed: {error}"),
                     );
-                    shared.fail(error.clone());
+                    shared.update_lifecycle(SessionLifecycle::Failed(error.clone()));
                     worker_failure = Some(error);
                     shared.cancel_and_wake_reader();
                     stopping = true;
@@ -1839,7 +1920,8 @@ fn control_worker(
                     None => SessionExit::with_exit_code(status.exit_code()),
                 };
                 if !stopping {
-                    shared.set_lifecycle(SessionLifecycle::Exited(terminal_exit));
+                    shared.update_lifecycle(SessionLifecycle::Exited(terminal_exit.clone()));
+                    exited = Some(terminal_exit);
                 }
                 shared.terminate_process_tree();
                 break;
@@ -1883,13 +1965,11 @@ fn control_worker(
                     SessionErrorKind::Internal,
                     format!("could not observe local child exit: {error}"),
                 );
-                shared.fail(error.clone());
+                shared.update_lifecycle(SessionLifecycle::Failed(error.clone()));
+                worker_failure = Some(error);
                 shared.cancel_and_wake_reader();
                 shared.terminate_process_tree();
-                drop(writer);
-                drop(master);
-                shared.complete(Err(error), &completion_sender);
-                return;
+                break;
             }
         }
     }
@@ -1898,16 +1978,29 @@ fn control_worker(
     drop(master);
     let reader_result = reader_done_receiver.recv_timeout(READER_STOP_TIMEOUT);
     let result = if let Some(error) = worker_failure {
+        shared.publish_terminal(SessionLifecycle::Failed(error.clone()));
         Err(error)
     } else {
         match reader_result {
             Ok(Ok(())) if stopping || shared.cancel.load(Ordering::Acquire) => {
-                shared.set_lifecycle(SessionLifecycle::Stopped);
+                shared.publish_terminal(SessionLifecycle::Stopped);
                 Ok(ShutdownResult::Stopped)
             }
-            Ok(Ok(())) => Ok(ShutdownResult::AlreadyStopped),
+            Ok(Ok(())) => {
+                if let Some(exit) = exited {
+                    shared.publish_terminal(SessionLifecycle::Exited(exit));
+                    Ok(ShutdownResult::AlreadyStopped)
+                } else {
+                    let error = SessionError::new(
+                        SessionErrorKind::Internal,
+                        "local PTY ended without a child exit",
+                    );
+                    shared.publish_terminal(SessionLifecycle::Failed(error.clone()));
+                    Err(error)
+                }
+            }
             Ok(Err(error)) => {
-                shared.fail(error.clone());
+                shared.publish_terminal(SessionLifecycle::Failed(error.clone()));
                 Err(error)
             }
             Err(RecvTimeoutError::Timeout) => {
@@ -1916,7 +2009,7 @@ fn control_worker(
                     SessionErrorKind::Shutdown,
                     "local PTY reader did not stop within the bounded shutdown interval",
                 );
-                shared.fail(error.clone());
+                shared.publish_terminal(SessionLifecycle::Failed(error.clone()));
                 Err(error)
             }
             Err(RecvTimeoutError::Disconnected) => {
@@ -1924,7 +2017,8 @@ fn control_worker(
                     SessionErrorKind::Internal,
                     "local PTY reader ended without reporting completion",
                 );
-                shared.fail(error.clone());
+                shared.cancel.store(true, Ordering::Release);
+                shared.publish_terminal(SessionLifecycle::Failed(error.clone()));
                 Err(error)
             }
         }
@@ -2411,6 +2505,7 @@ mod tests {
             automation_epoch: Arc::new(AutomationEpoch::new()),
             lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Running),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: 1,
                 ..SessionMetrics::default()
@@ -2468,6 +2563,7 @@ mod tests {
             automation_epoch: Arc::new(AutomationEpoch::new()),
             lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: 1,
                 ..SessionMetrics::default()
@@ -2518,6 +2614,7 @@ mod tests {
             automation_epoch: Arc::new(AutomationEpoch::new()),
             lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Starting),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: 1,
                 ..SessionMetrics::default()
@@ -2549,6 +2646,299 @@ mod tests {
         assert!(!shared.automation_epoch.is_current(generation));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn child_exit_event_follows_the_readers_last_output_even_when_the_queue_is_full() {
+        struct GatedReader {
+            release: Receiver<()>,
+            done: bool,
+        }
+
+        impl Read for GatedReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.done {
+                    return Ok(0);
+                }
+                self.release.recv().map_err(std::io::Error::other)?;
+                self.done = true;
+                buffer[..4].copy_from_slice(b"last");
+                Ok(4)
+            }
+        }
+
+        let pair = native_pty_system()
+            .openpty(to_portable_size(TerminalSize::new(80, 24).unwrap()))
+            .unwrap();
+        let child = pair
+            .slave
+            .spawn_command(CommandBuilder::new("/usr/bin/true"))
+            .unwrap();
+        let writer = local_pty_writer(&*pair.master).unwrap();
+        drop(pair.slave);
+        let (events, received) = mpsc::sync_channel(1);
+        let (commands, command_receiver) = mpsc::sync_channel(1);
+        let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let (reader_done, reader_completion) = mpsc::sync_channel(1);
+        let (release, gate) = mpsc::channel();
+        let shared = Arc::new(Shared {
+            id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
+            lifecycle: Mutex::new(SessionLifecycle::Running),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
+            metrics: Mutex::new(SessionMetrics {
+                event_queue_capacity: 1,
+                ..SessionMetrics::default()
+            }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
+            event_sender: events,
+            event_notifier: noop_session_event_notifier(),
+            cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
+            termination_requested: AtomicBool::new(false),
+            process_tree: None,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        });
+        let session = LocalPtySession {
+            process_id: None,
+            terminal_device: None,
+            shared: Arc::clone(&shared),
+            command_sender: commands,
+            event_receiver: Mutex::new(received),
+        };
+        let reader_shared = Arc::clone(&shared);
+        let reader = thread::spawn(move || {
+            reader_worker(
+                reader_shared,
+                Box::new(GatedReader {
+                    release: gate,
+                    done: false,
+                }),
+                |_| false,
+                reader_done,
+            );
+        });
+        let controller_shared = Arc::clone(&shared);
+        let controller = thread::spawn(move || {
+            control_worker(
+                controller_shared,
+                command_receiver,
+                pair.master,
+                writer,
+                child,
+                reader_completion,
+                completion_sender,
+            );
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !matches!(shared.lifecycle(), SessionLifecycle::Exited(_)) {
+            assert!(Instant::now() < deadline, "child exit was not observed");
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(session.try_recv_event(), Err(SessionTryReceiveError::Empty));
+        release.send(()).unwrap();
+        assert!(matches!(
+            shared
+                .completion_receiver
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2)),
+            Ok(Ok(ShutdownResult::AlreadyStopped))
+        ));
+        assert!(matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Output(bytes)) if bytes == b"last"
+        ));
+        assert!(matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Exited(_)))
+        ));
+        reader.join().unwrap();
+        controller.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    fn terminal_delivery_workers(
+        reader: Box<dyn Read + Send>,
+        queued: Option<&[u8]>,
+    ) -> (
+        LocalPtySession,
+        Arc<Shared>,
+        thread::JoinHandle<()>,
+        thread::JoinHandle<()>,
+    ) {
+        let pair = native_pty_system()
+            .openpty(to_portable_size(TerminalSize::new(80, 24).unwrap()))
+            .unwrap();
+        let child = pair
+            .slave
+            .spawn_command(CommandBuilder::new("/usr/bin/true"))
+            .unwrap();
+        let writer = local_pty_writer(&*pair.master).unwrap();
+        drop(pair.slave);
+        let (events, received) = mpsc::sync_channel(1);
+        let (commands, command_receiver) = mpsc::sync_channel(1);
+        let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let (reader_done, reader_completion) = mpsc::sync_channel(1);
+        let shared = Arc::new(Shared {
+            id: SessionId::next(),
+            automation_epoch: Arc::new(AutomationEpoch::new()),
+            lifecycle_transition: Mutex::new(()),
+            lifecycle: Mutex::new(SessionLifecycle::Running),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
+            metrics: Mutex::new(SessionMetrics {
+                event_queue_capacity: 1,
+                ..SessionMetrics::default()
+            }),
+            output_available: Condvar::new(),
+            output_waiting: AtomicBool::new(false),
+            event_sender: events,
+            event_notifier: noop_session_event_notifier(),
+            cancel: AtomicBool::new(false),
+            queued_output_bytes: AtomicUsize::new(0),
+            termination_requested: AtomicBool::new(false),
+            process_tree: None,
+            completion_receiver: Mutex::new(completion_receiver),
+            completion: Mutex::new(None),
+        });
+        if let Some(bytes) = queued {
+            assert!(shared.emit_output(bytes.to_vec()));
+        }
+        let session = LocalPtySession {
+            process_id: None,
+            terminal_device: None,
+            shared: Arc::clone(&shared),
+            command_sender: commands,
+            event_receiver: Mutex::new(received),
+        };
+        let reader_shared = Arc::clone(&shared);
+        let reader = thread::spawn(move || {
+            reader_worker(reader_shared, reader, |_| false, reader_done);
+        });
+        let controller_shared = Arc::clone(&shared);
+        let controller = thread::spawn(move || {
+            control_worker(
+                controller_shared,
+                command_receiver,
+                pair.master,
+                writer,
+                child,
+                reader_completion,
+                completion_sender,
+            );
+        });
+        (session, shared, reader, controller)
+    }
+
+    #[cfg(unix)]
+    fn assert_terminal_failure_after_output(
+        session: &LocalPtySession,
+        shared: &Shared,
+        expected_output: &[u8],
+        kind: SessionErrorKind,
+    ) {
+        let result = shared
+            .completion_receiver
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(matches!(result, Err(error) if error.kind() == kind));
+        assert!(matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Output(bytes)) if bytes == expected_output
+        ));
+        assert!(matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Error(error)) if error.kind() == kind
+        ));
+        assert!(matches!(
+            session.try_recv_event(),
+            Ok(SessionEvent::Lifecycle(SessionLifecycle::Failed(error))) if error.kind() == kind
+        ));
+        assert!(!shared.emit_output(b"after failure".to_vec()));
+        assert_eq!(session.try_recv_event(), Err(SessionTryReceiveError::Empty));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reader_failure_follows_admitted_output_when_the_queue_is_full() {
+        struct FailingReader(bool);
+        impl Read for FailingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 {
+                    return Err(std::io::Error::other("injected reader failure"));
+                }
+                self.0 = true;
+                buffer[..4].copy_from_slice(b"last");
+                Ok(4)
+            }
+        }
+        let (session, shared, reader, controller) =
+            terminal_delivery_workers(Box::new(FailingReader(false)), None);
+        assert_terminal_failure_after_output(&session, &shared, b"last", SessionErrorKind::Output);
+        reader.join().unwrap();
+        controller.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timed_out_reader_cannot_publish_after_terminal_failure() {
+        struct GatedReader {
+            gate: Receiver<()>,
+            done: bool,
+        }
+        impl Read for GatedReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.done {
+                    return Ok(0);
+                }
+                self.gate.recv().map_err(std::io::Error::other)?;
+                self.done = true;
+                buffer[..4].copy_from_slice(b"late");
+                Ok(4)
+            }
+        }
+        let (release, gate) = mpsc::channel();
+        let (session, shared, reader, controller) =
+            terminal_delivery_workers(Box::new(GatedReader { gate, done: false }), Some(b"before"));
+        assert_terminal_failure_after_output(
+            &session,
+            &shared,
+            b"before",
+            SessionErrorKind::Shutdown,
+        );
+        release.send(()).unwrap();
+        reader.join().unwrap();
+        controller.join().unwrap();
+        assert_eq!(session.try_recv_event(), Err(SessionTryReceiveError::Empty));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn blocked_reader_is_cancelled_before_terminal_failure_follows_queued_output() {
+        let reader = Box::new(std::io::Cursor::new(b"late".to_vec()));
+        let (session, shared, reader, controller) =
+            terminal_delivery_workers(reader, Some(b"before"));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !shared.output_waiting.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(shared.output_waiting.load(Ordering::Acquire));
+        assert_terminal_failure_after_output(
+            &session,
+            &shared,
+            b"before",
+            SessionErrorKind::Shutdown,
+        );
+        reader.join().unwrap();
+        controller.join().unwrap();
+        assert_eq!(session.try_recv_event(), Err(SessionTryReceiveError::Empty));
+    }
+
     #[test]
     fn queued_output_bytes_apply_backpressure_before_the_event_queue_fills() {
         let (event_sender, event_receiver) = mpsc::sync_channel(8);
@@ -2558,6 +2948,7 @@ mod tests {
             automation_epoch: Arc::new(AutomationEpoch::new()),
             lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Running),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: 8,
                 ..SessionMetrics::default()
@@ -2632,6 +3023,7 @@ mod tests {
                 automation_epoch: Arc::new(AutomationEpoch::new()),
                 lifecycle_transition: Mutex::new(()),
                 lifecycle: Mutex::new(SessionLifecycle::Running),
+                terminal_delivery: Mutex::new(TerminalDelivery::default()),
                 metrics: Mutex::new(SessionMetrics {
                     event_queue_capacity: 4,
                     ..SessionMetrics::default()
@@ -2698,6 +3090,7 @@ mod tests {
                 automation_epoch: Arc::new(AutomationEpoch::new()),
                 lifecycle_transition: Mutex::new(()),
                 lifecycle: Mutex::new(SessionLifecycle::Running),
+                terminal_delivery: Mutex::new(TerminalDelivery::default()),
                 metrics: Mutex::new(SessionMetrics {
                     event_queue_capacity: 1,
                     ..SessionMetrics::default()
@@ -2768,6 +3161,7 @@ mod tests {
             automation_epoch: Arc::new(AutomationEpoch::new()),
             lifecycle_transition: Mutex::new(()),
             lifecycle: Mutex::new(SessionLifecycle::Running),
+            terminal_delivery: Mutex::new(TerminalDelivery::default()),
             metrics: Mutex::new(SessionMetrics {
                 event_queue_capacity: event_capacity,
                 ..SessionMetrics::default()

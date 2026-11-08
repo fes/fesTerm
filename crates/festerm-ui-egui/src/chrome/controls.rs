@@ -237,6 +237,10 @@ pub(super) fn paint_overflow_menu(
             actions.push(ChromeAction::OpenSettings);
             ui.close();
         }
+        if ui.button("Terminal recordings…").clicked() {
+            actions.push(ChromeAction::OpenRecording);
+            ui.close();
+        }
         if include_inspector && ui.button("Session inspector").clicked() {
             actions.push(ChromeAction::ToggleInspector);
             ui.close();

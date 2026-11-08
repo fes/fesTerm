@@ -53,6 +53,18 @@ else
     printf 'suite=macos-development-launch status=skipped reason=macos-required\n' >>"$result_path"
     printf 'suite=ios-simulator status=skipped reason=macos-required\n' >>"$result_path"
 fi
+if [ "$(uname -s)" = Linux ] && [ "${FESTERM_RUN_LINUX_RECORDING_VALIDATION:-}" = 1 ]; then
+    if cargo test --locked -p festerm-recording-linux -- --ignored --test-threads=1 &&
+        cargo test --locked -p festerm-recording-export \
+            gstreamer_stages_readable_synchronized_mp4s -- --ignored --test-threads=1; then
+        printf 'suite=linux-recording-export status=pass\n' >>"$result_path"
+    else
+        printf 'suite=linux-recording-export status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=linux-recording-export status=skipped reason=linux-and-explicit-opt-in-required\n' >>"$result_path"
+fi
 # Exit status 3 from the UI-flow runner means Maestro is not installed.
 record_ui_flows() {
     case "$1" in

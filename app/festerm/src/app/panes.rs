@@ -812,11 +812,15 @@ impl FesTermApp {
                                 session.search.observe_screen_dirty(&session.terminal, now);
                                 session.search.observe_layout_change(&session.terminal, now);
                             }
+                            let dimensions_before = session.terminal.dimensions();
                             session.view.show_passive_in_ui(
                                 ui,
                                 &mut session.terminal,
                                 &mut session.controller,
                             );
+                            if session.terminal.dimensions() != dimensions_before {
+                                session.controller.record_resize(&session.terminal);
+                            }
                             if observe_search {
                                 session
                                     .search

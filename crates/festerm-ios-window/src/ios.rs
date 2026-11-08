@@ -746,6 +746,13 @@ impl KeyboardBridge {
         ))
     }
 
+    pub fn recording_folder_picker(&self) -> Option<crate::RecordingFolderPicker> {
+        Some(crate::RecordingFolderPicker::new(
+            self.view.clone(),
+            self.repaint.clone(),
+        ))
+    }
+
     /// Docked keyboard occlusion in view-relative units. Hidden/hardware or
     /// floating keyboards do not reserve a fabricated fixed-height region.
     pub fn occluded_height_fraction(&self) -> f32 {

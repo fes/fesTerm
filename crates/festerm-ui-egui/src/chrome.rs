@@ -269,6 +269,7 @@ impl ChipStatus {
 pub struct PaneMemberViewModel {
     pub id: ChipId,
     pub label: String,
+    pub recording: bool,
     pub surface: &'static str,
     pub status: ChipStatus,
     pub focused: bool,
@@ -280,6 +281,7 @@ pub struct ChipViewModel {
     pub id: ChipId,
     pub panes: Vec<PaneMemberViewModel>,
     pub primary: String,
+    pub recording: bool,
     pub secondary: Option<String>,
     pub status: ChipStatus,
     pub closable: bool,
@@ -326,6 +328,7 @@ pub enum ChromeAction {
     NewTextDocument,
     OpenMarkdownFile,
     OpenSettings,
+    OpenRecording,
     OpenProfiles,
     ToggleInspector,
     OpenAbout,
@@ -419,6 +422,7 @@ pub fn show(
                 id: chip.id,
                 panes: chip.panes.clone(),
                 primary: chip.primary.clone(),
+                recording: chip.recording,
                 secondary: None,
                 status: chip.status,
                 closable: chip.closable,
@@ -1130,6 +1134,7 @@ mod tests {
             id: ChipId(id),
             panes: Vec::new(),
             primary: primary.to_owned(),
+            recording: false,
             secondary: None,
             status: ChipStatus::Connected,
             closable: true,
@@ -2690,12 +2695,45 @@ mod tests {
     }
 
     #[test]
+    fn recording_marker_does_not_become_part_of_the_renamed_session() {
+        let mut recording = chip(1, "one");
+        recording.recording = true;
+        let mut harness = harness(ChromeHarnessState {
+            chips: vec![recording],
+            active: ChipId(1),
+            layout: ChipLayout::Wrap,
+            observed: Vec::new(),
+            available_update: None,
+        });
+        harness.run();
+        let center = harness.get_by_label("[REC] one").rect().center();
+        for _ in 0..2 {
+            harness.event(egui::Event::PointerMoved(center));
+            for pressed in [true, false] {
+                harness.event(egui::Event::PointerButton {
+                    pos: center,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::default(),
+                });
+            }
+            harness.run();
+        }
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert!(harness.state().observed.iter().any(|action| {
+            matches!(action, ChromeAction::Rename { id: ChipId(1), name } if name == "one")
+        }));
+    }
+
+    #[test]
     fn non_renamable_chip_double_click_does_not_enter_edit_mode() {
         let mut harness = harness(ChromeHarnessState {
             chips: vec![ChipViewModel {
                 id: ChipId(1),
                 panes: Vec::new(),
                 primary: "Launcher".to_owned(),
+                recording: false,
                 secondary: None,
                 status: ChipStatus::Neutral,
                 closable: false,
@@ -2783,6 +2821,7 @@ mod tests {
             id: ChipId(1),
             panes: Vec::new(),
             primary: "Launcher".to_owned(),
+            recording: false,
             secondary: None,
             status: ChipStatus::Neutral,
             closable: false,
@@ -2800,6 +2839,7 @@ mod tests {
                     id: neutral_chip.id,
                     panes: neutral_chip.panes.clone(),
                     primary: neutral_chip.primary.clone(),
+                    recording: neutral_chip.recording,
                     secondary: neutral_chip.secondary.clone(),
                     status: neutral_chip.status,
                     closable: neutral_chip.closable,

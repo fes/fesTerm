@@ -43,8 +43,10 @@ use tokio_util::sync::CancellationToken;
 
 pub use error::TunnelError;
 pub use festerm_tunnel_bridge::mobile::{
-    apply_recovery_sync, ClientId, Displacer, EndReason, Target, TunnelSession,
+    apply_recovery_sync, decode_recovery_sync, ClientId, Displacer, EndReason, Target,
+    TunnelSession,
 };
+pub use festerm_tunnel_bridge::protocol::Sync as RecoverySync;
 pub use festerm_tunnel_client::service::ResolvedTunnel;
 
 /// How an attach treats a session another client holds.

@@ -17,11 +17,17 @@ use crate::{
     modes::{CursorStyle, MouseTrackingMode, TerminalModes},
     parser::{
         ColorQuery, CsiParameters, DcsAction, OscAction, ParameterSeparator, Parser,
-        StringTerminator, TerminalOp,
+        RecordingParser, StringTerminator, TerminalOp,
     },
     replies::{queue_transport_bytes, QueuePushResult},
-    screen::{ColumnSpan, Rectangle, Screen},
-    unicode::{extends_grapheme, grapheme_width, Utf8Advance, Utf8Decoder, MAX_GRAPHEME_BYTES},
+    screen::{
+        deserialize_recording_vec, recording_text_is_hidden, ColumnSpan, RecordingScreen,
+        Rectangle, Screen,
+    },
+    unicode::{
+        extends_grapheme, grapheme_width, recording_character_visibility_is_ambiguous, Utf8Advance,
+        Utf8Decoder, MAX_GRAPHEME_BYTES,
+    },
     Cursor, Dimensions, TRANSPORT_QUEUE_HIGH_WATERMARK,
 };
 
@@ -324,6 +330,39 @@ struct BufferState {
     ansi_saved: Option<SavedAnsiCursor>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct RecordingBufferState {
+    screen: RecordingScreen,
+    cursor: Cursor,
+    scroll_top: usize,
+    scroll_bottom: usize,
+    scroll_left: usize,
+    scroll_right: usize,
+    pending_wrap: bool,
+    grapheme_anchor: Option<Cursor>,
+    dec_saved: Option<SavedDecState>,
+    ansi_saved: Option<SavedAnsiCursor>,
+}
+
+impl RecordingBufferState {
+    fn into_buffer(self) -> Result<BufferState, String> {
+        let buffer = BufferState {
+            screen: self.screen.into_screen()?,
+            cursor: self.cursor,
+            scroll_top: self.scroll_top,
+            scroll_bottom: self.scroll_bottom,
+            scroll_left: self.scroll_left,
+            scroll_right: self.scroll_right,
+            pending_wrap: self.pending_wrap,
+            grapheme_anchor: self.grapheme_anchor,
+            dec_saved: self.dec_saved,
+            ansi_saved: self.ansi_saved,
+        };
+        buffer.validate_recovery_state()?;
+        Ok(buffer)
+    }
+}
+
 impl BufferState {
     fn new(dimensions: Dimensions) -> Result<Self, TerminalError> {
         Ok(Self {
@@ -338,6 +377,25 @@ impl BufferState {
             dec_saved: None,
             ansi_saved: None,
         })
+    }
+
+    fn recording_copy(
+        &self,
+        scheme: &ColorScheme,
+        compare_ambiguous: bool,
+    ) -> RecordingBufferState {
+        RecordingBufferState {
+            screen: self.screen.recording_copy(scheme, compare_ambiguous),
+            cursor: self.cursor,
+            scroll_top: self.scroll_top,
+            scroll_bottom: self.scroll_bottom,
+            scroll_left: self.scroll_left,
+            scroll_right: self.scroll_right,
+            pending_wrap: self.pending_wrap,
+            grapheme_anchor: self.grapheme_anchor,
+            dec_saved: self.dec_saved,
+            ansi_saved: self.ansi_saved,
+        }
     }
 
     fn resized(&self, dimensions: Dimensions) -> Result<Self, TerminalError> {
@@ -717,6 +775,124 @@ pub struct Terminal {
     scrollback: Scrollback,
 }
 
+/// A recording-owned projection of one visible terminal screen.
+///
+/// It contains no retained history, transport queues, titles or link targets.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RecordingCheckpoint {
+    parser: RecordingParser,
+    visible: RecordingBufferState,
+    active_screen: ActiveScreen,
+    screen_generation: u64,
+    modes: TerminalModes,
+    cursor_style: CursorStyle,
+    cursor_style_set: bool,
+    #[serde(deserialize_with = "deserialize_recording_vec")]
+    tab_stops: Vec<bool>,
+    current_attributes: Attributes,
+    current_protected: bool,
+    protection: ProtectionSource,
+    current_foreground: Color,
+    current_background: Color,
+    color_scheme: ColorScheme,
+    scrollback_limit_bytes: usize,
+    history_capped: bool,
+}
+
+/// Maximum estimated allocation for one recording checkpoint.
+pub const MAX_RECORDING_CHECKPOINT_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum post-consent history retained by one recording replay.
+pub const MAX_RECORDING_SCROLLBACK_BYTES: usize = 8 * 1024 * 1024;
+
+impl RecordingCheckpoint {
+    /// Whether replay retains less history than the live terminal.
+    pub const fn history_capped(&self) -> bool {
+        self.history_capped
+    }
+
+    /// Returns the conservative allocation charge used by the recording queue.
+    pub fn estimated_allocation_bytes(&self) -> Result<usize, TerminalError> {
+        validate_recording_size(
+            self.visible.screen.allocation_bound(),
+            self.tab_stops.len(),
+            MAX_RECORDING_CHECKPOINT_BYTES,
+        )
+    }
+
+    /// Validates and restores a checkpoint into an isolated terminal with no history.
+    pub fn into_terminal(self) -> Result<Terminal, TerminalError> {
+        self.estimated_allocation_bytes()?;
+        if self.scrollback_limit_bytes > MAX_RECORDING_SCROLLBACK_BYTES {
+            return Err(TerminalError::invalid_snapshot(
+                "recording history limit exceeds its bound",
+            ));
+        }
+        if self.modes.alternate_screen() != (self.active_screen == ActiveScreen::Alternate) {
+            return Err(TerminalError::invalid_snapshot(
+                "recording screen and alternate-screen mode disagree",
+            ));
+        }
+        let visible = self
+            .visible
+            .into_buffer()
+            .map_err(TerminalError::invalid_snapshot)?;
+        let dimensions = visible.screen.dimensions();
+        let parser = self.parser.into_parser();
+        let (primary, alternate) = match self.active_screen {
+            ActiveScreen::Primary => (visible, None),
+            ActiveScreen::Alternate => (BufferState::new(dimensions)?, Some(visible)),
+        };
+        let mut terminal = Terminal {
+            parser,
+            utf8: Utf8Decoder::new(),
+            primary,
+            alternate,
+            active_screen: self.active_screen,
+            screen_generation: self.screen_generation,
+            modes: self.modes,
+            cursor_style: self.cursor_style,
+            last_graphic_character: None,
+            cursor_style_set: self.cursor_style_set,
+            tab_stops: self.tab_stops,
+            current_attributes: self.current_attributes,
+            current_protected: self.current_protected,
+            protection: self.protection,
+            current_foreground: self.current_foreground,
+            current_background: self.current_background,
+            title: String::new(),
+            current_hyperlink: None,
+            current_hyperlink_cells_remaining: 0,
+            color_scheme: self.color_scheme,
+            reply_queue: Vec::new(),
+            input_queue: Vec::new(),
+            reply_queue_overflowed: false,
+            input_queue_overflowed: false,
+            scrollback: Scrollback::new(self.scrollback_limit_bytes),
+        };
+        terminal.validate_recovery_snapshot()?;
+        terminal.restore_recovery_snapshot_allocations();
+        Ok(terminal)
+    }
+}
+
+fn validate_recording_size(
+    screen_bytes: Option<usize>,
+    tab_stops: usize,
+    maximum_bytes: usize,
+) -> Result<usize, TerminalError> {
+    let maximum_bytes = maximum_bytes.min(MAX_RECORDING_CHECKPOINT_BYTES);
+    let estimated_bytes = screen_bytes
+        .and_then(|bytes| bytes.checked_add(tab_stops))
+        .and_then(|bytes| bytes.checked_add(4096))
+        .ok_or_else(|| TerminalError::invalid_snapshot("recording checkpoint size overflow"))?;
+    if estimated_bytes > maximum_bytes {
+        return Err(TerminalError::invalid_snapshot(format!(
+            "recording checkpoint exceeds the {maximum_bytes}-byte limit"
+        )));
+    }
+    Ok(estimated_bytes)
+}
+
 // Frozen schema-2 field order: generation is synthesized, not consumed from the wire.
 #[derive(Deserialize)]
 #[serde(remote = "Terminal")]
@@ -1056,6 +1232,35 @@ impl Terminal {
         self.scrollback.set_limit_bytes(limit_bytes);
     }
 
+    /// Validates a recording resize before a replay allocates its screen.
+    pub fn validate_recording_dimensions(dimensions: Dimensions) -> Result<(), TerminalError> {
+        let screen_bytes = dimensions
+            .cell_count()
+            .checked_mul(std::mem::size_of::<Cell>() + 32)
+            .and_then(|bytes| {
+                dimensions
+                    .rows()
+                    .checked_mul(std::mem::size_of::<usize>() + 3)
+                    .and_then(|rows| bytes.checked_add(rows))
+            });
+        validate_recording_size(
+            screen_bytes,
+            dimensions.columns(),
+            MAX_RECORDING_CHECKPOINT_BYTES,
+        )
+        .map(drop)
+    }
+
+    /// Checks the live visible screen's allocation without copying its contents.
+    pub fn validate_recording_screen(&self) -> Result<(), TerminalError> {
+        validate_recording_size(
+            self.active_buffer().screen.recording_allocation_bound(),
+            self.tab_stops.len(),
+            MAX_RECORDING_CHECKPOINT_BYTES,
+        )
+        .map(drop)
+    }
+
     /// Borrows one retained physical row by its oldest-first history index.
     pub fn scrollback_physical_row(&self, row: usize) -> Option<&[Cell]> {
         self.scrollback.physical_row(row)
@@ -1112,19 +1317,27 @@ impl Terminal {
     pub fn ingest(&mut self, bytes: &[u8]) {
         let mut index = 0;
         while let Some(&byte) = bytes.get(index) {
-            if is_printable_ascii(byte) && self.ascii_run_fast_path_ready() {
-                let run = &bytes[index..];
-                let length = run
-                    .iter()
-                    .position(|&byte| !is_printable_ascii(byte))
-                    .unwrap_or(run.len());
-                self.print_ascii_run(&run[..length]);
+            let length = self.ascii_run_length(&bytes[index..]);
+            if length != 0 {
+                self.print_ascii_run(&bytes[index..index + length]);
                 index += length;
             } else {
                 self.ingest_byte(byte);
                 index += 1;
             }
         }
+    }
+
+    fn ascii_run_length(&self, bytes: &[u8]) -> usize {
+        if !bytes.first().is_some_and(|&byte| is_printable_ascii(byte))
+            || !self.ascii_run_fast_path_ready()
+        {
+            return 0;
+        }
+        bytes
+            .iter()
+            .position(|&byte| !is_printable_ascii(byte))
+            .unwrap_or(bytes.len())
     }
 
     /// Whether printable ASCII would reach [`Self::print`] untranslated, with
@@ -1202,6 +1415,174 @@ impl Terminal {
     }
 
     fn ingest_byte(&mut self, byte: u8) {
+        self.ingest_byte_observing_repeats(byte, &mut |_| {});
+    }
+
+    /// Applies output while reporting the character actually used by each REP
+    /// and states that need a transient replay-visibility comparison.
+    ///
+    /// A character that would be concealed in the live terminal is replaced
+    /// with a same-width blank, so pre-consent hidden text is not copied.
+    pub fn ingest_observing_recording(
+        &mut self,
+        bytes: &[u8],
+        mut observe_repeat: impl FnMut(usize, Option<char>),
+        mut observe_visible: impl FnMut(usize, &Terminal),
+    ) {
+        let mut offset = 0;
+        while let Some(&byte) = bytes.get(offset) {
+            if self.recording_block_cursor().is_none() {
+                let length = self.ascii_run_length(&bytes[offset..]);
+                if length != 0 {
+                    self.print_ascii_run(&bytes[offset..offset + length]);
+                    offset += length;
+                    continue;
+                }
+            }
+            let generation = self.screen_generation;
+            let cursor_before = self
+                .recording_exposed_cursor_cell()
+                .map(|(cursor, cell)| (cursor, cell.text.clone()));
+            let ambiguous_anchor = self.recording_hidden_anchor().is_some_and(|cell| {
+                let mut decoder = self.utf8.clone();
+                let character = match decoder.advance(byte) {
+                    Utf8Advance::Pending => return false,
+                    Utf8Advance::Character(character) => character,
+                    Utf8Advance::Invalid => char::REPLACEMENT_CHARACTER,
+                };
+                extends_grapheme(cell.text(), character) || extends_grapheme(" ", character)
+            });
+            let mut ambiguous_repeat = false;
+            self.ingest_byte_observing_repeats(byte, &mut |terminal| {
+                ambiguous_repeat = terminal.recording_repeat_visibility_is_ambiguous();
+                observe_repeat(offset, terminal.recording_repeat_character());
+            });
+            let cursor_changed =
+                self.recording_exposed_cursor_cell()
+                    .is_some_and(|(cursor, cell)| {
+                        cursor_before
+                            .as_ref()
+                            .is_none_or(|(before, text)| *before != cursor || text != cell.text)
+                    });
+            if self.screen_generation != generation
+                || cursor_changed
+                || ambiguous_anchor
+                || ambiguous_repeat
+            {
+                observe_visible(offset, self);
+            }
+            offset += 1;
+        }
+    }
+
+    /// Applies recorded output, requiring one ordered hint for every REP.
+    pub fn ingest_recorded_output(
+        &mut self,
+        bytes: &[u8],
+        hints: impl IntoIterator<Item = (usize, Option<char>)>,
+    ) -> Result<(), TerminalError> {
+        let mut hints = hints.into_iter().peekable();
+        let mut invalid = false;
+        let mut offset = 0;
+        while let Some(&byte) = bytes.get(offset) {
+            let length = self.ascii_run_length(&bytes[offset..]);
+            if length != 0
+                && hints
+                    .peek()
+                    .is_none_or(|(position, _)| *position >= offset + length)
+            {
+                self.print_ascii_run(&bytes[offset..offset + length]);
+                offset += length;
+                continue;
+            }
+            if hints.peek().is_some_and(|(position, _)| *position < offset) {
+                invalid = true;
+            }
+            self.ingest_byte_observing_repeats(byte, &mut |terminal| {
+                if hints
+                    .peek()
+                    .is_some_and(|(position, _)| *position == offset)
+                {
+                    terminal.last_graphic_character = hints.next().expect("hint was present").1;
+                } else {
+                    invalid = true;
+                }
+            });
+            offset += 1;
+        }
+        if invalid || hints.next().is_some() {
+            return Err(TerminalError::invalid_snapshot(
+                "recording repeat hints do not match terminal output",
+            ));
+        }
+        Ok(())
+    }
+
+    fn recording_repeat_character(&self) -> Option<char> {
+        self.last_graphic_character.map(|character| {
+            if recording_character_visibility_is_ambiguous(character)
+                || recording_text_is_hidden(
+                    self.current_foreground,
+                    self.current_background,
+                    self.current_attributes,
+                    &self.color_scheme,
+                )
+            {
+                if UnicodeWidthChar::width(character).unwrap_or(0) > 1 {
+                    '\u{3000}'
+                } else {
+                    ' '
+                }
+            } else {
+                character
+            }
+        })
+    }
+
+    fn recording_repeat_visibility_is_ambiguous(&self) -> bool {
+        self.last_graphic_character.is_some_and(|character| {
+            recording_character_visibility_is_ambiguous(character)
+                || (character != ' '
+                    && !self.current_attributes.contains(Attributes::CONCEALED)
+                    && recording_text_is_hidden(
+                        self.current_foreground,
+                        self.current_background,
+                        self.current_attributes,
+                        &self.color_scheme,
+                    ))
+        })
+    }
+
+    fn recording_block_cursor(&self) -> Option<Cursor> {
+        (self.modes.cursor_visible()
+            && self.cursor_style_set
+            && matches!(
+                self.cursor_style,
+                CursorStyle::BlinkingBlock | CursorStyle::SteadyBlock
+            ))
+        .then(|| self.cursor())
+    }
+
+    fn recording_exposed_cursor_cell(&self) -> Option<(Cursor, &Cell)> {
+        let cursor = self.recording_block_cursor()?;
+        let cell = self.cell_ref(cursor.column(), cursor.row())?;
+        (!cell.attributes.contains(Attributes::CONCEALED)
+            && cell.text.bytes().any(|byte| byte != b' ')
+            && cell.recording_text_is_redacted(&self.color_scheme))
+        .then_some((cursor, cell))
+    }
+
+    fn recording_hidden_anchor(&self) -> Option<&Cell> {
+        if !self.utf8.pending() {
+            return None;
+        }
+        self.active_buffer()
+            .grapheme_anchor
+            .and_then(|anchor| self.cell_ref(anchor.column(), anchor.row()))
+            .filter(|cell| cell.recording_text_is_redacted(&self.color_scheme))
+    }
+
+    fn ingest_byte_observing_repeats(&mut self, byte: u8, observe: &mut impl FnMut(&mut Self)) {
         if self.utf8.pending() {
             match self.utf8.advance(byte) {
                 Utf8Advance::Pending => return,
@@ -1211,7 +1592,7 @@ impl Terminal {
                 }
                 Utf8Advance::Invalid => {
                     self.print(char::REPLACEMENT_CHARACTER);
-                    self.ingest_byte(byte);
+                    self.ingest_byte_observing_repeats(byte, observe);
                     return;
                 }
             }
@@ -1225,6 +1606,9 @@ impl Terminal {
         }
 
         let operation = self.parser.advance(byte);
+        if matches!(operation, TerminalOp::RepeatPrecedingCharacter(_)) {
+            observe(self);
+        }
         self.apply(operation);
         let action = self.parser.take_osc_action();
         self.apply_osc_action(action);
@@ -1289,6 +1673,100 @@ impl Terminal {
             alternate.screen.mark_all_dirty();
         }
         clone
+    }
+
+    /// Captures only the visible screen and bounded state needed for recording.
+    ///
+    /// A partial protocol or UTF-8 sequence must finish before capture starts:
+    /// its buffered bytes may contain pre-consent output not visible on screen.
+    /// The last character used by `REP` is omitted because it can have scrolled
+    /// offscreen; later applied repeats must carry their own safe hints.
+    pub fn recording_checkpoint(
+        &self,
+        maximum_bytes: usize,
+    ) -> Result<RecordingCheckpoint, TerminalError> {
+        let parser = self.parser.recording_copy().ok_or_else(|| {
+            TerminalError::invalid_snapshot(
+                "terminal has an incomplete control sequence; retry recording",
+            )
+        })?;
+        if self.utf8.pending() {
+            return Err(TerminalError::invalid_snapshot(
+                "terminal has an incomplete UTF-8 sequence; retry recording",
+            ));
+        }
+        validate_recording_size(
+            self.active_buffer().screen.recording_allocation_bound(),
+            self.tab_stops.len(),
+            maximum_bytes,
+        )?;
+        for row in 0..self.dimensions().rows() {
+            for column in 0..self.dimensions().columns() {
+                let cell = self
+                    .cell_ref(column, row)
+                    .expect("recording screen dimensions are valid");
+                if !cell.attributes.contains(Attributes::CONCEALED) {
+                    if cell
+                        .text
+                        .chars()
+                        .any(recording_character_visibility_is_ambiguous)
+                    {
+                        return Err(TerminalError::invalid_snapshot(
+                            "screen contains potentially invisible Unicode; clear or replace it before recording",
+                        ));
+                    }
+                    if cell.text.bytes().any(|byte| byte != b' ')
+                        && cell.recording_text_is_redacted(&self.color_scheme)
+                    {
+                        return Err(TerminalError::invalid_snapshot(
+                            "text visibility is ambiguous; change its colors or clear it before recording",
+                        ));
+                    }
+                }
+            }
+        }
+        let checkpoint = RecordingCheckpoint {
+            parser,
+            visible: self
+                .active_buffer()
+                .recording_copy(&self.color_scheme, false),
+            active_screen: self.active_screen,
+            screen_generation: self.screen_generation,
+            modes: self.modes,
+            cursor_style: self.cursor_style,
+            cursor_style_set: self.cursor_style_set,
+            tab_stops: self.tab_stops.clone(),
+            current_attributes: self.current_attributes,
+            current_protected: self.current_protected,
+            protection: self.protection,
+            current_foreground: self.current_foreground,
+            current_background: self.current_background,
+            color_scheme: self.color_scheme,
+            scrollback_limit_bytes: self
+                .scrollback
+                .stats()
+                .limit_bytes()
+                .min(MAX_RECORDING_SCROLLBACK_BYTES),
+            history_capped: self.scrollback.stats().limit_bytes() > MAX_RECORDING_SCROLLBACK_BYTES,
+        };
+        validate_recording_size(
+            checkpoint.visible.screen.allocation_bound(),
+            checkpoint.tab_stops.len(),
+            maximum_bytes,
+        )?;
+        Ok(checkpoint)
+    }
+
+    /// An ephemeral projection for comparing recording replay with the live
+    /// buffer, even during a partial input sequence. Non-concealed text is
+    /// included regardless of color: only hash this in memory, and never
+    /// persist or log the projection.
+    pub fn recording_visible_state(&self) -> impl Serialize {
+        (
+            self.active_screen,
+            self.active_buffer()
+                .recording_copy(&self.color_scheme, true),
+        )
     }
 
     /// Queues an atomic input write for the session transport.
@@ -3861,11 +4339,39 @@ mod ascii_run_fast_path_tests {
             boundaries.sort_unstable();
             boundaries.dedup();
             let mut fast = Terminal::new(dimensions).expect("terminal");
+            let mut observed = Terminal::new(dimensions).expect("terminal");
+            let mut hints = Vec::new();
             for window in boundaries.windows(2) {
                 fast.ingest(&input[window[0]..window[1]]);
+                observed.ingest_observing_recording(
+                    &input[window[0]..window[1]],
+                    |offset, character| hints.push((window[0] + offset, character)),
+                    |_, _| {},
+                );
             }
 
             prop_assert!(fast == scalar, "diverged on {:?}", String::from_utf8_lossy(&input));
+            prop_assert!(observed == scalar, "recording observation diverged on {:?}", String::from_utf8_lossy(&input));
+            let mut replay = Terminal::new(dimensions).expect("terminal");
+            replay.ingest_recorded_output(&input, hints).expect("recorded repeats");
+            prop_assert!(replay == scalar, "recording replay diverged on {:?}", String::from_utf8_lossy(&input));
         }
+    }
+
+    #[test]
+    fn recording_observes_a_block_cursor_moving_over_ambiguous_text() {
+        let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?25l\x1b[38;2;0;0;0;48;2;0;0;0m X\x1b[H\x1b[?25h\x1b[2 q");
+        let mut checks = Vec::new();
+        terminal.ingest_observing_recording(b"A", |_, _| {}, |offset, _| checks.push(offset));
+        assert_eq!(checks, [0]);
+    }
+
+    #[test]
+    fn recorded_ascii_run_rejects_a_spurious_repeat_hint() {
+        let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+        assert!(terminal
+            .ingest_recorded_output(b"abcdef", [(2, Some('X'))])
+            .is_err());
     }
 }

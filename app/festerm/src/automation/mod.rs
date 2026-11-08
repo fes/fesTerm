@@ -52,7 +52,7 @@ use crate::{
 #[cfg(target_os = "macos")]
 type PrivacyMonitor = festerm_macos_window::PrivacyMonitor;
 #[cfg(windows)]
-type PrivacyMonitor = festerm_windows_power::PrivacyMonitor;
+type PrivacyMonitor = festerm_windows_power::SharedPrivacyMonitor;
 #[cfg(target_os = "linux")]
 type PrivacyMonitor = festerm_linux_power::PrivacyMonitor;
 
@@ -1062,7 +1062,7 @@ fn await_privacy_cleanup(
 }
 
 #[cfg(windows)]
-fn finish_privacy_cleanup(status: &festerm_windows_power::PrivacyCleanupStatus) -> bool {
+pub(crate) fn finish_privacy_cleanup(status: &festerm_windows_power::PrivacyCleanupStatus) -> bool {
     use festerm_windows_power::{
         privacy_monitor_ownership, PrivacyCleanupState, PrivacyOwnershipState,
     };
@@ -1095,7 +1095,7 @@ fn finish_privacy_cleanup(status: &festerm_windows_power::PrivacyCleanupStatus) 
 
 #[cfg(windows)]
 fn retire_privacy(privacy: PrivacyMonitor) -> bool {
-    finish_privacy_cleanup(&privacy.close())
+    privacy.close()
 }
 
 #[cfg(not(windows))]
