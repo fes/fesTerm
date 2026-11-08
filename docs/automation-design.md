@@ -1235,6 +1235,26 @@ private channel cannot be recalled. The stdio input reader buffers at most
 64 bounded frames independently of private-channel backpressure, so it can
 observe EOF and revoke while forwarding is stalled; overflow closes the channel.
 
+A native Windows feasibility probe uses an inherited stdout byte pipe and
+job-supervised subprocesses to examine `PIPE_NOWAIT` writes, reader closure
+and mode changes through a duplicated writer. It waits for the test helper to
+reach its setup point and drains observed test-harness output before the initial
+mode change. An initial refusal still fails the probe even if a diagnostic
+retry succeeds, and a positive partial write must be observed and physically
+accounted for. A previous native run, before this startup synchronization,
+reported `ERROR_PIPE_BUSY`, succeeded on retry after draining 16 bytes, and
+observed full or zero writes but no positive partial. In the revised
+[native run](https://github.com/fes/fesTerm/actions/runs/42516446589), the
+initial mode change succeeded after draining 16 startup bytes, but the
+controlled writes still produced no positive partial. The probe failed and
+stdout remains unqualified.
+
+The probe applies only to its controlled pipe and tested environment. It does
+not establish exclusive mode ownership, caller liveness, or a physical
+final-recipient privacy fence, and it does not enable the production stdio
+adapter. Windows documents
+[`PIPE_NOWAIT` as a compatibility mode, not asynchronous I/O](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-setnamedpipehandlestate).
+
 An accepted peer cancellation marks its existing bounded wait before attempting
 the shared admission guard. Busy leaves that wait pending without servicing it,
 defers peer events and schedules a retry; native observation approval and
