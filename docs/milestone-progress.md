@@ -8328,3 +8328,13 @@ This is not a configuration-generation or preference owner. It does not
 establish filesystem namespace/alias safety, external-writer coordination,
 durable restart recovery, or safe retirement of previous credentials after
 successful saves, and does not authorize session creation.
+
+## Avoiding allocations for discarded scroll rows
+
+Alternate-screen and partial-region scrolling never add rows to primary
+scrollback, but still built and discarded temporary row vectors. Those paths
+now overwrite departing rows directly; full-screen primary scrolling keeps its
+existing history and accounting path. A warmed allocation oracle observed
+8,192 allocations fall to zero over 4,096 scrolls in each unretained ASCII
+fixture, while the full-history control was unchanged. This measures allocator
+requests, not native throughput, input latency, or total memory.

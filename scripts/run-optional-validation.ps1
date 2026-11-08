@@ -169,6 +169,16 @@ if ($LASTEXITCODE -eq 0) {
     $status = 'fail'
 }
 
+Invoke-NativeCommand {
+    cargo bench --locked -p festerm-core --bench scroll_allocations -- --check
+}
+if ($LASTEXITCODE -eq 0) {
+    Write-OptionalResult "`nsuite=scroll-allocations status=pass"
+} else {
+    Write-OptionalResult "`nsuite=scroll-allocations status=fail"
+    $status = 'fail'
+}
+
 if ($env:OS -eq 'Windows_NT') {
     $vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
     $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'

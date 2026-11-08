@@ -1915,10 +1915,14 @@ impl Terminal {
             if !within_margins {
                 return;
             }
-            let removed =
-                buffer
-                    .screen
-                    .scroll_up(buffer.scroll_top, buffer.scroll_bottom, 1, fill, span);
+            let removed = buffer.screen.scroll_up(
+                buffer.scroll_top,
+                buffer.scroll_bottom,
+                1,
+                fill,
+                span,
+                retain_history,
+            );
             if retain_history {
                 self.scrollback.push_rows(removed);
             }
@@ -2628,10 +2632,14 @@ impl Terminal {
             && span.left == 0
             && span.right + 1 == dimensions.columns();
         let buffer = self.active_buffer_mut();
-        let removed =
-            buffer
-                .screen
-                .scroll_up(buffer.scroll_top, buffer.scroll_bottom, count, cell, span);
+        let removed = buffer.screen.scroll_up(
+            buffer.scroll_top,
+            buffer.scroll_bottom,
+            count,
+            cell,
+            span,
+            retain_history,
+        );
         if retain_history {
             self.scrollback.push_rows(removed);
         }

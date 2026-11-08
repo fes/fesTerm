@@ -34,6 +34,7 @@ festerm-test-support = { path = "../festerm-test-support" }
 # drives the terminal it is *running inside*, so hosting it means owning a pty.
 portable-pty = "0.9.0"
 proptest = "1.11.0"
+stats_alloc = "0.1.10"
 
 [[bench]]
 name = "sustained_output"
@@ -41,4 +42,8 @@ harness = false
 
 [[bench]]
 name = "interaction"
+harness = false
+
+[[bench]]
+name = "scroll_allocations"
 harness = false

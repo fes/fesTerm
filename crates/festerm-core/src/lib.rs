@@ -2871,6 +2871,32 @@ mod tests {
     }
 
     #[test]
+    fn discarded_scroll_rows_match_extracted_rows() {
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(b"\x1b[4;1Hring\r\n\x1b[1;1H\x1b[31m123456789");
+        terminal.ingest("\x1b[2;3H界".as_bytes());
+        terminal.ingest(b"\x1b[3;2H\x1b]8;;https://example.com/\x1b\\link\x1b]8;;\x1b\\");
+        terminal.ingest(format!("\x1b[4;1Ha{}", "\u{301}".repeat(16)).as_bytes());
+        assert_eq!(terminal.screen().row_soft_wrapped(0), Some(true));
+
+        let blank = crate::cell::blank_cell();
+        let mut colored = blank.clone();
+        colored.background = Color::Indexed(4);
+        let span = crate::screen::ColumnSpan::full(8);
+        for (top, bottom, count) in [(0, 3, 1), (0, 3, 3), (0, 3, 4), (1, 3, 1), (0, 2, 2)] {
+            for fill in [&blank, &colored] {
+                let mut extracted = terminal.screen().clone();
+                let mut discarded = extracted.clone();
+                let rows = extracted.scroll_up(top, bottom, count, fill.clone(), span, true);
+                let none = discarded.scroll_up(top, bottom, count, fill.clone(), span, false);
+                assert_eq!(rows.len(), count);
+                assert!(none.is_empty());
+                assert_eq!(discarded, extracted);
+            }
+        }
+    }
+
+    #[test]
     fn scrollback_is_strictly_bounded_and_clear_preserves_visible_cells() {
         let dimensions = Dimensions::new(4, 2).unwrap();
         let mut disabled = Terminal::with_scrollback_limit(dimensions, 0).unwrap();

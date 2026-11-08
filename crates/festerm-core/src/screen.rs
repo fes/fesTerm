@@ -708,6 +708,7 @@ impl Screen {
         count: usize,
         cell: Cell,
         span: ColumnSpan,
+        retain_history: bool,
     ) -> Vec<ScreenRow> {
         let count = count.min(bottom - top + 1);
         if !span.is_full(self.dimensions.columns()) {
@@ -722,23 +723,26 @@ impl Screen {
             self.mark_dirty_range(top, bottom);
             return Vec::new();
         }
-        // Every departing row is overwritten below (rotated-in and cleared,
-        // or shifted over), so its occupied cells are moved out rather than
-        // cloned: under sustained output this is once per line.
-        let removed = (top..top + count)
-            .map(|row| {
-                let start = self.physical_row_start(row);
-                let occupied = self.occupied_columns[self.physical_row(row)];
-                let mut cells = Vec::with_capacity(occupied);
-                for cell in &mut self.cells[start..start + occupied] {
-                    cells.push(std::mem::replace(cell, blank_cell()));
-                }
-                ScreenRow {
-                    cells,
-                    soft_wrapped: self.soft_wrapped_rows[self.physical_row(row)],
-                }
-            })
-            .collect();
+        let removed = if retain_history {
+            // Departing cells are moved into history before their rows are
+            // overwritten below; unretained rows can simply be overwritten.
+            (top..top + count)
+                .map(|row| {
+                    let start = self.physical_row_start(row);
+                    let occupied = self.occupied_columns[self.physical_row(row)];
+                    let mut cells = Vec::with_capacity(occupied);
+                    for cell in &mut self.cells[start..start + occupied] {
+                        cells.push(std::mem::replace(cell, blank_cell()));
+                    }
+                    ScreenRow {
+                        cells,
+                        soft_wrapped: self.soft_wrapped_rows[self.physical_row(row)],
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         if top == 0 && bottom + 1 == self.dimensions.rows() {
             // The common case: the whole screen scrolls. Rotating the ring
             // by `count` avoids moving any surviving row's cells at all -
