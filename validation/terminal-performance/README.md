@@ -85,7 +85,7 @@ throughput observations rather than end-to-end wall-time claims.
 End-to-end `cat` timings were inconsistent under concurrent machine load and
 are not used to claim a speedup for this change.
 
-### Unretained scroll allocations
+### Scroll allocation oracle
 
 Run `cargo bench --locked -p festerm-core --bench scroll_allocations -- --check`.
 The single-threaded oracle counts Rust system-allocator requests, not CPU time,
@@ -93,23 +93,26 @@ wall time, RSS, or native allocations. It warms an 80-by-24 terminal and
 measures 4,096 scrolls of short inline ASCII rows. The alternate screen and
 partial vertical scrolling regions do not retain departing rows; they now
 overwrite those rows directly rather than first allocating a temporary row
-and a vector to hold it. CI runs the check on Linux, and the optional suite
-runners also run it on their host platform.
+and a vector to hold it. When a single row does enter history, its temporary
+row container is stored inline; multi-row scrolls can spill to the heap.
+CI runs the check on Linux, and the optional suite runners also run it on
+their host platform.
 
 | Workload | Before allocations | After allocations | Before/after requested bytes |
 | --- | ---: | ---: | ---: |
 | Alternate screen, line feed | 8,192 | 0 | 917,504 / 0 |
 | Partial region, line feed | 8,192 | 0 | 917,504 / 0 |
 | Alternate screen, explicit scroll | 8,192 | 0 | 917,504 / 0 |
-| Full retained history, line feed | 12,288 | 12,288 | 950,272 / 950,272 |
+| Full retained history, line feed | 12,288 | 8,192 | 950,272 / 819,200 |
 
 These are 64-bit macOS observations. The zero-allocation checks apply to this
 inline-text fixture, not to arbitrary cell payloads. The retained-history
 control uses a 256 KiB limit, observes an eviction for each measured line, and
-retains 682 logical lines charged at 261,888 bytes. It is not affected by
-this optimization; recycling retained history requires separate measurement
-and bounded-storage design. No throughput or end-to-end responsiveness
-improvement is claimed from allocator counts alone.
+retains 682 logical lines charged at 261,888 bytes before and after the
+change. The retained cell and row-boundary allocations remain; recycling
+them requires separate measurement and bounded-storage design. No throughput
+or end-to-end responsiveness improvement is claimed from allocator counts
+alone.
 
 ## End-to-end output throughput (macOS)
 

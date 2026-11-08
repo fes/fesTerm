@@ -8338,3 +8338,10 @@ existing history and accounting path. A warmed allocation oracle observed
 8,192 allocations fall to zero over 4,096 scrolls in each unretained ASCII
 fixture, while the full-history control was unchanged. This measures allocator
 requests, not native throughput, input latency, or total memory.
+
+Single-row primary scrolling now also carries its departing row inline rather
+than allocating a temporary row container; multi-row scrolls still spill when
+needed. With full bounded history, the allocation oracle observed 12,288 calls
+fall to 8,192 over 4,096 scrolls, with the same retained-line count and
+accounted bytes. The cells and row-boundary allocations still require a
+separate bounded-recycling decision.

@@ -1,5 +1,6 @@
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::{
     cell::{blank_cell, Attributes, Cell, CellWidth},
@@ -709,7 +710,7 @@ impl Screen {
         cell: Cell,
         span: ColumnSpan,
         retain_history: bool,
-    ) -> Vec<ScreenRow> {
+    ) -> SmallVec<[ScreenRow; 1]> {
         let count = count.min(bottom - top + 1);
         if !span.is_full(self.dimensions.columns()) {
             // Only part of each row moves, so nothing leaves the screen as a
@@ -721,7 +722,7 @@ impl Screen {
                 self.fill_row_span(logical, cell.clone(), span);
             }
             self.mark_dirty_range(top, bottom);
-            return Vec::new();
+            return SmallVec::new();
         }
         let removed = if retain_history {
             // Departing cells are moved into history before their rows are
@@ -741,7 +742,7 @@ impl Screen {
                 })
                 .collect()
         } else {
-            Vec::new()
+            SmallVec::new()
         };
         if top == 0 && bottom + 1 == self.dimensions.rows() {
             // The common case: the whole screen scrolls. Rotating the ring

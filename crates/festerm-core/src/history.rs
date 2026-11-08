@@ -381,7 +381,7 @@ impl Scrollback {
         self.enforce_limit();
     }
 
-    pub(crate) fn push_rows(&mut self, rows: Vec<ScreenRow>) {
+    pub(crate) fn push_rows(&mut self, rows: impl IntoIterator<Item = ScreenRow>) {
         for row in rows {
             self.push_row(row);
         }

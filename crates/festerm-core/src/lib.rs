@@ -2799,6 +2799,21 @@ mod tests {
     }
 
     #[test]
+    fn multirow_scroll_preserves_history_order() {
+        let mut terminal = terminal(8, 4);
+        terminal.ingest(b"\x1b[1;1Hone\x1b[2;1Htwo\x1b[3;1Hthree\x1b[4;1Hfour\x1b[3S");
+        let history: Vec<String> = terminal
+            .scrollback_lines()
+            .map(|line| line.cells().iter().map(crate::Cell::character).collect())
+            .collect();
+        assert_eq!(history, ["one", "two", "three"]);
+        assert_eq!(terminal.row_text(0).unwrap().trim_end(), "four");
+        for row in 1..4 {
+            assert_eq!(terminal.screen().row_occupied_columns(row), Some(0));
+        }
+    }
+
+    #[test]
     fn reflow_keeps_a_double_width_cell_and_its_continuation_together() {
         let mut terminal = terminal(6, 2);
         // "A" + wide "界" + "B" + wide "界" -> 6 columns at width 6, one row.
