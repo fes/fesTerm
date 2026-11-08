@@ -7,9 +7,12 @@ changes, bounded writes and closure without enabling the automation adapter.
 The prior native run observed initial error 231 and no positive partial write.
 The revised [native run](https://github.com/fes/fesTerm/actions/runs/42516446589)
 drained 16 startup bytes and succeeded on the initial mode attempt, but still
-observed no positive partial and failed the probe. It remains unqualified;
-exclusive ownership, caller liveness and final-recipient privacy remain
-separate gates.
+observed no positive partial and failed the probe. A separate
+[request-size experiment](https://github.com/fes/fesTerm/actions/runs/42520044762)
+also observed no positive partial for 4,097- and 8,193-byte writes; 65,537-
+and 131,073-byte initial writes returned zero and stopped before the full
+backpressure scenario. It remains unqualified; exclusive ownership, caller
+liveness and final-recipient privacy remain separate gates.
 
 ## Coalescing terminal search refresh
 

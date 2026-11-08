@@ -3257,7 +3257,11 @@ partial write. A prior native run failed on initial error 231 and observed no
 positive partial. The revised
 [native run](https://github.com/fes/fesTerm/actions/runs/42516446589) succeeded
 in the initial mode change after draining 16 startup bytes, but also failed to
-observe a positive partial write. It therefore remains unqualified.
+observe a positive partial write. A subsequent
+[request-size experiment](https://github.com/fes/fesTerm/actions/runs/42520044762)
+observed no positive partial at 4,097 or 8,193 bytes; initial requests of
+65,537 and 131,073 bytes returned zero before the remaining scenario ran. It
+therefore remains unqualified.
 This experiment does not qualify exclusive mode ownership, final-recipient
 privacy fencing, caller liveness, or the production adapter.
 
