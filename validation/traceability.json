@@ -2544,9 +2544,12 @@
         "PASTE-*"
       ],
       "requirements": [
-        "docs/gui-design.md#paste-safety"
+        "docs/gui-design.md#paste-safety",
+        "docs/adr/0079-global-terminal-ingest-budget.md#decision"
       ],
-      "decisions": [],
+      "decisions": [
+        "ADR-0079"
+      ],
       "automated_tests": [
         "unbracketed_paste_normalizes_each_line_break_to_one_enter",
         "bracketed_paste_preserves_multiline_payload_and_marker_bytes",
@@ -2584,7 +2587,8 @@
         "keyboard_clipboard_wait_does_not_suppress_focus_or_mouse_reports",
         "keyboard_identified_paste_preserves_confirmation_and_generation_safety",
         "keyboard_native_menu_and_local_gestures_request_identified_clipboard_reads",
-        "paste_palette_command_requests_an_os_clipboard_paste"
+        "paste_palette_command_requests_an_os_clipboard_paste",
+        "multiline_paste_confirms_while_the_ingest_budget_defers_its_target_output"
       ],
       "manual_scenarios": [
         "PS-01",

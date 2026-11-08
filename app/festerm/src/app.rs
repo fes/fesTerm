@@ -1295,11 +1295,14 @@ impl FesTermApp {
             return;
         }
         let bracketed_paste = session.terminal.modes().bracketed_paste();
+        // Deferred output may still disable bracketed paste, so the cached
+        // mode cannot exempt multiline text from confirmation.
+        let deferred_output = session.output_ingest_deferred;
         let line_count = paste_line_count(&text);
         let character_count = text.chars().count();
         let requires_confirmation = character_count >= LARGE_PASTE_CHARACTER_THRESHOLD
             || line_count >= LARGE_PASTE_LINE_THRESHOLD
-            || (!bracketed_paste && line_count > 1);
+            || ((!bracketed_paste || deferred_output) && line_count > 1);
         if !requires_confirmation {
             self.deliver_ordered_paste(tab, text, clipboard_token, context);
             return;
@@ -1315,6 +1318,7 @@ impl FesTermApp {
             lifecycle_generation: session.controller.lifecycle_generation(),
             input_ownership_epoch,
             bracketed_paste,
+            deferred_output,
             cancel_focus_requested: false,
         });
     }
@@ -2803,6 +2807,7 @@ impl FesTermApp {
             let Some(session) = self.state.session_tab_mut(id) else {
                 continue;
             };
+            session.output_ingest_deferred = true;
             if session.adopt_recovered_terminal() {
                 session.controller.record_local_observation_change();
                 session.apply_frontend_terminal_configuration(scrollback_limit);
@@ -2836,6 +2841,7 @@ impl FesTermApp {
                         continue;
                     };
                     let result = session.pump_session_events_with_slice();
+                    session.output_ingest_deferred = result.hit_limit;
                     ingested_bytes = ingested_bytes.saturating_add(result.ingested_bytes);
                     self.last_session_pump = Some(id);
                     if result.hit_limit {
@@ -15647,6 +15653,82 @@ mod tests {
                 crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE as u64
             );
         }
+    }
+
+    #[test]
+    fn multiline_paste_confirms_while_the_ingest_budget_defers_its_target_output() {
+        use festerm_session::SessionEvent;
+
+        fn settle(app: &mut FesTermApp, context: &egui::Context) {
+            let frozen = Instant::now();
+            app.pump_all_sessions_with_clock(context, Duration::from_millis(2), || frozen);
+        }
+        fn expire_after_one_slice(app: &mut FesTermApp, context: &egui::Context) {
+            let start = Instant::now();
+            let tick = Cell::new(0_u64);
+            app.pump_all_sessions_with_clock(context, Duration::from_millis(2), || {
+                let current = tick.get();
+                tick.set(current + 1);
+                start + Duration::from_millis(current)
+            });
+        }
+        fn bracketed(app: &FesTermApp, tab: TabId) -> bool {
+            app.state
+                .session_tab(tab)
+                .unwrap()
+                .terminal
+                .modes()
+                .bracketed_paste()
+        }
+
+        // A busy session exhausts the shared budget before the target's
+        // queued mode change is parsed.
+        let context = egui::Context::default();
+        let (mut app, sessions) = background_efficiency_fixture(2, &context);
+        let (target, transport) = sessions[1].clone();
+        assert_eq!(app.state.active(), target);
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004h".to_vec()));
+        settle(&mut app, &context);
+        assert!(bracketed(&app, target));
+        for _ in 0..crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE {
+            sessions[0]
+                .1
+                .push_event(SessionEvent::Output(b"x".to_vec()));
+        }
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004l".to_vec()));
+        expire_after_one_slice(&mut app, &context);
+        assert!(bracketed(&app, target), "the mode change stays deferred");
+        app.handle_paste_request(target, "one\ntwo".to_owned(), None, &context);
+        assert!(app.overlays.pending_paste.as_ref().unwrap().deferred_output);
+        assert!(transport.sent().is_empty());
+        app.cancel_paste_confirmation();
+
+        // The target's own slice can also stop before its mode change.
+        let (mut app, sessions) = background_efficiency_fixture(1, &context);
+        let (target, transport) = sessions[0].clone();
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004h".to_vec()));
+        settle(&mut app, &context);
+        for _ in 0..crate::session_controller::MAX_SESSION_EVENTS_PER_SLICE {
+            transport.push_event(SessionEvent::Output(b"x".to_vec()));
+        }
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004l".to_vec()));
+        expire_after_one_slice(&mut app, &context);
+        assert!(bracketed(&app, target), "the mode change stays deferred");
+        app.handle_paste_request(target, "one\ntwo".to_owned(), None, &context);
+        assert!(app.overlays.pending_paste.is_some());
+        assert!(transport.sent().is_empty());
+        app.cancel_paste_confirmation();
+
+        // Once the target drains, its current mode decides again.
+        transport.push_event(SessionEvent::Output(b"\x1b[?2004h".to_vec()));
+        settle(&mut app, &context);
+        assert!(bracketed(&app, target));
+        app.handle_paste_request(target, "one\ntwo".to_owned(), None, &context);
+        assert!(app.overlays.pending_paste.is_none());
+        assert_eq!(
+            transport.sent(),
+            vec![b"\x1b[200~one\ntwo\x1b[201~".to_vec()]
+        );
     }
 
     #[test]

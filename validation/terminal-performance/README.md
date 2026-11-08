@@ -116,13 +116,14 @@ gain.
 
 ## Shared desktop update budget
 
-The desktop application now shares one 4 ms terminal-ingest budget across all
+Each desktop window now shares one 4 ms terminal-ingest budget across its
 sessions per update. Each round-robin session slice is capped at 64 events or
-256 KiB of ingested bytes, with a 16 MiB aggregate byte threshold; the final
-bounded slice can cross the threshold. Remaining work requests a continuation
-frame; the active session is not pumped a second time after painting. This
-replaces #640's per-pump budget and bounds synchronous ingest work as the
-number of live sessions grows.
+256 KiB of ingested bytes, with a 16 MiB per-window aggregate byte threshold;
+the final bounded slice can cross the threshold. An application update with
+several windows can spend up to one budget per window. Remaining work requests
+a continuation frame; the active session is not pumped a second time after
+painting. This replaces #640's per-pump budget and bounds each window's
+synchronous ingest work as its number of live sessions grows.
 
 The scheduler has deterministic fake-clock fairness coverage. A qualified
 before/after end-to-end throughput comparison is not yet available: shared-host
