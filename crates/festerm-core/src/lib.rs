@@ -153,7 +153,7 @@ impl Cursor {
     }
 }
 
-pub use cell::{Attributes, Cell, CellWidth, Color};
+pub use cell::{Attributes, Cell, CellWidth, Color, FAINT_OPACITY};
 pub use colors::{ColorScheme, Rgb};
 pub use input::{
     FocusEvent, InputEvent, InputEventOutcome, InputPreparationError, Key, KeypadKey, Modifiers,
@@ -164,8 +164,9 @@ pub use parser::{CsiParameters, ParameterSeparator, Parser, TerminalOp};
 pub use replies::QueuePushResult;
 pub use screen::Screen;
 pub use terminal::{
-    ContentPosition, Terminal, TerminalError, TerminalTextSnapshot, TerminalTextSnapshotRefusal,
-    TerminalTextSnapshotScreen,
+    ContentPosition, RecordingCheckpoint, Terminal, TerminalError, TerminalTextSnapshot,
+    TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen, MAX_RECORDING_CHECKPOINT_BYTES,
+    MAX_RECORDING_SCROLLBACK_BYTES,
 };
 
 #[cfg(test)]
@@ -178,7 +179,8 @@ mod tests {
         InputEvent, InputEventOutcome, Key, KeypadKey, Modifiers, MouseButton, MouseEvent,
         MouseEventKind, MouseTrackingMode, MouseWheel, Parser, QueuePushResult, Rgb, Terminal,
         TerminalOp, TerminalTextSnapshotRefusal, TerminalTextSnapshotScreen, MAX_CELL_COUNT,
-        MAX_CSI_PARAMETERS, MAX_STRING_BYTES, TRANSPORT_QUEUE_HIGH_WATERMARK,
+        MAX_CSI_PARAMETERS, MAX_RECORDING_CHECKPOINT_BYTES, MAX_STRING_BYTES,
+        TRANSPORT_QUEUE_HIGH_WATERMARK,
     };
     use std::sync::Arc;
 
@@ -1980,6 +1982,236 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("queued replies or input"));
+    }
+
+    #[test]
+    fn recording_checkpoint_excludes_history_queues_titles_and_link_targets() {
+        let mut terminal = terminal(32, 2);
+        terminal.ingest(b"HISTORY-PRIVATE\r\nnext\r\nvisible");
+        terminal.ingest(b"\x1b]2;TITLE-PRIVATE\x07");
+        terminal.ingest(b"\x1b]8;;https://private.example/path\x07 link\x1b]8;;\x07");
+        terminal.queue_input(b"INPUT-PRIVATE");
+        terminal.queue_reply(b"REPLY-PRIVATE");
+        let rows = [terminal.row_text(0), terminal.row_text(1)];
+
+        let checkpoint = terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap();
+        let serialized = serde_json::to_string(&checkpoint).unwrap();
+        for forbidden in [
+            "HISTORY-PRIVATE",
+            "INPUT-PRIVATE",
+            "REPLY-PRIVATE",
+            "TITLE-PRIVATE",
+            "private.example",
+        ] {
+            assert!(!serialized.contains(forbidden), "retained {forbidden}");
+        }
+        let restored = checkpoint.into_terminal().unwrap();
+        assert_eq!([restored.row_text(0), restored.row_text(1)], rows);
+        assert!(restored.queued_input().is_empty());
+        assert!(restored.queued_replies().is_empty());
+        assert_eq!(restored.scrollback_stats().logical_lines(), 0);
+        for row in 0..2 {
+            for column in 0..32 {
+                assert!(restored
+                    .screen()
+                    .cell_ref(column, row)
+                    .unwrap()
+                    .hyperlink()
+                    .is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn recording_checkpoint_redacts_concealed_text() {
+        let mut terminal = terminal(32, 3);
+        terminal.ingest(b"visible\r\n");
+        terminal.ingest("\x1b[8mCONCEALED界\x1b[0m".as_bytes());
+
+        let restored = terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap()
+            .into_terminal()
+            .unwrap();
+        assert!(restored.row_text(0).unwrap().starts_with("visible"));
+        for row in 0..3 {
+            let text = restored.row_text(row).unwrap();
+            assert!(!text.contains("CONCEALED"));
+            assert!(!text.contains('界'));
+        }
+        assert_eq!(
+            restored.screen().cell_ref(9, 1).unwrap().width(),
+            super::CellWidth::Double
+        );
+        assert_eq!(
+            restored.screen().cell_ref(10, 1).unwrap().width(),
+            super::CellWidth::Continuation
+        );
+    }
+
+    #[test]
+    fn recording_checkpoint_refuses_ambiguous_colored_text() {
+        let hidden_colors = b"\x1b[38;2;0;0;0;48;2;0;0;0m";
+        let mut emoji = terminal(20, 2);
+        emoji.ingest(b"\x1b[?25l");
+        emoji.ingest(hidden_colors);
+        emoji.ingest("🤖".as_bytes());
+        assert!(emoji
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap_err()
+            .to_string()
+            .contains("visibility is ambiguous"));
+
+        let mut cursor = terminal(20, 2);
+        cursor.ingest(hidden_colors);
+        cursor.ingest(b"secret\x1b[H\x1b[2 q");
+        assert!(cursor
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap_err()
+            .to_string()
+            .contains("visibility is ambiguous"));
+        cursor.ingest(b"\x1b[6 q");
+        assert!(cursor
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_err());
+
+        let mut concealed = terminal(20, 2);
+        concealed.ingest(b"\x1b[8m");
+        concealed.ingest("🤖".as_bytes());
+        concealed.ingest(b"\x1b[H\x1b[2 q");
+        assert!(concealed
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_ok());
+    }
+
+    #[test]
+    fn recording_checkpoint_refuses_faint_text_with_ambiguous_blending() {
+        for style in [
+            b"\x1b[2;38;2;16;22;30m".as_slice(),
+            b"\x1b[2;38;2;130;130;130;48;2;100;100;100m".as_slice(),
+            b"\x1b[2;7;38;2;100;100;100;48;2;130;130;130m".as_slice(),
+        ] {
+            let mut terminal = terminal(20, 2);
+            terminal.ingest(style);
+            terminal.ingest(b"PRIVATE");
+            assert!(terminal
+                .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+                .is_err());
+        }
+        let mut visible = terminal(20, 2);
+        visible.ingest(b"\x1b[2;38;2;255;255;255;48;2;0;0;0mFAINT-VISIBLE");
+        let restored = visible
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap()
+            .into_terminal()
+            .unwrap();
+        assert!(restored.row_text(0).unwrap().contains("FAINT-VISIBLE"));
+    }
+
+    #[test]
+    fn recording_checkpoint_omits_inactive_screen_and_refuses_partial_sequences() {
+        let mut terminal = terminal(32, 2);
+        terminal.ingest(b"HIDDEN-PRIMARY");
+        terminal.ingest(b"\x1b[?1049hvisible alternate");
+        let checkpoint = terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap();
+        let serialized = serde_json::to_string(&checkpoint).unwrap();
+        assert!(!serialized.contains("HIDDEN-PRIMARY"));
+        let restored = checkpoint.into_terminal().unwrap();
+        assert!(restored.modes().alternate_screen());
+        assert_eq!(restored.row_text(0), terminal.row_text(0));
+
+        terminal.ingest(b"\x1b]2;NOT-VISIBLE");
+        assert!(terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_err());
+        terminal.ingest(b"\x07");
+        terminal.ingest(&[0xe2, 0x82]);
+        assert!(terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_err());
+        terminal.ingest(&[0xac]);
+        assert!(terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_ok());
+        assert!(terminal.recording_checkpoint(100).is_err());
+    }
+
+    #[test]
+    fn recording_checkpoint_omits_offscreen_repeat_character() {
+        let mut terminal = terminal(20, 2);
+        terminal.ingest("🧬".as_bytes());
+        terminal.ingest(b"\x1b[2J\x1b[H");
+        let checkpoint = terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap();
+        let serialized = serde_json::to_string(&checkpoint).unwrap();
+        assert!(!serialized.contains('🧬'));
+
+        let mut restored = checkpoint.into_terminal().unwrap();
+        restored.ingest(b"\x1b[2b");
+        assert_eq!(
+            restored.row_text(0).as_deref(),
+            Some("                    ")
+        );
+    }
+
+    #[test]
+    fn recording_checkpoint_continues_charset_and_rendering_state() {
+        let mut original = terminal(20, 3);
+        original.ingest(b"\x1b)0\x0e\x1b[31m\x1b[2;4Hq");
+        let checkpoint = original
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap();
+        let encoded = serde_json::to_vec(&checkpoint).unwrap();
+        let checkpoint: super::RecordingCheckpoint = serde_json::from_slice(&encoded).unwrap();
+        let mut replay = checkpoint.into_terminal().unwrap();
+
+        let output = b"xl\x0f normal\x1b[2b";
+        original.ingest(output);
+        replay.ingest(output);
+        assert_eq!(replay.cursor(), original.cursor());
+        assert_eq!(replay.modes(), original.modes());
+        for row in 0..3 {
+            for column in 0..20 {
+                assert_eq!(
+                    replay.screen().cell_ref(column, row),
+                    original.screen().cell_ref(column, row)
+                );
+            }
+        }
+        assert!(replay.row_text(1).unwrap().contains("─│┌ normal"));
+    }
+
+    #[test]
+    fn recording_checkpoint_rejects_malformed_screen_and_cell_text() {
+        let terminal = terminal(8, 2);
+        let checkpoint = terminal
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap();
+        let value = serde_json::to_value(&checkpoint).unwrap();
+
+        let mut oversized_text = value.clone();
+        oversized_text["visible"]["screen"]["cells"][0]["text"] =
+            serde_json::Value::String("x".repeat(crate::unicode::MAX_GRAPHEME_BYTES + 1));
+        assert!(serde_json::from_value::<super::RecordingCheckpoint>(oversized_text).is_err());
+
+        let mut missing_cell = value.clone();
+        missing_cell["visible"]["screen"]["cells"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        let malformed: super::RecordingCheckpoint = serde_json::from_value(missing_cell).unwrap();
+        assert!(malformed.into_terminal().is_err());
+
+        let mut inconsistent_mode = value;
+        inconsistent_mode["modes"]["alternate_screen"] = serde_json::Value::Bool(true);
+        let malformed: super::RecordingCheckpoint =
+            serde_json::from_value(inconsistent_mode).unwrap();
+        assert!(malformed.into_terminal().is_err());
     }
 
     #[test]

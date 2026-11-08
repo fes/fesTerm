@@ -45,4 +45,8 @@ impl LockBridge {
     }
 
     pub fn sync(&self) {}
+
+    pub fn recording_monitor_available(&self) -> bool {
+        false
+    }
 }

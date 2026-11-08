@@ -49,6 +49,7 @@ pub(super) struct LiveSsh {
     identity: Option<HostIdentity>,
     context: egui::Context,
     session: Option<Arc<dyn Session>>,
+    pub(super) recording_stream: Option<festerm_recording::RecordingStream>,
     host_resolver: Option<HostKeyDecisionResolver>,
     password_resolver: Option<PasswordDecisionResolver>,
     host_prompt: Option<HostKeyPrompt>,
@@ -99,6 +100,7 @@ pub(super) fn disconnected_fixture() -> LiveSsh {
         identity: Some(HostIdentity::new("example.test", 22).expect("reserved fixture host")),
         context: egui::Context::default(),
         session: None,
+        recording_stream: None,
         host_resolver: None,
         password_resolver: None,
         host_prompt: None,
@@ -138,6 +140,7 @@ impl LiveSsh {
             identity: None,
             context: context.clone(),
             session: Some(session),
+            recording_stream: None,
             host_resolver: None,
             password_resolver: None,
             host_prompt: None,
@@ -228,6 +231,7 @@ impl LiveSsh {
             identity: Some(identity),
             context: context.clone(),
             session: Some(Arc::new(session)),
+            recording_stream: None,
             host_resolver,
             password_resolver,
             host_prompt: None,
@@ -267,6 +271,7 @@ impl LiveSsh {
     }
 
     pub(super) fn stop(&mut self, status: &'static str) {
+        drop(self.recording_stream.take());
         self.probe = None;
         self.resume_check = false;
         self.running = false;
@@ -282,6 +287,17 @@ impl LiveSsh {
         }
     }
 
+    fn stop_failed(&mut self, status: &'static str) {
+        if let Some(stream) = &self.recording_stream {
+            if let Err(error) =
+                stream.fail_integrity("Recording stopped because a terminal session failed")
+            {
+                log::error!("Could not stop recording after a session failure: {error}");
+            }
+        }
+        self.stop(status);
+    }
+
     pub(super) fn send(&mut self, bytes: &[u8]) {
         if !self.input_enabled() || bytes.is_empty() {
             return;
@@ -291,7 +307,7 @@ impl LiveSsh {
                 // Never drop part of a command and then accept its continuation.
                 // The backend admission is atomic; make refusal explicit and
                 // retire this session rather than replay input on a new shell.
-                self.stop(
+                self.stop_failed(
                     "Input rejected; disconnected. Earlier accepted input may have executed.",
                 );
             }
@@ -320,7 +336,12 @@ impl LiveSsh {
             match session.try_recv_event() {
                 Ok(SessionEvent::Output(bytes)) => {
                     output |= !bytes.is_empty();
-                    terminal.ingest(&bytes);
+                    if let Some(stream) = &self.recording_stream {
+                        // SharedRecording retains any error and wakes its owner.
+                        let _ = stream.ingest_output(terminal, &bytes);
+                    } else {
+                        terminal.ingest(&bytes);
+                    }
                     let replies = terminal.drain_replies();
                     // A tunnel host answers terminal queries itself.
                     let own_replies = !session.terminal_replies_owned_by_backend();
@@ -328,7 +349,7 @@ impl LiveSsh {
                         && !replies.is_empty()
                         && session.try_send_input(&replies).is_err()
                     {
-                        self.stop("Terminal reply rejected; disconnected");
+                        self.stop_failed("Terminal reply rejected; disconnected");
                         return output;
                     }
                 }
@@ -349,25 +370,48 @@ impl LiveSsh {
                     self.running = false;
                     self.status = "Connecting";
                 }
-                Ok(SessionEvent::Lifecycle(_)) | Ok(SessionEvent::Error(_)) => {
-                    if self.tunnel.is_some() {
-                        let status = self.tunnel_end_status();
-                        self.stop(status);
+                Ok(event @ (SessionEvent::Lifecycle(_) | SessionEvent::Error(_))) => {
+                    let status = if self.tunnel.is_some() {
+                        self.tunnel_end_status()
                     } else {
-                        self.stop(
-                            "Session ended or connection lost. Connect again for a fresh shell.",
-                        );
+                        "Session ended or connection lost. Connect again for a fresh shell."
+                    };
+                    if matches!(
+                        event,
+                        SessionEvent::Error(_)
+                            | SessionEvent::Lifecycle(
+                                SessionLifecycle::Failed(_) | SessionLifecycle::Disconnected(_)
+                            )
+                    ) {
+                        self.stop_failed(status);
+                    } else {
+                        self.stop(status);
                     }
                     return output;
                 }
                 Ok(SessionEvent::RecoverySync(bytes)) if self.tunnel.is_some() => {
-                    if festerm_mobile_tunnels::apply_recovery_sync(terminal, &bytes).is_err() {
-                        self.stop("Invalid host sync; disconnected");
-                        return output;
-                    }
+                    let command = match festerm_mobile_tunnels::decode_recovery_sync(&bytes) {
+                        Ok(command) => command,
+                        Err(_) => {
+                            if let Some(stream) = &self.recording_stream {
+                                let _ = stream.fail_integrity(
+                                    "Recording stopped because terminal recovery data was invalid",
+                                );
+                            }
+                            self.stop("Invalid host sync; disconnected");
+                            return output;
+                        }
+                    };
+                    self.apply_tunnel_recovery(terminal, command);
                     output = true;
                 }
+
                 Ok(SessionEvent::RecoverySync(_)) => {
+                    if let Some(stream) = &self.recording_stream {
+                        let _ = stream.fail_integrity(
+                            "Recording stopped because terminal recovery data was unsupported",
+                        );
+                    }
                     self.stop("Unsupported recovery event; disconnected");
                     return output;
                 }
@@ -379,7 +423,7 @@ impl LiveSsh {
                     } else {
                         "SSH worker closed"
                     };
-                    self.stop(status);
+                    self.stop_failed(status);
                     return output;
                 }
             }
@@ -408,7 +452,7 @@ impl LiveSsh {
                     } else {
                         PROBE_FAILED
                     };
-                    self.stop(status);
+                    self.stop_failed(status);
                     return output;
                 }
             }
@@ -420,7 +464,9 @@ impl LiveSsh {
             if self.running {
                 if changed.elapsed() >= Duration::from_millis(100) {
                     let Ok(size) = session_size(dimensions) else {
-                        self.stop("Terminal size cannot be represented by SSH; disconnected");
+                        self.stop_failed(
+                            "Terminal size cannot be represented by SSH; disconnected",
+                        );
                         return output;
                     };
                     if session.try_resize(size).is_ok() {
@@ -434,6 +480,48 @@ impl LiveSsh {
             }
         }
         output
+    }
+
+    fn apply_tunnel_recovery(
+        &self,
+        terminal: &mut Terminal,
+        command: festerm_mobile_tunnels::RecoverySync,
+    ) {
+        match command {
+            festerm_mobile_tunnels::RecoverySync::Scrollback(limit) => {
+                terminal.set_scrollback_limit(limit);
+                if let Some(stream) = &self.recording_stream {
+                    let _ = stream.observe_configuration(terminal);
+                }
+            }
+            festerm_mobile_tunnels::RecoverySync::Colors(colors) => {
+                terminal.set_color_scheme(colors);
+                if let Some(stream) = &self.recording_stream {
+                    if terminal.color_scheme() != &festerm_ui_egui::terminal_color_scheme() {
+                        let _ = stream.fail_integrity(
+                            "Recording stopped because terminal colors do not match the visible view",
+                        );
+                    } else {
+                        let _ = stream.observe_configuration(terminal);
+                    }
+                }
+            }
+            festerm_mobile_tunnels::RecoverySync::Bytes(bytes) => {
+                if let Some(stream) = &self.recording_stream {
+                    let _ = stream.ingest_output(terminal, &bytes);
+                } else {
+                    terminal.ingest(&bytes);
+                }
+            }
+            festerm_mobile_tunnels::RecoverySync::Reset => {
+                terminal.reset_to_initial_state();
+                if let Some(stream) = &self.recording_stream {
+                    let _ = stream.observe_reset();
+                }
+            }
+        }
+        let _ = terminal.drain_replies();
+        let _ = terminal.take_reply_queue_overflowed();
     }
 
     pub(super) fn host_verification(&self) -> Option<HostVerification> {
@@ -540,12 +628,23 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
+    fn private_recording_dir() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        festerm_unix_security::make_private_directory(
+            &std::fs::File::open(directory.path()).unwrap(),
+        )
+        .unwrap();
+        directory
+    }
+
     #[derive(Default)]
     pub(super) struct FakeSession {
         events: Mutex<VecDeque<SessionEvent>>,
         input: Mutex<Vec<Vec<u8>>>,
         resizes: Mutex<Vec<TerminalSize>>,
         rejected: bool,
+        closed: bool,
         shutdowns: Mutex<usize>,
     }
 
@@ -585,7 +684,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .pop_front()
-                .ok_or(SessionTryReceiveError::Empty)
+                .ok_or(if self.closed {
+                    SessionTryReceiveError::Closed
+                } else {
+                    SessionTryReceiveError::Empty
+                })
         }
         fn shutdown(&self, _timeout: Duration) -> Result<ShutdownResult, ShutdownError> {
             panic!("UI must never synchronously wait for shutdown")
@@ -597,6 +700,7 @@ mod tests {
             identity: Some(HostIdentity::new("example.test", 22).unwrap()),
             context: egui::Context::default(),
             session: Some(session),
+            recording_stream: None,
             host_resolver: None,
             password_resolver: None,
             host_prompt: None,
@@ -615,6 +719,787 @@ mod tests {
 
     fn terminal() -> Terminal {
         Terminal::with_scrollback_limit(Dimensions::new(80, 24).unwrap(), 4096).unwrap()
+    }
+
+    #[test]
+    fn recording_start_refuses_a_privacy_cut_before_the_recorder_exists() {
+        use std::{cell::Cell, sync::mpsc};
+
+        let directory = private_recording_dir();
+        let terminal = terminal();
+        let suspension = crate::SuspensionHandle::default();
+        let calls = Cell::new(0);
+        let (wake, _ready) = mpsc::channel();
+        let result = suspension.start_recording(
+            directory.path(),
+            &[&terminal],
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 2 {
+                    suspension.stop_recording();
+                }
+                Ok(1)
+            },
+            move || {
+                let _ = wake.send(());
+            },
+        );
+        assert!(result.is_err());
+        assert!(suspension.current_recording().unwrap().is_none());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn recording_start_rejects_stale_consent_before_and_during_binding() {
+        use std::cell::Cell;
+
+        for change_during_binding in [false, true] {
+            let suspension = crate::SuspensionHandle::default();
+            let calls = Cell::new(0);
+            let result = suspension.start_recording_using(
+                Some(7),
+                || {
+                    calls.set(calls.get() + 1);
+                    Ok(if change_during_binding && calls.get() == 1 {
+                        7
+                    } else {
+                        8
+                    })
+                },
+                |_| panic!("stale consent must not start a recorder"),
+            );
+            assert!(matches!(result, Err(error) if error.contains("privacy")));
+            assert!(suspension.current_recording().unwrap().is_none());
+            assert_eq!(calls.get(), if change_during_binding { 2 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn suspension_and_content_lock_cancel_export_without_a_ui_frame() {
+        use std::sync::atomic::Ordering;
+
+        for use_content_lock in [false, true] {
+            let suspension = crate::SuspensionHandle::default();
+            let cancellation = suspension.foreground_export_cancellation(|| Ok(1)).unwrap();
+            if use_content_lock {
+                suspension.content_lock_callback()();
+            } else {
+                suspension.suspend();
+            }
+            assert!(cancellation.flag().load(Ordering::Acquire));
+            assert!(!cancellation.commit_retention());
+        }
+    }
+
+    #[test]
+    fn mobile_inactivity_cancels_export_and_invalidates_consent() {
+        use festerm_ios_lock::{AppLock, Availability, FakeLocker, LifecycleEvent, ManualClock};
+        use std::sync::atomic::Ordering;
+
+        let suspension = crate::SuspensionHandle::default();
+        let lock = AppLock::new_with_content_lock_callback(
+            None,
+            FakeLocker::new(Availability::Unavailable),
+            Arc::new(ManualClock::new()),
+            || {},
+            suspension.content_lock_callback(),
+        );
+        let generation = lock.recording_privacy_generation().unwrap();
+        let cancellation = suspension
+            .foreground_export_cancellation(|| {
+                lock.recording_privacy_generation()
+                    .ok_or_else(|| "Inactive".to_owned())
+            })
+            .unwrap();
+
+        lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+        assert!(cancellation.flag().load(Ordering::Acquire));
+        assert_eq!(lock.recording_privacy_generation(), None);
+        lock.handle_lifecycle(LifecycleEvent::DidBecomeActive);
+        assert_ne!(lock.recording_privacy_generation(), Some(generation));
+        assert!(!cancellation.commit_retention());
+    }
+
+    #[test]
+    fn foreground_export_rejects_a_privacy_cut_during_registration() {
+        use std::cell::Cell;
+
+        let suspension = crate::SuspensionHandle::default();
+        let calls = Cell::new(0);
+        let result = suspension.foreground_export_cancellation(|| {
+            calls.set(calls.get() + 1);
+            Ok(if calls.get() == 1 { 1 } else { 2 })
+        });
+        assert!(matches!(result, Err(error) if error.contains("active, unlocked")));
+        assert!(suspension.foreground_export_cancellation(|| Ok(2)).is_ok());
+
+        let suspension = crate::SuspensionHandle::default();
+        let calls = Cell::new(0);
+        let result = suspension.foreground_export_cancellation(|| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 2 {
+                suspension.stop_recording();
+            }
+            Ok(1)
+        });
+        assert!(matches!(result, Err(error) if error.contains("active, unlocked")));
+    }
+
+    #[test]
+    fn recording_selection_rejects_same_tab_replacement_but_not_tab_movement() {
+        use crate::{Lifecycle, MobileApp, RecordingStart};
+        use std::{cell::Cell, rc::Rc};
+
+        let directory = private_recording_dir();
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut app = MobileApp::new(lifecycle);
+        app.open_local_tab();
+        let id = app.active_tab.unwrap();
+        let original = Arc::new(FakeSession::default());
+        *app.sink.live.connection.borrow_mut() = Some(connection(original));
+        let (_, selected) = app.recording_terminals(&[id]).unwrap();
+
+        app.park_active();
+        assert!(app.validate_recording_selection(&selected).is_ok());
+        app.activate_tab(id);
+        assert!(app.validate_recording_selection(&selected).is_ok());
+        *app.sink.live.connection.borrow_mut() = Some(connection(Arc::new(FakeSession::default())));
+
+        let error = app
+            .start_terminal_recording_from(
+                RecordingStart::Directory(directory.path()),
+                &selected,
+                &egui::Context::default(),
+            )
+            .unwrap_err();
+        assert!(error.contains("changed"));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn recording_refuses_to_checkpoint_a_scrolled_mobile_viewport() {
+        use crate::{Lifecycle, MobileApp};
+        use std::{cell::Cell, rc::Rc};
+
+        let directory = private_recording_dir();
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut app = MobileApp::new(lifecycle);
+        app.open_local_tab();
+        let id = app.active_tab.unwrap();
+        *app.sink.live.connection.borrow_mut() = Some(connection(Arc::new(FakeSession::default())));
+        for _ in 0..32 {
+            app.terminal.ingest(b"old safe output\r\n");
+        }
+        app.terminal.ingest(b"hidden live secret");
+        app.view.reveal_document_row(&app.terminal, 0);
+        let error = app
+            .start_terminal_recording(directory.path(), &[id], &egui::Context::default())
+            .unwrap_err();
+        assert!(error.contains("live screen"));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn recording_start_retains_completion_after_a_privacy_generation_change() {
+        use festerm_recording::{Completion, FinishReason};
+        use std::{cell::Cell, sync::mpsc};
+
+        let directory = private_recording_dir();
+        let terminal = terminal();
+        let suspension = crate::SuspensionHandle::default();
+        let calls = Cell::new(0);
+        let (wake, ready) = mpsc::channel();
+        let result = suspension.start_recording(
+            directory.path(),
+            &[&terminal],
+            || {
+                calls.set(calls.get() + 1);
+                Ok(if calls.get() < 3 { 1 } else { 2 })
+            },
+            move || {
+                let _ = wake.send(());
+            },
+        );
+        assert!(result.is_err());
+        assert!(!suspension
+            .current_recording()
+            .unwrap()
+            .unwrap()
+            .is_recording()
+            .unwrap());
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = suspension.poll_recording_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(
+            completion,
+            Completion::Complete {
+                reason: FinishReason::Lifecycle,
+                ..
+            }
+        ));
+        assert!(suspension.current_recording().unwrap().is_none());
+    }
+
+    #[test]
+    fn recording_start_stops_capture_if_the_privacy_check_unwinds() {
+        use festerm_recording::{Completion, FinishReason};
+        use std::{cell::Cell, panic::AssertUnwindSafe, sync::mpsc};
+
+        let directory = private_recording_dir();
+        let terminal = terminal();
+        let suspension = crate::SuspensionHandle::default();
+        let calls = Cell::new(0);
+        let (wake, ready) = mpsc::channel();
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _ = suspension.start_recording(
+                directory.path(),
+                &[&terminal],
+                || {
+                    calls.set(calls.get() + 1);
+                    assert!(calls.get() < 3, "simulated privacy check panic");
+                    Ok(1)
+                },
+                move || {
+                    let _ = wake.send(());
+                },
+            );
+        }));
+        assert!(result.is_err());
+        assert!(!suspension
+            .current_recording()
+            .unwrap()
+            .unwrap()
+            .is_recording()
+            .unwrap());
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = suspension.poll_recording_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(
+            completion,
+            Completion::Complete {
+                reason: FinishReason::Lifecycle,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn mobile_recording_binds_selected_active_and_parked_sessions() {
+        use crate::{app_lock::LockHost, Lifecycle, MobileApp};
+        use festerm_ios_lock::{
+            AppLock, Availability, BiometryKind, FakeLocker, LifecycleEvent, ManualClock,
+        };
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use std::{cell::Cell, fs::File, rc::Rc, thread};
+
+        let directory = private_recording_dir();
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut app = MobileApp::new(lifecycle);
+        app.open_local_tab();
+        let parked_id = app.active_tab.unwrap();
+        let parked_session = Arc::new(FakeSession::default());
+        *app.sink.live.connection.borrow_mut() = Some(connection(parked_session.clone()));
+        app.park_active();
+        let active_id = app.push_tab("Active".to_owned(), None);
+        app.active_tab = Some(active_id);
+        app.terminal = terminal();
+        let active_session = Arc::new(FakeSession::default());
+        *app.sink.live.connection.borrow_mut() = Some(connection(active_session.clone()));
+
+        let lock = AppLock::new_with_content_lock_callback(
+            None,
+            FakeLocker::new(Availability::Available(BiometryKind::FaceId)),
+            Arc::new(ManualClock::new()),
+            || {},
+            app.sink.live.content_lock_callback(),
+        );
+        let host = LockHost::new(lock.clone(), None);
+        assert!(host.recording_privacy_generation().is_err());
+        app.lock = Some(host);
+        let context = egui::Context::default();
+        assert!(app
+            .start_terminal_recording(directory.path(), &[parked_id], &context)
+            .unwrap_err()
+            .contains("native privacy monitor"));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        app.lock
+            .as_mut()
+            .unwrap()
+            .enable_recording_bridge_for_test();
+        assert!(app
+            .start_terminal_recording(directory.path(), &[active_id, active_id], &context)
+            .is_err());
+        app.start_terminal_recording(directory.path(), &[parked_id], &context)
+            .unwrap();
+        for _ in 0..32 {
+            app.terminal.ingest(b"older output\r\n");
+        }
+        app.terminal.ingest(b"hidden live output");
+        app.view.reveal_document_row(&app.terminal, 0);
+        assert!(app
+            .include_terminal_in_recording(active_id)
+            .unwrap_err()
+            .contains("live screen"));
+        app.view.reveal_document_row(&app.terminal, usize::MAX);
+        app.include_terminal_in_recording(active_id).unwrap();
+        assert!(app.include_terminal_in_recording(active_id).is_err());
+
+        for (session, output) in [
+            (&parked_session, b"parked before lock".as_slice()),
+            (&active_session, b"active before lock".as_slice()),
+        ] {
+            session
+                .events
+                .lock()
+                .unwrap()
+                .push_back(SessionEvent::Output(output.to_vec()));
+        }
+        {
+            let mut background = app.sink.live.background.borrow_mut();
+            let (_, live) = background
+                .iter_mut()
+                .find(|(id, _)| *id == parked_id)
+                .unwrap();
+            let tab = app.tabs.iter_mut().find(|tab| tab.id == parked_id).unwrap();
+            live.poll(&mut tab.parked.as_mut().unwrap().0, &context);
+        }
+        app.sink
+            .live
+            .connection
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .poll(&mut app.terminal, &context);
+        lock.handle_lifecycle(LifecycleEvent::DeviceLocked);
+        active_session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"after lock".to_vec()));
+        app.sink
+            .live
+            .connection
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .poll(&mut app.terminal, &context);
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let completion = loop {
+            if let Some(completion) = app.poll_terminal_recording().unwrap() {
+                break completion;
+            }
+            assert!(Instant::now() < deadline, "recording did not finish");
+            thread::sleep(Duration::from_millis(5));
+        };
+        let Completion::Complete { path, reason, .. } = completion else {
+            panic!("expected a completed lifecycle recording");
+        };
+        assert_eq!(reason, FinishReason::Lifecycle);
+        let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+        let mut output = Vec::new();
+        while let Some(event) = reader.next_event().unwrap() {
+            if let ArtifactEvent::Output { stream, bytes, .. } = event {
+                output.push((stream.index(), bytes));
+            }
+        }
+        assert_eq!(
+            output,
+            vec![
+                (1, b"parked before lock".to_vec()),
+                (2, b"active before lock".to_vec())
+            ]
+        );
+    }
+
+    #[test]
+    fn recording_captures_active_and_parked_output_then_stops_on_native_suspension() {
+        use crate::{Lifecycle, NativeLifecycle, SuspensionHandle};
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use std::{cell::Cell, fs, rc::Rc, sync::mpsc};
+
+        let directory = private_recording_dir();
+        let mut active_terminal = terminal();
+        let mut parked_terminal = terminal();
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) = festerm_recording::SharedRecording::start(
+            directory.path(),
+            &[&active_terminal, &parked_terminal],
+            move || {
+                let _ = wake.send(());
+            },
+        )
+        .unwrap();
+        let active_session = Arc::new(FakeSession::default());
+        let parked_session = Arc::new(FakeSession::default());
+        active_session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"active output".to_vec()));
+        parked_session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"parked output".to_vec()));
+        let mut active = connection(active_session.clone());
+        active.recording_stream = Some(streams.remove(0));
+        let mut parked = connection(parked_session);
+        parked.recording_stream = Some(streams.remove(0));
+        active.send(b"private local input");
+        let context = egui::Context::default();
+        assert!(active.poll(&mut active_terminal, &context));
+        assert!(parked.poll(&mut parked_terminal, &context));
+        assert_eq!(
+            active_session.input.lock().unwrap().concat(),
+            b"private local input"
+        );
+
+        let suspension = SuspensionHandle::default();
+        suspension.install_test_recording(recording.clone());
+        *suspension.connection.borrow_mut() = Some(active);
+        suspension.background.borrow_mut().push((2, parked));
+        let lifecycle = Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        }));
+        let mut native = NativeLifecycle::new(lifecycle, suspension);
+        assert!(native.suspended(false));
+        assert!(!recording.is_recording().unwrap());
+        ready.recv_timeout(Duration::from_secs(10)).unwrap();
+        let Completion::Complete { path, reason, .. } =
+            recording.poll_completion().unwrap().unwrap()
+        else {
+            panic!("expected a completed lifecycle recording");
+        };
+        assert_eq!(reason, FinishReason::Lifecycle);
+        let bytes = fs::read(path).unwrap();
+        assert!(!bytes
+            .windows(b"private local input".len())
+            .any(|window| window == b"private local input"));
+        let mut reader = ArtifactReader::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut outputs = Vec::new();
+        while let Some(event) = reader.next_event().unwrap() {
+            if let ArtifactEvent::Output { stream, bytes, .. } = event {
+                outputs.push((stream.index(), bytes));
+            }
+        }
+        assert_eq!(
+            outputs,
+            vec![
+                (1, b"active output".to_vec()),
+                (2, b"parked output".to_vec())
+            ]
+        );
+    }
+
+    #[test]
+    fn recovery_palette_mismatch_stops_recording_before_later_output() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use std::sync::mpsc;
+
+        let directory = private_recording_dir();
+        let mut terminal = terminal();
+        terminal.ingest(b"\x1b[8msecret");
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) =
+            festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        let foreign = festerm_core::ColorScheme::new(
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::Rgb::new(0, 0, 0),
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::ColorScheme::DEFAULT_ANSI,
+        );
+        let session = Arc::new(FakeSession::default());
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"AFTER-PALETTE-LOSS".to_vec()));
+        let mut live = connection(session);
+        live.recording_stream = Some(streams.remove(0));
+        let bytes =
+            serde_json::to_vec(&festerm_mobile_tunnels::RecoverySync::Colors(foreign)).unwrap();
+        let command = festerm_mobile_tunnels::decode_recovery_sync(&bytes).unwrap();
+        live.apply_tunnel_recovery(&mut terminal, command);
+        live.poll(&mut terminal, &egui::Context::default());
+        assert!(terminal.row_text(0).unwrap().contains("AFTER-PALETTE-LOSS"));
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording
+            .take_failure()
+            .unwrap()
+            .unwrap()
+            .contains("colors do not match"));
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        let Completion::Incomplete {
+            path,
+            reason: FinishReason::IntegrityFailure,
+            ..
+        } = completion
+        else {
+            panic!("a palette mismatch must leave an incomplete recording");
+        };
+        let mut reader = ArtifactReader::new(std::fs::File::open(path).unwrap()).unwrap();
+        let Some(ArtifactEvent::Started { terminal, .. }) = reader.next_event().unwrap() else {
+            panic!("expected the safe checkpoint");
+        };
+        assert!(!terminal.row_text(0).unwrap().contains("secret"));
+        while let Some(event) = reader.next_event().unwrap() {
+            assert!(!matches!(
+                event,
+                ArtifactEvent::Configured { .. } | ArtifactEvent::Output { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn unsupported_recovery_stops_the_whole_recording_as_incomplete() {
+        use festerm_recording::{Completion, FinishReason};
+        use std::sync::mpsc;
+
+        let directory = private_recording_dir();
+        let mut terminal = terminal();
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) =
+            festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        let session = Arc::new(FakeSession::default());
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::RecoverySync(vec![1]));
+        let mut live = connection(session);
+        live.recording_stream = Some(streams.remove(0));
+        live.poll(&mut terminal, &egui::Context::default());
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording
+            .take_failure()
+            .unwrap()
+            .unwrap()
+            .contains("recovery data was unsupported"));
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(
+            completion,
+            Completion::Incomplete {
+                reason: FinishReason::IntegrityFailure,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn failed_mobile_session_stops_all_recorded_streams_incomplete() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use festerm_session::{SessionError, SessionErrorKind};
+        use std::{fs::File, sync::mpsc};
+
+        let error = SessionError::new(SessionErrorKind::Output, "synthetic failure");
+        for event in [
+            Some(SessionEvent::Error(error.clone())),
+            Some(SessionEvent::Lifecycle(SessionLifecycle::Failed(
+                error.clone(),
+            ))),
+            Some(SessionEvent::Lifecycle(SessionLifecycle::Disconnected(
+                error.clone(),
+            ))),
+            None,
+        ] {
+            let directory = private_recording_dir();
+            let mut first_terminal = terminal();
+            let mut second_terminal = terminal();
+            let (wake, ready) = mpsc::channel();
+            let (recording, mut streams) = festerm_recording::SharedRecording::start(
+                directory.path(),
+                &[&first_terminal, &second_terminal],
+                move || {
+                    let _ = wake.send(());
+                },
+            )
+            .unwrap();
+            let session = Arc::new(FakeSession {
+                closed: event.is_none(),
+                ..Default::default()
+            });
+            let mut events = session.events.lock().unwrap();
+            events.push_back(SessionEvent::Output(b"before failure".to_vec()));
+            if let Some(event) = event {
+                events.push_back(event);
+            }
+            drop(events);
+            let mut live = connection(session);
+            live.recording_stream = Some(streams.remove(0));
+            let other = streams.remove(0);
+            live.poll(&mut first_terminal, &egui::Context::default());
+            assert!(!recording.is_recording().unwrap());
+            assert!(recording.take_failure().unwrap().is_some());
+            other
+                .ingest_output(&mut second_terminal, b"after failure")
+                .unwrap();
+            assert!(second_terminal
+                .row_text(0)
+                .unwrap()
+                .contains("after failure"));
+            let completion = loop {
+                ready.recv_timeout(Duration::from_secs(10)).unwrap();
+                if let Some(completion) = recording.poll_completion().unwrap() {
+                    break completion;
+                }
+            };
+            let Completion::Incomplete {
+                path,
+                reason: FinishReason::IntegrityFailure,
+                ..
+            } = completion
+            else {
+                panic!("a failed session must make the shared recording incomplete");
+            };
+            let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+            let mut output = Vec::new();
+            while let Some(event) = reader.next_event().unwrap() {
+                if let ArtifactEvent::Output { bytes, .. } = event {
+                    output.extend(bytes);
+                }
+            }
+            assert_eq!(output, b"before failure");
+        }
+    }
+
+    #[test]
+    fn clean_mobile_session_exit_leaves_other_streams_recording() {
+        use festerm_recording::{Completion, FinishReason};
+        use festerm_session::SessionExit;
+        use std::sync::mpsc;
+
+        let directory = private_recording_dir();
+        let mut first_terminal = terminal();
+        let second_terminal = terminal();
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) = festerm_recording::SharedRecording::start(
+            directory.path(),
+            &[&first_terminal, &second_terminal],
+            move || {
+                let _ = wake.send(());
+            },
+        )
+        .unwrap();
+        let session = Arc::new(FakeSession::default());
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Lifecycle(SessionLifecycle::Exited(
+                SessionExit::with_exit_code(0),
+            )));
+        let mut live = connection(session);
+        live.recording_stream = Some(streams.remove(0));
+        live.poll(&mut first_terminal, &egui::Context::default());
+        assert!(recording.is_recording().unwrap());
+        recording.stop(FinishReason::User).unwrap();
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(completion, Completion::Complete { .. }));
+    }
+
+    #[test]
+    fn mobile_inactivity_and_locks_stop_recording_without_a_ui_frame() {
+        use crate::SuspensionHandle;
+        use festerm_ios_lock::{
+            AppLock, Availability, BiometryKind, FakeLocker, LifecycleEvent, LockSettings,
+            ManualClock,
+        };
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use std::{fs::File, sync::mpsc};
+
+        for cut in ["app", "device", "background", "inactive"] {
+            let directory = private_recording_dir();
+            let mut terminal = terminal();
+            let (wake, ready) = mpsc::channel();
+            let (recording, mut streams) = festerm_recording::SharedRecording::start(
+                directory.path(),
+                &[&terminal],
+                move || {
+                    let _ = wake.send(());
+                },
+            )
+            .unwrap();
+            let suspension = SuspensionHandle::default();
+            suspension.install_test_recording(recording.clone());
+            let locker = FakeLocker::new(Availability::Available(BiometryKind::FaceId));
+            let lock = AppLock::new_with_content_lock_callback(
+                None,
+                locker,
+                Arc::new(ManualClock::new()),
+                || {},
+                suspension.content_lock_callback(),
+            );
+            let generation = lock.recording_privacy_generation().unwrap();
+            if cut == "app" {
+                lock.apply_settings(LockSettings {
+                    enabled: true,
+                    ..LockSettings::default()
+                })
+                .unwrap();
+                lock.lock_now();
+            } else if cut == "device" {
+                lock.handle_lifecycle(LifecycleEvent::DeviceLocked);
+            } else if cut == "background" {
+                lock.handle_lifecycle(LifecycleEvent::DidEnterBackground);
+            } else {
+                lock.handle_lifecycle(LifecycleEvent::WillResignActive);
+            }
+            assert_ne!(lock.recording_privacy_generation(), Some(generation));
+            assert!(!recording.is_recording().unwrap());
+            streams[0]
+                .ingest_output(&mut terminal, b"after lock")
+                .unwrap();
+            drop(streams.remove(0));
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            let Completion::Complete { path, reason, .. } =
+                recording.poll_completion().unwrap().unwrap()
+            else {
+                panic!("expected a completed lock recording");
+            };
+            assert_eq!(reason, FinishReason::Lifecycle);
+            let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+            while let Some(event) = reader.next_event().unwrap() {
+                assert!(!matches!(event, ArtifactEvent::Output { .. }));
+            }
+        }
     }
 
     #[test]
@@ -1163,6 +2048,7 @@ mod tests {
                 &parked_session
             ));
         }
+
         lock.retry_unlock();
         lock.handle_lifecycle(LifecycleEvent::WillResignActive);
         assert!(!native.suspended(false));
@@ -1195,6 +2081,45 @@ mod tests {
         assert!(!app.dictation_open());
         assert!(first.input.lock().unwrap().is_empty());
         assert!(replacement.input.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn recorded_mobile_session_input_refusal_stops_the_shared_recording() {
+        use festerm_recording::{Completion, FinishReason, SharedRecording};
+        use std::sync::mpsc;
+
+        let directory = private_recording_dir();
+        let first = terminal();
+        let second = terminal();
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) =
+            SharedRecording::start(directory.path(), &[&first, &second], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        let session = Arc::new(FakeSession {
+            rejected: true,
+            ..Default::default()
+        });
+        let mut live = connection(session);
+        live.recording_stream = Some(streams.remove(0));
+        live.send(b"command");
+        assert!(live.session.is_none());
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording.take_failure().unwrap().is_some());
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        assert!(matches!(
+            completion,
+            Completion::Incomplete {
+                reason: FinishReason::IntegrityFailure,
+                ..
+            }
+        ));
     }
 
     #[test]

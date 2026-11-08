@@ -533,15 +533,26 @@ async fn run(
     }
 }
 
+/// Validates a host recovery mutation before it is applied to a frontend.
+pub fn decode_recovery_sync(payload: &[u8]) -> io::Result<Sync> {
+    let sync = serde_json::from_slice::<Sync>(payload).map_err(|_| invalid())?;
+    match &sync {
+        Sync::Scrollback(limit) if *limit <= SNAPSHOT_LIMIT => {}
+        Sync::Colors(_) | Sync::Reset => {}
+        Sync::Bytes(bytes) if bytes.len() <= CHUNK_LIMIT => {}
+        _ => return Err(invalid()),
+    }
+    Ok(sync)
+}
+
 /// Applies a host `RecoverySync` event payload to the frontend terminal, in
 /// session order. Mirrors the desktop `apply_recovery_sync`.
 pub fn apply_recovery_sync(terminal: &mut Terminal, payload: &[u8]) -> io::Result<()> {
-    match serde_json::from_slice::<Sync>(payload).map_err(|_| invalid())? {
-        Sync::Scrollback(limit) if limit <= SNAPSHOT_LIMIT => terminal.set_scrollback_limit(limit),
+    match decode_recovery_sync(payload)? {
+        Sync::Scrollback(limit) => terminal.set_scrollback_limit(limit),
         Sync::Colors(colors) => terminal.set_color_scheme(colors),
-        Sync::Bytes(bytes) if bytes.len() <= CHUNK_LIMIT => terminal.ingest(&bytes),
+        Sync::Bytes(bytes) => terminal.ingest(&bytes),
         Sync::Reset => terminal.reset_to_initial_state(),
-        _ => return Err(invalid()),
     }
     let _ = terminal.drain_replies();
     let _ = terminal.take_reply_queue_overflowed();

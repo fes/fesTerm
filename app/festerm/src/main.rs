@@ -43,6 +43,8 @@ mod owned_fixture_paths;
 #[cfg(test)]
 mod performance_fixtures;
 mod port_forward_draft;
+mod recording_privacy;
+mod recording_storage;
 mod remote_files;
 mod save_as;
 mod screens;

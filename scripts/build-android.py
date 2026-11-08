@@ -73,6 +73,8 @@ def native_dependencies():
 
 
 def build(args):
+    if args.recording_validation and args.release:
+        raise ValueError("Recording validation hooks are not allowed in release APKs")
     sdk = Path(args.sdk).expanduser().resolve()
     tools = sdk / "build-tools" / BUILD_TOOLS
     android_jar = sdk / "platforms" / f"android-{API}" / "android.jar"
@@ -100,6 +102,8 @@ def build(args):
     env["RUSTFLAGS"] = env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-z,max-page-size=16384"
     env.setdefault("CARGO_PROFILE_DEV_DEBUG", "0")
     features = ["--no-default-features"] if args.offline else []
+    if args.recording_validation:
+        features += ["--features", "native-recording-validation"]
     tree = run("cargo", "tree", "--locked", "-p", "festerm-android", "--target", target,
                "--edges", "normal,build", "--prefix", "none", *features, env=env, capture=True)
     check_dependency_tree(tree)
@@ -140,9 +144,12 @@ def build(args):
                     security.write_bytes(archive.read("res/xml/network_security_config.xml"))
             else:
                 jars.append(dependency)
+        java = sorted((APP / "java").rglob("*.java"))
+        if args.recording_validation:
+            java += sorted((APP / "tests/hooks").rglob("*.java"))
         run("javac", "-encoding", "UTF-8", "-source", "11", "-target", "11",
             "-classpath", android_jar, "-d", classes,
-            *sorted((APP / "java").rglob("*.java")), env=env)
+            *java, env=env)
         run(tools / "d8", "--lib", android_jar, "--min-api", MIN_API,
             "--output", dex, *sorted(classes.rglob("*.class")), *jars, env=env)
         resources = work / "resources.zip"
@@ -167,6 +174,7 @@ def build(args):
         "dirty": bool(run("git", "status", "--porcelain", capture=True)),
         "abi": args.abi, "min_sdk": MIN_API, "target_sdk": API,
         "live_ssh": not args.offline, "signing": "development-only",
+        "recording_validation": args.recording_validation,
         "profile": mode, "ndk": NDK, "build_tools": BUILD_TOOLS,
         "sha256": digest,
     }
@@ -187,6 +195,8 @@ def main():
     parser.add_argument("--abi", choices=TARGETS, default="arm64-v8a")
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--offline", action="store_true", help="Build the offline fixture instead of live SSH")
+    parser.add_argument("--recording-validation", action="store_true",
+                        help="Include native recording test hooks in a development APK")
     parser.add_argument("--check-dependencies", action="store_true")
     parser.add_argument("--install", action="store_true")
     parser.add_argument("--serial")

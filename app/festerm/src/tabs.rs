@@ -293,7 +293,9 @@ impl ApplicationSession {
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
             #[cfg(test)]
-            Self::TestSsh(_) | Self::TestLocal(_) => None,
+            Self::TestSsh(session) => session.take_recovered_terminal(),
+            #[cfg(test)]
+            Self::TestLocal(_) => None,
         }
     }
 
@@ -304,7 +306,9 @@ impl ApplicationSession {
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => false,
             #[cfg(test)]
-            Self::TestSsh(_) | Self::TestLocal(_) => false,
+            Self::TestSsh(session) => session.recovery_protocol_is_authoritative(),
+            #[cfg(test)]
+            Self::TestLocal(_) => false,
         }
     }
 
@@ -652,10 +656,16 @@ impl Session for ApplicationSession {
 /// A running local-shell or SSH session tab: the terminal, its controller,
 /// and presentation view. `SessionController` remains the sole terminal
 /// writer.
+struct RecordingAutoEnrollment {
+    pending: festerm_recording::PendingEnrollment,
+    generation: u64,
+}
+
 pub struct SessionTab {
     remote_files: Option<crate::remote_files::RemoteFileCapability>,
     pub terminal: Terminal,
     pub controller: SessionController<ApplicationSession>,
+    recording_auto_enrollment: Option<RecordingAutoEnrollment>,
     pub view: TerminalView,
     /// Stable primary identity (`docs/gui-design.md` "Identity precedence").
     /// Transient terminal-provided titles are shown as secondary metadata and
@@ -1001,6 +1011,7 @@ impl SessionTab {
     pub fn apply_frontend_terminal_configuration(&mut self, preference: ScrollbackLimitPreference) {
         self.set_scrollback_limit(preference);
         self.apply_color_scheme();
+        self.controller.record_configuration(&self.terminal);
     }
 
     pub fn sync_recovery_clear(&self) -> Result<(), PersistentSessionError> {
@@ -1029,31 +1040,148 @@ impl SessionTab {
         };
         self.terminal = recovered;
         self.view.reset_recovery_layout();
+        self.controller.end_recording_on_replacement();
         true
     }
 
+    fn start_recording_auto_enrollment(
+        &mut self,
+        recording: &festerm_recording::SharedRecording,
+        scrollback_limit: ScrollbackLimitPreference,
+    ) {
+        let Some(session) = self.controller.session() else {
+            return;
+        };
+        if matches!(self.inspector_transport, InspectorTransport::Sftp { .. }) {
+            return;
+        }
+        match recording.is_recording() {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                tracing::error!("Could not inspect recording before including a session: {error}");
+                return;
+            }
+        }
+        let authoritative = session.recovery_protocol_is_authoritative();
+        if matches!(
+            session,
+            ApplicationSession::Persistent(_) | ApplicationSession::DevTunnel(_)
+        ) && !authoritative
+        {
+            Self::fail_recording_auto_enrollment(
+                recording,
+                "legacy session recovery cannot be included safely",
+            );
+            return;
+        }
+        if authoritative {
+            match recording.reserve_enrollment() {
+                Ok(pending) => {
+                    self.recording_auto_enrollment = Some(RecordingAutoEnrollment {
+                        pending,
+                        generation: self.controller.lifecycle_generation(),
+                    });
+                    if self.adopt_recovered_terminal() {
+                        self.apply_frontend_terminal_configuration(scrollback_limit);
+                        self.complete_recording_auto_enrollment();
+                    }
+                }
+                Err(error) => Self::fail_recording_auto_enrollment(recording, &error),
+            }
+            return;
+        }
+        if let Err(error) = self.view.validate_recording_view(&self.terminal) {
+            Self::fail_recording_auto_enrollment(recording, error);
+            return;
+        }
+        match recording.enroll(&self.terminal) {
+            Ok(stream) => self.controller.attach_recording_stream(stream),
+            Err(error) => Self::fail_recording_auto_enrollment(recording, &error),
+        }
+    }
+
+    fn fail_recording_auto_enrollment(
+        recording: &festerm_recording::SharedRecording,
+        error: impl std::fmt::Display,
+    ) {
+        tracing::warn!("Could not include a new terminal session in the recording: {error}");
+        match recording.is_recording() {
+            Ok(true) => {
+                if let Err(stop_error) = recording
+                    .fail_integrity("Recording stopped because a new session could not be included")
+                {
+                    tracing::error!(
+                        "Could not stop recording after enrollment failed: {stop_error}"
+                    );
+                }
+            }
+            Ok(false) => {}
+            Err(state_error) => {
+                tracing::error!(
+                    "Could not inspect recording after enrollment failed: {state_error}"
+                );
+            }
+        }
+    }
+
+    pub(crate) fn complete_recording_auto_enrollment(&mut self) {
+        let Some(enrollment) = self.recording_auto_enrollment.take() else {
+            return;
+        };
+        if enrollment.generation != self.controller.lifecycle_generation() {
+            return;
+        }
+        if let Err(error) = self.view.validate_recording_view(&self.terminal) {
+            tracing::warn!("Could not include a recovered terminal in the recording: {error}");
+            return;
+        }
+        match enrollment.pending.enroll(&self.terminal) {
+            Ok(stream) => self.controller.attach_recording_stream(stream),
+            Err(error) => {
+                tracing::warn!("Could not include a recovered terminal in the recording: {error}");
+            }
+        }
+    }
+
     pub fn pump_session_events(&mut self) -> bool {
-        let view = &mut self.view;
-        self.controller
-            .pump_events_with_resize(&mut self.terminal, |terminal, dimensions| {
-                !matches!(
-                    view.apply_terminal_resize(terminal, dimensions),
-                    festerm_ui_egui::ResizeOutcome::Rejected
-                )
-            })
+        self.pump_session_events_with_slice().hit_limit
     }
 
     pub(crate) fn pump_session_events_with_slice(
         &mut self,
     ) -> crate::session_controller::PumpResult {
         let view = &mut self.view;
-        self.controller
-            .pump_events_with_resize_slice(&mut self.terminal, |terminal, dimensions| {
+        let result = self.controller.pump_events_with_resize_slice(
+            &mut self.terminal,
+            |terminal, dimensions| {
                 !matches!(
                     view.apply_terminal_resize(terminal, dimensions),
                     festerm_ui_egui::ResizeOutcome::Rejected
                 )
+            },
+        );
+        if self
+            .recording_auto_enrollment
+            .as_ref()
+            .is_some_and(|enrollment| {
+                enrollment.generation != self.controller.lifecycle_generation()
+                    || self.controller.last_pump_output_received()
+                    || self.controller.last_pump_closed()
+                    || matches!(
+                        self.controller.lifecycle(),
+                        Some(
+                            SessionLifecycle::Failed(_)
+                                | SessionLifecycle::Disconnected(_)
+                                | SessionLifecycle::Exited(_)
+                                | SessionLifecycle::Stopped
+                        )
+                    )
             })
+        {
+            self.recording_auto_enrollment = None;
+        }
+        result
     }
 
     /// Starts a fresh default local session. `window_dimensions`, when
@@ -1499,6 +1627,7 @@ impl SessionTab {
             remote_files: None,
             terminal,
             controller,
+            recording_auto_enrollment: None,
             view: TerminalView::default(),
             label: label.to_owned(),
             default_label: label.to_owned(),
@@ -1733,6 +1862,10 @@ impl SessionTab {
     pub fn accepts_input(&self) -> bool {
         self.controller.start_error().is_none()
             && matches!(self.controller.lifecycle(), Some(SessionLifecycle::Running))
+    }
+
+    pub(crate) fn recording_eligible(&self) -> bool {
+        self.accepts_input() && !matches!(self.inspector_transport, InspectorTransport::Sftp { .. })
     }
 
     /// Whether the terminal viewport should still deliver typed keystrokes
@@ -2219,6 +2352,10 @@ pub enum AppCommand {
     OpenLauncher,
     /// Opens (or focuses) the singleton Settings application surface.
     OpenSettings,
+    /// Application-scoped recording surfaces.
+    OpenRecording,
+    OpenRecordingSettings,
+    OpenRecordingLibrary,
     /// Moves one tab into another window, or - with `target: None` - out to a
     /// new window of its own at `screen_position` (ADR 0033).
     ///
@@ -2952,6 +3089,7 @@ fn native_alias_identity(
 
 struct PendingResume {
     requires_running_sessions: bool,
+    recording_auto_enrollment: Option<festerm_recording::RecordingId>,
     target: TabId,
     receiver: std::sync::mpsc::Receiver<Result<SessionTab, String>>,
     handle: Option<std::thread::JoinHandle<()>>,
@@ -2977,6 +3115,7 @@ pub struct AppState {
     pub discovery: crate::discovery::Discovery,
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
+    recording_auto_enrollment: Option<festerm_recording::SharedRecording>,
     pending_native_termination: Option<PendingNativeTermination>,
     #[cfg(feature = "experimental-dev-tunnels")]
     tunnel_reconnects: tunnel_reconnect::TunnelReconnects,
@@ -3129,6 +3268,7 @@ impl AppState {
             discovery: Default::default(),
             resume_error: None,
             pending_resume: None,
+            recording_auto_enrollment: None,
             pending_native_termination: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             tunnel_reconnects: Default::default(),
@@ -3943,6 +4083,13 @@ impl AppState {
             })
     }
 
+    pub(crate) fn set_recording_auto_enrollment(
+        &mut self,
+        recording: Option<festerm_recording::SharedRecording>,
+    ) {
+        self.recording_auto_enrollment = recording;
+    }
+
     /// Requests an on-demand SSH-level liveness probe (ADR 0018) on every
     /// open SSH session tab. Intended for a wake/network-change signal:
     /// each request is coalescing and nonblocking, so calling this
@@ -4019,6 +4166,9 @@ impl AppState {
                 }
             }
             AppCommand::OpenSettings => self.open_settings(),
+            AppCommand::OpenRecording
+            | AppCommand::OpenRecordingSettings
+            | AppCommand::OpenRecordingLibrary => {}
             AppCommand::OpenProfiles => self.open_profiles(),
             AppCommand::CreateProfile { kind } => {
                 self.open_profiles();
@@ -5535,7 +5685,7 @@ impl AppState {
 
     fn start_local_session(&mut self, context: &egui::Context) {
         let dimensions = self.current_session_dimensions();
-        self.place_session(SessionTab::start_default(
+        self.place_user_session(SessionTab::start_default(
             context,
             dimensions,
             self.prefer_powershell,
@@ -5552,7 +5702,7 @@ impl AppState {
         let result = LocalPtySession::start_with_notifier(profile, size, make_notifier(context))
             .map(ApplicationSession::Local)
             .map_err(|error| error.to_string());
-        self.place_session(SessionTab::from_local_session_result(
+        self.place_user_session(SessionTab::from_local_session_result(
             result,
             dimensions,
             "Local Shell",
@@ -5566,13 +5716,14 @@ impl AppState {
         &mut self,
         start: impl FnOnce() -> Result<SessionTab, String> + Send + 'static,
     ) {
-        self.begin_attach(start, true);
+        self.begin_attach(start, true, None);
     }
 
     fn begin_attach(
         &mut self,
         start: impl FnOnce() -> Result<SessionTab, String> + Send + 'static,
         require_running_sessions: bool,
+        recording_auto_enrollment: Option<festerm_recording::RecordingId>,
     ) {
         if self.pending_resume.is_some()
             || self.pending_native_termination.is_some()
@@ -5598,6 +5749,7 @@ impl AppState {
             Ok(handle) => {
                 self.pending_resume = Some(PendingResume {
                     requires_running_sessions: require_running_sessions,
+                    recording_auto_enrollment,
                     target: self.active,
                     receiver,
                     handle: Some(handle),
@@ -5667,7 +5819,7 @@ impl AppState {
                 tab.remote_files = started.files;
                 tab.tunnel = tunnel;
                 Ok(tab)
-            }, false);
+            }, false, self.recording_auto_enrollment.as_ref().map(festerm_recording::SharedRecording::id));
     }
 
     pub fn native_termination_pending(&self) -> bool {
@@ -5731,7 +5883,12 @@ impl AppState {
                 && self.active == pending.target
                 && matches!(self.active_tab().content, TabContent::Launcher);
             match pending.receiver.try_recv().unwrap_or_else(|_| Err("Reattach worker failed".into())) {
-                Ok(session) if still_requested => self.place_session(session),
+                Ok(session) if still_requested => {
+                    let recording = self.recording_auto_enrollment.as_ref().filter(|recording| {
+                        Some(recording.id()) == pending.recording_auto_enrollment
+                    }).cloned();
+                    self.place_session_with_recording(session, recording.as_ref());
+                }
                 Err(error) if still_requested => self.resume_error = Some(format!("Could not reattach: {error} No replacement shell was started. Refresh Running Sessions and try again.")),
                 _ => {},
             }
@@ -5766,7 +5923,7 @@ impl AppState {
             return;
         };
         let dimensions = self.current_session_dimensions();
-        self.place_session(SessionTab::start_local_profile(
+        self.place_user_session(SessionTab::start_local_profile(
             local.to_local_profile(),
             local.identifier(),
             local.persistence(),
@@ -5778,7 +5935,7 @@ impl AppState {
 
     fn start_serial_session(&mut self, settings: LineSettings, context: &egui::Context) {
         let dimensions = self.current_session_dimensions();
-        self.place_session(SessionTab::start_serial(
+        self.place_user_session(SessionTab::start_serial(
             settings, None, context, dimensions,
         ));
     }
@@ -5795,7 +5952,7 @@ impl AppState {
             return;
         };
         let dimensions = self.current_session_dimensions();
-        self.place_session(SessionTab::start_serial(
+        self.place_user_session(SessionTab::start_serial(
             settings,
             Some(profile_id),
             context,
@@ -5904,7 +6061,7 @@ impl AppState {
         // rejection (see `reprompt_rejected_ssh_passwords`) restarts the
         // session directly rather than routing back through this dispatch
         // path, so it can carry its own running attempt count forward.
-        self.place_session(SessionTab::start_ssh(
+        self.place_user_session(SessionTab::start_ssh(
             profile,
             authentication,
             options,
@@ -5925,7 +6082,7 @@ impl AppState {
             .configuration
             .known_host_fingerprint(profile.identity().host(), profile.identity().port())
             .map(str::to_owned);
-        self.place_session(SessionTab::start_sftp(
+        self.place_user_session(SessionTab::start_sftp(
             profile,
             authentication,
             self.default_sftp_local_directory.clone(),
@@ -6270,8 +6427,35 @@ impl AppState {
         }
     }
 
-    fn place_session(&mut self, mut session: SessionTab) {
+    fn place_user_session(&mut self, session: SessionTab) {
+        let is_replacement = matches!(
+            self.active_tab().content,
+            TabContent::SshAuthenticationRequired(_)
+                | TabContent::SftpAuthenticationRequired(_)
+                | TabContent::SftpFileManagerAuthenticationRequired(_)
+        );
+        let recording = if is_replacement {
+            None
+        } else {
+            self.recording_auto_enrollment.clone()
+        };
+        self.place_session_with_recording(session, recording.as_ref());
+    }
+
+    #[cfg(test)]
+    fn place_session(&mut self, session: SessionTab) {
+        self.place_session_with_recording(session, None);
+    }
+
+    fn place_session_with_recording(
+        &mut self,
+        mut session: SessionTab,
+        recording: Option<&festerm_recording::SharedRecording>,
+    ) {
         session.apply_frontend_terminal_configuration(self.scrollback_limit);
+        if let Some(recording) = recording {
+            session.start_recording_auto_enrollment(recording, self.scrollback_limit);
+        }
         self.workspace_dirty = true;
         // Starting a configured profile also consumes the active Profiles
         // surface, but a synchronous startup failure leaves it available.
@@ -6787,6 +6971,7 @@ impl SessionTab {
             remote_files: None,
             terminal: Terminal::new(dimensions).expect("terminal allocation"),
             controller,
+            recording_auto_enrollment: None,
             view: TerminalView::default(),
             label: format!("{username}@{host}"),
             default_label: format!("{username}@{host}"),
@@ -6851,6 +7036,264 @@ impl AppState {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    struct RecordingFixture {
+        _storage: crate::recording_storage::RecordingStorage,
+        _streams: Vec<festerm_recording::RecordingStream>,
+        recording: festerm_recording::SharedRecording,
+        ready: std::sync::mpsc::Receiver<()>,
+        _directory: tempfile::TempDir,
+    }
+
+    impl RecordingFixture {
+        fn new(streams: usize) -> Self {
+            let directory = crate::recording_storage::test_private_parent();
+            let path =
+                crate::recording_storage::test_directory_path(directory.path()).join("recordings");
+            let (storage, _) =
+                crate::recording_storage::RecordingStorage::open_for_test(&path).unwrap();
+            let terminal = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+            let terminals = vec![&terminal; streams];
+            let (wake, ready) = std::sync::mpsc::channel();
+            let (recording, streams) =
+                festerm_recording::SharedRecording::start(storage.path(), &terminals, move || {
+                    let _ = wake.send(());
+                })
+                .unwrap();
+            Self {
+                _storage: storage,
+                _streams: streams,
+                recording,
+                ready,
+                _directory: directory,
+            }
+        }
+
+        fn completion(&self) -> festerm_recording::Completion {
+            loop {
+                self.ready.recv_timeout(Duration::from_secs(10)).unwrap();
+                if let Some(completion) = self.recording.poll_completion().unwrap() {
+                    return completion;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn recording_auto_enrollment_only_follows_new_user_sessions_and_the_same_generation() {
+        let fixture = RecordingFixture::new(1);
+        let mut state = AppState::for_test();
+        let recording = &fixture.recording;
+        let make_session = || {
+            SessionTab::for_test_ssh(
+                crate::session_controller::fake::FakeSshSession::new([]),
+                "user",
+                "example.test",
+                22,
+            )
+        };
+        state.set_recording_auto_enrollment(Some(recording.clone()));
+        state.place_user_session(make_session());
+        let user_tab = state.active();
+        assert_eq!(
+            state
+                .session_tab(user_tab)
+                .unwrap()
+                .controller
+                .recording_id(),
+            Some(recording.id())
+        );
+
+        state.place_session(make_session());
+        assert!(state
+            .session_tab(state.active())
+            .unwrap()
+            .controller
+            .recording_id()
+            .is_none());
+
+        state.place_user_session(make_session());
+        let session = state.session_tab_mut(state.active()).unwrap();
+        assert_eq!(session.controller.recording_id(), Some(recording.id()));
+        session.controller.advance_lifecycle_generation();
+        assert!(session.controller.recording_id().is_none());
+
+        state.set_recording_auto_enrollment(None);
+        state.place_user_session(make_session());
+        assert!(state
+            .session_tab(state.active())
+            .unwrap()
+            .controller
+            .recording_id()
+            .is_none());
+        recording
+            .stop(festerm_recording::FinishReason::User)
+            .unwrap();
+        assert!(matches!(
+            fixture.completion(),
+            festerm_recording::Completion::Complete { .. }
+        ));
+    }
+
+    #[test]
+    fn recording_auto_enrollment_does_not_miss_a_fast_session() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+
+        let fixture = RecordingFixture::new(1);
+        let mut state = AppState::for_test();
+        let session = SessionTab::for_test_ssh(
+            crate::session_controller::fake::FakeSshSession::new([
+                SessionEvent::Lifecycle(SessionLifecycle::Running),
+                SessionEvent::Output(b"short-lived output".to_vec()),
+                SessionEvent::Lifecycle(SessionLifecycle::Exited(
+                    festerm_session::SessionExit::with_exit_code(0),
+                )),
+            ]),
+            "user",
+            "example.test",
+            22,
+        );
+        state.set_recording_auto_enrollment(Some(fixture.recording.clone()));
+        state.place_user_session(session);
+        let tab = state.active();
+        assert_eq!(
+            state.session_tab(tab).unwrap().controller.recording_id(),
+            Some(fixture.recording.id())
+        );
+        state
+            .session_tab_mut(tab)
+            .unwrap()
+            .pump_session_events_with_slice();
+        fixture.recording.stop(FinishReason::User).unwrap();
+        let Completion::Complete { path, .. } = fixture.completion() else {
+            panic!("a clean short-lived session should finish normally");
+        };
+        let mut reader = ArtifactReader::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut started = 0;
+        let mut recorded_output = false;
+        while let Some(event) = reader.next_event().unwrap() {
+            match event {
+                ArtifactEvent::Started { .. } => started += 1,
+                ArtifactEvent::Output { bytes, .. } => {
+                    recorded_output |= bytes == b"short-lived output"
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(started, 2);
+        assert!(recorded_output);
+    }
+
+    #[test]
+    fn recording_auto_enrollment_waits_for_a_sanitized_recovery_screen() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+
+        let fixture = RecordingFixture::new(1);
+        let fake = crate::session_controller::fake::FakeSshSession::new([]);
+        fake.enable_authoritative_recovery();
+        let mut state = AppState::for_test();
+        state.set_recording_auto_enrollment(Some(fixture.recording.clone()));
+        state.place_user_session(SessionTab::for_test_ssh(
+            fake.clone(),
+            "user",
+            "example.test",
+            22,
+        ));
+        let tab = state.active();
+        assert!(state
+            .session_tab(tab)
+            .unwrap()
+            .recording_auto_enrollment
+            .is_some());
+        assert!(state
+            .session_tab(tab)
+            .unwrap()
+            .controller
+            .recording_id()
+            .is_none());
+
+        let mut recovered = Terminal::new(Dimensions::new(20, 2).unwrap()).unwrap();
+        recovered.ingest(b"old hidden history\r\nsecond line\r\nvisible recovery");
+        fake.set_recovered_terminal(recovered);
+        let preference = state.scrollback_limit();
+        let session = state.session_tab_mut(tab).unwrap();
+        assert!(session.adopt_recovered_terminal());
+        session.apply_frontend_terminal_configuration(preference);
+        session.complete_recording_auto_enrollment();
+        assert_eq!(
+            session.controller.recording_id(),
+            Some(fixture.recording.id())
+        );
+        fake.push_event(SessionEvent::Output(b" live".to_vec()));
+        session.pump_session_events_with_slice();
+        fixture.recording.stop(FinishReason::User).unwrap();
+
+        let Completion::Complete { path, .. } = fixture.completion() else {
+            panic!("a recovered session should finish normally");
+        };
+        let mut reader = ArtifactReader::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut found_recovery = false;
+        let mut found_live = false;
+        while let Some(event) = reader.next_event().unwrap() {
+            match event {
+                ArtifactEvent::Started { terminal, .. } => {
+                    let rows = (0..terminal.dimensions().rows())
+                        .map(|row| terminal.row_text(row).unwrap())
+                        .collect::<String>();
+                    assert!(!rows.contains("old hidden history"));
+                    found_recovery |= rows.contains("visible recovery");
+                }
+                ArtifactEvent::Output { bytes, .. } => {
+                    assert!(!bytes
+                        .windows(b"old hidden history".len())
+                        .any(|w| w == b"old hidden history"));
+                    found_live |= bytes == b" live";
+                }
+                _ => {}
+            }
+        }
+        assert!(found_recovery && found_live);
+    }
+
+    #[test]
+    fn recording_auto_enrollment_fails_if_a_pending_session_is_replaced() {
+        let fixture = RecordingFixture::new(1);
+        let fake = crate::session_controller::fake::FakeSshSession::new([]);
+        fake.enable_authoritative_recovery();
+        let mut state = AppState::for_test();
+        state.set_recording_auto_enrollment(Some(fixture.recording.clone()));
+        state.place_user_session(SessionTab::for_test_ssh(fake, "user", "example.test", 22));
+        let session = state.session_tab_mut(state.active()).unwrap();
+        session.controller.advance_lifecycle_generation();
+        session.pump_session_events_with_slice();
+        assert!(!fixture.recording.is_recording().unwrap());
+        assert!(matches!(
+            fixture.completion(),
+            festerm_recording::Completion::Incomplete {
+                reason: festerm_recording::FinishReason::IntegrityFailure,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn recording_auto_enrollment_failure_stops_the_recording() {
+        let fixture = RecordingFixture::new(festerm_recording::MAX_STREAMS);
+        let mut state = AppState::for_test();
+        state.set_recording_auto_enrollment(Some(fixture.recording.clone()));
+        state.place_user_session(SessionTab::for_test_ssh(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "user",
+            "example.test",
+            22,
+        ));
+        assert!(!fixture.recording.is_recording().unwrap());
+        assert!(fixture.recording.take_failure().unwrap().is_some());
+        assert!(matches!(
+            fixture.completion(),
+            festerm_recording::Completion::Incomplete { .. }
+        ));
+    }
 
     fn alias_test_configuration() -> Configuration {
         let directory = std::env::current_dir().unwrap();

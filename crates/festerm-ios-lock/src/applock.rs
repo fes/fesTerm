@@ -43,6 +43,7 @@ struct Inner {
     automatic_unlock: bool,
     dialog_inactive: bool,
     backgrounded: bool,
+    privacy_generation: u64,
     last_failure: Option<AuthFailure>,
     settings_error: Option<&'static str>,
 }
@@ -52,6 +53,7 @@ struct Shared {
     locker: Arc<dyn Locker>,
     clock: Arc<dyn MonotonicClock>,
     repaint: Box<dyn Fn() + Send + Sync>,
+    content_lock: Box<dyn Fn() + Send + Sync>,
 }
 
 /// Thread-safe handle: the lifecycle bridge, the egui host and the Locker
@@ -68,6 +70,20 @@ impl AppLock {
         locker: Arc<dyn Locker>,
         clock: Arc<dyn MonotonicClock>,
         repaint: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        Self::new_with_content_lock_callback(store, locker, clock, repaint, || {})
+    }
+
+    /// The callback runs synchronously when the app becomes inactive, content
+    /// becomes locked or the device locks, before another caller can observe
+    /// the new policy state.
+    /// It must not call back into this `AppLock`.
+    pub fn new_with_content_lock_callback(
+        store: Option<SettingsStore>,
+        locker: Arc<dyn Locker>,
+        clock: Arc<dyn MonotonicClock>,
+        repaint: impl Fn() + Send + Sync + 'static,
+        content_lock: impl Fn() + Send + Sync + 'static,
     ) -> Self {
         let (settings, load_status) = store
             .as_ref()
@@ -92,12 +108,14 @@ impl AppLock {
                     automatic_unlock,
                     dialog_inactive: false,
                     backgrounded: false,
+                    privacy_generation: 0,
                     last_failure: None,
                     settings_error: None,
                 }),
                 locker,
                 clock,
                 repaint: Box::new(repaint),
+                content_lock: Box::new(content_lock),
             }),
         }
     }
@@ -113,6 +131,15 @@ impl AppLock {
     /// Terminal and file content must be drawn only when this is true.
     pub fn should_draw_content(&self) -> bool {
         self.inner().policy.should_draw_content()
+    }
+
+    /// A generation token for admitting foreground content capture. Installing
+    /// a capture owner and then rechecking this token closes the race with a
+    /// concurrent lock or background notification.
+    pub fn recording_privacy_generation(&self) -> Option<u64> {
+        let inner = self.inner();
+        (inner.active && inner.policy.should_draw_content() && inner.privacy_generation != u64::MAX)
+            .then_some(inner.privacy_generation)
     }
 
     pub fn settings(&self) -> LockSettings {
@@ -180,7 +207,8 @@ impl AppLock {
         let now = self.shared.clock.now();
         let retired = {
             let mut inner = self.inner();
-            match event {
+            let content_was_available = inner.policy.should_draw_content();
+            let retired = match event {
                 LifecycleEvent::WillResignActive => {
                     inner.active = false;
                     inner.dialog_inactive |= inner.pending.is_some();
@@ -216,7 +244,18 @@ impl AppLock {
                     }
                     None
                 }
+            };
+            if matches!(
+                event,
+                LifecycleEvent::WillResignActive
+                    | LifecycleEvent::DeviceLocked
+                    | LifecycleEvent::DidEnterBackground
+            ) || (content_was_available && !inner.policy.should_draw_content())
+            {
+                inner.privacy_generation = inner.privacy_generation.saturating_add(1);
+                (self.shared.content_lock)();
             }
+            retired
         };
         // Native invalidation may reply synchronously; never hold the policy mutex.
         drop(retired);
@@ -226,9 +265,14 @@ impl AppLock {
     pub fn lock_now(&self) {
         let retired = {
             let mut inner = self.inner();
+            let content_was_available = inner.policy.should_draw_content();
             let retired = inner.retire();
             inner.policy.lock_now();
             inner.automatic_unlock = inner.policy.state() == LockState::Locked;
+            if content_was_available && !inner.policy.should_draw_content() {
+                inner.privacy_generation = inner.privacy_generation.saturating_add(1);
+                (self.shared.content_lock)();
+            }
             retired
         };
         drop(retired);
