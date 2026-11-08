@@ -160,6 +160,39 @@ fn required_env(name: &str) -> String {
     }
 }
 
+fn tls_certificate_error<'a>(
+    mut error: &'a (dyn std::error::Error + 'static),
+) -> Option<&'a rustls::CertificateError> {
+    loop {
+        if let Some(rustls::Error::InvalidCertificate(reason)) =
+            error.downcast_ref::<rustls::Error>()
+        {
+            return Some(reason);
+        }
+        error = if let Some(inner) = error
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+        {
+            inner
+        } else {
+            error.source()?
+        };
+    }
+}
+
+#[test]
+fn tls_certificate_error_finds_nested_io_causes() {
+    let error = std::io::Error::other(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer),
+    ));
+    assert!(matches!(
+        tls_certificate_error(&error),
+        Some(rustls::CertificateError::UnknownIssuer)
+    ));
+    assert!(tls_certificate_error(&std::io::Error::other("not TLS")).is_none());
+}
+
 fn assert_tls_failure(config: &InteropConfig, host: &str, ca_pem: Option<&str>, wrong_name: bool) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -184,27 +217,18 @@ fn assert_tls_failure(config: &InteropConfig, host: &str, ca_pem: Option<&str>, 
     let WinrmError::Http(error) = error else {
         panic!("expected TLS transport failure, got {error:?}");
     };
-    let mut source: &(dyn std::error::Error + 'static) = &error;
-    loop {
-        if let Some(rustls::Error::InvalidCertificate(reason)) =
-            source.downcast_ref::<rustls::Error>()
-        {
-            let expected = if wrong_name {
-                matches!(
-                    reason,
-                    rustls::CertificateError::NotValidForName
-                        | rustls::CertificateError::NotValidForNameContext { .. }
-                )
-            } else {
-                matches!(reason, rustls::CertificateError::UnknownIssuer)
-            };
-            assert!(expected, "unexpected TLS certificate failure: {reason:?}");
-            return;
-        }
-        source = source.source().unwrap_or_else(|| {
-            panic!("connection did not reach certificate verification: {error:?}")
-        });
-    }
+    let reason = tls_certificate_error(&error)
+        .unwrap_or_else(|| panic!("connection did not reach certificate verification: {error:?}"));
+    let expected = if wrong_name {
+        matches!(
+            reason,
+            rustls::CertificateError::NotValidForName
+                | rustls::CertificateError::NotValidForNameContext { .. }
+        )
+    } else {
+        matches!(reason, rustls::CertificateError::UnknownIssuer)
+    };
+    assert!(expected, "unexpected TLS certificate failure: {reason:?}");
 }
 
 #[test]
