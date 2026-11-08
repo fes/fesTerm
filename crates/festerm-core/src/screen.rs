@@ -46,11 +46,11 @@ struct RecordingCell {
 }
 
 impl RecordingCell {
-    fn from_cell(cell: &Cell, scheme: &ColorScheme) -> Self {
+    fn from_cell(cell: &Cell, scheme: &ColorScheme, compare_text: bool) -> Self {
         let hidden =
             recording_text_is_hidden(cell.foreground, cell.background, cell.attributes, scheme);
         Self {
-            text: if hidden && cell.width != CellWidth::Continuation {
+            text: if hidden && !compare_text && cell.width != CellWidth::Continuation {
                 CompactString::const_new(" ")
             } else {
                 cell.text.clone()
@@ -371,14 +371,22 @@ impl Screen {
             })
     }
 
-    pub(crate) fn recording_copy(&self, scheme: &ColorScheme) -> RecordingScreen {
+    pub(crate) fn recording_copy(
+        &self,
+        scheme: &ColorScheme,
+        compare_ambiguous: bool,
+    ) -> RecordingScreen {
         RecordingScreen {
             dimensions: self.dimensions,
             top: self.top,
             cells: self
                 .cells
                 .iter()
-                .map(|cell| RecordingCell::from_cell(cell, scheme))
+                .map(|cell| {
+                    let compare_text =
+                        compare_ambiguous && !cell.attributes.contains(Attributes::CONCEALED);
+                    RecordingCell::from_cell(cell, scheme, compare_text)
+                })
                 .collect(),
             occupied_cells: self.occupied_cells.clone(),
             soft_wrapped_rows: self.soft_wrapped_rows.clone(),
@@ -602,6 +610,56 @@ impl Screen {
             let extent = &mut self.occupied_columns[physical_row];
             *extent = (*extent).max(column + 1);
         }
+    }
+
+    /// Writes single-width ASCII cells left to right from `column`, exactly
+    /// as one [`Self::replace_cluster`] per byte would. The run must fit in
+    /// the row. When every target is already single width, no wide pair can
+    /// be split, so the cells are written in one pass with one extent update.
+    pub(crate) fn write_ascii(
+        &mut self,
+        column: usize,
+        row: usize,
+        text: &[u8],
+        foreground: crate::Color,
+        background: crate::Color,
+        attributes: Attributes,
+    ) {
+        let cell = |byte: u8| {
+            let text = CompactString::new(char::from(byte).encode_utf8(&mut [0; 4]));
+            let text_capacity_bytes = text.capacity();
+            Cell {
+                text,
+                text_capacity_bytes,
+                width: CellWidth::Single,
+                foreground,
+                background,
+                attributes,
+                hyperlink: None,
+            }
+        };
+        let start = self
+            .cell_index(column, row)
+            .expect("terminal cursor must remain within screen dimensions");
+        let end = start + text.len();
+        debug_assert!(column + text.len() <= self.dimensions.columns());
+        if self.cells[start..end]
+            .iter()
+            .any(|existing| existing.width != CellWidth::Single)
+        {
+            for (offset, &byte) in text.iter().enumerate() {
+                self.replace_cluster(column + offset, row, cell(byte));
+            }
+            return;
+        }
+        for (existing, &byte) in self.cells[start..end].iter_mut().zip(text) {
+            *existing = cell(byte);
+        }
+        self.occupied_cells[start..end].fill(true);
+        let physical_row = self.physical_row(row);
+        let extent = &mut self.occupied_columns[physical_row];
+        *extent = (*extent).max(column + text.len());
+        self.mark_dirty(row);
     }
 
     /// Updates `occupied_columns` after writing an occupied cluster at

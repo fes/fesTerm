@@ -58,8 +58,10 @@ fn start(
     terminals: &[&Terminal],
 ) -> (Recorder, Vec<festerm_recording::StreamId>, Receiver<()>) {
     let (wake, ready) = mpsc::channel();
-    let (recorder, streams) =
-        Recorder::start(directory, terminals, move || wake.send(()).unwrap()).unwrap();
+    let (recorder, streams) = Recorder::start(directory, terminals, move || {
+        let _ = wake.send(());
+    })
+    .unwrap();
     (recorder, streams, ready)
 }
 
@@ -123,6 +125,30 @@ fn completed_path(completion: Completion) -> PathBuf {
 
 #[test]
 fn active_recording_flushes_its_recent_complete_events() {
+    #[cfg(windows)]
+    let expected_partial_bytes = {
+        let reference = private_dir();
+        let mut terminal = terminal(4, 2);
+        let (mut recorder, streams, ready) = start(reference.path(), &[&terminal]);
+        recorder
+            .ingest_output(streams[0], &mut terminal, b"hi")
+            .unwrap();
+        recorder.stop(FinishReason::User).unwrap();
+        let bytes = fs::read(completed_path(completion(&mut recorder, ready))).unwrap();
+        let mut input = Cursor::new(bytes);
+        {
+            let mut reader = ArtifactReader::new(&mut input).unwrap();
+            assert!(matches!(
+                reader.next_event().unwrap(),
+                Some(ArtifactEvent::Started { .. })
+            ));
+            assert!(matches!(
+                reader.next_event().unwrap(),
+                Some(ArtifactEvent::Output { bytes, .. }) if bytes == b"hi"
+            ));
+        }
+        input.position()
+    };
     let directory = private_dir();
     let mut terminal = terminal(4, 2);
     let (mut recorder, streams, ready) = start(directory.path(), &[&terminal]);
@@ -134,6 +160,7 @@ fn active_recording_flushes_its_recent_complete_events() {
         .join(format!("recording-{}.partial", recorder.id()));
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
+        #[cfg(not(windows))]
         let flushed = fs::File::open(&partial)
             .ok()
             .and_then(|file| ArtifactReader::new(file).ok())
@@ -144,6 +171,9 @@ fn active_recording_flushes_its_recent_complete_events() {
                         Ok(Some(ArtifactEvent::Output { bytes, .. })) if bytes == b"hi"
                     )
             });
+        #[cfg(windows)]
+        let flushed =
+            fs::metadata(&partial).is_ok_and(|metadata| metadata.len() == expected_partial_bytes);
         if flushed {
             break;
         }
@@ -154,9 +184,15 @@ fn active_recording_flushes_its_recent_complete_events() {
         std::thread::sleep(Duration::from_millis(20));
     }
     recorder.stop(FinishReason::User).unwrap();
+    let path = completed_path(completion(&mut recorder, ready));
+    let mut reader = ArtifactReader::new(fs::File::open(path).unwrap()).unwrap();
     assert!(matches!(
-        completion(&mut recorder, ready),
-        Completion::Complete { .. }
+        reader.next_event().unwrap(),
+        Some(ArtifactEvent::Started { .. })
+    ));
+    assert!(matches!(
+        reader.next_event().unwrap(),
+        Some(ArtifactEvent::Output { bytes, .. }) if bytes == b"hi"
     ));
 }
 
@@ -372,7 +408,7 @@ fn a_brief_switch_to_a_preconsent_screen_is_checked_before_switching_back() {
 }
 
 #[test]
-fn palette_change_cannot_reveal_text_redacted_at_consent() {
+fn ambiguous_color_text_refuses_start_without_creating_a_source() {
     let directory = private_dir();
     let mut live = terminal(20, 2);
     let mut ansi = ColorScheme::DEFAULT_ANSI;
@@ -384,26 +420,8 @@ fn palette_change_cannot_reveal_text_redacted_at_consent() {
         ansi,
     ));
     live.ingest(b"\x1b[31mCOLOR-PRIVATE");
-    let (mut recorder, streams, ready) = start(directory.path(), &[&live]);
-    live.set_color_scheme(ColorScheme::default());
-    recorder.observe_configuration(streams[0], &live).unwrap();
-    recorder.stop(FinishReason::User).unwrap();
-    let Completion::Incomplete {
-        path,
-        reason: FinishReason::IntegrityFailure,
-        ..
-    } = completion(&mut recorder, ready)
-    else {
-        panic!("revealing redacted content must end incompletely");
-    };
-    let bytes = fs::read(path).unwrap();
-    assert!(!bytes
-        .windows(b"COLOR-PRIVATE".len())
-        .any(|window| window == b"COLOR-PRIVATE"));
-    let mut reader = ArtifactReader::new(Cursor::new(bytes)).unwrap();
-    while let Some(event) = reader.next_event().unwrap() {
-        assert!(!matches!(event, ArtifactEvent::Configured { .. }));
-    }
+    assert!(Recorder::start(directory.path(), &[&live], || {}).is_err());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
 #[test]
@@ -547,56 +565,86 @@ fn repeat_of_offscreen_preconsent_character_is_recorded_only_when_repeated() {
 
 #[test]
 fn concealed_preconsent_repeat_uses_a_same_width_blank_until_visible() {
-    for conceal in [
-        b"\x1b[8m".as_slice(),
+    let directory = private_dir();
+    let mut live = terminal(20, 2);
+    live.ingest("🧬".as_bytes());
+    live.ingest(b"\x1b[2J\x1b[H\x1b[8m");
+    let (mut recorder, streams, ready) = start(directory.path(), &[&live]);
+    recorder
+        .ingest_output(streams[0], &mut live, b"\x1b[2b")
+        .unwrap();
+    let concealed_cursor = live.cursor();
+    recorder
+        .ingest_output(streams[0], &mut live, b"\x1b[0m\x1b[2b")
+        .unwrap();
+    recorder.stop(FinishReason::User).unwrap();
+    let bytes = fs::read(completed_path(completion(&mut recorder, ready))).unwrap();
+    let mut reader = ArtifactReader::new(Cursor::new(&bytes)).unwrap();
+    let mut replay = match reader.next_event().unwrap().unwrap() {
+        ArtifactEvent::Started { terminal, .. } => terminal,
+        _ => panic!("expected an initial checkpoint"),
+    };
+    let ArtifactEvent::Output {
+        bytes: first,
+        repeats,
+        ..
+    } = reader.next_event().unwrap().unwrap()
+    else {
+        panic!("expected concealed repeat output");
+    };
+    assert_eq!(repeats, vec![(3, Some('\u{3000}'))]);
+    replay.ingest_recorded_output(&first, repeats).unwrap();
+    assert_eq!(replay.cursor(), concealed_cursor);
+    assert!(!replay.row_text(0).unwrap().contains("🧬"));
+    let ArtifactEvent::Output {
+        bytes: second,
+        repeats,
+        ..
+    } = reader.next_event().unwrap().unwrap()
+    else {
+        panic!("expected visible repeat output");
+    };
+    assert_eq!(repeats, vec![(7, Some('🧬'))]);
+    replay.ingest_recorded_output(&second, repeats).unwrap();
+    assert_eq!(replay.cursor(), live.cursor());
+    assert_eq!(replay.cell_ref(4, 0).unwrap().text(), "🧬");
+    assert_eq!(replay.cell_ref(6, 0).unwrap().text(), "🧬");
+}
+
+#[test]
+fn repeat_of_ambiguous_text_stops_before_an_unfaithful_event() {
+    for style in [
         b"\x1b[38;2;0;0;0;48;2;0;0;0m".as_slice(),
         b"\x1b[2;38;2;130;130;130;48;2;100;100;100m".as_slice(),
     ] {
         let directory = private_dir();
-        let mut live = terminal(20, 2);
-        live.ingest("🧬".as_bytes());
-        live.ingest(b"\x1b[2J\x1b[H");
-        live.ingest(conceal);
-        let (mut recorder, streams, ready) = start(directory.path(), &[&live]);
-        recorder
-            .ingest_output(streams[0], &mut live, b"\x1b[2b")
-            .unwrap();
-        let concealed_cursor = live.cursor();
-        recorder
-            .ingest_output(streams[0], &mut live, b"\x1b[0m\x1b[2b")
-            .unwrap();
-        recorder.stop(FinishReason::User).unwrap();
-        let bytes = fs::read(completed_path(completion(&mut recorder, ready))).unwrap();
-        let mut reader = ArtifactReader::new(Cursor::new(&bytes)).unwrap();
-        let mut replay = match reader.next_event().unwrap().unwrap() {
-            ArtifactEvent::Started { terminal, .. } => terminal,
-            _ => panic!("expected an initial checkpoint"),
-        };
-        let ArtifactEvent::Output {
-            bytes: first,
-            repeats,
-            ..
-        } = reader.next_event().unwrap().unwrap()
-        else {
-            panic!("expected concealed repeat output");
-        };
-        assert_eq!(repeats, vec![(3, Some('\u{3000}'))]);
-        replay.ingest_recorded_output(&first, repeats).unwrap();
-        assert_eq!(replay.cursor(), concealed_cursor);
-        assert!(!replay.row_text(0).unwrap().contains("🧬"));
-        let ArtifactEvent::Output {
-            bytes: second,
-            repeats,
-            ..
-        } = reader.next_event().unwrap().unwrap()
-        else {
-            panic!("expected visible repeat output");
-        };
-        assert_eq!(repeats, vec![(7, Some('🧬'))]);
-        replay.ingest_recorded_output(&second, repeats).unwrap();
-        assert_eq!(replay.cursor(), live.cursor());
-        assert_eq!(replay.cell_ref(4, 0).unwrap().text(), "🧬");
-        assert_eq!(replay.cell_ref(6, 0).unwrap().text(), "🧬");
+        for secret in ["🧬", "X"] {
+            let mut live = terminal(20, 2);
+            live.ingest(secret.as_bytes());
+            live.ingest(b"\x1b[2J\x1b[H");
+            live.ingest(style);
+            let (mut recorder, streams, ready) = start(directory.path(), &[&live]);
+            recorder
+                .ingest_output(streams[0], &mut live, b"\x1b[2b")
+                .unwrap();
+            recorder.stop(FinishReason::User).unwrap();
+            let Completion::Incomplete {
+                path,
+                reason: FinishReason::IntegrityFailure,
+                ..
+            } = completion(&mut recorder, ready)
+            else {
+                panic!("an ambiguous repeat must not silently lose visible text");
+            };
+            let mut reader = ArtifactReader::new(fs::File::open(path).unwrap()).unwrap();
+            let Some(ArtifactEvent::Started { terminal, .. }) = reader.next_event().unwrap() else {
+                panic!("expected the safe initial checkpoint");
+            };
+            assert!(!terminal.row_text(0).unwrap().contains(secret));
+            while let Some(event) = reader.next_event().unwrap() {
+                assert!(!matches!(event, ArtifactEvent::Output { .. }));
+            }
+        }
     }
 }
 
@@ -628,6 +676,50 @@ fn repeat_does_not_extend_a_hidden_preconsent_grapheme_anchor() {
     assert_eq!(replay.cell_ref(1, 0).unwrap().text(), "🇦");
     assert_eq!(live.cell_ref(0, 0).unwrap().text(), "🇦");
     assert_eq!(live.cell_ref(1, 0).unwrap().text(), "🇦");
+}
+
+#[test]
+fn concealed_preconsent_grapheme_cannot_change_replay_geometry() {
+    let directory = private_dir();
+    let mut live = terminal(20, 2);
+    live.ingest(b"\x1b[8m#");
+    let (mut recorder, streams, ready) = start(directory.path(), &[&live]);
+    recorder
+        .ingest_output(streams[0], &mut live, "\u{fe0f}\u{20e3}".as_bytes())
+        .unwrap();
+    recorder.stop(FinishReason::User).unwrap();
+    let Completion::Incomplete {
+        path,
+        reason: FinishReason::IntegrityFailure,
+        ..
+    } = completion(&mut recorder, ready)
+    else {
+        panic!("different hidden grapheme geometry must stop the recording");
+    };
+    let mut reader = ArtifactReader::new(fs::File::open(path).unwrap()).unwrap();
+    let Some(ArtifactEvent::Started { terminal, .. }) = reader.next_event().unwrap() else {
+        panic!("expected the safe initial checkpoint");
+    };
+    assert_eq!(terminal.cell_ref(0, 0).unwrap().text(), " ");
+    while let Some(event) = reader.next_event().unwrap() {
+        assert!(!matches!(event, ArtifactEvent::Output { .. }));
+    }
+}
+
+#[test]
+fn concealed_unrelated_unicode_does_not_exhaust_visibility_checks() {
+    let directory = private_dir();
+    let mut live = terminal(80, 2);
+    live.ingest(b"\x1b[8mX");
+    let (mut recorder, streams, ready) = start(directory.path(), &[&live]);
+    recorder
+        .ingest_output(streams[0], &mut live, "é".repeat(32).as_bytes())
+        .unwrap();
+    recorder.stop(FinishReason::User).unwrap();
+    assert!(matches!(
+        completion(&mut recorder, ready),
+        Completion::Complete { .. }
+    ));
 }
 
 #[test]

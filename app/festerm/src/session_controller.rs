@@ -142,6 +142,9 @@ impl ResizeProbe {
     }
 
     fn record_visible_nonblank_cells(&mut self, terminal: &Terminal) {
+        let Some(generation) = self.generations.back_mut() else {
+            return;
+        };
         let count = (0..terminal.dimensions().rows())
             .flat_map(|row| {
                 (0..terminal.dimensions().columns())
@@ -149,9 +152,7 @@ impl ResizeProbe {
             })
             .filter(|cell| cell.character() != ' ')
             .count();
-        if let Some(generation) = self.generations.back_mut() {
-            generation.visible_nonblank_cells = count;
-        }
+        generation.visible_nonblank_cells = count;
     }
 
     pub const fn observed_output_bytes(&self) -> u64 {
@@ -191,9 +192,20 @@ enum CursorPositionQueryScanner {
 }
 
 impl CursorPositionQueryScanner {
-    fn observe(&mut self, bytes: &[u8]) -> u64 {
+    fn observe(&mut self, mut bytes: &[u8]) -> u64 {
         let mut recognized = 0_u64;
-        for &byte in bytes {
+        loop {
+            // Only ESC leaves ground, so plain text is skipped wholesale.
+            if *self == Self::Ground {
+                let Some(escape) = bytes.iter().position(|&byte| byte == 0x1b) else {
+                    return recognized;
+                };
+                bytes = &bytes[escape..];
+            }
+            let Some((&byte, rest)) = bytes.split_first() else {
+                return recognized;
+            };
+            bytes = rest;
             *self = match (*self, byte) {
                 (_, 0x1b) => Self::Escape,
                 (Self::Ground, _) => Self::Ground,
@@ -212,7 +224,6 @@ impl CursorPositionQueryScanner {
                 (Self::CsiOther, _) => Self::CsiOther,
             };
         }
-        recognized
     }
 }
 
@@ -652,7 +663,7 @@ impl<S: Session> SessionController<S> {
     pub fn record_configuration(&self, terminal: &Terminal) {
         if let Some(stream) = &self.recording_stream {
             // The shared recording retains any error and wakes its owner.
-            let _ = stream.observe_configuration(terminal);
+            observe_recording_configuration(stream, terminal);
         }
     }
 
@@ -1901,6 +1912,19 @@ fn apply_recording_output(
     }
 }
 
+fn observe_recording_configuration(
+    stream: &festerm_recording::RecordingStream,
+    terminal: &Terminal,
+) {
+    if terminal.color_scheme() != &festerm_ui_egui::terminal_color_scheme() {
+        let _ = stream.fail_integrity(
+            "Recording stopped because terminal colors do not match the visible view",
+        );
+    } else {
+        let _ = stream.observe_configuration(terminal);
+    }
+}
+
 fn apply_recovery_sync(
     terminal: &mut Terminal,
     command: &festerm_sessiond::RecoverySyncCommand,
@@ -1910,13 +1934,13 @@ fn apply_recovery_sync(
         festerm_sessiond::RecoverySyncCommand::SetScrollbackLimit { limit_bytes } => {
             terminal.set_scrollback_limit(*limit_bytes);
             if let Some(stream) = stream {
-                let _ = stream.observe_configuration(terminal);
+                observe_recording_configuration(stream, terminal);
             }
         }
         festerm_sessiond::RecoverySyncCommand::SetColorScheme(scheme) => {
             terminal.set_color_scheme(*scheme);
             if let Some(stream) = stream {
-                let _ = stream.observe_configuration(terminal);
+                observe_recording_configuration(stream, terminal);
             }
         }
         festerm_sessiond::RecoverySyncCommand::MirrorBytes(bytes) => {
@@ -3123,6 +3147,10 @@ mod tests {
         assert_eq!(scanner.observe(b"6n"), 1);
         assert_eq!(scanner.observe(b"\x1b[16n"), 0);
         assert_eq!(scanner.observe(b"\x1b[6n"), 1);
+        assert_eq!(scanner.observe(b"plain text\x1b[6nmore\x1b[6n tail"), 2);
+        assert_eq!(scanner.observe(b"text\x1b"), 0);
+        assert_eq!(scanner.observe(b"[6n"), 1);
+        assert_eq!(scanner.observe(b"no escapes here"), 0);
     }
 
     #[test]
@@ -3224,6 +3252,66 @@ mod tests {
                 "finish"
             ]
         );
+    }
+
+    #[test]
+    fn recovery_palette_mismatch_stops_recording_before_later_output() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+
+        let mut terminal = Terminal::new(Dimensions::new(20, 6).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[8msecret");
+        let directory = private_recording_dir();
+        let (wake, ready) = std::sync::mpsc::channel();
+        let (recording, streams) =
+            festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        let foreign = festerm_core::ColorScheme::new(
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::Rgb::new(0, 0, 0),
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::ColorScheme::DEFAULT_ANSI,
+        );
+        apply_recovery_sync(
+            &mut terminal,
+            &festerm_sessiond::RecoverySyncCommand::SetColorScheme(foreign),
+            Some(&streams[0]),
+        );
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording
+            .take_failure()
+            .unwrap()
+            .unwrap()
+            .contains("colors do not match"));
+        streams[0]
+            .ingest_output(&mut terminal, b"AFTER-PALETTE-LOSS")
+            .unwrap();
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        let Completion::Incomplete {
+            path,
+            reason: FinishReason::IntegrityFailure,
+            ..
+        } = completion
+        else {
+            panic!("a palette mismatch must leave an incomplete recording");
+        };
+        let mut reader = ArtifactReader::new(std::fs::File::open(path).unwrap()).unwrap();
+        let Some(ArtifactEvent::Started { terminal, .. }) = reader.next_event().unwrap() else {
+            panic!("expected the safe checkpoint");
+        };
+        assert!(!terminal.row_text(0).unwrap().contains("secret"));
+        while let Some(event) = reader.next_event().unwrap() {
+            assert!(!matches!(
+                event,
+                ArtifactEvent::Configured { .. } | ArtifactEvent::Output { .. }
+            ));
+        }
     }
 
     #[test]

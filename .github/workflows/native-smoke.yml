@@ -30,6 +30,12 @@ jobs:
         run: cargo test --locked -p festerm-windows-power --lib
       - name: Test desktop recording coordinator
         run: cargo test --locked -p festerm --bin festerm application::recording::tests
+      - name: Test recovery palette cut
+        run: cargo test --locked -p festerm --bin festerm recovery_palette_mismatch
+      - name: Test terminal replay fast paths
+        run: cargo test --locked -p festerm-core ascii_run_fast_path_tests
+      - name: Test recording visibility rendering
+        run: cargo test --locked -p festerm-ui-egui color_emoji_and_block_cursor_can_reveal_equal_color_text
       - name: Encode and inspect native Windows video
         run: cargo test --locked -p festerm-recording-windows -- --ignored --nocapture
       - name: Verify private synchronized capture

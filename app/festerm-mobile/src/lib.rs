@@ -1096,11 +1096,8 @@ impl MobileApp {
             let session = live
                 .and_then(live_ssh::LiveSsh::input_destination)
                 .ok_or_else(|| "A selected terminal session is not live".to_owned())?;
-            if !view.shows_live_screen(terminal) {
-                return Err(
-                    "Return each selected terminal to its live screen before recording".to_owned(),
-                );
-            }
+            view.validate_recording_view(terminal)
+                .map_err(str::to_owned)?;
             terminals.push(terminal);
             identities.push(RecordingSessionSelection { tab: *id, session });
         }
@@ -1251,9 +1248,8 @@ impl MobileApp {
             if live.can_reset() {
                 return Err("The selected terminal session is not live".to_owned());
             }
-            if !view.shows_live_screen(terminal) {
-                return Err("Return the terminal to its live screen before recording".to_owned());
-            }
+            view.validate_recording_view(terminal)
+                .map_err(str::to_owned)?;
             if live
                 .recording_stream
                 .as_ref()

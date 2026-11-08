@@ -551,6 +551,16 @@ impl Parser {
         self.state == ParserState::Ground
     }
 
+    /// Whether printable 7-bit bytes currently print as themselves.
+    pub(crate) fn prints_ascii_verbatim(&self) -> bool {
+        let charset = if self.shifted_to_g1 {
+            self.g1_charset
+        } else {
+            self.g0_charset
+        };
+        charset == Charset::Ascii
+    }
+
     pub(crate) fn recording_copy(&self) -> Option<RecordingParser> {
         if !self.is_ground() {
             return None;

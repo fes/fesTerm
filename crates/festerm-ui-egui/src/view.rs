@@ -740,6 +740,19 @@ impl TerminalView {
         terminal.modes().alternate_screen() || self.follows_latest_output()
     }
 
+    /// Validates frontend state that cannot be inferred by the recording core.
+    pub fn validate_recording_view(&self, terminal: &Terminal) -> Result<(), &'static str> {
+        if !self.shows_live_screen(terminal) {
+            return Err("Return the terminal to its live screen before recording");
+        }
+        if terminal.color_scheme() != &crate::renderer::terminal_color_scheme() {
+            return Err(
+                "Terminal colors do not match the visible view; retry after colors synchronize",
+            );
+        }
+        Ok(())
+    }
+
     /// Marks this view as needing keyboard focus again on its next frame.
     /// Chip/tab activation switches which session's `show`/`show_in_ui` is
     /// called each frame (inactive tabs render nothing at all), so the
@@ -3101,6 +3114,25 @@ mod history_overlay_tests {
         assert!(!view.shows_live_screen(&terminal));
         terminal.ingest(b"\x1b[?1049h");
         assert!(view.shows_live_screen(&terminal));
+    }
+
+    #[test]
+    fn recording_refuses_a_palette_that_does_not_match_the_visible_view() {
+        let mut terminal = Terminal::new(Dimensions::new(12, 2).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[38;2;17;22;30msecret");
+        let view = TerminalView::default();
+        assert!(view.validate_recording_view(&terminal).is_ok());
+
+        terminal.set_color_scheme(festerm_core::ColorScheme::new(
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::Rgb::new(0, 0, 0),
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::ColorScheme::DEFAULT_ANSI,
+        ));
+        assert!(view
+            .validate_recording_view(&terminal)
+            .unwrap_err()
+            .contains("colors do not match"));
     }
 
     #[test]

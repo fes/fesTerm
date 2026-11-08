@@ -39,18 +39,27 @@ mutations that affect the displayed terminal. Events preserve per-session
 order and share one clock. Their times represent application of a visible
 change, not remote packet arrival or individual keystrokes; output reads may
 combine characters. When a mutation cannot be replayed as a typed event, the
-recorder writes a fresh bounded recording checkpoint at that boundary.
+recorder stops incomplete instead of importing another live snapshot.
 
 A recording-specific checkpoint contains only the visible primary/alternate
 screen and the bounded terminal state needed to continue rendering. It excludes
 retained scrollback, pending input/reply queues, transport/backend state,
 window title and other non-rendering metadata. It also excludes the cached
-last graphic character used by `REP`, which may no longer be visible; capture
-writes a same-timestamp post-mutation checkpoint when output applies `REP`.
-It must not reuse a complete session-recovery snapshot without projecting out
-those fields. Resizes that reflow primary history require an applied resize
-event plus a post-reflow visible-state checkpoint; the initial checkpoint does
-not include pre-consent scrollback.
+last graphic character used by `REP`, which may no longer be visible.
+Concealed text is replaced with same-width blanks. Admission refuses partial
+control sequences, history viewports, a mismatch between the terminal and
+painted palettes, and non-concealed text whose colors make visibility
+ambiguous. Local selection and focus-dependent overlays are not captured;
+terminal cursor state is retained for non-blinking export. The visibility
+model is conservative and is not a pixel-level legibility guarantee on every
+renderer.
+
+Output events carry bounded `REP` annotations instead of post-mutation
+checkpoints. Replay is compared with transient, memory-only visible-state
+fingerprints at ambiguous output boundaries, resizes, screen transitions and
+configuration changes. If replay would reveal or lose omitted pre-consent
+content, capture stops incomplete before recording that event; it never
+imports pre-consent scrollback or an inactive screen to repair the mismatch.
 
 Capture one versioned source artifact with a shared event timeline and
 per-session streams. Do not send the source artifact to telemetry, include it
@@ -215,7 +224,9 @@ existing exports are never merged with or overwritten.
   `worker_publishes_all_streams_before_applying_retention`,
   `retaining_backend_preserves_sources_even_with_old_deletion_settings`,
   `recovery_stops_before_corrupt_truncated_or_semantically_invalid_frames`,
-  `recovery_omits_output_without_its_required_post_mutation_checkpoint`,
+  `recovery_omits_a_truncated_annotated_output_frame`,
+  `ambiguous_color_text_refuses_start_without_creating_a_source`,
+  `resizing_into_preconsent_history_stops_before_the_unfaithful_event`,
   `recovered_prefix_is_labeled_and_never_deletes_the_original`, and
   `worker_retains_source_on_encoding_and_publication_failure`.
 - **Native/manual evidence required:** Consent and recording indicators;

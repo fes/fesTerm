@@ -134,6 +134,15 @@ impl Cell {
         self.attributes
     }
 
+    pub(crate) fn recording_text_is_redacted(&self, scheme: &crate::ColorScheme) -> bool {
+        crate::screen::recording_text_is_hidden(
+            self.foreground,
+            self.background,
+            self.attributes,
+            scheme,
+        )
+    }
+
     /// Returns the trusted-for-display OSC 8 target attached to this cell.
     ///
     /// The core never opens links; the presentation layer must require an

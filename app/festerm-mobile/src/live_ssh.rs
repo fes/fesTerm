@@ -383,37 +383,10 @@ impl LiveSsh {
                             return output;
                         }
                     };
-                    match command {
-                        festerm_mobile_tunnels::RecoverySync::Scrollback(limit) => {
-                            terminal.set_scrollback_limit(limit);
-                            if let Some(stream) = &self.recording_stream {
-                                let _ = stream.observe_configuration(terminal);
-                            }
-                        }
-                        festerm_mobile_tunnels::RecoverySync::Colors(colors) => {
-                            terminal.set_color_scheme(colors);
-                            if let Some(stream) = &self.recording_stream {
-                                let _ = stream.observe_configuration(terminal);
-                            }
-                        }
-                        festerm_mobile_tunnels::RecoverySync::Bytes(bytes) => {
-                            if let Some(stream) = &self.recording_stream {
-                                let _ = stream.ingest_output(terminal, &bytes);
-                            } else {
-                                terminal.ingest(&bytes);
-                            }
-                        }
-                        festerm_mobile_tunnels::RecoverySync::Reset => {
-                            terminal.reset_to_initial_state();
-                            if let Some(stream) = &self.recording_stream {
-                                let _ = stream.observe_reset();
-                            }
-                        }
-                    }
-                    let _ = terminal.drain_replies();
-                    let _ = terminal.take_reply_queue_overflowed();
+                    self.apply_tunnel_recovery(terminal, command);
                     output = true;
                 }
+
                 Ok(SessionEvent::RecoverySync(_)) => {
                     if let Some(stream) = &self.recording_stream {
                         let _ = stream.fail_integrity(
@@ -486,6 +459,48 @@ impl LiveSsh {
             }
         }
         output
+    }
+
+    fn apply_tunnel_recovery(
+        &self,
+        terminal: &mut Terminal,
+        command: festerm_mobile_tunnels::RecoverySync,
+    ) {
+        match command {
+            festerm_mobile_tunnels::RecoverySync::Scrollback(limit) => {
+                terminal.set_scrollback_limit(limit);
+                if let Some(stream) = &self.recording_stream {
+                    let _ = stream.observe_configuration(terminal);
+                }
+            }
+            festerm_mobile_tunnels::RecoverySync::Colors(colors) => {
+                terminal.set_color_scheme(colors);
+                if let Some(stream) = &self.recording_stream {
+                    if terminal.color_scheme() != &festerm_ui_egui::terminal_color_scheme() {
+                        let _ = stream.fail_integrity(
+                            "Recording stopped because terminal colors do not match the visible view",
+                        );
+                    } else {
+                        let _ = stream.observe_configuration(terminal);
+                    }
+                }
+            }
+            festerm_mobile_tunnels::RecoverySync::Bytes(bytes) => {
+                if let Some(stream) = &self.recording_stream {
+                    let _ = stream.ingest_output(terminal, &bytes);
+                } else {
+                    terminal.ingest(&bytes);
+                }
+            }
+            festerm_mobile_tunnels::RecoverySync::Reset => {
+                terminal.reset_to_initial_state();
+                if let Some(stream) = &self.recording_stream {
+                    let _ = stream.observe_reset();
+                }
+            }
+        }
+        let _ = terminal.drain_replies();
+        let _ = terminal.take_reply_queue_overflowed();
     }
 
     pub(super) fn host_verification(&self) -> Option<HostVerification> {
@@ -1136,6 +1151,73 @@ mod tests {
                 (2, b"parked output".to_vec())
             ]
         );
+    }
+
+    #[test]
+    fn recovery_palette_mismatch_stops_recording_before_later_output() {
+        use festerm_recording::{ArtifactEvent, ArtifactReader, Completion, FinishReason};
+        use std::sync::mpsc;
+
+        let directory = private_recording_dir();
+        let mut terminal = terminal();
+        terminal.ingest(b"\x1b[8msecret");
+        let (wake, ready) = mpsc::channel();
+        let (recording, mut streams) =
+            festerm_recording::SharedRecording::start(directory.path(), &[&terminal], move || {
+                let _ = wake.send(());
+            })
+            .unwrap();
+        let foreign = festerm_core::ColorScheme::new(
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::Rgb::new(0, 0, 0),
+            festerm_core::ColorScheme::DEFAULT_FOREGROUND,
+            festerm_core::ColorScheme::DEFAULT_ANSI,
+        );
+        let session = Arc::new(FakeSession::default());
+        session
+            .events
+            .lock()
+            .unwrap()
+            .push_back(SessionEvent::Output(b"AFTER-PALETTE-LOSS".to_vec()));
+        let mut live = connection(session);
+        live.recording_stream = Some(streams.remove(0));
+        let bytes =
+            serde_json::to_vec(&festerm_mobile_tunnels::RecoverySync::Colors(foreign)).unwrap();
+        let command = festerm_mobile_tunnels::decode_recovery_sync(&bytes).unwrap();
+        live.apply_tunnel_recovery(&mut terminal, command);
+        live.poll(&mut terminal, &egui::Context::default());
+        assert!(terminal.row_text(0).unwrap().contains("AFTER-PALETTE-LOSS"));
+        assert!(!recording.is_recording().unwrap());
+        assert!(recording
+            .take_failure()
+            .unwrap()
+            .unwrap()
+            .contains("colors do not match"));
+        let completion = loop {
+            ready.recv_timeout(Duration::from_secs(10)).unwrap();
+            if let Some(completion) = recording.poll_completion().unwrap() {
+                break completion;
+            }
+        };
+        let Completion::Incomplete {
+            path,
+            reason: FinishReason::IntegrityFailure,
+            ..
+        } = completion
+        else {
+            panic!("a palette mismatch must leave an incomplete recording");
+        };
+        let mut reader = ArtifactReader::new(std::fs::File::open(path).unwrap()).unwrap();
+        let Some(ArtifactEvent::Started { terminal, .. }) = reader.next_event().unwrap() else {
+            panic!("expected the safe checkpoint");
+        };
+        assert!(!terminal.row_text(0).unwrap().contains("secret"));
+        while let Some(event) = reader.next_event().unwrap() {
+            assert!(!matches!(
+                event,
+                ArtifactEvent::Configured { .. } | ArtifactEvent::Output { .. }
+            ));
+        }
     }
 
     #[test]

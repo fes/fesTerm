@@ -71,7 +71,11 @@
         "recording_auto_enrollment_only_follows_new_user_sessions_and_the_same_generation",
         "mobile_recording_binds_selected_active_and_parked_sessions",
         "reopened_sheet_remains_interactive_after_scrim_dismissal",
-        "partial_preconsent_sequences_refuse_start_without_creating_a_source"
+        "partial_preconsent_sequences_refuse_start_without_creating_a_source",
+        "ambiguous_color_text_refuses_start_without_creating_a_source",
+        "recording_checkpoint_refuses_faint_text_with_ambiguous_blending",
+        "recording_refuses_a_palette_that_does_not_match_the_visible_view",
+        "color_emoji_and_block_cursor_can_reveal_equal_color_text"
       ],
       "manual_scenarios": ["TR-02"],
       "status": "partial",
@@ -89,6 +93,9 @@
         "selected_streams_share_a_timeline_and_replay_applied_mutations",
         "recording_tracks_a_passive_pane_resize",
         "active_recording_flushes_its_recent_complete_events",
+        "repeat_of_offscreen_preconsent_character_is_recorded_only_when_repeated",
+        "concealed_preconsent_repeat_uses_a_same_width_blank_until_visible",
+        "ascii_runs_match_byte_at_a_time_printing",
         "closing_one_shared_stream_keeps_the_other_recording",
         "recording_captures_active_and_parked_output_then_stops_on_native_suspension"
       ],
@@ -110,7 +117,13 @@
         "lifecycle_closes_admission_before_waiting_for_the_capture_lock",
         "a_brief_shield_transition_revokes_consent_once",
         "suspension_and_content_lock_cancel_export_without_a_ui_frame",
-        "shared_capture_failure_is_visible_and_stops_every_stream"
+        "shared_capture_failure_is_visible_and_stops_every_stream",
+        "resizing_into_preconsent_history_stops_before_the_unfaithful_event",
+        "a_brief_switch_to_a_preconsent_screen_is_checked_before_switching_back",
+        "concealed_preconsent_grapheme_cannot_change_replay_geometry",
+        "recovery_palette_mismatch_stops_recording_before_later_output",
+        "recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss",
+        "a_new_ambiguous_graphical_session_revokes_existing_consent"
       ],
       "manual_scenarios": ["TR-02"],
       "status": "partial",
@@ -147,7 +160,7 @@
         "recovers_only_validated_complete_partials_without_overwriting",
         "recovery_rejects_a_valid_source_changed_after_inspection",
         "recovery_stops_before_corrupt_truncated_or_semantically_invalid_frames",
-        "recovery_omits_output_without_its_required_post_mutation_checkpoint",
+        "recovery_omits_a_truncated_annotated_output_frame",
         "recovered_prefix_is_labeled_and_never_deletes_the_original",
         "recovery_refuses_a_changed_tail_even_when_the_prefix_is_unchanged"
       ],

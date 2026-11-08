@@ -637,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn recording_palette_cannot_reveal_invisible_checkpoint_text() {
+    fn recording_palette_cannot_reveal_concealed_checkpoint_text() {
         let size = RecordingFrameSize::new(320, 180).unwrap();
         let render = |style: &[u8], text: &[u8]| {
             let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
@@ -660,13 +660,34 @@ mod tests {
             .unwrap();
             renderer.render(Some(&recorded)).unwrap().to_vec()
         };
-        for style in [
-            b"\x1b[38;2;17;22;30m".as_slice(),
-            b"\x1b[2;38;2;16;22;30m".as_slice(),
-            b"\x1b[2;38;2;130;130;130;48;2;100;100;100m".as_slice(),
-        ] {
-            assert_eq!(render(style, b"SECRET"), render(style, b"      "));
-        }
+        assert_eq!(render(b"\x1b[8m", b"SECRET"), render(b"\x1b[8m", b"      "));
+    }
+
+    #[test]
+    fn color_emoji_and_block_cursor_can_reveal_equal_color_text() {
+        let size = RecordingFrameSize::new(320, 180).unwrap();
+        let render = |text: &str, cursor: &[u8]| {
+            let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+            terminal.ingest(b"\x1b[?25l\x1b[38;2;0;0;0;48;2;0;0;0m");
+            terminal.ingest(text.as_bytes());
+            terminal.ingest(cursor);
+            let mut renderer = RecordingRenderer::new(size, 24.0).unwrap();
+            let pixels = renderer.render(Some(&terminal)).unwrap().to_vec();
+            (terminal, pixels)
+        };
+        let (emoji, emoji_pixels) = render("🤖", b"");
+        let (_, blank_pixels) = render("  ", b"");
+        assert_ne!(emoji_pixels, blank_pixels);
+        assert!(emoji
+            .recording_checkpoint(festerm_core::MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_err());
+
+        let (cursor, cursor_pixels) = render("X", b"\x1b[?25h\x1b[H\x1b[2 q");
+        let (_, blank_cursor_pixels) = render(" ", b"\x1b[?25h\x1b[H\x1b[2 q");
+        assert_ne!(cursor_pixels, blank_cursor_pixels);
+        assert!(cursor
+            .recording_checkpoint(festerm_core::MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_err());
     }
 
     #[test]

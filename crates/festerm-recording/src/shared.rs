@@ -275,6 +275,10 @@ impl RecordingStream {
 
     /// Applies output even if the recording has already stopped.
     pub fn ingest_output(&self, terminal: &mut Terminal, bytes: &[u8]) -> Result<(), CaptureError> {
+        if self.ended || self.recording.admission_closed.load(Ordering::Acquire) {
+            terminal.ingest(bytes);
+            return Ok(());
+        }
         let output = crate::capture::observe_terminal_output(terminal, bytes);
         self.observe(|recorder, id| recorder.observe_output(id, bytes, output))
     }
@@ -460,12 +464,17 @@ mod tests {
         let cutoff_upper_bound = guard.recorder.elapsed();
         assert!(!recording.is_recording().unwrap());
         let stream = streams.remove(0);
+        let (applied, observed) = mpsc::channel();
         let output = thread::spawn(move || {
             stream
                 .ingest_output(&mut terminal, b"after lifecycle cut")
                 .unwrap();
+            applied.send(terminal.row_text(0).unwrap()).unwrap();
         });
-        thread::sleep(Duration::from_millis(50));
+        assert!(observed
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .contains("after lifecycle cut"));
         drop(guard);
         stop.join().unwrap();
         output.join().unwrap();

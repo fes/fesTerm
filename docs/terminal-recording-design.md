@@ -198,9 +198,10 @@ authoritative single-writer path, when they are applied to each presented
 terminal. It does not become a writer or change backend byte queues. Capturing
 only backend output is insufficient: recovery synchronization, app-generated
 terminal text, clear/reset actions and session replacement can also change the
-display. The recorded event model must represent these typed mutations or
-write a bounded recording checkpoint after them. Resize is recorded when
-applied to the terminal, not when requested by a view or backend.
+display. The recorded event model represents supported mutations as typed
+events; an unsupported mutation ends the recording as incomplete rather than
+copying a fresh live snapshot. Resize is recorded when applied to the
+terminal, not when requested by a view or backend.
 
 Each included session has a recording-local opaque stream ID. Events preserve
 per-stream application order and share a monotonic clock; timestamps describe
@@ -216,20 +217,33 @@ pending input/reply queues, transport/backend state, window title, current
 hyperlink targets and connection metadata; cell styling may be preserved
 without retaining link targets. The current visible screen can contain
 pre-consent output, so the start confirmation names that explicitly; older
-scrollback is not copied. Checkpointing refuses an incomplete control or UTF-8
-sequence rather than copying its buffered pre-consent bytes. The cached last
-graphic character used by `REP` is also omitted because it may no longer be
-visible. When applied output contains `REP`, capture writes a post-mutation
-visible checkpoint at the same timestamp; replay applies it before rendering.
-If that checkpoint cannot be made, the recording stops as incomplete. The
-projection never serializes the complete live `Terminal` or reuses a recovery
-snapshot without validation, and its size has a hard limit.
+scrollback is not copied. Concealed cell text is replaced with same-width
+blanks. Admission refuses a partial control or UTF-8 sequence, a history
+viewport, a terminal palette different from the one actually painted, or
+non-concealed text whose colors make visibility ambiguous. This can refuse
+genuinely hidden text as well as color emoji, text exposed by a block cursor
+or selection, and faint text whose blending varies by graphics backend; the
+user can clear or change that text and retry. Local selection and
+focus-dependent overlays are not recorded; terminal cursor state is retained
+and exported without blinking. Color visibility is a conservative model, not
+a pixel-for-pixel guarantee of glyph legibility on every renderer.
 
-Events include terminal output, applied resize/reflow, reset/clear,
-`RecoverySync` operations, adopted/replaced terminal state, and app-originated
-terminal mutations such as failure messages and reconnect dividers. When an
-operation cannot be replayed as a typed event, the writer emits a new visible
-state checkpoint. Screen-affecting theme or font changes are captured as
+The cached last graphic character used by `REP` is omitted because it may no
+longer be visible. Output events carry bounded repeat annotations: a
+character that becomes visible through post-consent output can be replayed,
+while concealed repeats use same-width blanks. Capture compares transient
+in-memory fingerprints at potentially ambiguous repeats, hidden grapheme
+extensions, screen transitions, resizes and configuration changes. These
+fingerprints are never written to the source. If replay would diverge because
+of omitted pre-consent content, or if a check exceeds its bound, capture stops
+incomplete before publishing the affected event. The projection never
+serializes the complete live `Terminal` or reuses a recovery snapshot without
+validation, and its size has a hard limit.
+
+Events include terminal output, applied resize/reflow, reset/clear, supported
+`RecoverySync` operations and app-originated terminal output such as failure
+messages and reconnect dividers. Replacement requires fresh inclusion.
+Screen-affecting theme or font changes are captured as
 render settings or frozen to a recording-wide export setting; per-tab zoom
 changes must not silently alter only one stream.
 
@@ -329,7 +343,9 @@ complete recording.
 
 The initial implementation caps capture at 16 sessions, two hours and 1 GiB
 per source artifact; a single checkpoint is capped at 8 MiB and the shared
-write queue at 16 MiB. Single events are capped at 1 MiB. Export is capped at
+write queue at 16 MiB. Single output events are capped at 1 MiB, 4,096 repeat
+annotations and 16 visibility checks; replay history is capped at 8 MiB per
+stream. Export is capped at
 3840x2160 and 30 fps. These are proposed starting limits that require
 measurement and explicit tests before the feature can be enabled. Hitting a
 bound stops and finalizes safely where possible. No live-session failure may
@@ -356,10 +372,11 @@ finalization, integrity checking and bounded parsing. Arbitrary file import
 is not supported in v1; retained app-created recordings can be listed,
 re-exported and deleted. Interrupted artifacts are surfaced for explicit
 recovery or deletion at next launch and are not silently left indefinitely.
-Recovery validates framing, checksums, timestamps, stream state and checkpoints
-in order, stopping at the first invalid or truncated frame. Output requiring a
-post-mutation checkpoint is excluded unless that checkpoint is present. The
-user is told that later output may be missing, and the recovered export folder
+Recovery validates framing, checksums, timestamps, stream state, repeat
+annotations and checkpoints in order, stopping at the first invalid or
+truncated frame. Output and its annotations are one frame and are recovered
+only together. The user is told that later output may be missing, and the
+recovered export folder
 is marked `-recovered`. The original source is never modified or automatically
 deleted. Recovery binds both the replayed prefix and the complete inspected
 source bytes to the library snapshot before publication.
@@ -475,9 +492,10 @@ files are published and verified. Never replace an existing export silently.
 
 - All included sessions share one monotonic time origin and preserve
   application mutation order, including recovery, reset and resize changes.
-- Initial, late-join and replacement checkpoints contain visible state only,
-  omit scrollback and queues, remain below the size cap, and replay accurately
-  through subsequent primary-screen reflows.
+- Initial and late-join checkpoints omit scrollback and queues, redact
+  concealed cells, refuse ambiguous visibility and remain below the size cap.
+  Reflow and screen transitions that require omitted history stop incomplete
+  before an unfaithful event is written.
 - Session selection and later-session enrollment follow explicit consent;
   automation-created sessions are not auto-enrolled.
 - Saved export settings are device-local, are fixed for an active recording,

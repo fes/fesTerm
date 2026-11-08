@@ -1977,10 +1977,9 @@ mod tests {
     }
 
     #[test]
-    fn recording_checkpoint_redacts_text_invisible_in_the_live_palette() {
+    fn recording_checkpoint_redacts_concealed_text() {
         let mut terminal = terminal(32, 3);
-        terminal.ingest(b"visible ");
-        terminal.ingest(b"\x1b[38;2;17;22;30mCOLOR-PRIVATE\x1b[0m\r\n");
+        terminal.ingest(b"visible\r\n");
         terminal.ingest("\x1b[8mCONCEALED界\x1b[0m".as_bytes());
 
         let restored = terminal
@@ -1988,10 +1987,9 @@ mod tests {
             .unwrap()
             .into_terminal()
             .unwrap();
-        assert!(restored.row_text(0).unwrap().starts_with("visible "));
+        assert!(restored.row_text(0).unwrap().starts_with("visible"));
         for row in 0..3 {
             let text = restored.row_text(row).unwrap();
-            assert!(!text.contains("COLOR-PRIVATE"));
             assert!(!text.contains("CONCEALED"));
             assert!(!text.contains('界'));
         }
@@ -2006,21 +2004,62 @@ mod tests {
     }
 
     #[test]
-    fn recording_checkpoint_redacts_faint_text_that_can_blend_into_its_background() {
-        let mut terminal = terminal(48, 4);
-        terminal.ingest(b"\x1b[2;38;2;16;22;30mGAMMA-PRIVATE\x1b[0m\r\n");
-        terminal.ingest(b"\x1b[2;38;2;130;130;130;48;2;100;100;100mLINEAR-PRIVATE\x1b[0m\r\n");
-        terminal.ingest(b"\x1b[2;7;38;2;100;100;100;48;2;130;130;130mINVERSE-PRIVATE\x1b[0m\r\n");
-        terminal.ingest(b"\x1b[2;38;2;255;255;255;48;2;0;0;0mFAINT-VISIBLE");
-
-        let checkpoint = terminal
+    fn recording_checkpoint_refuses_ambiguous_colored_text() {
+        let hidden_colors = b"\x1b[38;2;0;0;0;48;2;0;0;0m";
+        let mut emoji = terminal(20, 2);
+        emoji.ingest(b"\x1b[?25l");
+        emoji.ingest(hidden_colors);
+        emoji.ingest("🤖".as_bytes());
+        assert!(emoji
             .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
-            .unwrap();
-        let restored = checkpoint.into_terminal().unwrap();
-        for row in 0..3 {
-            assert!(restored.row_text(row).unwrap().trim().is_empty());
+            .unwrap_err()
+            .to_string()
+            .contains("visibility is ambiguous"));
+
+        let mut cursor = terminal(20, 2);
+        cursor.ingest(hidden_colors);
+        cursor.ingest(b"secret\x1b[H\x1b[2 q");
+        assert!(cursor
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap_err()
+            .to_string()
+            .contains("visibility is ambiguous"));
+        cursor.ingest(b"\x1b[6 q");
+        assert!(cursor
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_err());
+
+        let mut concealed = terminal(20, 2);
+        concealed.ingest(b"\x1b[8m");
+        concealed.ingest("🤖".as_bytes());
+        concealed.ingest(b"\x1b[H\x1b[2 q");
+        assert!(concealed
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .is_ok());
+    }
+
+    #[test]
+    fn recording_checkpoint_refuses_faint_text_with_ambiguous_blending() {
+        for style in [
+            b"\x1b[2;38;2;16;22;30m".as_slice(),
+            b"\x1b[2;38;2;130;130;130;48;2;100;100;100m".as_slice(),
+            b"\x1b[2;7;38;2;100;100;100;48;2;130;130;130m".as_slice(),
+        ] {
+            let mut terminal = terminal(20, 2);
+            terminal.ingest(style);
+            terminal.ingest(b"PRIVATE");
+            assert!(terminal
+                .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+                .is_err());
         }
-        assert!(restored.row_text(3).unwrap().contains("FAINT-VISIBLE"));
+        let mut visible = terminal(20, 2);
+        visible.ingest(b"\x1b[2;38;2;255;255;255;48;2;0;0;0mFAINT-VISIBLE");
+        let restored = visible
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap()
+            .into_terminal()
+            .unwrap();
+        assert!(restored.row_text(0).unwrap().contains("FAINT-VISIBLE"));
     }
 
     #[test]

@@ -606,12 +606,15 @@ impl DesktopRecording {
             self.status = Some("Select at least one currently running session".to_owned());
             return;
         };
-        if identities.iter().any(|identity| {
-            app.recording_session(identity.tab)
-                .is_some_and(|session| !session.view.shows_live_screen(&session.terminal))
+        if let Some(error) = identities.iter().find_map(|identity| {
+            app.recording_session(identity.tab).and_then(|session| {
+                session
+                    .view
+                    .validate_recording_view(&session.terminal)
+                    .err()
+            })
         }) {
-            self.status =
-                Some("Return each selected terminal to its live screen before recording".into());
+            self.status = Some(error.to_owned());
             return;
         }
         let Some(storage) = &self.storage else {
@@ -766,13 +769,17 @@ impl DesktopRecording {
             );
             return;
         }
-        if selected.iter().any(|identity| {
-            app.recording_session(identity.tab)
-                .is_some_and(|session| !session.view.shows_live_screen(&session.terminal))
+        if let Some(error) = selected.iter().find_map(|identity| {
+            app.recording_session(identity.tab).and_then(|session| {
+                session
+                    .view
+                    .validate_recording_view(&session.terminal)
+                    .err()
+            })
         }) {
-            self.status = Some(
-                "A selected terminal is showing history; return to its live screen and start again. Check the recording library for unfinished private files".to_owned(),
-            );
+            self.status = Some(format!(
+                "{error}. Check the recording library for unfinished private files"
+            ));
             return;
         }
         let terminals: Option<Vec<_>> = selected
@@ -866,9 +873,8 @@ impl DesktopRecording {
         if session.controller.recording_id() == Some(recording.id()) {
             return;
         }
-        if !session.view.shows_live_screen(&session.terminal) {
-            self.status =
-                Some("Return the terminal to its live screen before including it".to_owned());
+        if let Err(error) = session.view.validate_recording_view(&session.terminal) {
+            self.status = Some(error.to_owned());
             return;
         }
         match recording.enroll(&session.terminal) {

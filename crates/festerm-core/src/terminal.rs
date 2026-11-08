@@ -375,9 +375,13 @@ impl BufferState {
         })
     }
 
-    fn recording_copy(&self, scheme: &ColorScheme) -> RecordingBufferState {
+    fn recording_copy(
+        &self,
+        scheme: &ColorScheme,
+        compare_ambiguous: bool,
+    ) -> RecordingBufferState {
         RecordingBufferState {
-            screen: self.screen.recording_copy(scheme),
+            screen: self.screen.recording_copy(scheme, compare_ambiguous),
             cursor: self.cursor,
             scroll_top: self.scroll_top,
             scroll_bottom: self.scroll_bottom,
@@ -716,6 +720,10 @@ struct SavedAnsiCursor {
     cursor: Cursor,
     protected: bool,
     protection: ProtectionSource,
+}
+
+const fn is_printable_ascii(byte: u8) -> bool {
+    matches!(byte, b' '..=b'~')
 }
 
 const fn initial_screen_generation() -> u64 {
@@ -1303,6 +1311,100 @@ impl Terminal {
     }
 
     pub fn ingest(&mut self, bytes: &[u8]) {
+        let mut index = 0;
+        while let Some(&byte) = bytes.get(index) {
+            let length = self.ascii_run_length(&bytes[index..]);
+            if length != 0 {
+                self.print_ascii_run(&bytes[index..index + length]);
+                index += length;
+            } else {
+                self.ingest_byte(byte);
+                index += 1;
+            }
+        }
+    }
+
+    fn ascii_run_length(&self, bytes: &[u8]) -> usize {
+        if !bytes.first().is_some_and(|&byte| is_printable_ascii(byte))
+            || !self.ascii_run_fast_path_ready()
+        {
+            return 0;
+        }
+        bytes
+            .iter()
+            .position(|&byte| !is_printable_ascii(byte))
+            .unwrap_or(bytes.len())
+    }
+
+    /// Whether printable ASCII would reach [`Self::print`] untranslated, with
+    /// no parser, decoder, insert-mode or hyperlink side effects, so that a
+    /// run of it can be written row segment by row segment.
+    fn ascii_run_fast_path_ready(&self) -> bool {
+        !self.utf8.pending()
+            && self.parser.is_ground()
+            && self.parser.prints_ascii_verbatim()
+            && !self.modes.insert_mode
+            && self.current_hyperlink.is_none()
+    }
+
+    /// Prints printable ASCII with exactly the effect of calling
+    /// [`Self::print`] once per byte. ASCII never extends a grapheme and is
+    /// always one column wide, so everything that fits before the wrap point
+    /// is written in one pass; wrapping, and the scroll it can cause, still
+    /// go through `print`.
+    fn print_ascii_run(&mut self, mut run: &[u8]) {
+        while let Some(&first) = run.first() {
+            if self.active_buffer().pending_wrap && self.modes.auto_wrap {
+                self.print(char::from(first));
+                run = &run[1..];
+                continue;
+            }
+            let (wrap_limit, _) = self.wrap_geometry();
+            let auto_wrap = self.modes.auto_wrap;
+            let cursor = self.cursor();
+            // A cursor left of the left margin wraps at the screen edge only
+            // until it walks into the margins, where the right margin starts
+            // to apply, so a segment stops at that boundary.
+            let left_margin = self.horizontal_margins().left;
+            let segment_limit = if cursor.column < left_margin {
+                left_margin
+            } else {
+                wrap_limit
+            };
+            let length = run
+                .len()
+                .min(segment_limit.saturating_sub(cursor.column))
+                .max(1);
+            let (segment, rest) = run.split_at(length);
+            let foreground = self.current_foreground;
+            let background = self.current_background;
+            let attributes = if self.current_protected {
+                self.current_attributes.with(Attributes::PROTECTED)
+            } else {
+                self.current_attributes
+            };
+            let last = Cursor {
+                column: cursor.column + length - 1,
+                row: cursor.row,
+            };
+            let buffer = self.active_buffer_mut();
+            buffer.screen.write_ascii(
+                cursor.column,
+                cursor.row,
+                segment,
+                foreground,
+                background,
+                attributes,
+            );
+            buffer.grapheme_anchor = Some(last);
+            Self::place_cursor_after_cluster(buffer, last, 1, wrap_limit, auto_wrap);
+            self.last_graphic_character = Some(char::from(segment[length - 1]));
+            run = rest;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ingest_scalar(&mut self, bytes: &[u8]) {
         for &byte in bytes {
             self.ingest_byte(byte);
         }
@@ -1312,7 +1414,8 @@ impl Terminal {
         self.ingest_byte_observing_repeats(byte, &mut |_| {});
     }
 
-    /// Applies output while reporting the character actually used by each REP.
+    /// Applies output while reporting the character actually used by each REP
+    /// and states that need a transient replay-visibility comparison.
     ///
     /// A character that would be concealed in the live terminal is replaced
     /// with a same-width blank, so pre-consent hidden text is not copied.
@@ -1320,16 +1423,51 @@ impl Terminal {
         &mut self,
         bytes: &[u8],
         mut observe_repeat: impl FnMut(usize, Option<char>),
-        mut observe_screen: impl FnMut(usize, &Terminal),
+        mut observe_visible: impl FnMut(usize, &Terminal),
     ) {
-        for (offset, &byte) in bytes.iter().enumerate() {
+        let mut offset = 0;
+        while let Some(&byte) = bytes.get(offset) {
+            if self.recording_block_cursor().is_none() {
+                let length = self.ascii_run_length(&bytes[offset..]);
+                if length != 0 {
+                    self.print_ascii_run(&bytes[offset..offset + length]);
+                    offset += length;
+                    continue;
+                }
+            }
             let generation = self.screen_generation;
+            let cursor_before = self
+                .recording_exposed_cursor_cell()
+                .map(|(cursor, cell)| (cursor, cell.text.clone()));
+            let ambiguous_anchor = self.recording_hidden_anchor().is_some_and(|cell| {
+                let mut decoder = self.utf8.clone();
+                let character = match decoder.advance(byte) {
+                    Utf8Advance::Pending => return false,
+                    Utf8Advance::Character(character) => character,
+                    Utf8Advance::Invalid => char::REPLACEMENT_CHARACTER,
+                };
+                extends_grapheme(cell.text(), character) || extends_grapheme(" ", character)
+            });
+            let mut ambiguous_repeat = false;
             self.ingest_byte_observing_repeats(byte, &mut |terminal| {
+                ambiguous_repeat = terminal.recording_repeat_visibility_is_ambiguous();
                 observe_repeat(offset, terminal.recording_repeat_character());
             });
-            if self.screen_generation != generation {
-                observe_screen(offset, self);
+            let cursor_changed =
+                self.recording_exposed_cursor_cell()
+                    .is_some_and(|(cursor, cell)| {
+                        cursor_before
+                            .as_ref()
+                            .is_none_or(|(before, text)| *before != cursor || text != &cell.text)
+                    });
+            if self.screen_generation != generation
+                || cursor_changed
+                || ambiguous_anchor
+                || ambiguous_repeat
+            {
+                observe_visible(offset, self);
             }
+            offset += 1;
         }
     }
 
@@ -1341,7 +1479,18 @@ impl Terminal {
     ) -> Result<(), TerminalError> {
         let mut hints = hints.into_iter().peekable();
         let mut invalid = false;
-        for (offset, &byte) in bytes.iter().enumerate() {
+        let mut offset = 0;
+        while let Some(&byte) = bytes.get(offset) {
+            let length = self.ascii_run_length(&bytes[offset..]);
+            if length != 0
+                && hints
+                    .peek()
+                    .is_none_or(|(position, _)| *position >= offset + length)
+            {
+                self.print_ascii_run(&bytes[offset..offset + length]);
+                offset += length;
+                continue;
+            }
             if hints.peek().is_some_and(|(position, _)| *position < offset) {
                 invalid = true;
             }
@@ -1355,6 +1504,7 @@ impl Terminal {
                     invalid = true;
                 }
             });
+            offset += 1;
         }
         if invalid || hints.next().is_some() {
             return Err(TerminalError::invalid_snapshot(
@@ -1381,6 +1531,47 @@ impl Terminal {
                 character
             }
         })
+    }
+
+    fn recording_repeat_visibility_is_ambiguous(&self) -> bool {
+        self.last_graphic_character
+            .is_some_and(|character| character != ' ')
+            && !self.current_attributes.contains(Attributes::CONCEALED)
+            && recording_text_is_hidden(
+                self.current_foreground,
+                self.current_background,
+                self.current_attributes,
+                &self.color_scheme,
+            )
+    }
+
+    fn recording_block_cursor(&self) -> Option<Cursor> {
+        (self.modes.cursor_visible()
+            && self.cursor_style_set
+            && matches!(
+                self.cursor_style,
+                CursorStyle::BlinkingBlock | CursorStyle::SteadyBlock
+            ))
+        .then(|| self.cursor())
+    }
+
+    fn recording_exposed_cursor_cell(&self) -> Option<(Cursor, &Cell)> {
+        let cursor = self.recording_block_cursor()?;
+        let cell = self.cell_ref(cursor.column(), cursor.row())?;
+        (!cell.attributes.contains(Attributes::CONCEALED)
+            && cell.text.bytes().any(|byte| byte != b' ')
+            && cell.recording_text_is_redacted(&self.color_scheme))
+        .then_some((cursor, cell))
+    }
+
+    fn recording_hidden_anchor(&self) -> Option<&Cell> {
+        if !self.utf8.pending() {
+            return None;
+        }
+        self.active_buffer()
+            .grapheme_anchor
+            .and_then(|anchor| self.cell_ref(anchor.column(), anchor.row()))
+            .filter(|cell| cell.recording_text_is_redacted(&self.color_scheme))
     }
 
     fn ingest_byte_observing_repeats(&mut self, byte: u8, observe: &mut impl FnMut(&mut Self)) {
@@ -1501,9 +1692,26 @@ impl Terminal {
             self.tab_stops.len(),
             maximum_bytes,
         )?;
+        for row in 0..self.dimensions().rows() {
+            for column in 0..self.dimensions().columns() {
+                let cell = self
+                    .cell_ref(column, row)
+                    .expect("recording screen dimensions are valid");
+                if !cell.attributes.contains(Attributes::CONCEALED)
+                    && cell.text.bytes().any(|byte| byte != b' ')
+                    && cell.recording_text_is_redacted(&self.color_scheme)
+                {
+                    return Err(TerminalError::invalid_snapshot(
+                        "text visibility is ambiguous; change its colors or clear it before recording",
+                    ));
+                }
+            }
+        }
         let checkpoint = RecordingCheckpoint {
             parser,
-            visible: self.active_buffer().recording_copy(&self.color_scheme),
+            visible: self
+                .active_buffer()
+                .recording_copy(&self.color_scheme, false),
             active_screen: self.active_screen,
             screen_generation: self.screen_generation,
             modes: self.modes,
@@ -1531,12 +1739,15 @@ impl Terminal {
         Ok(checkpoint)
     }
 
-    /// An ephemeral, sanitized projection for comparing recording replay
-    /// with the current visible buffer, even during a partial input sequence.
+    /// An ephemeral projection for comparing recording replay with the live
+    /// buffer, even during a partial input sequence. Non-concealed text is
+    /// included regardless of color: only hash this in memory, and never
+    /// persist or log the projection.
     pub fn recording_visible_state(&self) -> impl Serialize {
         (
             self.active_screen,
-            self.active_buffer().recording_copy(&self.color_scheme),
+            self.active_buffer()
+                .recording_copy(&self.color_scheme, true),
         )
     }
 
@@ -3945,4 +4156,117 @@ fn resized_tab_stops(existing: &[bool], dimensions: Dimensions) -> Vec<bool> {
                 .unwrap_or(column != 0 && column % 8 == 0)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod ascii_run_fast_path_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn fragment() -> impl Strategy<Value = Vec<u8>> {
+        prop_oneof![
+            4 => "[ -~]{0,40}".prop_map(String::into_bytes),
+            1 => prop_oneof![
+                Just(b"\r\n".to_vec()),
+                Just(b"\r".to_vec()),
+                Just(b"\n".to_vec()),
+                Just(b"\x08".to_vec()),
+                Just(b"\t".to_vec()),
+                Just("漢字".as_bytes().to_vec()),
+                Just("e\u{301}".as_bytes().to_vec()),
+                Just("\u{301}".as_bytes().to_vec()),
+                Just("👩\u{200d}💻".as_bytes().to_vec()),
+                Just("\u{600}".as_bytes().to_vec()),
+                Just(b"\xe6\xbc".to_vec()),
+                Just(b"\xff".to_vec()),
+            ],
+            2 => prop_oneof![
+                Just(b"\x1b[4h".to_vec()),
+                Just(b"\x1b[4l".to_vec()),
+                Just(b"\x1b(0".to_vec()),
+                Just(b"\x1b(B".to_vec()),
+                Just(b"\x1b)0".to_vec()),
+                Just(vec![0x0e]),
+                Just(vec![0x0f]),
+                Just(b"\x1b]8;;https://e.x/\x1b\\".to_vec()),
+                Just(b"\x1b]8;;\x1b\\".to_vec()),
+                Just(b"\x1b[2;4r".to_vec()),
+                Just(b"\x1b[r".to_vec()),
+                Just(b"\x1b[?69h\x1b[3;8s".to_vec()),
+                Just(b"\x1b[?69l".to_vec()),
+                Just(b"\x1b[?7l".to_vec()),
+                Just(b"\x1b[?7h".to_vec()),
+                Just(b"\x1b[1;10H".to_vec()),
+                Just(b"\x1b[5G".to_vec()),
+                Just(b"\x1b[12G".to_vec()),
+                Just(b"\x1b[31;1m".to_vec()),
+                Just(b"\x1b[0m".to_vec()),
+                Just(b"\x1b[1\"q".to_vec()),
+                Just(b"\x1b[0\"q".to_vec()),
+                Just(b"\x1bV".to_vec()),
+                Just(b"\x1bW".to_vec()),
+                Just(b"\x1b[3b".to_vec()),
+                Just(b"\x1b[?1049h".to_vec()),
+                Just(b"\x1b[?1049l".to_vec()),
+                Just(b"\x1b[".to_vec()),
+                Just(b"\x1b]0;title".to_vec()),
+                Just(b"\x07".to_vec()),
+            ],
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2_000))]
+
+        #[test]
+        fn ascii_runs_match_byte_at_a_time_printing(
+            fragments in proptest::collection::vec(fragment(), 0..24),
+            cuts in proptest::collection::vec(any::<prop::sample::Index>(), 0..6),
+        ) {
+            let input: Vec<u8> = fragments.into_iter().flatten().collect();
+            let dimensions = Dimensions::new(12, 5).expect("dimensions");
+            let mut scalar = Terminal::new(dimensions).expect("terminal");
+            scalar.ingest_scalar(&input);
+
+            let mut boundaries: Vec<usize> =
+                cuts.iter().map(|cut| cut.index(input.len() + 1)).collect();
+            boundaries.extend([0, input.len()]);
+            boundaries.sort_unstable();
+            boundaries.dedup();
+            let mut fast = Terminal::new(dimensions).expect("terminal");
+            let mut observed = Terminal::new(dimensions).expect("terminal");
+            let mut hints = Vec::new();
+            for window in boundaries.windows(2) {
+                fast.ingest(&input[window[0]..window[1]]);
+                observed.ingest_observing_recording(
+                    &input[window[0]..window[1]],
+                    |offset, character| hints.push((window[0] + offset, character)),
+                    |_, _| {},
+                );
+            }
+
+            prop_assert!(fast == scalar, "diverged on {:?}", String::from_utf8_lossy(&input));
+            prop_assert!(observed == scalar, "recording observation diverged on {:?}", String::from_utf8_lossy(&input));
+            let mut replay = Terminal::new(dimensions).expect("terminal");
+            replay.ingest_recorded_output(&input, hints).expect("recorded repeats");
+            prop_assert!(replay == scalar, "recording replay diverged on {:?}", String::from_utf8_lossy(&input));
+        }
+    }
+
+    #[test]
+    fn recording_observes_a_block_cursor_moving_over_ambiguous_text() {
+        let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+        terminal.ingest(b"\x1b[?25l\x1b[38;2;0;0;0;48;2;0;0;0m X\x1b[H\x1b[?25h\x1b[2 q");
+        let mut checks = Vec::new();
+        terminal.ingest_observing_recording(b"A", |_, _| {}, |offset, _| checks.push(offset));
+        assert_eq!(checks, [0]);
+    }
+
+    #[test]
+    fn recorded_ascii_run_rejects_a_spurious_repeat_hint() {
+        let mut terminal = Terminal::new(Dimensions::new(8, 2).unwrap()).unwrap();
+        assert!(terminal
+            .ingest_recorded_output(b"abcdef", [(2, Some('X'))])
+            .is_err());
+    }
 }
