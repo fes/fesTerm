@@ -418,7 +418,7 @@ separate facts. A package version match is not a compatibility check.
 Existing local desktop discovery and attachment retain their existing policy.
 The machine-readable interface does not expose a network listener, grant
 cross-user access, implement a PSRP bridge or authorize remote takeover.
-Capabilities include schema 2 for local compatibility; the remote bridge
+Capabilities include schemas 2 and 3 for local compatibility; the remote bridge
 requires the exact current protocol and recovery schema on both sides.
 
 ## Remote sessiond over SSH

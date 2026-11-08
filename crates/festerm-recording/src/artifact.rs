@@ -7,15 +7,16 @@ use std::{
 
 use bincode::Options;
 use festerm_core::{
-    ColorScheme, Dimensions, RecordingCheckpoint, Terminal, MAX_RECORDING_CHECKPOINT_BYTES,
-    MAX_RECORDING_SCROLLBACK_BYTES,
+    ColorScheme, Dimensions, RecordingCheckpoint, Terminal, TerminalSemantics,
+    MAX_RECORDING_CHECKPOINT_BYTES, MAX_RECORDING_SCROLLBACK_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{MAX_ARTIFACT_BYTES, MAX_DURATION, MAX_OUTPUT_BYTES, MAX_OUTPUT_REPEATS, MAX_STREAMS};
 
-const MAGIC: &[u8; 8] = b"FSTREC2\0";
+const LEGACY_MAGIC: &[u8; 8] = b"FSTREC2\0";
+const MAGIC: &[u8; 8] = b"FSTREC3\0";
 const HEADER_BYTES: usize = 18;
 const START: u8 = 1;
 const OUTPUT: u8 = 2;
@@ -384,9 +385,15 @@ fn encode_checkpoint(checkpoint: &RecordingCheckpoint) -> Result<Vec<u8>, Artifa
     checkpoint
         .estimated_allocation_bytes()
         .map_err(|error| ArtifactError::new(format!("invalid recording checkpoint: {error}")))?;
+    let mut payload = Vec::new();
+    payload.push(match checkpoint.semantics() {
+        TerminalSemantics::Legacy => 0,
+        TerminalSemantics::Current => 1,
+    });
     checkpoint_options()
-        .serialize(checkpoint)
-        .map_err(|error| ArtifactError::new(format!("checkpoint encoding failed: {error}")))
+        .serialize_into(&mut payload, checkpoint)
+        .map_err(|error| ArtifactError::new(format!("checkpoint encoding failed: {error}")))?;
+    Ok(payload)
 }
 
 fn configuration_options() -> impl Options {
@@ -475,6 +482,7 @@ pub struct ArtifactReader<R> {
     active: [bool; MAX_STREAMS],
     finished: bool,
     fingerprint: Sha256,
+    legacy: bool,
 }
 
 impl<R: Read> ArtifactReader<R> {
@@ -486,11 +494,12 @@ impl<R: Read> ArtifactReader<R> {
                 "legacy recording format cannot be safely exported",
             ));
         }
-        if &magic != MAGIC {
+        let legacy = &magic == LEGACY_MAGIC;
+        if !legacy && &magic != MAGIC {
             return Err(ArtifactError::new("unsupported recording format"));
         }
         let mut fingerprint = Sha256::new();
-        fingerprint.update(MAGIC);
+        fingerprint.update(magic);
         Ok(Self {
             input,
             bytes_read: MAGIC.len() as u64,
@@ -499,6 +508,7 @@ impl<R: Read> ArtifactReader<R> {
             active: [false; MAX_STREAMS],
             finished: false,
             fingerprint,
+            legacy,
         })
     }
 
@@ -526,7 +536,7 @@ impl<R: Read> ArtifactReader<R> {
             return Err(ArtifactError::new("recording timestamps are out of range"));
         }
         let maximum = match kind {
-            START => MAX_RECORDING_CHECKPOINT_BYTES,
+            START => MAX_RECORDING_CHECKPOINT_BYTES + usize::from(!self.legacy),
             OUTPUT => MAX_OUTPUT_BYTES + 4 + MAX_OUTPUT_REPEATS * 8,
             RESIZE => 8,
             END | RESET => 0,
@@ -586,7 +596,7 @@ impl<R: Read> ArtifactReader<R> {
                         "recording streams are not in enrollment order",
                     ));
                 }
-                let (terminal, history_capped) = decode_checkpoint(&payload)?;
+                let (terminal, history_capped) = decode_checkpoint(&payload, self.legacy)?;
                 self.next_stream += 1;
                 self.active[slot] = true;
                 ArtifactEvent::Started {
@@ -687,13 +697,27 @@ impl<R: Read> ArtifactReader<R> {
     }
 }
 
-fn decode_checkpoint(payload: &[u8]) -> Result<(Terminal, bool), ArtifactError> {
+fn decode_checkpoint(payload: &[u8], legacy: bool) -> Result<(Terminal, bool), ArtifactError> {
+    let (semantics, payload) = if legacy {
+        (TerminalSemantics::Legacy, payload)
+    } else {
+        match payload.split_first() {
+            Some((0, payload)) => (TerminalSemantics::Legacy, payload),
+            Some((1, payload)) => (TerminalSemantics::Current, payload),
+            _ => {
+                return Err(ArtifactError::new(
+                    "unsupported recording terminal semantics",
+                ))
+            }
+        }
+    };
     let checkpoint: RecordingCheckpoint = checkpoint_options()
         .deserialize(payload)
         .map_err(|error| ArtifactError::new(format!("invalid recording checkpoint: {error}")))?;
     let history_capped = checkpoint.history_capped();
-    checkpoint
+    let mut terminal = checkpoint
         .into_terminal()
-        .map(|terminal| (terminal, history_capped))
-        .map_err(|error| ArtifactError::new(format!("invalid recording checkpoint: {error}")))
+        .map_err(|error| ArtifactError::new(format!("invalid recording checkpoint: {error}")))?;
+    terminal.set_semantics(semantics);
+    Ok((terminal, history_capped))
 }

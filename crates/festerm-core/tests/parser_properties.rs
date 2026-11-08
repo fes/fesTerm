@@ -26,6 +26,28 @@ fn terminal() -> Terminal {
     Terminal::new(Dimensions::new(COLUMNS, ROWS).expect("dimensions")).expect("terminal")
 }
 
+proptest! {
+    #[test]
+    fn ris_restores_fresh_visible_behavior_after_arbitrary_output(input in proptest::collection::vec(any::<u8>(), 0..512)) {
+        let mut actual = terminal();
+        actual.ingest(&input);
+        actual.ingest(b"\x1bc");
+        let mut expected = terminal();
+        let suffix = b"\x1b[2bq\tZ\x1b[2;4H@\x1b[?2K";
+        actual.ingest(suffix);
+        expected.ingest(suffix);
+
+        prop_assert_eq!(actual.cursor(), expected.cursor());
+        prop_assert_eq!(actual.modes(), expected.modes());
+        prop_assert_eq!(actual.attributes(), expected.attributes());
+        for row in 0..ROWS {
+            for column in 0..COLUMNS {
+                prop_assert_eq!(actual.cell(column, row), expected.cell(column, row));
+            }
+        }
+    }
+}
+
 /// Everything that must be true of a terminal no matter what it was fed.
 fn assert_invariants(terminal: &Terminal, input: &[u8]) {
     let cursor = terminal.cursor();

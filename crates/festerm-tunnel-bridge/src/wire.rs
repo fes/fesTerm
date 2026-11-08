@@ -30,7 +30,17 @@ pub(crate) async fn discover_stream(
     write_frame(stream, DISCOVER, &VERSION.to_be_bytes()).await?;
     let (kind, bytes) = tokio::time::timeout(DEADLINE, read_frame(stream))
         .await
-        .map_err(|_| invalid())??;
+        .map_err(|_| invalid())?
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Bridge discovery ended early; the connection may have failed or the host may need an update.",
+                )
+            } else {
+                error
+            }
+        })?;
     if kind != DESCRIPTION {
         return Err(invalid());
     }

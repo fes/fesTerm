@@ -202,8 +202,8 @@ fn observe_recovery_allocation_restore() {
 ///
 /// This changes only when the daemon introduces an incompatible wire format.
 pub const PROTOCOL_VERSION: u16 = 3;
-/// Recovery snapshot schema used by sessions started by this build.
-pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 3;
+/// Recovery snapshot schema used by protocol-v2 sessions started by this build.
+pub const RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 4;
 /// Schema version for machine-readable helper metadata.
 pub const MACHINE_READABLE_SCHEMA_VERSION: u32 = 1;
 const LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION: u16 = 0;
@@ -226,6 +226,7 @@ const RECOVERY_DISCONNECT_MESSAGE: &str =
 /// Content-free guidance suitable for the visible GUI recovery controls.
 pub const RECOVERY_RETRY_MESSAGE: &str =
     "persistent-session daemon closed before recovery completed; it may be busy or shutting down; retry Reconnect or Resume";
+const RECONNECT_PROTOCOL_CHANGED: &str = "The session's recovery protocol changed. Open the selected session in a new tab instead of reconnecting.";
 
 struct ConnectedSession {
     stream: Box<dyn SessionStream>,
@@ -539,7 +540,7 @@ pub fn capabilities() -> SessiondCapabilities {
             maximum: PROTOCOL_VERSION,
         },
         recovery_snapshot_schema: SupportedVersions {
-            supported_versions: vec![2, RECOVERY_SNAPSHOT_SCHEMA_VERSION],
+            supported_versions: vec![2, 3, RECOVERY_SNAPSHOT_SCHEMA_VERSION],
         },
         remote_attachment: true,
     }
@@ -1215,7 +1216,9 @@ impl PersistentSession {
             root,
             require_unattached,
             &AtomicBool::new(false),
+            None,
         )?;
+        let snapshot_protocol = connection.protocol_version >= 2;
         let selected = selected.clone();
         let root = root.to_owned();
         Self::from_stream_with_reconnector(
@@ -1224,7 +1227,13 @@ impl PersistentSession {
             Some(Arc::new(move |cancelled| {
                 // Manual reconnect retains steal-on-reconnect, but only for
                 // the generation selected from this registry.
-                connect_discovered_with_cancel(&selected, &root, false, cancelled)
+                connect_discovered_with_cancel(
+                    &selected,
+                    &root,
+                    false,
+                    cancelled,
+                    Some(snapshot_protocol),
+                )
             })),
         )
     }
@@ -1256,11 +1265,12 @@ impl PersistentSession {
         notifier: Arc<dyn SessionEventNotifier>,
         name: String,
     ) -> Result<Self, PersistentSessionError> {
+        let snapshot_protocol = connection.protocol_version >= 2;
         Self::from_stream_with_reconnector(
             connection,
             notifier,
             Some(Arc::new(move |cancelled| {
-                connect_existing_with_cancel(&name, cancelled)
+                connect_existing_with_cancel(&name, cancelled, Some(snapshot_protocol))
             })),
         )
     }
@@ -1527,6 +1537,11 @@ impl PersistentSession {
                 }
                 match connection {
                     Ok(connection) => {
+                        if (connection.protocol_version >= 2) != drop_pending_events {
+                            reconnect_failed(&shared, RECONNECT_PROTOCOL_CHANGED);
+                            let _ = completion.send(ShutdownResult::AlreadyStopped);
+                            return;
+                        }
                         *shared
                             .identity
                             .lock()
@@ -1693,7 +1708,7 @@ fn finish_cancelled_reconnect(shared: &Shared, completion: &SyncSender<ShutdownR
 }
 
 fn connect_existing(name: &str) -> Result<ConnectedSession, PersistentSessionError> {
-    connect_existing_with_cancel(name, &AtomicBool::new(false))
+    connect_existing_with_cancel(name, &AtomicBool::new(false), None)
 }
 
 fn connect_discovered_with_cancel(
@@ -1701,6 +1716,7 @@ fn connect_discovered_with_cancel(
     root: &std::path::Path,
     require_unattached: bool,
     cancelled: &AtomicBool,
+    snapshot_protocol: Option<bool>,
 ) -> Result<ConnectedSession, PersistentSessionError> {
     let registry = load_registry_in_with_cancel(root, cancelled)?;
     let record = registry.sessions.get(&selected.name).filter(|record| {
@@ -1711,6 +1727,7 @@ fn connect_discovered_with_cancel(
     }).ok_or_else(|| PersistentSessionError::new(
         "The selected native session exited, changed, or attached elsewhere. Refresh Running Sessions and try again."
     ))?;
+    ensure_reconnect_protocol(record, snapshot_protocol)?;
     if !record_is_live(root, record)? {
         return Err(PersistentSessionError::new(
             "The selected native daemon is no longer running. Refresh Running Sessions.",
@@ -1722,12 +1739,13 @@ fn connect_discovered_with_cancel(
 fn connect_existing_with_cancel(
     name: &str,
     cancelled: &AtomicBool,
+    snapshot_protocol: Option<bool>,
 ) -> Result<ConnectedSession, PersistentSessionError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
     let registry = load_registry()?;
-    connect_existing_in_registry_with_cancel(&registry, name, cancelled)
+    connect_existing_in_registry_with_cancel(&registry, name, cancelled, snapshot_protocol)
 }
 
 #[cfg(test)]
@@ -1735,13 +1753,14 @@ fn connect_existing_in_registry(
     registry: &SessionRegistry,
     name: &str,
 ) -> Result<ConnectedSession, PersistentSessionError> {
-    connect_existing_in_registry_with_cancel(registry, name, &AtomicBool::new(false))
+    connect_existing_in_registry_with_cancel(registry, name, &AtomicBool::new(false), None)
 }
 
 fn connect_existing_in_registry_with_cancel(
     registry: &SessionRegistry,
     name: &str,
     cancelled: &AtomicBool,
+    snapshot_protocol: Option<bool>,
 ) -> Result<ConnectedSession, PersistentSessionError> {
     let record = match registry.sessions.get(name) {
         Some(record) => record,
@@ -1755,6 +1774,7 @@ fn connect_existing_in_registry_with_cancel(
         }
     };
     ensure_protocol_compatible(record)?;
+    ensure_reconnect_protocol(record, snapshot_protocol)?;
     connect_record_with_cancel(record, cancelled).map_err(|error| {
         PersistentSessionError::new(format!(
             "session '{name}' is registered to process {} but is not accepting connections \
@@ -1762,6 +1782,16 @@ fn connect_existing_in_registry_with_cancel(
             record.pid,
         ))
     })
+}
+
+fn ensure_reconnect_protocol(
+    record: &SessionRecord,
+    snapshot_protocol: Option<bool>,
+) -> Result<(), PersistentSessionError> {
+    if snapshot_protocol.is_some_and(|expected| expected != (record.protocol_version >= 2)) {
+        return Err(PersistentSessionError::new(RECONNECT_PROTOCOL_CHANGED));
+    }
+    Ok(())
 }
 
 impl Session for PersistentSession {
@@ -2152,12 +2182,29 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
         })?;
         read_protocol_bytes(stream, &mut payload.bytes[start..end], &mut should_abort)?;
     }
+    let (semantics, bytes) = if snapshot_schema_version < 4 {
+        (
+            festerm_core::TerminalSemantics::Legacy,
+            payload.bytes.as_slice(),
+        )
+    } else {
+        match payload.bytes.split_first() {
+            Some((0, bytes)) => (festerm_core::TerminalSemantics::Legacy, bytes),
+            Some((1, bytes)) => (festerm_core::TerminalSemantics::Current, bytes),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "persistent-session recovery snapshot has unsupported terminal semantics",
+                ))
+            }
+        }
+    };
     let decoded = if snapshot_schema_version == 2 {
         bincode_options()
-            .deserialize::<Schema2RecoveryTerminal>(&payload.bytes)
+            .deserialize::<Schema2RecoveryTerminal>(bytes)
             .map(|snapshot| snapshot.0)
     } else {
-        bincode_options().deserialize::<Terminal>(&payload.bytes)
+        bincode_options().deserialize::<Terminal>(bytes)
     };
     let mut terminal = decoded.map_err(|error| {
         io::Error::new(
@@ -2165,6 +2212,7 @@ fn read_recovery_terminal_with_abort<R: Read + ?Sized>(
             format!("persistent-session recovery snapshot is invalid: {error}"),
         )
     })?;
+    terminal.set_semantics(semantics);
     drop(payload);
     terminal.validate_recovery_snapshot().map_err(|error| {
         io::Error::new(
@@ -2776,7 +2824,7 @@ fn ensure_protocol_compatible(record: &SessionRecord) -> Result<(), PersistentSe
     if record.protocol_version >= 2 && !snapshot_schema_is_supported(record.snapshot_schema_version)
     {
         return Err(PersistentSessionError::new(format!(
-            "session '{}' uses recovery snapshot schema {}, but this fesTerm supports schemas 2 and {}; \
+            "session '{}' uses recovery snapshot schema {}, but this fesTerm supports schemas 2, 3 and {}; \
              keep using a compatible fesTerm version or terminate that session before replacing it",
             record.name, record.snapshot_schema_version, RECOVERY_SNAPSHOT_SCHEMA_VERSION
         )));
@@ -2789,9 +2837,9 @@ pub const fn protocol_is_supported(version: u16) -> bool {
     version >= MIN_SUPPORTED_PROTOCOL_VERSION && version <= PROTOCOL_VERSION
 }
 
-/// Schema 2 is upgraded on receipt; new helpers continue to emit only schema 3.
+/// Schemas 2 and 3 retain their legacy terminal behavior; new helpers emit schema 4.
 pub const fn snapshot_schema_is_supported(version: u16) -> bool {
-    version == 2 || version == RECOVERY_SNAPSHOT_SCHEMA_VERSION
+    version == 2 || version == 3 || version == RECOVERY_SNAPSHOT_SCHEMA_VERSION
 }
 
 const fn recovery_snapshot_required(protocol_version: u16, snapshot_schema_version: u16) -> bool {
@@ -3438,7 +3486,10 @@ pub fn encode_recovery_snapshot_with_limit(
                 "could not size terminal recovery snapshot: {error}"
             ))
         })?;
-    let payload_len = usize::try_from(payload_len).map_err(|_| {
+    let terminal_len = usize::try_from(payload_len).map_err(|_| {
+        PersistentSessionError::new("terminal recovery snapshot length overflows usize")
+    })?;
+    let payload_len = terminal_len.checked_add(1).ok_or_else(|| {
         PersistentSessionError::new("terminal recovery snapshot length overflows usize")
     })?;
     if payload_len > maximum {
@@ -3460,7 +3511,11 @@ pub fn encode_recovery_snapshot_with_limit(
     encoded.bytes[..RECOVERY_MAGIC.len()].copy_from_slice(RECOVERY_MAGIC);
     encoded.bytes[RECOVERY_MAGIC.len()..RECOVERY_HEADER_BYTES]
         .copy_from_slice(&(payload_len as u64).to_be_bytes());
-    let mut destination = io::Cursor::new(&mut encoded.bytes[RECOVERY_HEADER_BYTES..]);
+    encoded.bytes[RECOVERY_HEADER_BYTES] = match terminal.semantics() {
+        festerm_core::TerminalSemantics::Legacy => 0,
+        festerm_core::TerminalSemantics::Current => 1,
+    };
+    let mut destination = io::Cursor::new(&mut encoded.bytes[RECOVERY_HEADER_BYTES + 1..]);
     // The sized slice enforces the wire bound without a third sizing traversal.
     bincode_options()
         .with_no_limit()
@@ -3470,7 +3525,7 @@ pub fn encode_recovery_snapshot_with_limit(
                 "could not serialize terminal recovery snapshot: {error}"
             ))
         })?;
-    if destination.position() != payload_len as u64 {
+    if destination.position() != terminal_len as u64 {
         return Err(PersistentSessionError::new(
             "terminal recovery snapshot serialized length changed",
         ));
@@ -3874,8 +3929,20 @@ mod recovery_wire_tests {
 
         // Produced by the pre-compaction schema-3 encoder.
         let wire = include_bytes!("../tests/fixtures/schema3-legacy-cell.bin");
-        assert_eq!(encode_recovery_snapshot(&expected).unwrap(), wire);
-        let mut recovered = read_snapshot(&mut io::Cursor::new(wire)).unwrap().unwrap();
+        let current_wire = encode_recovery_snapshot(&expected).unwrap();
+        assert_eq!(
+            &current_wire[RECOVERY_HEADER_BYTES + 1..],
+            &wire[RECOVERY_HEADER_BYTES..]
+        );
+        let mut recovered = read_attach_recovery_terminal(
+            &mut io::Cursor::new(wire),
+            PROTOCOL_VERSION,
+            3,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap()
+        .unwrap();
+        expected.set_semantics(festerm_core::TerminalSemantics::Legacy);
         assert_eq!(recovered.recovery_clone(), expected.recovery_clone());
 
         for terminal in [&mut recovered, &mut expected] {
@@ -3989,13 +4056,14 @@ mod recovery_wire_tests {
     }
 
     #[test]
-    fn recovery_encoding_uses_one_wire_buffer_and_preserves_legacy_bytes() {
+    fn recovery_encoding_uses_one_wire_buffer_and_preserves_bincode_payload() {
         let terminal = large_recovery_terminal();
         let snapshot = terminal.recovery_clone();
         let payload = bincode_options().serialize(&snapshot).unwrap();
         assert!(payload.len() > 1024 * 1024);
         let mut expected = Vec::from(RECOVERY_MAGIC);
-        expected.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        expected.extend_from_slice(&((payload.len() + 1) as u64).to_be_bytes());
+        expected.push(1);
         expected.extend_from_slice(&payload);
         drop(payload);
         drop(snapshot);
@@ -4074,13 +4142,39 @@ mod recovery_wire_tests {
         let invalid: Terminal = serde_json::from_value(value).unwrap();
         let payload = bincode_options().serialize(&invalid).unwrap();
         let mut encoded = Vec::from(RECOVERY_MAGIC);
-        encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&((payload.len() + 1) as u64).to_be_bytes());
+        encoded.push(1);
         encoded.extend_from_slice(&payload);
         let measurement = WireMeasurement::start();
         let error = read_snapshot(&mut io::Cursor::new(encoded)).unwrap_err();
         assert!(error.to_string().contains("tab stops"));
         assert_eq!(measurement.read().before_restore, None);
         assert_eq!(measurement.read().current, 0);
+    }
+
+    #[test]
+    fn schema4_preserves_and_validates_recovery_semantics() {
+        for semantics in [
+            festerm_core::TerminalSemantics::Legacy,
+            festerm_core::TerminalSemantics::Current,
+        ] {
+            let mut terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+            terminal.set_semantics(semantics);
+            terminal.ingest(b"ABC");
+            let mut encoded = encode_recovery_snapshot(&terminal).unwrap();
+            let mut recovered = read_snapshot(&mut io::Cursor::new(&encoded))
+                .unwrap()
+                .unwrap();
+            assert_eq!(recovered.semantics(), semantics);
+            recovered.ingest(b"\x1bcXYZ");
+            let expected = match semantics {
+                festerm_core::TerminalSemantics::Legacy => "ABCXYZ",
+                festerm_core::TerminalSemantics::Current => "XYZ",
+            };
+            assert!(recovered.row_text(0).unwrap().starts_with(expected));
+            encoded[RECOVERY_HEADER_BYTES] = 2;
+            assert!(read_snapshot(&mut io::Cursor::new(encoded)).is_err());
+        }
     }
 
     #[test]
@@ -4272,6 +4366,73 @@ mod client_worker_tests {
             thread::sleep(POLL_INTERVAL);
         }
         ready()
+    }
+
+    #[test]
+    fn reconnect_rejects_a_change_between_raw_and_snapshot_protocols() {
+        for (initial_protocol, next_protocol) in [(1, 3), (3, 1)] {
+            let initial = ScriptedStream::default();
+            if initial_protocol >= 2 {
+                let terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+                initial.queue_readable(encode_recovery_snapshot(&terminal).unwrap());
+            }
+            initial.lock().eof = true;
+            let next = ScriptedStream::default();
+            let reconnect_stream = next.clone();
+            let session = PersistentSession::from_stream_with_protocol(
+                Box::new(initial),
+                noop_session_event_notifier(),
+                Some(Arc::new(move |_| {
+                    Ok(ConnectedSession {
+                        stream: Box::new(reconnect_stream.clone()),
+                        protocol_version: next_protocol,
+                        snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+                        identity: None,
+                    })
+                })),
+                initial_protocol,
+                RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            )
+            .unwrap();
+            assert!(wait_for(|| {
+                let _ = session.take_recovered_terminal();
+                matches!(session.lifecycle(), SessionLifecycle::Disconnected(_))
+            }));
+            session.try_reconnect().unwrap();
+            assert!(wait_for(|| matches!(
+                session.lifecycle(),
+                SessionLifecycle::Disconnected(ref error)
+                    if error.message() == RECONNECT_PROTOCOL_CHANGED
+            )));
+            assert!(next.written().is_empty());
+        }
+    }
+
+    #[test]
+    fn reconnect_protocol_change_is_rejected_before_opening_the_daemon() {
+        for (protocol, expected_snapshot_protocol) in [(1, true), (3, false)] {
+            let registry: SessionRegistry = serde_json::from_value(serde_json::json!({
+                "sessions": {
+                    "same": {
+                        "name": "same",
+                        "pid": 42,
+                        "socket": "must-not-be-opened",
+                        "protocol_version": protocol,
+                        "snapshot_schema_version": 3
+                    }
+                }
+            }))
+            .unwrap();
+            let error = connect_existing_in_registry_with_cancel(
+                &registry,
+                "same",
+                &AtomicBool::new(false),
+                Some(expected_snapshot_protocol),
+            )
+            .err()
+            .expect("a changed recovery protocol must be refused");
+            assert_eq!(error.to_string(), RECONNECT_PROTOCOL_CHANGED);
+        }
     }
 
     #[test]
@@ -5629,7 +5790,8 @@ mod tests {
         let payload = bincode_options().serialize(&snapshot).unwrap();
         let mut encoded = Vec::new();
         encoded.extend_from_slice(RECOVERY_MAGIC);
-        encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&((payload.len() + 1) as u64).to_be_bytes());
+        encoded.push(1);
         encoded.extend_from_slice(&payload);
         let error = read_attach_recovery_terminal(
             &mut std::io::Cursor::new(encoded),
@@ -5649,7 +5811,8 @@ mod tests {
         let payload = bincode_options().serialize(&snapshot).unwrap();
         let mut encoded = Vec::new();
         encoded.extend_from_slice(RECOVERY_MAGIC);
-        encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&((payload.len() + 1) as u64).to_be_bytes());
+        encoded.push(1);
         encoded.extend_from_slice(&payload);
         let error = read_attach_recovery_terminal(
             &mut std::io::Cursor::new(encoded),
@@ -5669,7 +5832,8 @@ mod tests {
         let snapshot: Terminal = serde_json::from_value(value).unwrap();
         let payload = bincode_options().serialize(&snapshot).unwrap();
         let mut encoded = Vec::from(RECOVERY_MAGIC);
-        encoded.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&((payload.len() + 1) as u64).to_be_bytes());
+        encoded.push(1);
         encoded.extend_from_slice(&payload);
         let error = read_attach_recovery_terminal(
             &mut io::Cursor::new(encoded),
@@ -5801,7 +5965,7 @@ mod registry_filtering_tests {
         assert_eq!(
             capabilities.recovery_snapshot_schema,
             SupportedVersions {
-                supported_versions: vec![2, RECOVERY_SNAPSHOT_SCHEMA_VERSION],
+                supported_versions: vec![2, 3, RECOVERY_SNAPSHOT_SCHEMA_VERSION],
             }
         );
         assert!(capabilities.remote_attachment);

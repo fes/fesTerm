@@ -202,7 +202,7 @@ fn native_capabilities_json_is_exact_and_read_only() {
                 "maximum": festerm_sessiond::PROTOCOL_VERSION
             },
             "recovery_snapshot_schema": {
-                "supported_versions": [2, festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION]
+                "supported_versions": [2, 3, festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION]
             },
             "remote_attachment": true
         })
@@ -707,6 +707,10 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
     let mut premature = spawn_bridge(&executable, &runtime, &selection);
     let premature_snapshot = read_bridge_snapshot(premature.stdout.as_mut().unwrap());
     assert!(terminal_contains(&premature_snapshot, b"READY"));
+    assert_eq!(
+        premature_snapshot.semantics(),
+        festerm_core::TerminalSemantics::Current
+    );
     let still_attached =
         festerm_sessiond::list_running_sessions_in(&runtime_registry_root(&runtime))
             .unwrap()
@@ -2806,25 +2810,26 @@ fn hex_encode_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn read_recovery_terminal(stream: &mut dyn ClientStream) -> Terminal {
-    let mut header = [0u8; 12];
-    stream.read_exact(&mut header).unwrap();
-    assert_eq!(&header[..4], b"FSD2");
-    let length = usize::try_from(u64::from_be_bytes(header[4..12].try_into().unwrap())).unwrap();
-    let mut payload = vec![0; length];
-    stream.read_exact(&mut payload).unwrap();
-    bincode::deserialize(&payload).unwrap()
+fn read_recovery_terminal(mut stream: &mut dyn ClientStream) -> Terminal {
+    festerm_sessiond::read_attach_recovery_terminal(
+        &mut stream,
+        festerm_sessiond::PROTOCOL_VERSION,
+        festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        std::time::Instant::now() + Duration::from_secs(5),
+    )
+    .unwrap()
+    .expect("current protocol carries a recovery snapshot")
 }
 
 fn read_bridge_snapshot(stream: &mut impl Read) -> Terminal {
-    let mut header = [0u8; 12];
-    stream.read_exact(&mut header).unwrap();
-    assert_eq!(&header[..4], b"FSD2");
-    let length = usize::try_from(u64::from_be_bytes(header[4..12].try_into().unwrap())).unwrap();
-    assert!(length <= 768 * 1024 * 1024);
-    let mut payload = vec![0; length];
-    stream.read_exact(&mut payload).unwrap();
-    bincode::deserialize(&payload).unwrap()
+    festerm_sessiond::read_attach_recovery_terminal(
+        stream,
+        festerm_sessiond::PROTOCOL_VERSION,
+        festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        std::time::Instant::now() + Duration::from_secs(5),
+    )
+    .unwrap()
+    .expect("current bridge carries a recovery snapshot")
 }
 
 fn write_resize_frame(stream: &mut impl Write, cols: u16, rows: u16) -> io::Result<()> {

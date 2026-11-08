@@ -380,9 +380,18 @@ async fn forward_child(
                     if corruption != 0 && !corrupted {
                         corrupted = true;
                         let mut invalid = b"FSD2".to_vec();
-                        let announced = if corruption == 1 { 1u64 } else { 16u64 };
+                        let announced = match corruption {
+                            1 => 2u64,
+                            2 => 16u64,
+                            3 => 1u64,
+                            _ => unreachable!("fixture corruption mode"),
+                        };
                         invalid.extend_from_slice(&announced.to_be_bytes());
-                        invalid.push(0xff);
+                        if corruption == 3 {
+                            invalid.push(2);
+                        } else {
+                            invalid.extend_from_slice(&[1, 0xff]);
+                        }
                         channel.data(&invalid[..]).await.map_err(|_| io::ErrorKind::BrokenPipe)?;
                         corrupt_deliveries.fetch_add(1, Ordering::AcqRel);
                         output_open = false;
@@ -696,7 +705,7 @@ fn host_key_rotation_after_discovery_never_authenticates_or_displaces_the_live_s
 }
 
 #[test]
-fn malformed_or_truncated_remote_snapshots_never_adopt_or_displace_the_live_session() {
+fn invalid_remote_snapshots_never_adopt_or_displace_the_live_session() {
     let fixture = Fixture::start();
     let target = fixture
         .endpoint
@@ -719,6 +728,11 @@ fn malformed_or_truncated_remote_snapshots_never_adopt_or_displace_the_live_sess
             b"printf '\\141\\146\\164\\145\\162\\055\\163\\150\\157\\162\\164\\n'\n".as_slice(),
             "after-short",
         ),
+        (
+            3,
+            b"printf '\\141\\146\\164\\145\\162\\055\\163\\145\\155\\141\\156\\164\\151\\143\\163\\n'\n".as_slice(),
+            "after-semantics",
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -738,6 +752,11 @@ fn malformed_or_truncated_remote_snapshots_never_adopt_or_displace_the_live_sess
                         assert!(
                             error.message().contains("recovery snapshot is invalid"),
                             "malformed payload failed for the wrong reason: {error}"
+                        );
+                    } else if corruption == 3 {
+                        assert!(
+                            error.message().contains("unsupported terminal semantics"),
+                            "unknown semantics failed for the wrong reason: {error}"
                         );
                     }
                     break;

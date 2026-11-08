@@ -734,6 +734,16 @@ const fn initial_screen_generation() -> u64 {
     1
 }
 
+/// Parser and reset behavior for an existing terminal stream.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TerminalSemantics {
+    /// Behavior used by releases before RIS reset support.
+    Legacy,
+    /// Current RIS and reset behavior.
+    #[default]
+    Current,
+}
+
 /// GUI-independent terminal state. The terminal owns one logical writer.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Terminal {
@@ -805,6 +815,11 @@ pub const MAX_RECORDING_CHECKPOINT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_RECORDING_SCROLLBACK_BYTES: usize = 8 * 1024 * 1024;
 
 impl RecordingCheckpoint {
+    /// Parser and reset behavior captured for this stream.
+    pub fn semantics(&self) -> TerminalSemantics {
+        self.parser.semantics()
+    }
+
     /// Whether replay retains less history than the live terminal.
     pub const fn history_capped(&self) -> bool {
         self.history_capped
@@ -926,6 +941,16 @@ struct TerminalSnapshotV2 {
 }
 
 impl Terminal {
+    /// Returns the parser and reset behavior used for this terminal stream.
+    pub fn semantics(&self) -> TerminalSemantics {
+        self.parser.semantics()
+    }
+
+    /// Sets the behavior identified by a trusted recovery or recording format.
+    pub fn set_semantics(&mut self, semantics: TerminalSemantics) {
+        self.parser.set_semantics(semantics);
+    }
+
     /// Decodes the schema-2 recovery layout, initializing its absent screen generation.
     ///
     /// The caller must still validate the snapshot and restore its allocation capacities.
@@ -1281,17 +1306,20 @@ impl Terminal {
     /// construction: clears the visible screen, homes the cursor, restores
     /// default colors/attributes/modes/tab stops, exits the alternate
     /// screen if active, and clears any parser byte-stream state (e.g. a
-    /// truncated escape sequence). This mirrors what a real terminal does
-    /// on `ESC c` (RIS) or a shell's `reset` command, but is invoked
-    /// directly by the GUI so it works even if the running program is
-    /// wedged and can't be asked to emit that sequence itself.
+    /// truncated escape sequence). `ESC c` (RIS) invokes the same reset;
+    /// the GUI can also invoke it directly when a program is wedged.
     ///
     /// Retained scrollback history is left untouched, matching how
     /// terminal emulators typically distinguish "reset the screen" from
     /// "clear the scrollback" as separate user actions; see
-    /// [`Self::clear_scrollback`] for the latter.
+    /// [`Self::clear_scrollback`] for the latter. The configured color scheme
+    /// and already-queued transport bytes are also retained.
     pub fn reset_to_initial_state(&mut self) {
         let dimensions = self.dimensions();
+        let semantics = self.semantics();
+        if semantics == TerminalSemantics::Current {
+            self.scrollback.finish_open_line();
+        }
         self.primary.reset();
         self.alternate = None;
         self.active_screen = ActiveScreen::Primary;
@@ -1299,14 +1327,22 @@ impl Terminal {
         self.modes = TerminalModes::default();
         self.cursor_style = CursorStyle::default();
         self.cursor_style_set = false;
+        if semantics == TerminalSemantics::Current {
+            self.last_graphic_character = None;
+        }
         self.tab_stops = default_tab_stops(dimensions);
         self.current_attributes = Attributes::NONE;
+        if semantics == TerminalSemantics::Current {
+            self.current_protected = false;
+            self.protection = ProtectionSource::None;
+        }
         self.current_foreground = Color::Default;
         self.current_background = Color::Default;
         self.title.clear();
         self.current_hyperlink = None;
         self.current_hyperlink_cells_remaining = 0;
         self.parser = Parser::new();
+        self.parser.set_semantics(semantics);
         self.utf8 = Utf8Decoder::new();
     }
 
@@ -2072,6 +2108,7 @@ impl Terminal {
                 parameters,
             } => self.request_mode(private, parameters),
             TerminalOp::SoftReset => self.soft_reset(),
+            TerminalOp::ResetToInitialState => self.reset_to_initial_state(),
             TerminalOp::CopyRectangle(parameters) => self.copy_rectangle(parameters),
             TerminalOp::FillRectangle(parameters) => self.fill_rectangle(parameters),
             TerminalOp::EraseRectangle {

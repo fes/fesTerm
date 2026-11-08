@@ -98,6 +98,7 @@
         "recording_observes_applied_output_resize_and_recovery_without_local_input",
         "recording_tracks_a_passive_pane_resize",
         "active_recording_flushes_its_recent_complete_events",
+        "ris_recording_replay_does_not_repeat_pre_reset_characters",
         "repeat_of_offscreen_preconsent_character_is_recorded_only_when_repeated",
         "concealed_preconsent_repeat_uses_a_same_width_blank_until_visible",
         "ascii_runs_match_byte_at_a_time_printing",
@@ -1423,7 +1424,9 @@
         "renderer_projects_text_without_remote_escape_sequences",
         "native_ssh_remote_sessiond_adopts_snapshot_and_reattaches_same_live_generation",
         "native_ssh_remote_sessiond_rejects_a_replaced_generation",
-        "native_ssh_remote_sessiond_rejects_an_untrusted_host_key"
+        "native_ssh_remote_sessiond_rejects_an_untrusted_host_key",
+        "host_key_rotation_after_discovery_never_authenticates_or_displaces_the_live_session",
+        "invalid_remote_snapshots_never_adopt_or_displace_the_live_session"
       ],
       "manual_scenarios": ["CP-24"],
       "status": "partial",
@@ -4260,7 +4263,7 @@
         "native_recovery_primary_ui_does_not_promote_raw_disconnect_details",
         "native_daemon_survives_launcher_and_supports_input_replay_and_takeover",
         "native_daemon_snapshot_matches_fresh_terminal_after_large_output",
-        "recovery_encoding_uses_one_wire_buffer_and_preserves_legacy_bytes",
+        "recovery_encoding_uses_one_wire_buffer_and_preserves_bincode_payload",
         "recovery_decoding_retires_wire_before_restoring_capacities",
         "recovery_encoding_refuses_before_owning_an_over_limit_wire_buffer",
         "recovery_encoding_enforces_the_exact_payload_limit",

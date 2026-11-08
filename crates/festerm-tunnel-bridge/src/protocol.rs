@@ -1,11 +1,12 @@
 use std::io;
 
-use festerm_core::{ColorScheme, Terminal};
+use festerm_core::{ColorScheme, Terminal, TerminalSemantics};
 #[cfg(feature = "relay")]
 use festerm_sessiond::RecoverySyncCommand;
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 4;
+pub const SNAPSHOT_SCHEMA_VERSION: u16 = 4;
 pub const SNAPSHOT_LIMIT: usize = 8 * 1024 * 1024;
 pub const CHUNK_LIMIT: usize = 64 * 1024;
 pub const HELLO: u8 = 1;
@@ -24,6 +25,7 @@ pub const DISCOVER: u8 = 13;
 pub const DESCRIPTION: u8 = 14;
 /// Host to client: this attachment was displaced; payload is one [`Displacer`] code.
 pub const DISPLACED: u8 = 15;
+pub const INCOMPATIBLE: u8 = 16;
 pub const FILE_READ: u8 = 20;
 pub const FILE_RESULT: u8 = 21;
 pub const FILE_LIMIT: usize = 4 * 1024 * 1024;
@@ -223,7 +225,7 @@ pub fn validate_length(kind: u8, length: usize) -> io::Result<()> {
         RESIZE | RESIZED => 8,
         CAPABILITIES => 2,
         DISPLACED => 1,
-        ADOPTED | DETACH | REFUSED | EXITED => 0,
+        ADOPTED | DETACH | REFUSED | EXITED | INCOMPATIBLE => 0,
         _ => return Err(invalid()),
     };
     if length > maximum {
@@ -237,7 +239,13 @@ pub fn validate_length(kind: u8, length: usize) -> io::Result<()> {
 /// restoring capacities. The trusted-local bincode decoder is not network-facing.
 pub fn decode_snapshot(bytes: &[u8]) -> io::Result<Terminal> {
     validate_length(SNAPSHOT, bytes.len())?;
+    let (semantics, bytes) = match bytes.split_first() {
+        Some((0, bytes)) => (TerminalSemantics::Legacy, bytes),
+        Some((1, bytes)) => (TerminalSemantics::Current, bytes),
+        _ => return Err(invalid()),
+    };
     let mut terminal: Terminal = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    terminal.set_semantics(semantics);
     terminal
         .validate_recovery_snapshot()
         .map_err(|_| invalid())?;
@@ -270,7 +278,10 @@ pub fn encode_snapshot(terminal: &Terminal) -> io::Result<Vec<u8>> {
             Ok(())
         }
     }
-    let mut output = Limited(Vec::new());
+    let mut output = Limited(vec![match terminal.semantics() {
+        TerminalSemantics::Legacy => 0,
+        TerminalSemantics::Current => 1,
+    }]);
     serde_json::to_writer(&mut output, terminal).map_err(|_| invalid())?;
     // Apply the same semantic/resource policy at both ends.
     decode_snapshot(&output.0)?;
@@ -297,10 +308,36 @@ mod tests {
         let large = Terminal::new(Dimensions::new(257, 24).unwrap()).unwrap();
         assert!(encode_snapshot(&large).is_err());
         terminal.queue_input(b"must not replay");
-        assert!(decode_snapshot(&serde_json::to_vec(&terminal).unwrap()).is_err());
+        let mut queued = vec![1];
+        queued.extend(serde_json::to_vec(&terminal).unwrap());
+        assert!(decode_snapshot(&queued).is_err());
         terminal.drain_input();
         terminal.queue_reply(b"must not duplicate");
-        assert!(decode_snapshot(&serde_json::to_vec(&terminal).unwrap()).is_err());
+        let mut queued = vec![1];
+        queued.extend(serde_json::to_vec(&terminal).unwrap());
+        assert!(decode_snapshot(&queued).is_err());
+    }
+
+    #[test]
+    fn remote_snapshot_retains_the_daemons_reset_semantics() {
+        for semantics in [TerminalSemantics::Legacy, TerminalSemantics::Current] {
+            let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+            terminal.set_semantics(semantics);
+            terminal.ingest(b"ABC");
+            let bytes = encode_snapshot(&terminal.recovery_clone()).unwrap();
+            let mut recovered = decode_snapshot(&bytes).unwrap();
+            assert_eq!(recovered.semantics(), semantics);
+            recovered.ingest(b"\x1bcXYZ");
+            let expected = match semantics {
+                TerminalSemantics::Legacy => "ABCXYZ",
+                TerminalSemantics::Current => "XYZ",
+            };
+            assert!(recovered.row_text(0).unwrap().starts_with(expected));
+            let mut invalid_semantics = bytes;
+            invalid_semantics[0] = 2;
+            assert!(decode_snapshot(&invalid_semantics).is_err());
+        }
+        assert!(decode_snapshot(&[]).is_err());
     }
 
     #[test]

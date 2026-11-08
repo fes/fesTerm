@@ -72,9 +72,14 @@ pub fn read_destination(path: &std::path::Path) -> io::Result<Destination> {
     serde_json::from_slice(&bytes).map_err(|_| invalid())
 }
 
+enum ValidatedOutput {
+    Bytes(Vec<u8>),
+    Failure(&'static str),
+}
+
 struct ValidatedStream {
     input: flume::Sender<Vec<u8>>,
-    output: flume::Receiver<Vec<u8>>,
+    output: flume::Receiver<ValidatedOutput>,
     pending: io::Cursor<Vec<u8>>,
     cancel: CancellationToken,
 }
@@ -93,7 +98,10 @@ impl Read for ValidatedStream {
             return Ok(count);
         }
         let next = match self.output.recv_timeout(Duration::from_millis(20)) {
-            Ok(bytes) => bytes,
+            Ok(ValidatedOutput::Bytes(bytes)) => bytes,
+            Ok(ValidatedOutput::Failure(message)) => {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, message));
+            }
             Err(flume::RecvTimeoutError::Timeout) => return Err(io::ErrorKind::TimedOut.into()),
             Err(flume::RecvTimeoutError::Disconnected) => return Ok(0),
         };
@@ -214,7 +222,7 @@ async fn client_session(
     destination: Destination,
     token: Zeroizing<String>,
     commands: flume::Receiver<Vec<u8>>,
-    output: flume::Sender<Vec<u8>>,
+    output: flume::Sender<ValidatedOutput>,
     files: flume::Receiver<FileCall>,
     takeover: bool,
     client: Option<ClientId>,
@@ -248,7 +256,7 @@ async fn client_io_with_files(
     mut stream: impl AsyncRead + AsyncWrite + Unpin,
     target: Target,
     commands: flume::Receiver<Vec<u8>>,
-    output: flume::Sender<Vec<u8>>,
+    output: flume::Sender<ValidatedOutput>,
     files: flume::Receiver<FileCall>,
     file_access: FileAccess,
     takeover: bool,
@@ -258,7 +266,7 @@ async fn client_io_with_files(
         takeover,
         files: file_access,
         version: VERSION,
-        snapshot_schema: 3,
+        snapshot_schema: SNAPSHOT_SCHEMA_VERSION,
         target,
         client,
     })
@@ -267,11 +275,11 @@ async fn client_io_with_files(
     let (kind, capabilities) = tokio::time::timeout(DEADLINE, read_frame(&mut stream))
         .await
         .map_err(|_| invalid())??;
-    if kind == REFUSED {
-        // Someone else holds the session: end as displaced so the tab offers a
-        // deliberate takeover and never reconnects automatically.
+    if kind == REFUSED || kind == INCOMPATIBLE {
         let _ = output
-            .send_async(festerm_sessiond::encode_server_stolen_frame())
+            .send_async(ValidatedOutput::Failure(
+                "The host refused the attachment or uses an incompatible bridge protocol; verify the session and update both devices.",
+            ))
             .await;
         return Err(invalid());
     }
@@ -286,6 +294,14 @@ async fn client_io_with_files(
     let (kind, bytes) = tokio::time::timeout(DEADLINE, read_frame(&mut stream))
         .await
         .map_err(|_| invalid())??;
+    if kind == REFUSED || kind == INCOMPATIBLE {
+        let _ = output
+            .send_async(ValidatedOutput::Failure(
+                "The host refused the attachment; the session may be unavailable or attached elsewhere.",
+            ))
+            .await;
+        return Err(invalid());
+    }
     if kind != SNAPSHOT {
         return Err(invalid());
     }
@@ -296,7 +312,7 @@ async fn client_io_with_files(
     drop(terminal);
     for chunk in snapshot.chunks(CHUNK_LIMIT) {
         output
-            .send_async(chunk.to_vec())
+            .send_async(ValidatedOutput::Bytes(chunk.to_vec()))
             .await
             .map_err(|_| invalid())?;
     }
@@ -372,7 +388,7 @@ async fn client_send(
 
 async fn client_receive(
     mut reader: impl AsyncRead + Unpin,
-    output: flume::Sender<Vec<u8>>,
+    output: flume::Sender<ValidatedOutput>,
     pending: PendingFile,
 ) -> io::Result<()> {
     loop {
@@ -414,7 +430,10 @@ async fn client_receive(
             DISPLACED if bytes.len() == 1 => festerm_sessiond::encode_server_stolen_frame(),
             _ => return Err(invalid()),
         };
-        output.send_async(frame).await.map_err(|_| invalid())?;
+        output
+            .send_async(ValidatedOutput::Bytes(frame))
+            .await
+            .map_err(|_| invalid())?;
         if kind == EXITED || kind == DISPLACED {
             return Err(invalid());
         }
@@ -599,9 +618,11 @@ pub async fn serve_with_reclaim(
         return Err(invalid());
     }
     let hello: Hello = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    if hello.version != VERSION
-        || hello.snapshot_schema != 3
-        || hello.target != target
+    if hello.version != VERSION || hello.snapshot_schema != SNAPSHOT_SCHEMA_VERSION {
+        write_frame(&mut stream, INCOMPATIBLE, &[]).await?;
+        return Err(io::Error::other("daemon.hello_incompatible"));
+    }
+    if hello.target != target
         || (hello.files.read
             && (!file_service.allows_read() || hello.files.windows_paths != cfg!(windows)))
     {
@@ -867,8 +888,8 @@ mod tests {
     async fn bridge_discovery_refuses_incompatible_or_nonbridge_responses_without_admission() {
         for response in [
             serde_json::json!({"version":999,"target":{"name":"owned","pid":7,"generation":"9"},"files":{"read":false,"windows_paths":false}}),
-            serde_json::json!({"version":1,"target":{"name":"owned","pid":7,"generation":"bad"},"files":{"read":false,"windows_paths":false}}),
-            serde_json::json!({"version":1,"target":{"name":"owned","pid":7,"generation":"9"},"files":{"read":false,"windows_paths":false},"endpoint":"private-local-path"}),
+            serde_json::json!({"version":VERSION,"target":{"name":"owned","pid":7,"generation":"bad"},"files":{"read":false,"windows_paths":false}}),
+            serde_json::json!({"version":VERSION,"target":{"name":"owned","pid":7,"generation":"9"},"files":{"read":false,"windows_paths":false},"endpoint":"private-local-path"}),
         ] {
             let (mut client, mut host) = tokio::io::duplex(8192);
             let task = tokio::spawn(async move {
@@ -888,10 +909,11 @@ mod tests {
 
     #[tokio::test]
     async fn bridge_refuses_incompatible_hello_before_daemon_admission() {
-        for (version, schema, generation) in [
-            (VERSION + 1, 3, "9"),
-            (VERSION, 2, "9"),
-            (VERSION, 3, "wrong"),
+        for (version, schema, generation, response) in [
+            (1, 3, "9", INCOMPATIBLE),
+            (VERSION + 1, SNAPSHOT_SCHEMA_VERSION, "9", INCOMPATIBLE),
+            (VERSION, 3, "9", INCOMPATIBLE),
+            (VERSION, SNAPSHOT_SCHEMA_VERSION, "wrong", REFUSED),
         ] {
             let (mut client, host) = tokio::io::duplex(8192);
             let selected = NativeSessionIdentity {
@@ -915,9 +937,58 @@ mod tests {
             })
             .unwrap();
             write_frame(&mut client, HELLO, &hello).await.unwrap();
-            assert_eq!(read_frame(&mut client).await.unwrap(), (REFUSED, vec![]));
+            assert_eq!(read_frame(&mut client).await.unwrap(), (response, vec![]));
             assert!(task.await.unwrap().is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn legacy_refusal_is_reported_as_ambiguous_not_as_a_takeover() {
+        let (client, mut host) = tokio::io::duplex(8192);
+        let (input, commands) = flume::bounded(QUEUE);
+        let (output, events) = flume::bounded(QUEUE);
+        let (_file_tx, file_rx) = flume::bounded(1);
+        let cancel = CancellationToken::new();
+        let session = PersistentSession::from_validated_transport(
+            ValidatedStream {
+                input,
+                output: events,
+                pending: io::Cursor::new(Vec::new()),
+                cancel,
+            },
+            Arc::new(Wake(AtomicUsize::new(0))),
+        )
+        .unwrap();
+        let task = tokio::spawn(client_io_with_files(
+            client,
+            Target {
+                name: "test-owned".into(),
+                pid: 7,
+                generation: "9".into(),
+            },
+            commands,
+            output,
+            file_rx,
+            FileAccess::default(),
+            false,
+            None,
+        ));
+        assert_eq!(read_frame(&mut host).await.unwrap().0, HELLO);
+        write_frame(&mut host, REFUSED, &[]).await.unwrap();
+        assert!(task.await.unwrap().is_err());
+        let error = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let SessionLifecycle::Disconnected(error) = session.lifecycle() {
+                    break error;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(error.message().contains("incompatible bridge protocol"));
+        assert!(!error.message().contains("stolen"));
+        assert!(session.take_recovered_terminal().is_none());
     }
 
     #[tokio::test]
@@ -1014,6 +1085,7 @@ mod tests {
         assert!(!hello.takeover, "the client declined to displace a holder");
         write_frame(&mut host, CAPABILITIES, &[1, 0]).await.unwrap();
         let mut terminal = Terminal::new(Dimensions::new(80, 24).unwrap()).unwrap();
+        terminal.set_semantics(festerm_core::TerminalSemantics::Legacy);
         terminal.ingest(b"same retained shell\r\n");
         let snapshot = encode_snapshot(&terminal.recovery_clone()).unwrap();
         write_frame(&mut host, SNAPSHOT, &snapshot).await.unwrap();
@@ -1023,7 +1095,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        let recovered = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut recovered = tokio::time::timeout(Duration::from_secs(3), async {
             loop {
                 if let Some(terminal) = session.take_recovered_terminal() {
                     return terminal;
@@ -1033,6 +1105,15 @@ mod tests {
         })
         .await
         .unwrap();
+        assert!(recovered
+            .row_text(0)
+            .unwrap()
+            .starts_with("same retained shell"));
+        assert_eq!(
+            recovered.semantics(),
+            festerm_core::TerminalSemantics::Legacy
+        );
+        recovered.ingest(b"\x1bcafter");
         assert!(recovered
             .row_text(0)
             .unwrap()

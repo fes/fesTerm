@@ -35,6 +35,8 @@ pub enum TunnelError {
     SessionNotFound,
     /// Legacy refusals do not distinguish occupancy from a dead/changed daemon.
     AttachRefused,
+    /// Before negotiation, an older host may refuse an incompatible client.
+    AttachRefusedOrIncompatible,
     /// Someone holds the session and this profile does not allow takeover (or
     /// the host forbids it).
     SessionInUse {
@@ -73,13 +75,18 @@ impl fmt::Display for TunnelError {
             Self::AttachRefused => f.write_str(
                 "The host refused the attachment. The session may have ended or changed; check the host logs.",
             ),
+            Self::AttachRefusedOrIncompatible => f.write_str(
+                "The host refused the attachment or uses an incompatible version. Check the session and update both devices.",
+            ),
             Self::SessionInUse { .. } => {
                 f.write_str("The session is attached elsewhere and takeover is off.")
             }
             Self::Displaced(by) => EndReason::Displaced(*by).fmt(f),
             Self::ConnectionLost => f.write_str("Connection lost."),
             Self::SessionExited => f.write_str("The remote shell exited."),
-            Self::Protocol => f.write_str("Unexpected host response."),
+            Self::Protocol => f.write_str(
+                "Unexpected host response or incompatible version. Check the connection and update both devices.",
+            ),
             Self::ProbeUnsupported => {
                 f.write_str("Host liveness check unavailable; reconnect to continue.")
             }
@@ -136,6 +143,7 @@ impl From<AttachError> for TunnelError {
     fn from(error: AttachError) -> Self {
         match error {
             AttachError::Refused => Self::AttachRefused,
+            AttachError::RefusedOrIncompatible => Self::AttachRefusedOrIncompatible,
             AttachError::Protocol => Self::Protocol,
             AttachError::Connection => Self::Network,
             AttachError::Cancelled => Self::Cancelled,

@@ -36,7 +36,7 @@ fn main() {
 fn run() -> io::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.as_slice() == ["--version"] {
-        println!("festerm-tunnel-bridge {} experimental bridge protocol 1 / daemon protocol 3; Dev Tunnels SDK b73b0eb774b86a5b519c300f2f41c9072a66f663", env!("CARGO_PKG_VERSION"));
+        println!("festerm-tunnel-bridge {} experimental bridge protocol 4 / daemon protocol 3; Dev Tunnels SDK b73b0eb774b86a5b519c300f2f41c9072a66f663", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     if args.iter().any(|arg| arg == "--help") {
