@@ -155,6 +155,14 @@ impl MobileApp {
         tab: Option<u64>,
         automatic: bool,
     ) {
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            self.recording_ui.pending_tunnel_recording = if !automatic && tab.is_none() {
+                self.recording_for_new_session()
+            } else {
+                None
+            };
+        }
         self.cancel_dictation();
         self.notice = None;
         self.tunnel.attach_error = None;
@@ -337,6 +345,13 @@ impl MobileApp {
         client: ClientId,
         attachment: Attachment,
     ) {
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let recording = if tab.is_none() {
+            self.recording_ui.pending_tunnel_recording.take()
+        } else {
+            self.recording_ui.pending_tunnel_recording = None;
+            None
+        };
         if tab.is_some_and(|id| !self.tabs.iter().any(|tab| tab.id == id)) {
             let _ = attachment.session().try_shutdown();
             return;
@@ -370,6 +385,10 @@ impl MobileApp {
         self.workspace = workspaces::Workspace::Terminal;
         self.surface = Surface::Terminal;
         self.clear_sticky_modifiers();
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        if let Some(id) = self.active_tab {
+            self.include_new_session(id, recording);
+        }
     }
 
     /// Advances sign-in, tunnel listing and connect flows once per frame.

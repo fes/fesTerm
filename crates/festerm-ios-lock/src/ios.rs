@@ -280,6 +280,10 @@ impl LockBridge {
     pub fn sync(&self) {
         self.shield.set_covered(self.lock.shield_should_cover());
     }
+
+    pub fn recording_monitor_available(&self) -> bool {
+        true
+    }
 }
 
 impl Drop for LockBridge {

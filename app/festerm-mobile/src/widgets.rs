@@ -1070,6 +1070,13 @@ pub fn bottom_sheet_with_footer(
     bottom_sheet_inner(ctx, id, bounds, content, Some(footer))
 }
 
+pub fn reset_bottom_sheet_scroll(ctx: &egui::Context, id: &str) {
+    let scroll_id = ctx.data(|data| data.get_temp::<Id>(Id::new(("sheet-scroll", id))));
+    if let Some(scroll_id) = scroll_id {
+        ctx.data_mut(|data| data.remove::<egui::scroll_area::State>(scroll_id));
+    }
+}
+
 fn bottom_sheet_inner(
     ctx: &egui::Context,
     id: &str,
@@ -1079,6 +1086,11 @@ fn bottom_sheet_inner(
 ) -> SheetOutcome {
     let mut outcome = SheetOutcome::default();
     let scrim_id = Id::new(("sheet-scrim", id));
+    let sheet_id = Id::new(("sheet", id));
+    ctx.set_sublayer(
+        egui::LayerId::new(egui::Order::Foreground, scrim_id),
+        egui::LayerId::new(egui::Order::Foreground, sheet_id),
+    );
     egui::Area::new(scrim_id)
         .order(egui::Order::Foreground)
         .fixed_pos(bounds.min)
@@ -1101,7 +1113,7 @@ fn bottom_sheet_inner(
         .data_mut(|data| data.get_temp::<f32>(height_id))
         .unwrap_or(0.0)
         .min(max_height);
-    let sheet = egui::Area::new(Id::new(("sheet", id)))
+    let sheet = egui::Area::new(sheet_id)
         .order(egui::Order::Foreground)
         .constrain_to(Rect::from_min_max(
             bounds.left_top(),
@@ -1156,6 +1168,9 @@ fn bottom_sheet_inner(
                             content(ui);
                             ui.min_rect().height()
                         });
+                    ctx.data_mut(|data| {
+                        data.insert_temp(Id::new(("sheet-scroll", id)), scroll.id);
+                    });
                     let content_height = scroll.inner;
                     if known.is_none_or(|known| (known - content_height).abs() > 0.5) {
                         ctx.data_mut(|data| data.insert_temp(content_id, content_height));
@@ -1184,7 +1199,9 @@ fn bottom_sheet_inner(
 
 /// Sheet heading with a trailing text action ("Done") or close glyph.
 pub fn sheet_title(ui: &mut Ui, title: &str, action: Option<&str>) -> bool {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), Sense::hover());
+    let (rect, heading) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), Sense::hover());
+    heading.widget_info(|| WidgetInfo::labeled(WidgetType::Label, ui.is_enabled(), title));
     paint_fit(
         ui.painter(),
         egui::pos2(rect.left(), rect.center().y),
@@ -1788,6 +1805,129 @@ fn follow_caret_drag(ui: &Ui, field: Id) {
         .cursor
         .set_char_range(Some(egui::text::CCursorRange::one(caret)));
     state.store(ctx, field);
+}
+
+#[cfg(test)]
+mod sheet_tests {
+    use super::*;
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    #[derive(Default)]
+    struct State {
+        open: bool,
+        selected: bool,
+    }
+
+    #[test]
+    fn sheet_heading_is_accessible() {
+        let mut harness = Harness::new_ui(|ui| {
+            sheet_title(ui, "Recording library", Some("Close"));
+        });
+        harness.run();
+        harness.get_by_label("Recording library");
+        harness.get_by_label("Close");
+    }
+
+    #[test]
+    fn reopened_sheet_remains_interactive_after_scrim_dismissal() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 800.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if state.open {
+                        let outcome = bottom_sheet_with_footer(
+                            ui.ctx(),
+                            "reopen-test",
+                            ui.max_rect(),
+                            |ui| {
+                                ui.checkbox(&mut state.selected, "Include session");
+                            },
+                            |ui| {
+                                ui.label("Footer");
+                            },
+                        );
+                        if outcome.dismissed {
+                            state.open = false;
+                        }
+                    }
+                },
+                State {
+                    open: true,
+                    ..State::default()
+                },
+            );
+        harness.run();
+        let point = egui::pos2(10.0, 10.0);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerMoved(point));
+            harness.event(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        harness.run();
+        assert!(!harness.state().open);
+        harness.state_mut().open = true;
+        harness.run();
+        harness.get_by_label("Include session").click();
+        harness.run();
+        assert!(harness.state().open);
+        assert!(harness.state().selected);
+    }
+
+    #[test]
+    fn resetting_reopened_sheet_restores_its_top() {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(400.0, 400.0))
+            .build_ui_state(
+                |ui, state: &mut State| {
+                    if state.open {
+                        bottom_sheet(ui.ctx(), "reset-scroll-test", ui.max_rect(), |ui| {
+                            ui.label("Sheet heading");
+                            for index in 0..40 {
+                                ui.label(format!("Row {index}"));
+                            }
+                        });
+                    }
+                },
+                State {
+                    open: true,
+                    ..State::default()
+                },
+            );
+        harness.run();
+        let scroll_id = harness
+            .ctx
+            .data(|data| data.get_temp::<Id>(Id::new(("sheet-scroll", "reset-scroll-test"))))
+            .expect("sheet scroll state exists");
+        let mut scroll = egui::scroll_area::State::load(&harness.ctx, scroll_id).unwrap();
+        scroll.offset.y = 300.0;
+        scroll.store(&harness.ctx, scroll_id);
+        harness.run();
+        assert!(
+            egui::scroll_area::State::load(&harness.ctx, scroll_id)
+                .unwrap()
+                .offset
+                .y
+                > 0.0
+        );
+
+        harness.state_mut().open = false;
+        harness.run();
+        reset_bottom_sheet_scroll(&harness.ctx, "reset-scroll-test");
+        harness.state_mut().open = true;
+        harness.run();
+        assert_eq!(
+            egui::scroll_area::State::load(&harness.ctx, scroll_id)
+                .unwrap()
+                .offset
+                .y,
+            0.0
+        );
+    }
 }
 
 #[cfg(test)]

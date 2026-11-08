@@ -617,6 +617,7 @@ pub(crate) struct GridPaint<'a> {
     pub(crate) cache: &'a TerminalRenderCache,
     pub(crate) selection: &'a Selection,
     pub(crate) fonts: &'a FontSettings,
+    pub(crate) color_scheme: Option<&'a ColorScheme>,
     pub(crate) shape_cell_runs: bool,
     pub(crate) focused: bool,
     pub(crate) suppress_cursor: bool,
@@ -744,11 +745,22 @@ impl GlyphRun {
 /// physical columns. Wide cells, selections, style changes, and hyperlinks
 /// create hard boundaries. The renderer may shape a run as one visual glyph
 /// sequence, but cursor, selection, and hit testing keep using `CellGeometry`.
+#[cfg(test)]
 pub(crate) fn glyph_runs(
     cells: &[RenderedCell],
     row: usize,
     dimensions: Dimensions,
     selection: Option<CellRange>,
+) -> Vec<GlyphRun> {
+    glyph_runs_with_scheme(cells, row, dimensions, selection, &terminal_color_scheme())
+}
+
+fn glyph_runs_with_scheme(
+    cells: &[RenderedCell],
+    row: usize,
+    dimensions: Dimensions,
+    selection: Option<CellRange>,
+    scheme: &ColorScheme,
 ) -> Vec<GlyphRun> {
     let mut runs = Vec::new();
     for (column, cell) in cells.iter().enumerate() {
@@ -757,7 +769,7 @@ pub(crate) fn glyph_runs(
         }
         let position = CellPosition { column, row };
         let columns = rendered_cell_columns(cell, dimensions, column);
-        let (foreground, _) = cell_colors(cell);
+        let (foreground, _) = cell_colors_with_scheme(cell, scheme);
         let selected = rendered_cell_is_selected(selection, position, columns);
         let can_extend = runs.last().is_some_and(|run: &GlyphRun| {
             run.position.row == row
@@ -809,7 +821,15 @@ fn paint_grid_with_clip_override(
         paint.selection.range_in_snapshot(paint.snapshot)
     };
     let clip_policy = GridGlyphClipPolicy::new(&painter, clip_override);
-    crate::background::paint_background(&painter, paint.layout.rect);
+    let scheme = paint
+        .color_scheme
+        .copied()
+        .unwrap_or_else(terminal_color_scheme);
+    if paint.color_scheme.is_some() {
+        painter.rect_filled(paint.layout.rect, 0.0, color32(scheme.background()));
+    } else {
+        crate::background::paint_background(&painter, paint.layout.rect);
+    }
     let native =
         crate::native_painter::Batch::begin(&painter, painter.clip_rect(), paint.full_redraw);
     glyphs.rows.begin(dimensions.rows(), paint.full_redraw);
@@ -823,7 +843,8 @@ fn paint_grid_with_clip_override(
         let Some(cells) = paint.cache.row(row) else {
             continue;
         };
-        let key = if native.is_none()
+        let key = if paint.color_scheme.is_none()
+            && native.is_none()
             && clip_override == GridTextClipOverride::Auto
             && glyphs.rows.enabled()
             && (!paint.fonts.font_set().color_emoji()
@@ -888,7 +909,7 @@ fn paint_grid_with_clip_override(
                 let position = CellPosition { column, row };
                 let columns = rendered_cell_columns(cell, dimensions, column);
                 let rect = grid_cell_rect(paint.layout, position, columns);
-                let (foreground, background) = cell_colors(cell);
+                let (foreground, background) = cell_colors_with_scheme(cell, &scheme);
                 let selected = rendered_cell_is_selected(selection_range, position, columns);
                 if key.is_some()
                     && !paint.shape_cell_runs
@@ -924,7 +945,8 @@ fn paint_grid_with_clip_override(
                         },
                     );
                 }
-                if !paint.shape_cell_runs && has_glyph_ink(&cell.text) {
+                let concealed = cell.attributes.contains(Attributes::CONCEALED);
+                if !paint.shape_cell_runs && !concealed && has_glyph_ink(&cell.text) {
                     // Clip to this cell's rect. Some glyphs (notably box-drawing
                     // corners/dots in certain bundled faces) can measure taller
                     // than the "M"-derived cell height, so an unclipped paint can
@@ -966,7 +988,9 @@ fn paint_grid_with_clip_override(
                     }
                 }
                 let double_underline = cell.attributes.contains(Attributes::DOUBLE_UNDERLINE);
-                if cell.attributes.contains(Attributes::UNDERLINE) || double_underline {
+                if !concealed
+                    && (cell.attributes.contains(Attributes::UNDERLINE) || double_underline)
+                {
                     let underline_y = rect.bottom() - if double_underline { 3.0 } else { 2.0 };
                     painter.line_segment(
                         [
@@ -986,7 +1010,7 @@ fn paint_grid_with_clip_override(
                         );
                     }
                 }
-                if cell.attributes.contains(Attributes::STRIKETHROUGH) {
+                if !concealed && cell.attributes.contains(Attributes::STRIKETHROUGH) {
                     let strikethrough_y = rect.center().y;
                     painter.line_segment(
                         [
@@ -999,8 +1023,8 @@ fn paint_grid_with_clip_override(
             }
         }
         if paint.shape_cell_runs {
-            for run in glyph_runs(cells, row, dimensions, selection_range) {
-                if !has_glyph_ink(&run.text) {
+            for run in glyph_runs_with_scheme(cells, row, dimensions, selection_range, &scheme) {
+                if run.attributes.contains(Attributes::CONCEALED) || !has_glyph_ink(&run.text) {
                     continue;
                 }
                 let rect = grid_cell_rect(paint.layout, run.position, run.columns);
@@ -1055,10 +1079,11 @@ fn paint_grid_with_clip_override(
                 ),
                 Vec2::new(paint.layout.metrics.width, paint.layout.metrics.height),
             );
+            let cursor_color = color32(scheme.cursor());
             let color = if paint.focused {
-                DEFAULT_FOREGROUND
+                cursor_color
             } else {
-                DEFAULT_FOREGROUND.gamma_multiply(0.5)
+                cursor_color.gamma_multiply(0.5)
             };
             // Until the running program explicitly requests a cursor shape
             // via DECSCUSR, render a vertical bar rather than the
@@ -1080,16 +1105,16 @@ fn paint_grid_with_clip_override(
                 // underneath; redraw it inverted (background-colored) on
                 // top, matching every other terminal emulator's filled
                 // block-cursor convention.
-                if let Some(cell) = paint
-                    .cache
-                    .row(cursor_row)
-                    .and_then(|row| row.get(cursor_column).filter(|cell| !cell.text.is_empty()))
-                {
+                if let Some(cell) = paint.cache.row(cursor_row).and_then(|row| {
+                    row.get(cursor_column).filter(|cell| {
+                        !cell.text.is_empty() && !cell.attributes.contains(Attributes::CONCEALED)
+                    })
+                }) {
                     let galley = glyphs.layout(
                         &painter,
                         &cell.text,
                         cell.attributes,
-                        DEFAULT_BACKGROUND,
+                        color32(scheme.background()),
                         paint.fonts,
                         cell_rect.width(),
                     );
@@ -1098,7 +1123,7 @@ fn paint_grid_with_clip_override(
                         cell_rect.top()
                             + ((paint.layout.metrics.height - galley.size().y) / 2.0).max(0.0),
                     );
-                    painter.galley(text_position, galley, DEFAULT_BACKGROUND);
+                    painter.galley(text_position, galley, color32(scheme.background()));
                 }
             }
         }
@@ -1169,18 +1194,26 @@ fn paint_cursor(
 }
 
 pub(crate) fn cell_colors(cell: &RenderedCell) -> (Color32, Color32) {
-    let mut foreground = resolve_color(cell.foreground, DEFAULT_FOREGROUND);
-    let mut background = resolve_color(cell.background, DEFAULT_BACKGROUND);
+    cell_colors_with_scheme(cell, &terminal_color_scheme())
+}
+
+fn cell_colors_with_scheme(cell: &RenderedCell, scheme: &ColorScheme) -> (Color32, Color32) {
+    let mut foreground = color32(scheme.resolve(cell.foreground, scheme.foreground()));
+    let mut background = color32(scheme.resolve(cell.background, scheme.background()));
     if cell.attributes.contains(Attributes::INVERSE) {
         std::mem::swap(&mut foreground, &mut background);
+    }
+    if cell.attributes.contains(Attributes::FAINT) {
+        foreground = foreground.gamma_multiply(festerm_core::FAINT_OPACITY);
     }
     if cell.attributes.contains(Attributes::CONCEALED) {
         foreground = background;
     }
-    if cell.attributes.contains(Attributes::FAINT) {
-        foreground = foreground.gamma_multiply(0.6);
-    }
     (foreground, background)
+}
+
+fn color32(color: Rgb) -> Color32 {
+    Color32::from_rgb(color.red, color.green, color.blue)
 }
 
 /// Resolves terminal colors using the xterm-style ANSI/256-color palette.
@@ -2251,6 +2284,7 @@ mod tests {
                         layout,
                         selection,
                         fonts,
+                        color_scheme: None,
                         focused: options.focused,
                         suppress_cursor: false,
                         full_redraw: options.full_redraw,
@@ -3121,6 +3155,7 @@ mod tests {
                         layout: grid_layout(4, 2),
                         selection: &Selection::default(),
                         fonts: &FontSettings::default(),
+                        color_scheme: None,
                         focused: true,
                         suppress_cursor: false,
                         full_redraw: false,
@@ -3320,6 +3355,7 @@ mod tests {
                     cache: &cache,
                     selection: &selection,
                     fonts: &fonts,
+                    color_scheme: None,
                     shape_cell_runs: scenario.shape_cell_runs,
                     focused: false,
                     suppress_cursor: false,

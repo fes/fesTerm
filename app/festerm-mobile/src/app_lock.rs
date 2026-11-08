@@ -49,6 +49,8 @@ pub struct LockHost {
     lock: AppLock,
     #[allow(dead_code)] // keeps the native shield and observers alive on iOS
     bridge: Option<festerm_ios_lock::LockBridge>,
+    #[cfg(all(test, feature = "live-ssh"))]
+    recording_bridge_available: bool,
     last_frame: Option<u64>,
     pub error: Option<String>,
 }
@@ -58,6 +60,8 @@ impl LockHost {
         Self {
             lock,
             bridge,
+            #[cfg(all(test, feature = "live-ssh"))]
+            recording_bridge_available: false,
             last_frame: None,
             error: None,
         }
@@ -68,6 +72,32 @@ impl LockHost {
     pub fn hides_terminal_text(&self) -> bool {
         let settings = self.lock.settings();
         settings.enabled && settings.hide_app_switcher_preview
+    }
+
+    #[cfg(feature = "live-ssh")]
+    pub fn content_available(&self) -> bool {
+        self.lock.should_draw_content()
+    }
+
+    #[cfg(feature = "live-ssh")]
+    pub fn recording_privacy_generation(&self) -> Result<u64, String> {
+        let available = self
+            .bridge
+            .as_ref()
+            .is_some_and(festerm_ios_lock::LockBridge::recording_monitor_available);
+        #[cfg(test)]
+        let available = available || self.recording_bridge_available;
+        if !available {
+            return Err("Recording requires the native privacy monitor".to_owned());
+        }
+        self.lock
+            .recording_privacy_generation()
+            .ok_or_else(|| "Recording requires an active, unlocked app".to_owned())
+    }
+
+    #[cfg(all(test, feature = "live-ssh"))]
+    pub(super) fn enable_recording_bridge_for_test(&mut self) {
+        self.recording_bridge_available = true;
     }
 
     pub fn view(&self) -> LockView {

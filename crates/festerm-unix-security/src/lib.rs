@@ -5,22 +5,10 @@
 #[cfg(unix)]
 mod imp {
     use std::{ffi::OsString, fs::File, io, os::unix::fs::MetadataExt, path::Path};
+    #[cfg(not(target_os = "ios"))]
     use xattr::FileExt;
 
     const MAX_SECURITY_ATTRIBUTE_BYTES: usize = 8 * 1024 * 1024;
-
-    fn require_private_security_support() -> io::Result<()> {
-        // iOS intake only needs no-follow opens; its ACL/xattr privacy checks
-        // have not been implemented.
-        if cfg!(target_os = "ios") {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "private security metadata is unavailable on iOS",
-            ))
-        } else {
-            Ok(())
-        }
-    }
 
     /// Returns an ordinary user's OS identity, refusing elevated/setuid setup.
     pub fn current_user_id() -> io::Result<u32> {
@@ -46,11 +34,22 @@ mod imp {
     /// Checks effective write/search access without creating entries or reopening a path.
     pub fn writable_directory(directory: &File) -> io::Result<()> {
         current_user_id()?;
+        // Android's faccessat lacks AT_EACCESS; use real credentials only
+        // after confirming that both real and effective IDs are identical.
+        #[cfg(target_os = "android")]
+        let flags = {
+            if nix::unistd::Gid::current() != nix::unistd::Gid::effective() {
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+            nix::fcntl::AtFlags::empty()
+        };
+        #[cfg(not(target_os = "android"))]
+        let flags = nix::fcntl::AtFlags::AT_EACCESS;
         nix::unistd::faccessat(
             directory,
             ".",
             nix::unistd::AccessFlags::W_OK | nix::unistd::AccessFlags::X_OK,
-            nix::fcntl::AtFlags::AT_EACCESS,
+            flags,
         )
         .map_err(io::Error::from)
     }
@@ -61,7 +60,7 @@ mod imp {
         gid: u32,
         mode: u32,
         attributes: Vec<(OsString, Vec<u8>)>,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         acl: Vec<u8>,
     }
 
@@ -70,13 +69,25 @@ mod imp {
         uid: u32,
         gid: u32,
         mode: u32,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         acl: Vec<u8>,
     }
 
     pub fn security_metadata(file: &File) -> io::Result<SecurityMetadata> {
-        require_private_security_support()?;
         let metadata = file.metadata()?;
+        let attributes = security_attributes(file)?;
+        Ok(SecurityMetadata {
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+            mode: metadata.mode() & 0o7777,
+            attributes,
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            acl: apple_acl(file)?,
+        })
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    fn security_attributes(file: &File) -> io::Result<Vec<(OsString, Vec<u8>)>> {
         let mut total = 0usize;
         let mut attributes = file
             .list_xattr()?
@@ -95,14 +106,75 @@ mod imp {
             })
             .collect::<io::Result<Vec<_>>>()?;
         attributes.sort_by(|left, right| left.0.cmp(&right.0));
-        Ok(SecurityMetadata {
-            uid: metadata.uid(),
-            gid: metadata.gid(),
-            mode: metadata.mode() & 0o7777,
-            attributes,
-            #[cfg(target_os = "macos")]
-            acl: macos_acl(file)?,
-        })
+        Ok(attributes)
+    }
+
+    #[cfg(target_os = "ios")]
+    fn security_attributes(file: &File) -> io::Result<Vec<(OsString, Vec<u8>)>> {
+        use std::{ffi::CString, os::fd::AsRawFd, os::unix::ffi::OsStringExt};
+
+        fn read_attribute(mut read: impl FnMut(*mut u8, usize) -> isize) -> io::Result<Vec<u8>> {
+            let size = read(std::ptr::null_mut(), 0);
+            if size < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if size as usize > MAX_SECURITY_ATTRIBUTE_BYTES {
+                return Err(io::Error::other("security metadata is too large"));
+            }
+            let mut bytes = vec![0; size as usize];
+            let buffer = if bytes.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                bytes.as_mut_ptr()
+            };
+            let count = read(buffer, bytes.len());
+            if count < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if count as usize > bytes.len() {
+                return Err(io::Error::other("security metadata changed while reading"));
+            }
+            bytes.truncate(count as usize);
+            Ok(bytes)
+        }
+
+        let fd = file.as_raw_fd();
+        let names = read_attribute(|buffer, size| {
+            // SAFETY: fd is borrowed from a live file and the buffer has `size` bytes.
+            unsafe { nix::libc::flistxattr(fd, buffer.cast(), size, 0) }
+        })?;
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        if names.last() != Some(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "security attribute names are malformed",
+            ));
+        }
+        let mut total = names.len();
+        let mut attributes = Vec::new();
+        for name in names[..names.len() - 1].split(|byte| *byte == 0) {
+            if name.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "a security attribute name is empty",
+                ));
+            }
+            let c_name =
+                CString::new(name).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+            let value = read_attribute(|buffer, size| {
+                // SAFETY: the name is NUL-terminated and the buffer has `size` bytes.
+                unsafe { nix::libc::fgetxattr(fd, c_name.as_ptr(), buffer.cast(), size, 0, 0) }
+            })?;
+            total = total
+                .checked_add(value.len())
+                .filter(|total| *total <= MAX_SECURITY_ATTRIBUTE_BYTES)
+                .ok_or_else(|| io::Error::other("security metadata is too large"))?;
+            attributes.push((OsString::from_vec(name.to_vec()), value));
+        }
+        attributes.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(attributes)
     }
 
     pub fn security_metadata_matches(file: &File, expected: &SecurityMetadata) -> io::Result<bool> {
@@ -112,7 +184,6 @@ mod imp {
     /// Captures the exact parent security state after refusing directories
     /// where another account can rename a newly created staging entry.
     pub fn secure_staging_parent(directory: &File) -> io::Result<StagingParentSecurity> {
-        require_private_security_support()?;
         let metadata = directory.metadata()?;
         let mode = metadata.mode();
         let shared_writable = mode & 0o022 != 0;
@@ -120,9 +191,9 @@ mod imp {
         let sticky = mode & u32::from(nix::libc::S_ISVTX) != 0;
         #[cfg(not(any(target_os = "macos", target_os = "ios")))]
         let sticky = mode & nix::libc::S_ISVTX != 0;
-        #[cfg(target_os = "macos")]
-        let permissive_acl = macos_acl_has_allow_entry(directory)?;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let permissive_acl = apple_acl_has_allow_entry(directory)?;
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
         let permissive_acl = false;
         if !staging_parent_security_is_safe(
             shared_writable,
@@ -139,8 +210,8 @@ mod imp {
             uid: metadata.uid(),
             gid: metadata.gid(),
             mode,
-            #[cfg(target_os = "macos")]
-            acl: macos_acl(directory)?,
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            acl: apple_acl(directory)?,
         })
     }
 
@@ -163,8 +234,7 @@ mod imp {
     pub fn make_private(file: &File) -> io::Result<()> {
         use nix::sys::stat::{fchmod, Mode};
 
-        require_private_security_support()?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         if file
             .list_xattr()
             .map_err(private_io_error)?
@@ -173,16 +243,16 @@ mod imp {
             file.remove_xattr("system.posix_acl_access")
                 .map_err(private_io_error)?;
         }
-        #[cfg(target_os = "macos")]
-        clear_macos_acl(file).map_err(private_io_error)?;
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        clear_apple_acl(file).map_err(private_io_error)?;
         fchmod(file, Mode::from_bits_truncate(0o600)).map_err(private_metadata_error)?;
         let private = security_metadata(file).map_err(private_io_error)?;
         if private.mode != 0o600 || {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
             {
                 !private.acl.is_empty()
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
             {
                 false
             }
@@ -198,8 +268,7 @@ mod imp {
     pub fn make_private_directory(directory: &File) -> io::Result<()> {
         use nix::sys::stat::{fchmod, Mode};
 
-        require_private_security_support()?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         for attribute in ["system.posix_acl_access", "system.posix_acl_default"] {
             if directory
                 .list_xattr()
@@ -211,22 +280,27 @@ mod imp {
                     .map_err(private_io_error)?;
             }
         }
-        #[cfg(target_os = "macos")]
-        clear_macos_acl(directory).map_err(private_io_error)?;
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        clear_apple_acl(directory).map_err(private_io_error)?;
         fchmod(directory, Mode::from_bits_truncate(0o700)).map_err(private_metadata_error)?;
         let private = security_metadata(directory).map_err(private_io_error)?;
         let inherited_acl = {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 private.attributes.iter().any(|(name, _)| {
                     name == "system.posix_acl_access" || name == "system.posix_acl_default"
                 })
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
             {
                 !private.acl.is_empty()
             }
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "android",
+                target_os = "macos",
+                target_os = "ios"
+            )))]
             {
                 false
             }
@@ -271,16 +345,21 @@ mod imp {
     }
 
     /// Verifies an owner-only object without changing an existing access policy.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
     pub fn is_current_user_only(file: &File, directory: bool) -> io::Result<bool> {
         let metadata = file.metadata()?;
         let security = security_metadata(file)?;
         let acl = {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
             {
                 !security.acl.is_empty()
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 security.attributes.iter().any(|(name, _)| {
                     name == "system.posix_acl_access" || name == "system.posix_acl_default"
@@ -297,12 +376,23 @@ mod imp {
             && !acl)
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    )))]
     pub fn is_current_user_only(_file: &File, _directory: bool) -> io::Result<bool> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        test
+    ))]
     pub(crate) const fn private_storage_owner_and_mode(
         actual_uid: u32,
         current_uid: u32,
@@ -337,7 +427,7 @@ mod imp {
         if metadata.uid() == 0
             && matches!(metadata.gid(), 0 | 80)
             && metadata.mode() & 0o1002 == 0
-            && !macos_acl_has_allow_entry(directory)?
+            && !apple_acl_has_allow_entry(directory)?
         {
             return Ok(());
         }
@@ -346,7 +436,6 @@ mod imp {
 
     /// Creates only one directory relative to a retained safe parent.
     pub fn create_private_directory(directory: &File, name: &Path) -> io::Result<File> {
-        require_private_security_support()?;
         one_component(name)?;
         nix::sys::stat::mkdirat(directory, name, nix::sys::stat::Mode::S_IRWXU)
             .map_err(io::Error::from)?;
@@ -362,7 +451,6 @@ mod imp {
             fcntl::{openat, OFlag},
             sys::stat::Mode,
         };
-        require_private_security_support()?;
         one_component(name)?;
         let flags = OFlag::O_RDWR
             | OFlag::O_CLOEXEC
@@ -389,7 +477,6 @@ mod imp {
     /// Atomically replaces one entry inside an already verified private
     /// directory. Callers must validate the existing target before replacement.
     pub fn replace_private_file(directory: &File, source: &Path, target: &Path) -> io::Result<()> {
-        require_private_security_support()?;
         one_component(source)?;
         one_component(target)?;
         nix::fcntl::renameat(directory, source, directory, target).map_err(io::Error::from)
@@ -397,7 +484,6 @@ mod imp {
 
     /// Removes one caller-owned staging entry relative to its retained parent.
     pub fn remove_private_staging_file(directory: &File, name: &Path) -> io::Result<()> {
-        require_private_security_support()?;
         one_component(name)?;
         nix::unistd::unlinkat(directory, name, nix::unistd::UnlinkatFlags::NoRemoveDir)
             .map_err(io::Error::from)
@@ -431,7 +517,12 @@ mod imp {
 
         // A rejected FIFO must not block, and a terminal must not become controlling.
         let flags = OFlag::O_RDONLY | OFlag::O_NONBLOCK;
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios"
+        ))]
         let flags = flags | OFlag::O_NOCTTY;
         let file = open_nofollow(directory, name, flags)?;
         if file.metadata()?.is_file() {
@@ -629,8 +720,8 @@ mod imp {
         ))
     }
 
-    #[cfg(target_os = "macos")]
-    fn macos_acl(file: &File) -> io::Result<Vec<u8>> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    fn apple_acl(file: &File) -> io::Result<Vec<u8>> {
         use std::{
             ffi::c_void,
             os::fd::{AsRawFd, RawFd},
@@ -684,8 +775,8 @@ mod imp {
         Ok(bytes)
     }
 
-    #[cfg(target_os = "macos")]
-    fn macos_acl_has_allow_entry(file: &File) -> io::Result<bool> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    fn apple_acl_has_allow_entry(file: &File) -> io::Result<bool> {
         use std::{
             ffi::c_void,
             os::fd::{AsRawFd, RawFd},
@@ -813,8 +904,8 @@ mod imp {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    fn clear_macos_acl(file: &File) -> io::Result<()> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    fn clear_apple_acl(file: &File) -> io::Result<()> {
         use std::{
             ffi::c_void,
             os::fd::{AsRawFd, RawFd},
@@ -860,7 +951,41 @@ mod imp {
         .map_err(rename_error)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "android")]
+    pub fn rename_noreplace(
+        source_directory: &File,
+        source: &Path,
+        target_directory: &File,
+        target: &Path,
+    ) -> io::Result<()> {
+        use std::{ffi::CString, os::fd::AsRawFd, os::unix::ffi::OsStrExt};
+
+        one_component(source)?;
+        one_component(target)?;
+        let source = CString::new(source.as_os_str().as_bytes())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let target = CString::new(target.as_os_str().as_bytes())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        // The syscall works on API 29, unlike bionic's API 30 renameat2
+        // wrapper. The descriptors and C strings remain valid through it.
+        let renamed = unsafe {
+            nix::libc::syscall(
+                nix::libc::SYS_renameat2,
+                source_directory.as_raw_fd(),
+                source.as_ptr(),
+                target_directory.as_raw_fd(),
+                target.as_ptr(),
+                nix::libc::RENAME_NOREPLACE as nix::libc::c_uint,
+            )
+        };
+        if renamed == 0 {
+            Ok(())
+        } else {
+            Err(rename_error(nix::errno::Errno::last()))
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub fn rename_noreplace(
         source_directory: &File,
         source: &Path,
@@ -876,7 +1001,7 @@ mod imp {
         )
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     fn renameatx(
         source_directory: &File,
         source: &Path,
@@ -909,7 +1034,15 @@ mod imp {
         }
     }
 
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "android",
+            target_os = "ios"
+        ))
+    ))]
     pub fn rename_noreplace(
         _source_directory: &File,
         _source: &Path,
@@ -922,7 +1055,13 @@ mod imp {
         ))
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "android",
+        target_os = "ios",
+        test
+    ))]
     fn rename_error(error: nix::errno::Errno) -> io::Error {
         if [
             nix::errno::Errno::EINVAL,
@@ -1045,6 +1184,7 @@ mod tests {
     #[test]
     fn security_snapshot_detects_xattr_changes_and_private_reset() {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        #[cfg(not(target_os = "ios"))]
         use xattr::FileExt;
 
         let directory = TemporaryDirectory::new();
@@ -1056,12 +1196,34 @@ mod tests {
             .mode(0o644)
             .open(&path)
             .unwrap();
-        file.set_xattr("user.festerm-security-test", b"before")
-            .unwrap();
+        #[cfg(not(target_os = "ios"))]
+        let set_attribute = |value: &[u8]| file.set_xattr("user.festerm-security-test", value);
+        #[cfg(target_os = "ios")]
+        let set_attribute = |value: &[u8]| {
+            use std::{ffi::CString, os::fd::AsRawFd};
+            let name = CString::new("user.festerm-security-test").unwrap();
+            // SAFETY: the live file, NUL-terminated name, and bytes remain
+            // valid for this synchronous call.
+            let result = unsafe {
+                nix::libc::fsetxattr(
+                    file.as_raw_fd(),
+                    name.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                    0,
+                )
+            };
+            if result == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        };
+        set_attribute(b"before").unwrap();
         let snapshot = security_metadata(&file).unwrap();
 
-        file.set_xattr("user.festerm-security-test", b"after")
-            .unwrap();
+        set_attribute(b"after").unwrap();
 
         assert!(!security_metadata_matches(&file, &snapshot).unwrap());
         make_private(&file).unwrap();

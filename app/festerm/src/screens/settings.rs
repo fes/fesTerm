@@ -207,6 +207,17 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         ui.heading("Settings");
                         ui.add_space(2.0);
 
+                        settings_card(ui, "Recordings", |ui| {
+                            ui.label("Choose a device-local export folder, naming and playback defaults.");
+                            ui.horizontal(|ui| {
+                                if ui.button("Recording settings…").clicked() {
+                                    command = Some(AppCommand::OpenRecordingSettings);
+                                }
+                                if ui.button("Recording library…").clicked() {
+                                    command = Some(AppCommand::OpenRecordingLibrary);
+                                }
+                            });
+                        });
                         settings_card(ui, "Panes", |ui| {
                             if settings_toggle_row(
                                 ui,

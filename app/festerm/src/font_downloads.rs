@@ -15,6 +15,7 @@ use std::{
 
 use eframe::egui;
 use festerm_config::TerminalFontPreference;
+use festerm_recording::RecordingFont;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -171,6 +172,59 @@ fn cached(root: &Path, face: &FontFile) -> Result<Option<Vec<u8>>, String> {
         .read_to_end(&mut bytes)
         .map_err(|_| "The cached font could not be read completely. Retry.")?;
     Ok(verify(&bytes, face).then_some(bytes))
+}
+
+fn native_root() -> Option<PathBuf> {
+    directories::ProjectDirs::from("com", "fes", "fesTerm")
+        .map(|directories| directories.data_local_dir().join("fonts").join("v1"))
+}
+
+/// Read only already-installed, verified faces. Export never starts a download
+/// or temporarily falls back when its selected family is unavailable.
+pub(crate) fn recording_faces(
+    font: RecordingFont,
+    cancel: &AtomicBool,
+) -> Result<Option<[Vec<u8>; 4]>, String> {
+    let family = match font {
+        RecordingFont::JetBrainsMono | RecordingFont::JetBrainsMonoLigatures => return Ok(None),
+        RecordingFont::IosevkaTerm => TerminalFontPreference::IosevkaTerm,
+        RecordingFont::JuliaMono => TerminalFontPreference::JuliaMono,
+        RecordingFont::MapleMono => TerminalFontPreference::MapleMono,
+    };
+    let root = native_root().ok_or_else(|| {
+        format!(
+            "{} is unavailable; download it in Terminal font settings or choose a bundled font",
+            font.label()
+        )
+    })?;
+    recording_faces_at(&root, family, cancel).map(Some)
+}
+
+fn recording_faces_at(
+    root: &Path,
+    family: TerminalFontPreference,
+    cancel: &AtomicBool,
+) -> Result<[Vec<u8>; 4], String> {
+    let unavailable = || {
+        format!(
+            "{} is unavailable; download it in Terminal font settings or choose a bundled font",
+            family_label(family)
+        )
+    };
+    match fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(unavailable()),
+        Ok(_) => return Err("The font cache is not a safe directory.".into()),
+        Err(error) => return Err(format!("The font cache cannot be inspected: {error}")),
+    }
+    let mut faces = Vec::with_capacity(4);
+    for face in catalog(family)? {
+        cancelled(cancel)?;
+        faces.push(cached(root, &face)?.ok_or_else(unavailable)?);
+    }
+    faces
+        .try_into()
+        .map_err(|_| "The cached recording font is incomplete.".into())
 }
 
 fn prepare_store(root: &Path) -> Result<(), String> {
@@ -373,10 +427,7 @@ type TestCompletion = mpsc::SyncSender<Result<[Vec<u8>; 4], String>>;
 
 impl FontDownloads {
     pub(crate) fn native() -> Self {
-        Self::with_root(
-            directories::ProjectDirs::from("com", "fes", "fesTerm")
-                .map(|directories| directories.data_local_dir().join("fonts").join("v1")),
-        )
+        Self::with_root(native_root())
     }
 
     pub(crate) fn with_root(root: Option<PathBuf>) -> Self {
@@ -581,6 +632,31 @@ impl FontDownloads {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn recording_uses_only_complete_verified_cached_faces() {
+        let directory = tempfile::tempdir().unwrap();
+        let family = TerminalFontPreference::MapleMono;
+        let cancel = AtomicBool::new(false);
+        assert!(recording_faces_at(directory.path(), family, &cancel)
+            .unwrap_err()
+            .contains("unavailable"));
+        let _controller = FontDownloads::cached_for_test(directory.path(), family);
+        let faces = recording_faces_at(directory.path(), family, &cancel).unwrap();
+        assert!(faces
+            .iter()
+            .zip(catalog(family).unwrap())
+            .all(|(bytes, face)| verify(bytes, &face)));
+        let first = &catalog(family).unwrap()[0];
+        fs::write(directory.path().join(asset_name(first)), b"corrupted").unwrap();
+        assert!(recording_faces_at(directory.path(), family, &cancel)
+            .unwrap_err()
+            .contains("unavailable"));
+        cancel.store(true, Ordering::Relaxed);
+        assert!(recording_faces_at(directory.path(), family, &cancel)
+            .unwrap_err()
+            .contains("cancelled"));
+    }
 
     fn fixtures() -> ([FontFile; 4], [Vec<u8>; 4]) {
         let bytes: [Vec<u8>; 4] = std::array::from_fn(|index| vec![index as u8 + 1; 32 + index]);

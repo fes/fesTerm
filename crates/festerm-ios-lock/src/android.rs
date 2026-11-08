@@ -3,7 +3,7 @@ use crate::{
     LifecycleEvent, Locker,
 };
 use festerm_android_platform::{self as native, AuthResult};
-use std::sync::Arc;
+use std::{cell::Cell, sync::Arc};
 
 pub struct AndroidLocker;
 
@@ -44,6 +44,7 @@ fn outcome(result: AuthResult) -> AuthOutcome {
 
 pub struct LockBridge {
     lock: AppLock,
+    recording_monitor_available: Cell<bool>,
 }
 
 impl LockBridge {
@@ -63,7 +64,10 @@ impl LockBridge {
             lock.lock_now();
             return None;
         }
-        Some(Self { lock })
+        Some(Self {
+            lock,
+            recording_monitor_available: Cell::new(true),
+        })
     }
 
     pub fn sync(&self) {
@@ -73,8 +77,15 @@ impl LockBridge {
             self.lock.shield_should_cover(),
             settings.hide_app_switcher_preview,
         ) {
+            if self.recording_monitor_available.replace(false) {
+                self.lock.handle_lifecycle(LifecycleEvent::DeviceLocked);
+            }
             self.lock.lock_now();
             eprintln!("fesTerm: {error}");
         }
+    }
+
+    pub fn recording_monitor_available(&self) -> bool {
+        self.recording_monitor_available.get()
     }
 }

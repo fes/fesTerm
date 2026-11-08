@@ -35,6 +35,159 @@
   ],
   "coverage": [
     {
+      "id": "recording-settings",
+      "edges": ["REC-01"],
+      "requirements": ["docs/terminal-recording-design.md#recording-settings-naming-and-directory-layout"],
+      "decisions": ["ADR-0077"],
+      "automated_tests": [
+        "recording_settings_ui_saves_a_valid_device_local_draft",
+        "legacy_deletion_preference_is_not_enabled_on_mobile",
+        "saves_settings_off_thread_and_reloads_them",
+        "defaults_use_safe_retention_and_shared_pacing",
+        "appearance_round_trips_and_rejects_invalid_canvas_and_scale",
+        "recording_uses_only_complete_verified_cached_faces",
+        "settings_round_trip_and_validate_all_pacing_and_naming_fields",
+        "saves_and_reloads_device_local_settings",
+        "refuses_concurrent_changes_and_invalid_settings",
+        "refuses_unprivate_symlinked_or_corrupt_state",
+        "refuses_replaced_directory_without_writing_to_it",
+        "refuses_a_busy_store_and_a_hard_linked_settings_file"
+      ],
+      "manual_scenarios": ["TR-01"],
+      "status": "partial",
+      "prerequisites": [
+        "Qualify desktop export-folder selection and device-local settings on macOS, Windows and Linux",
+        "Qualify the iOS Files-folder picker, bookmark authorization and coordinated provider publication",
+        "Qualify Android and iOS settings, grant persistence, accessibility, backup policy and failure recovery in native apps"
+      ]
+    },
+    {
+      "id": "recording-consent-and-selection",
+      "edges": ["REC-02"],
+      "requirements": ["docs/terminal-recording-design.md#user-workflow", "docs/terminal-recording-design.md#capture-model"],
+      "decisions": ["ADR-0077"],
+      "automated_tests": [
+        "consent_identity_rejects_reconnected_or_replaced_sessions",
+        "recording_auto_enrollment_only_follows_new_user_sessions_and_the_same_generation",
+        "recording_auto_enrollment_does_not_miss_a_fast_session",
+        "recording_auto_enrollment_waits_for_a_sanitized_recovery_screen",
+        "mobile_recording_binds_selected_active_and_parked_sessions",
+        "reopened_sheet_remains_interactive_after_scrim_dismissal",
+        "partial_preconsent_sequences_refuse_start_without_creating_a_source",
+        "ambiguous_color_text_refuses_start_without_creating_a_source",
+        "invisible_unicode_refuses_start_without_creating_a_source",
+        "invisible_unicode_cannot_enter_the_initial_checkpoint",
+        "recording_checkpoint_refuses_faint_text_with_ambiguous_blending",
+        "recording_refuses_a_palette_that_does_not_match_the_visible_view",
+        "color_emoji_and_block_cursor_can_reveal_equal_color_text"
+      ],
+      "manual_scenarios": ["TR-02"],
+      "status": "partial",
+      "prerequisites": [
+        "Qualify consent, cancellation, selection and indicators in native desktop and mobile applications"
+      ]
+    },
+    {
+      "id": "recording-shared-capture",
+      "edges": ["REC-03"],
+      "requirements": ["docs/terminal-recording-design.md#capture-model", "docs/terminal-recording-design.md#shared-timeline-and-separate-exports"],
+      "decisions": ["ADR-0077"],
+      "automated_tests": [
+        "synchronized_capture_spans_windows_and_excludes_local_input",
+        "selected_streams_share_a_timeline_and_replay_applied_mutations",
+        "recording_tracks_a_passive_pane_resize",
+        "active_recording_flushes_its_recent_complete_events",
+        "repeat_of_offscreen_preconsent_character_is_recorded_only_when_repeated",
+        "concealed_preconsent_repeat_uses_a_same_width_blank_until_visible",
+        "ascii_runs_match_byte_at_a_time_printing",
+        "closing_one_shared_stream_keeps_the_other_recording",
+        "clean_mobile_session_exit_leaves_other_streams_recording",
+        "event_channel_closing_after_clean_exit_does_not_fail_other_streams",
+        "recording_captures_active_and_parked_output_then_stops_on_native_suspension"
+      ],
+      "manual_scenarios": ["TR-02"],
+      "status": "partial",
+      "prerequisites": [
+        "Qualify cross-window movement, inclusion and synchronized stop in native desktop and mobile applications"
+      ]
+    },
+    {
+      "id": "recording-privacy-and-integrity-stop",
+      "edges": ["REC-04"],
+      "requirements": ["docs/terminal-recording-design.md#recording-artifact-and-privacy", "docs/terminal-recording-design.md#resource-bounds-and-failure-behavior"],
+      "decisions": ["ADR-0077"],
+      "automated_tests": [
+        "recording_start_refuses_a_privacy_cut_before_the_recorder_exists",
+        "mobile_inactivity_and_locks_stop_recording_without_a_ui_frame",
+        "mobile_inactivity_cancels_export_and_invalidates_consent",
+        "inactive_authentication_dialog_revokes_recording_consent",
+        "shared_lifecycle_stop_blocks_later_output_in_every_stream",
+        "lifecycle_closes_admission_before_waiting_for_the_capture_lock",
+        "a_brief_shield_transition_revokes_consent_once",
+        "suspension_and_content_lock_cancel_export_without_a_ui_frame",
+        "shared_capture_failure_is_visible_and_stops_every_stream",
+        "failed_mobile_session_stops_all_recorded_streams_incomplete",
+        "recorded_mobile_session_input_refusal_stops_the_shared_recording",
+        "disconnected_or_closed_session_stops_the_shared_recording_incomplete",
+        "recording_auto_enrollment_failure_stops_the_recording",
+        "recording_auto_enrollment_fails_if_a_pending_session_is_replaced",
+        "unresolved_enrollment_never_finishes_as_a_complete_recording",
+        "resizing_into_preconsent_history_stops_before_the_unfaithful_event",
+        "a_brief_switch_to_a_preconsent_screen_is_checked_before_switching_back",
+        "concealed_preconsent_grapheme_cannot_change_replay_geometry",
+        "repeat_of_invisible_preconsent_character_stops_before_persisting_it",
+        "recovery_palette_mismatch_stops_recording_before_later_output",
+        "recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss",
+        "a_new_ambiguous_graphical_session_revokes_existing_consent"
+      ],
+      "manual_scenarios": ["TR-02"],
+      "status": "partial",
+      "prerequisites": [
+        "Qualify the shared Windows privacy monitor and its synchronous revocation on native Windows",
+        "Qualify native lock, sleep, background and app-privacy cutoff delivery on each platform"
+      ]
+    },
+    {
+      "id": "recording-export-and-recovery",
+      "edges": ["REC-05"],
+      "requirements": ["docs/terminal-recording-design.md#mp4-encoding-and-platform-qualification", "docs/terminal-recording-design.md#recording-artifact-and-privacy"],
+      "decisions": ["ADR-0077"],
+      "automated_tests": [
+        "streams_use_one_idle_transform_and_frame_schedule",
+        "worker_publishes_all_streams_before_applying_retention",
+        "retaining_backend_preserves_sources_even_with_old_deletion_settings",
+        "worker_retains_source_on_encoding_and_publication_failure",
+        "cancellation_after_publication_retains_source",
+        "cancellation_during_committed_deletion_stops_subsequent_cleanup",
+        "resetting_reopened_sheet_restores_its_top",
+        "advanced_pacing_observes_cancellation_after_the_last_source_read",
+        "cancellation_interrupts_a_large_typing_run",
+        "cancellation_interrupts_endpoint_queue_construction",
+        "cancellation_interrupts_a_large_simultaneous_event_group",
+        "preview_binds_the_confirmed_settings_and_source_to_export",
+        "selected_appearance_is_used_for_every_stream_and_published_with_its_identity",
+        "unavailable_selected_font_retains_source_without_publishing",
+        "corrupted_selected_font_is_not_substituted_or_published",
+        "recording_palette_resolves_default_ansi_and_inverse_colors",
+        "desktop_stop_requires_a_current_duration_preview_and_export_confirmation",
+        "provider_failure_reports_partial_directory_and_retains_source",
+        "cancellation_interrupts_provider_video_verification",
+        "recovers_only_validated_complete_partials_without_overwriting",
+        "recovery_rejects_a_valid_source_changed_after_inspection",
+        "recovery_stops_before_corrupt_truncated_or_semantically_invalid_frames",
+        "recovery_omits_a_truncated_annotated_output_frame",
+        "recovered_prefix_is_labeled_and_never_deletes_the_original",
+        "recovery_refuses_a_changed_tail_even_when_the_prefix_is_unchanged"
+      ],
+      "manual_scenarios": ["TR-03"],
+      "status": "partial",
+      "prerequisites": [
+        "Qualify appearance selection, verified metadata and prefix recovery in native UIs",
+        "Qualify end-to-end native MP4 export, playback, retry and deletion on each supported platform",
+        "Qualify Windows Media Foundation and physical mobile devices; isolated Linux and Android smoke does not qualify every native workflow"
+      ]
+    },
+    {
       "id": "desktop-split-pane-presentation",
       "edges": ["PANE-01", "PANE-02", "PANE-03", "PANE-04", "PANE-05", "PANE-06", "PANE-07", "PANE-08", "PANE-09", "PANE-10"],
       "requirements": ["docs/adr/0078-desktop-split-pane-presentation.md#decision", "docs/gui-design.md"],

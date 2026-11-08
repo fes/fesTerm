@@ -332,6 +332,7 @@ pub(crate) struct SessionNameNotice {
 #[derive(Default)]
 pub(crate) struct OverlayState {
     pub(crate) native_tunnel: bool,
+    pub(crate) recording_modal: bool,
     pub(crate) pending_close: Option<PendingCloseConfirmation>,
     pub(crate) pending_paste: Option<PendingPasteConfirmation>,
     pub(crate) pending_file_drop: Option<PendingFileDropConfirmation>,
@@ -417,6 +418,7 @@ impl OverlayState {
 
     pub(crate) fn blocks_terminal_input_except_paste(&self) -> bool {
         self.native_tunnel
+            || self.recording_modal
             || self.pending_close.is_some()
             || self.pending_document_close.is_some()
             || self.pending_file_drop.is_some()
