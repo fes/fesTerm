@@ -1,0 +1,4417 @@
+{
+  "description": "Headless egui all-dirty-grid benchmark; process user plus system CPU seconds",
+  "baseline_commit": "209e494cd93311d9ec505c59de26dbb20b643e15",
+  "candidate": "implementation recorded with this receipt",
+  "platform": "Apple M2, macOS 27.2, Rust 1.97.1, release profile",
+  "sample_order": "A-B-B-A-A-B-B-A-A-B-B-A",
+  "records": [
+    {
+      "load_before": [
+        14.4111328125,
+        30.97314453125,
+        30.2666015625
+      ],
+      "workload": "changing_scroll",
+      "frames": 6000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.387782,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.369777,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.391041,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.4031850000000001,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.3920519999999998,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.447348,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.401533,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.411052,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.433705,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.3703070000000002,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.401125,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.381984,
+      "state": "workload=changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1287948 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "medians": {
+        "before": 1.3976185,
+        "after": 1.396083
+      },
+      "load_after": [
+        11.9501953125,
+        29.6181640625,
+        29.794921875
+      ]
+    },
+    {
+      "load_before": [
+        11.9501953125,
+        29.6181640625,
+        29.794921875
+      ],
+      "workload": "eighty_percent_repeated_scroll",
+      "frames": 6000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.837873,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.8460629999999999,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.83688,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.7984169999999999,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.8141759999999999,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.8504029999999999,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.8146100000000001,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.799236,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.808361,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.790562,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.806853,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.786001,
+      "state": "workload=eighty_percent_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=175301 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "medians": {
+        "before": 0.8037985,
+        "after": 0.825745
+      },
+      "load_after": [
+        11.10888671875,
+        28.85595703125,
+        29.5224609375
+      ]
+    },
+    {
+      "load_before": [
+        11.10888671875,
+        28.85595703125,
+        29.5224609375
+      ],
+      "workload": "half_repeated_scroll",
+      "frames": 6000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.997964,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.98053,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.953784,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.936832,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.970529,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.960367,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.9446959999999999,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.964361,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.9790220000000001,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.1473939999999998,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.1531740000000001,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.083302,
+      "state": "workload=half_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=683223 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "medians": {
+        "before": 0.9747755,
+        "after": 0.9704485
+      },
+      "load_after": [
+        9.52197265625,
+        27.63671875,
+        29.07568359375
+      ]
+    },
+    {
+      "load_before": [
+        9.52197265625,
+        27.63671875,
+        29.07568359375
+      ],
+      "workload": "interior_change_scroll",
+      "frames": 1200
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0670510000000002,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0376750000000001,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0890609999999998,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.048579,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0399260000000001,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.028494,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.035765,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.020513,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0586630000000001,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.078881,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0247870000000001,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0363,
+      "state": "workload=interior_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5612504 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 1.0442525,
+        "after": 1.03672
+      },
+      "load_after": [
+        8.83935546875,
+        26.8916015625,
+        28.7939453125
+      ]
+    },
+    {
+      "load_before": [
+        8.83935546875,
+        26.8916015625,
+        28.7939453125
+      ],
+      "workload": "interior_mixed_scroll",
+      "frames": 1200
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.083072,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.042909,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.080952,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.015386,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.037771,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.063055,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.076597,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.053847,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0154400000000001,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.084333,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.100173,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.067613,
+      "state": "workload=interior_mixed_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=44 primitives=5577214 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 1.045809,
+        "after": 1.0787745
+      },
+      "load_after": [
+        8.06103515625,
+        25.8349609375,
+        28.38330078125
+      ]
+    },
+    {
+      "load_before": [
+        8.06103515625,
+        25.8349609375,
+        28.38330078125
+      ],
+      "workload": "late_change_scroll",
+      "frames": 1200
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0464069999999999,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.045493,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.03337,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.068381,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.08161,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0346659999999999,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0765689999999999,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.093893,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.064815,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.059675,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.11215,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.15648,
+      "state": "workload=late_change_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5715704 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "medians": {
+        "before": 1.0749955,
+        "after": 1.052584
+      },
+      "load_after": [
+        7.51611328125,
+        25.1318359375,
+        28.10400390625
+      ]
+    },
+    {
+      "load_before": [
+        7.51611328125,
+        25.1318359375,
+        28.10400390625
+      ],
+      "workload": "late_change_tui",
+      "frames": 12000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.457766,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.46755299999999994,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.475761,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.479507,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.48411,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.479342,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.45406399999999997,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.453029,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.453596,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.44808299999999995,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.475044,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.47766,
+      "state": "workload=late_change_tui frames=12000 columns=152 rows=44 reused=516000 rebuilt=12000 primitives=1341012 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "medians": {
+        "before": 0.467713,
+        "after": 0.47129849999999995
+      },
+      "load_after": [
+        7.154296875,
+        24.76416015625,
+        27.95654296875
+      ]
+    },
+    {
+      "load_before": [
+        7.154296875,
+        24.76416015625,
+        27.95654296875
+      ],
+      "workload": "linked_late_change_scroll",
+      "frames": 6000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.796312,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7862089999999999,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7972159999999999,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.774613,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.7947439999999999,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7835019999999999,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7986530000000001,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.808163,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.8189219999999999,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.78312,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.77613,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.7970939999999999,
+      "state": "workload=linked_late_change_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=6000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 0.7967029999999999,
+        "after": 0.7848554999999999
+      },
+      "load_after": [
+        6.97607421875,
+        24.14599609375,
+        27.69970703125
+      ]
+    },
+    {
+      "load_before": [
+        6.97607421875,
+        24.14599609375,
+        27.69970703125
+      ],
+      "workload": "linked_multi_wide_repeated_scroll",
+      "frames": 1200
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.074583,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.043942,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0684609999999999,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.000881,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.019476,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.038465,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.098143,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.03764,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.016519,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0408670000000002,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0308860000000002,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.020704,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 1.0200900000000002,
+        "after": 1.0424045
+      },
+      "load_after": [
+        6.4580078125,
+        23.19140625,
+        27.29638671875
+      ]
+    },
+    {
+      "load_before": [
+        6.4580078125,
+        23.19140625,
+        27.29638671875
+      ],
+      "workload": "linked_repeated_scroll",
+      "frames": 8000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.057234,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.010344,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.001219,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.04721,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0739180000000002,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0233109999999999,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.993037,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.064021,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.052828,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.01065,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0075370000000001,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.06006,
+      "state": "workload=linked_repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 1.0586470000000001,
+        "after": 1.0089405
+      },
+      "load_after": [
+        6.2333984375,
+        22.591796875,
+        27.03564453125
+      ]
+    },
+    {
+      "load_before": [
+        6.2333984375,
+        22.591796875,
+        27.03564453125
+      ],
+      "workload": "linked_wide_changing_scroll",
+      "frames": 1200
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0111640000000002,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.0589190000000002,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.069623,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0352389999999998,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.003471,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.060795,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.067401,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.024621,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0114809999999999,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.083669,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.02484,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.042076,
+      "state": "workload=linked_wide_changing_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 1.0180509999999998,
+        "after": 1.064098
+      },
+      "load_after": [
+        5.96533203125,
+        21.7294921875,
+        26.64990234375
+      ]
+    },
+    {
+      "load_before": [
+        5.96533203125,
+        21.7294921875,
+        26.64990234375
+      ],
+      "workload": "linked_wide_repeated_scroll",
+      "frames": 1200
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0656539999999999,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7050909999999999,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.703475,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.033769,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.060616,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.718579,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7186259999999999,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.011825,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.039347,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.705827,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.729634,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.105867,
+      "state": "workload=linked_wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 1.0499815,
+        "after": 0.7122029999999999
+      },
+      "load_after": [
+        5.66259765625,
+        21.1455078125,
+        26.384765625
+      ]
+    },
+    {
+      "load_before": [
+        5.66259765625,
+        21.1455078125,
+        26.384765625
+      ],
+      "workload": "mostly_changing_scroll",
+      "frames": 6000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0587149999999999,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.031076,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.075591,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.05456,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.040581,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.048184,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.068859,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.038843,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.072284,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.091317,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.034829,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0401449999999999,
+      "state": "workload=mostly_changing_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=1094385 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "medians": {
+        "before": 1.0475705,
+        "after": 1.0585215
+      },
+      "load_after": [
+        5.400390625,
+        20.58056640625,
+        26.12255859375
+      ]
+    },
+    {
+      "load_before": [
+        5.400390625,
+        20.58056640625,
+        26.12255859375
+      ],
+      "workload": "mostly_repeated_scroll",
+      "frames": 6000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.798093,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.757493,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7667569999999999,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.765022,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.750915,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7563139999999999,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7714129999999999,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.75157,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.783527,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7867580000000001,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.77534,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.752458,
+      "state": "workload=mostly_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=44 primitives=90667 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "medians": {
+        "before": 0.75874,
+        "after": 0.7690849999999999
+      },
+      "load_after": [
+        5.48583984375,
+        20.099609375,
+        25.88671875
+      ]
+    },
+    {
+      "load_before": [
+        5.48583984375,
+        20.099609375,
+        25.88671875
+      ],
+      "workload": "repeated_scroll",
+      "frames": 8000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.9864189999999999,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.882087,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.8396849999999999,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.949888,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.9738669999999999,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.833835,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.846752,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.9588439999999999,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.9937149999999999,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.88168,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.821139,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=352000 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.9437819999999999,
+      "state": "workload=repeated_scroll frames=8000 columns=152 rows=44 reused=0 rebuilt=0 primitives=8000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 0.9663554999999999,
+        "after": 0.8432184999999999
+      },
+      "load_after": [
+        5.22314453125,
+        19.326171875,
+        25.50927734375
+      ]
+    },
+    {
+      "load_before": [
+        5.22314453125,
+        19.326171875,
+        25.50927734375
+      ],
+      "workload": "three_quarter_repeated_scroll",
+      "frames": 6000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.899264,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.890721,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.845985,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.8921739999999999,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.828266,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.8447129999999999,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.826198,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.8655459999999999,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.8611389999999999,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.8627659999999999,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.8241599999999999,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.8295569999999999,
+      "state": "workload=three_quarter_repeated_scroll frames=6000 columns=152 rows=44 reused=0 rebuilt=0 primitives=348647 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "medians": {
+        "before": 0.8633424999999999,
+        "after": 0.8453489999999999
+      },
+      "load_after": [
+        5.1884765625,
+        18.85400390625,
+        25.26904296875
+      ]
+    },
+    {
+      "load_before": [
+        5.1884765625,
+        18.85400390625,
+        25.26904296875
+      ],
+      "workload": "wide_repeated_scroll",
+      "frames": 1200
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.113299,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7228419999999999,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7069949999999999,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.036049,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.015823,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.7021749999999999,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.682285,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.0325199999999999,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.042163,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.6927559999999999,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.67816,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=52800 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.999362,
+      "state": "workload=wide_repeated_scroll frames=1200 columns=152 rows=44 reused=0 rebuilt=0 primitives=5677200 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 1.0342845,
+        "after": 0.6974654999999998
+      },
+      "load_after": [
+        5.00537109375,
+        18.3642578125,
+        25.02001953125
+      ]
+    }
+  ],
+  "earlier_round_before_benchmark_cli_and_texture_cleanup": [
+    {
+      "load_before": [
+        6.11474609375,
+        5.8076171875,
+        8.83984375
+      ],
+      "workload": "changing_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.476367,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.47152499999999997,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.48167399999999994,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.482319,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.47694899999999996,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.460987,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.47205099999999994,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.478449,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.461138,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.47091099999999997,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.46874699999999997,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.45758499999999996,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "medians": {
+        "before": 0.47665799999999997,
+        "after": 0.47121799999999997
+      },
+      "load_after": [
+        6.025390625,
+        5.7939453125,
+        8.81689453125
+      ]
+    },
+    {
+      "load_before": [
+        5.09033203125,
+        5.60888671875,
+        8.82568359375
+      ],
+      "workload": "eighty_percent_repeated_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.265716,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27181299999999997,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.26653499999999997,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.260773,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.26335699999999995,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27120199999999994,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.265401,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.271702,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.261449,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.261795,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.262323,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.272645,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "medians": {
+        "before": 0.26453649999999995,
+        "after": 0.265968
+      },
+      "load_after": [
+        5.09033203125,
+        5.60888671875,
+        8.82568359375
+      ]
+    },
+    {
+      "load_before": [
+        5.1630859375,
+        5.615234375,
+        8.80908203125
+      ],
+      "workload": "half_repeated_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.31182699999999997,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.331819,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.32973,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.31510999999999995,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.310532,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.314961,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.318304,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.32640699999999995,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.33918299999999996,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.337779,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.337383,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.329182,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "medians": {
+        "before": 0.32075849999999995,
+        "after": 0.33077449999999997
+      },
+      "load_after": [
+        5.95068359375,
+        5.77099609375,
+        8.84521484375
+      ]
+    },
+    {
+      "load_before": [
+        5.78271484375,
+        5.74755859375,
+        8.78271484375
+      ],
+      "workload": "interior_change_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.288076,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28332199999999996,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28157299999999996,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28255199999999997,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.298661,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.307517,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.297151,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.329038,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.321958,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.311409,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.294029,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.294436,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.2965485,
+        "after": 0.29559
+      },
+      "load_after": [
+        5.5595703125,
+        5.70166015625,
+        8.74853515625
+      ]
+    },
+    {
+      "load_before": [
+        5.5595703125,
+        5.70166015625,
+        8.74853515625
+      ],
+      "workload": "interior_mixed_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.308551,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.29828299999999996,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.315538,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.298988,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29230399999999995,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.29523099999999997,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.316226,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.299829,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.294239,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.290647,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.289527,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.294778,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.296883,
+        "after": 0.29675699999999994
+      },
+      "load_after": [
+        5.6748046875,
+        5.72314453125,
+        8.73828125
+      ]
+    },
+    {
+      "load_before": [
+        6.025390625,
+        5.7939453125,
+        8.81689453125
+      ],
+      "workload": "late_change_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.30233299999999996,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.29423999999999995,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.304106,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29675999999999997,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.290709,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.278595,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.293964,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.302473,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.292736,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28435299999999997,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.30868999999999996,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.305372,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "medians": {
+        "before": 0.29954649999999994,
+        "after": 0.294102
+      },
+      "load_after": [
+        5.78271484375,
+        5.74755859375,
+        8.78271484375
+      ]
+    },
+    {
+      "load_before": [
+        5.6748046875,
+        5.72314453125,
+        8.73828125
+      ],
+      "workload": "late_change_tui",
+      "frames": 3000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.131402,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.130601,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.129415,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.129184,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.129826,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.12936799999999998,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.12758,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.128985,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.12980999999999998,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.133375,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.138314,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.133768,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "medians": {
+        "before": 0.129818,
+        "after": 0.130008
+      },
+      "load_after": [
+        5.6748046875,
+        5.72314453125,
+        8.73828125
+      ]
+    },
+    {
+      "load_before": [
+        6.11474609375,
+        5.8076171875,
+        8.83984375
+      ],
+      "workload": "linked_late_change_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29874999999999996,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.283961,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27856,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.286759,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.284335,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.275989,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27733199999999997,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29722099999999996,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.296436,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.285872,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.280727,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.301089,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 0.29682849999999994,
+        "after": 0.2796435
+      },
+      "load_after": [
+        6.11474609375,
+        5.8076171875,
+        8.83984375
+      ]
+    },
+    {
+      "load_before": [
+        5.109375,
+        5.640625,
+        8.89453125
+      ],
+      "workload": "linked_repeated_scroll",
+      "frames": 4000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.480907,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.443921,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.458359,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.496707,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.487855,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.453513,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.453395,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.506118,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.496754,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.479101,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.465511,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.501419,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 0.49673049999999996,
+        "after": 0.455936
+      },
+      "load_after": [
+        5.0205078125,
+        5.61328125,
+        8.86572265625
+      ]
+    },
+    {
+      "load_before": [
+        5.119140625,
+        5.65185546875,
+        8.91796875
+      ],
+      "workload": "linked_wide_changing_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.254467,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.24947,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.24526599999999998,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.246628,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.249636,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.254884,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.24695999999999999,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.24740499999999999,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.253697,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.246054,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.25139599999999995,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.24745699999999998,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.2485465,
+        "after": 0.248215
+      },
+      "load_after": [
+        5.119140625,
+        5.65185546875,
+        8.91796875
+      ]
+    },
+    {
+      "load_before": [
+        5.216796875,
+        5.68017578125,
+        8.947265625
+      ],
+      "workload": "linked_wide_repeated_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.24545599999999998,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.172545,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.171641,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.246848,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.24059999999999998,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.171584,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.17657399999999998,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.252233,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.25419200000000003,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.171369,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.176613,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.24336499999999997,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.24615199999999998,
+        "after": 0.172093
+      },
+      "load_after": [
+        5.119140625,
+        5.65185546875,
+        8.91796875
+      ]
+    },
+    {
+      "load_before": [
+        5.95068359375,
+        5.77099609375,
+        8.84521484375
+      ],
+      "workload": "mostly_changing_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.362724,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.357968,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.36999499999999996,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.368459,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.36886399999999997,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.36083099999999996,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.36322799999999994,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.38316799999999995,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.372091,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.36380599999999996,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.377266,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.394159,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "medians": {
+        "before": 0.3704775,
+        "after": 0.363517
+      },
+      "load_after": [
+        6.11474609375,
+        5.8076171875,
+        8.83984375
+      ]
+    },
+    {
+      "load_before": [
+        5.0986328125,
+        5.61962890625,
+        8.8486328125
+      ],
+      "workload": "mostly_repeated_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.259056,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.26220099999999996,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.25322300000000003,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.247336,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.24532099999999998,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.246427,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.249106,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.251745,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.258851,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.253253,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27298300000000003,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27621599999999996,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "medians": {
+        "before": 0.255298,
+        "after": 0.253238
+      },
+      "load_after": [
+        5.09033203125,
+        5.60888671875,
+        8.82568359375
+      ]
+    },
+    {
+      "load_before": [
+        5.119140625,
+        5.65185546875,
+        8.91796875
+      ],
+      "workload": "repeated_scroll",
+      "frames": 4000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.43372099999999997,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.393117,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.399843,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.43512599999999996,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.437307,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.39894699999999994,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.393827,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.43264199999999997,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.445669,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.392343,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.391569,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.440525,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 0.4362165,
+        "after": 0.393472
+      },
+      "load_after": [
+        5.109375,
+        5.640625,
+        8.89453125
+      ]
+    },
+    {
+      "load_before": [
+        5.09033203125,
+        5.60888671875,
+        8.82568359375
+      ],
+      "workload": "three_quarter_repeated_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27974,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.277788,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27764199999999994,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.290724,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.290686,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.296015,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.288481,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.281042,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.278339,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.284527,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.291458,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28389,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "medians": {
+        "before": 0.282466,
+        "after": 0.286504
+      },
+      "load_after": [
+        5.1630859375,
+        5.615234375,
+        8.80908203125
+      ]
+    },
+    {
+      "load_before": [
+        5.0205078125,
+        5.61328125,
+        8.86572265625
+      ],
+      "workload": "wide_repeated_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.263357,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.189485,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.17838099999999998,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.248422,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.25452299999999994,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.18033599999999997,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.177587,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.265181,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.254877,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.174404,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.174319,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.25460099999999997,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.254739,
+        "after": 0.17798399999999998
+      },
+      "load_after": [
+        5.0986328125,
+        5.61962890625,
+        8.8486328125
+      ]
+    }
+  ],
+  "earlier_unreleased_per_cell_link_comparison": [
+    {
+      "load_before": [
+        4.318359375,
+        6.06982421875,
+        9.51416015625
+      ],
+      "workload": "linked_wide_repeated_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.24215799999999998,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.258578,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.25752600000000003,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.240529,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.24052199999999999,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.263373,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.258953,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.240513,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.258202,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.26069600000000004,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.26351,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.242264,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.2413435,
+        "after": 0.2598245
+      },
+      "load_after": [
+        4.37255859375,
+        6.0517578125,
+        9.4873046875
+      ]
+    }
+  ],
+  "earlier_full_round_before_dirty_row_order_guard": [
+    {
+      "load_before": [
+        12.2529296875,
+        12.98388671875,
+        11.06494140625
+      ],
+      "workload": "changing_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.480446,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.48211499999999996,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.45689199999999996,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.44303,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.459779,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.447667,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.470234,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.461357,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.44373399999999996,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.443001,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.46519499999999997,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.46316399999999996,
+      "state": "workload=changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=429304 nonblank_rows=43 final_vertices=2776"
+    },
+    {
+      "medians": {
+        "before": 0.460568,
+        "after": 0.46104349999999994
+      },
+      "load_after": [
+        11.431640625,
+        12.80126953125,
+        11.01171875
+      ]
+    },
+    {
+      "load_before": [
+        15.083984375,
+        13.5224609375,
+        11.20458984375
+      ],
+      "workload": "eighty_percent_repeated_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27689699999999995,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.273981,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28837599999999997,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27325299999999997,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.271868,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.271006,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.284434,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27253299999999997,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.272225,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27257699999999996,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.267996,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.268221,
+      "state": "workload=eighty_percent_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=58441 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "medians": {
+        "before": 0.272379,
+        "after": 0.27327899999999994
+      },
+      "load_after": [
+        14.3564453125,
+        13.3974609375,
+        11.173828125
+      ]
+    },
+    {
+      "load_before": [
+        13.92724609375,
+        13.32421875,
+        11.16064453125
+      ],
+      "workload": "half_repeated_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.32137099999999996,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.32942,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.33403099999999997,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.3492,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.353985,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.35193399999999997,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.34428,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.331387,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.336663,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.32219499999999995,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.322277,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.338172,
+      "state": "workload=half_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=227743 nonblank_rows=43 final_vertices=1308"
+    },
+    {
+      "medians": {
+        "before": 0.3374175,
+        "after": 0.3317255
+      },
+      "load_after": [
+        12.9716796875,
+        13.1357421875,
+        11.10693359375
+      ]
+    },
+    {
+      "load_before": [
+        10.75634765625,
+        12.63818359375,
+        10.96435546875
+      ],
+      "workload": "interior_change_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.277245,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.275184,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28222899999999995,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.292642,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.281091,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.287732,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.277213,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28624499999999997,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28152099999999997,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.272295,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.26968099999999995,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.297465,
+      "state": "workload=interior_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1402928 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.283883,
+        "after": 0.2761985
+      },
+      "load_after": [
+        10.21484375,
+        12.49462890625,
+        10.92333984375
+      ]
+    },
+    {
+      "load_before": [
+        10.21484375,
+        12.49462890625,
+        10.92333984375
+      ],
+      "workload": "interior_mixed_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.279889,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.286499,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27763899999999997,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.288257,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27954599999999996,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.278263,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27720900000000004,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.273225,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.277632,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.291355,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.282487,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27303499999999997,
+      "state": "workload=interior_mixed_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=44 primitives=1394290 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.278589,
+        "after": 0.280375
+      },
+      "load_after": [
+        10.21484375,
+        12.49462890625,
+        10.92333984375
+      ]
+    },
+    {
+      "load_before": [
+        11.431640625,
+        12.80126953125,
+        11.01171875
+      ],
+      "workload": "late_change_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.282329,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.273819,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.285588,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.282305,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28368,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.30571299999999996,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.309034,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29055899999999996,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.281178,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.272989,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.279832,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.285788,
+      "state": "workload=late_change_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1428728 nonblank_rows=43 final_vertices=19976"
+    },
+    {
+      "medians": {
+        "before": 0.2830045,
+        "after": 0.28271
+      },
+      "load_after": [
+        10.75634765625,
+        12.63818359375,
+        10.96435546875
+      ]
+    },
+    {
+      "load_before": [
+        10.21484375,
+        12.49462890625,
+        10.92333984375
+      ],
+      "workload": "late_change_tui",
+      "frames": 3000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.11983899999999999,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.120545,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.12056199999999999,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.123774,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.12943,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.12592499999999998,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.137135,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.12709099999999998,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.123261,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.122802,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.12705799999999998,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.133696,
+      "state": "workload=late_change_tui frames=3000 columns=152 rows=44 reused=129000 rebuilt=3000 primitives=335256 nonblank_rows=1 final_vertices=488"
+    },
+    {
+      "medians": {
+        "before": 0.1254325,
+        "after": 0.12436349999999999
+      },
+      "load_after": [
+        9.95703125,
+        12.4033203125,
+        10.89990234375
+      ]
+    },
+    {
+      "load_before": [
+        12.9716796875,
+        13.1357421875,
+        11.10693359375
+      ],
+      "workload": "linked_late_change_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.270885,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.29301699999999997,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28321599999999997,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27328699999999995,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.274847,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.287838,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28319799999999995,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.291834,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.27567899999999995,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27432300000000004,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28831399999999996,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29037999999999997,
+      "state": "workload=linked_late_change_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=2000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 0.275263,
+        "after": 0.285527
+      },
+      "load_after": [
+        12.2529296875,
+        12.98388671875,
+        11.06494140625
+      ]
+    },
+    {
+      "load_before": [
+        19.49462890625,
+        14.18408203125,
+        11.376953125
+      ],
+      "workload": "linked_multi_wide_repeated_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.30291,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.301484,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.303491,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.30144799999999994,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29393499999999995,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.294083,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.285617,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28101,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.303931,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.29180999999999996,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.287981,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.281515,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.29769149999999994,
+        "after": 0.2929465
+      },
+      "load_after": [
+        18.33349609375,
+        14.03125,
+        11.33935546875
+      ]
+    },
+    {
+      "load_before": [
+        17.185546875,
+        13.8642578125,
+        11.2958984375
+      ],
+      "workload": "linked_repeated_scroll",
+      "frames": 4000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.5819909999999999,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.548365,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.522809,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.56857,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.54974,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.51198,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.510687,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.538457,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.570518,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.510792,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.494646,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.549069,
+      "state": "workload=linked_repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 0.5591550000000001,
+        "after": 0.511386
+      },
+      "load_after": [
+        16.04931640625,
+        13.68359375,
+        11.2470703125
+      ]
+    },
+    {
+      "load_before": [
+        20.84375,
+        14.3564453125,
+        11.4208984375
+      ],
+      "workload": "linked_wide_changing_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.297831,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.297718,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.293412,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.310881,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.296084,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.289748,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.278842,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.281302,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29238499999999995,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.304436,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.306912,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29536,
+      "state": "workload=linked_wide_changing_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.29572200000000004,
+        "after": 0.29556499999999997
+      },
+      "load_after": [
+        19.49462890625,
+        14.18408203125,
+        11.376953125
+      ]
+    },
+    {
+      "load_before": [
+        20.84375,
+        14.3564453125,
+        11.4208984375
+      ],
+      "workload": "linked_wide_repeated_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.266242,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.197867,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.19813099999999997,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28365199999999996,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.296917,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.20789899999999997,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.21276599999999998,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.304828,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.291522,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.206148,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.20431,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.289439,
+      "state": "workload=linked_wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.29048050000000003,
+        "after": 0.205229
+      },
+      "load_after": [
+        20.84375,
+        14.3564453125,
+        11.4208984375
+      ]
+    },
+    {
+      "load_before": [
+        12.9716796875,
+        13.1357421875,
+        11.10693359375
+      ],
+      "workload": "mostly_changing_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.364894,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.359276,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.38435199999999997,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.366444,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.369343,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.36374199999999995,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.37201799999999996,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.37227,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.36192899999999995,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.35522099999999995,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.36677,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.363157,
+      "state": "workload=mostly_changing_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=364779 nonblank_rows=43 final_vertices=1724"
+    },
+    {
+      "medians": {
+        "before": 0.365669,
+        "after": 0.36525599999999997
+      },
+      "load_after": [
+        12.9716796875,
+        13.1357421875,
+        11.10693359375
+      ]
+    },
+    {
+      "load_before": [
+        15.083984375,
+        13.5224609375,
+        11.20458984375
+      ],
+      "workload": "mostly_repeated_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.263143,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.27315199999999995,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.273245,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.26352899999999996,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.267571,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.278159,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.278578,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.274447,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.298126,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.283999,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.287474,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.276599,
+      "state": "workload=mostly_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=44 primitives=30219 nonblank_rows=43 final_vertices=604"
+    },
+    {
+      "medians": {
+        "before": 0.271009,
+        "after": 0.2783685
+      },
+      "load_after": [
+        15.083984375,
+        13.5224609375,
+        11.20458984375
+      ]
+    },
+    {
+      "load_before": [
+        18.33349609375,
+        14.03125,
+        11.33935546875
+      ],
+      "workload": "repeated_scroll",
+      "frames": 4000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.521404,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.47081,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.44156,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.511582,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.496977,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.453242,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.45827799999999996,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.49566299999999996,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.5332439999999999,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.45364899999999997,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.448893,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=176000 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.529071,
+      "state": "workload=repeated_scroll frames=4000 columns=152 rows=44 reused=0 rebuilt=0 primitives=4000 nonblank_rows=43 final_vertices=540"
+    },
+    {
+      "medians": {
+        "before": 0.516493,
+        "after": 0.45344549999999995
+      },
+      "load_after": [
+        17.185546875,
+        13.8642578125,
+        11.2958984375
+      ]
+    },
+    {
+      "load_before": [
+        14.3564453125,
+        13.3974609375,
+        11.173828125
+      ],
+      "workload": "three_quarter_repeated_scroll",
+      "frames": 2000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29494,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.30150899999999997,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.29294400000000004,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28796599999999994,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29073,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.295628,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.28946900000000003,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.30286799999999997,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.326422,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.296267,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.289383,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.287403,
+      "state": "workload=three_quarter_repeated_scroll frames=2000 columns=152 rows=44 reused=0 rebuilt=0 primitives=116204 nonblank_rows=43 final_vertices=924"
+    },
+    {
+      "medians": {
+        "before": 0.29283499999999996,
+        "after": 0.29428600000000005
+      },
+      "load_after": [
+        13.92724609375,
+        13.32421875,
+        11.16064453125
+      ]
+    },
+    {
+      "load_before": [
+        16.04931640625,
+        13.68359375,
+        11.2470703125
+      ],
+      "workload": "wide_repeated_scroll",
+      "frames": 300
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.26697499999999996,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.190769,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.185544,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.273852,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.29301099999999997,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.201684,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.194828,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.318307,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.28914399999999996,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.194605,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 0.186244,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=13200 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 0.26391,
+      "state": "workload=wide_repeated_scroll frames=300 columns=152 rows=44 reused=0 rebuilt=0 primitives=1419300 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 0.28149799999999997,
+        "after": 0.192687
+      },
+      "load_after": [
+        15.083984375,
+        13.5224609375,
+        11.20458984375
+      ]
+    }
+  ],
+  "longer_control_rechecks": [
+    {
+      "load_before": [
+        4.158203125,
+        15.11669921875,
+        23.220703125
+      ],
+      "workload": "eighty_percent_repeated_scroll",
+      "frames": 12000
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.612569,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.6734850000000001,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.596846,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.640043,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.617934,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.600265,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.598448,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.626675,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.6685409999999998,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.614522,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.6338629999999998,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.595535,
+      "state": "workload=eighty_percent_repeated_scroll frames=12000 columns=152 rows=44 reused=0 rebuilt=44 primitives=350619 nonblank_rows=43 final_vertices=732"
+    },
+    {
+      "medians": {
+        "before": 1.6223045,
+        "after": 1.6073935000000001
+      },
+      "load_after": [
+        4.3154296875,
+        14.4443359375,
+        22.79052734375
+      ]
+    },
+    {
+      "load_before": [
+        4.1123046875,
+        16.05615234375,
+        23.78369140625
+      ],
+      "workload": "interior_mixed_scroll",
+      "frames": 2400
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.110594,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.216475,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.148969,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.161249,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.151368,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.174084,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.145073,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.1095479999999998,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.172001,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.1295669999999998,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.271098,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.156631,
+      "state": "workload=interior_mixed_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=44 primitives=11154418 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 2.1539995000000003,
+        "after": 2.1615265
+      },
+      "load_after": [
+        4.158203125,
+        15.11669921875,
+        23.220703125
+      ]
+    },
+    {
+      "load_before": [
+        4.3154296875,
+        14.4443359375,
+        22.79052734375
+      ],
+      "workload": "linked_multi_wide_repeated_scroll",
+      "frames": 2400
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.066348,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.1169179999999996,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.07694,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.166442,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.092434,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.101022,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.148499,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.11233,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.0582059999999998,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.104043,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.0895509999999997,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.074192,
+      "state": "workload=linked_multi_wide_repeated_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 2.083313,
+        "after": 2.1025324999999997
+      },
+      "load_after": [
+        4.73974609375,
+        13.73193359375,
+        22.2919921875
+      ]
+    },
+    {
+      "load_before": [
+        4.4306640625,
+        17.16064453125,
+        24.392578125
+      ],
+      "workload": "linked_wide_changing_scroll",
+      "frames": 2400
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.806914,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.8747880000000001,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 1.8508099999999998,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.907838,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 1.926318,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.039561,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.081854,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.0956829999999997,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.0812690000000003,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.092626,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "after",
+      "cpu_seconds": 2.14037,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "variant": "before",
+      "cpu_seconds": 2.128379,
+      "state": "workload=linked_wide_changing_scroll frames=2400 columns=152 rows=44 reused=0 rebuilt=0 primitives=11354400 nonblank_rows=43 final_vertices=19632"
+    },
+    {
+      "medians": {
+        "before": 2.0037935,
+        "after": 2.0607075
+      },
+      "load_after": [
+        4.1123046875,
+        16.05615234375,
+        23.78369140625
+      ]
+    }
+  ]
+}

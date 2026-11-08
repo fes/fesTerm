@@ -35,3 +35,7 @@ harness = false
 [[bench]]
 name = "render_cache_allocations"
 harness = false
+
+[[bench]]
+name = "dirty_row_cpu"
+harness = false
