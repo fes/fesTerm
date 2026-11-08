@@ -5896,6 +5896,47 @@ mod tests {
     }
 
     #[test]
+    fn ris_and_repeated_resizes_replace_stale_rendered_content() {
+        let mut harness = Harness::builder()
+            .with_size(Vec2::new(800.0, 600.0))
+            .build_ui_state(
+                |ui, state: &mut HeadlessViewState| {
+                    state.view.show(ui, &mut state.terminal, &mut state.sink);
+                },
+                HeadlessViewState::new(),
+            );
+
+        for generation in 0..100 {
+            let size = if generation % 2 == 0 {
+                Vec2::new(430.0, 280.0)
+            } else {
+                Vec2::new(930.0, 680.0)
+            };
+            harness.set_size(size);
+            let marker = format!("\x1bc\x1b[3JRECONNECT:{generation:03}\r\nprompt> ");
+            harness.state_mut().terminal.ingest(marker.as_bytes());
+            harness.run();
+
+            let state = harness.state();
+            assert_eq!(
+                state.view.cache.dimensions(),
+                Some(state.terminal.dimensions()),
+                "generation {generation}"
+            );
+            let rendered = (0..state.terminal.dimensions().rows())
+                .filter_map(|row| state.view.cache.row(row))
+                .flatten()
+                .map(|cell| cell.text())
+                .collect::<String>();
+            assert!(rendered.contains(&format!("RECONNECT:{generation:03}")));
+            assert!(rendered.contains("prompt>"));
+            if generation > 0 {
+                assert!(!rendered.contains(&format!("RECONNECT:{:03}", generation - 1)));
+            }
+        }
+    }
+
+    #[test]
     fn ordinary_click_stays_clear_of_selection_even_while_output_streams_between_press_and_release()
     {
         // #94: heavy/streaming PTY output arriving between a press and its

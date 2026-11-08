@@ -1281,15 +1281,14 @@ impl Terminal {
     /// construction: clears the visible screen, homes the cursor, restores
     /// default colors/attributes/modes/tab stops, exits the alternate
     /// screen if active, and clears any parser byte-stream state (e.g. a
-    /// truncated escape sequence). This mirrors what a real terminal does
-    /// on `ESC c` (RIS) or a shell's `reset` command, but is invoked
-    /// directly by the GUI so it works even if the running program is
-    /// wedged and can't be asked to emit that sequence itself.
+    /// truncated escape sequence). `ESC c` (RIS) invokes the same reset;
+    /// the GUI can also invoke it directly when a program is wedged.
     ///
     /// Retained scrollback history is left untouched, matching how
     /// terminal emulators typically distinguish "reset the screen" from
     /// "clear the scrollback" as separate user actions; see
-    /// [`Self::clear_scrollback`] for the latter.
+    /// [`Self::clear_scrollback`] for the latter. The configured color scheme
+    /// and already-queued transport bytes are also retained.
     pub fn reset_to_initial_state(&mut self) {
         let dimensions = self.dimensions();
         self.primary.reset();
@@ -1299,8 +1298,11 @@ impl Terminal {
         self.modes = TerminalModes::default();
         self.cursor_style = CursorStyle::default();
         self.cursor_style_set = false;
+        self.last_graphic_character = None;
         self.tab_stops = default_tab_stops(dimensions);
         self.current_attributes = Attributes::NONE;
+        self.current_protected = false;
+        self.protection = ProtectionSource::None;
         self.current_foreground = Color::Default;
         self.current_background = Color::Default;
         self.title.clear();
@@ -2072,6 +2074,7 @@ impl Terminal {
                 parameters,
             } => self.request_mode(private, parameters),
             TerminalOp::SoftReset => self.soft_reset(),
+            TerminalOp::ResetToInitialState => self.reset_to_initial_state(),
             TerminalOp::CopyRectangle(parameters) => self.copy_rectangle(parameters),
             TerminalOp::FillRectangle(parameters) => self.fill_rectangle(parameters),
             TerminalOp::EraseRectangle {

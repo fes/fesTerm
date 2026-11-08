@@ -384,6 +384,8 @@ pub enum TerminalOp {
     /// reach from here and is ignored.
     WindowOperation(CsiParameters),
     Ignored,
+    /// `ESC c` (RIS): reset the terminal to its initial display state.
+    ResetToInitialState,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -726,6 +728,10 @@ impl Parser {
             },
             b'=' => TerminalOp::SetApplicationKeypad(true),
             b'>' => TerminalOp::SetApplicationKeypad(false),
+            b'c' => {
+                *self = Self::new();
+                TerminalOp::ResetToInitialState
+            }
             _ => TerminalOp::Ignored,
         }
     }

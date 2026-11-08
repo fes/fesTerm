@@ -802,7 +802,14 @@ margins. It is a test pattern for screen alignment, so it deliberately leaves
 nothing of the previous state in the way; esctest2 checks the margins are
 gone by walking the cursor across where they were.
 
-### Resets: DECSTR, and what a save actually saves
+### Resets: RIS, DECSTR, and what a save actually saves
+
+`ESC c` (RIS) resets the visible screen, cursor, pen, margins, tab stops,
+character sets, saved cursors and modes, and returns to the primary screen.
+It also abandons an incomplete escape or string sequence. Retained scrollback,
+the configured color scheme and already-queued transport bytes survive; use
+`CSI 3 J` to clear scrollback separately. The GUI's direct reset uses the same
+display-state transition.
 
 `CSI ! p` (DECSTR) is a soft reset: it returns the modes, the scroll region
 and the saved cursor to their power-on values and leaves the screen's

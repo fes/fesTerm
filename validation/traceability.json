@@ -98,6 +98,7 @@
         "recording_observes_applied_output_resize_and_recovery_without_local_input",
         "recording_tracks_a_passive_pane_resize",
         "active_recording_flushes_its_recent_complete_events",
+        "ris_recording_replay_does_not_repeat_pre_reset_characters",
         "repeat_of_offscreen_preconsent_character_is_recorded_only_when_repeated",
         "concealed_preconsent_repeat_uses_a_same_width_blank_until_visible",
         "ascii_runs_match_byte_at_a_time_printing",

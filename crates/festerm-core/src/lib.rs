@@ -3587,6 +3587,95 @@ mod tests {
     }
 
     #[test]
+    fn ris_restores_display_modes_and_charset_without_discarding_history_or_input() {
+        let mut terminal = terminal(12, 4);
+        terminal.ingest(b"first\r\nsecond\r\nthird\r\nfourth\r\n");
+        let history_before = terminal.scrollback_stats().logical_lines();
+        assert!(history_before > 0);
+        terminal.queue_input(b"queued input");
+        terminal.ingest(
+            b"\x1b[3;4H\x1b7\x1b[s\x1b[3g\x1b[?1049h\x1b[2;3r\x1b[?69h\x1b[3;8s\
+              \x1b[?6;1000;2004h\x1b[?25l\x1b[3 q\x1b[31m\x1b[1\"q\x1b)0\x0eq",
+        );
+        let generation = terminal.screen_generation();
+
+        terminal.ingest(b"\x1bc");
+
+        assert_eq!(terminal.modes(), super::TerminalModes::default());
+        assert_eq!(terminal.cursor().column(), 0);
+        assert_eq!(terminal.cursor().row(), 0);
+        assert_eq!(terminal.cursor_style(), super::CursorStyle::default());
+        assert!(!terminal.cursor_style_requested_by_program());
+        assert_eq!(terminal.foreground(), Color::Default);
+        assert_eq!(terminal.attributes(), Attributes::NONE);
+        assert_eq!(terminal.alternate_screen(), None);
+        assert_ne!(terminal.screen_generation(), generation);
+        assert_eq!(terminal.scrollback_stats().logical_lines(), history_before);
+        assert_eq!(terminal.drain_input(), b"queued input");
+        for row in 0..terminal.dimensions().rows() {
+            assert!(terminal.row_text(row).unwrap().trim().is_empty());
+        }
+
+        terminal.ingest(b"\x1b[2b\x1b8\x1b[uq");
+        assert_eq!(terminal.row_text(0).unwrap().trim(), "q");
+        terminal.ingest(b"\x1b[?2K");
+        assert!(terminal.row_text(0).unwrap().trim().is_empty());
+        terminal.ingest(b"\r\t");
+        assert_eq!(terminal.cursor().column(), 8);
+    }
+
+    #[test]
+    fn ris_recovers_from_incomplete_controls_and_utf8_across_chunks() {
+        for prefix in [
+            b"".as_slice(),
+            b"\x1b[".as_slice(),
+            b"\x1b[12;".as_slice(),
+            b"\x1b]0;unfinished".as_slice(),
+            b"\x1bPunfinished".as_slice(),
+            b"\x1b_unfinished".as_slice(),
+            b"\xf0\x9f".as_slice(),
+        ] {
+            let mut terminal = terminal(12, 3);
+            terminal.ingest(b"\x1b)0\x0eq");
+            terminal.ingest(prefix);
+            terminal.ingest(b"\x1b");
+            terminal.ingest(b"c");
+            terminal.ingest(b"\x1b[2bq");
+
+            assert_eq!(terminal.row_text(0).unwrap().trim(), "q", "{prefix:?}");
+            assert_eq!(terminal.cursor().column(), 1, "{prefix:?}");
+        }
+    }
+
+    #[test]
+    fn ris_recording_replay_does_not_repeat_pre_reset_characters() {
+        let mut live = terminal(12, 3);
+        live.ingest(b"\x1b[?1049hsecret");
+        let mut replay = live
+            .recording_checkpoint(MAX_RECORDING_CHECKPOINT_BYTES)
+            .unwrap()
+            .into_terminal()
+            .unwrap();
+        let mut repeats = Vec::new();
+        let mut visible_changes = Vec::new();
+        let output = b"\x1bc\x1b[2bX";
+        live.ingest_observing_recording(
+            output,
+            |offset, character| repeats.push((offset, character)),
+            |offset, _| visible_changes.push(offset),
+        );
+        replay
+            .ingest_recorded_output(output, repeats.clone())
+            .unwrap();
+
+        assert_eq!(repeats, vec![(5, None)]);
+        assert!(visible_changes.contains(&1));
+        assert_eq!(live.row_text(0).unwrap().trim(), "X");
+        assert_eq!(live.row_text(0), replay.row_text(0));
+        assert_eq!(live.modes(), replay.modes());
+    }
+
+    #[test]
     fn text_snapshot_preserves_soft_wraps_and_graphemes() {
         let mut terminal = terminal(4, 2);
         terminal.ingest("e\u{301}🤖AB".as_bytes());
