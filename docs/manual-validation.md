@@ -3260,11 +3260,13 @@ in the initial mode change after draining 16 startup bytes, but also failed to
 observe a positive partial write. A subsequent
 [request-size experiment](https://github.com/fes/fesTerm/actions/runs/42520044762)
 observed no positive partial at 4,097 or 8,193 bytes; initial requests of
-65,537 and 131,073 bytes returned zero before the remaining scenario ran. It
-therefore remains unqualified. The probe also tries an oversized write while
-an actual one-byte read is pending; that additional case needs native evidence.
-This experiment does not qualify exclusive mode ownership, final-recipient
-privacy fencing, caller liveness, or the production adapter.
+65,537 and 131,073 bytes returned zero before the remaining scenario ran. In a
+later [native run](https://github.com/fes/fesTerm/actions/runs/42523996156/job/128863387770),
+a pending one-byte read yielded one physically accounted byte from a
+131,073-byte request. That is evidence for this specific pending-reader case,
+not a positive partial write to a stalled recipient. The experiment remains
+unqualified for exclusive mode ownership, final-recipient privacy fencing,
+caller liveness, or the production adapter.
 
 | ID | Scenario | Evidence class | Current evidence / remaining acceptance |
 | --- | --- | --- | --- |
