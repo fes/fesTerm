@@ -4190,14 +4190,14 @@ mod tests {
     }
 
     fn read_recovery_terminal<S: Read>(stream: &mut S) -> Terminal {
-        let mut header = [0u8; 12];
-        stream.read_exact(&mut header).unwrap();
-        assert_eq!(&header[..4], b"FSD2");
-        let length =
-            usize::try_from(u64::from_be_bytes(header[4..12].try_into().unwrap())).unwrap();
-        let mut payload = vec![0; length];
-        stream.read_exact(&mut payload).unwrap();
-        bincode::deserialize(&payload).unwrap()
+        festerm_sessiond::read_attach_recovery_terminal(
+            stream,
+            festerm_sessiond::PROTOCOL_VERSION,
+            festerm_sessiond::RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap()
+        .expect("current protocol carries a recovery snapshot")
     }
 
     fn acknowledge_recovery(writer: &mut impl Write) {
