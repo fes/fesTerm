@@ -71,6 +71,39 @@ core-and-view synthetic measurements, not native key-to-PTY latency or
 end-to-end zero-allocation delivery. Application pending writes and session
 transport still allocate or copy.
 
+## Local PTY output backpressure
+
+On Unix, `cargo bench --locked -p festerm-pty --bench blocked_output -- paused 5`
+starts an owned `/usr/bin/yes` child, waits until the bounded event/byte queue
+stalls, and leaves it undrained for five seconds. The `draining 32` and
+`draining 128` cases warm one MiB and then consume at least the named number
+of MiB using the session event notifier.
+Both cases shut the child down and report `getrusage(RUSAGE_SELF)` user and
+system CPU for the measured interval, excluding the child's CPU and startup
+and shutdown. The draining result can overshoot by one output event, so compare
+CPU per delivered MiB.
+
+On Apple M2, 64-bit macOS and Rust 1.97.1, three paired release samples in
+A-B-B-A-A-B order compared #645 with this change, using separate target
+directories:
+
+| Fixture | #645 median process CPU | Candidate median process CPU |
+| --- | ---: | ---: |
+| Queue stalled for 5 s | 3.921 ms | 0.801 ms |
+| Normally draining 32 MiB | 8.771 ms/MiB | 9.312 ms/MiB |
+| Normally draining 128 MiB | 9.248 ms/MiB | 9.380 ms/MiB |
+
+During the stalled interval, the median recorded failed backpressure attempts
+fell from 676 to zero after the initial stall; the command thread still polls.
+The 32-MiB control increased 6.2% by median, so a separate 128-MiB control
+was run; its median increased 1.4%. Before/after samples ranged from
+8.617–9.647 / 8.560–10.063 ms/MiB for 32 MiB and 9.243–9.571 /
+8.977–9.967 ms/MiB for 128 MiB. This variation cannot rule out a modest
+normal-path regression. The host's one-minute load decreased from about 8.7
+to 7.4 and five-minute load from 18.1 to 16.3, with competing processes
+active. These are PTY-only observations, not GUI throughput, physical latency
+or total system CPU claims.
+
 ## CPU presentation-cache allocation oracle
 
 Run `cargo bench --locked -p festerm-ui-egui --bench render_cache_allocations -- --check`.
@@ -156,7 +189,7 @@ throughput observations rather than end-to-end wall-time claims.
 End-to-end `cat` timings were inconsistent under concurrent machine load and
 are not used to claim a speedup for this change.
 
-### Unretained scroll allocations
+### Scroll allocation oracle
 
 Run `cargo bench --locked -p festerm-core --bench scroll_allocations -- --check`.
 The single-threaded oracle counts Rust system-allocator requests, not CPU time,
@@ -164,23 +197,133 @@ wall time, RSS, or native allocations. It warms an 80-by-24 terminal and
 measures 4,096 scrolls of short inline ASCII rows. The alternate screen and
 partial vertical scrolling regions do not retain departing rows; they now
 overwrite those rows directly rather than first allocating a temporary row
-and a vector to hold it. CI runs the check on Linux, and the optional suite
-runners also run it on their host platform.
+and a vector to hold it. When a single row does enter history, its temporary
+row container is stored inline; multi-row scrolls can spill to the heap.
+CI runs the check on Linux, and the optional suite runners also run it on
+their host platform.
 
 | Workload | Before allocations | After allocations | Before/after requested bytes |
 | --- | ---: | ---: | ---: |
 | Alternate screen, line feed | 8,192 | 0 | 917,504 / 0 |
 | Partial region, line feed | 8,192 | 0 | 917,504 / 0 |
 | Alternate screen, explicit scroll | 8,192 | 0 | 917,504 / 0 |
-| Full retained history, line feed | 12,288 | 12,288 | 950,272 / 950,272 |
+| Full retained history, line feed | 12,288 | 8,192 | 950,272 / 819,200 |
 
 These are 64-bit macOS observations. The zero-allocation checks apply to this
 inline-text fixture, not to arbitrary cell payloads. The retained-history
 control uses a 256 KiB limit, observes an eviction for each measured line, and
-retains 682 logical lines charged at 261,888 bytes. It is not affected by
-this optimization; recycling retained history requires separate measurement
-and bounded-storage design. No throughput or end-to-end responsiveness
-improvement is claimed from allocator counts alone.
+retains 682 logical lines charged at 261,888 bytes before and after the
+change. At this stage the retained cell and row-boundary allocations remained;
+the later boundary handoff is described below. No throughput or end-to-end
+responsiveness improvement is claimed from allocator counts alone.
+
+### Evicted row-boundary handoff
+
+ADR 0080 reuses an eligible evicted hard line's one-element boundary vector
+immediately for an incoming hard line, but only when the incoming line's
+minimum charge makes that eviction inevitable. It retains no free-list and
+keeps the existing history and recovery representation.
+
+Against the inline-row handoff above, the same 4,096-scroll full-history
+fixture fell from 8,192 to 4,096 allocation calls and from 819,200 to 786,432
+requested bytes. Both runs retained 682 logical lines charged at 261,888
+bytes under the 256 KiB limit. At this stage the remaining allocation per
+scroll was the retained cell vector; this was not a zero-allocation general
+scroll path.
+
+On an Apple M2, 64-bit macOS and Rust 1.97.1, three paired release samples
+in A-B-B-A-A-B order measured process user plus system CPU for 40 million
+full-history scrolls. Before samples were 9.632, 8.019 and 7.913 seconds;
+after samples were 8.625, 7.863 and 7.716 seconds. One-minute shared-host
+load fell from about 17.7 to 12.9. The 8.019 versus 7.863 second medians are
+too noisy to establish a CPU speedup, and do not measure native presentation.
+
+Generated mixed output, resize, budget and hyperlink sequences produced the
+same terminal states and recovery-validation outcomes before and after the
+handoff. A pre-existing recovery failure for a completely trimmed open line
+is tracked separately in #651; this handoff does not fix it.
+
+### Evicted cell-buffer handoff
+
+The stricter ADR 0080 path can also transfer an evicted single-row line's
+matching cell buffer before a full-primary-screen, single-row scroll. It
+requires the incoming hard line's minimum charge without owned payloads to
+prove that eviction is inevitable. Old cells are dropped, including text and
+hyperlink ownership, before their slots are filled with the departing screen
+row; no pool is kept. Ineligible cases retain the boundary-only fallback.
+
+Against #652, each warmed 80-by-24, 256 KiB full-history fixture made 4,096
+allocations requesting 786,432 bytes before and zero allocations afterward,
+for both line-feed and explicit-scroll operations. Each run retained 682
+logical lines charged at 261,888 bytes. The oracle checks only this inline
+three-cell workload; arbitrary payloads, different capacities, wrapped lines
+and non-evicting operations can still allocate.
+
+On Apple M2, 64-bit macOS and Rust 1.97.1, three paired release samples in
+A-B-B-A-A-B order measured process user plus system CPU against #652:
+
+| Workload | Iterations | Before CPU seconds | After CPU seconds | Median change |
+| --- | ---: | --- | --- | ---: |
+| Full history, `row` | 40 million scrolls | 6.044, 6.341, 6.163 | 5.170, 5.282, 5.194 | -15.7% |
+| Full history, alternating `row`/`longer` | 10 million pairs | 3.469, 3.451, 3.433 | 2.861, 2.964, 2.908 | -15.7% |
+| Unfilled history, `row` | 10 million writes | 1.565, 1.563, 1.540 | 1.576, 1.659, 1.591 | +1.8% |
+
+The unfilled fixture starts a new 16 MiB history every 4,096 writes and
+does not evict. One-minute shared-host load ranged from about 5.1 to 4.6;
+other processes were active. The observed pre-fill regression and sample
+variation are material limitations, and these synthetic core measurements
+do not establish native or end-to-end throughput or latency. The original
+280 generated mixed-state comparisons and another 1,604 saturated-history
+snapshots matched the parent, including recovery-validation results.
+
+### Compact cells with stable history charges
+
+ADR 0081 narrows the in-memory text-capacity field while retaining its legacy
+wire integer and charging history at the old cell size. Eligible ASCII runs
+also overwrite single-width cells in place, releasing old text and links and
+applying the new rendition. Runs touching wide cells still use the repair
+path. On the measured 64-bit target the cell is 56 rather than 64 bytes, but
+the configured history limit retains the same lines as before.
+
+Run `cargo bench --locked -p festerm-core --bench cell_density -- 1000000 120`
+for a one-million-line, 32 MiB full-history fixture; replace `120` with `80`
+or `200` for the other widths. The row contains three fewer printable cells
+than the column count. Three paired release samples in A-B-B-A-A-B order
+compared the parent of this change with the combined candidate, using separate
+build directories. Process user plus system CPU and peak RSS were measured
+with macOS `wait4` on an Apple M2, 64-bit macOS and Rust 1.97.1:
+
+| Columns | Median CPU seconds, before / after | Median peak RSS bytes, before / after | Retained lines, both |
+| --- | ---: | ---: | ---: |
+| 80 | 1.157 / 1.135 | 29,523,968 / 29,491,200 | 4,865 |
+| 120 | 1.643 / 1.595 | 29,425,664 / 26,427,392 | 3,221 |
+| 200 | 2.639 / 2.588 | 30,851,072 / 28,000,256 | 1,922 |
+
+These are synthetic process peaks, not the native application's RSS. The
+120- and 200-column fixtures decreased by about 10.2% and 9.2%; the 80-column
+fixture barely changed. On this allocator the respective 4,928- and
+4,312-byte cell-vector requests for a 77-cell row both occupy 5,120 bytes.
+Allocator classes, occupancy and other platforms can change the result.
+One-minute shared-host load decreased from 10.5 to 8.0 and five-minute load
+from 8.2 to 7.8 during the table; competing processes were active.
+
+The same benchmark accepts `styled_utf8`, `osc8_links`, and `tui_overwrite`
+after the column count. At 120 columns, 1.5 million styled UTF-8 iterations,
+1.5 million linked-output iterations and six million TUI overwrites had
+respective before/after median CPU seconds of 1.518/1.537, 1.851/1.868 and
+1.522/1.570. Their one-minute load decreased from 8.0 to 6.9. Small CPU
+differences and the 3.2% TUI increase are not conclusive; a modest regression
+cannot be ruled out. A separate 64-byte in-place-only control measured
+1.448/1.445 seconds at 120 columns and 2.555/2.466 at 200 columns against the
+compact candidate; sample variation also prevents a CPU attribution.
+
+An earlier compact-only prototype without in-place overwrites increased the
+80-, 120- and 200-column median CPU by 6.2%, 7.7% and 3.2% respectively in
+separate paired samples. The combined candidate mitigated that observed
+regression in the measurements above, but neither a general CPU speedup nor
+native presentation latency is established. Generated mixed-state and
+saturated-history comparisons matched the parent, including the same
+pre-existing recovery-validation failures tracked in #651.
 
 ## End-to-end output throughput (macOS)
 
@@ -198,8 +341,10 @@ The reader now appends further reads to the same chunk, up to 64 KiB:
 - Only while earlier output is still queued does it wait up to 2 ms for more.
 - Queued output is bounded at 2 MiB, the same bound as before.
 
-Each pump still ingests at least 256 KiB of a backlog, and keeps going for up
-to 8 ms (4 MiB at most), so fewer frames are spent waiting for a drawable.
+The #640 baseline pump ingested at least 256 KiB of a backlog, and continued
+for up to 8 ms per pump (4 MiB at most), so fewer frames were spent waiting for
+a drawable. The desktop scheduler policy was subsequently revised as described
+below.
 
 | `cat` workload | Before | After | Change |
 | --- | --- | --- | --- |
@@ -208,6 +353,24 @@ to 8 ms (4 MiB at most), so fewer frames are spent waiting for a drawable.
 
 The time budget alone accounts for about 3% (plain) and 20% (SGR) of the
 gain.
+
+## Shared desktop update budget
+
+Each desktop window now shares one 4 ms terminal-ingest budget across its
+sessions per update. Each round-robin session slice is capped at 64 events or
+256 KiB of ingested bytes, with a 16 MiB per-window aggregate byte threshold;
+the final bounded slice can cross the threshold. An application update with
+several windows can spend up to one budget per window. Remaining work requests
+a continuation frame; the active session is not pumped a second time after
+painting. This replaces #640's per-pump budget and bounds each window's
+synchronous ingest work as its number of live sessions grows.
+
+The scheduler has deterministic fake-clock fairness coverage. A qualified
+before/after end-to-end throughput comparison is not yet available: shared-host
+load made the recent wall-time runs inconsistent. The 4 ms budget may trade
+single-session bulk throughput for multi-session fairness and bounded update
+work; no throughput or input-latency improvement is claimed until stable
+matched measurements are recorded.
 
 ## Automatic WARP composition rollout
 

@@ -625,3 +625,37 @@ fn inserting_a_whole_region_of_lines_blanks_it() {
         );
     }
 }
+
+/// The scheduled fuzzer found an erase that left a guarded cell in place but
+/// recorded it as empty. `ESC V` opens an ISO guarded area, so the `EL` below
+/// spares the character it guards; the row's occupied extent then stopped
+/// short of that character, and the scroll that trusts the extent neither
+/// carried it into history nor cleared it from the row it recycled. A debug
+/// build failed the assertion guarding that extent; a release build drew the
+/// lost character again on the new bottom line.
+#[test]
+fn a_guarded_cell_an_erase_spared_scrolls_away_with_its_line() {
+    // The crash input, minimised: `0xDB` starts a UTF-8 sequence that never
+    // finishes, so the parser stores U+FFFD, and six line feeds scroll its
+    // row off a six-row screen.
+    let input = b"\x1bV\xdb\x1b[H\x1b[K\n\n\n\n\n\n";
+    let mut terminal = terminal();
+    terminal.ingest(input);
+    assert_invariants(&terminal, input);
+
+    let history = terminal.scrollback_lines().collect::<Vec<_>>();
+    assert_eq!(history.len(), 1);
+    assert_eq!(
+        history[0]
+            .cells()
+            .iter()
+            .map(|cell| cell.character())
+            .collect::<String>(),
+        "\u{fffd}"
+    );
+    assert_eq!(
+        terminal.row_text(ROWS - 1).as_deref().map(str::trim_end),
+        Some(""),
+        "the recycled bottom row still shows the line that scrolled away"
+    );
+}

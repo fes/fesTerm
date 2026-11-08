@@ -1,5 +1,6 @@
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::{
     cell::{blank_cell, Attributes, Cell, CellWidth},
@@ -329,7 +330,7 @@ impl Screen {
                 .cell_index(column + 1, row)
                 .expect("wide terminal character must fit in the screen");
             let text = CompactString::const_new("");
-            let text_capacity_bytes = text.capacity();
+            let text_capacity_bytes = Cell::text_capacity(&text);
             self.cells[continuation] = Cell {
                 text,
                 text_capacity_bytes,
@@ -371,7 +372,7 @@ impl Screen {
     ) {
         let cell = |byte: u8| {
             let text = CompactString::new(char::from(byte).encode_utf8(&mut [0; 4]));
-            let text_capacity_bytes = text.capacity();
+            let text_capacity_bytes = Cell::text_capacity(&text);
             Cell {
                 text,
                 text_capacity_bytes,
@@ -397,7 +398,23 @@ impl Screen {
             return;
         }
         for (existing, &byte) in self.cells[start..end].iter_mut().zip(text) {
-            *existing = cell(byte);
+            let Cell {
+                text: existing_text,
+                text_capacity_bytes,
+                width,
+                foreground: existing_foreground,
+                background: existing_background,
+                attributes: existing_attributes,
+                hyperlink,
+            } = existing;
+            debug_assert_eq!(*width, CellWidth::Single);
+            let new_text = CompactString::new(char::from(byte).encode_utf8(&mut [0; 4]));
+            *text_capacity_bytes = Cell::text_capacity(&new_text);
+            *existing_text = new_text;
+            *existing_foreground = foreground;
+            *existing_background = background;
+            *existing_attributes = attributes;
+            *hyperlink = None;
         }
         self.occupied_cells[start..end].fill(true);
         let physical_row = self.physical_row(row);
@@ -528,6 +545,7 @@ impl Screen {
         let last_row = (end - 1) / columns;
         let first_column = start % columns;
         let last_column = end - last_row * columns;
+        let occupied = !is_structural_blank(&cell);
         // Successive logical rows are only contiguous in the cell array while
         // the ring is unrotated, so each row's span is mapped through the ring
         // on its own: a single mapped span would run off the end of the array
@@ -545,15 +563,23 @@ impl Screen {
             let physical_start = self.logical_linear_to_physical(row * columns + row_start);
             let physical_end = physical_start + (row_end - row_start);
             if spare_protected {
-                for existing in &mut self.cells[physical_start..physical_end] {
+                // A spared cell keeps its occupancy along with its content.
+                // Taking the fill's would let the row's extent stop short of
+                // it, and a scroll trusts the extent both to carry the row
+                // into history and to clear the row it recycles.
+                for (existing, existing_occupied) in self.cells[physical_start..physical_end]
+                    .iter_mut()
+                    .zip(&mut self.occupied_cells[physical_start..physical_end])
+                {
                     if !existing.attributes.contains(Attributes::PROTECTED) {
                         *existing = cell.clone();
+                        *existing_occupied = occupied;
                     }
                 }
             } else {
                 self.cells[physical_start..physical_end].fill(cell.clone());
+                self.occupied_cells[physical_start..physical_end].fill(occupied);
             }
-            self.occupied_cells[physical_start..physical_end].fill(!is_structural_blank(&cell));
         }
         self.mark_dirty_range(first_row, last_row);
         // A contiguous fill can split a pair only at either range boundary.
@@ -709,7 +735,7 @@ impl Screen {
         cell: Cell,
         span: ColumnSpan,
         retain_history: bool,
-    ) -> Vec<ScreenRow> {
+    ) -> SmallVec<[ScreenRow; 1]> {
         let count = count.min(bottom - top + 1);
         if !span.is_full(self.dimensions.columns()) {
             // Only part of each row moves, so nothing leaves the screen as a
@@ -721,27 +747,19 @@ impl Screen {
                 self.fill_row_span(logical, cell.clone(), span);
             }
             self.mark_dirty_range(top, bottom);
-            return Vec::new();
+            return SmallVec::new();
         }
         let removed = if retain_history {
-            // Departing cells are moved into history before their rows are
-            // overwritten below; unretained rows can simply be overwritten.
+            // Departing cells move into history before their rows are
+            // overwritten; discarded rows can simply be overwritten.
             (top..top + count)
                 .map(|row| {
-                    let start = self.physical_row_start(row);
                     let occupied = self.occupied_columns[self.physical_row(row)];
-                    let mut cells = Vec::with_capacity(occupied);
-                    for cell in &mut self.cells[start..start + occupied] {
-                        cells.push(std::mem::replace(cell, blank_cell()));
-                    }
-                    ScreenRow {
-                        cells,
-                        soft_wrapped: self.soft_wrapped_rows[self.physical_row(row)],
-                    }
+                    self.take_row_into(row, occupied, Vec::with_capacity(occupied))
                 })
                 .collect()
         } else {
-            Vec::new()
+            SmallVec::new()
         };
         if top == 0 && bottom + 1 == self.dimensions.rows() {
             // The common case: the whole screen scrolls. Rotating the ring
@@ -768,6 +786,34 @@ impl Screen {
         }
         self.mark_dirty_range(top, bottom);
         removed
+    }
+
+    pub(crate) fn scroll_up_reusing(&mut self, cells: Vec<Cell>, fill: Cell) -> ScreenRow {
+        let occupied = self.occupied_columns[self.physical_row(0)];
+        let row = self.take_row_into(0, occupied, cells);
+        let removed = self.scroll_up(
+            0,
+            self.dimensions.rows() - 1,
+            1,
+            fill,
+            ColumnSpan::full(self.dimensions.columns()),
+            false,
+        );
+        debug_assert!(removed.is_empty());
+        row
+    }
+
+    #[inline]
+    fn take_row_into(&mut self, row: usize, occupied: usize, mut cells: Vec<Cell>) -> ScreenRow {
+        debug_assert!(cells.is_empty() && cells.capacity() >= occupied);
+        let start = self.physical_row_start(row);
+        for cell in &mut self.cells[start..start + occupied] {
+            cells.push(std::mem::replace(cell, blank_cell()));
+        }
+        ScreenRow {
+            cells,
+            soft_wrapped: self.soft_wrapped_rows[self.physical_row(row)],
+        }
     }
 
     pub(crate) fn scroll_down(
