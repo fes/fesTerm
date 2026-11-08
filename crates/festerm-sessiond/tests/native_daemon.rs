@@ -582,7 +582,7 @@ fn native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_
         &["emit:READY", "read-line", "echo:INPUT", "spin"],
     );
     #[cfg(windows)]
-    let _daemon = launch_session_with(
+    let mut daemon = launch_session_with(
         &executable,
         &runtime,
         &name,
@@ -623,6 +623,12 @@ fn native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_
     assert!(terminal_contains(&client.snapshot, b"READY"));
     send_input(&mut client, &test_input("still-alive")).unwrap();
     assert_contains(&mut client, b"INPUT:still-alive");
+    #[cfg(windows)]
+    {
+        drop(client);
+        kill_for_cleanup(&executable, &runtime, &name).unwrap();
+        daemon.wait().unwrap();
+    }
 }
 
 #[test]
@@ -655,7 +661,7 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
         ],
     );
     #[cfg(windows)]
-    let _daemon = launch_session_with(
+    let mut daemon = launch_session_with(
         &executable,
         &runtime,
         &name,
@@ -784,6 +790,12 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
         .any(|w| w == b"INPUT:bridge-two"));
     drop(reattached.stdin.take());
     assert!(reattached.wait().unwrap().success());
+    #[cfg(windows)]
+    {
+        drop(old);
+        kill_for_cleanup(&executable, &runtime, &name).unwrap();
+        daemon.wait().unwrap();
+    }
 }
 
 #[cfg(unix)]
