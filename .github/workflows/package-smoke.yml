@@ -16,8 +16,10 @@ on:
       - 'assets/app-icon/**'
       - 'packaging/**'
       - 'scripts/check_packaging.py'
+      - 'scripts/run-cargo-packager.py'
       - 'scripts/smoke_linux_automation_worker.py'
       - 'scripts/tests/test_check_packaging.py'
+      - 'scripts/tests/test_cargo_packager_retry.py'
       - 'scripts/stage-conpty.ps1'
       - 'scripts/stage-windows-sessiond.ps1'
       - 'third_party/conpty/**'
@@ -227,7 +229,8 @@ jobs:
           cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
           if ($LASTEXITCODE -ne 0) { throw 'Tunnel helper build failed' }
           ./scripts/stage-windows-sessiond.ps1 -Configuration Release
-          cargo packager --config packaging/windows.toml --formats nsis
+          python scripts/run-cargo-packager.py --config packaging/windows.toml --formats nsis
+          if ($LASTEXITCODE -ne 0) { throw 'cargo-packager failed to build the NSIS installer' }
           $installer = Get-ChildItem target/release -Filter '*-setup.exe' | Select-Object -First 1
           if (-not $installer) {
             throw 'cargo-packager did not produce an NSIS installer'
@@ -454,7 +457,7 @@ jobs:
         run: |
           cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
           cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
-          cargo packager --config packaging/linux.toml --formats appimage
+          python3 scripts/run-cargo-packager.py --config packaging/linux.toml --formats appimage
           appimage="$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)"
           test -n "$appimage"
           chmod +x "$appimage"
