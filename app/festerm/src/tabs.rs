@@ -13,6 +13,10 @@
 //! `SessionController` pair defined in `session_controller.rs`.
 
 use std::collections::VecDeque;
+#[cfg(test)]
+#[path = "tabs_remote_tests.rs"]
+mod remote_tests;
+
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -29,7 +33,7 @@ pub use panes::PaneClosePlan;
 use eframe::egui;
 use festerm_config::{
     ChipLayoutPreference, ConfigError, Configuration, DurableSessionIdentity,
-    EmojiPresentationPreference, ImageMemoryBudgetPreference, InterfaceSettings,
+    EmojiPresentationPreference, ImageMemoryBudgetPreference, InterfaceSettings, LocalBindPolicy,
     PersistenceConfiguration, PersistenceProviderKind, ScrollSpeedPreference,
     ScrollbackLimitPreference, SessionAlias, SftpPaneOrderPreference,
     SshPortForwardDirection as ConfigSshPortForwardDirection, SshProfileConfiguration,
@@ -69,7 +73,9 @@ use festerm_ui_egui::{
 use std::rc::Rc;
 
 use crate::documents::{DocumentRegistry, OpenFailure, SharedDocuments};
+use crate::local_bind::ResolvedLocalBind;
 use crate::markdown_viewer::MarkdownViewerTab;
+use crate::powershell::PowerShellTab;
 use crate::session_controller::{seed_session_startup_failure, terminal_size, SessionController};
 use crate::sftp_file_manager::{
     local_home_directory, AuthenticationFormState, SftpFileManagerAuthentication,
@@ -286,16 +292,22 @@ impl std::fmt::Display for ConfiguredSshProfileLaunchError {
 impl std::error::Error for ConfiguredSshProfileLaunchError {}
 
 impl ApplicationSession {
-    pub fn take_recovered_terminal(&self) -> Option<Terminal> {
+    fn take_recovered_terminal_deferred(&self) -> Option<Terminal> {
         match self {
             Self::Persistent(session) | Self::DevTunnel(session) => {
-                session.take_recovered_terminal()
+                session.take_recovered_terminal_deferred()
             }
             Self::Local(_) | Self::Ssh(_) | Self::Sftp(_) | Self::Serial(_) => None,
             #[cfg(test)]
             Self::TestSsh(session) => session.take_recovered_terminal(),
             #[cfg(test)]
             Self::TestLocal(_) => None,
+        }
+    }
+
+    fn acknowledge_recovery_adoption(&self) {
+        if let Self::Persistent(session) | Self::DevTunnel(session) = self {
+            session.acknowledge_recovery_adoption();
         }
     }
 
@@ -725,11 +737,12 @@ pub struct LiveSessionCounts {
     pub local: usize,
     pub ssh: usize,
     pub serial: usize,
+    pub powershell: usize,
 }
 
 impl LiveSessionCounts {
     pub const fn total(&self) -> usize {
-        self.local + self.ssh + self.serial
+        self.local + self.ssh + self.serial + self.powershell
     }
 }
 
@@ -749,6 +762,7 @@ pub enum InspectorTransport {
         username: String,
         host: String,
         port: u16,
+        local_bind: ResolvedLocalBind,
         /// The durable remote-session provider and name this connection
         /// attaches to or creates, if any (ADR 0018). `None` means this is
         /// an ordinary manual-recovery plain shell. This drives the
@@ -761,6 +775,8 @@ pub enum InspectorTransport {
         username: String,
         host: String,
         port: u16,
+        #[allow(dead_code)]
+        local_bind: ResolvedLocalBind,
     },
     Serial {
         device: String,
@@ -1031,17 +1047,25 @@ impl SessionTab {
     }
 
     pub fn adopt_recovered_terminal(&mut self) -> bool {
+        self.adopt_recovered_terminal_with(|_| {})
+    }
+
+    fn adopt_recovered_terminal_with(&mut self, before_install: impl FnOnce(&Self)) -> bool {
         let Some(recovered) = self
             .controller
             .session()
-            .and_then(ApplicationSession::take_recovered_terminal)
+            .and_then(ApplicationSession::take_recovered_terminal_deferred)
         else {
             return false;
         };
+        before_install(self);
         self.terminal = recovered;
         self.search.terminal_replaced(&self.terminal);
         self.view.reset_recovery_layout();
         self.controller.end_recording_on_replacement();
+        if let Some(session) = self.controller.session() {
+            session.acknowledge_recovery_adoption();
+        }
         true
     }
 
@@ -1331,6 +1355,50 @@ impl SessionTab {
         Self::from_local_session_result(result, dimensions, name, None, None, inspector_persistence)
     }
 
+    fn start_remote_persistent(
+        target: festerm_sessiond::RemoteSessionTarget,
+        authentication: SshAuthentication,
+        context: &egui::Context,
+    ) -> Self {
+        let endpoint = target.endpoint();
+        let profile = endpoint.profile();
+        let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
+        let label = format!(
+            "{} · {}@{}",
+            target.name(),
+            profile.username(),
+            profile.identity().host()
+        );
+        let transport = InspectorTransport::Ssh {
+            username: profile.username().to_owned(),
+            host: profile.identity().host().to_owned(),
+            port: profile.identity().port(),
+            local_bind: ResolvedLocalBind::from_address(profile.local_bind_address()),
+            persistence: Some(InspectorPersistence {
+                provider_label: "Remote sessiond",
+                session_name: target.name().to_owned(),
+            }),
+        };
+        let result = target
+            .attach_with_takeover(authentication, make_notifier(context))
+            .map(ApplicationSession::Persistent)
+            .map_err(|error| error.to_string());
+        let mut session = Self::from_local_session_result(
+            result,
+            dimensions,
+            &label,
+            Some(format!(
+                "SSH sessiond · pid {} · generation {}",
+                target.pid(),
+                target.generation()
+            )),
+            None,
+            None,
+        );
+        session.inspector_transport = transport;
+        session
+    }
+
     /// Starts the prevalidated attach-only provider client. No saved profile
     /// backs this launch, so workspace/Inspector metadata cannot claim one.
     fn start_multiplexer_session(
@@ -1393,6 +1461,7 @@ impl SessionTab {
             username: profile.username().to_owned(),
             host: profile.identity().host().to_owned(),
             port: profile.identity().port(),
+            local_bind: ResolvedLocalBind::from_address(profile.local_bind_address()),
             persistence,
         };
         // Only a plain-password attempt can be usefully retried by
@@ -1448,6 +1517,7 @@ impl SessionTab {
             username: profile.username().to_owned(),
             host: profile.identity().host().to_owned(),
             port: profile.identity().port(),
+            local_bind: ResolvedLocalBind::from_address(profile.local_bind_address()),
         };
         let result = SftpTerminalSession::start_with_notifier(
             profile,
@@ -2114,6 +2184,13 @@ impl SessionTab {
         }
     }
 
+    pub(crate) fn is_remote_persistent(&self) -> bool {
+        matches!(
+            self.controller.session(),
+            Some(ApplicationSession::Persistent(_))
+        ) && matches!(self.inspector_transport, InspectorTransport::Ssh { .. })
+    }
+
     /// The most recent live SSH port-forward snapshot for this tab.
     pub fn port_forwards(&self) -> &[SshPortForwardRuntime] {
         self.controller.port_forwards()
@@ -2194,6 +2271,9 @@ pub enum TabContent {
     TextEditor(Box<TextEditorTab>),
     SftpFileManagerAuthenticationRequired(Box<SftpFileManagerAuthenticationRequiredTab>),
     SftpFileManager(Box<SftpFileManagerTab>),
+    PowerShell(Box<PowerShellTab>),
+    Enterprise(Box<crate::enterprise::EnterpriseTab>),
+    RemoteSessions(Box<crate::remote_sessions::RemoteSessionsTab>),
     Session(Box<SessionTab>),
 }
 
@@ -2281,6 +2361,7 @@ pub enum NewProfileKind {
     DevTunnel,
     /// The Dev Tunnel host-setup surface rather than a profile editor.
     HostSetup,
+    PowerShell,
     SshFromDraft(SshProfileDraftSeed),
 }
 
@@ -2300,6 +2381,7 @@ pub struct SshProfileDraftSeed {
     pub port: String,
     pub username: String,
     pub port_forwards: Vec<SshPortForwardDraftSeed>,
+    pub local_bind_policy: LocalBindPolicy,
     pub durable_session_enabled: bool,
     pub durable_session_provider: PersistenceProviderKind,
     pub durable_session_name: String,
@@ -2355,6 +2437,24 @@ pub enum AppCommand {
     },
     #[cfg(feature = "experimental-dev-tunnels")]
     ConnectDevTunnel(crate::tunnel_activation::Launch),
+    OpenEnterprise,
+    OpenRemoteSessions,
+    Enterprise {
+        tab_id: TabId,
+        action: crate::enterprise::EnterpriseAction,
+    },
+    RemoteSessions {
+        tab_id: TabId,
+        action: crate::remote_sessions::RemoteSessionsAction,
+    },
+    PowerShell {
+        tab_id: TabId,
+        action: crate::powershell::PowerShellAction,
+    },
+    /// Cancels a preconnection form without retargeting a deferred credential completion.
+    CancelConnectionSetup {
+        tab_id: TabId,
+    },
     /// "New Tab opens the session launcher" (`docs/gui-design.md`
     /// "Interaction Conventions").
     OpenLauncher,
@@ -2471,6 +2571,7 @@ pub enum AppCommand {
     /// options. Launcher invocation surfaces validate input into these typed
     /// values; this does not create a persisted profile.
     StartSshSession {
+        profile_id: Option<String>,
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
         options: SshSessionOptions,
@@ -2478,6 +2579,7 @@ pub enum AppCommand {
     /// Starts one text-mode SFTP transport from explicitly supplied, secret-free
     /// connection metadata and transient authentication.
     StartSftpSession {
+        profile_id: Option<String>,
         profile: SshConnectionProfile,
         authentication: SshAuthentication,
     },
@@ -2506,11 +2608,13 @@ pub enum AppCommand {
     StartStoredPasswordSshProfile {
         profile_id: String,
         options: SshSessionOptions,
+        local_bind: ResolvedLocalBind,
     },
     /// Starts an existing configured SFTP profile by resolving its native
     /// stored password on the SFTP worker. This command has no password value.
     StartStoredPasswordSftpProfile {
         profile_id: String,
+        local_bind: ResolvedLocalBind,
     },
     /// Launches a saved SSH profile the same way a saved local profile
     /// launches: from a Launcher/Profiles card, with no upfront password
@@ -2535,7 +2639,7 @@ pub enum AppCommand {
     /// Starts a saved profile's GUI SFTP surface using its opaque
     /// native-store password or private-key reference.
     StartStoredSftpFileManagerProfile {
-        profile_id: String,
+        target: SftpFileManagerLaunchTarget,
     },
     /// Starts a serial session from explicitly supplied line settings. The
     /// Launcher's serial form validates input into a `LineSettings` value;
@@ -2546,6 +2650,11 @@ pub enum AppCommand {
     /// Starts a serial session from a saved serial profile. Mirrors
     /// `StartConfiguredLocalProfile`.
     StartConfiguredSerialProfile {
+        profile_id: String,
+    },
+    /// Opens a native PowerShell profile as a disconnected structured setup
+    /// tab. Connecting is an explicit tab action, never workspace restore.
+    OpenConfiguredPowerShellProfile {
         profile_id: String,
     },
     /// Opens a local file in the native editor, binding to the document if it
@@ -2602,12 +2711,14 @@ pub enum AppCommand {
         profile_id: String,
         password: PasswordToStore,
         options: SshSessionOptions,
+        local_bind: ResolvedLocalBind,
     },
     /// Requests that the composition root store a password for an existing
     /// configured SSH profile before starting it as SFTP.
     StoreSftpPassword {
         profile_id: String,
         password: PasswordToStore,
+        local_bind: ResolvedLocalBind,
     },
     /// Requests that the composition root store or replace a password for
     /// an existing configured SSH profile from the Profiles editor, with no
@@ -2936,7 +3047,7 @@ impl AppCommand {
 ///
 /// It has no public getter and redacts `Debug`, so application commands remain
 /// safe to inspect in UI tests and diagnostics.
-pub struct PasswordToStore(String);
+pub struct PasswordToStore(zeroize::Zeroizing<String>);
 
 /// One session-only connect capability. Never OAuth or a bridge host token.
 pub struct TunnelConnectToken(zeroize::Zeroizing<String>);
@@ -3006,11 +3117,11 @@ impl std::fmt::Debug for ExternalLinkTarget {
 
 impl PasswordToStore {
     pub(crate) fn new(password: String) -> Self {
-        Self(password)
+        Self(zeroize::Zeroizing::new(password))
     }
 
     pub(crate) fn into_secret_bytes(self) -> SecretBytes {
-        SecretBytes::from_secret_string(self.0)
+        SecretBytes::copy_from_slice(self.0.as_bytes())
     }
 }
 
@@ -3136,6 +3247,9 @@ pub struct AppState {
     pane_error: Option<String>,
     pane_available: egui::Vec2,
     pane_minimum: egui::Vec2,
+    retiring_powershell_workers: Vec<crate::powershell::PowerShellShutdownHandle>,
+    retiring_enterprise_workers: Vec<crate::enterprise::EnterpriseShutdownHandle>,
+    retiring_remote_workers: Vec<crate::remote_sessions::RemoteSessionsShutdownHandle>,
     active: TabId,
     presentation_workspace: Option<crate::automation::WorkspaceRevision>,
     /// Which tabs were looked at, oldest first, so that closing the active tab
@@ -3289,6 +3403,9 @@ impl AppState {
             pane_error: None,
             pane_available: egui::Vec2::ZERO,
             pane_minimum: egui::vec2(520.0, 240.0),
+            retiring_powershell_workers: Vec::new(),
+            retiring_enterprise_workers: Vec::new(),
+            retiring_remote_workers: Vec::new(),
             active,
             presentation_workspace: None,
             activation_history: Vec::new(),
@@ -3491,6 +3608,7 @@ impl AppState {
                                 known_host_persisted: configuration
                                     .known_host_fingerprint(ssh.host(), ssh.port())
                                     .is_some(),
+                                local_bind_policy: ssh.local_bind_policy(),
                             },
                             false,
                         ),
@@ -3510,6 +3628,13 @@ impl AppState {
                         context,
                         None,
                     )))
+                }
+                WorkspaceTab::PowerShellSession(tab) => {
+                    let profile = configuration
+                        .profile(tab.profile_id())
+                        .and_then(festerm_config::Profile::as_powershell)
+                        .expect("validated workspace PowerShell profile reference");
+                    TabContent::PowerShell(Box::new(PowerShellTab::new(profile.clone())))
                 }
             };
             if let TabContent::Session(session) = &mut content {
@@ -3548,18 +3673,20 @@ impl AppState {
     pub fn live_session_counts(&self) -> LiveSessionCounts {
         let mut counts = LiveSessionCounts::default();
         for tab in &self.tabs {
-            let TabContent::Session(session) = &tab.content else {
-                continue;
-            };
-            if !session.close_requires_confirmation() {
-                continue;
-            }
-            match session.inspector_transport {
-                InspectorTransport::Local { .. } => counts.local += 1,
-                InspectorTransport::Ssh { .. }
-                | InspectorTransport::Sftp { .. }
-                | InspectorTransport::DevTunnel { .. } => counts.ssh += 1,
-                InspectorTransport::Serial { .. } => counts.serial += 1,
+            match &tab.content {
+                TabContent::Session(session) if session.close_requires_confirmation() => {
+                    match session.inspector_transport {
+                        InspectorTransport::Local { .. } => counts.local += 1,
+                        InspectorTransport::Ssh { .. }
+                        | InspectorTransport::Sftp { .. }
+                        | InspectorTransport::DevTunnel { .. } => counts.ssh += 1,
+                        InspectorTransport::Serial { .. } => counts.serial += 1,
+                    }
+                }
+                TabContent::PowerShell(powershell) if powershell.close_requires_confirmation() => {
+                    counts.powershell += 1;
+                }
+                _ => {}
             }
         }
         counts
@@ -3581,6 +3708,14 @@ impl AppState {
     /// and are never stopped or reconfigured.
     pub fn replace_configuration(&mut self, configuration: Configuration) {
         for tab in &mut self.tabs {
+            if let TabContent::PowerShell(powershell) = &mut tab.content {
+                if let Some(profile) = configuration
+                    .profile(powershell.profile_identifier())
+                    .and_then(festerm_config::Profile::as_powershell)
+                {
+                    powershell.refresh_profile(profile);
+                }
+            }
             let TabContent::Session(session) = &mut tab.content else {
                 continue;
             };
@@ -3683,7 +3818,10 @@ impl AppState {
                 TabContent::Profiles => Some(WorkspaceTab::profiles(identifier.clone())?),
                 // ADR 0034 §12: an editor tab is not restored, because the
                 // buffer it was showing is not persisted anywhere.
-                TabContent::MarkdownViewer(_) | TabContent::TextEditor(_) => None,
+                TabContent::MarkdownViewer(_)
+                | TabContent::TextEditor(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
                 TabContent::SshAuthenticationRequired(ssh) => Some(WorkspaceTab::ssh_session(
                     identifier.clone(),
                     ssh.profile.identifier(),
@@ -3707,6 +3845,10 @@ impl AppState {
                         WorkspaceTab::sftp_file_manager(identifier.clone(), profile_id)
                     })
                     .transpose()?,
+                TabContent::PowerShell(tab) => Some(WorkspaceTab::powershell_session(
+                    identifier.clone(),
+                    tab.profile_identifier(),
+                )?),
                 TabContent::Session(session) => session
                     .profile_identifier
                     .as_deref()
@@ -3997,7 +4139,10 @@ impl AppState {
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
                 | TabContent::SftpFileManager(_)
                 | TabContent::MarkdownViewer(_)
-                | TabContent::TextEditor(_) => None,
+                | TabContent::TextEditor(_)
+                | TabContent::PowerShell(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
             })
     }
 
@@ -4015,7 +4160,10 @@ impl AppState {
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
-                | TabContent::SftpFileManager(_) => None,
+                | TabContent::SftpFileManager(_)
+                | TabContent::PowerShell(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
             })
     }
 
@@ -4033,7 +4181,10 @@ impl AppState {
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
-                | TabContent::Session(_) => None,
+                | TabContent::Session(_)
+                | TabContent::PowerShell(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
             })
     }
 
@@ -4066,7 +4217,10 @@ impl AppState {
             | TabContent::SshAuthenticationRequired(_)
             | TabContent::SftpAuthenticationRequired(_)
             | TabContent::SftpFileManagerAuthenticationRequired(_)
-            | TabContent::SftpFileManager(_) => None,
+            | TabContent::SftpFileManager(_)
+            | TabContent::PowerShell(_)
+            | TabContent::Enterprise(_)
+            | TabContent::RemoteSessions(_) => None,
         })
     }
 
@@ -4087,7 +4241,10 @@ impl AppState {
                 | TabContent::SshAuthenticationRequired(_)
                 | TabContent::SftpAuthenticationRequired(_)
                 | TabContent::SftpFileManagerAuthenticationRequired(_)
-                | TabContent::SftpFileManager(_) => None,
+                | TabContent::SftpFileManager(_)
+                | TabContent::PowerShell(_)
+                | TabContent::Enterprise(_)
+                | TabContent::RemoteSessions(_) => None,
             })
     }
 
@@ -4098,6 +4255,83 @@ impl AppState {
         self.recording_auto_enrollment = recording;
     }
 
+    pub fn drain_background_tabs(&mut self, context: &egui::Context) {
+        self.retiring_powershell_workers
+            .retain(|handle| !handle.is_finished());
+        self.retiring_enterprise_workers
+            .retain(|handle| !handle.is_finished());
+        self.retiring_remote_workers
+            .retain(|handle| !handle.is_finished());
+        for tab in &mut self.tabs {
+            match &mut tab.content {
+                TabContent::PowerShell(tab) => tab.drain_messages(context),
+                TabContent::Enterprise(tab) => tab.drain_messages(context),
+                TabContent::RemoteSessions(tab) => tab.drain_messages(context),
+                _ => {}
+            }
+        }
+    }
+
+    pub(crate) fn background_worker_count(&self) -> usize {
+        self.retiring_powershell_workers
+            .iter()
+            .filter(|handle| !handle.is_finished())
+            .count()
+            + self
+                .retiring_enterprise_workers
+                .iter()
+                .filter(|handle| !handle.is_finished())
+                .count()
+            + self
+                .retiring_remote_workers
+                .iter()
+                .filter(|handle| !handle.is_finished())
+                .count()
+            + self
+                .tabs
+                .iter()
+                .filter(|tab| match &tab.content {
+                    TabContent::PowerShell(tab) => tab
+                        .shutdown_handle()
+                        .is_some_and(|handle| !handle.is_finished()),
+                    TabContent::Enterprise(tab) => tab
+                        .shutdown_handle()
+                        .is_some_and(|handle| !handle.is_finished()),
+                    TabContent::RemoteSessions(tab) => tab
+                        .shutdown_handle()
+                        .is_some_and(|handle| !handle.is_finished()),
+                    _ => false,
+                })
+                .count()
+    }
+
+    pub(crate) fn request_background_shutdown(&mut self) {
+        for handle in &self.retiring_powershell_workers {
+            handle.request_close();
+        }
+        for handle in &self.retiring_enterprise_workers {
+            handle.request_shutdown();
+        }
+        for handle in &self.retiring_remote_workers {
+            handle.request_shutdown();
+        }
+        for tab in &mut self.tabs {
+            match &mut tab.content {
+                TabContent::PowerShell(tab) => tab.request_close(),
+                TabContent::Enterprise(tab) => tab.request_close(),
+                TabContent::RemoteSessions(tab) => tab.request_close(),
+                _ => {}
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retire_powershell_for_test(
+        &mut self,
+        handle: crate::powershell::PowerShellShutdownHandle,
+    ) {
+        self.retiring_powershell_workers.push(handle);
+    }
     /// Requests an on-demand SSH-level liveness probe (ADR 0018) on every
     /// open SSH session tab. Intended for a wake/network-change signal:
     /// each request is coalescing and nonblocking, so calling this
@@ -4141,6 +4375,31 @@ impl AppState {
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ConnectDevTunnel(launch) => {
                 self.start_tunnel_launch(None, None, move || Ok(launch), context);
+            }
+            AppCommand::PowerShell { .. } => {}
+            AppCommand::Enterprise { .. } | AppCommand::RemoteSessions { .. } => {}
+            AppCommand::OpenEnterprise => {
+                self.open_auxiliary_tab(TabContent::Enterprise(Box::new(
+                    crate::enterprise::EnterpriseTab::new(),
+                )));
+            }
+            AppCommand::OpenRemoteSessions => {
+                self.open_auxiliary_tab(TabContent::RemoteSessions(Box::new(
+                    crate::remote_sessions::RemoteSessionsTab::new(),
+                )));
+            }
+            AppCommand::CancelConnectionSetup { tab_id } => {
+                if self.active == tab_id {
+                    self.input_ownership_epoch = self.input_ownership_epoch.wrapping_add(1);
+                    if matches!(
+                        self.active_tab().content,
+                        TabContent::SshAuthenticationRequired(_)
+                            | TabContent::SftpAuthenticationRequired(_)
+                            | TabContent::SftpFileManagerAuthenticationRequired(_)
+                    ) {
+                        self.close(tab_id);
+                    }
+                }
             }
             AppCommand::OpenLauncher => self.open_launcher(),
             AppCommand::OpenWindow => self.window_open_requested = true,
@@ -4237,21 +4496,31 @@ impl AppState {
             }
 
             AppCommand::StartSshSession {
+                profile_id,
                 profile,
                 authentication,
                 options,
-            } => self.execute_ssh_session(profile, authentication, options, None, context),
+            } => {
+                let profile_id = self.matching_ssh_profile_id(profile_id.as_deref(), &profile);
+                self.execute_ssh_session(profile, authentication, options, profile_id, context);
+            }
             AppCommand::StartSftpSession {
+                profile_id,
                 profile,
                 authentication,
-            } => self.execute_sftp_session(profile, authentication, None, context),
-            AppCommand::OpenSftpFileManager { target } => self.open_sftp_file_manager(target),
+            } => {
+                let profile_id = self.matching_ssh_profile_id(profile_id.as_deref(), &profile);
+                self.execute_sftp_session(profile, authentication, profile_id, context);
+            }
+            AppCommand::OpenSftpFileManager { target } => {
+                self.open_sftp_file_manager(target, context)
+            }
             AppCommand::StartSftpFileManager {
                 target,
                 authentication,
             } => self.start_sftp_file_manager(target, authentication, context),
             AppCommand::RetrySftpFileManagerConnection { tab_id, target } => {
-                self.retry_sftp_file_manager_connection(tab_id, target)
+                self.retry_sftp_file_manager_connection(tab_id, target, context)
             }
             AppCommand::RetryTerminalFontDownload
             | AppCommand::StartStoredPasswordSshProfile { .. }
@@ -4331,13 +4600,16 @@ impl AppState {
                 }
             }
             AppCommand::OpenConfiguredSftpFileManagerProfile { profile_id } => {
-                self.open_configured_sftp_file_manager_profile(&profile_id)
+                self.open_configured_sftp_file_manager_profile(&profile_id, context)
             }
             AppCommand::StartSerialSession { settings } => {
                 self.start_serial_session(settings, context)
             }
             AppCommand::StartConfiguredSerialProfile { profile_id } => {
                 self.start_configured_serial_profile(&profile_id, context)
+            }
+            AppCommand::OpenConfiguredPowerShellProfile { profile_id } => {
+                self.open_configured_powershell_profile(&profile_id)
             }
             AppCommand::ResolveHostKeyTrust { tab, decision } => {
                 self.resolve_host_key_trust(tab, decision)
@@ -4402,7 +4674,16 @@ impl AppState {
             }
             AppCommand::ActivateNextTab => self.activate_relative(1),
             AppCommand::ActivatePreviousTab => self.activate_relative(-1),
-            AppCommand::CloseTab(id) | AppCommand::DiscardAndCloseTab(id) => self.close(id),
+            AppCommand::CloseTab(id) | AppCommand::DiscardAndCloseTab(id) => {
+                if self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == id && matches!(tab.content, TabContent::Profiles))
+                {
+                    crate::screens::clear_profiles_screen_state(context, id);
+                }
+                self.close(id);
+            }
             AppCommand::ReorderTab { moved, before } => self.reorder(moved, before),
             AppCommand::MoveTabLeft(id) => self.move_tab(id, -1),
             AppCommand::MoveTabRight(id) => self.move_tab(id, 1),
@@ -5968,6 +6249,18 @@ impl AppState {
         ));
     }
 
+    fn open_configured_powershell_profile(&mut self, profile_id: &str) {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_powershell)
+            .cloned()
+        else {
+            return;
+        };
+        self.place_powershell(PowerShellTab::new(profile));
+    }
+
     /// Starts a saved SSH profile that has no stored native-secret
     /// credential, using the same openssh-style in-terminal interactive
     /// prompt flow as Quick Connect. Unlike a stored-password profile (which
@@ -6009,6 +6302,85 @@ impl AppState {
         Ok(())
     }
 
+    pub(crate) fn open_ssh_profile_authentication(
+        &mut self,
+        profile_id: &str,
+        context: &egui::Context,
+    ) -> bool {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_ssh)
+            .cloned()
+        else {
+            return false;
+        };
+        self.workspace_dirty = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(tab.content, TabContent::Launcher) {
+                tab.content = TabContent::SshAuthenticationRequired(SshAuthenticationRequiredTab {
+                    profile,
+                    alias: None,
+                });
+                crate::screens::reset_connection_form(context, tab.id);
+                return true;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
+            content: TabContent::SshAuthenticationRequired(SshAuthenticationRequiredTab {
+                profile,
+                alias: None,
+            }),
+        });
+        self.set_active(id);
+        crate::screens::reset_connection_form(context, id);
+        true
+    }
+
+    pub(crate) fn open_sftp_profile_authentication(
+        &mut self,
+        profile_id: &str,
+        context: &egui::Context,
+    ) -> bool {
+        let Some(profile) = self
+            .configuration
+            .profile(profile_id)
+            .and_then(festerm_config::Profile::as_ssh)
+            .cloned()
+        else {
+            return false;
+        };
+        self.workspace_dirty = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(tab.content, TabContent::Launcher) {
+                tab.content =
+                    TabContent::SftpAuthenticationRequired(SftpAuthenticationRequiredTab {
+                        profile,
+                        alias: None,
+                    });
+                crate::screens::reset_connection_form(context, tab.id);
+                return true;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
+            content: TabContent::SftpAuthenticationRequired(SftpAuthenticationRequiredTab {
+                profile,
+                alias: None,
+            }),
+        });
+        self.set_active(id);
+        crate::screens::reset_connection_form(context, id);
+        true
+    }
+
     /// Starts a saved SSH profile as a text-mode SFTP session, using the
     /// same host-key-first interactive password flow as Quick Connect when
     /// no stored credential is present.
@@ -6041,6 +6413,24 @@ impl AppState {
             context,
         );
         true
+    }
+
+    fn matching_ssh_profile_id<'a>(
+        &self,
+        identifier: Option<&'a str>,
+        connection: &SshConnectionProfile,
+    ) -> Option<&'a str> {
+        // Edited destinations are ad hoc; otherwise restore would reopen a different host.
+        identifier.filter(|identifier| {
+            self.configuration
+                .profile(identifier)
+                .and_then(festerm_config::Profile::as_ssh)
+                .is_some_and(|saved| {
+                    saved.host() == connection.identity().host()
+                        && saved.port() == connection.identity().port()
+                        && saved.username() == connection.username()
+                })
+        })
     }
 
     fn execute_ssh_session(
@@ -6111,6 +6501,7 @@ impl AppState {
         &mut self,
         tab_id: TabId,
         mut target: SftpFileManagerLaunchTarget,
+        _context: &egui::Context,
     ) {
         target.known_host_persisted = self
             .configuration
@@ -6124,7 +6515,11 @@ impl AppState {
         }
     }
 
-    fn open_sftp_file_manager(&mut self, mut target: SftpFileManagerLaunchTarget) {
+    fn open_sftp_file_manager(
+        &mut self,
+        mut target: SftpFileManagerLaunchTarget,
+        _context: &egui::Context,
+    ) {
         target.known_host_persisted = self
             .configuration
             .known_host_fingerprint(&target.host, target.port)
@@ -6155,9 +6550,13 @@ impl AppState {
         self.set_active(id);
     }
 
-    fn open_configured_sftp_file_manager_profile(&mut self, profile_id: &str) {
+    fn open_configured_sftp_file_manager_profile(
+        &mut self,
+        profile_id: &str,
+        context: &egui::Context,
+    ) {
         if let Some(target) = self.sftp_file_manager_target_for_profile(profile_id) {
-            self.open_sftp_file_manager(target);
+            self.open_sftp_file_manager(target, context);
         }
     }
 
@@ -6209,15 +6608,19 @@ impl AppState {
                 .configuration
                 .known_host_fingerprint(ssh.host(), ssh.port())
                 .is_some(),
+            local_bind_policy: ssh.local_bind_policy(),
         })
     }
 
-    pub(crate) fn start_stored_sftp_file_manager_profile(
+    pub(crate) fn start_stored_sftp_file_manager_target(
         &mut self,
-        profile_id: &str,
+        target: SftpFileManagerLaunchTarget,
         store: Arc<dyn festerm_secret_store::SecretStore>,
         context: &egui::Context,
     ) -> bool {
+        let Some(profile_id) = target.profile_id.as_deref() else {
+            return false;
+        };
         let Some(profile) = self
             .configuration
             .profile(profile_id)
@@ -6225,6 +6628,13 @@ impl AppState {
         else {
             return false;
         };
+        if profile.host() != target.host
+            || profile.port() != target.port
+            || profile.username() != target.username
+            || target.stored_credential_kind != Some(profile.credential_kind())
+        {
+            return false;
+        }
         let Some(reference) = profile.credential_reference() else {
             return false;
         };
@@ -6233,9 +6643,9 @@ impl AppState {
             reference,
             store,
         );
-        let Some(target) = self.sftp_file_manager_target_for_profile(profile_id) else {
+        if target.local_bind_policy == LocalBindPolicy::Ask {
             return false;
-        };
+        }
         self.start_sftp_file_manager(target, authentication, context);
         true
     }
@@ -6270,6 +6680,7 @@ impl AppState {
             ref username,
             ref host,
             port,
+            local_bind,
             ..
         } = session.inspector_transport
         else {
@@ -6282,6 +6693,9 @@ impl AppState {
                 self.configuration
                     .profile(profile_id)
                     .and_then(festerm_config::Profile::as_ssh)
+                    .filter(|ssh| {
+                        ssh.host() == host && ssh.port() == port && ssh.username() == username
+                    })
                     .map(|ssh| {
                         (
                             Some(ssh.identifier().to_owned()),
@@ -6306,6 +6720,7 @@ impl AppState {
                 .configuration
                 .known_host_fingerprint(host, port)
                 .is_some(),
+            local_bind_policy: local_bind.policy(),
         })
     }
 
@@ -6326,6 +6741,7 @@ impl AppState {
         profile_id: &str,
         store: Arc<dyn SecretStore>,
         options: SshSessionOptions,
+        local_bind: Option<ResolvedLocalBind>,
         context: &egui::Context,
     ) -> bool {
         let Some(profile) = self
@@ -6338,7 +6754,17 @@ impl AppState {
         let Some(reference) = profile.credential_reference() else {
             return false;
         };
-        let Ok(connection_profile) = profile.to_connection_profile() else {
+        if profile.local_bind_policy() == LocalBindPolicy::Ask && local_bind.is_none() {
+            return false;
+        }
+        let size = TerminalSize::new(profile.initial_size().0, profile.initial_size().1)
+            .expect("validated SSH profile size remains valid");
+        let Ok(connection_profile) = profile.to_connection_profile_with_resolved_local_bind(
+            size,
+            local_bind
+                .map(ResolvedLocalBind::address)
+                .unwrap_or_else(|| profile.local_bind_policy().fixed_address()),
+        ) else {
             return false;
         };
         let authentication = match profile.credential_kind() {
@@ -6366,6 +6792,7 @@ impl AppState {
         &mut self,
         profile_id: &str,
         store: Arc<dyn SecretStore>,
+        local_bind: Option<ResolvedLocalBind>,
         context: &egui::Context,
     ) -> bool {
         let Some(profile) = self
@@ -6378,7 +6805,17 @@ impl AppState {
         let Some(reference) = profile.credential_reference() else {
             return false;
         };
-        let Ok(connection_profile) = profile.to_connection_profile() else {
+        if profile.local_bind_policy() == LocalBindPolicy::Ask && local_bind.is_none() {
+            return false;
+        }
+        let size = TerminalSize::new(profile.initial_size().0, profile.initial_size().1)
+            .expect("validated SSH profile size remains valid");
+        let Ok(connection_profile) = profile.to_connection_profile_with_resolved_local_bind(
+            size,
+            local_bind
+                .map(ResolvedLocalBind::address)
+                .unwrap_or_else(|| profile.local_bind_policy().fixed_address()),
+        ) else {
             return false;
         };
         let authentication = match profile.credential_kind() {
@@ -6514,6 +6951,52 @@ impl AppState {
             content: TabContent::Session(Box::new(session)),
         });
         self.set_active(id);
+    }
+
+    fn place_powershell(&mut self, powershell: PowerShellTab) {
+        self.workspace_dirty = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(tab.content, TabContent::Launcher) {
+                tab.content = TabContent::PowerShell(Box::new(powershell));
+                return;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
+            content: TabContent::PowerShell(Box::new(powershell)),
+        });
+        self.set_active(id);
+    }
+
+    fn open_auxiliary_tab(&mut self, content: TabContent) {
+        self.workspace_dirty = true;
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+            if matches!(tab.content, TabContent::Launcher) {
+                tab.content = content;
+                return;
+            }
+        }
+        let id = TabId::next();
+        self.tabs.push(Tab {
+            id,
+            durable_id: uuid::Uuid::new_v4().to_string(),
+            pane_id: uuid::Uuid::new_v4().to_string(),
+            content,
+        });
+        self.set_active(id);
+    }
+
+    pub(crate) fn attach_remote_session(
+        &mut self,
+        request: crate::remote_sessions::RemoteAttachRequest,
+        context: &egui::Context,
+    ) {
+        let session =
+            SessionTab::start_remote_persistent(request.target, request.authentication, context);
+        self.place_user_session(session);
     }
 
     fn place_sftp_file_manager(&mut self, tab_content: SftpFileManagerTab) {
@@ -6926,8 +7409,27 @@ impl AppState {
         if let Some(document) = view_document(&removed.content) {
             self.documents.borrow_mut().release(document);
         }
-        if let TabContent::Session(session) = removed.content {
-            session.controller.shutdown();
+        match removed.content {
+            TabContent::Session(session) => session.controller.shutdown(),
+            TabContent::PowerShell(mut tab) => {
+                tab.request_close();
+                if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
+                    self.retiring_powershell_workers.push(handle);
+                }
+            }
+            TabContent::Enterprise(mut tab) => {
+                tab.request_close();
+                if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
+                    self.retiring_enterprise_workers.push(handle);
+                }
+            }
+            TabContent::RemoteSessions(mut tab) => {
+                tab.request_close();
+                if let Some(handle) = tab.shutdown_handle().filter(|handle| !handle.is_finished()) {
+                    self.retiring_remote_workers.push(handle);
+                }
+            }
+            _ => {}
         }
         if self.tabs.is_empty() {
             // Root state must never go empty (`docs/gui-design.md` "Root
@@ -6994,6 +7496,7 @@ impl SessionTab {
                 username: username.to_owned(),
                 host: host.to_owned(),
                 port,
+                local_bind: ResolvedLocalBind::Automatic,
                 persistence: None,
             },
             eviction_notice_shown: false,
@@ -7979,6 +8482,7 @@ mod tests {
                     username: "deploy".into(),
                     host: "ssh.example.test".into(),
                     port: 22,
+                    local_bind: ResolvedLocalBind::Automatic,
                 };
             } else if let Some(provider) = provider {
                 if let InspectorTransport::Ssh { persistence, .. } =
@@ -8398,6 +8902,7 @@ mod tests {
                         username: "deploy".into(),
                         host: "ssh.example.test".into(),
                         port: 22,
+                        local_bind: ResolvedLocalBind::Automatic,
                         persistence: Some(InspectorPersistence {
                             provider_label: provider.label(),
                             session_name: "build".into(),
@@ -8852,15 +9357,19 @@ mod tests {
             let profiles = state.active();
             let store: Arc<dyn SecretStore> =
                 Arc::new(festerm_secret_store::MemorySecretStore::new());
+            let target = state
+                .sftp_file_manager_target_for_profile("stored")
+                .unwrap();
             assert!(match transport {
                 0 => state.start_stored_password_ssh_profile(
                     "stored",
                     store,
                     SshSessionOptions::new(),
+                    None,
                     &context,
                 ),
-                1 => state.start_stored_password_sftp_profile("stored", store, &context),
-                _ => state.start_stored_sftp_file_manager_profile("stored", store, &context),
+                1 => state.start_stored_password_sftp_profile("stored", store, None, &context),
+                _ => state.start_stored_sftp_file_manager_target(target, store, &context),
             });
             assert_eq!(state.active(), profiles);
             assert_eq!(state.tabs().len(), 2);
@@ -8927,6 +9436,7 @@ mod tests {
             "production",
             store,
             SshSessionOptions::new(),
+            None,
             &context,
         ));
 
@@ -8942,6 +9452,526 @@ mod tests {
             target.stored_credential_kind,
             Some(festerm_config::CredentialKind::Password)
         );
+    }
+
+    #[test]
+    fn fixed_source_address_is_retained_for_ssh_retry_and_gui_sftp_target() {
+        let context = egui::Context::default();
+        let fixed_address = "127.0.0.1".parse().unwrap();
+        let profile = festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Address(fixed_address))
+        .unwrap();
+        let configuration = Configuration::new(vec![festerm_config::Profile::Ssh(profile)])
+            .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+
+        let connection_profile = state
+            .configuration()
+            .profile("production")
+            .and_then(festerm_config::Profile::as_ssh)
+            .unwrap()
+            .to_connection_profile()
+            .unwrap();
+        state.dispatch(
+            AppCommand::StartSshSession {
+                profile_id: None,
+                profile: connection_profile,
+                authentication: SshAuthentication::password("test-password"),
+                options: SshSessionOptions::new(),
+            },
+            &context,
+        );
+
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("configured SSH profile must place a session tab");
+        };
+        assert_eq!(
+            session
+                .ssh_password_retry
+                .as_ref()
+                .map(|retry| retry.profile.local_bind_address()),
+            Some(Some(fixed_address))
+        );
+        let target = state
+            .sftp_file_manager_target_for_tab(state.active())
+            .expect("SSH session should offer GUI SFTP");
+        assert_eq!(
+            target.local_bind_policy.fixed_address(),
+            Some(fixed_address)
+        );
+    }
+
+    #[test]
+    fn inspector_sftp_target_uses_live_session_source_not_edited_profile() {
+        let live_address = "127.0.0.2".parse().unwrap();
+        let edited_profile_address = "127.0.0.1".parse().unwrap();
+        let profile = festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Address(edited_profile_address))
+        .unwrap();
+        let configuration = Configuration::new(vec![festerm_config::Profile::Ssh(profile)])
+            .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let tab = state.replace_active_with_test_ssh_session(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "deploy",
+            "ssh.example.test",
+            22,
+        );
+        let session = state.session_tab_mut(tab).expect("test session exists");
+        session.profile_identifier = Some("production".to_owned());
+        session.inspector_transport = InspectorTransport::Ssh {
+            username: "deploy".to_owned(),
+            host: "ssh.example.test".to_owned(),
+            port: 22,
+            local_bind: ResolvedLocalBind::Address(live_address),
+            persistence: None,
+        };
+
+        let target = state
+            .sftp_file_manager_target_for_tab(tab)
+            .expect("SSH session should offer GUI SFTP");
+
+        assert_eq!(target.profile_id.as_deref(), Some("production"));
+        assert_eq!(target.local_bind_policy.fixed_address(), Some(live_address));
+        assert_ne!(
+            target.local_bind_policy.fixed_address(),
+            Some(edited_profile_address),
+            "Open SFTP must inherit the live session source, not re-read edited profile metadata"
+        );
+    }
+
+    #[test]
+    fn inspector_sftp_stored_credential_launch_preserves_live_source_for_matching_destination() {
+        let context = egui::Context::default();
+        let live_address = "127.0.0.2".parse().unwrap();
+        let edited_profile_address = "127.0.0.1".parse().unwrap();
+        let profile = festerm_config::Profile::ssh(
+            "production",
+            "live.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Address(edited_profile_address))
+        .unwrap();
+        let configuration = Configuration::new(vec![festerm_config::Profile::Ssh(profile)])
+            .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let tab = state.replace_active_with_test_ssh_session(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "deploy",
+            "live.example.test",
+            22,
+        );
+        let session = state.session_tab_mut(tab).expect("test session exists");
+        session.profile_identifier = Some("production".to_owned());
+        session.inspector_transport = InspectorTransport::Ssh {
+            username: "deploy".to_owned(),
+            host: "live.example.test".to_owned(),
+            port: 22,
+            local_bind: ResolvedLocalBind::Address(live_address),
+            persistence: None,
+        };
+        let target = state
+            .sftp_file_manager_target_for_tab(tab)
+            .expect("SSH session should offer GUI SFTP");
+        let store: Arc<dyn festerm_secret_store::SecretStore> =
+            Arc::new(festerm_secret_store::MemorySecretStore::new());
+
+        assert!(state.start_stored_sftp_file_manager_target(target, store, &context));
+
+        let TabContent::SftpFileManager(tab) = &state.active_tab().content else {
+            panic!("stored GUI SFTP launch should place a file-manager tab");
+        };
+        assert_eq!(tab.launch_target.host, "live.example.test");
+        assert_eq!(tab.launch_target.username, "deploy");
+        assert_eq!(tab.launch_target.port, 22);
+        assert_eq!(
+            tab.launch_target.local_bind_policy.fixed_address(),
+            Some(live_address)
+        );
+    }
+
+    #[test]
+    fn inspector_sftp_does_not_reuse_a_credential_for_an_edited_destination() {
+        let context = egui::Context::default();
+        let original = festerm_config::Profile::ssh(
+            "production",
+            "live.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .unwrap();
+        let mut state = AppState::for_test_with_configuration(
+            Configuration::new(vec![original.clone()]).unwrap(),
+        );
+        let tab = state.replace_active_with_test_ssh_session(
+            crate::session_controller::fake::FakeSshSession::new([]),
+            "deploy",
+            "live.example.test",
+            22,
+        );
+        state.session_tab_mut(tab).unwrap().profile_identifier = Some("production".to_owned());
+        let stale_target = state.sftp_file_manager_target_for_tab(tab).unwrap();
+        assert_eq!(
+            stale_target.stored_credential_kind,
+            Some(festerm_config::CredentialKind::Password)
+        );
+
+        let edited = festerm_config::Profile::ssh(
+            "production",
+            "edited.example.test",
+            2222,
+            "other-user",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .unwrap();
+        state.replace_configuration(Configuration::new(vec![edited]).unwrap());
+        let target = state.sftp_file_manager_target_for_tab(tab).unwrap();
+        assert_eq!(target.host, "live.example.test");
+        assert!(target.profile_id.is_none());
+        assert!(target.stored_credential_kind.is_none());
+        let store: Arc<dyn festerm_secret_store::SecretStore> =
+            Arc::new(festerm_secret_store::MemorySecretStore::new());
+        assert!(!state.start_stored_sftp_file_manager_target(stale_target, store, &context));
+        assert_eq!(state.active(), tab);
+        assert!(matches!(state.active_tab().content, TabContent::Session(_)));
+    }
+
+    #[test]
+    fn ask_source_address_profile_opens_authentication_without_connecting() {
+        let profile = festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Ask)
+        .unwrap();
+        let configuration = Configuration::new(vec![festerm_config::Profile::Ssh(profile)])
+            .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+
+        assert!(state.open_ssh_profile_authentication("production", &egui::Context::default()));
+
+        let TabContent::SshAuthenticationRequired(tab) = &state.active_tab().content else {
+            panic!("Ask source policy must stop before a transport starts");
+        };
+        assert_eq!(tab.profile.local_bind_policy(), LocalBindPolicy::Ask);
+    }
+
+    #[test]
+    fn ask_manual_sessions_restore_profile_reference_without_persisting_source_choice() {
+        let profile = festerm_config::Profile::ssh(
+            "fixture",
+            "ssh.example.test",
+            22,
+            "fixture",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Ask)
+        .unwrap();
+        for sftp in [false, true] {
+            let configuration =
+                Configuration::new(vec![festerm_config::Profile::Ssh(profile.clone())]).unwrap();
+            let mut state = AppState::for_test_with_configuration(configuration);
+            let context = egui::Context::default();
+            let connection = profile
+                .to_connection_profile_with_resolved_local_bind(
+                    TerminalSize::new(80, 24).unwrap(),
+                    Some("127.0.0.1".parse().unwrap()),
+                )
+                .unwrap();
+            let different_user = SshConnectionProfile::new(
+                connection.identity().clone(),
+                "different-user",
+                "xterm-256color",
+                TerminalSize::new(80, 24).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                state.matching_ssh_profile_id(Some("fixture"), &different_user),
+                None
+            );
+            let command = if sftp {
+                AppCommand::StartSftpSession {
+                    profile_id: Some("fixture".to_owned()),
+                    profile: connection,
+                    authentication: SshAuthentication::interactive(),
+                }
+            } else {
+                AppCommand::StartSshSession {
+                    profile_id: Some("fixture".to_owned()),
+                    profile: connection,
+                    authentication: SshAuthentication::interactive(),
+                    options: SshSessionOptions::new(),
+                }
+            };
+            state.dispatch(command, &context);
+            let identifier = state.active_tab().durable_id.clone();
+            let (tabs, _) = state.capture_window_workspace_tabs(&mut 0).unwrap();
+            let expected = if sftp {
+                WorkspaceTab::sftp_session(identifier, "fixture")
+            } else {
+                WorkspaceTab::ssh_session(identifier, "fixture")
+            }
+            .unwrap();
+            assert_eq!(tabs, vec![expected]);
+            let captured = state
+                .capture_workspace_configuration(Vec::new(), &mut 0, None)
+                .unwrap();
+            assert_eq!(
+                captured
+                    .profile("fixture")
+                    .unwrap()
+                    .as_ssh()
+                    .unwrap()
+                    .local_bind_policy(),
+                LocalBindPolicy::Ask
+            );
+            assert!(!captured.to_toml().unwrap().contains("127.0.0.1"));
+            state.dispatch(AppCommand::CloseTab(state.active()), &context);
+        }
+    }
+
+    #[test]
+    fn cancelling_ask_setup_closes_only_the_prompt_without_starting_a_transport() {
+        let profile = festerm_config::Profile::ssh(
+            "fixture",
+            "ssh.example.test",
+            22,
+            "fixture",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Ask)
+        .unwrap();
+        for mode in 0..3 {
+            let configuration =
+                Configuration::new(vec![festerm_config::Profile::Ssh(profile.clone())]).unwrap();
+            let mut state = AppState::for_test_with_configuration(configuration);
+            let context = egui::Context::default();
+            match mode {
+                0 => {
+                    assert!(state.open_ssh_profile_authentication("fixture", &context));
+                }
+                1 => {
+                    assert!(state.open_sftp_profile_authentication("fixture", &context));
+                }
+                2 => state.open_configured_sftp_file_manager_profile("fixture", &context),
+                _ => unreachable!(),
+            }
+            let tab_id = state.active();
+            assert!(!matches!(
+                state.active_tab().content,
+                TabContent::Launcher | TabContent::Session(_)
+            ));
+            state.dispatch(AppCommand::CancelConnectionSetup { tab_id }, &context);
+            assert_eq!(state.tabs().len(), 1);
+            assert!(matches!(state.active_tab().content, TabContent::Launcher));
+            assert_eq!(
+                state
+                    .configuration()
+                    .profile("fixture")
+                    .unwrap()
+                    .as_ssh()
+                    .unwrap()
+                    .local_bind_policy(),
+                LocalBindPolicy::Ask
+            );
+        }
+    }
+
+    #[test]
+    fn stored_secret_profile_with_unresolved_ask_does_not_start_automatic() {
+        let context = egui::Context::default();
+        let profile = festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Ask)
+        .unwrap();
+        let configuration = Configuration::new(vec![festerm_config::Profile::Ssh(profile)])
+            .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let store: Arc<dyn festerm_secret_store::SecretStore> =
+            Arc::new(festerm_secret_store::MemorySecretStore::new());
+
+        assert!(!state.start_stored_password_ssh_profile(
+            "production",
+            store,
+            SshSessionOptions::new(),
+            None,
+            &context,
+        ));
+        assert!(
+            matches!(state.active_tab().content, TabContent::Launcher),
+            "unresolved Ask must not become an automatic stored-secret launch"
+        );
+    }
+
+    #[test]
+    fn stored_ssh_explicit_automatic_overrides_fixed_source_profile() {
+        let context = egui::Context::default();
+        let fixed_address = "127.0.0.1".parse().unwrap();
+        let profile = festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Address(fixed_address))
+        .unwrap();
+        let configuration = Configuration::new(vec![festerm_config::Profile::Ssh(profile)])
+            .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let store: Arc<dyn festerm_secret_store::SecretStore> =
+            Arc::new(festerm_secret_store::MemorySecretStore::new());
+
+        assert!(state.start_stored_password_ssh_profile(
+            "production",
+            store,
+            SshSessionOptions::new(),
+            Some(ResolvedLocalBind::Automatic),
+            &context,
+        ));
+
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("stored SSH launch should place a session tab");
+        };
+        let InspectorTransport::Ssh { local_bind, .. } = session.inspector_transport else {
+            panic!("stored SSH launch should record SSH transport metadata");
+        };
+        assert_eq!(local_bind, ResolvedLocalBind::Automatic);
+        assert_eq!(
+            session
+                .ssh_password_retry
+                .as_ref()
+                .map(|retry| retry.profile.local_bind_address()),
+            None
+        );
+    }
+
+    #[test]
+    fn stored_sftp_explicit_automatic_overrides_fixed_source_profile() {
+        let context = egui::Context::default();
+        let fixed_address = "127.0.0.1".parse().unwrap();
+        let profile = festerm_config::Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("test SSH profile is valid")
+        .with_credential_reference(festerm_secret_store::SecretReference::generate())
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Address(fixed_address))
+        .unwrap();
+        let configuration = Configuration::new(vec![festerm_config::Profile::Ssh(profile)])
+            .expect("test configuration is valid");
+        let mut state = AppState::for_test_with_configuration(configuration);
+        let store: Arc<dyn festerm_secret_store::SecretStore> =
+            Arc::new(festerm_secret_store::MemorySecretStore::new());
+
+        assert!(state.start_stored_password_sftp_profile(
+            "production",
+            store,
+            Some(ResolvedLocalBind::Automatic),
+            &context,
+        ));
+
+        let TabContent::Session(session) = &state.active_tab().content else {
+            panic!("stored SFTP launch should place a session tab");
+        };
+        let InspectorTransport::Sftp { local_bind, .. } = session.inspector_transport else {
+            panic!("stored SFTP launch should record SFTP transport metadata");
+        };
+        assert_eq!(local_bind, ResolvedLocalBind::Automatic);
     }
 
     #[test]
@@ -9060,6 +10090,125 @@ mod tests {
 
         assert_eq!(state.active(), state.tabs()[0].id);
         assert!(matches!(state.active_tab().content, TabContent::Launcher));
+    }
+
+    #[test]
+    fn powershell_workspace_restores_disconnected_metadata_only() {
+        let reference = festerm_secret_store::SecretReference::generate();
+        let profile =
+            festerm_config::Profile::powershell("ps", "win.example.test", 5986, "fixture")
+                .unwrap()
+                .with_powershell_credential_reference(reference)
+                .unwrap();
+        let workspace = WorkspaceConfiguration::new(
+            vec![WorkspaceTab::powershell_session("ps-tab", "ps").unwrap()],
+            Some("ps-tab".to_owned()),
+        )
+        .unwrap();
+        let configuration = Configuration::new(vec![profile]).unwrap();
+        let context = egui::Context::default();
+        let mut state = AppState::with_restored_workspace(&context, configuration, &workspace);
+        let TabContent::PowerShell(tab) = &state.active_tab().content else {
+            panic!("saved PowerShell metadata must restore disconnected setup");
+        };
+        assert_eq!(tab.state(), crate::powershell::PowerShellState::Setup);
+        assert_eq!(tab.profile_identifier(), "ps");
+        assert_eq!(state.session_tabs_with_id_mut().count(), 0);
+        let (captured, _) = state.capture_window_workspace_tabs(&mut 0).unwrap();
+        assert_eq!(
+            captured,
+            vec![WorkspaceTab::powershell_session("ps-tab", "ps").unwrap()]
+        );
+    }
+
+    #[test]
+    fn discovery_surfaces_open_without_workers_and_never_enter_workspace_metadata() {
+        for command in [AppCommand::OpenEnterprise, AppCommand::OpenRemoteSessions] {
+            let context = egui::Context::default();
+            let mut state = AppState::for_test_with_configuration(Configuration::empty());
+            let original = state.active();
+            state.dispatch(command, &context);
+            assert_eq!(state.active(), original);
+            assert!(matches!(
+                state.active_tab().content,
+                TabContent::Enterprise(_) | TabContent::RemoteSessions(_)
+            ));
+            assert_eq!(state.background_worker_count(), 0);
+            assert_eq!(state.session_tabs_with_id_mut().count(), 0);
+            let (captured, focused) = state.capture_window_workspace_tabs(&mut 0).unwrap();
+            assert!(captured.is_empty());
+            assert!(focused.is_none());
+            state.dispatch(AppCommand::CloseTab(original), &context);
+            assert!(matches!(state.active_tab().content, TabContent::Launcher));
+            assert_eq!(state.background_worker_count(), 0);
+        }
+    }
+
+    #[test]
+    fn closing_powershell_tab_retains_cleanup_until_worker_exit() {
+        let context = egui::Context::default();
+        let profile =
+            festerm_config::Profile::powershell("ps", "win.example.test", 5986, "fixture").unwrap();
+        let mut state =
+            AppState::for_test_with_configuration(Configuration::new(vec![profile]).unwrap());
+        state.dispatch(
+            AppCommand::OpenConfiguredPowerShellProfile {
+                profile_id: "ps".to_owned(),
+            },
+            &context,
+        );
+        let id = state.active();
+        let handle = crate::powershell::PowerShellShutdownHandle::pending_for_test();
+        let TabContent::PowerShell(tab) = &mut state.active_tab_mut().content else {
+            panic!("PowerShell tab expected");
+        };
+        tab.attach_shutdown_handle_for_test(handle.clone());
+        state.dispatch(AppCommand::CloseTab(id), &context);
+        assert!(!state.tabs().iter().any(|tab| tab.id == id));
+        assert!(handle.close_requested_for_test());
+        assert_eq!(state.background_worker_count(), 1);
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 1);
+        handle.finish_for_test();
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 0);
+        assert!(state.retiring_powershell_workers.is_empty());
+    }
+
+    #[test]
+    fn closing_discovery_tabs_retains_cleanup_until_worker_exit() {
+        let context = egui::Context::default();
+        let mut state = AppState::for_test_with_configuration(Configuration::empty());
+        state.dispatch(AppCommand::OpenEnterprise, &context);
+        let enterprise = crate::enterprise::EnterpriseShutdownHandle::pending_for_test();
+        let TabContent::Enterprise(tab) = &mut state.active_tab_mut().content else {
+            panic!("enterprise tab");
+        };
+        tab.attach_shutdown_handle_for_test(enterprise.clone());
+        state.close(state.active());
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 1);
+        assert_eq!(state.retiring_enterprise_workers.len(), 1);
+        enterprise.finish_for_test();
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 0);
+        assert!(state.retiring_enterprise_workers.is_empty());
+
+        state.dispatch(AppCommand::OpenRemoteSessions, &context);
+        let remote = crate::remote_sessions::RemoteSessionsShutdownHandle::pending_for_test();
+        let TabContent::RemoteSessions(tab) = &mut state.active_tab_mut().content else {
+            panic!("remote sessions tab");
+        };
+        tab.attach_shutdown_handle_for_test(remote.clone());
+        state.close(state.active());
+        state.request_background_shutdown();
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 1);
+        assert_eq!(state.retiring_remote_workers.len(), 1);
+        remote.finish_for_test();
+        state.drain_background_tabs(&context);
+        assert_eq!(state.background_worker_count(), 0);
+        assert!(state.retiring_remote_workers.is_empty());
     }
 
     #[test]
@@ -9879,12 +11028,14 @@ mod tests {
                     username: "fixture".into(),
                     host: "fixture.invalid".into(),
                     port: 22,
+                    local_bind: ResolvedLocalBind::Automatic,
                     persistence: None,
                 },
                 "sftp" => InspectorTransport::Sftp {
                     username: "fixture".into(),
                     host: "fixture.invalid".into(),
                     port: 22,
+                    local_bind: ResolvedLocalBind::Automatic,
                 },
                 "serial" => InspectorTransport::Serial {
                     device: "fixture".into(),
@@ -10390,6 +11541,7 @@ mod tests {
                 username: "test-user".to_owned(),
                 host: "example.invalid".to_owned(),
                 port: 22,
+                local_bind: ResolvedLocalBind::Automatic,
                 persistence: None,
             },
             None,
@@ -10419,6 +11571,7 @@ mod tests {
         let launcher_id = state.active();
         let secret = "transient-test-password";
         let command = AppCommand::StartSshSession {
+            profile_id: None,
             profile: ssh_profile(),
             authentication: SshAuthentication::password(secret),
             options: SshSessionOptions::new(),
@@ -10453,6 +11606,7 @@ mod tests {
 
         state.dispatch(
             AppCommand::StartSshSession {
+                profile_id: None,
                 profile: ssh_profile(),
                 authentication: SshAuthentication::interactive(),
                 options: SshSessionOptions::new(),
@@ -10495,6 +11649,7 @@ mod tests {
 
         state.dispatch(
             AppCommand::StartSshSession {
+                profile_id: None,
                 profile: ssh_profile(),
                 authentication: SshAuthentication::password("transient-test-password"),
                 options: SshSessionOptions::new(),
@@ -11037,6 +12192,7 @@ mod tests {
                     username: "deploy".to_owned(),
                     host: "web-1.example.test".to_owned(),
                     port: 22,
+                    local_bind: ResolvedLocalBind::Automatic,
                     persistence: persistence(),
                 })
                 .as_deref(),
@@ -11052,12 +12208,14 @@ mod tests {
                 username: "deploy".to_owned(),
                 host: "web-1.example.test".to_owned(),
                 port: 22,
+                local_bind: ResolvedLocalBind::Automatic,
                 persistence: None,
             },
             InspectorTransport::Sftp {
                 username: "builder".to_owned(),
                 host: "artifacts.example.test".to_owned(),
                 port: 22,
+                local_bind: ResolvedLocalBind::Automatic,
             },
         ] {
             assert_eq!(

@@ -839,6 +839,15 @@ impl FesTermApp {
                             files.set_status_bar_visible(status_bar);
                             let _ = files.show(ui, view);
                         }
+                        TabContent::PowerShell(powershell) => {
+                            let _ = powershell.show(ui);
+                        }
+                        TabContent::Enterprise(enterprise) => {
+                            let _ = enterprise.show(ui);
+                        }
+                        TabContent::RemoteSessions(remote) => {
+                            let _ = remote.show(ui);
+                        }
                         TabContent::SshAuthenticationRequired(_)
                         | TabContent::SftpAuthenticationRequired(_)
                         | TabContent::SftpFileManagerAuthenticationRequired(_) => {

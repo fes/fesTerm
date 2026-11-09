@@ -26,10 +26,12 @@ mod tunnel_profile_import;
 mod document_store;
 #[allow(dead_code)]
 mod documents;
+mod enterprise;
 mod environment;
 mod font_downloads;
 mod inspector;
 mod keyboard;
+mod local_bind;
 mod local_command;
 mod markdown_diagrams;
 mod markdown_images;
@@ -43,12 +45,15 @@ mod owned_fixture_paths;
 #[cfg(test)]
 mod performance_fixtures;
 mod port_forward_draft;
+mod powershell;
 mod recording_privacy;
 mod recording_storage;
 mod remote_files;
+mod remote_sessions;
 mod save_as;
 mod screens;
 mod search;
+mod secret_input;
 pub mod session_controller;
 mod sftp_file_manager;
 mod software_background;

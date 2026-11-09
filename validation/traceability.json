@@ -138,6 +138,7 @@
         "a_brief_switch_to_a_preconsent_screen_is_checked_before_switching_back",
         "concealed_preconsent_grapheme_cannot_change_replay_geometry",
         "recording_renderer_invalidates_cached_text_when_concealed",
+        "desktop_quit_requires_both_recording_finalization_and_worker_cleanup",
         "repeat_of_invisible_preconsent_character_stops_before_persisting_it",
         "recovery_palette_mismatch_stops_recording_before_later_output",
         "recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss",
@@ -479,6 +480,7 @@
         "watchdog_closure_wins_before_the_exact_commit_claim",
         "watchdog_reaps_at_deadline_while_admission_gate_is_busy",
         "watchdog_drains_worker_output_while_admission_gate_is_busy",
+        "worker_exit_between_empty_read_and_status_check_preserves_final_message",
         "disclosure_guard_refuses_revoked_and_busy_pipe_writes",
         "disclosure_rechecks_after_a_partial_pipe_write",
         "disclosure_write_and_source_revocation_are_serialized",
@@ -1369,6 +1371,301 @@
       "prerequisites": ["An explicitly reviewed inventory/create/terminate operation slice; these operations are unavailable in the current bridge"]
     },
     {
+      "id": "native-powershell-ssh-subsystem",
+      "edges": ["PSRP-06"],
+      "requirements": ["docs/powershell-enterprise.md"],
+      "decisions": ["ADR-0082"],
+      "automated_tests": [
+        "raw_subsystem_uses_native_request_without_exec_or_pty",
+        "raw_subsystem_rejects_invalid_names_and_server_refusal",
+        "opt_in_real_pwsh_ssh_subsystem_runs_structured_psrp",
+        "acknowledgement_timeout_invalidates_even_during_cancellation",
+        "budget_exhaustion_drains_terminal_state_and_reports_budget_failure",
+        "blocked_stop_after_budget_or_channel_failure_is_bounded",
+        "terminal_event_at_budget_limit_reports_failure_without_stopping_closed_pipeline",
+        "terminal_budget_failure_survives_full_event_queue",
+        "terminal_state_survives_failed_or_timed_out_pipeline_cleanup",
+        "ssh_close_interrupts_unacknowledged_pipeline_startup",
+        "powershell_https_is_backwards_compatible_default_transport",
+        "powershell_ssh_requires_explicit_pin_and_uses_ssh_defaults",
+        "powershell_profile_editor_routes_explicit_ssh_metadata",
+        "worker_dispatches_explicit_ssh_profile_through_same_lifecycle",
+        "worker_close_and_stop_interrupt_unacknowledged_ssh_startup",
+        "worker_remembers_stop_before_ssh_startup_registration",
+        "worker_stop_during_successful_ssh_start_handoff_invalidates_session",
+        "worker_stop_after_startup_does_not_shutdown_ssh_session"
+      ],
+      "manual_scenarios": ["CP-25", "CP-23"],
+      "status": "partial",
+      "prerequisites": [
+        "authorized deployed OpenSSH PowerShell subsystem and approved authentication for each claimed remote platform",
+        "native GUI usability/accessibility qualification and corporate network/device-policy acceptance",
+        "controlled local real-pwsh subsystem composition is not corporate Dev Box or cross-host acceptance"
+      ]
+    },
+    {
+      "id": "desktop-remote-and-enterprise-discovery",
+      "edges": ["RSD-03", "ENTRA-03"],
+      "requirements": [
+        "docs/powershell-enterprise.md",
+        "docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md"
+      ],
+      "decisions": ["ADR-0014", "ADR-0038", "ADR-0082"],
+      "automated_tests": [
+        "discovery_surfaces_open_without_workers_and_never_enter_workspace_metadata",
+        "remote_and_enterprise_cards_route_to_typed_discovery_actions",
+        "remote_picker_target_opens_normal_terminal_adopts_snapshot_and_stays_ephemeral",
+        "closing_discovery_tabs_retains_cleanup_until_worker_exit",
+        "discovery_action_guard_rejects_stale_owners_and_caps_only_new_workers",
+        "remote_picker_click_flow_requires_review_before_emitting_exact_target",
+        "finished_worker_without_terminal_message_reports_failure"
+      ],
+      "manual_scenarios": ["CP-24", "CP-21"],
+      "status": "partial",
+      "prerequisites": [
+        "native desktop focus/accessibility and real remote Windows OpenSSH/named-pipe qualification",
+        "approved enterprise tenant/application registration and policy-authorized Dev Center access",
+        "broker/device claims and enrolled-phone workflow remain separate implementation and qualification"
+      ]
+    },
+    {
+      "id": "remote-sessiond-ssh-backend",
+      "edges": ["RSD-01", "RSD-02"],
+      "requirements": [
+        "docs/powershell-enterprise.md#remote-sessiond-over-ssh",
+        "docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md"
+      ],
+      "decisions": ["ADR-0038", "ADR-0082"],
+      "automated_tests": [
+        "remote_target_pins_generation_and_requires_explicit_takeover_command",
+        "remote_inventory_refuses_unavailable_incompatible_or_invalid_generations",
+        "remote_inventory_checks_schema_size_count_and_duplicate_identity",
+        "remote_helper_is_a_single_portable_executable_token",
+        "raw_exec_uses_no_pty_and_preserves_stdout_stderr_and_bytes",
+        "raw_exec_rejects_changed_pinned_host_key_without_unbound_fallback",
+        "raw_exec_requires_a_pinned_host_key_and_bounded_command",
+        "raw_exec_reports_rejection_and_nonzero_exit",
+        "raw_exec_pending_read_times_out_and_cancel_while_queue_full",
+        "native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_session",
+        "native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated",
+        "native_bridge_drains_exit_and_takeover_final_frames_before_success",
+        "invocation_rejects_attach_without_explicit_takeover",
+        "closed_session_input_is_an_error_not_successful_detach",
+        "bounded_line_reader_rejects_without_truncating_prefix",
+        "renderer_projects_text_without_remote_escape_sequences",
+        "native_ssh_remote_sessiond_adopts_snapshot_and_reattaches_same_live_generation",
+        "native_ssh_remote_sessiond_rejects_a_replaced_generation",
+        "native_ssh_remote_sessiond_rejects_an_untrusted_host_key",
+        "host_key_rotation_after_discovery_never_authenticates_or_displaces_the_live_session",
+        "invalid_remote_snapshots_never_adopt_or_displace_the_live_session"
+      ],
+      "manual_scenarios": ["CP-24"],
+      "status": "partial",
+      "prerequisites": [
+        "cross-host macOS/Linux and Windows OpenSSH/named-pipe native qualification",
+        "enterprise/PSRP daemon bridge remains a separate implementation slice"
+      ]
+    },
+    {
+      "id": "native-powershell-desktop",
+      "edges": [
+        "PSRP-02",
+        "PSRP-03",
+        "PSRP-04",
+        "PSRP-05"
+      ],
+      "requirements": [
+        "docs/gui-design.md#native-powershell-sessions",
+        "docs/powershell-enterprise.md#native-backend-example"
+      ],
+      "decisions": [
+        "ADR-0082"
+      ],
+      "automated_tests": [
+        "endpoint_configuration_defaults_to_windows_powershell_resource_uri",
+        "endpoint_selects_explicit_configurations_without_fallback",
+        "endpoint_configuration_name_trims_but_preserves_selection",
+        "endpoint_configuration_name_rejects_unsafe_or_bounded_input",
+        "psrp_configuration_cli_selects_endpoint_and_preserves_positionals",
+        "psrp_configuration_cli_rejects_malformed_values_at_parse_time",
+        "powershell_profile_toml_uses_secret_free_metadata_fields",
+        "powershell_new_profile_card_dispatches_at_narrow_and_wide_tab_sizes",
+        "powershell_profile_editor_click_flow_dispatches_secret_free_save",
+        "powershell_profile_edit_preserves_stored_reference_and_new_password_is_transient",
+        "powershell_password_save_links_only_unchanged_saved_profile",
+        "powershell_workspace_restores_disconnected_metadata_only",
+        "worker_keeps_session_ready_after_recoverable_pipeline_failure",
+        "worker_close_running_cancels_drains_and_closes",
+        "worker_nonblocking_mailbox_allows_close_when_gui_queue_full",
+        "close_failure_is_reported_not_shaped_as_success",
+        "presentation_queue_enforces_cumulative_byte_budget",
+        "bounded_value_renderer_truncates_deep_and_large_values",
+        "powershell_secondary_close_waits_only_for_its_own_retiring_workers",
+        "powershell_primary_quit_waits_for_all_window_workers_without_blocking",
+        "powershell_shutdown_deadline_allows_unconfirmed_cleanup_exit",
+        "powershell_cleanup_is_not_authorized_by_a_deferred_document_close",
+        "closing_powershell_tab_retains_cleanup_until_worker_exit"
+      ],
+      "manual_scenarios": [
+        "CP-25",
+        "CP-23"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "native GUI lifecycle, accessibility and keyboard usability with an authorized endpoint on each desktop platform",
+        "same-host Core 7 case passed with an owned endpoint using the protected installed plugin; the default copied System32 plugin and deployed endpoints remain unqualified",
+        "cross-host macOS and Linux HTTPS/NTLM interoperability and approved corporate endpoint authentication",
+        "restricted/JEA permissions and interactive-host behavior require separate qualification",
+        "remote sessiond attachment and enterprise broker/device-compliance integration are not implemented"
+      ]
+    },
+    {
+      "id": "local-source-address-selection",
+      "edges": [
+        "NET-01",
+        "NET-02",
+        "NET-03"
+      ],
+      "requirements": [
+        "docs/gui-design.md#local-source-address-selection",
+        "docs/powershell-enterprise.md#local-source-address"
+      ],
+      "decisions": [
+        "ADR-0082"
+      ],
+      "automated_tests": [
+        "connection_profile_validates_safe_non_secret_inputs",
+        "explicit_ipv4_local_bind_reaches_server_from_configured_source_and_survives_reconnect",
+        "explicit_ipv6_local_bind_reaches_server_from_configured_source_when_available",
+        "automatic_default_connection_remains_unbound_and_reaches_loopback_server",
+        "explicit_local_bind_mismatch_fails_closed_without_unbound_retry",
+        "unavailable_explicit_local_bind_fails_closed_without_unbound_retry",
+        "endpoint_local_bind_address_defaults_to_none_and_can_be_set",
+        "endpoint_local_bind_address_rejects_unsupported_sources",
+        "endpoint_local_bind_failure_is_explicit_and_never_connects_unbound",
+        "psrp_local_bind_cli_preserves_positionals_and_parses_explicit_choice",
+        "psrp_local_bind_cli_rejects_conflicting_or_malformed_options",
+        "psrp_local_bind_prompt_requires_explicit_input_and_bounds_it",
+        "ssh_local_bind_policy_defaults_round_trips_fixed_and_ask",
+        "ssh_local_bind_policy_rejects_invalid_fixed_addresses_but_allows_ask",
+        "source_chooser_requires_choice_and_surfaces_discovery_failure_without_repainting_io",
+        "discovery_filters_unsupported_addresses_and_bounds_results",
+        "ask_ssh_and_sftp_setup_requires_choice_resets_and_cancels_without_launching",
+        "ask_manual_authentication_retains_profile_identity_and_runtime_source",
+        "ask_manual_sessions_restore_profile_reference_without_persisting_source_choice",
+        "gui_sftp_ask_chooser_resolves_stored_launch_and_resets_before_cancellation",
+        "gui_sftp_unresolved_source_keeps_password_until_an_explicit_choice",
+        "cancelling_ask_setup_closes_only_the_prompt_without_starting_a_transport",
+        "remember_password_completion_retains_source_on_current_tab",
+        "deferred_source_connection_is_cancelled_after_switch_close_cancel_or_profile_change",
+        "stored_ssh_explicit_automatic_overrides_fixed_source_profile",
+        "stored_sftp_explicit_automatic_overrides_fixed_source_profile",
+        "gui_sftp_saved_target_applies_explicit_automatic_source_choice",
+        "gui_sftp_manual_password_target_applies_fixed_source_choice",
+        "inspector_sftp_target_uses_live_session_source_not_edited_profile",
+        "inspector_sftp_stored_credential_launch_preserves_live_source_for_matching_destination",
+        "inspector_sftp_does_not_reuse_a_credential_for_an_edited_destination",
+        "remote_tmux_probe_uses_fixed_source_and_skips_unresolved_ask",
+        "profile_editor_remote_tmux_probe_uses_fixed_source_and_skips_ask"
+      ],
+      "manual_scenarios": [
+        "CP-22"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "native macOS, Windows and Linux multi-address/VPN evidence with authorized IPv4/IPv6 endpoints",
+        "chooser accessibility and disappearance/reconnect usability on real adapters",
+        "strict adapter enforcement, DNS binding and IPv6 link-local scope selection are not implemented"
+      ]
+    },
+    {
+      "id": "native-powershell-foundation",
+      "edges": [
+        "PSRP-01"
+      ],
+      "requirements": [
+        "docs/powershell-enterprise.md#native-backend-example",
+        "docs/powershell-enterprise.md#local-source-address",
+        "docs/powershell-enterprise.md#isolated-native-interoperability",
+        "docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md"
+      ],
+      "decisions": [
+        "ADR-0082"
+      ],
+      "automated_tests": [
+        "credentials_debug_redacts_password",
+        "unsupported_auth_is_rejected_before_network_use",
+        "endpoint_validation_rejects_url_shaped_hosts",
+        "empty_trusted_ca_pem_is_rejected",
+        "zero_bounds_are_rejected_before_worker_start",
+        "command_budget_rejects_reference_amplification_like_growth",
+        "map_winrm_error_redacts_response_details",
+        "cancel_drain_deadline_applies_to_in_flight_wait",
+        "cancellation_timeout_becomes_invalidated",
+        "cancellation_protocol_error_invalidates_session",
+        "acknowledged_cancellation_does_not_invalidate_session",
+        "every_stream_variant_escapes_terminal_controls",
+        "native_psrp_persists_state_across_commands",
+        "native_psrp_reports_typed_success_streams",
+        "native_psrp_rejects_unsupported_prompt_without_hanging",
+        "native_psrp_cancellation_is_bounded_and_does_not_claim_uncertain_success",
+        "native_psrp_close_is_idempotent_and_prevents_new_commands",
+        "native_psrp_rejects_untrusted_ca_wrong_identity_and_wrong_credentials",
+        "native_psrp_powershell7_configuration_when_registered"
+      ],
+      "manual_scenarios": [
+        "CP-25"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "isolated hosted Windows PowerShell and owned Core 7 HTTPS/NTLM interop is separate from cross-host and corporate endpoint qualification",
+        "native GUI qualification and full host behavior with authorized endpoints remain separate from loopback cases",
+        "authenticated generation-bound sessiond bridge and recovery remain separate CP-24 work"
+      ]
+    },
+    {
+      "id": "enterprise-public-client-foundation",
+      "edges": [
+        "ENTRA-01",
+        "ENTRA-02"
+      ],
+      "requirements": [
+        "docs/powershell-enterprise.md#enterprise-backend-example",
+        "docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md"
+      ],
+      "decisions": [
+        "ADR-0082"
+      ],
+      "automated_tests": [
+        "auth_flow_completes_after_loopback_callback_and_cleans_up_listener",
+        "auth_flow_can_be_cancelled_after_an_idle_socket_is_accepted",
+        "auth_flow_times_out_on_slow_partial_headers_and_cleans_up_listener",
+        "token_exchange_rejects_claims_challenge_errors",
+        "token_exchange_rejects_oversized_error_body",
+        "http_client_cancels_during_async_dns_resolution_without_hanging_runtime_drop",
+        "http_client_reuses_runtime_for_dns_state_across_requests",
+        "http_client_cancels_while_waiting_for_headers",
+        "http_client_cancels_during_chunked_body_reads",
+        "http_client_enforces_subsecond_deadlines",
+        "dev_center_lists_projects_and_dev_boxes_across_pages",
+        "dev_center_parses_remote_connections_without_exposing_debug_urls",
+        "dev_center_rejects_expired_tokens_before_network",
+        "dev_center_allows_listing_without_remote_connection_ability_but_blocks_link_fetch",
+        "dev_center_does_not_accept_partial_inventory_or_hide_http_failures",
+        "combined_inventory_enforces_byte_bounds_before_growing",
+        "combined_inventory_bounds_apply_across_projects",
+        "parse_options_rejects_invalid_project_before_sign_in"
+      ],
+      "manual_scenarios": [
+        "CP-21"
+      ],
+      "status": "partial",
+      "prerequisites": [
+        "approved public-client tenant/application/redirect registration and Dev Center account/endpoint for native service evidence",
+        "separate application-command/GUI integration, platform broker and enrolled-device Conditional Access qualification"
+      ]
+    },
+    {
       "id": "root-lifecycle",
       "edges": [
         "ROOT-*"
@@ -1491,12 +1788,14 @@
         "LAUNCH-12"
       ],
       "requirements": [
-        "docs/gui-design.md#session-launcher"
+        "docs/gui-design.md#session-launcher",
+        "docs/powershell-enterprise.md#machine-readable-sessiond-discovery"
       ],
       "decisions": [
         "ADR-0018",
         "ADR-0025",
-        "ADR-0038"
+        "ADR-0038",
+        "ADR-0041"
       ],
       "automated_tests": [
         "rapid_refresh_is_coalesced_and_stale_results_are_discarded",
@@ -1546,6 +1845,20 @@
         "login_shell_environment_loads_interactive_startup_files",
         "unavailable_binary_is_not_a_provider_error",
         "registry_absence_corruption_and_lock_contention_have_distinct_bounded_results",
+        "capabilities_are_explicit_and_advertise_remote_bridge_attachment",
+        "discovery_of_a_missing_registry_is_empty_and_read_only",
+        "discovery_classifies_live_stale_attached_and_incompatible_records",
+        "discovery_surfaces_unreadable_and_invalid_identity_records_without_blobs",
+        "discovery_reports_legacy_schema_as_unsupported_but_keeps_protocol_v1_session_available",
+        "discovery_parse_errors_are_content_free",
+        "discovery_enforces_record_count_and_registry_size_bounds",
+        "native_capabilities_json_is_exact_and_read_only",
+        "native_discover_json_is_empty_and_read_only_without_a_registry",
+        "native_discover_json_reports_session_statuses_without_leaking_sensitive_fields",
+        "native_discover_json_rejects_unsupported_flags_and_bounded_failures_emit_no_json",
+        "native_discover_json_rejects_zero_byte_registry_without_success_shaped_output",
+        "native_discover_json_parse_errors_do_not_echo_registry_contents",
+        "native_discover_json_enforces_serialized_output_cap_without_partial_json",
         "generation_lease_excludes_stale_pid_records_and_attached_native_sessions",
         "killing_a_stale_generation_never_signals_a_reused_live_pid",
         "failed_attachment_state_publication_is_retried_not_marked_complete",
@@ -1582,11 +1895,13 @@
       ],
       "manual_scenarios": [
         "CP-12",
-        "CP-16"
+        "CP-16",
+        "CP-24"
       ],
       "status": "partial",
       "prerequisites": [
-        "CP-16 requires verified application HWND and input-free native samples; residual idle failure tracked in #242"
+        "CP-16 requires verified application HWND and input-free native samples; residual idle failure tracked in #242",
+        "CP-24 helper contracts share registry/liveness infrastructure with local discovery; they do not implement remote PSRP discovery, GUI integration or attachment"
       ]
     },
     {

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, net::IpAddr, path::Path};
 use std::{fmt, sync::Arc};
 
 use festerm_pty::LocalProfile;
@@ -7,7 +7,7 @@ use festerm_serial::LineSettings;
 use festerm_session::TerminalSize;
 use festerm_ssh::{
     is_sha256_fingerprint, HostIdentity, PersistenceProvider, PersistentSessionName,
-    SessionStrategy, SshConnectionProfile, SshPortForwardSpec,
+    SessionStrategy, SshConnectionProfile, SshPortForwardSpec, SshRawExecOptions,
 };
 use serde::{Deserialize, Serialize};
 
@@ -65,7 +65,7 @@ impl<'de> Deserialize<'de> for CredentialReference {
     }
 }
 
-/// A reusable local-shell or SSH profile.
+/// A reusable local-shell, SSH/SFTP, serial, or native PowerShell profile.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Profile {
@@ -73,6 +73,7 @@ pub enum Profile {
     Ssh(SshProfileConfiguration),
     Serial(SerialProfileConfiguration),
     DevTunnel(DevTunnelProfileConfiguration),
+    PowerShell(PowerShellProfileConfiguration),
 }
 
 /// Secret-free operator-trusted destination metadata. The file is read and
@@ -448,6 +449,7 @@ impl Profile {
             port_forwards: Vec::new(),
             profile_kind: RemoteProfileKind::Ssh,
             sftp_gui_mode: true,
+            local_bind_policy: LocalBindPolicy::default(),
         });
         profile.validate()?;
         Ok(profile)
@@ -475,6 +477,7 @@ impl Profile {
             port_forwards: Vec::new(),
             profile_kind: RemoteProfileKind::Sftp,
             sftp_gui_mode: gui_mode,
+            local_bind_policy: LocalBindPolicy::default(),
         });
         profile.validate()?;
         Ok(profile)
@@ -517,6 +520,34 @@ impl Profile {
             parity,
             stop_bits,
             flow_control,
+        });
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    /// Creates a native PowerShell HTTPS/PSRP profile with secret-free
+    /// metadata. The password, when remembered, is represented only by an
+    /// opaque native-store reference added via
+    /// [`Self::with_powershell_credential_reference`].
+    pub fn powershell(
+        identifier: impl Into<String>,
+        host: impl Into<String>,
+        port: u16,
+        username: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        let profile = Self::PowerShell(PowerShellProfileConfiguration {
+            id: identifier.into(),
+            transport: PowerShellTransport::Https,
+            host: host.into(),
+            port: Some(port),
+            username: username.into(),
+            domain: None,
+            configuration_name: default_powershell_configuration_name(),
+            trusted_ca_file: None,
+            local_bind_policy: LocalBindPolicy::default(),
+            ssh_host_key_fingerprint: None,
+            ssh_subsystem: default_powershell_ssh_subsystem(),
+            credential_id: None,
         });
         profile.validate()?;
         Ok(profile)
@@ -577,6 +608,11 @@ impl Profile {
                     ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
                 ))
             }
+            Self::PowerShell(_) => {
+                return Err(ConfigError::new(
+                    ConfigErrorKind::PersistenceRequiresLocalOrSshProfile,
+                ))
+            }
         }
         self.validate()?;
         Ok(self)
@@ -594,6 +630,20 @@ impl Profile {
         Ok(self)
     }
 
+    /// Associates a native PowerShell profile with an opaque native-store
+    /// password reference. No password material is stored in configuration.
+    pub fn with_powershell_credential_reference(
+        mut self,
+        credential_reference: SecretReference,
+    ) -> Result<Self, ConfigError> {
+        let Self::PowerShell(profile) = &mut self else {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        };
+        profile.credential_id = Some(CredentialReference::new(credential_reference));
+        self.validate()?;
+        Ok(self)
+    }
+
     /// Returns this profile's stable reusable identifier.
     pub fn identifier(&self) -> &str {
         match self {
@@ -601,6 +651,7 @@ impl Profile {
             Self::Ssh(profile) => profile.identifier(),
             Self::Serial(profile) => profile.identifier(),
             Self::DevTunnel(profile) => profile.identifier(),
+            Self::PowerShell(profile) => profile.identifier(),
         }
     }
 
@@ -608,7 +659,7 @@ impl Profile {
     pub fn as_local(&self) -> Option<&LocalProfileConfiguration> {
         match self {
             Self::Local(profile) => Some(profile),
-            Self::Ssh(_) | Self::Serial(_) | Self::DevTunnel(_) => None,
+            Self::Ssh(_) | Self::Serial(_) | Self::DevTunnel(_) | Self::PowerShell(_) => None,
         }
     }
 
@@ -616,7 +667,7 @@ impl Profile {
     pub fn as_ssh(&self) -> Option<&SshProfileConfiguration> {
         match self {
             Self::Ssh(profile) => Some(profile),
-            Self::Local(_) | Self::Serial(_) | Self::DevTunnel(_) => None,
+            Self::Local(_) | Self::Serial(_) | Self::DevTunnel(_) | Self::PowerShell(_) => None,
         }
     }
 
@@ -624,16 +675,25 @@ impl Profile {
     pub fn as_serial(&self) -> Option<&SerialProfileConfiguration> {
         match self {
             Self::Serial(profile) => Some(profile),
-            Self::Local(_) | Self::Ssh(_) | Self::DevTunnel(_) => None,
+            Self::Local(_) | Self::Ssh(_) | Self::DevTunnel(_) | Self::PowerShell(_) => None,
         }
     }
 
-    /// Returns this SSH profile's opaque native-store SSH-password reference, if set.
+    /// Returns native PowerShell metadata when this is a PowerShell profile.
+    pub fn as_powershell(&self) -> Option<&PowerShellProfileConfiguration> {
+        match self {
+            Self::PowerShell(profile) => Some(profile),
+            Self::Local(_) | Self::Ssh(_) | Self::Serial(_) | Self::DevTunnel(_) => None,
+        }
+    }
+
+    /// Returns this profile's opaque native-store credential reference, if set.
     pub fn credential_reference(&self) -> Option<&SecretReference> {
         match self {
             Self::Ssh(profile) => profile.credential_reference(),
             Self::DevTunnel(profile) => profile.credential_reference(),
-            _ => None,
+            Self::PowerShell(profile) => profile.credential_reference(),
+            Self::Local(_) | Self::Serial(_) => None,
         }
     }
 
@@ -644,7 +704,7 @@ impl Profile {
         match self {
             Self::Local(profile) => profile.persistence(),
             Self::Ssh(profile) => profile.persistence(),
-            Self::Serial(_) | Self::DevTunnel(_) => None,
+            Self::Serial(_) | Self::DevTunnel(_) | Self::PowerShell(_) => None,
         }
     }
 
@@ -654,6 +714,7 @@ impl Profile {
             Self::Ssh(profile) => profile.validate(),
             Self::Serial(profile) => profile.validate(),
             Self::DevTunnel(profile) => profile.validate(),
+            Self::PowerShell(profile) => profile.validate(),
         }
     }
 }
@@ -887,6 +948,48 @@ impl LocalProfileConfiguration {
     }
 }
 
+/// How a future SSH/SFTP connection selects the local source address used for
+/// the outbound socket. Adapter names are deliberately not persisted: a fixed
+/// value is only an IP address, and `Ask` must be resolved by application UI
+/// before any transport starts.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalBindPolicy {
+    #[default]
+    Automatic,
+    Address(IpAddr),
+    Ask,
+}
+
+impl LocalBindPolicy {
+    pub const fn is_automatic(&self) -> bool {
+        matches!(self, Self::Automatic)
+    }
+
+    pub const fn fixed_address(&self) -> Option<IpAddr> {
+        match self {
+            Self::Address(address) => Some(*address),
+            Self::Automatic | Self::Ask => None,
+        }
+    }
+
+    fn validate(self) -> Result<(), ConfigError> {
+        match self {
+            Self::Automatic | Self::Ask => Ok(()),
+            Self::Address(address) => validate_local_bind_address(address),
+        }
+    }
+}
+
+fn validate_local_bind_address(address: IpAddr) -> Result<(), ConfigError> {
+    festerm_ssh::validate_local_bind_address(address)
+        .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))
+}
+
+fn is_default_local_bind_policy(policy: &LocalBindPolicy) -> bool {
+    policy.is_automatic()
+}
+
 /// Distinguishes the kind of secret a profile's native-store credential
 /// reference points at, so a stored credential is resolved with the right
 /// authentication method instead of always being treated as a password.
@@ -1034,6 +1137,8 @@ pub struct SshProfileConfiguration {
     pub(crate) profile_kind: RemoteProfileKind,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     sftp_gui_mode: bool,
+    #[serde(default, skip_serializing_if = "is_default_local_bind_policy")]
+    local_bind_policy: LocalBindPolicy,
 }
 
 fn is_default_credential_kind(kind: &CredentialKind) -> bool {
@@ -1112,6 +1217,11 @@ impl SshProfileConfiguration {
         self.sftp_gui_mode
     }
 
+    /// Returns the saved source-address binding policy for future SSH/SFTP launches.
+    pub const fn local_bind_policy(&self) -> LocalBindPolicy {
+        self.local_bind_policy
+    }
+
     /// Converts safe metadata into the SSH backend's connection profile.
     pub fn to_connection_profile(&self) -> Result<SshConnectionProfile, ConfigError> {
         let size = TerminalSize::new(self.initial_columns, self.initial_rows)
@@ -1128,9 +1238,30 @@ impl SshProfileConfiguration {
         &self,
         size: TerminalSize,
     ) -> Result<SshConnectionProfile, ConfigError> {
+        if self.local_bind_policy == LocalBindPolicy::Ask {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidSshProfile));
+        }
+        self.connection_profile_with_size_and_address(size, self.local_bind_policy.fixed_address())
+    }
+
+    /// Converts metadata into an SSH backend profile with an application-resolved source address.
+    pub fn to_connection_profile_with_resolved_local_bind(
+        &self,
+        size: TerminalSize,
+        local_bind_address: Option<IpAddr>,
+    ) -> Result<SshConnectionProfile, ConfigError> {
+        self.connection_profile_with_size_and_address(size, local_bind_address)
+    }
+
+    fn connection_profile_with_size_and_address(
+        &self,
+        size: TerminalSize,
+        local_bind_address: Option<IpAddr>,
+    ) -> Result<SshConnectionProfile, ConfigError> {
         let identity = HostIdentity::new(&self.host, self.port)
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
         SshConnectionProfile::new(identity, &self.username, &self.terminal_type, size)
+            .and_then(|profile| profile.with_local_bind_address(local_bind_address))
             .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))
     }
 
@@ -1155,6 +1286,16 @@ impl SshProfileConfiguration {
         Ok(self)
     }
 
+    /// Returns a validated replacement with a new source-address binding policy.
+    pub fn with_local_bind_policy(
+        mut self,
+        local_bind_policy: LocalBindPolicy,
+    ) -> Result<Self, ConfigError> {
+        self.local_bind_policy = local_bind_policy;
+        self.validate()?;
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         validate_identifier(&self.id)?;
         if self.host.contains("://")
@@ -1166,7 +1307,11 @@ impl SshProfileConfiguration {
         {
             return Err(ConfigError::new(ConfigErrorKind::InvalidSshProfile));
         }
-        self.to_connection_profile().map(|_| ())?;
+        let size = TerminalSize::new(self.initial_columns, self.initial_rows)
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidSshProfile))?;
+        self.connection_profile_with_size_and_address(size, self.local_bind_policy.fixed_address())
+            .map(|_| ())?;
+        self.local_bind_policy.validate()?;
         self.session_strategy().map(|_| ())?;
         if self.profile_kind == RemoteProfileKind::Sftp
             && (self.persistence.is_some() || !self.port_forwards.is_empty())
@@ -1207,6 +1352,297 @@ pub struct SerialProfileConfiguration {
     stop_bits: SerialStopBits,
     #[serde(default)]
     flow_control: SerialFlowControl,
+}
+
+const DEFAULT_POWERSHELL_PORT: u16 = 5986;
+const DEFAULT_POWERSHELL_SSH_SUBSYSTEM: &str = "powershell";
+
+fn default_powershell_configuration_name() -> String {
+    "Microsoft.PowerShell".to_owned()
+}
+
+fn is_default_powershell_configuration_name(name: &str) -> bool {
+    name == "Microsoft.PowerShell"
+}
+
+fn default_powershell_ssh_subsystem() -> String {
+    DEFAULT_POWERSHELL_SSH_SUBSYSTEM.to_owned()
+}
+
+fn valid_powershell_configuration_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 256
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerShellTransport {
+    #[default]
+    Https,
+    Ssh,
+}
+
+fn is_default_powershell_transport(transport: &PowerShellTransport) -> bool {
+    *transport == PowerShellTransport::default()
+}
+
+fn is_default_powershell_ssh_subsystem(subsystem: &str) -> bool {
+    subsystem == DEFAULT_POWERSHELL_SSH_SUBSYSTEM
+}
+
+fn valid_powershell_ssh_subsystem(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+/// Secret-free metadata for an experimental native PowerShell PSRP
+/// connection. HTTPS/NTLM remains the backwards-compatible default transport;
+/// SSH must be selected explicitly and carries its own pinned host-key and
+/// subsystem metadata. Authentication material is represented only by
+/// [`Self::credential_reference`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PowerShellProfileConfiguration {
+    id: String,
+    #[serde(default, skip_serializing_if = "is_default_powershell_transport")]
+    transport: PowerShellTransport,
+    host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+    username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    domain: Option<String>,
+    #[serde(
+        default = "default_powershell_configuration_name",
+        skip_serializing_if = "is_default_powershell_configuration_name"
+    )]
+    configuration_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trusted_ca_file: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_local_bind_policy")]
+    local_bind_policy: LocalBindPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ssh_host_key_fingerprint: Option<String>,
+    #[serde(
+        default = "default_powershell_ssh_subsystem",
+        skip_serializing_if = "is_default_powershell_ssh_subsystem"
+    )]
+    ssh_subsystem: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) credential_id: Option<CredentialReference>,
+}
+
+impl PowerShellProfileConfiguration {
+    pub fn identifier(&self) -> &str {
+        &self.id
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub const fn transport(&self) -> PowerShellTransport {
+        self.transport
+    }
+
+    pub fn transport_label(&self) -> &'static str {
+        match self.transport {
+            PowerShellTransport::Https => "HTTPS/NTLM",
+            PowerShellTransport::Ssh => "SSH subsystem",
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port.unwrap_or(match self.transport {
+            PowerShellTransport::Https => DEFAULT_POWERSHELL_PORT,
+            PowerShellTransport::Ssh => DEFAULT_SSH_PORT,
+        })
+    }
+
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    pub fn domain(&self) -> Option<&str> {
+        self.domain.as_deref()
+    }
+
+    pub fn configuration_name(&self) -> &str {
+        &self.configuration_name
+    }
+
+    pub fn trusted_ca_file(&self) -> Option<&Path> {
+        self.trusted_ca_file.as_deref().map(Path::new)
+    }
+
+    pub const fn local_bind_policy(&self) -> LocalBindPolicy {
+        self.local_bind_policy
+    }
+
+    pub fn ssh_host_key_fingerprint(&self) -> Option<&str> {
+        self.ssh_host_key_fingerprint.as_deref()
+    }
+
+    pub fn ssh_subsystem(&self) -> &str {
+        &self.ssh_subsystem
+    }
+
+    pub fn credential_reference(&self) -> Option<&SecretReference> {
+        self.credential_id
+            .as_ref()
+            .map(CredentialReference::as_secret_reference)
+    }
+
+    pub fn with_domain(mut self, domain: Option<String>) -> Result<Self, ConfigError> {
+        self.domain = domain;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_configuration_name(mut self, name: impl Into<String>) -> Result<Self, ConfigError> {
+        self.configuration_name = name.into();
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_trusted_ca_file(mut self, path: Option<String>) -> Result<Self, ConfigError> {
+        self.trusted_ca_file = path;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_local_bind_policy(
+        mut self,
+        local_bind_policy: LocalBindPolicy,
+    ) -> Result<Self, ConfigError> {
+        self.local_bind_policy = local_bind_policy;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_ssh_transport(
+        mut self,
+        host_key_fingerprint: impl Into<String>,
+        subsystem: impl Into<String>,
+    ) -> Result<Self, ConfigError> {
+        self.transport = PowerShellTransport::Ssh;
+        self.port.get_or_insert(DEFAULT_SSH_PORT);
+        self.ssh_host_key_fingerprint = Some(host_key_fingerprint.into());
+        self.ssh_subsystem = subsystem.into();
+        self.domain = None;
+        self.trusted_ca_file = None;
+        self.configuration_name = default_powershell_configuration_name();
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_https_transport(mut self) -> Result<Self, ConfigError> {
+        self.transport = PowerShellTransport::Https;
+        self.port.get_or_insert(DEFAULT_POWERSHELL_PORT);
+        self.ssh_host_key_fingerprint = None;
+        self.ssh_subsystem = default_powershell_ssh_subsystem();
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_port(mut self, port: u16) -> Result<Self, ConfigError> {
+        self.port = Some(port);
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn to_ssh_connection_profile_with_resolved_local_bind(
+        &self,
+        local_bind_address: Option<IpAddr>,
+    ) -> Result<SshConnectionProfile, ConfigError> {
+        if self.transport != PowerShellTransport::Ssh {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        }
+        let identity = HostIdentity::new(&self.host, self.port())
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile))?;
+        let size = TerminalSize::new(default_columns(), default_rows())
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile))?;
+        SshConnectionProfile::new(identity, &self.username, default_terminal_type(), size)
+            .and_then(|profile| profile.with_local_bind_address(local_bind_address))
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile))
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        validate_identifier(&self.id)?;
+        if self.host.trim().is_empty()
+            || self.host.contains("://")
+            || self.host.contains('/')
+            || self.host.contains('@')
+            || self.username.trim().is_empty()
+            || self.configuration_name.trim().is_empty()
+            || self.configuration_name.trim() != self.configuration_name
+            || !valid_powershell_configuration_name(&self.configuration_name)
+            || contains_control_character(&self.host)
+            || contains_control_character(&self.username)
+            || contains_control_character(&self.configuration_name)
+            || contains_secret_bearing_value(&self.host)
+            || contains_secret_bearing_value(&self.username)
+            || contains_secret_bearing_value(&self.configuration_name)
+            || self.port() == 0
+        {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        }
+        if self.domain.as_ref().is_some_and(|domain| {
+            domain.trim().is_empty()
+                || contains_control_character(domain)
+                || contains_secret_bearing_value(domain)
+        }) {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        }
+        if self.trusted_ca_file.as_ref().is_some_and(|path| {
+            path.trim().is_empty()
+                || contains_control_character(path)
+                || contains_secret_bearing_value(path)
+        }) {
+            return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+        }
+        match self.transport {
+            PowerShellTransport::Https => {
+                if self.ssh_host_key_fingerprint.is_some()
+                    || !is_default_powershell_ssh_subsystem(&self.ssh_subsystem)
+                {
+                    return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+                }
+            }
+            PowerShellTransport::Ssh => {
+                if self.domain.is_some()
+                    || self.trusted_ca_file.is_some()
+                    || self.configuration_name != default_powershell_configuration_name()
+                    || !valid_powershell_ssh_subsystem(&self.ssh_subsystem)
+                {
+                    return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+                }
+                let Some(fingerprint) = &self.ssh_host_key_fingerprint else {
+                    return Err(ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile));
+                };
+                SshRawExecOptions::new()
+                    .with_known_host_fingerprint(fingerprint)
+                    .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile))?;
+                self.to_ssh_connection_profile_with_resolved_local_bind(
+                    self.local_bind_policy.fixed_address(),
+                )
+                .map(|_| ())?;
+            }
+        }
+        self.local_bind_policy
+            .validate()
+            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidPowerShellProfile))
+    }
 }
 
 impl SerialProfileConfiguration {
@@ -1725,6 +2161,127 @@ mod tests {
             .kind(),
             ConfigErrorKind::InvalidSshProfile
         );
+    }
+
+    #[test]
+    fn powershell_profiles_are_secret_free_and_validate_connection_metadata() {
+        let reference = SecretReference::parse(CREDENTIAL_REFERENCE).unwrap();
+        let profile = Profile::powershell("ops", "win.example.test", 5986, "alice")
+            .unwrap()
+            .with_powershell_credential_reference(reference)
+            .unwrap();
+        let powershell = profile.as_powershell().unwrap();
+        assert_eq!(powershell.configuration_name(), "Microsoft.PowerShell");
+        assert_eq!(
+            powershell
+                .credential_reference()
+                .unwrap()
+                .to_persisted_string(),
+            CREDENTIAL_REFERENCE
+        );
+        assert!(
+            Profile::powershell("bad", "https://win.example.test/wsman", 5986, "alice").is_err()
+        );
+        assert!(Profile::powershell("bad", "win.example.test", 0, "alice").is_err());
+        let powershell7 = powershell
+            .clone()
+            .with_configuration_name("PowerShell.7")
+            .unwrap();
+        assert_eq!(powershell7.configuration_name(), "PowerShell.7");
+        let custom_jea = powershell
+            .clone()
+            .with_configuration_name("JEA_Ops-1")
+            .unwrap();
+        assert_eq!(custom_jea.configuration_name(), "JEA_Ops-1");
+        for invalid in [
+            "",
+            " Microsoft.PowerShell",
+            "Microsoft PowerShell",
+            ".Microsoft.PowerShell",
+            "-Microsoft.PowerShell",
+            "http://schemas.microsoft.com/powershell/Microsoft.PowerShell",
+            "Microsoft/PowerShell",
+            "Microsoft\"PowerShell",
+            "Microsoft<PowerShell",
+        ] {
+            assert!(
+                powershell.clone().with_configuration_name(invalid).is_err(),
+                "{invalid:?} should be rejected"
+            );
+        }
+        assert!(powershell
+            .clone()
+            .with_configuration_name("A".repeat(257))
+            .is_err());
+    }
+
+    #[test]
+    fn powershell_https_is_backwards_compatible_default_transport() {
+        let document = r#"
+kind = "power_shell"
+id = "legacy"
+host = "win.example.test"
+username = "alice"
+"#;
+        let profile: Profile = toml::from_str(document).unwrap();
+        let powershell = profile.as_powershell().unwrap();
+        assert_eq!(powershell.transport(), PowerShellTransport::Https);
+        assert_eq!(powershell.port(), 5986);
+        assert_eq!(powershell.configuration_name(), "Microsoft.PowerShell");
+        assert!(powershell.ssh_host_key_fingerprint().is_none());
+        powershell.validate().unwrap();
+    }
+
+    #[test]
+    fn powershell_ssh_requires_explicit_pin_and_uses_ssh_defaults() {
+        let document = r#"
+kind = "power_shell"
+id = "ps-ssh"
+transport = "ssh"
+host = "linux.example.test"
+username = "alice"
+ssh_host_key_fingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+"#;
+        let profile: Profile = toml::from_str(document).unwrap();
+        let powershell = profile.as_powershell().unwrap();
+        assert_eq!(powershell.transport(), PowerShellTransport::Ssh);
+        assert_eq!(powershell.port(), 22);
+        assert_eq!(powershell.ssh_subsystem(), "powershell");
+        powershell.validate().unwrap();
+
+        for invalid in [
+            r#"
+kind = "power_shell"
+id = "missing-pin"
+transport = "ssh"
+host = "linux.example.test"
+username = "alice"
+"#,
+            r#"
+kind = "power_shell"
+id = "ssh-with-https"
+transport = "ssh"
+host = "linux.example.test"
+username = "alice"
+domain = "CONTOSO"
+ssh_host_key_fingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+"#,
+            r#"
+kind = "power_shell"
+id = "ssh-with-ca"
+transport = "ssh"
+host = "linux.example.test"
+username = "alice"
+trusted_ca_file = "ca.pem"
+ssh_host_key_fingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+"#,
+        ] {
+            let profile: Profile = toml::from_str(invalid).unwrap();
+            assert_eq!(
+                profile.validate().unwrap_err().kind(),
+                ConfigErrorKind::InvalidPowerShellProfile
+            );
+        }
     }
 
     #[test]

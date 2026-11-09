@@ -120,12 +120,16 @@ fn worker_events_wake_a_consumer_without_polling() {
         )
         .unwrap();
     notifications.recv_timeout(Duration::from_secs(8)).unwrap();
-    assert!(matches!(
-        worker.try_event().unwrap(),
-        Some(Event::Finished {
-            outcome: Outcome::Completed { value }
-        }) if value == 7
-    ));
+    let event = worker.try_event().unwrap();
+    assert!(
+        matches!(
+            &event,
+            Some(Event::Finished {
+                outcome: Outcome::Completed { value }
+            }) if value == 7
+        ),
+        "unexpected worker event: {event:?}"
+    );
     worker.shutdown().unwrap();
 }
 

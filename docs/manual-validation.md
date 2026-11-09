@@ -3295,6 +3295,35 @@ evidence. A new matching wire invocation may reuse a still-live synthetic
 handoff after revalidation. Production-qualified grant reuse and the external
 client's uncertain-action interlock remain open.
 
+## PowerShell and enterprise development gates
+
+These gates belong to the owner-authorized `feat/powershell` work under
+[ADR 0082](adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md).
+Backend/CLI fixtures do not establish a finished GUI workflow, corporate
+authorization, broker support, or enrolled-phone acceptance.
+
+| ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
+| --- | --- | --- | --- |
+| CP-24 | Query helper capabilities and current-user discovery using an isolated registry. Native SSH exec pins host/account/source and an exact live generation; explicit takeover, binary snapshot adoption and detach preserve the daemon. In the desktop picker, change endpoints, cancel discovery, reject stale selection, confirm takeover, use the normal terminal, and close/move tabs while work is pending. No workspace restores credentials, inventories or selected remote generations. | Automated helper, native loopback SSH/daemon and desktop routing contracts; cross-host/platform and native GUI usability remain separate | #256. The SSH path does not implement PSRP attachment or enterprise authorization. Windows OpenSSH/named-pipe and cross-host macOS/Linux interoperability need separate native records; existing CP-11 local policy remains unchanged. |
+| CP-25 | Open a real native PSRP runspace; set state in one pipeline and read it in another; preserve all seven stream types and structured objects; reject unsupported prompts; cancel a running pipeline, exercise deadlines/budgets and close without silently replacing or reusing uncertain state. | Deterministic protocol/bounds fixtures plus passing isolated native interoperability; partial, not accepted | #256. [Run 42525629625](https://github.com/fes/fesTerm/actions/runs/42525629625) passed eight Windows PowerShell HTTPS/NTLM cases and a required PowerShell 7 case with retained state after confirmed cancellation, using an owned endpoint and non-admin identity. The native SSH composition fixture also passes against PowerShell 7.6.6 on macOS arm64 for structured output, state reuse, cancellation and close. See the [harness scope](powershell-enterprise.md#isolated-native-interoperability); deployed cross-host OpenSSH/HTTPS, corporate authentication and native GUI acceptance remain separate evidence. |
+| CP-21 | Complete configured public-client PKCE sign-in from the enterprise desktop tab; reject mismatched callbacks and policy denial; list authorized projects and owned Dev Boxes with bounded, same-origin pagination. Cancel or switch account/configuration during sign-in/discovery, close the tab/window during pending work, and reject stale results. Keep tokens and connection URLs out of diagnostics/workspaces and never launch a discovered URL implicitly. | Loopback protocol fixtures and injected desktop lifecycle/routing contracts plus real tenant/native evidence; not accepted | #255. Requires an approved tenant/application/redirect registration, consent, Dev Center endpoint and account. Broker/device-compliance and enrolled-phone evidence remain additional gates; browser sign-in and API discovery are not Windows logon or embedded RDP acceptance. |
+
+The current implementation/evidence boundary is maintained in
+[`powershell-enterprise.md`](powershell-enterprise.md). Do not record a native
+pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell.
+
+## Native PowerShell desktop qualification
+
+| ID | Scenario | Evidence class | Prerequisites and limits |
+| --- | --- | --- | --- |
+| CP-23 | Create/edit/duplicate a PowerShell profile, explicitly select HTTPS/NTLM or SSH, connect, run repeated stateful commands, inspect structured streams, stop a long command, and close during connection/execution. Preserve old HTTPS defaults; reject missing/wrong SSH pins, invalid subsystems and transport/source configuration without fallback. Switch tabs/windows during pending work. Restart a saved workspace into disconnected setup without restored secrets, command, output or runtime source. Exercise narrow/high-DPI layouts and keyboard focus. | Injected lifecycle/configuration/UI regressions plus native GUI and endpoint evidence; partial | #256. Each claimed client/transport requires an authorized HTTPS/NTLM endpoint or configured PowerShell SSH subsystem. PowerShell 7 and restricted/JEA configurations need distinct endpoint/permission evidence; broker/device-compliance and corporate Dev Box access remain CP-21. Unsupported host prompts/native-console applications and automatic reconnection are not advertised. |
+
+## Local source address qualification
+
+| ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
+| --- | --- | --- | --- |
+| CP-22 | On macOS, Windows and Linux with multiple local addresses, exercise Automatic, fixed source and Ask on first connection for SSH/SFTP and the native PSRP fixed-source CLI. Observe the source at an authorized server. Cancel before connection; choose an unavailable address; disconnect its VPN/interface before reconnect; confirm no unbound fallback. Open SFTP from the live SSH session and exercise a separate transfer connection. Confirm profile edits do not alter the live session, new Ask sessions prompt again, and workspace restore does not persist a prompted source. | Deterministic config/UI/socket regressions plus native network and usability evidence; partial | Requires authorized IPv4/IPv6 endpoints and a controlled multi-adapter/VPN environment per platform. Adapter labels aid address selection only. DNS, proxy policy, strict interface binding and VPN-only enforcement are not established by socket source binding. IPv6 link-local scope selection is unsupported. No corporate interfaces, routes or policies are changed automatically. |
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

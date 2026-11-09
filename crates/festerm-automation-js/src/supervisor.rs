@@ -637,6 +637,17 @@ fn reap(child: &mut Child) -> Result<(), Error> {
     }
 }
 
+fn poll_worker_output(
+    decoder: &mut Decoder,
+    output: &mut impl std::io::Read,
+    poll_exit: impl FnOnce() -> std::io::Result<bool>,
+) -> Result<(Option<WorkerMessage>, bool), Error> {
+    // A worker can write its final frame and exit after an empty read.
+    let exited = poll_exit()?;
+    let message = decoder.read(output)?;
+    Ok((message, exited))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn supervise(
     mut owned: OwnedChild,
@@ -754,7 +765,10 @@ fn supervise(
                     }
                 }
             }
-            if let Some(message) = decoder.read::<WorkerMessage>(&mut output)? {
+            let (message, child_exited) = poll_worker_output(&mut decoder, &mut output, || {
+                child.try_wait().map(|status| status.is_some())
+            })?;
+            if let Some(message) = message {
                 match message {
                     WorkerMessage::Ready { profile }
                         if !qualified && profile == expected_profile =>
@@ -795,7 +809,7 @@ fn supervise(
                     _ => return Err(Error::Protocol),
                 }
             }
-            if child.try_wait()?.is_some() {
+            if child_exited {
                 return Err(Error::Protocol);
             }
             #[cfg(target_os = "macos")]
@@ -805,7 +819,8 @@ fn supervise(
                     Ok(false) => {}
                     Ok(true) => return Ok(Outcome::ResourceLimit {}),
                     Err(error) if child.try_wait()?.is_none() => return Err(error),
-                    Err(_) => return Err(Error::Protocol),
+                    // The exited child may have a final frame left to drain.
+                    Err(_) => continue,
                 }
             }
             thread::sleep(Duration::from_millis(1));
@@ -834,6 +849,51 @@ fn supervise(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_exit_between_empty_read_and_status_check_preserves_final_message() {
+        use std::{cell::Cell, io::Read};
+
+        struct ExitingReader<'a> {
+            exited: &'a Cell<bool>,
+            final_message: std::io::Cursor<Vec<u8>>,
+        }
+
+        impl Read for ExitingReader<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if !self.exited.replace(true) {
+                    Err(std::io::ErrorKind::WouldBlock.into())
+                } else {
+                    self.final_message.read(buf)
+                }
+            }
+        }
+
+        let exited = Cell::new(false);
+        let mut output = ExitingReader {
+            exited: &exited,
+            final_message: std::io::Cursor::new(
+                encode_frame(&WorkerMessage::Finished {
+                    outcome: Outcome::Completed { value: 7.into() },
+                })
+                .unwrap(),
+            ),
+        };
+        let mut decoder = Decoder::default();
+        let (message, child_exited) =
+            poll_worker_output(&mut decoder, &mut output, || Ok(exited.get())).unwrap();
+        assert!(message.is_none() && !child_exited);
+
+        let (message, child_exited) =
+            poll_worker_output(&mut decoder, &mut output, || Ok(exited.get())).unwrap();
+        assert!(child_exited);
+        assert!(matches!(
+            message,
+            Some(WorkerMessage::Finished {
+                outcome: Outcome::Completed { value }
+            }) if value == 7
+        ));
+    }
 
     #[test]
     fn event_wake_coalesces_without_blocking_and_refuses_a_lost_receiver() {

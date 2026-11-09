@@ -26,6 +26,7 @@ festerm-automation-mcp = { path = "../../crates/festerm-automation-mcp" }
 festerm-automation-workflow = { path = "../../crates/festerm-automation-workflow" }
 festerm-core = { path = "../../crates/festerm-core" }
 festerm-document = { path = "../../crates/festerm-document" }
+festerm-enterprise = { path = "../../crates/festerm-enterprise" }
 festerm-markdown = { path = "../../crates/festerm-markdown" }
 festerm-syntax = { path = "../../crates/festerm-syntax" }
 festerm-host-setup = { path = "../../crates/festerm-host-setup" }
@@ -40,11 +41,13 @@ festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional 
 festerm-tunnel-client = { path = "../../crates/festerm-tunnel-client", optional = true }
 tokio-util = { version = "0.7", features = ["rt"], optional = true }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
+festerm-powershell = { path = "../../crates/festerm-powershell" }
 festerm-serial = { path = "../../crates/festerm-serial" }
 festerm-ssh = { path = "../../crates/festerm-ssh" }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui" }
 festerm-windows-power = { path = "../../crates/festerm-windows-power" }
 image = "0.25"
+if-addrs = "0.13"
 mermaid-svg = "=0.7.0"
 resvg = { version = "0.48.1", default-features = false, features = ["text"] }
 roxmltree = "0.21"
@@ -85,7 +88,7 @@ winresource = "0.1"
 
 [dev-dependencies]
 festerm-automation-mcp-client = { path = "../../crates/festerm-automation-mcp-client" }
-festerm-test-support = { path = "../../crates/festerm-test-support" }
+festerm-test-support = { path = "../../crates/festerm-test-support", features = ["powershell"] }
 festerm-syntax = { path = "../../crates/festerm-syntax", features = ["test-support"] }
 accesskit = "0.24"
 egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }

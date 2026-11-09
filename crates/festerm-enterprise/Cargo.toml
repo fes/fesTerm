@@ -1,0 +1,27 @@
+[package]
+name = "festerm-enterprise"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Enterprise identity and Dev Center discovery backend for fesTerm."
+
+[dependencies]
+festerm-secret-store = { path = "../festerm-secret-store" }
+base64 = "0.22"
+oauth2 = { version = "5", default-features = false }
+reqwest = { version = "0.12.28", default-features = false, features = ["hickory-dns", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.17.0", default-features = false, features = ["rt", "time", "net", "sync", "macros"] }
+url = "2.5"
+webbrowser = "1.2"
+zeroize = "1"
+ctrlc = "3.4"
+
+[dev-dependencies]
+static_assertions = "1"
+
+[lints]
+workspace = true

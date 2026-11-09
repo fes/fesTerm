@@ -60,6 +60,7 @@ fn recording_rejects_sftp_sessions() {
         username: "user".to_owned(),
         host: "example.test".to_owned(),
         port: 22,
+        local_bind: crate::local_bind::ResolvedLocalBind::Automatic,
     };
     assert!(app.recording_session(first).is_none());
     assert!(SessionIdentity::capture(&app, first).is_none());
@@ -180,24 +181,181 @@ fn desktop_quit_waits_for_a_finalized_private_recording() {
     output.textures_delta.clear();
     assert!(!recording.is_recording().unwrap());
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    let mut close_requested = false;
     while coordinator.recording.is_some() {
         let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             coordinator.poll_capture(&mut app, ui.ctx());
         });
-        close_requested |= output
+        assert!(!output
             .viewport_output
             .values()
             .flat_map(|viewport| &viewport.commands)
-            .any(|command| matches!(command, egui::ViewportCommand::Close));
+            .any(|command| matches!(command, egui::ViewportCommand::Close)));
         output.textures_delta.clear();
         assert!(std::time::Instant::now() < deadline, "quit did not finish");
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(close_requested);
+    assert!(!coordinator.blocks_quit());
     assert!(coordinator.export.is_none());
     let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
     while reader.next_event().unwrap().is_some() {}
+}
+
+#[test]
+fn desktop_quit_requires_both_recording_finalization_and_worker_cleanup() {
+    for (incomplete, finish_worker_early) in [(false, false), (false, true), (true, false)] {
+        let (mut app, first, _, _, _) = two_windows();
+        let parent = crate::recording_storage::test_private_parent();
+        let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
+        let (storage, _) = RecordingStorage::open_for_test(&root).unwrap();
+        let terminal = &app.recording_session(first).unwrap().terminal;
+        let (recording, _) = SharedRecording::start(&root, &[terminal], || {}).unwrap();
+        if incomplete {
+            recording.fail_integrity("controlled test failure").unwrap();
+        }
+        app.recording.storage = Some(storage);
+        app.recording.recording = Some(recording.clone());
+        let worker = app.windows[0].app.retire_powershell_for_test();
+        app.windows[0].app.accept_window_close_for_test();
+        let context = egui::Context::default();
+
+        let mut output = context.run_ui(Default::default(), |ui| app.settle_windows(ui.ctx()));
+        assert!(output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::CancelClose)));
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Close)));
+        output.textures_delta.clear();
+        assert!(worker.close_requested_for_test());
+        assert!(!recording.is_recording().unwrap());
+        if finish_worker_early {
+            worker.finish_for_test();
+            let mut output = context.run_ui(Default::default(), |ui| app.settle_windows(ui.ctx()));
+            assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::Close)));
+            output.textures_delta.clear();
+        }
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while app.recording.recording.is_some() {
+            let mut output = context.run_ui(Default::default(), |ui| {
+                app.settle_recording(ui.ctx());
+                app.settle_windows(ui.ctx());
+            });
+            if app.recording.recording.is_some() || !finish_worker_early || incomplete {
+                assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command, egui::ViewportCommand::Close)));
+            }
+            output.textures_delta.clear();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "recording did not finish"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        worker.finish_for_test();
+        if incomplete {
+            assert!(app.recording.blocks_quit());
+            let mut output = context.run_ui(Default::default(), |ui| app.settle_windows(ui.ctx()));
+            assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::Close)));
+            output.textures_delta.clear();
+            app.recording.defer_quit(&context);
+        }
+        let mut output = context.run_ui(Default::default(), |ui| app.settle_windows(ui.ctx()));
+        assert!(output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Close)));
+        output.textures_delta.clear();
+    }
+}
+
+#[test]
+fn desktop_quit_keeps_late_recordings_private_and_waits_for_workers() {
+    for incomplete in [false, true] {
+        let (mut app, first, _, _, _) = two_windows();
+        let parent = crate::recording_storage::test_private_parent();
+        let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
+        let (storage, _) = RecordingStorage::open_for_test(&root).unwrap();
+        let terminal = &app.recording_session(first).unwrap().terminal;
+        let (recording, _) = SharedRecording::start(&root, &[terminal], || {}).unwrap();
+        let destination = tempfile::tempdir().unwrap();
+        let settings = RecordingSettings {
+            destination: Some(ExportDestination::DesktopPath(
+                crate::recording_storage::test_directory_path(destination.path()),
+            )),
+            ..RecordingSettings::default()
+        };
+        let start = festerm_recording::LocalStart::new(2026, 2, 28, 9, 6, 5).unwrap();
+        app.recording.manifest =
+            Some(RecordingManifest::create(&root, recording.id(), start, &settings).unwrap());
+        app.recording.lease = Some(Arc::new(RecordingLease::acquire(&root).unwrap()));
+        app.recording.storage = Some(storage);
+        app.recording.recording = Some(recording.clone());
+        app.recording.quit_blocked = true;
+        app.recording.quit_waiting_until = Some(std::time::Instant::now());
+        let worker = app.windows[0].app.retire_powershell_for_test();
+        app.windows[0].app.accept_window_close_for_test();
+        let context = egui::Context::default();
+
+        app.settle_recording(&context);
+        assert!(app.recording.quit_waiting_until.is_none());
+        assert!(app.recording.blocks_quit());
+        if incomplete {
+            recording.fail_integrity("controlled test failure").unwrap();
+        } else {
+            recording.stop(FinishReason::Lifecycle).unwrap();
+        }
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while app.recording.recording.is_some() {
+            app.settle_recording(&context);
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(app.recording.blocks_quit(), incomplete);
+        assert!(app.recording.pending_export.is_none());
+        assert!(app.recording.export.is_none());
+        let mut output = context.run_ui(Default::default(), |ui| app.settle_windows(ui.ctx()));
+        assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Close)));
+        output.textures_delta.clear();
+
+        worker.finish_for_test();
+        if incomplete {
+            assert!(app
+                .recording
+                .status
+                .as_deref()
+                .unwrap()
+                .contains("before quitting"));
+            let mut output = context.run_ui(Default::default(), |ui| app.settle_windows(ui.ctx()));
+            assert!(!output.viewport_output[&egui::ViewportId::ROOT]
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::Close)));
+            output.textures_delta.clear();
+            app.recording.defer_quit(&context);
+        }
+        let mut output = context.run_ui(Default::default(), |ui| app.settle_windows(ui.ctx()));
+        assert!(output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Close)));
+        output.textures_delta.clear();
+    }
 }
 
 #[test]

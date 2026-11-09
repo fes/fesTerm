@@ -529,6 +529,10 @@ impl FesTermApplication {
         self.broadcast_committed_configuration();
         self.move_requested_tabs(context);
         self.open_requested_windows(context);
+        if self.windows[0].app.window_close_requested() {
+            self.recording.prepare_accepted_quit(context);
+        }
+        self.settle_powershell_shutdown(context);
         self.close_finished_windows(context);
         // The shared signal survives window teardown. Drain only after opens
         // and closes so newly opened windows receive all pending warnings too.
@@ -554,6 +558,39 @@ impl FesTermApplication {
         for window in &mut self.windows {
             window.app.report_shared_cleanup_failures(notices);
             context.request_repaint_of(window.id.viewport_id());
+        }
+    }
+
+    fn settle_powershell_shutdown(&mut self, context: &egui::Context) {
+        let quitting = self.windows[0].app.window_close_requested();
+        let mut ready = true;
+        for window in &mut self.windows {
+            if quitting || window.app.window_close_requested() {
+                let finished = window.app.prepare_powershell_shutdown(context);
+                if !quitting && !finished {
+                    context.send_viewport_cmd_to(
+                        window.id.viewport_id(),
+                        egui::ViewportCommand::CancelClose,
+                    );
+                }
+                if !quitting && finished {
+                    context.send_viewport_cmd_to(
+                        window.id.viewport_id(),
+                        egui::ViewportCommand::Close,
+                    );
+                }
+                ready &= finished;
+            }
+        }
+        if quitting {
+            context.send_viewport_cmd_to(
+                egui::ViewportId::ROOT,
+                if ready && !self.recording.blocks_quit() {
+                    egui::ViewportCommand::Close
+                } else {
+                    egui::ViewportCommand::CancelClose
+                },
+            );
         }
     }
 
@@ -892,6 +929,11 @@ impl FesTermApplication {
         for id in closing {
             self.automation.controller_window_closing(id);
         }
+        for window in &self.windows {
+            if window.id != WindowId::PRIMARY && window.app.window_close_accepted() {
+                window.app.clear_profile_screen_state(context);
+            }
+        }
         if self
             .windows
             .iter()
@@ -1200,10 +1242,11 @@ impl eframe::App for FesTermApplication {
         guard.application.refresh_application_close_context();
         eframe::App::logic(guard.application.primary_mut(), context, frame);
         if context.input(|input| input.viewport().close_requested())
-            && guard.application.primary_mut().window_close_accepted()
+            && guard.application.primary_mut().window_close_requested()
         {
             guard.application.recording.defer_quit(context);
         }
+        guard.application.settle_powershell_shutdown(context);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -4970,6 +5013,34 @@ mod tests {
     }
 
     #[test]
+    fn closing_a_secondary_window_scrubs_only_its_profile_password_state() {
+        let (mut application, context) = application();
+        application.open_window(&context, None);
+        for index in 0..2 {
+            application
+                .window_mut(index)
+                .dispatch_for_test(AppCommand::OpenProfiles, &context);
+        }
+        let primary = application.window_mut(0).active_tab_id_for_test();
+        let secondary = application.window_mut(1).active_tab_id_for_test();
+        let primary_widget = crate::screens::install_profile_secret_for_test(&context, primary);
+        let secondary_widget = crate::screens::install_profile_secret_for_test(&context, secondary);
+        assert!(egui::TextEdit::load_state(&context, secondary_widget).is_some());
+
+        application.window_mut(1).accept_window_close_for_test();
+        application.settle_windows(&context);
+
+        assert!(!crate::screens::has_profile_screen_state_for_test(
+            &context, secondary
+        ));
+        assert!(egui::TextEdit::load_state(&context, secondary_widget).is_none());
+        assert!(crate::screens::has_profile_screen_state_for_test(
+            &context, primary
+        ));
+        assert!(egui::TextEdit::load_state(&context, primary_widget).is_some());
+    }
+
+    #[test]
     fn window_teardown_does_not_release_already_closed_document_views() {
         let (mut application, context) = application();
         application.open_window(&context, None);
@@ -5064,6 +5135,82 @@ mod tests {
         drop(application);
 
         assert!(documents.borrow().is_empty());
+    }
+
+    #[test]
+    fn powershell_secondary_close_waits_only_for_its_own_retiring_workers() {
+        let (mut application, context) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+        let primary = application.window_mut(0).retire_powershell_for_test();
+        let secondary = application.window_mut(1).retire_powershell_for_test();
+        application.window_mut(1).accept_window_close_for_test();
+        application.settle_windows(&context);
+        assert_eq!(application.window_count(), 2);
+        assert!(secondary.close_requested_for_test());
+        assert!(!primary.close_requested_for_test());
+        secondary.finish_for_test();
+        application.settle_windows(&context);
+        assert_eq!(application.window_count(), 1);
+        assert!(!primary.close_requested_for_test());
+        primary.finish_for_test();
+    }
+
+    #[test]
+    fn powershell_primary_quit_waits_for_all_window_workers_without_blocking() {
+        let (mut application, context) = application();
+        application
+            .window_mut(0)
+            .dispatch_for_test(AppCommand::OpenWindow, &context);
+        application.settle_windows(&context);
+        let primary = application.window_mut(0).retire_powershell_for_test();
+        let secondary = application.window_mut(1).retire_powershell_for_test();
+        application.window_mut(0).accept_window_close_for_test();
+        assert!(!powershell_close_pass(&mut application, &context));
+        assert!(primary.close_requested_for_test());
+        assert!(secondary.close_requested_for_test());
+        primary.finish_for_test();
+        assert!(!powershell_close_pass(&mut application, &context));
+        secondary.finish_for_test();
+        assert!(powershell_close_pass(&mut application, &context));
+    }
+
+    #[test]
+    fn powershell_shutdown_deadline_allows_unconfirmed_cleanup_exit() {
+        let (mut application, context) = application();
+        let handle = application.window_mut(0).retire_powershell_for_test();
+        application.window_mut(0).accept_window_close_for_test();
+        application
+            .window_mut(0)
+            .expire_powershell_shutdown_for_test();
+        assert!(powershell_close_pass(&mut application, &context));
+        assert!(!handle.is_finished());
+        assert!(handle.close_requested_for_test());
+        handle.finish_for_test();
+    }
+
+    fn powershell_close_pass(
+        application: &mut FesTermApplication,
+        context: &egui::Context,
+    ) -> bool {
+        let mut output = context.run_ui(Default::default(), |ui| {
+            application.settle_windows(ui.ctx())
+        });
+        output.textures_delta.clear();
+        let command = output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .rev()
+            .find(|command| {
+                matches!(
+                    command,
+                    egui::ViewportCommand::Close | egui::ViewportCommand::CancelClose
+                )
+            })
+            .expect("shutdown must explicitly close or cancel close");
+        matches!(command, egui::ViewportCommand::Close)
     }
 
     /// A window must not re-broadcast a document it merely adopted, or two

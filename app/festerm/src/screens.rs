@@ -13,8 +13,9 @@ use std::{
 
 use eframe::egui::{self, vec2, ScrollArea, Sense, Stroke, TextEdit, Ui, WidgetInfo, WidgetType};
 use festerm_config::{
-    Configuration, CredentialKind, PersistenceConfiguration, PersistenceProviderKind, Profile,
-    RemoteProfileKind, SshPortForwardDirection, SshProfileConfiguration,
+    Configuration, CredentialKind, LocalBindPolicy, PersistenceConfiguration,
+    PersistenceProviderKind, Profile, RemoteProfileKind, SshPortForwardDirection,
+    SshProfileConfiguration,
 };
 use festerm_session::{PasswordPrompt, TerminalSize};
 use festerm_ssh::{
@@ -32,6 +33,7 @@ use festerm_ui_egui::{
 #[cfg(test)]
 use festerm_config::SshPortForwardConfiguration;
 
+use crate::local_bind::{show_local_bind_draft, LocalBindDraft};
 use crate::port_forward_draft::PortForwardDraft as SshPortForwardDraft;
 use crate::tabs::{
     AppCommand, NewProfileKind, PasswordToStore, PrivateKeyToStore, ProfileCredentialToStore,
@@ -43,9 +45,12 @@ mod path_autocomplete;
 mod profiles;
 use destination::{DestinationFields, DestinationPane, FieldOptions, FieldStyle, DEFAULT_SSH_PORT};
 use path_autocomplete::{local_executable_field, local_working_directory_field};
+pub(crate) use profiles::clear_profiles_screen_state;
 pub(crate) use profiles::report_dev_tunnel_save_outcome;
 pub(crate) use profiles::report_local_profile_save_outcome;
 pub(crate) use profiles::show_profiles;
+#[cfg(test)]
+pub(crate) use profiles::{has_profile_screen_state_for_test, install_profile_secret_for_test};
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use profiles::{set_local_host_views, LocalHostView};
@@ -64,12 +69,16 @@ enum LauncherItemKind<'a> {
     NewSsh,
     NewSftp,
     NewSerial,
+    NewPowerShell,
+    NewRemoteSessions,
+    NewEnterprise,
     /// Opens a Markdown workspace: the file picker, then a viewer tab.
     NewMarkdown,
     LocalProfile(&'a str),
     SshProfile(&'a str),
     SftpProfile(&'a str),
     SerialProfile(&'a str),
+    PowerShellProfile(&'a str),
     ResumeSession(&'a festerm_sessiond::UnattachedSession),
     /// A locally running tmux or GNU screen session offered from its own
     /// quick-connect widget (feature request: local tmux/screen quick
@@ -115,6 +124,7 @@ enum ProfileTableKind {
     DevTunnel,
     Sftp,
     Serial,
+    PowerShell,
 }
 
 impl ProfileTableKind {
@@ -125,6 +135,7 @@ impl ProfileTableKind {
             Self::Ssh => "SSH",
             Self::Sftp => "SFTP",
             Self::Serial => "Serial",
+            Self::PowerShell => "PowerShell",
         }
     }
 
@@ -135,6 +146,7 @@ impl ProfileTableKind {
             Self::Ssh => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
             Self::Sftp => (Icon::FileTransfer, theme::ICON_SESSION_FILE_TRANSFER),
             Self::Serial => (Icon::Serial, theme::ICON_SESSION_SERIAL),
+            Self::PowerShell => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
         }
     }
 }
@@ -164,6 +176,9 @@ impl ProfileTableItem {
                 profile_id: self.identifier.clone(),
             },
             ProfileTableKind::Serial => AppCommand::StartConfiguredSerialProfile {
+                profile_id: self.identifier.clone(),
+            },
+            ProfileTableKind::PowerShell => AppCommand::OpenConfiguredPowerShellProfile {
                 profile_id: self.identifier.clone(),
             },
         }
@@ -211,6 +226,7 @@ impl LauncherItem<'_> {
             LauncherItemKind::SshProfile(_) => ProfileTableKind::Ssh,
             LauncherItemKind::SftpProfile(_) => ProfileTableKind::Sftp,
             LauncherItemKind::SerialProfile(_) => ProfileTableKind::Serial,
+            LauncherItemKind::PowerShellProfile(_) => ProfileTableKind::PowerShell,
             _ => unreachable!("only saved profiles are rendered by the profile table"),
         };
         ProfileTableItem {
@@ -233,6 +249,9 @@ impl LauncherItem<'_> {
             | LauncherItemKind::NewSsh
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
+            | LauncherItemKind::NewPowerShell
+            | LauncherItemKind::NewRemoteSessions
+            | LauncherItemKind::NewEnterprise
             | LauncherItemKind::NewMarkdown
             | LauncherItemKind::RunningTunnel(_)
             | LauncherItemKind::ResumeSession(_)
@@ -241,7 +260,8 @@ impl LauncherItem<'_> {
             | LauncherItemKind::DevTunnelProfile(id)
             | LauncherItemKind::SshProfile(id)
             | LauncherItemKind::SftpProfile(id)
-            | LauncherItemKind::SerialProfile(id) => Some(id),
+            | LauncherItemKind::SerialProfile(id)
+            | LauncherItemKind::PowerShellProfile(id) => Some(id),
         }
     }
 
@@ -268,6 +288,12 @@ impl LauncherItem<'_> {
             }
             LauncherItemKind::NewSerial | LauncherItemKind::SerialProfile(_) => {
                 (Icon::Serial, theme::ICON_SESSION_SERIAL)
+            }
+            LauncherItemKind::NewPowerShell | LauncherItemKind::PowerShellProfile(_) => {
+                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
+            }
+            LauncherItemKind::NewRemoteSessions | LauncherItemKind::NewEnterprise => {
+                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
             }
             LauncherItemKind::NewMarkdown => (Icon::MarkdownDocument, theme::ICON_SESSION_MARKDOWN),
         }
@@ -300,7 +326,12 @@ impl LauncherItem<'_> {
                     "the New Serial Connection item opens the serial form, not an AppCommand"
                 )
             }
+            LauncherItemKind::NewPowerShell => AppCommand::CreateProfile {
+                kind: NewProfileKind::PowerShell,
+            },
             LauncherItemKind::NewMarkdown => AppCommand::OpenMarkdownWorkspace,
+            LauncherItemKind::NewRemoteSessions => AppCommand::OpenRemoteSessions,
+            LauncherItemKind::NewEnterprise => AppCommand::OpenEnterprise,
             LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
             },
@@ -312,6 +343,11 @@ impl LauncherItem<'_> {
             },
             LauncherItemKind::SerialProfile(profile_id) => {
                 AppCommand::StartConfiguredSerialProfile {
+                    profile_id: profile_id.to_owned(),
+                }
+            }
+            LauncherItemKind::PowerShellProfile(profile_id) => {
+                AppCommand::OpenConfiguredPowerShellProfile {
                     profile_id: profile_id.to_owned(),
                 }
             }
@@ -738,6 +774,7 @@ struct SshLauncherForm {
     durable_session: DurableSessionDraft,
     remote_tmux_probe: Box<RemoteTmuxProbeState>,
     port_forwards: Vec<SshPortForwardDraft>,
+    local_bind: LocalBindDraft,
     sftp_gui_mode: bool,
     remember_password: bool,
     feedback: Option<String>,
@@ -779,6 +816,7 @@ impl Default for SshLauncherForm {
             durable_session: DurableSessionDraft::default(),
             remote_tmux_probe: Box::default(),
             port_forwards: Vec::new(),
+            local_bind: LocalBindDraft::default(),
             sftp_gui_mode: true,
             remember_password: false,
             feedback: None,
@@ -831,6 +869,7 @@ impl SshLauncherForm {
             .iter()
             .map(SshPortForwardDraft::from_configuration)
             .collect();
+        self.local_bind = LocalBindDraft::from_policy(profile.local_bind_policy());
         self.advanced_open = true;
         // Compose the shorthand too, so the destination reads correctly in
         // whichever notation the user has the pane set to.
@@ -875,13 +914,14 @@ impl SshLauncherForm {
         let identity = HostIdentity::new(&self.host, port).map_err(|error| error.to_string())?;
         let initial_size =
             TerminalSize::new(80, 24).expect("the launcher default terminal size is valid");
-        SshConnectionProfile::new(
+        let profile = SshConnectionProfile::new(
             identity,
             self.username.clone(),
             SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
             initial_size,
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+        self.local_bind.apply_to_profile(profile)
     }
 
     fn remote_tmux_probe_request(
@@ -953,7 +993,7 @@ impl SshLauncherForm {
         })
     }
 
-    fn profile_draft_seed(&self) -> SshProfileDraftSeed {
+    fn profile_draft_seed(&self) -> Result<SshProfileDraftSeed, String> {
         let trimmed_host = self.host.trim();
         let trimmed_username = self.username.trim();
         let name = if trimmed_host.is_empty() {
@@ -961,7 +1001,7 @@ impl SshLauncherForm {
         } else {
             trimmed_host.to_owned()
         };
-        SshProfileDraftSeed {
+        Ok(SshProfileDraftSeed {
             name,
             host: trimmed_host.to_owned(),
             port: self.port.trim().to_owned(),
@@ -980,7 +1020,8 @@ impl SshLauncherForm {
             durable_session_enabled: self.durable_session.enabled,
             durable_session_provider: self.durable_session.provider,
             durable_session_name: self.durable_session.session_name.clone(),
-        }
+            local_bind_policy: self.local_bind.saved_policy()?,
+        })
     }
 
     /// Converts the transient form into the application's typed SSH command.
@@ -1008,26 +1049,31 @@ impl SshLauncherForm {
                         .expect("saved profile was checked above"),
                     password: PasswordToStore::new(password),
                     options,
+                    local_bind: self.local_bind.resolved()?,
                 })
             }
             SshAuthenticationMethod::Password if password.is_empty() => {
                 Ok(AppCommand::StartSshSession {
+                    profile_id: self.saved_profile_id.clone(),
                     profile,
                     authentication: SshAuthentication::interactive(),
                     options,
                 })
             }
             SshAuthenticationMethod::Password => Ok(AppCommand::StartSshSession {
+                profile_id: self.saved_profile_id.clone(),
                 profile,
                 authentication: SshAuthentication::password(password),
                 options,
             }),
             SshAuthenticationMethod::PrivateKey => Ok(AppCommand::StartSshSession {
+                profile_id: self.saved_profile_id.clone(),
                 profile,
                 authentication: Self::parse_private_key(private_key, key_passphrase)?,
                 options,
             }),
             SshAuthenticationMethod::Certificate => Ok(AppCommand::StartSshSession {
+                profile_id: self.saved_profile_id.clone(),
                 profile,
                 authentication: Self::parse_certificate(private_key, key_passphrase, certificate)?,
                 options,
@@ -1043,6 +1089,7 @@ impl SshLauncherForm {
         Ok(AppCommand::StartStoredPasswordSshProfile {
             profile_id,
             options: self.session_options()?,
+            local_bind: self.local_bind.resolved()?,
         })
     }
 
@@ -1059,6 +1106,9 @@ impl SshLauncherForm {
                     profile_id: None,
                     stored_credential_kind: None,
                     known_host_persisted: false,
+                    local_bind_policy: profile
+                        .local_bind_address()
+                        .map_or(LocalBindPolicy::Automatic, LocalBindPolicy::Address),
                 },
             });
         }
@@ -1080,23 +1130,28 @@ impl SshLauncherForm {
                         .clone()
                         .expect("saved profile was checked above"),
                     password: PasswordToStore::new(password),
+                    local_bind: self.local_bind.resolved()?,
                 })
             }
             SshAuthenticationMethod::Password if password.is_empty() => {
                 Ok(AppCommand::StartSftpSession {
+                    profile_id: self.saved_profile_id.clone(),
                     profile,
                     authentication: SshAuthentication::interactive(),
                 })
             }
             SshAuthenticationMethod::Password => Ok(AppCommand::StartSftpSession {
+                profile_id: self.saved_profile_id.clone(),
                 profile,
                 authentication: SshAuthentication::password(password),
             }),
             SshAuthenticationMethod::PrivateKey => Ok(AppCommand::StartSftpSession {
+                profile_id: self.saved_profile_id.clone(),
                 profile,
                 authentication: Self::parse_private_key(private_key, key_passphrase)?,
             }),
             SshAuthenticationMethod::Certificate => Ok(AppCommand::StartSftpSession {
+                profile_id: self.saved_profile_id.clone(),
                 profile,
                 authentication: Self::parse_certificate(private_key, key_passphrase, certificate)?,
             }),
@@ -1344,6 +1399,10 @@ fn launcher_state_id(tab_id: TabId) -> egui::Id {
     egui::Id::new(("launcher_state", tab_id))
 }
 
+pub(crate) fn reset_connection_form(context: &egui::Context, tab_id: TabId) {
+    context.data_mut(|data| data.remove::<LauncherState>(launcher_state_id(tab_id)));
+}
+
 fn ssh_field_id(ui: &Ui, tab_id: TabId, field: &'static str) -> egui::Id {
     ui.make_persistent_id(("launcher_ssh", tab_id, field))
 }
@@ -1428,7 +1487,7 @@ fn configure_content_scrollbar(ui: &mut Ui) {
     ui.spacing_mut().scroll = scroll_style;
 }
 
-fn show_bounded_content_scroll<R>(
+pub(crate) fn show_bounded_content_scroll<R>(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
     body: impl FnOnce(&mut Ui) -> R,
@@ -1958,11 +2017,19 @@ fn show_authentication_section(
                             Err(feedback) => form.feedback = Some(feedback),
                         },
                         LauncherSurface::Sftp => {
-                            command = form.saved_profile_id.as_ref().map(|profile_id| {
-                                AppCommand::StartStoredPasswordSftpProfile {
-                                    profile_id: profile_id.clone(),
+                            if let Some(profile_id) = form.saved_profile_id.as_ref() {
+                                match form.local_bind.resolved() {
+                                    Ok(local_bind) => {
+                                        command =
+                                            Some(AppCommand::StartStoredPasswordSftpProfile {
+                                                profile_id: profile_id.clone(),
+                                                local_bind,
+                                            });
+                                        form.feedback = None;
+                                    }
+                                    Err(feedback) => form.feedback = Some(feedback),
                                 }
-                            });
+                            }
                         }
                     }
                 }
@@ -2089,6 +2156,15 @@ fn show_ssh_form(
             let submit_with_enter = destination_enter | authentication.submit_with_enter;
 
             ui.add_space(14.0);
+            ssh_section_heading(ui, "Source address");
+            show_local_bind_draft(
+                ui,
+                &mut form.local_bind,
+                false,
+                ("launcher_ssh_source", tab_id),
+            );
+
+            ui.add_space(14.0);
             ui.separator();
             ui.add_space(14.0);
             form.sync_remote_durable_provider_default(ui.ctx(), configuration);
@@ -2147,10 +2223,13 @@ fn show_ssh_form(
                         }
                     }
                     if launcher_text_button(ui, "Save as Profile…", None, false).clicked() {
-                        form.feedback = None;
-                        result = Some(AppCommand::CreateSshProfileFromDraft {
-                            draft: form.profile_draft_seed(),
-                        });
+                        match form.profile_draft_seed() {
+                            Ok(draft) => {
+                                form.feedback = None;
+                                result = Some(AppCommand::CreateSshProfileFromDraft { draft });
+                            }
+                            Err(feedback) => form.feedback = Some(feedback),
+                        }
                     }
                 });
             }
@@ -2451,6 +2530,14 @@ fn show_sftp_form(
                 return;
             }
 
+            ui.add_space(10.0);
+            ssh_section_heading(ui, "Source address");
+            show_local_bind_draft(
+                ui,
+                &mut form.local_bind,
+                false,
+                ("launcher_sftp_source", tab_id),
+            );
             ui.add_space(10.0);
             ui.checkbox(&mut form.sftp_gui_mode, "Use graphical file manager");
             if form.sftp_gui_mode {
@@ -3643,8 +3730,7 @@ pub fn show_launcher(
     let profiles = configuration.profiles();
     let customize_local_shell = configuration.interface_settings().customize_local_shell();
     let now_unix_seconds = unix_now_seconds();
-    // The base launch cards: one per session type fesTerm can start from
-    // nothing, in the order a new user meets them.
+    // Connection and discovery entry points, followed by saved profiles.
     let mut items = vec![
         LauncherItem::untabulated(
             "Local Shell".to_owned(),
@@ -3670,6 +3756,21 @@ pub fn show_launcher(
             "Markdown".to_owned(),
             "Open a Markdown workspace".to_owned(),
             LauncherItemKind::NewMarkdown,
+        ),
+        LauncherItem::untabulated(
+            "PowerShell".to_owned(),
+            "Experimental structured HTTPS/NTLM or SSH PSRP".to_owned(),
+            LauncherItemKind::NewPowerShell,
+        ),
+        LauncherItem::untabulated(
+            "Remote Sessions".to_owned(),
+            "Discover and resume an existing sessiond shell over SSH".to_owned(),
+            LauncherItemKind::NewRemoteSessions,
+        ),
+        LauncherItem::untabulated(
+            "Enterprise".to_owned(),
+            "Experimental Entra sign-in and Dev Box discovery".to_owned(),
+            LauncherItemKind::NewEnterprise,
         ),
     ];
     if cfg!(feature = "experimental-dev-tunnels") {
@@ -3786,6 +3887,14 @@ pub fn show_launcher(
                 "Serial",
                 serial.device().to_owned(),
             ),
+            Profile::PowerShell(powershell) => (
+                LauncherItemKind::PowerShellProfile(profile.identifier()),
+                match powershell.transport() {
+                    festerm_config::PowerShellTransport::Https => "PowerShell HTTPS",
+                    festerm_config::PowerShellTransport::Ssh => "PowerShell SSH",
+                },
+                powershell.host().to_owned(),
+            ),
         };
         LauncherItem {
             label: profile.identifier().to_owned(),
@@ -3882,6 +3991,7 @@ pub fn show_launcher(
         });
         if back_clicked {
             state.ssh_open = false;
+            command = Some(AppCommand::CancelConnectionSetup { tab_id });
         }
         ui.data_mut(|data| data.insert_temp(state_id, state));
         return command;
@@ -3920,6 +4030,7 @@ pub fn show_launcher(
         });
         if back_clicked {
             state.sftp_open = false;
+            command = Some(AppCommand::CancelConnectionSetup { tab_id });
         }
         ui.data_mut(|data| data.insert_temp(state_id, state));
         return command;
@@ -4399,6 +4510,7 @@ fn show_launch_card_row(
                         LauncherItemKind::NewDevTunnel => {
                             state.pending_form = Some(LauncherForm::DevTunnel);
                         }
+                        LauncherItemKind::NewPowerShell => *command = Some(item.command()),
                         _ => *command = Some(item.command()),
                     }
                 }
@@ -4786,6 +4898,7 @@ fn show_restored_authentication_required(
     tab_id: TabId,
     heading: &str,
     destination_description: &str,
+    choosing_source: bool,
     prefill_once: impl FnOnce(&mut LauncherState),
     render_form: impl FnOnce(&mut Ui, &mut LauncherState) -> Option<AppCommand>,
 ) -> Option<AppCommand> {
@@ -4793,18 +4906,28 @@ fn show_restored_authentication_required(
     let mut state = ui.data(|data| data.get_temp::<LauncherState>(state_id).unwrap_or_default());
     prefill_once(&mut state);
 
-    let command = ui
-        .vertical(|ui| {
+    let command = show_bounded_content_scroll(ui, ("connection_setup", tab_id), |ui| {
+        ui.vertical(|ui| {
             ui.add_space(24.0);
             ui.heading(heading);
             ui.label(destination_description);
-            ui.label(
-                "This workspace restored destination metadata only. Enter fresh authentication \
-                 below to connect; no prior connection, credential, or host trust was restored.",
-            );
+            if ui.button("Cancel").clicked()
+                || ui.input(|input| input.key_pressed(egui::Key::Escape))
+            {
+                return Some(AppCommand::CancelConnectionSetup { tab_id });
+            }
+            if choosing_source {
+                ui.label("Choose Automatic or a local source address, then connect. No connection has been opened.");
+            } else {
+                ui.label(
+                    "This workspace restored destination metadata only. Enter fresh authentication \
+                     below to connect; no prior connection, credential, or host trust was restored.",
+                );
+            }
             render_form(ui, &mut state)
         })
-        .inner;
+        .inner
+    });
 
     ui.data_mut(|data| data.insert_temp(state_id, state));
     command
@@ -4824,13 +4947,18 @@ pub fn show_ssh_authentication_required(
     show_restored_authentication_required(
         ui,
         tab_id,
-        "SSH authentication required",
+        if profile.local_bind_policy() == LocalBindPolicy::Ask {
+            "Choose SSH source address"
+        } else {
+            "SSH authentication required"
+        },
         &format!(
-            "Restored SSH destination: {}@{}:{}",
+            "SSH destination: {}@{}:{}",
             profile.username(),
             profile.host(),
             profile.port()
         ),
+        profile.local_bind_policy() == LocalBindPolicy::Ask,
         |state| {
             if !state.ssh_profile_prefilled {
                 state.ssh.prefill_saved_profile(profile);
@@ -4851,13 +4979,18 @@ pub fn show_sftp_authentication_required(
     show_restored_authentication_required(
         ui,
         tab_id,
-        "SFTP authentication required",
+        if profile.local_bind_policy() == LocalBindPolicy::Ask {
+            "Choose SFTP source address"
+        } else {
+            "SFTP authentication required"
+        },
         &format!(
-            "Restored SFTP destination: {}@{}:{}",
+            "SFTP destination: {}@{}:{}",
             profile.username(),
             profile.host(),
             profile.port()
         ),
+        profile.local_bind_policy() == LocalBindPolicy::Ask,
         |state| {
             if !state.sftp_profile_prefilled {
                 state.sftp.prefill_restored_sftp_profile(profile);
@@ -5017,6 +5150,7 @@ pub fn show_ssh_live_password_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local_bind::ResolvedLocalBind;
     use crate::tabs::AppState;
     use egui_kittest::{kittest::Queryable, Harness};
 
@@ -5061,31 +5195,36 @@ mod tests {
         configuration: Configuration,
         width: f32,
     ) -> Harness<'static, LauncherHarnessState> {
-        Harness::builder()
-            .with_size(egui::vec2(width, 880.0))
-            .build_ui_state(
-                move |ui, state: &mut LauncherHarnessState| {
-                    if let Some(command) = show_launcher(
-                        ui,
-                        state.tab_id,
-                        &state.configuration,
-                        true,
-                        None,
-                        false,
-                        &[],
-                        &[],
-                        &[],
-                        &[],
-                    ) {
-                        state.command = Some(command);
-                    }
-                },
-                LauncherHarnessState {
-                    tab_id: AppState::for_test().active(),
-                    configuration,
-                    command: None,
-                },
-            )
+        harness_with_configuration_size(configuration, egui::vec2(width, 880.0))
+    }
+
+    fn harness_with_configuration_size(
+        configuration: Configuration,
+        size: egui::Vec2,
+    ) -> Harness<'static, LauncherHarnessState> {
+        Harness::builder().with_size(size).build_ui_state(
+            move |ui, state: &mut LauncherHarnessState| {
+                if let Some(command) = show_launcher(
+                    ui,
+                    state.tab_id,
+                    &state.configuration,
+                    true,
+                    None,
+                    false,
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                ) {
+                    state.command = Some(command);
+                }
+            },
+            LauncherHarnessState {
+                tab_id: AppState::for_test().active(),
+                configuration,
+                command: None,
+            },
+        )
     }
 
     fn harness_with_profiles_and_grid(
@@ -5256,6 +5395,65 @@ mod tests {
         assert!(harness
             .query_by_label("Working directory (optional)")
             .is_none());
+    }
+
+    #[test]
+    fn powershell_new_profile_card_dispatches_at_narrow_and_wide_tab_sizes() {
+        for size in [egui::vec2(360.0, 516.0), egui::vec2(752.0, 516.0)] {
+            let mut harness = harness_with_configuration_size(Configuration::empty(), size);
+            harness.run_ok();
+
+            harness
+                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP")
+                .scroll_to_me();
+            harness.run_ok();
+            harness
+                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP")
+                .click();
+            harness.run_ok();
+
+            assert!(
+                matches!(
+                    harness.state().command,
+                    Some(AppCommand::CreateProfile {
+                        kind: NewProfileKind::PowerShell
+                    })
+                ),
+                "PowerShell card should dispatch CreateProfile at {size:?}, got {:?}",
+                harness.state().command
+            );
+        }
+    }
+
+    #[test]
+    fn remote_and_enterprise_cards_route_to_typed_discovery_actions() {
+        for size in [egui::vec2(360.0, 516.0), egui::vec2(752.0, 516.0)] {
+            for (label, remote) in [
+                (
+                    "Remote Sessions — Discover and resume an existing sessiond shell over SSH",
+                    true,
+                ),
+                (
+                    "Enterprise — Experimental Entra sign-in and Dev Box discovery",
+                    false,
+                ),
+            ] {
+                let mut harness = harness_with_configuration_size(Configuration::empty(), size);
+                harness.run_ok();
+                harness.get_by_label(label).scroll_to_me();
+                harness.run_ok();
+                harness.get_by_label(label).click();
+                harness.run_ok();
+                assert!(if remote {
+                    matches!(
+                        harness.state().command,
+                        Some(AppCommand::OpenRemoteSessions)
+                    )
+                } else {
+                    matches!(harness.state().command, Some(AppCommand::OpenEnterprise))
+                });
+            }
+        }
     }
 
     #[test]
@@ -5566,6 +5764,7 @@ mod tests {
             profile,
             authentication,
             options,
+            profile_id: None,
         }) = harness.state().command.as_ref()
         else {
             panic!("the valid SSH form must return a typed SSH command");
@@ -5914,6 +6113,7 @@ mod tests {
         let AppCommand::StartStoredPasswordSshProfile {
             profile_id,
             options,
+            ..
         } = form
             .submit_stored_credential()
             .expect("stored credential launch should validate")
@@ -5933,6 +6133,198 @@ mod tests {
             .expect("expected options should validate");
         assert_eq!(profile_id, "production");
         assert_eq!(options, expected_options);
+    }
+
+    #[test]
+    fn stored_credential_launch_preserves_resolved_source_address() {
+        let profile = Profile::ssh(
+            "production",
+            "ssh.example.test",
+            22,
+            "deploy",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .expect("profile should validate");
+        let mut form = SshLauncherForm::default();
+        form.prefill_saved_profile(profile.as_ssh().expect("profile remains SSH"));
+        form.local_bind =
+            LocalBindDraft::from_policy(LocalBindPolicy::Address("127.0.0.1".parse().unwrap()));
+
+        let AppCommand::StartStoredPasswordSshProfile { local_bind, .. } = form
+            .submit_stored_credential()
+            .expect("stored credential launch should validate")
+        else {
+            panic!("stored credential launch must retain its source address");
+        };
+
+        assert_eq!(
+            local_bind,
+            ResolvedLocalBind::Address("127.0.0.1".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn ask_ssh_and_sftp_setup_requires_choice_resets_and_cancels_without_launching() {
+        for sftp in [false, true] {
+            let profile = Profile::ssh(
+                "fixture",
+                "ssh.example.test",
+                22,
+                "fixture",
+                "xterm-256color",
+                80,
+                24,
+            )
+            .unwrap()
+            .with_credential_reference(festerm_secret_store::SecretReference::generate())
+            .unwrap()
+            .as_ssh()
+            .unwrap()
+            .clone()
+            .with_local_bind_policy(LocalBindPolicy::Ask)
+            .unwrap();
+            let tab_id = AppState::for_test().active();
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(1000.0, 900.0))
+                .build_ui_state(
+                    move |ui, state: &mut (SshProfileConfiguration, Option<AppCommand>, bool)| {
+                        if std::mem::take(&mut state.2) {
+                            reset_connection_form(ui.ctx(), tab_id);
+                        }
+                        let command = if sftp {
+                            show_sftp_authentication_required(ui, tab_id, &state.0, true)
+                        } else {
+                            show_ssh_authentication_required(ui, tab_id, &state.0, true)
+                        };
+                        if command.is_some() {
+                            state.1 = command;
+                        }
+                    },
+                    (profile, None, false),
+                );
+            harness.run();
+            harness.get_by_label("Use stored password").click();
+            harness.run();
+            assert!(
+                harness.state().1.is_none(),
+                "Ask must not resolve itself to Automatic"
+            );
+            harness.get_by_label("Automatic").click();
+            harness.run();
+            harness.get_by_label("Use stored password").click();
+            harness.run();
+            assert!(matches!(
+                &harness.state().1,
+                Some(AppCommand::StartStoredPasswordSshProfile {
+                    local_bind: ResolvedLocalBind::Automatic,
+                    ..
+                }) | Some(AppCommand::StartStoredPasswordSftpProfile {
+                    local_bind: ResolvedLocalBind::Automatic,
+                    ..
+                })
+            ));
+            assert_eq!(harness.state().0.local_bind_policy(), LocalBindPolicy::Ask);
+            harness.state_mut().1 = None;
+            harness.state_mut().2 = true;
+            harness.run();
+            harness.get_by_label("Use stored password").click();
+            harness.run();
+            assert!(harness.state().1.is_none(), "fresh setup must ask again");
+            harness.get_by_label("Cancel").click();
+            harness.run();
+            assert!(
+                matches!(harness.state().1, Some(AppCommand::CancelConnectionSetup { tab_id: id }) if id == tab_id)
+            );
+        }
+    }
+
+    #[test]
+    fn ask_manual_authentication_retains_profile_identity_and_runtime_source() {
+        let profile = Profile::ssh(
+            "fixture",
+            "ssh.example.test",
+            22,
+            "fixture",
+            "xterm-256color",
+            80,
+            24,
+        )
+        .unwrap()
+        .as_ssh()
+        .unwrap()
+        .clone()
+        .with_local_bind_policy(LocalBindPolicy::Ask)
+        .unwrap();
+        for sftp in [false, true] {
+            let mut form = SshLauncherForm::default();
+            form.prefill_saved_profile(&profile);
+            form.sftp_gui_mode = false;
+            form.password = "fixture".to_owned();
+            form.local_bind =
+                LocalBindDraft::from_policy(LocalBindPolicy::Address("127.0.0.1".parse().unwrap()));
+            let command = if sftp {
+                form.submit_sftp()
+            } else {
+                form.submit()
+            }
+            .unwrap();
+            let (identifier, connection) = match command {
+                AppCommand::StartSshSession {
+                    profile_id,
+                    profile,
+                    ..
+                }
+                | AppCommand::StartSftpSession {
+                    profile_id,
+                    profile,
+                    ..
+                } => (profile_id, profile),
+                _ => panic!("manual authentication should start the selected transport"),
+            };
+            assert_eq!(identifier.as_deref(), Some("fixture"));
+            assert_eq!(
+                connection.local_bind_address(),
+                Some("127.0.0.1".parse().unwrap())
+            );
+            assert_eq!(profile.local_bind_policy(), LocalBindPolicy::Ask);
+        }
+    }
+
+    #[test]
+    fn remote_tmux_probe_uses_fixed_source_and_skips_unresolved_ask() {
+        let configuration = Configuration::empty()
+            .with_known_host_trust(
+                "ssh.example.test",
+                22,
+                "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ",
+            )
+            .expect("known host should validate");
+        let mut form = SshLauncherForm {
+            host: "ssh.example.test".to_owned(),
+            username: "deploy".to_owned(),
+            password: "transient-password".to_owned(),
+            local_bind: LocalBindDraft::from_policy(LocalBindPolicy::Address(
+                "127.0.0.1".parse().unwrap(),
+            )),
+            ..Default::default()
+        };
+
+        let request = form
+            .remote_tmux_probe_request(Some(&configuration))
+            .expect("fixed source should permit the probe");
+        assert_eq!(
+            request.profile.local_bind_address(),
+            Some("127.0.0.1".parse().unwrap())
+        );
+
+        form.local_bind = LocalBindDraft::from_policy(LocalBindPolicy::Ask);
+        assert!(
+            form.remote_tmux_probe_request(Some(&configuration))
+                .is_none(),
+            "unresolved Ask must not fall through to an automatic tmux probe"
+        );
     }
 
     #[test]
@@ -6860,7 +7252,7 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        let launch_cards = 5 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
+        let launch_cards = 8 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
         for _ in 0..launch_cards {
             harness.key_press(egui::Key::ArrowDown);
             harness.run();

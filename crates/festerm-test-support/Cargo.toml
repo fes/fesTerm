@@ -7,8 +7,12 @@ authors.workspace = true
 repository.workspace = true
 description = "Golden fixture and test support utilities for fesTerm."
 
+[features]
+powershell = ["dep:psrp-rs"]
+
 [dependencies]
 festerm-core = { path = "../festerm-core" }
+psrp-rs = { path = "../../vendor/psrp-rs", features = ["__internal"], optional = true }
 
 [lints]
 workspace = true

@@ -12,11 +12,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use crate::local_bind::{show_local_bind_draft, LocalBindDraft};
+use crate::secret_input::SecretText;
 use eframe::egui::{
     self, Align, Color32, FontFamily, FontId, Key, Layout, RichText, ScrollArea, Sense, TextEdit,
     Ui, WidgetInfo, WidgetType,
 };
-use festerm_config::{CredentialKind, SftpPaneOrderPreference};
+use festerm_config::{CredentialKind, LocalBindPolicy, SftpPaneOrderPreference};
 use festerm_markdown::{MarkdownBounds, RemoteMarkdownSource, RemoteSourceOwner};
 use festerm_secret_store::{SecretReference, SecretStore};
 use festerm_session::HostKeyPrompt;
@@ -33,7 +35,7 @@ use festerm_ui_egui::{
     icon::{self, Icon},
     theme,
 };
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 /// How often the browsing session's worker checks that the remote
 /// connection is still alive, so a dropped connection (network blip, VPN
@@ -382,6 +384,7 @@ pub(crate) struct SftpFileManagerLaunchTarget {
     pub(crate) profile_id: Option<String>,
     pub(crate) stored_credential_kind: Option<CredentialKind>,
     pub(crate) known_host_persisted: bool,
+    pub(crate) local_bind_policy: LocalBindPolicy,
 }
 
 impl SftpFileManagerLaunchTarget {
@@ -390,12 +393,16 @@ impl SftpFileManagerLaunchTarget {
             HostIdentity::new(&self.host, self.port).map_err(|error| error.to_string())?;
         let size = festerm_session::TerminalSize::new(80, 24)
             .expect("default GUI SFTP terminal size is valid");
+        if self.local_bind_policy == LocalBindPolicy::Ask {
+            return Err("Choose Automatic or a fixed source address before connecting.".to_owned());
+        }
         SshConnectionProfile::new(
             identity,
             self.username.clone(),
             SshConnectionProfile::DEFAULT_TERMINAL_TYPE,
             size,
         )
+        .and_then(|profile| profile.with_local_bind_address(self.local_bind_policy.fixed_address()))
         .map_err(|error| error.to_string())
     }
 }
@@ -459,95 +466,6 @@ enum AuthMode {
     #[default]
     Password,
     PrivateKey,
-}
-
-#[derive(Default)]
-struct SecretText {
-    bytes: Zeroizing<Vec<u8>>,
-}
-
-impl SecretText {
-    #[cfg(test)]
-    fn new(text: impl Into<String>) -> Self {
-        let mut text = text.into();
-        let bytes = Zeroizing::new(text.as_bytes().to_vec());
-        text.zeroize();
-        Self { bytes }
-    }
-
-    fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.bytes).expect("secret text remains valid UTF-8")
-    }
-
-    fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    fn take(&mut self) -> String {
-        let result =
-            String::from_utf8(self.bytes.as_slice().to_vec()).expect("secret text is valid UTF-8");
-        self.bytes.zeroize();
-        self.bytes.clear();
-        result
-    }
-
-    fn reserve_for(&mut self, required: usize) {
-        if required <= self.bytes.capacity() {
-            return;
-        }
-        let mut replacement = Zeroizing::new(Vec::with_capacity(required.next_power_of_two()));
-        replacement.extend_from_slice(&self.bytes);
-        self.bytes.zeroize();
-        self.bytes.clear();
-        self.bytes = replacement;
-    }
-}
-
-impl egui::TextBuffer for SecretText {
-    fn is_mutable(&self) -> bool {
-        true
-    }
-
-    fn as_str(&self) -> &str {
-        self.as_str()
-    }
-
-    fn insert_text(&mut self, text: &str, char_index: egui::text::CharIndex) -> usize {
-        let byte_index = self
-            .as_str()
-            .char_indices()
-            .nth(char_index.0)
-            .map_or(self.bytes.len(), |(index, _)| index);
-        let old_len = self.bytes.len();
-        let new_len = old_len + text.len();
-        self.reserve_for(new_len);
-        self.bytes.resize(new_len, 0);
-        self.bytes
-            .copy_within(byte_index..old_len, byte_index + text.len());
-        self.bytes[byte_index..byte_index + text.len()].copy_from_slice(text.as_bytes());
-        text.chars().count()
-    }
-
-    fn delete_char_range(&mut self, char_range: std::ops::Range<egui::text::CharIndex>) {
-        let value = self.as_str();
-        let start = value
-            .char_indices()
-            .nth(char_range.start.0)
-            .map_or(value.len(), |(index, _)| index);
-        let end = value
-            .char_indices()
-            .nth(char_range.end.0)
-            .map_or(value.len(), |(index, _)| index);
-        let old_len = self.bytes.len();
-        self.bytes.copy_within(end..old_len, start);
-        let new_len = old_len - (end - start);
-        self.bytes[new_len..old_len].fill(0);
-        self.bytes.truncate(new_len);
-    }
-
-    fn type_id(&self) -> std::any::TypeId {
-        std::any::TypeId::of::<Self>()
-    }
 }
 
 struct SecretWidgetState {
@@ -628,6 +546,7 @@ pub(crate) struct AuthenticationFormState {
     username: String,
     host: String,
     port: String,
+    source: LocalBindDraft,
     /// One-shot request to focus the credential field for the current
     /// [`AuthMode`], armed whenever this screen is entered (including a
     /// return trip through "Edit connection…" after a failure) and whenever
@@ -685,17 +604,18 @@ impl AuthenticationFormState {
     }
 }
 
-/// Parses the (possibly user-edited) destination fields back into a
-/// [`SftpFileManagerLaunchTarget`]. A saved-profile target's destination
-/// isn't editable here (see `show_authentication_required`), so it's passed
-/// through unchanged; only an ad-hoc destination's fields are actually
-/// read from `state`.
+/// Parses the (possibly user-edited) destination fields and always applies
+/// the source-address choice. Saved-profile destinations keep their
+/// destination metadata but still resolve the per-launch source selection.
 fn resolve_edited_target(
     target: &SftpFileManagerLaunchTarget,
     state: &AuthenticationFormState,
 ) -> Result<SftpFileManagerLaunchTarget, String> {
+    let local_bind_policy = state.source.resolved()?.policy();
     if target.profile_id.is_some() {
-        return Ok(target.clone());
+        let mut target = target.clone();
+        target.local_bind_policy = local_bind_policy;
+        return Ok(target);
     }
     let username = state.username.trim();
     if username.is_empty() {
@@ -724,11 +644,13 @@ fn resolve_edited_target(
         profile_id: None,
         stored_credential_kind: None,
         known_host_persisted,
+        local_bind_policy,
     })
 }
 
 pub(crate) fn show_authentication_required(
     ui: &mut Ui,
+    tab_id: crate::tabs::TabId,
     target: &SftpFileManagerLaunchTarget,
     return_to_profiles: bool,
     state: &mut AuthenticationFormState,
@@ -750,6 +672,7 @@ pub(crate) fn show_authentication_required(
         state.username = target.username.clone();
         state.host = target.host.clone();
         state.port = target.port.to_string();
+        state.source = LocalBindDraft::from_policy(target.local_bind_policy);
         state.destination_initialized = true;
     }
     let pass = ui.ctx().cumulative_pass_nr();
@@ -760,12 +683,20 @@ pub(crate) fn show_authentication_required(
     }
     state.last_rendered_pass = Some(pass);
     let mut command = None;
-    egui::Frame::new()
+    crate::screens::show_bounded_content_scroll(ui, ("gui_sftp_setup", tab_id), |ui| {
+        egui::Frame::new()
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.add_space(24.0);
                 ui.heading("Open GUI SFTP");
+                if !return_to_profiles
+                    && (ui.button("Cancel").clicked()
+                        || ui.input(|input| input.key_pressed(egui::Key::Escape)))
+                {
+                    command = Some(crate::tabs::AppCommand::CancelConnectionSetup { tab_id });
+                    return;
+                }
                 if target.profile_id.is_some() {
                     ui.label(format!(
                         "Destination: {}@{}:{}",
@@ -790,6 +721,13 @@ pub(crate) fn show_authentication_required(
                         ui.add(TextEdit::singleline(&mut state.port).desired_width(60.0));
                     });
                 }
+                ui.add_space(10.0);
+                show_local_bind_draft(
+                    ui,
+                    &mut state.source,
+                    false,
+                    ("gui_sftp_source", tab_id),
+                );
                 if !target.known_host_persisted {
                     ui.label(
                         "If this host is new or its key changed, fesTerm will pause for host-key verification before opening the file manager.",
@@ -861,22 +799,25 @@ pub(crate) fn show_authentication_required(
                     ui.colored_label(theme::STATUS_ERROR, feedback);
                 }
                 ui.add_space(10.0);
-                if let (Some(profile_id), Some(kind)) =
+                if let (Some(_profile_id), Some(kind)) =
                     (&target.profile_id, target.stored_credential_kind)
                 {
                     let label = match kind {
                         CredentialKind::Password => "Use stored password",
                         CredentialKind::PrivateKey => "Use stored private key",
                     };
-                    if ui
-                        .add(egui::Button::new(label))
-                        .clicked()
-                    {
-                        command = Some(
-                            crate::tabs::AppCommand::StartStoredSftpFileManagerProfile {
-                                profile_id: profile_id.clone(),
-                            },
-                        );
+                    if ui.add(egui::Button::new(label)).clicked() {
+                        match resolve_edited_target(target, state) {
+                            Ok(target) => {
+                                command = Some(
+                                    crate::tabs::AppCommand::StartStoredSftpFileManagerProfile {
+                                        target,
+                                    },
+                                );
+                                state.feedback = None;
+                            }
+                            Err(feedback) => state.feedback = Some(feedback),
+                        }
                     }
                     ui.add_space(6.0);
                 }
@@ -932,6 +873,7 @@ pub(crate) fn show_authentication_required(
                 }
             });
         });
+    });
     command
 }
 
@@ -2043,6 +1985,7 @@ impl SftpFileManagerTab {
             profile_id: None,
             stored_credential_kind: None,
             known_host_persisted: false,
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let mut local_pane = SftpPaneState::new(local_snapshot.path.clone());
         let local_selection =
@@ -7136,10 +7079,20 @@ pub(crate) mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
     use std::ffi::OsString;
 
-    #[derive(Default)]
     struct AuthenticationHarnessState {
         command: Option<crate::tabs::AppCommand>,
         form: AuthenticationFormState,
+        tab_id: crate::tabs::TabId,
+    }
+
+    impl Default for AuthenticationHarnessState {
+        fn default() -> Self {
+            Self {
+                command: None,
+                form: AuthenticationFormState::default(),
+                tab_id: crate::tabs::TabId::next_for_test(),
+            }
+        }
     }
 
     /// Builds a `SftpFileManagerTab` for unit tests without going through
@@ -8130,7 +8083,8 @@ pub(crate) mod tests {
         let target = test_launch_target(Some("production"));
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
-                state.command = show_authentication_required(ui, &target, true, &mut state.form);
+                state.command =
+                    show_authentication_required(ui, state.tab_id, &target, true, &mut state.form);
             },
             AuthenticationHarnessState::default(),
         );
@@ -8177,7 +8131,8 @@ pub(crate) mod tests {
         let target = test_launch_target(Some("production"));
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
-                state.command = show_authentication_required(ui, &target, true, &mut state.form);
+                state.command =
+                    show_authentication_required(ui, state.tab_id, &target, true, &mut state.form);
             },
             AuthenticationHarnessState::default(),
         );
@@ -8205,9 +8160,13 @@ pub(crate) mod tests {
             let target = test_launch_target(Some("production"));
             let mut harness = Harness::builder().build_ui_state(
                 move |ui, state: &mut AuthenticationHarnessState| {
-                    if let Some(command) =
-                        show_authentication_required(ui, &target, true, &mut state.form)
-                    {
+                    if let Some(command) = show_authentication_required(
+                        ui,
+                        state.tab_id,
+                        &target,
+                        true,
+                        &mut state.form,
+                    ) {
                         state.command = Some(command);
                     }
                 },
@@ -8271,8 +8230,13 @@ pub(crate) mod tests {
             let bound_target = target.clone();
             let mut harness = Harness::builder().build_ui_state(
                 move |ui, state: &mut AuthenticationHarnessState| {
-                    state.command =
-                        show_authentication_required(ui, &target, false, &mut state.form);
+                    state.command = show_authentication_required(
+                        ui,
+                        state.tab_id,
+                        &target,
+                        false,
+                        &mut state.form,
+                    );
                 },
                 AuthenticationHarnessState {
                     form: AuthenticationFormState {
@@ -8318,7 +8282,7 @@ pub(crate) mod tests {
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
                 if let Some(command) =
-                    show_authentication_required(ui, &target, true, &mut state.form)
+                    show_authentication_required(ui, state.tab_id, &target, true, &mut state.form)
                 {
                     state.command = Some(command);
                 }
@@ -8352,7 +8316,13 @@ pub(crate) mod tests {
         profile_b.host = "b.example.test".to_owned();
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
-                state.command = show_authentication_required(ui, &profile_b, true, &mut state.form);
+                state.command = show_authentication_required(
+                    ui,
+                    state.tab_id,
+                    &profile_b,
+                    true,
+                    &mut state.form,
+                );
             },
             AuthenticationHarnessState {
                 form: AuthenticationFormState {
@@ -8389,11 +8359,12 @@ pub(crate) mod tests {
             profile_id: Some("production".to_owned()),
             stored_credential_kind: Some(CredentialKind::Password),
             known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
                 if let Some(next) =
-                    show_authentication_required(ui, &target, false, &mut state.form)
+                    show_authentication_required(ui, state.tab_id, &target, false, &mut state.form)
                 {
                     state.command = Some(next);
                 }
@@ -8408,9 +8379,162 @@ pub(crate) mod tests {
         assert!(matches!(
             &harness.state().command,
             Some(crate::tabs::AppCommand::StartStoredSftpFileManagerProfile {
-                profile_id
-            }) if profile_id == "production"
+                target,
+                ..
+            }) if target.profile_id.as_deref() == Some("production")
         ));
+    }
+
+    #[test]
+    fn gui_sftp_ask_chooser_resolves_stored_launch_and_resets_before_cancellation() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "fixture".to_owned(),
+            username: "fixture".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: Some("fixture".to_owned()),
+            stored_credential_kind: Some(CredentialKind::Password),
+            known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Ask,
+        };
+        let tab_id = crate::tabs::TabId::next_for_test();
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut AuthenticationHarnessState| {
+                if let Some(command) =
+                    show_authentication_required(ui, state.tab_id, &target, false, &mut state.form)
+                {
+                    state.command = Some(command);
+                }
+            },
+            AuthenticationHarnessState {
+                tab_id,
+                ..Default::default()
+            },
+        );
+        harness.run();
+        harness.get_by_label("Use stored password").click();
+        harness.run();
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("Automatic").click();
+        harness.run();
+        harness.get_by_label("Use stored password").click();
+        harness.run();
+        assert!(matches!(
+            &harness.state().command,
+            Some(crate::tabs::AppCommand::StartStoredSftpFileManagerProfile { target })
+                if target.local_bind_policy == LocalBindPolicy::Automatic
+        ));
+        harness.state_mut().command = None;
+        harness.state_mut().form = AuthenticationFormState::default();
+        harness.run();
+        harness.get_by_label("Use stored password").click();
+        harness.run();
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(matches!(
+            harness.state().command,
+            Some(crate::tabs::AppCommand::CancelConnectionSetup { tab_id: id }) if id == tab_id
+        ));
+    }
+
+    #[test]
+    fn gui_sftp_unresolved_source_keeps_password_until_an_explicit_choice() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "fixture".to_owned(),
+            username: "fixture".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Ask,
+        };
+        let mut harness = Harness::builder().build_ui_state(
+            move |ui, state: &mut AuthenticationHarnessState| {
+                if let Some(next) =
+                    show_authentication_required(ui, state.tab_id, &target, false, &mut state.form)
+                {
+                    state.command = Some(next);
+                }
+            },
+            AuthenticationHarnessState::default(),
+        );
+        harness.run();
+        harness
+            .get_by_role(egui::accesskit::Role::PasswordInput)
+            .type_text("fixture");
+        harness.run();
+        harness.get_by_label("Open SFTP file manager").click();
+        harness.run();
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("Automatic").click();
+        harness.run();
+        harness.get_by_label("Open SFTP file manager").click();
+        harness.run();
+        assert!(matches!(
+            &harness.state().command,
+            Some(crate::tabs::AppCommand::StartSftpFileManager { target, authentication: SftpFileManagerAuthentication::Password(password) })
+                if target.local_bind_policy == LocalBindPolicy::Automatic && password == "fixture"
+        ));
+    }
+
+    #[test]
+    fn gui_sftp_saved_target_applies_explicit_automatic_source_choice() {
+        let target = SftpFileManagerLaunchTarget {
+            label: "production".to_owned(),
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: 22,
+            profile_id: Some("production".to_owned()),
+            stored_credential_kind: Some(CredentialKind::Password),
+            known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Ask,
+        };
+        let state = AuthenticationFormState {
+            source: LocalBindDraft::from_policy(LocalBindPolicy::Automatic),
+            ..AuthenticationFormState::default()
+        };
+
+        let resolved =
+            resolve_edited_target(&target, &state).expect("explicit Automatic resolves Ask");
+
+        assert_eq!(resolved.local_bind_policy, LocalBindPolicy::Automatic);
+        assert_eq!(resolved.host, "sftp.example.test");
+    }
+
+    #[test]
+    fn gui_sftp_manual_password_target_applies_fixed_source_choice() {
+        let address = "127.0.0.1".parse().unwrap();
+        let target = SftpFileManagerLaunchTarget {
+            label: "ad-hoc".to_owned(),
+            username: "old".to_owned(),
+            host: "old.example.test".to_owned(),
+            port: 22,
+            profile_id: None,
+            stored_credential_kind: None,
+            known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Ask,
+        };
+        let state = AuthenticationFormState {
+            username: "deploy".to_owned(),
+            host: "sftp.example.test".to_owned(),
+            port: "2022".to_owned(),
+            source: LocalBindDraft::from_policy(LocalBindPolicy::Address(address)),
+            ..AuthenticationFormState::default()
+        };
+
+        let resolved =
+            resolve_edited_target(&target, &state).expect("fixed source resolves target");
+
+        assert_eq!(resolved.username, "deploy");
+        assert_eq!(resolved.host, "sftp.example.test");
+        assert_eq!(resolved.port, 2022);
+        assert_eq!(resolved.local_bind_policy.fixed_address(), Some(address));
+        assert!(
+            !resolved.known_host_persisted,
+            "editing the destination must clear stale host-key persistence"
+        );
     }
 
     #[test]
@@ -8423,10 +8547,12 @@ pub(crate) mod tests {
             profile_id: None,
             stored_credential_kind: None,
             known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
-                state.command = show_authentication_required(ui, &target, false, &mut state.form);
+                state.command =
+                    show_authentication_required(ui, state.tab_id, &target, false, &mut state.form);
             },
             AuthenticationHarnessState::default(),
         );
@@ -8449,11 +8575,12 @@ pub(crate) mod tests {
             profile_id: None,
             stored_credential_kind: None,
             known_host_persisted: false,
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
                 if let Some(next) =
-                    show_authentication_required(ui, &target, false, &mut state.form)
+                    show_authentication_required(ui, state.tab_id, &target, false, &mut state.form)
                 {
                     state.command = Some(next);
                 }
@@ -8487,10 +8614,12 @@ pub(crate) mod tests {
             profile_id: None,
             stored_credential_kind: None,
             known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
-                state.command = show_authentication_required(ui, &target, false, &mut state.form);
+                state.command =
+                    show_authentication_required(ui, state.tab_id, &target, false, &mut state.form);
             },
             AuthenticationHarnessState::default(),
         );
@@ -8525,6 +8654,7 @@ pub(crate) mod tests {
         struct ReentryState {
             visible: bool,
             form: AuthenticationFormState,
+            tab_id: crate::tabs::TabId,
         }
 
         let target = SftpFileManagerLaunchTarget {
@@ -8535,11 +8665,12 @@ pub(crate) mod tests {
             profile_id: None,
             stored_credential_kind: None,
             known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut ReentryState| {
                 if state.visible {
-                    show_authentication_required(ui, &target, false, &mut state.form);
+                    show_authentication_required(ui, state.tab_id, &target, false, &mut state.form);
                 } else {
                     // Stands in for the connecting/failed surface the tab
                     // swaps in while the form is away.
@@ -8549,6 +8680,7 @@ pub(crate) mod tests {
             ReentryState {
                 visible: true,
                 form: AuthenticationFormState::default(),
+                tab_id: crate::tabs::TabId::next_for_test(),
             },
         );
 
@@ -8588,10 +8720,12 @@ pub(crate) mod tests {
             profile_id: None,
             stored_credential_kind: None,
             known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let mut harness = Harness::builder().build_ui_state(
             move |ui, state: &mut AuthenticationHarnessState| {
-                state.command = show_authentication_required(ui, &target, false, &mut state.form);
+                state.command =
+                    show_authentication_required(ui, state.tab_id, &target, false, &mut state.form);
             },
             AuthenticationHarnessState::default(),
         );
@@ -8618,6 +8752,7 @@ pub(crate) mod tests {
             profile_id: None,
             stored_credential_kind: None,
             known_host_persisted: false,
+            local_bind_policy: LocalBindPolicy::Automatic,
         };
         let prompt = HostKeyPrompt::new("sftp.example.test", 22, "SHA256:abcDef012+/");
         let tab_id = crate::tabs::AppState::for_test().active();
@@ -9229,6 +9364,7 @@ pub(crate) mod tests {
             profile_id: profile_id.map(str::to_owned),
             stored_credential_kind: None,
             known_host_persisted: true,
+            local_bind_policy: LocalBindPolicy::Automatic,
         }
     }
 
@@ -9820,6 +9956,10 @@ pub(crate) mod tests {
             MarkdownFilePicker::new(directory.path().to_path_buf(), egui::Context::default());
         wait_for_picker_load(&mut picker);
         assert!(picker.pane.error.is_none());
+        picker.pane.set_error(
+            "A previous lookup failed.".to_owned(),
+            "Controlled fixture detail.".to_owned(),
+        );
         let mut harness = Harness::builder()
             .with_size(egui::vec2(800.0, 650.0))
             .build_ui_state(
@@ -9846,6 +9986,8 @@ pub(crate) mod tests {
         harness.state_mut().0.local_loader = LocalDirectoryLoader::paused_for_test();
         harness.state_mut().0.submit_path();
         let request_id = harness.state().0.pane.pending_request_id;
+        // Submitting clears the prior error rows and moves the footer.
+        harness.run();
         harness.get_by_label("Cancel").click();
         harness.run();
         assert!(matches!(
@@ -9858,7 +10000,7 @@ pub(crate) mod tests {
             .event_sender
             .send(MarkdownPickerEvent::PathResolved {
                 request_id,
-                result: Ok((std::env::temp_dir().join("must-not-open.txt"), false)),
+                result: Ok((directory.path().join("must-not-open.txt"), false)),
             })
             .unwrap();
         harness.state_mut().0.poll();

@@ -1,6 +1,8 @@
 //! Repository-owned golden-fixture support for terminal behavior.
 
 pub mod captures;
+#[cfg(feature = "powershell")]
+pub mod powershell;
 pub mod replies;
 pub mod tui_workload;
 

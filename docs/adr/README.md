@@ -86,6 +86,7 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0042: Isolated iOS Rendering Spike Host](0042-ios-rendering-spike-host.md) — Phase 1 implementation for review; native feasibility pending
 
+- [ADR 0082: Native PowerShell, Enterprise Identity, and Remote Session Discovery](0082-native-powershell-enterprise-and-sessiond-boundaries.md) - owner-authorized desktop implementation; native PSRP, enterprise access and remote daemon attachment remain qualification gates
 - [ADR 0025: fesTerm-Owned Local Session Persistence via a Standalone `festerm-sessiond` Executable](0025-native-local-session-persistence-daemon.md)
 - [ADR 0027: SSH Port Forwarding for Profiles and Live Sessions](0027-ssh-port-forwarding-for-profiles-and-live-sessions.md) — see issue #38
 - [ADR 0028: Text-Mode SFTP Session Tabs via `russh-sftp`](0028-text-mode-sftp-session-tabs-via-russh-sftp.md)
