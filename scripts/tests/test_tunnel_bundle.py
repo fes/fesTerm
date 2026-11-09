@@ -83,6 +83,19 @@ class TunnelBundleTests(unittest.TestCase):
                 for entry in source.getmembers()
             }
 
+    def install_objc_fallbacks(self):
+        fallbacks = self.root / "packaging/license-fallbacks"
+        fallbacks.mkdir(parents=True)
+        shutil.copyfile(
+            ROOT / "packaging/license-fallbacks.toml",
+            self.root / "packaging/license-fallbacks.toml",
+        )
+        for name in ("objc2-legacy-mit", "objc2-license-notes", "objc2-supplemental-mit"):
+            shutil.copyfile(
+                ROOT / f"packaging/license-fallbacks/{name}.txt",
+                fallbacks / f"{name}.txt",
+            )
+
     def test_six_native_payloads_have_exact_names_versions_modes_and_checksums(self):
         for platform in bundle.PLATFORMS:
             for arch in bundle.ARCHITECTURES:
@@ -216,6 +229,7 @@ class TunnelBundleTests(unittest.TestCase):
 
     def test_explicit_mit_declarations_are_pinned_not_generic_fallbacks(self):
         shutil.rmtree(self.root / "dependency")
+        self.install_objc_fallbacks()
         for (name, version), attribution in bundle.MIT_DECLARATIONS.items():
             with self.subTest(name=name):
                 metadata = copy.deepcopy(self.metadata)
@@ -231,6 +245,19 @@ class TunnelBundleTests(unittest.TestCase):
                 metadata["packages"][-1].update({"license": "MIT", "version": "999.0.0"})
                 with self.assertRaisesRegex(ValueError, "missing dependency license"):
                     bundle.third_party_notices(metadata, VERSION, self.root)
+
+    def test_macos_block2_uses_reviewed_notices(self):
+        shutil.rmtree(self.root / "dependency")
+        self.install_objc_fallbacks()
+        metadata = copy.deepcopy(self.metadata)
+        metadata["packages"][-1].update({
+            "name": "block2", "version": "0.6.2", "license": "MIT",
+        })
+        text = bundle.third_party_notices(metadata, VERSION, self.root).decode()
+        self.assertIn("=== block2 0.6.2 ===", text)
+        self.assertIn("Copyright (c) Steven Sheldon", text)
+        self.assertIn("Copyright 2026 Mads Marquart", text)
+        self.assertIn("Apple SDKs", text)
 
     def test_dependency_license_path_traversal_and_symlinks_are_rejected(self):
         for traversal in (True, False):
