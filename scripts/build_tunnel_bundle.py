@@ -9,6 +9,7 @@ before this script packages them.
 import argparse
 import gzip
 import hashlib
+import importlib.util
 import io
 import json
 import re
@@ -20,6 +21,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+NOTICE_SPEC = importlib.util.spec_from_file_location(
+    "build_app_notices", ROOT / "scripts/build_app_notices.py"
+)
+reviewed_notices = importlib.util.module_from_spec(NOTICE_SPEC)
+NOTICE_SPEC.loader.exec_module(reviewed_notices)
 BINARIES = ("festerm-sessiond", "festerm-tunnel-bridge", "festerm-tunnel-setup")
 PLATFORMS = ("linux", "macos", "windows")
 ARCHITECTURES = ("x86_64", "aarch64")
@@ -32,12 +38,12 @@ APACHE_DECLARATIONS = {
     ("russh-cryptovec", "0.62.0"): "Copyright 2016 Pierre-Étienne Meunier",
     ("russh-util", "0.52.0"): "russh contributors, https://github.com/warp-tech/russh",
 }
-# These exact published objc2-family crates (macOS-only, via notify) omit their
-# license files. Select their declared MIT option and retain upstream attribution
-# from https://github.com/madsmtm/objc2/blob/main/LICENSE-MIT.txt.
+# These exact published objc2-family crates omit their license files; retain the
+# same reviewed upstream license and attribution used by the app notices.
 MIT_DECLARATIONS = {
     (name, version): "Copyright 2026 Mads Marquart; https://github.com/madsmtm/objc2"
     for name, version in (
+        ("block2", "0.6.2"),
         ("dispatch2", "0.3.1"),
         ("objc2", "0.6.4"),
         ("objc2-core-foundation", "0.3.2"),
@@ -136,8 +142,11 @@ def third_party_notices(metadata, version, root):
         if not files and key in MIT_DECLARATIONS:
             if package["license"] not in ("MIT", "Zlib OR Apache-2.0 OR MIT"):
                 raise ValueError(f"missing dependency license/notice: {package['name']}")
-            terms = MIT_LICENSE.split("MIT License\n", 1)[1]
-            notices.append(f"{MIT_DECLARATIONS[key]}\nLicensed under MIT.\n\n{terms}\n")
+            sources, overrides = reviewed_notices.load_fallbacks(root)
+            documents = reviewed_notices.package_documents(package, sources, overrides, root)
+            notices.append(f"{MIT_DECLARATIONS[key]}\nLicensed under MIT.\n")
+            for name, data in documents:
+                notices.append(f"\n--- {name} ---\n{data.decode('utf-8')}\n")
         elif not files:
             declaration = APACHE_DECLARATIONS.get(key)
             if not declaration or package["license"] not in (
