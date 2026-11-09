@@ -181,6 +181,7 @@ jobs:
           test -x target/release/fesTerm.app/Contents/MacOS/festerm-sessiond
           test -x target/release/fesTerm.app/Contents/MacOS/festerm-tunnel-setup
           test -x target/release/fesTerm.app/Contents/MacOS/festerm-tunnel-bridge
+          cmp packaging/THIRD_PARTY_NOTICES.txt target/release/fesTerm.app/Contents/Resources/THIRD_PARTY_NOTICES.txt
           test ! -e target/release/fesTerm.app/Contents/MacOS/devtunnel
           test -f target/release/fesTerm.app/Contents/Info.plist
           test "$(defaults read "$PWD/target/release/fesTerm.app/Contents/Info" CFBundleIdentifier)" = "dev.fes.festerm"
@@ -293,6 +294,7 @@ jobs:
           )[0].version
           $installedSessionDaemon = Join-Path $installDirectory "festerm-sessiond-$sessiondVersion.exe"
           $installedConpty = Join-Path $installDirectory 'runtime/conpty/${{ matrix.conpty_runtime }}/conpty.dll'
+          $installedNotices = Join-Path $installDirectory 'THIRD_PARTY_NOTICES.txt'
           $uninstaller = Join-Path $installDirectory 'uninstall.exe'
           if (-not (Test-Path $installedBinary -PathType Leaf)) {
             throw 'NSIS install did not place festerm.exe'
@@ -316,6 +318,11 @@ jobs:
           if (-not (Test-Path $installedConpty -PathType Leaf)) {
             throw 'NSIS install did not place the ConPTY runtime'
           }
+          if (-not (Test-Path $installedNotices -PathType Leaf) -or
+              (Get-FileHash $installedNotices -Algorithm SHA256).Hash -ne
+              (Get-FileHash 'packaging/THIRD_PARTY_NOTICES.txt' -Algorithm SHA256).Hash) {
+            throw 'NSIS did not install the reviewed third-party notices'
+          }
           if (-not (Test-Path $uninstaller -PathType Leaf)) {
             throw 'NSIS install did not place an uninstaller'
           }
@@ -335,6 +342,9 @@ jobs:
           }
           if (Test-Path $installedSessionDaemon) {
             throw 'NSIS uninstall left the session daemon installed'
+          }
+          if (Test-Path $installedNotices) {
+            throw 'NSIS uninstall left the third-party notices installed'
           }
 
           $legacyInstaller = Join-Path $env:RUNNER_TEMP 'festerm-0.2.0-setup.exe'
@@ -457,6 +467,7 @@ jobs:
             test -x squashfs-root/usr/bin/festerm-sessiond
             test -x squashfs-root/usr/bin/festerm-tunnel-setup
             test -x squashfs-root/usr/bin/festerm-tunnel-bridge
+            cmp ../../packaging/THIRD_PARTY_NOTICES.txt squashfs-root/usr/lib/festerm/THIRD_PARTY_NOTICES.txt
             test ! -e squashfs-root/usr/bin/devtunnel
             timeout --kill-after=6s 15s python3 ../../scripts/smoke_linux_automation_worker.py squashfs-root/usr/bin/festerm-automation-js-worker
             desktop="$(find squashfs-root/usr/share/applications -maxdepth 1 -name '*.desktop' -print -quit)"
@@ -525,6 +536,7 @@ jobs:
           test -x /usr/bin/festerm-sessiond
           test -x /usr/bin/festerm-tunnel-setup
           test -x /usr/bin/festerm-tunnel-bridge
+          cmp packaging/THIRD_PARTY_NOTICES.txt /usr/lib/festerm/THIRD_PARTY_NOTICES.txt
           timeout --kill-after=6s 15s python3 scripts/smoke_linux_automation_worker.py /usr/bin/festerm-automation-js-worker
           sudo dpkg --remove festerm
           test ! -e /usr/bin/festerm
@@ -532,3 +544,4 @@ jobs:
           test ! -e /usr/bin/festerm-tunnel-setup
           test ! -e /usr/bin/festerm-tunnel-bridge
           test ! -e /usr/bin/festerm-automation-js-worker
+          test ! -e /usr/lib/festerm/THIRD_PARTY_NOTICES.txt

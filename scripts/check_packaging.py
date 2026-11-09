@@ -22,6 +22,10 @@ EXPECTED_FORMATS = {
     "windows": ["nsis"],
     "linux": ["appimage", "deb"],
 }
+EXPECTED_NOTICE_RESOURCE = {
+    "src": "../packaging/THIRD_PARTY_NOTICES.txt",
+    "target": "THIRD_PARTY_NOTICES.txt",
+}
 EXPECTED_MACOS_ICONS = [
     f"../assets/app-icon/app-icon-{size}.png"
     for size in (16, 32, 128, 256, 512)
@@ -332,8 +336,8 @@ def verify() -> None:
             errors.append(
                 f"{path.relative_to(ROOT)} has unexpected packaged binaries"
             )
-        if platform != "windows" and config.get("resources"):
-            errors.append(f"{path.relative_to(ROOT)} has unexpected packaged resources")
+        if platform != "windows" and config.get("resources") != [EXPECTED_NOTICE_RESOURCE]:
+            errors.append(f"{path.relative_to(ROOT)} must package only the reviewed notices")
         if config.get("external-binaries"):
             errors.append(f"{path.relative_to(ROOT)} has unexpected external binaries")
 
@@ -458,11 +462,12 @@ def verify() -> None:
             for helper in WINDOWS_TUNNEL_HELPERS
         ),
         expected_runtime,
+        EXPECTED_NOTICE_RESOURCE,
     ]
     if resources != expected_resources:
         errors.append(
             "Windows packaging must contain exactly the versioned daemon, sibling "
-            "tunnel helpers, and ConPTY resources (not the downloaded CLI)"
+            "tunnel helpers, ConPTY, and notices (not the downloaded CLI)"
         )
 
     linux = load_toml(CONFIGS["linux"])

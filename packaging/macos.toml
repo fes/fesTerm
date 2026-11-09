@@ -20,6 +20,9 @@ binaries = [
   { path = "festerm-tunnel-setup", main = false },
   { path = "festerm-tunnel-bridge", main = false },
 ]
+resources = [
+  { src = "../packaging/THIRD_PARTY_NOTICES.txt", target = "THIRD_PARTY_NOTICES.txt" },
+]
 
 [macos]
 info-plist-path = "../packaging/macos-info.plist"

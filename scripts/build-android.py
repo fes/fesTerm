@@ -162,6 +162,7 @@ def build(args):
             package.write(library, f"lib/{args.abi}/libfesterm_android.so")
             package.write(APP / "NOTICE.txt", "assets/NOTICE.txt")
             package.write(ROOT / "vendor/egui-winit/LICENSE-APACHE", "assets/licenses/Apache-2.0.txt")
+            package.write(ROOT / "packaging/THIRD_PARTY_NOTICES.txt", "assets/THIRD_PARTY_NOTICES.txt")
         aligned = work / "aligned.apk"
         run(tools / "zipalign", "-P", "16", "-f", "4", unsigned, aligned, env=env)
         run(tools / "apksigner", "sign", "--ks", keystore, "--ks-key-alias", "androiddebugkey",

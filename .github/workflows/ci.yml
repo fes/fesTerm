@@ -87,6 +87,7 @@ jobs:
       - run: python scripts/validate-icons.py --check
       - run: python scripts/generate_windows_icon.py --check
       - run: python scripts/check_packaging.py
+      - run: python scripts/build_app_notices.py --check
       - run: python scripts/check_validation_traceability.py
       - name: Check warmed terminal scroll allocations
         run: cargo bench --locked -p festerm-core --bench scroll_allocations -- --check

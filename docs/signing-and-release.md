@@ -92,6 +92,18 @@ named for its release — the `festerm-sessiond-<release>.exe` `src`/`target`
 pair inside `packaging/windows.toml`. `scripts/check_packaging.py` fails the
 build when any of them disagrees with the workspace version.
 
+Desktop packages and mobile builds include `packaging/THIRD_PARTY_NOTICES.txt`.
+The report retains dependency and bundled-font license texts, plus the Android
+JVM and Windows ConPTY notices. After changing release dependencies, fonts, or
+those component pins, run `python3 scripts/build_app_notices.py --generate`,
+review the resulting report and index, and commit both. The generator fails
+when a dependency lacks a primary license file without an exact-version
+reviewed fallback in `packaging/license-fallbacks.toml`. To refresh pinned
+upstream fallback files, run `python3 scripts/build_app_notices.py
+--refresh-fallbacks` before regenerating; each download is checked against its
+recorded Git blob. CI and release validation run `--check` against the release
+dependency graphs and source inputs. This collection is not a legal audit.
+
 Before an in-app install begins, fesTerm obtains aggregate restart consent if
 live sessions would be closed. Cancelling leaves the verified download ready
 to install. After a consented install completes, fesTerm requests one normal

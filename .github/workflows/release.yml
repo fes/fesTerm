@@ -93,6 +93,7 @@ jobs:
           if-no-files-found: error
       - run: python3 scripts/generate_windows_icon.py --check
       - run: python3 scripts/check_packaging.py
+      - run: python3 scripts/build_app_notices.py --check
       - run: python3 scripts/check_validation_traceability.py
 
   macos:

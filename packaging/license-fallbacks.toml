@@ -1,0 +1,262 @@
+# License texts omitted from the published crates below. URLs are pinned to
+# a source revision recorded in a published crate's .cargo_vcs_info.json,
+# except where a later supplemental attribution is explicitly identified.
+# The Git blob ID verifies the exact upstream file, not just the URL.
+
+[[source]]
+name = "accesskit-mit"
+url = "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-MIT"
+git-blob = "31aa79387f27e730e33d871925e152e35e428031"
+
+[[source]]
+name = "accesskit-apache"
+url = "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-APACHE"
+git-blob = "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d"
+
+[[source]]
+name = "objc2-legacy-mit"
+url = "https://raw.githubusercontent.com/madsmtm/objc2/4fc083f1c6d6784577e38b0ee8dbd344481e2fd2/LICENSE.txt"
+git-blob = "e9ab3babc0d8602b83dccde8a462f8f3dc1e52ad"
+
+[[source]]
+name = "objc2-license-notes"
+url = "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+git-blob = "540ae4c81adb5f64a9f61e222b688880da24300e"
+
+# Supplemental copyright attribution published upstream after those releases.
+[[source]]
+name = "objc2-supplemental-mit"
+url = "https://raw.githubusercontent.com/madsmtm/objc2/ee9a7ada2131f5944b8750428e265c15632f2a19/LICENSE-MIT.txt"
+git-blob = "ce8c4c17fd88f6cf5f3720c08fa685434e3cbcbb"
+
+[[source]]
+name = "packager-mit"
+url = "https://raw.githubusercontent.com/crabnebula-dev/cargo-packager/2e71af6d882157e706062b99f978c1723c9c5c64/LICENSE_MIT"
+git-blob = "11697458f18d76c6f2a669e1a9c9abc483e30657"
+
+[[source]]
+name = "clipboard-bsl"
+url = "https://raw.githubusercontent.com/DoumanAsh/clipboard-win/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/LICENSE"
+git-blob = "36b7cd93cdfbac762f5be4c6ce276df2ea6305c2"
+
+[[source]]
+name = "delegate-mit"
+url = "https://raw.githubusercontent.com/kobzol/rust-delegate/b129d4cbf4cc499eff7743365dcb0fe5d8d2e820/LICENSE-MIT"
+git-blob = "688d43f92fad946c826ac49c4edf7ec280fdad66"
+
+[[source]]
+name = "jni-mit"
+url = "https://raw.githubusercontent.com/jni-rs/jni-rs/5ae9458a4ec44c5318f37ddc7569c1d4ae8a69e7/LICENSE-MIT"
+git-blob = "74323882c4eeb6ce9f75f1f3269d212038f394d2"
+
+[[source]]
+name = "jni-sys-mit"
+url = "https://raw.githubusercontent.com/jni-rs/jni-sys/64d77b7a5f119d7b55b4e2c169a4668067ff59e6/LICENSE-MIT"
+git-blob = "2008402b8a1299cf118ea38e02116bfcc72e53c3"
+
+[[source]]
+name = "ndk-mit"
+url = "https://raw.githubusercontent.com/rust-mobile/ndk/49bbbba16c58ff63cb8a0ad0eca5a9fb7ecaec25/LICENSE-MIT"
+git-blob = "9cf106272ac3b56b0c4c80218e8fc10a664ca5f4"
+
+[[source]]
+name = "rustls-verifier-mit"
+url = "https://raw.githubusercontent.com/rustls/rustls-platform-verifier/252e25161a91af476cbea620e29d277592d27ec7/LICENSE-MIT"
+git-blob = "9964122648c6348a3c8e61d6d46a87d5942d036c"
+
+[[source]]
+name = "profiling-mit"
+url = "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-MIT"
+git-blob = "6a84e059ad8b43e03c2b06bc2af4dc1d8442808d"
+
+[[source]]
+name = "pulp-mit"
+url = "https://raw.githubusercontent.com/sarah-quinones/pulp/5eb07fd7b68edf0a5e19f71737d315f72a510295/LICENSE"
+git-blob = "84e3f4435bfe437a7e2a1db5f6d701ffd0638fae"
+
+[[source]]
+name = "rquickjs-mit"
+url = "https://raw.githubusercontent.com/DelSkayn/rquickjs/d7ef5eeae702fea24c03643064de454f1c1dd4b0/LICENSE"
+git-blob = "3aa726b708598dbbf587e7ca2dcd0eff4987bef7"
+
+[[source]]
+name = "tree-sitter-cpp-json-mit"
+url = "https://raw.githubusercontent.com/tree-sitter/tree-sitter-cpp/f41e1a044c8a84ea9fa8577fdd2eab92ec96de02/LICENSE"
+git-blob = "4b52d191cead337b11e274b79459a86f1b5a7779"
+
+[[source]]
+name = "tree-sitter-md-mit"
+url = "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-markdown/f969cd3ae3f9fbd4e43205431d0ae286014c05b5/LICENSE"
+git-blob = "c125939af9e397f845811e9d8f31e07dc69170db"
+
+[[source]]
+name = "tree-sitter-toml-mit"
+url = "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-toml/64b56832c2cffe41758f28e05c756a3a98d16f41/LICENSE"
+git-blob = "7bf071b1d83ca0644118769f568c978bb7ccf3ae"
+
+[[source]]
+name = "tree-sitter-typescript-mit"
+url = "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE"
+git-blob = "aa9f858db5722d9576104726471b11cc0e31f131"
+
+[[source]]
+name = "zune-zlib"
+url = "https://raw.githubusercontent.com/etemesi254/zune-image/69502ce83fdfecdd0beefd677e2abb3781b29d98/LICENSE-ZLIB"
+git-blob = "582ec653390adaf4893b71f3e113a6ac4d392463"
+
+[[source]]
+name = "apache-gl"
+url = "https://raw.githubusercontent.com/brendanzab/gl-rs/ea503e8d5fb6d73c6030e6191ce738cd3bf3433e/LICENSE"
+git-blob = "d645695673349e3947e8e5ae42332d0ac3164cd7"
+
+[[source]]
+name = "egui-mit"
+path = "vendor/egui/LICENSE-MIT"
+git-blob = "673ea5f0505d6fa65c6a2b6a753c93b8e19d11b9"
+
+# MIT is declared by these two crates, but neither their published sources nor
+# their upstream repositories contain a license text or copyright notice.
+[[source]]
+name = "declared-mit-terms"
+path = "packaging/license-fallbacks/declared-mit-terms.txt"
+
+[[override]]
+packages = [
+  "accesskit@0.24.1", "accesskit_atspi_common@0.18.1",
+  "accesskit_consumer@0.35.0", "accesskit_consumer@0.36.0",
+  "accesskit_consumer@0.37.0", "accesskit_consumer@0.38.0",
+  "accesskit_ios@0.1.1", "accesskit_macos@0.26.3",
+  "accesskit_unix@0.21.1", "accesskit_windows@0.32.1",
+]
+licenses = ["MIT OR Apache-2.0"]
+sources = ["accesskit-mit"]
+
+[[override]]
+packages = ["accesskit_winit@0.32.2"]
+licenses = ["Apache-2.0"]
+sources = ["accesskit-apache"]
+
+[[override]]
+packages = [
+  "block2@0.5.1", "objc-sys@0.3.5", "objc2@0.5.2",
+  "objc2-app-kit@0.2.2", "objc2-foundation@0.2.2", "objc2-ui-kit@0.2.2",
+]
+licenses = ["MIT"]
+sources = ["objc2-legacy-mit"]
+
+[[override]]
+packages = [
+  "block2@0.6.2", "dispatch2@0.3.1", "objc2@0.6.4",
+  "objc2-app-kit@0.3.2", "objc2-avf-audio@0.3.2",
+  "objc2-core-foundation@0.3.2", "objc2-core-graphics@0.3.2",
+  "objc2-core-services@0.3.2", "objc2-encode@4.1.0",
+  "objc2-foundation@0.3.2", "objc2-local-authentication@0.3.2",
+  "objc2-metal@0.3.2", "objc2-quartz-core@0.3.2",
+  "objc2-security@0.3.2", "objc2-speech@0.3.2", "objc2-ui-kit@0.3.2",
+  "objc2-uniform-type-identifiers@0.3.2",
+]
+licenses = ["MIT", "Zlib OR Apache-2.0 OR MIT"]
+sources = ["objc2-legacy-mit", "objc2-license-notes", "objc2-supplemental-mit"]
+
+[[override]]
+packages = ["cargo-packager-updater@0.2.3", "cargo-packager-utils@0.1.1"]
+licenses = ["Apache-2.0 OR MIT"]
+sources = ["packager-mit"]
+
+[[override]]
+packages = ["clipboard-win@5.4.1"]
+licenses = ["BSL-1.0"]
+sources = ["clipboard-bsl"]
+
+[[override]]
+packages = ["cesu8@1.1.0"]
+licenses = ["Apache-2.0/MIT"]
+sources = ["apache-gl"]
+
+[[override]]
+packages = ["delegate@0.13.5"]
+licenses = ["MIT OR Apache-2.0"]
+sources = ["delegate-mit"]
+
+[[override]]
+packages = ["dispatch@0.2.0", "simd_helpers@0.1.0"]
+licenses = ["MIT"]
+sources = ["declared-mit-terms"]
+
+[[override]]
+packages = ["ecolor@0.36.1", "eframe@0.36.1", "emath@0.36.1"]
+licenses = ["MIT OR Apache-2.0"]
+sources = ["egui-mit"]
+
+[[override]]
+packages = ["epaint_default_fonts@0.36.1"]
+licenses = ["(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0"]
+sources = ["egui-mit"]
+
+[[override]]
+packages = ["jni@0.22.4", "jni-macros@0.22.4"]
+licenses = ["MIT OR Apache-2.0"]
+sources = ["jni-mit"]
+
+[[override]]
+packages = ["jni-sys-macros@0.4.1"]
+licenses = ["MIT OR Apache-2.0"]
+sources = ["jni-sys-mit"]
+
+[[override]]
+packages = ["ndk@0.9.0", "ndk-context@0.1.1", "ndk-sys@0.6.0+11769913"]
+licenses = ["MIT OR Apache-2.0"]
+sources = ["ndk-mit"]
+
+[[override]]
+packages = ["rustls-platform-verifier-android@0.2.0"]
+licenses = ["MIT OR Apache-2.0"]
+sources = ["rustls-verifier-mit"]
+
+[[override]]
+packages = ["profiling@1.0.18", "profiling-procmacros@1.0.18"]
+licenses = ["MIT OR Apache-2.0"]
+sources = ["profiling-mit"]
+
+[[override]]
+packages = ["pulp-wasm-simd-flag@0.1.1"]
+licenses = ["MIT"]
+sources = ["pulp-mit"]
+
+[[override]]
+packages = ["rquickjs-core@0.14.0", "rquickjs-sys@0.14.0"]
+licenses = ["MIT"]
+sources = ["rquickjs-mit"]
+
+[[override]]
+packages = [
+  "gl_generator@0.14.0", "khronos_api@3.1.0", "pageant@0.2.1",
+  "russh-cryptovec@0.62.0", "russh-util@0.52.0", "spirv@0.4.0+sdk-1.4.341.0",
+]
+licenses = ["Apache-2.0"]
+sources = ["apache-gl"]
+
+[[override]]
+packages = ["tree-sitter-cpp@0.23.4", "tree-sitter-json@0.24.8"]
+licenses = ["MIT"]
+sources = ["tree-sitter-cpp-json-mit"]
+
+[[override]]
+packages = ["tree-sitter-md@0.5.3"]
+licenses = ["MIT"]
+sources = ["tree-sitter-md-mit"]
+
+[[override]]
+packages = ["tree-sitter-toml-ng@0.7.0"]
+licenses = ["MIT"]
+sources = ["tree-sitter-toml-mit"]
+
+[[override]]
+packages = ["tree-sitter-typescript@0.23.2"]
+licenses = ["MIT"]
+sources = ["tree-sitter-typescript-mit"]
+
+[[override]]
+packages = ["zune-inflate@0.2.54"]
+licenses = ["MIT OR Apache-2.0 OR Zlib"]
+sources = ["zune-zlib"]

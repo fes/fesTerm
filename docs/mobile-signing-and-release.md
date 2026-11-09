@@ -47,7 +47,10 @@ alpha, `ITSAppUsesNonExemptEncryption=false`), wraps it in an `.xcarchive` and
 exports a distribution-signed `.ipa` with `xcodebuild -exportArchive`. No
 keychain-access-group entitlement is added: the provisioning profile supplies
 `application-identifier`, which iOS uses as the default Keychain group, and the
-script verifies the exported entitlements (no `get-task-allow`).
+script verifies the exported entitlements (no `get-task-allow`). The app
+contains the reviewed third-party notices described in
+`docs/signing-and-release.md`; archive and upload both check the notice
+coverage and the exported IPA must contain the exact reviewed report.
 
 Prerequisites (one-time, manual): accepted Program License Agreement; the
 `fesTerm` app record (bundle ID `com.feslabs.fesTerm`, team `F884J4784J`) in

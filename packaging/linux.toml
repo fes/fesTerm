@@ -22,6 +22,9 @@ binaries = [
   { path = "festerm-tunnel-bridge", main = false },
   { path = "festerm-automation-js-worker", main = false },
 ]
+resources = [
+  { src = "../packaging/THIRD_PARTY_NOTICES.txt", target = "THIRD_PARTY_NOTICES.txt" },
+]
 file-associations = [
   { extensions = ["md", "markdown"], mime-type = "text/markdown", name = "Markdown Document", description = "Markdown document", role = "viewer" },
 ]

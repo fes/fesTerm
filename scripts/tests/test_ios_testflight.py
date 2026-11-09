@@ -1,8 +1,12 @@
 """Portable TestFlight helper checks; no Apple credentials, Xcode or network."""
 import importlib.util
+import plistlib
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest import mock
+import zipfile
 
 SCRIPT = Path(__file__).resolve().parents[1] / "build-ios-testflight.py"
 SPEC = importlib.util.spec_from_file_location("ios_testflight", SCRIPT)
@@ -82,6 +86,45 @@ class TestFlightTests(unittest.TestCase):
 
     def test_icon_source_is_marketing_size(self):
         tf.check_icon()
+
+    def test_exported_ipa_requires_the_exact_reviewed_notices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            notice = root / "THIRD_PARTY_NOTICES.txt"
+            notice.write_bytes(b"reviewed notices")
+            ipa = root / "app.ipa"
+            entitlements = {
+                "application-identifier": "F884J4784J.com.feslabs.fesTerm",
+                "com.apple.developer.team-identifier": "F884J4784J",
+            }
+            info = tf.testflight_info("0.16.0", "123")
+            with mock.patch.object(tf, "NOTICES", notice), \
+                    mock.patch.object(tf, "OUTPUT", root / "output"), \
+                    mock.patch.object(tf, "run", return_value=SimpleNamespace(
+                        stdout=plistlib.dumps(entitlements))):
+                for content in (None, b"outdated", b"reviewed notices"):
+                    with self.subTest(content=content), zipfile.ZipFile(ipa, "w") as archive:
+                        archive.writestr("Payload/fesTerm.app/Info.plist", plistlib.dumps(info))
+                        if content is not None:
+                            archive.writestr("Payload/fesTerm.app/THIRD_PARTY_NOTICES.txt", content)
+                    if content == b"reviewed notices":
+                        tf.check_ipa(ipa, tf.TEAM_ID, "0.16.0", "123")
+                    else:
+                        with self.assertRaisesRegex(ValueError, "third-party notices"):
+                            tf.check_ipa(ipa, tf.TEAM_ID, "0.16.0", "123")
+
+    def test_upload_does_not_send_an_ipa_that_fails_verification(self):
+        ipa = Path("/tmp/0.16.0-123/export/fesTerm.ipa")
+        with mock.patch.object(tf.platform, "system", return_value="Darwin"), \
+                mock.patch.object(tf, "workspace_version", return_value="0.16.0"), \
+                mock.patch.object(tf, "api_credentials", return_value=(Path("/tmp/key"), "KEY", ISSUER)), \
+                mock.patch.object(tf, "check_icon"), mock.patch.object(tf, "run"), \
+                mock.patch.object(tf, "latest_ipa", return_value=ipa), \
+                mock.patch.object(tf, "check_ipa", side_effect=ValueError("missing notices")), \
+                mock.patch.object(tf, "upload") as upload:
+            with self.assertRaisesRegex(ValueError, "missing notices"):
+                tf.main(["--upload", "--build-number", "123"])
+            upload.assert_not_called()
 
 
 if __name__ == "__main__":
