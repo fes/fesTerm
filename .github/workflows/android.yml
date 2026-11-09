@@ -10,6 +10,7 @@ on:
       - 'assets/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'packaging/THIRD_PARTY_NOTICES.txt'
       - 'scripts/*android*'
       - 'scripts/tests/test_android*'
       - '.github/workflows/android.yml'
@@ -48,7 +49,16 @@ jobs:
       - name: Check Android packaging policy
         run: python3 -m unittest discover -s scripts/tests -p 'test_android*.py'
       - name: Build shared live SSH application
-        run: python3 scripts/build-android.py --abi "${{ matrix.abi }}"
+        run: |
+          python3 scripts/build-android.py --abi "${{ matrix.abi }}"
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          with zipfile.ZipFile("target/android/${{ matrix.abi }}/live/fesTerm.apk") as apk:
+              if apk.read("assets/THIRD_PARTY_NOTICES.txt") != Path("packaging/THIRD_PARTY_NOTICES.txt").read_bytes():
+                  raise SystemExit("Android APK is missing the reviewed third-party notices")
+          PY
       - name: Check offline dependency boundary
         run: python3 scripts/build-android.py --abi "${{ matrix.abi }}" --offline --check-dependencies
       - name: Retain development APK and provenance

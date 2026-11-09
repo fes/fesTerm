@@ -65,6 +65,19 @@ class PackagingMetadataTests(unittest.TestCase):
     def test_repository_packaging_metadata_is_consistent(self):
         packaging.verify()
 
+    def test_missing_notice_resource_is_rejected_on_every_platform(self):
+        load_toml = packaging.load_toml
+        for platform in packaging.CONFIGS:
+            config = copy.deepcopy(load_toml(packaging.CONFIGS[platform]))
+            config["resources"].remove(packaging.EXPECTED_NOTICE_RESOURCE)
+
+            def altered(path):
+                return config if path == packaging.CONFIGS[platform] else load_toml(path)
+
+            with self.subTest(platform=platform), mock.patch.object(packaging, "load_toml", side_effect=altered):
+                with self.assertRaises(packaging.PackagingError):
+                    packaging.verify()
+
     def test_missing_or_relocated_tunnel_helper_is_rejected(self):
         load_toml = packaging.load_toml
         for platform in packaging.CONFIGS:

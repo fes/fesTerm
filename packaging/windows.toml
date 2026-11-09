@@ -17,6 +17,7 @@ resources = [
   { src = "../target/release/festerm-tunnel-bridge.exe", target = "festerm-tunnel-bridge.exe" },
   { src = "../target/release/festerm-tunnel-worker.exe", target = "festerm-tunnel-worker.exe" },
   { src = "../target/release/runtime/conpty", target = "runtime/conpty" },
+  { src = "../packaging/THIRD_PARTY_NOTICES.txt", target = "THIRD_PARTY_NOTICES.txt" },
 ]
 
 [nsis]

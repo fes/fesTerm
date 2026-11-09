@@ -93,6 +93,7 @@ jobs:
           if-no-files-found: error
       - run: python3 scripts/generate_windows_icon.py --check
       - run: python3 scripts/check_packaging.py
+      - run: python3 scripts/build_app_notices.py --check
       - run: python3 scripts/check_validation_traceability.py
 
   macos:
@@ -404,7 +405,8 @@ jobs:
       - name: Build NSIS installer
         shell: pwsh
         run: |
-          cargo packager --config packaging/windows.toml --formats nsis --target '${{ matrix.target }}'
+          python scripts/run-cargo-packager.py --config packaging/windows.toml --formats nsis --target '${{ matrix.target }}'
+          if ($LASTEXITCODE -ne 0) { throw 'cargo-packager failed to build the NSIS installer' }
           $installers = @(Get-ChildItem target/release -Filter 'festerm_*-setup.exe')
           if ($installers.Count -ne 1) {
             throw "Expected one NSIS installer, found $($installers.Count)"
@@ -479,7 +481,7 @@ jobs:
           set -euo pipefail
           cargo build --release -p festerm -p festerm-sessiond -p festerm-automation-js
           cargo build --locked --release -p festerm-tunnel-bridge --no-default-features --features relay --bins
-          cargo packager --config packaging/linux.toml --formats appimage
+          python3 scripts/run-cargo-packager.py --config packaging/linux.toml --formats appimage
           appimage=$(find target/release -maxdepth 1 -name '*.AppImage' -print -quit)
           test -n "$appimage"
           mkdir dist

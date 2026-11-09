@@ -53,6 +53,7 @@ IPA_NAME = "fesTerm.ipa"
 PROFILE_NAME = "fesTerm App Store"
 API = "https://api.appstoreconnect.apple.com"
 PROFILE_DIR = Path.home() / "Library/MobileDevice/Provisioning Profiles"
+NOTICES = ROOT / "packaging/THIRD_PARTY_NOTICES.txt"
 
 
 def workspace_version(root: Path = ROOT) -> str:
@@ -272,6 +273,7 @@ def sdk_keys() -> dict[str, str]:
 
 
 def archive(args, key: tuple[Path, str, str], version: str, build: str) -> Path:
+    run(sys.executable, "scripts/build_app_notices.py", "--check")
     spike.check_dependencies(TARGET, live_ssh=True)
     run("rustup", "target", "add", TARGET)
     sdk = run("xcrun", "--sdk", "iphoneos", "--show-sdk-path", capture_output=True, text=True).stdout.strip()
@@ -284,6 +286,7 @@ def archive(args, key: tuple[Path, str, str], version: str, build: str) -> Path:
     app = work / "fesTerm.xcarchive" / "Products" / "Applications" / f"{DISPLAY_NAME}.app"
     app.mkdir(parents=True)
     shutil.copy2(ROOT / "target" / TARGET / "release" / "festerm-mobile", app / "festerm-mobile")
+    shutil.copy2(NOTICES, app / NOTICES.name)
     keys = sdk_keys()
     icons = build_assets(app, work / "assets", keys["DTPlatformVersion"])
     info = testflight_info(version, build, keys)
@@ -317,6 +320,9 @@ def check_ipa(ipa: Path, team: str, version: str, build: str) -> None:
             raise ValueError("ipa must contain exactly one app")
         info = plistlib.loads(archive_file.read(names[0]))
         app_dir = names[0].rsplit("/", 1)[0]
+        notice_entry = f"{app_dir}/{NOTICES.name}"
+        if archive_file.namelist().count(notice_entry) != 1 or archive_file.read(notice_entry) != NOTICES.read_bytes():
+            raise ValueError("ipa is missing the reviewed third-party notices")
         extracted = OUTPUT / "verify"
         shutil.rmtree(extracted, ignore_errors=True)
         archive_file.extractall(extracted)
@@ -443,9 +449,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.archive:
         print(archive(args, key, version, build))
     if args.upload:
+        if not args.archive:
+            run(sys.executable, "scripts/build_app_notices.py", "--check")
         ipa = latest_ipa(version, build if args.archive or args.build_number else None)
+        ipa_build = validate_build_number(ipa.parent.parent.name.removeprefix(version + "-"))
+        check_ipa(ipa, args.team, version, ipa_build)
         upload(ipa, key)
-        print(f"Uploaded {BUNDLE_ID} {version} ({ipa.parent.parent.name.split('-', 1)[1]})")
+        print(f"Uploaded {BUNDLE_ID} {version} ({ipa_build})")
     if args.status:
         show_status(key, version)
     return 0
