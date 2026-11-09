@@ -2058,7 +2058,11 @@ mod tests {
             PowerShellSshSession::connect_stream(
                 stream,
                 PowerShellOptions {
-                    shutdown_timeout: Duration::from_millis(150),
+                    shutdown_timeout: if self.startup_gate.is_some() {
+                        Duration::from_secs(2)
+                    } else {
+                        Duration::from_millis(150)
+                    },
                     ..PowerShellOptions::default()
                 },
             )
