@@ -129,7 +129,7 @@ ported, not reused, removed from that build target — and the in-app
 | Platform | Identity required | Provisioning mechanism | Relationship to existing desktop credentials |
 |---|---|---|---|
 | iOS | Apple Distribution certificate + App Store provisioning profile | Fastlane `match` (encrypted git-backed cert/profile store), driven by the App Store Connect API key | **Net-new certificate.** The existing Developer ID Application certificate used for macOS DMG notarization is a categorically different credential — Developer ID is for outside-App-Store distribution only, cannot be provisioned via the App Store Connect API, and must remain manually managed. Distribution certs, by contrast, can be automated via `match` + the same API key already used for notarization, so the **API key is reusable**; the certificate is not. |
-| Android | Play App Signing key (Google-managed) + a CI-held upload key | CI signs the AAB with a self-generated upload keystore (PKCS12/JKS) and uploads via `fastlane supply`; Google re-signs with the app signing key it custodies | Fully new credential; no analog exists in the desktop signing setup. Recommended over a fully self-managed signing key: losing the upload key is recoverable through Google's key-reset process, whereas losing a self-managed signing key permanently orphans the app listing. |
+| Android | Play App Signing key (Google-managed) + a CI-held upload key | CI signs the AAB with a self-generated upload keystore (PKCS12) and uploads to the Internal track via the stdlib Android Publisher client `scripts/upload-android-play-bundle.py` (ADR 0083, which replaced the earlier `fastlane supply` plan); Google re-signs with the app signing key it custodies | Fully new credential; no analog exists in the desktop signing setup. Recommended over a fully self-managed signing key: losing the upload key is recoverable through Google's key-reset process, whereas losing a self-managed signing key permanently orphans the app listing. |
 
 Both mobile signing flows should live under **new** GitHub Actions
 environments (e.g. `release-ios`, `release-android`), scoped separately from
@@ -146,6 +146,10 @@ federation already used for Windows Artifact Signing in
 `docs/signing-and-release.md` (`repo:fes/fesTerm:environment:release`),
 keeping the "no long-lived cloud credential lives in GitHub secrets" policy
 consistent across every platform's CI trust chain.
+
+Implemented by ADR 0083: the `release-android` environment's OIDC subject is
+the only principal allowed to impersonate a key-less publisher service
+account, and only tag-push runs request a short-lived `androidpublisher` token.
 
 Apple has no equivalent workload-identity-federation option for the App
 Store Connect API key as of this writing — it remains a stored, rotatable
@@ -177,6 +181,8 @@ number per platform (the CI run number is the simplest deterministic source)
 and validate it the same way `release.yml` validates tag/version agreement
 today, so a future contributor can find the rule in one place rather than
 inferring it from CI configuration.
+Android implements this as `versionCode = 1000 + release.yml run number`,
+with the manifest versionName checked against the workspace version (ADR 0083).
 
 ## Store review considerations
 

@@ -23,7 +23,12 @@ Run commands from the repository root. The APK is
 `target/android/arm64-v8a/live/fesTerm.apk`; its adjacent receipt records the
 source revision, dirty state, ABI, tool versions, signing mode and APK hash.
 `--abi x86_64` supports Intel emulators; `--offline` builds just the offline
-fixture. `--release` optimizes Rust but **still uses development signing**.
+fixture. `--release` optimizes Rust but **still uses development signing**
+for APKs. `--release --bundle --version-code N` instead builds the unsigned
+multi-ABI Google Play AAB at `target/android/bundle/fesTerm-unsigned.aab`
+from a clean checkout; `scripts/sign-android-bundle.py` then signs it with the
+Play upload key from `ANDROID_UPLOAD_KEYSTORE`,
+`ANDROID_UPLOAD_KEYSTORE_PASSWORD` and `ANDROID_UPLOAD_KEY_ALIAS` (ADR 0083).
 Both ABIs target Android 10/API 29 or later, target API 35, and use 16-KiB
 native alignment. The SDK-only packager needs neither Gradle nor cargo-apk.
 JVM TLS dependencies are version-pinned and checksum-verified, including
@@ -80,6 +85,8 @@ input queue, not the host view.
   them; ciphertext is deliberately device-bound and excluded from backup.
 - APK signature mismatch: another checkout may have a different development
   key. Do not uninstall a valuable installation just to bypass the mismatch.
-- Store publication needs separate release signing, licensing/distribution
-  review, target-SDK review and native acceptance; the generated development
-  keystore must never be committed or used as a release key.
+- Store publication: `release.yml` builds the AAB without secrets
+  (`android-build`), then `android-play` signs it and, on tag pushes, uploads it to the Play Internal testing track only
+  (ADR 0083). Promotion, store listing, Data safety and native acceptance
+  (`PLAY-01`) remain manual. The generated development keystore must never be
+  committed or used as a release key; the signer refuses it.

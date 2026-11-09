@@ -51,6 +51,74 @@ class AndroidBuildTests(unittest.TestCase):
                     android.native_dependencies()
                 download.assert_not_called()
 
+    def arguments(self, **overrides):
+        values = dict(release=True, bundle=True, version_code=1001, abi=None, offline=False,
+                      recording_validation=False, install=False)
+        values.update(overrides)
+        return android.argparse.Namespace(**values)
+
+    def test_bundle_arguments_require_release_version_code_and_all_abis(self):
+        android.validate_arguments(self.arguments())
+        android.validate_arguments(self.arguments(bundle=False, version_code=None, abi="x86_64"))
+        for overrides, message in (
+            ({"release": False}, "requires --release"),
+            ({"version_code": None}, "--version-code"),
+            ({"version_code": 0}, "between"),
+            ({"version_code": android.MAX_VERSION_CODE + 1}, "between"),
+            ({"abi": "arm64-v8a"}, "--abi"),
+            ({"offline": True}, "--offline"),
+            ({"install": True}, "--install"),
+            ({"recording_validation": True}, "Recording validation"),
+        ):
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(ValueError, message):
+                android.validate_arguments(self.arguments(**overrides))
+
+    def test_release_version_must_match_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Cargo.toml").write_text('[workspace.package]\nversion = "0.16.0"\n')
+            manifest = root / "AndroidManifest.xml"
+            with patch.object(android, "ROOT", root), patch.object(android, "APP", root):
+                manifest.write_text('<manifest android:versionName="0.16.0" />')
+                self.assertEqual(android.check_release_version(), "0.16.0")
+                manifest.write_text('<manifest android:versionName="0.15.0" />')
+                with self.assertRaisesRegex(ValueError, "does not match"):
+                    android.check_release_version()
+
+    def test_base_module_uses_bundletool_layout_and_rejects_unknown_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vendor/egui-winit").mkdir(parents=True)
+            (root / "vendor/egui-winit/LICENSE-APACHE").write_text("license")
+            (root / "NOTICE.txt").write_text("notice")
+            dex = root / "dex"
+            dex.mkdir()
+            (dex / "classes.dex").write_bytes(b"dex")
+            libraries = []
+            for abi in android.TARGETS:
+                library = root / f"{abi}.so"
+                library.write_bytes(abi.encode())
+                libraries.append((abi, library))
+            proto = root / "proto.apk"
+            with android.zipfile.ZipFile(proto, "w") as archive:
+                archive.writestr("AndroidManifest.xml", "manifest")
+                archive.writestr("resources.pb", "table")
+                archive.writestr("res/xml/config.xml", "xml")
+            base = root / "base.zip"
+            with patch.object(android, "ROOT", root), patch.object(android, "APP", root):
+                android.write_base_module(proto, base, dex, libraries)
+                with android.zipfile.ZipFile(base) as module:
+                    self.assertEqual(sorted(module.namelist()), sorted([
+                        "manifest/AndroidManifest.xml", "resources.pb", "res/xml/config.xml",
+                        "dex/classes.dex", "lib/arm64-v8a/libfesterm_android.so",
+                        "lib/x86_64/libfesterm_android.so", "assets/NOTICE.txt",
+                        "assets/licenses/Apache-2.0.txt"]))
+                    self.assertEqual(module.read("lib/x86_64/libfesterm_android.so"), b"x86_64")
+                with android.zipfile.ZipFile(proto, "a") as archive:
+                    archive.writestr("classes.dex", "unexpected")
+                with self.assertRaisesRegex(ValueError, "Unexpected aapt2 proto entry"):
+                    android.write_base_module(proto, base, dex, libraries)
+
 
 if __name__ == "__main__":
     unittest.main()

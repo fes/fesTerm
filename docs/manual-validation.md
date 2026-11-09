@@ -808,7 +808,8 @@ cross-window pointer behavior, caret/focus, or usability acceptance.
 The owner-requested Android host reuses the implemented iOS application.
 The existing MOB action IDs apply to both hosts; **iOS evidence never qualifies
 Android**. Build/setup instructions and intentional differences are in
-`app/festerm-android/README.md`. Store release, physical-device acceptance and
+`app/festerm-android/README.md`. The Play release pipeline (ADR 0083) is
+automated, but store acceptance (`PLAY-01`), physical-device acceptance and
 provider in-place editing are not claimed.
 
 | IDs | Automated/emulator evidence | Remaining native/usability prerequisites |
@@ -821,6 +822,7 @@ provider in-place editing are not claimed.
 | MOB-08 | Private import/publication tests cover Unicode, stale-save refusal, size/root limits, symlink replacement, bounded events and shared writer admission. JNI instrumentation rejects ungranted file-URI results. The real Android picker imported byte-exact owned Markdown with its sanitized name/type; edits saved to the private copy, the provider original remained byte-identical, and the saved copy reopened after cold launch with its edits and rendered preview. Cancelling the native source chooser allowed a subsequent import. | System-picker cancellation/provider errors, local SFTP exclusion, storage exhaustion and dirty-close/focus/IME on physical devices. Imported copies never overwrite provider originals; native selection must supply a content-provider URI, not an ungranted filesystem path. |
 | MOB-09 | Emulator app-lock flow covered cold-launch credential UI, cancel/retry, device-passcode-only unlock, device-lock relock, “Immediately” app-switch relock, Home prompt retirement, one fresh relaunch prompt, and authenticated disable/cancel behavior. Host regressions cover request-token-bound stale replies and cancellation. | Physical biometrics, API 29 credential behavior, rapid lifecycle races, physical app-switcher snapshots/compositor timing, and lock behavior with active/parked tunnel identity remain unqualified. |
 | MOB-10 | `accesskit_android` tree on the decor-view host. All three shared Maestro flows (`scripts/run-mobile-ui-flows.py --platform android`) pass on an Android 14 (API 34) ARM64 Pixel 7 emulator: navigation, profile-form typing, and terminal menu/typing. | TalkBack swipe/double-tap navigation and typing, explore-by-touch (hover reaches `NativeActivity`, not the host view, and is a known gap), switch access, privacy-shield concealment and physical devices. |
+| PLAY-01 | `release.yml` `android-build` job (ADR 0083) builds the unsigned multi-ABI AAB and checks package/versionCode/versionName with bundletool without any secrets; `android-play` signs it with the Play upload key and uploads it to the Internal testing track over keyless Workload Identity Federation; packager and uploader unit tests; the `android.yml` `bundle` job builds an ephemerally signed AAB on pull requests. | A tester account installs the CI-uploaded Internal testing build from Google Play on a physical arm64 device, the Play-signed app launches, shows the release versionName, opens a live SSH session, and upgrades over the previous Internal build without losing profiles. Play pre-launch report and Data safety review are owner gates; Closed testing and production promotion stay manual. |
 
 Development evidence is retained under `target/android/`, `target/android-smoke/`
 and the local `target/android-*.png` captures; these are not committed release
