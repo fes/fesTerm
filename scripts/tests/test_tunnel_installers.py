@@ -430,6 +430,42 @@ class UnixInstallerTests(unittest.TestCase):
 
 
 class InstallerSyntaxTests(unittest.TestCase):
+    @unittest.skipUnless(POWERSHELL, "Installer completion requires a native PowerShell engine")
+    def test_powershell_setup_and_upgrade_display_and_copy_connection_profile(self):
+        source = WINDOWS_INSTALLER.read_text()
+        parameters = source[:source.index("\nSet-StrictMode")]
+        start = source.index("    $profile = Join-Path $root 'state\\festerm-profile.json'")
+        completion = source[start:source.index("\n} finally {", start)]
+        profile_json = json.dumps({"fixture": "public-connection"})
+        with tempfile.TemporaryDirectory(prefix="festerm-installer-completion-") as directory:
+            root = Path(directory)
+            (root / "state").mkdir()
+            (root / "state" / "festerm-profile.json").write_text(profile_json)
+            script = root / "completion.ps1"
+            script.write_text(
+                parameters + "\nSet-StrictMode -Version Latest\n"
+                "$ErrorActionPreference='Stop'\n"
+                "$root=$env:FESTERM_TEST_INSTALL_ROOT\n"
+                "$script:copiedProfile=$null\n"
+                "function Set-Clipboard { param([string]$Value) $script:copiedProfile=$Value }\n" +
+                completion +
+                "\nif($script:copiedProfile -cne $env:FESTERM_TEST_PROFILE_JSON){"
+                "throw 'Connection profile was not copied correctly'}\n",
+                encoding="utf-8-sig",
+            )
+            for arguments in ([], ["-Upgrade"]):
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(
+                        [POWERSHELL, "-NoProfile", "-NonInteractive", "-File", str(script),
+                         *arguments],
+                        env={**os.environ, "FESTERM_TEST_INSTALL_ROOT": str(root),
+                             "FESTERM_TEST_PROFILE_JSON": profile_json},
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(profile_json, result.stdout)
+                    self.assertIn("Copied to the clipboard.", result.stdout)
+
     @unittest.skipIf(os.name == "nt", "Bash native syntax check")
     def test_unix_shell_syntax(self):
         subprocess.run(["bash", "-n", str(UNIX_INSTALLER)], check=True)
