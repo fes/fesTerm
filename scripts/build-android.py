@@ -15,7 +15,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import tomllib
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -58,13 +60,28 @@ def check_dependency_tree(tree):
         if required not in names:
             raise ValueError("Missing shared Android dependency: " + required)
 
+def download(url, limit, attempts=4):
+    """Retries transient (5xx/network) failures; the checksum still decides trust."""
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                return response.read(limit + 1)
+        except urllib.error.HTTPError as error:
+            error.close()
+            if error.code < 500 or attempt == attempts:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == attempts:
+                raise
+        time.sleep(5 * 2 ** (attempt - 1))
+
+
 def fetch_pinned(artifact, limit):
     directory = ROOT / "target" / "android-dependencies"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / artifact["name"]
     if not path.exists():
-        with urllib.request.urlopen(artifact["url"], timeout=60) as response:
-            data = response.read(limit + 1)
+        data = download(artifact["url"], limit)
         if len(data) > limit:
             raise ValueError("Android dependency exceeds the download bound")
         if hashlib.sha256(data).hexdigest() != artifact["sha256"]:

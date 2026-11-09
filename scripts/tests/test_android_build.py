@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -119,6 +120,20 @@ class AndroidBuildTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Unexpected aapt2 proto entry"):
                     android.write_base_module(proto, base, dex, libraries)
 
+
+    def test_pinned_download_retries_transient_server_errors_only(self):
+        def failure(code):
+            return android.urllib.error.HTTPError("https://x", code, "err", {}, None)
+        ok = io.BytesIO(b"jar")
+        with patch.object(android.time, "sleep") as sleep, \
+                patch.object(android.urllib.request, "urlopen", side_effect=[failure(504), ok]):
+            self.assertEqual(android.download("https://x", 10), b"jar")
+            sleep.assert_called_once()
+        with patch.object(android.time, "sleep"), \
+                patch.object(android.urllib.request, "urlopen", side_effect=[failure(404)]) as opener, \
+                self.assertRaises(android.urllib.error.HTTPError):
+            android.download("https://x", 10)
+        self.assertEqual(opener.call_count, 1)
 
 if __name__ == "__main__":
     unittest.main()
