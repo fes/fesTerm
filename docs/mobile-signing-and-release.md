@@ -1,6 +1,7 @@
 # Mobile Signing, Distribution, and Store Strategy
 
-**Status:** Exploratory design, not scheduled. Companion to ADR 0031 and
+**Status:** TestFlight and Android bundle preparation are implemented; the
+Play publisher remains subject to store setup and native acceptance. Companion to ADR 0031 and
 `docs/mobile-port-plan.md` Phase 5. This document is explicitly **separate**
 from `docs/signing-and-release.md` and ADR 0021, which remain scoped to
 desktop `cargo-packager`/GitHub Releases distribution only. Mobile
@@ -81,6 +82,48 @@ remain: adding testers to an internal TestFlight group in App Store Connect and
 answering any export-compliance or beta-information prompts. External testing
 and App Review are out of scope.
 
+### Play internal testing (bundle preparation)
+
+`scripts/build-android-play.py --version-code N` builds an **unsigned** Android
+App Bundle for `io.github.fes.festerm`, targeting Android 16/API 36 with ARM64
+and x86_64 libraries. It checks package/version/SDK, 16-KiB native segment
+alignment and the reviewed third-party notices. Signing is a separate step:
+`scripts/sign-android-bundle.py` checks the unsigned bundle's recorded hash,
+the upload certificate and the signed bundle. CI exercises this path with a
+disposable key and a `validation_only` receipt; neither that output nor the
+development APK may be submitted to Play.
+
+The **Android Play release** workflow runs manually on `main` or its release
+tag, and also runs on version tags. It requires the selected commit to equal
+current `main` with successful main CI. Its unprivileged build job receives no
+upload key or OIDC token; only the separate signing job uses the protected
+`release-android` environment: `ANDROID_UPLOAD_KEYSTORE_BASE64` and
+`ANDROID_UPLOAD_KEYSTORE_PASSWORD` secrets plus `ANDROID_UPLOAD_KEY_ALIAS`.
+The key password must match the keystore password. Preserve the enrolled
+upload key; do not generate or replace it for a routine release.
+
+For initial preparation, dispatch the workflow with `publish` false, approve
+the protected environment and download `festerm-android-play-<version>`.
+Compare the signed bundle's SHA-256 with `signing-receipt.json` and retain both
+receipts. The workflow derives `versionCode` from its run number; confirm it
+exceeds every previously uploaded Play version before a manual upload.
+
+New apps require initial Play App Signing setup and the first upload through
+Play Console. Configure the Internal track and testers, upload the verified
+bundle, complete required declarations and review prompts, and roll out the
+release. A draft does not reach testers; even a completed track may await Google
+processing or review. Confirm the track and tester availability in Play
+Console rather than treating artifact creation as publication.
+
+After that first upload, manually dispatch with `publish` true and an explicit
+`draft` or `completed` status to use the Play API. Tag-triggered API upload is
+disabled unless the environment variable `ANDROID_PLAY_AUTO_PUBLISH` is `true`;
+when enabled, `ANDROID_PLAY_RELEASE_STATUS` must explicitly be `draft` or
+`completed`. The publisher checks existing bundles, APKs and tracks before
+uploading, refuses an unfinished Internal release or a non-increasing code,
+and does not automatically retry an uncertain commit. Store processing,
+testers and promotion beyond Internal remain manual.
+
 ### UIScene lifecycle (required on iOS 27)
 
 iOS 27 terminates, at launch, apps linked against its SDK that do not adopt the
@@ -132,7 +175,7 @@ ported, not reused, removed from that build target — and the in-app
 | Platform | Identity required | Provisioning mechanism | Relationship to existing desktop credentials |
 |---|---|---|---|
 | iOS | Apple Distribution certificate + App Store provisioning profile | Fastlane `match` (encrypted git-backed cert/profile store), driven by the App Store Connect API key | **Net-new certificate.** The existing Developer ID Application certificate used for macOS DMG notarization is a categorically different credential — Developer ID is for outside-App-Store distribution only, cannot be provisioned via the App Store Connect API, and must remain manually managed. Distribution certs, by contrast, can be automated via `match` + the same API key already used for notarization, so the **API key is reusable**; the certificate is not. |
-| Android | Play App Signing key (Google-managed) + a CI-held upload key | CI signs the AAB with a self-generated upload keystore (PKCS12/JKS) and uploads via `fastlane supply`; Google re-signs with the app signing key it custodies | Fully new credential; no analog exists in the desktop signing setup. Recommended over a fully self-managed signing key: losing the upload key is recoverable through Google's key-reset process, whereas losing a self-managed signing key permanently orphans the app listing. |
+| Android | Play App Signing key (Google-managed) + a CI-held upload key | Protected CI signs the AAB with the enrolled upload keystore; after the manual first upload, the opt-in Android Publisher client can update the Internal track (ADR 0083). Google re-signs with its app signing key. | Fully new credential; no analog exists in the desktop signing setup. Losing the upload key is recoverable through Google's key-reset process, whereas losing a self-managed app signing key permanently orphans the app listing. |
 
 Both mobile signing flows should live under **new** GitHub Actions
 environments (e.g. `release-ios`, `release-android`), scoped separately from
@@ -142,13 +185,18 @@ desktop.
 
 ### Keyless CI authentication for Android
 
-Use GCP **Workload Identity Federation** (`google-github-actions/auth`)
-instead of a long-lived Play service-account JSON secret for CI access to the
-Play Developer API. This is the direct Android-ecosystem analog of the OIDC
+The opt-in Play publisher uses GCP **Workload Identity Federation**
+(`google-github-actions/auth`) instead of a long-lived Play service-account
+JSON secret. This is the direct Android-ecosystem analog of the OIDC
 federation already used for Windows Artifact Signing in
 `docs/signing-and-release.md` (`repo:fes/fesTerm:environment:release`),
 keeping the "no long-lived cloud credential lives in GitHub secrets" policy
 consistent across every platform's CI trust chain.
+
+Implemented by ADR 0083: the `release-android` environment's OIDC subject is
+the only principal allowed to impersonate a key-less publisher service
+account. Only explicitly enabled publishing steps request a short-lived
+`androidpublisher` token.
 
 Apple has no equivalent workload-identity-federation option for the App
 Store Connect API key as of this writing — it remains a stored, rotatable
@@ -180,6 +228,9 @@ number per platform (the CI run number is the simplest deterministic source)
 and validate it the same way `release.yml` validates tag/version agreement
 today, so a future contributor can find the rule in one place rather than
 inferring it from CI configuration.
+Android implements this as `versionCode = 1000 + Android Play release workflow
+run number`, with the manifest versionName checked against the workspace
+version and the existing Play inventory checked before API uploads (ADR 0083).
 
 ## Store review considerations
 

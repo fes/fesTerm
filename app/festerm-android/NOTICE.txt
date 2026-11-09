@@ -1,4 +1,4 @@
-fesTerm Android development build
+fesTerm Android host
 
 This host reuses the fesTerm Rust application and bundled fonts. Component and
 font provenance is maintained in the source repository:
@@ -16,4 +16,3 @@ Copyright JetBrains s.r.o. and Kotlin Programming Language contributors
 https://github.com/JetBrains/kotlin
 
 Build inputs and integrity hashes: app/festerm-android/dependencies.json.
-This development-signed package is not a store distribution.
