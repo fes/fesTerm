@@ -47,6 +47,26 @@ class CargoPackagerRetryTests(unittest.TestCase):
             self.assertEqual(packager.run([]), 7)
             self.assertEqual(execute.call_count, len(packager.DELAYS) + 1)
 
+    def test_each_download_has_its_own_bounded_retry_budget(self):
+        first = "ERROR https://github.com/tauri-apps/AppRun: status code 504"
+        second = "ERROR https://github.com/tauri-apps/linuxdeploy: status code 504"
+        failures = [(1, first)] * len(packager.DELAYS) + [(1, second)] * 2 + [(0, "")]
+        with patch.object(packager, "execute", side_effect=failures), \
+                patch.object(packager.time, "sleep") as sleep:
+            self.assertEqual(packager.run([]), 0)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [5, 15, 30, 60, 120, 5, 15])
+
+    def test_total_retries_are_bounded_across_different_downloads(self):
+        failures = [
+            (1, f"ERROR https://github.com/tauri-apps/tool-{index}: status code 504")
+            for index in range(4)
+        ]
+        with patch.object(packager, "MAX_TOTAL_RETRIES", 3), \
+                patch.object(packager, "execute", side_effect=failures) as execute, \
+                patch.object(packager.time, "sleep"):
+            self.assertEqual(packager.run([]), 1)
+            self.assertEqual(execute.call_count, 4)
+
 
 if __name__ == "__main__":
     unittest.main()
