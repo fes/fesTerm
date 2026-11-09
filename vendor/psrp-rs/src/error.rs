@@ -43,6 +43,20 @@ pub enum PsrpError {
     /// An operation was cancelled.
     #[error("operation cancelled")]
     Cancelled,
+
+    /// An out-of-process transport acknowledgement did not arrive in time.
+    #[error("PSRP transport acknowledgement timed out")]
+    AckTimeout,
+
+    /// A terminal pipeline state was observed, but transport cleanup failed.
+    #[error("pipeline reached {state:?} but transport close failed: {source}")]
+    PipelineClose {
+        /// The terminal state reported by the server.
+        state: crate::pipeline::PipelineState,
+        /// The transport cleanup failure.
+        #[source]
+        source: Box<PsrpError>,
+    },
 }
 
 impl PsrpError {

@@ -303,9 +303,12 @@ pub enum PowerShellSessionStatus {
 
 pub struct PowerShellCommand {
     receiver: Receiver<PowerShellCommandMessage>,
+    terminal_outcome: CommandOutcome,
     cancel: CancellationToken,
     finished: bool,
 }
+
+type CommandOutcome = Arc<Mutex<Option<PowerShellCommandMessage>>>;
 
 impl PowerShellCommand {
     pub fn cancel(&self) {
@@ -319,16 +322,20 @@ impl PowerShellCommand {
         if self.finished {
             return Ok(None);
         }
-        match self.receiver.recv_timeout(timeout) {
-            Ok(message) => {
-                if message.is_terminal() {
-                    self.finished = true;
-                }
-                Ok(Some(message))
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(PowerShellSessionError::TimedOut),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(PowerShellSessionError::Invalidated),
+        let message = match self.receiver.recv_timeout(timeout) {
+            Ok(message) => message,
+            Err(mpsc::RecvTimeoutError::Timeout) => return Err(PowerShellSessionError::TimedOut),
+            Err(mpsc::RecvTimeoutError::Disconnected) => self
+                .terminal_outcome
+                .lock()
+                .expect("terminal outcome mutex poisoned")
+                .take()
+                .ok_or(PowerShellSessionError::Invalidated)?,
+        };
+        if message.is_terminal() {
+            self.finished = true;
         }
+        Ok(Some(message))
     }
 }
 
@@ -426,11 +433,13 @@ impl PowerShellSession {
             return Err(PowerShellSessionError::Closed);
         };
         let (message_tx, message_rx) = mpsc::sync_channel(self.options.event_channel_capacity + 1);
+        let terminal_outcome = Arc::new(Mutex::new(None));
         let (ack_tx, ack_rx) = mpsc::sync_channel(1);
         let cancel = CancellationToken::new();
         let request = SessionRequest::RunScript {
             script,
             message_tx,
+            terminal_outcome: Arc::clone(&terminal_outcome),
             cancel: cancel.clone(),
             ack_tx,
         };
@@ -442,6 +451,7 @@ impl PowerShellSession {
             .map_err(|_| PowerShellSessionError::Invalidated)??;
         Ok(PowerShellCommand {
             receiver: message_rx,
+            terminal_outcome,
             cancel,
             finished: false,
         })
@@ -481,6 +491,21 @@ pub struct PowerShellSshSession {
     status: Arc<Mutex<PowerShellSessionStatus>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     options: PowerShellOptions,
+    shutdown: CancellationToken,
+}
+
+/// Nonblocking shutdown signal for an SSH PowerShell session.
+#[derive(Clone, Debug)]
+pub struct PowerShellSshShutdownHandle {
+    shutdown: CancellationToken,
+}
+
+impl PowerShellSshShutdownHandle {
+    /// Interrupt pending startup and cancel active commands. The session owner
+    /// must still call `close` to dispose the stream and observe its result.
+    pub fn request_shutdown(&self) {
+        self.shutdown.cancel();
+    }
 }
 
 impl PowerShellSshSession {
@@ -536,6 +561,7 @@ impl PowerShellSshSession {
         let status = Arc::new(Mutex::new(PowerShellSessionStatus::Connecting));
         let (request_tx, request_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let shutdown = CancellationToken::new();
         let worker_status = Arc::clone(&status);
         let worker_options = options.clone();
         let join = thread::Builder::new()
@@ -550,6 +576,7 @@ impl PowerShellSshSession {
                 status,
                 worker: Mutex::new(Some(join)),
                 options,
+                shutdown,
             }),
             Ok(Err(error)) => {
                 let _ = join.join();
@@ -564,6 +591,13 @@ impl PowerShellSshSession {
 
     pub fn status(&self) -> PowerShellSessionStatus {
         *self.status.lock().expect("status mutex poisoned")
+    }
+
+    /// Return a nonblocking signal that can interrupt a pending pipeline start.
+    pub fn shutdown_handle(&self) -> PowerShellSshShutdownHandle {
+        PowerShellSshShutdownHandle {
+            shutdown: self.shutdown.clone(),
+        }
     }
 
     pub fn start_script(
@@ -584,10 +618,12 @@ impl PowerShellSshSession {
             self.options.event_channel_capacity,
             sender,
             script.into(),
+            &self.shutdown,
         )
     }
 
     pub fn close(&self) -> Result<(), PowerShellSessionError> {
+        self.shutdown.cancel();
         close_session_request(&self.sender, &self.status, &self.worker)
     }
 }
@@ -597,6 +633,7 @@ fn start_script_request(
     event_channel_capacity: usize,
     sender: mpsc::Sender<SessionRequest>,
     script: String,
+    shutdown: &CancellationToken,
 ) -> Result<PowerShellCommand, PowerShellSessionError> {
     if script.trim().is_empty() {
         return Err(PowerShellSessionError::InvalidConfiguration(
@@ -613,12 +650,14 @@ fn start_script_request(
         });
     }
     let (message_tx, message_rx) = mpsc::sync_channel(event_channel_capacity + 1);
+    let terminal_outcome = Arc::new(Mutex::new(None));
     let (ack_tx, ack_rx) = mpsc::sync_channel(1);
-    let cancel = CancellationToken::new();
+    let cancel = shutdown.child_token();
     sender
         .send(SessionRequest::RunScript {
             script,
             message_tx,
+            terminal_outcome: Arc::clone(&terminal_outcome),
             cancel: cancel.clone(),
             ack_tx,
         })
@@ -628,6 +667,7 @@ fn start_script_request(
         .map_err(|_| PowerShellSessionError::Invalidated)??;
     Ok(PowerShellCommand {
         receiver: message_rx,
+        terminal_outcome,
         cancel,
         finished: false,
     })
@@ -646,14 +686,16 @@ fn close_session_request(
         return Err(PowerShellSessionError::Closed);
     };
     let (ack_tx, ack_rx) = mpsc::sync_channel(1);
-    sender
-        .send(SessionRequest::Close { ack_tx })
-        .map_err(|_| PowerShellSessionError::Invalidated)?;
-    let result = ack_rx
-        .recv()
-        .map_err(|_| PowerShellSessionError::Invalidated)?;
+    let result = match sender.send(SessionRequest::Close { ack_tx }) {
+        Ok(()) => ack_rx
+            .recv()
+            .unwrap_or(Err(PowerShellSessionError::Invalidated)),
+        Err(_) => Err(PowerShellSessionError::Invalidated),
+    };
     if let Some(join) = worker.lock().expect("worker mutex poisoned").take() {
-        let _ = join.join();
+        if join.join().is_err() {
+            return Err(PowerShellSessionError::Invalidated);
+        }
     }
     result
 }
@@ -662,6 +704,7 @@ enum SessionRequest {
     RunScript {
         script: String,
         message_tx: SyncSender<PowerShellCommandMessage>,
+        terminal_outcome: CommandOutcome,
         cancel: CancellationToken,
         ack_tx: SyncSender<Result<(), PowerShellSessionError>>,
     },
@@ -731,6 +774,7 @@ fn run_worker(
             SessionRequest::RunScript {
                 script,
                 message_tx,
+                terminal_outcome,
                 cancel,
                 ack_tx,
             } => {
@@ -740,7 +784,12 @@ fn run_worker(
                     Ok(handle) => {
                         let _ = ack_tx.send(Ok(()));
                         let health = runtime.block_on(drive_pipeline(
-                            handle, message_tx, cancel, &options, &status,
+                            handle,
+                            message_tx,
+                            terminal_outcome,
+                            cancel,
+                            &options,
+                            &status,
                         ));
                         if matches!(health, WorkerHealth::Invalidated) {
                             *status.lock().expect("status mutex poisoned") =
@@ -750,10 +799,13 @@ fn run_worker(
                     }
                     Err(error) => {
                         let mapped = map_psrp_error(&error);
-                        let _ = ack_tx.send(Err(mapped.clone()));
-                        if invalidates_psrp(&error) {
+                        let invalidates = invalidates_psrp(&error);
+                        if invalidates {
                             *status.lock().expect("status mutex poisoned") =
                                 PowerShellSessionStatus::Invalidated;
+                        }
+                        let _ = ack_tx.send(Err(mapped.clone()));
+                        if invalidates {
                             break;
                         }
                     }
@@ -800,7 +852,8 @@ fn run_ssh_stream_worker<S>(
         }
     };
 
-    let transport = BlockingIoPsrpTransport::powershell_ssh(stream);
+    let transport =
+        BlockingIoPsrpTransport::powershell_ssh_with_ack_timeout(stream, options.operation_timeout);
     let open_result = runtime.block_on(async {
         match tokio::time::timeout(options.connect_timeout, async move {
             let (rpid, creation) =
@@ -831,16 +884,27 @@ fn run_ssh_stream_worker<S>(
             SessionRequest::RunScript {
                 script,
                 message_tx,
+                terminal_outcome,
                 cancel,
                 ack_tx,
             } => {
-                let started =
-                    runtime.block_on(async { Pipeline::new(script).start(&mut pool).await });
+                let started = runtime.block_on(async {
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => Err(psrp_rs::PsrpError::Cancelled),
+                        result = Pipeline::new(script).start(&mut pool) => result,
+                    }
+                });
                 match started {
                     Ok(handle) => {
                         let _ = ack_tx.send(Ok(()));
                         let health = runtime.block_on(drive_pipeline(
-                            handle, message_tx, cancel, &options, &status,
+                            handle,
+                            message_tx,
+                            terminal_outcome,
+                            cancel,
+                            &options,
+                            &status,
                         ));
                         if matches!(health, WorkerHealth::Invalidated) {
                             *status.lock().expect("status mutex poisoned") =
@@ -849,11 +913,18 @@ fn run_ssh_stream_worker<S>(
                         }
                     }
                     Err(error) => {
-                        let mapped = map_psrp_error(&error);
-                        let _ = ack_tx.send(Err(mapped.clone()));
-                        if invalidates_psrp(&error) {
+                        let mapped = if cancel.is_cancelled() {
+                            PowerShellSessionError::Closed
+                        } else {
+                            map_psrp_error(&error)
+                        };
+                        let invalidates = invalidates_psrp(&error);
+                        if invalidates {
                             *status.lock().expect("status mutex poisoned") =
                                 PowerShellSessionStatus::Invalidated;
+                        }
+                        let _ = ack_tx.send(Err(mapped.clone()));
+                        if invalidates {
                             break;
                         }
                     }
@@ -925,6 +996,7 @@ enum WorkerHealth {
 async fn drive_pipeline<T: PsrpTransport>(
     mut handle: psrp_rs::PipelineHandle<'_, T>,
     message_tx: SyncSender<PowerShellCommandMessage>,
+    terminal_outcome: CommandOutcome,
     cancel: CancellationToken,
     options: &PowerShellOptions,
     status: &Arc<Mutex<PowerShellSessionStatus>>,
@@ -935,56 +1007,66 @@ async fn drive_pipeline<T: PsrpTransport>(
     let mut deadline: Option<Instant> = None;
 
     loop {
-        let event = {
+        let next = {
             let mut next_event = Box::pin(handle.next_event_with_cancel(cancel.clone()));
-            match wait_for_pipeline_event(next_event.as_mut(), &cancel, &mut deadline, options)
-                .await
-            {
-                NextPipelineEvent::Event(Ok(event)) => event,
-                NextPipelineEvent::Event(Err(error)) => {
-                    let cancel_requested = cancel.is_cancelled();
-                    let kind = failure_kind_for_pipeline_error(&error, cancel_requested);
-                    let invalidates = pipeline_error_invalidates_worker(&error, cancel_requested);
-                    if invalidates {
-                        *status.lock().expect("status mutex poisoned") =
-                            PowerShellSessionStatus::Invalidated;
-                    }
-                    let _ = message_tx.try_send(PowerShellCommandMessage::Failed(
-                        PowerShellCommandFailure {
-                            kind,
-                            state: None,
-                            errors: pipeline_errors,
-                        },
-                    ));
-                    return if invalidates {
-                        WorkerHealth::Invalidated
-                    } else {
-                        WorkerHealth::Healthy
-                    };
-                }
-                NextPipelineEvent::DeadlineElapsed => {
+            wait_for_pipeline_event(next_event.as_mut(), &cancel, &mut deadline, options).await
+        };
+        let event = match next {
+            NextPipelineEvent::Event(Ok(event)) => event,
+            NextPipelineEvent::Event(Err(error)) => {
+                let cancel_requested = cancel.is_cancelled();
+                let kind = failure_kind_for_pipeline_error(&error, cancel_requested);
+                let invalidates = pipeline_error_invalidates_worker(&error, cancel_requested);
+                if invalidates {
                     *status.lock().expect("status mutex poisoned") =
                         PowerShellSessionStatus::Invalidated;
-                    let _ = message_tx.try_send(PowerShellCommandMessage::Failed(
-                        PowerShellCommandFailure {
-                            kind: timeout_failure_kind(
-                                cancel.is_cancelled(),
-                                deferred_failure.as_ref(),
-                            ),
-                            state: None,
-                            errors: pipeline_errors,
-                        },
-                    ));
-                    return WorkerHealth::Invalidated;
                 }
+                let delivered = send_terminal(
+                    &message_tx,
+                    &terminal_outcome,
+                    PowerShellCommandMessage::Failed(PowerShellCommandFailure {
+                        kind,
+                        state: handle.observed_terminal_state(),
+                        errors: pipeline_errors,
+                    }),
+                );
+                return if invalidates || !delivered {
+                    *status.lock().expect("status mutex poisoned") =
+                        PowerShellSessionStatus::Invalidated;
+                    WorkerHealth::Invalidated
+                } else {
+                    WorkerHealth::Healthy
+                };
+            }
+            NextPipelineEvent::DeadlineElapsed => {
+                *status.lock().expect("status mutex poisoned") =
+                    PowerShellSessionStatus::Invalidated;
+                send_terminal(
+                    &message_tx,
+                    &terminal_outcome,
+                    PowerShellCommandMessage::Failed(PowerShellCommandFailure {
+                        kind: timeout_failure_kind(
+                            cancel.is_cancelled(),
+                            deferred_failure.as_ref(),
+                        ),
+                        state: handle.observed_terminal_state(),
+                        errors: pipeline_errors,
+                    }),
+                );
+                return WorkerHealth::Invalidated;
             }
         };
 
-        if let Err(kind) = budget.note_event(&event) {
-            deferred_failure = Some(kind);
-            let _ = handle.stop().await;
-            cancel.cancel();
-            note_cancel_deadline(&mut deadline, options.cancel_drain_timeout);
+        if deferred_failure.is_none() {
+            if let Err(kind) = budget.note_event(&event) {
+                deferred_failure = Some(kind);
+                if !matches!(&event, PipelineEvent::State(state) if state.is_terminal()) {
+                    cancel.cancel();
+                    note_cancel_deadline(&mut deadline, options.cancel_drain_timeout);
+                    continue;
+                }
+            }
+        } else if !matches!(&event, PipelineEvent::State(state) if state.is_terminal()) {
             continue;
         }
 
@@ -992,9 +1074,27 @@ async fn drive_pipeline<T: PsrpTransport>(
             pipeline_errors.push(value.clone());
         }
 
-        if send_event(&message_tx, PowerShellCommandMessage::Event(event.clone())).is_err() {
-            let _ = handle.stop().await;
-            return WorkerHealth::Invalidated;
+        let terminal_state = matches!(&event, PipelineEvent::State(state) if state.is_terminal());
+        match message_tx.try_send(PowerShellCommandMessage::Event(event.clone())) {
+            Ok(()) | Err(TrySendError::Full(_)) if terminal_state => {}
+            Ok(()) => {}
+            Err(_) => {
+                if !terminal_state {
+                    let _ = tokio::time::timeout(options.cancel_drain_timeout, handle.stop()).await;
+                }
+                *status.lock().expect("status mutex poisoned") =
+                    PowerShellSessionStatus::Invalidated;
+                send_terminal(
+                    &message_tx,
+                    &terminal_outcome,
+                    PowerShellCommandMessage::Failed(PowerShellCommandFailure {
+                        kind: PowerShellCommandFailureKind::Invalidated,
+                        state: handle.observed_terminal_state(),
+                        errors: pipeline_errors,
+                    }),
+                );
+                return WorkerHealth::Invalidated;
+            }
         }
 
         if let PipelineEvent::State(state) = event {
@@ -1002,14 +1102,27 @@ async fn drive_pipeline<T: PsrpTransport>(
                 continue;
             }
             if let Some(kind) = deferred_failure {
-                let _ = message_tx.try_send(PowerShellCommandMessage::Failed(
-                    PowerShellCommandFailure {
+                let invalidated = state == PipelineState::Disconnected;
+                if invalidated {
+                    *status.lock().expect("status mutex poisoned") =
+                        PowerShellSessionStatus::Invalidated;
+                }
+                let delivered = send_terminal(
+                    &message_tx,
+                    &terminal_outcome,
+                    PowerShellCommandMessage::Failed(PowerShellCommandFailure {
                         kind,
                         state: Some(state),
                         errors: pipeline_errors,
-                    },
-                ));
-                return WorkerHealth::Healthy;
+                    }),
+                );
+                return if invalidated || !delivered {
+                    *status.lock().expect("status mutex poisoned") =
+                        PowerShellSessionStatus::Invalidated;
+                    WorkerHealth::Invalidated
+                } else {
+                    WorkerHealth::Healthy
+                };
             }
             let terminal = match state {
                 PipelineState::Completed => PowerShellCommandMessage::Completed { state },
@@ -1056,8 +1169,10 @@ async fn drive_pipeline<T: PsrpTransport>(
                 *status.lock().expect("status mutex poisoned") =
                     PowerShellSessionStatus::Invalidated;
             }
-            let _ = message_tx.try_send(terminal);
-            return if invalidated {
+            let delivered = send_terminal(&message_tx, &terminal_outcome, terminal);
+            return if invalidated || !delivered {
+                *status.lock().expect("status mutex poisoned") =
+                    PowerShellSessionStatus::Invalidated;
                 WorkerHealth::Invalidated
             } else {
                 WorkerHealth::Healthy
@@ -1125,13 +1240,21 @@ fn timeout_failure_kind(
     }
 }
 
-fn send_event(
+fn send_terminal(
     sender: &SyncSender<PowerShellCommandMessage>,
+    terminal_outcome: &CommandOutcome,
     message: PowerShellCommandMessage,
-) -> Result<(), ()> {
-    sender.try_send(message).map_err(|error| match error {
-        TrySendError::Full(_) | TrySendError::Disconnected(_) => (),
-    })
+) -> bool {
+    match sender.try_send(message) {
+        Ok(()) => true,
+        Err(TrySendError::Full(message)) => {
+            *terminal_outcome
+                .lock()
+                .expect("terminal outcome mutex poisoned") = Some(message);
+            true
+        }
+        Err(TrySendError::Disconnected(_)) => false,
+    }
 }
 
 struct CommandBudget {
@@ -1405,6 +1528,8 @@ fn invalidates_psrp(error: &psrp_rs::PsrpError) -> bool {
         error,
         psrp_rs::PsrpError::Winrm(WinrmError::Timeout(_))
             | psrp_rs::PsrpError::Cancelled
+            | psrp_rs::PsrpError::AckTimeout
+            | psrp_rs::PsrpError::PipelineClose { .. }
             | psrp_rs::PsrpError::Protocol(_)
             | psrp_rs::PsrpError::Fragment(_)
             | psrp_rs::PsrpError::Clixml(_)
@@ -1414,7 +1539,10 @@ fn invalidates_psrp(error: &psrp_rs::PsrpError) -> bool {
 fn map_psrp_error(error: &psrp_rs::PsrpError) -> PowerShellSessionError {
     match error {
         psrp_rs::PsrpError::Winrm(error) => map_winrm_error(error),
-        psrp_rs::PsrpError::Cancelled => PowerShellSessionError::TimedOut,
+        psrp_rs::PsrpError::PipelineClose { source, .. } => map_psrp_error(source),
+        psrp_rs::PsrpError::Cancelled | psrp_rs::PsrpError::AckTimeout => {
+            PowerShellSessionError::TimedOut
+        }
         psrp_rs::PsrpError::Stopped
         | psrp_rs::PsrpError::BadState { .. }
         | psrp_rs::PsrpError::Protocol(_)
@@ -1498,6 +1626,11 @@ pub fn host_object(name: &str, value: &str) -> PsValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use festerm_test_support::powershell::{HeldStartupAck, StalledStartupPeer};
+    use psrp_rs::fragment::encode_message;
+    use psrp_rs::message::{Destination, MessageType, PsrpMessage};
+    use psrp_rs::transport::mock::MockTransport;
+    use psrp_rs::RunspacePoolState;
     use static_assertions::assert_not_impl_any;
     use std::future::poll_fn;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1711,6 +1844,434 @@ mod tests {
         );
     }
 
+    async fn opened_mock_pool(transport: &MockTransport) -> RunspacePool<MockTransport> {
+        let (rpid, _) = RunspacePool::<MockTransport>::build_creation_fragments(1, 1).unwrap();
+        let state = PsValue::Object(PsObject::new().with(
+            "RunspaceState",
+            PsValue::I32(RunspacePoolState::Opened as i32),
+        ));
+        let message = PsrpMessage {
+            destination: Destination::Client,
+            message_type: MessageType::RunspacePoolState,
+            rpid,
+            pid: Default::default(),
+            data: psrp_rs::to_clixml(&state),
+        };
+        transport.push_incoming(encode_message(1, &message.encode()));
+        RunspacePool::open_from_transport(transport.clone(), rpid, 1, 1)
+            .await
+            .unwrap()
+    }
+
+    fn push_mock_pipeline_message(
+        transport: &MockTransport,
+        pool: &RunspacePool<MockTransport>,
+        object_id: u64,
+        message_type: MessageType,
+        data: String,
+    ) {
+        let id = pool.id();
+        let message = PsrpMessage {
+            destination: Destination::Client,
+            message_type,
+            rpid: id,
+            pid: id,
+            data,
+        };
+        transport.push_incoming(encode_message(object_id, &message.encode()));
+    }
+
+    #[test]
+    fn budget_exhaustion_drains_terminal_state_and_reports_budget_failure() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let transport = MockTransport::new();
+            let mut pool = opened_mock_pool(&transport).await;
+            for id in [10, 11] {
+                push_mock_pipeline_message(
+                    &transport,
+                    &pool,
+                    id,
+                    MessageType::PipelineOutput,
+                    "<S>output</S>".into(),
+                );
+            }
+            push_mock_pipeline_message(
+                &transport,
+                &pool,
+                12,
+                MessageType::PipelineState,
+                psrp_rs::to_clixml(&PsValue::Object(
+                    PsObject::new()
+                        .with("PipelineState", PsValue::I32(PipelineState::Stopped as i32)),
+                )),
+            );
+            let handle = Pipeline::new("x")
+                .__with_forced_pid_for_test(pool.id())
+                .start(&mut pool)
+                .await
+                .unwrap();
+            let (sender, receiver) = mpsc::sync_channel(4);
+            let status = Arc::new(Mutex::new(PowerShellSessionStatus::Ready));
+            let options = PowerShellOptions {
+                max_events_per_command: 1,
+                cancel_drain_timeout: Duration::from_millis(100),
+                ..PowerShellOptions::default()
+            };
+            let health = drive_pipeline(
+                handle,
+                sender,
+                Arc::new(Mutex::new(None)),
+                CancellationToken::new(),
+                &options,
+                &status,
+            )
+            .await;
+            assert!(matches!(health, WorkerHealth::Healthy));
+            let messages: Vec<_> = receiver.try_iter().collect();
+            assert!(matches!(
+                messages.last(),
+                Some(PowerShellCommandMessage::Failed(PowerShellCommandFailure {
+                    kind: PowerShellCommandFailureKind::BudgetExceeded,
+                    state: Some(PipelineState::Stopped),
+                    ..
+                }))
+            ));
+            assert_eq!(transport.stopped_pipeline_ids.lock().unwrap().len(), 1);
+            pool.close().await.unwrap();
+        });
+    }
+
+    #[test]
+    fn terminal_event_at_budget_limit_reports_failure_without_stopping_closed_pipeline() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            for state in [PipelineState::Completed, PipelineState::Disconnected] {
+                let transport = MockTransport::new();
+                let mut pool = opened_mock_pool(&transport).await;
+                push_mock_pipeline_message(
+                    &transport,
+                    &pool,
+                    10,
+                    MessageType::PipelineOutput,
+                    "<S>output</S>".into(),
+                );
+                push_mock_pipeline_message(
+                    &transport,
+                    &pool,
+                    11,
+                    MessageType::PipelineState,
+                    psrp_rs::to_clixml(&PsValue::Object(
+                        PsObject::new().with("PipelineState", PsValue::I32(state as i32)),
+                    )),
+                );
+                let handle = Pipeline::new("x")
+                    .__with_forced_pid_for_test(pool.id())
+                    .start(&mut pool)
+                    .await
+                    .unwrap();
+                let (sender, receiver) = mpsc::sync_channel(4);
+                let status = Arc::new(Mutex::new(PowerShellSessionStatus::Ready));
+                let options = PowerShellOptions {
+                    max_events_per_command: 1,
+                    ..PowerShellOptions::default()
+                };
+                let health = drive_pipeline(
+                    handle,
+                    sender,
+                    Arc::new(Mutex::new(None)),
+                    CancellationToken::new(),
+                    &options,
+                    &status,
+                )
+                .await;
+                assert_eq!(
+                    matches!(health, WorkerHealth::Invalidated),
+                    state == PipelineState::Disconnected
+                );
+                assert_eq!(
+                    *status.lock().unwrap(),
+                    if state == PipelineState::Disconnected {
+                        PowerShellSessionStatus::Invalidated
+                    } else {
+                        PowerShellSessionStatus::Ready
+                    }
+                );
+                assert!(matches!(
+                    receiver.try_iter().last(),
+                    Some(PowerShellCommandMessage::Failed(PowerShellCommandFailure {
+                        kind: PowerShellCommandFailureKind::BudgetExceeded,
+                        state: Some(reported),
+                        ..
+                    })) if reported == state
+                ));
+                assert!(transport.stopped_pipeline_ids.lock().unwrap().is_empty());
+                pool.close().await.unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn terminal_budget_failure_survives_full_event_queue() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            for output_count in [1, 2] {
+                let transport = MockTransport::new();
+                let mut pool = opened_mock_pool(&transport).await;
+                for id in 0..output_count {
+                    push_mock_pipeline_message(
+                        &transport,
+                        &pool,
+                        10 + id,
+                        MessageType::PipelineOutput,
+                        "<S>output</S>".into(),
+                    );
+                }
+                push_mock_pipeline_message(
+                    &transport,
+                    &pool,
+                    12,
+                    MessageType::PipelineState,
+                    psrp_rs::to_clixml(&PsValue::Object(PsObject::new().with(
+                        "PipelineState",
+                        PsValue::I32(PipelineState::Completed as i32),
+                    ))),
+                );
+                let handle = Pipeline::new("x")
+                    .__with_forced_pid_for_test(pool.id())
+                    .start(&mut pool)
+                    .await
+                    .unwrap();
+                let (sender, receiver) = mpsc::sync_channel(2);
+                let outcome = Arc::new(Mutex::new(None));
+                let cancel = CancellationToken::new();
+                let status = Arc::new(Mutex::new(PowerShellSessionStatus::Ready));
+                let options = PowerShellOptions {
+                    event_channel_capacity: 1,
+                    max_events_per_command: output_count as usize,
+                    ..PowerShellOptions::default()
+                };
+                let health = drive_pipeline(
+                    handle,
+                    sender,
+                    Arc::clone(&outcome),
+                    cancel.clone(),
+                    &options,
+                    &status,
+                )
+                .await;
+                assert!(matches!(health, WorkerHealth::Healthy));
+                let mut command = PowerShellCommand {
+                    receiver,
+                    terminal_outcome: outcome,
+                    cancel,
+                    finished: false,
+                };
+                let mut messages = Vec::new();
+                while let Some(message) = command.recv_timeout(Duration::from_secs(1)).unwrap() {
+                    messages.push(message);
+                }
+                assert!(matches!(
+                    messages.last(),
+                    Some(PowerShellCommandMessage::Failed(PowerShellCommandFailure {
+                        kind: PowerShellCommandFailureKind::BudgetExceeded,
+                        state: Some(PipelineState::Completed),
+                        ..
+                    }))
+                ));
+                assert!(transport.stopped_pipeline_ids.lock().unwrap().is_empty());
+                assert_eq!(*status.lock().unwrap(), PowerShellSessionStatus::Ready);
+                pool.close().await.unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn terminal_state_survives_failed_or_timed_out_pipeline_cleanup() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            for blocked_close in [false, true] {
+                let transport = MockTransport::new();
+                *transport.fail_close_pipeline.lock().unwrap() = !blocked_close;
+                *transport.close_pipeline_blocked.lock().unwrap() = blocked_close;
+                let mut pool = opened_mock_pool(&transport).await;
+                push_mock_pipeline_message(
+                    &transport,
+                    &pool,
+                    10,
+                    MessageType::PipelineState,
+                    psrp_rs::to_clixml(&PsValue::Object(PsObject::new().with(
+                        "PipelineState",
+                        PsValue::I32(PipelineState::Completed as i32),
+                    ))),
+                );
+                let handle = Pipeline::new("x")
+                    .__with_forced_pid_for_test(pool.id())
+                    .start(&mut pool)
+                    .await
+                    .unwrap();
+                let (sender, receiver) = mpsc::sync_channel(4);
+                let status = Arc::new(Mutex::new(PowerShellSessionStatus::Ready));
+                let options = PowerShellOptions {
+                    cancel_drain_timeout: Duration::from_millis(40),
+                    ..PowerShellOptions::default()
+                };
+                let cancel = CancellationToken::new();
+                let close_started = Arc::clone(&transport.closed_pipeline_ids);
+                let cancel_after_close = cancel.clone();
+                let trigger = tokio::spawn(async move {
+                    if blocked_close {
+                        tokio::time::timeout(Duration::from_secs(2), async {
+                            while close_started.lock().unwrap().is_empty() {
+                                tokio::time::sleep(Duration::from_millis(1)).await;
+                            }
+                        })
+                        .await
+                        .expect("pipeline cleanup did not start");
+                        cancel_after_close.cancel();
+                    }
+                });
+                let health = drive_pipeline(
+                    handle,
+                    sender,
+                    Arc::new(Mutex::new(None)),
+                    cancel,
+                    &options,
+                    &status,
+                )
+                .await;
+                trigger.await.unwrap();
+                assert!(matches!(health, WorkerHealth::Invalidated));
+                assert_eq!(
+                    *status.lock().unwrap(),
+                    PowerShellSessionStatus::Invalidated
+                );
+                assert!(matches!(
+                    receiver.try_iter().last(),
+                    Some(PowerShellCommandMessage::Failed(PowerShellCommandFailure {
+                        state: Some(PipelineState::Completed),
+                        ..
+                    }))
+                ));
+                pool.close().await.unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn ssh_close_interrupts_unacknowledged_pipeline_startup() {
+        for held in [HeldStartupAck::Command, HeldStartupAck::PipelineData] {
+            let (peer, stream) = StalledStartupPeer::pair(held);
+            let options = PowerShellOptions {
+                operation_timeout: Duration::from_secs(10),
+                shutdown_timeout: Duration::from_millis(250),
+                ..PowerShellOptions::default()
+            };
+            let session = Arc::new(PowerShellSshSession::connect_stream(stream, options).unwrap());
+            let starting_session = Arc::clone(&session);
+            let starting = thread::spawn(move || starting_session.start_script("'late'"));
+            assert!(
+                peer.wait_until_stalled(Duration::from_secs(2)),
+                "pipeline startup did not reach the held ACK"
+            );
+            assert!(!peer.stream_disposed());
+            let closing_session = Arc::clone(&session);
+            let (closed_tx, closed_rx) = mpsc::sync_channel(1);
+            let closing = thread::spawn(move || {
+                let _ = closed_tx.send(closing_session.close());
+            });
+            let close = closed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("close waited for the pipeline operation timeout");
+            assert!(matches!(close, Err(PowerShellSessionError::Invalidated)));
+            closing.join().unwrap();
+            assert!(matches!(
+                starting.join().unwrap(),
+                Err(PowerShellSessionError::Closed | PowerShellSessionError::Invalidated)
+            ));
+            assert!(
+                peer.stream_disposed(),
+                "close returned before disposing the stream"
+            );
+            assert_eq!(
+                peer.write_count(),
+                if matches!(held, HeldStartupAck::PipelineData) {
+                    3
+                } else {
+                    2
+                }
+            );
+            assert!(matches!(
+                session.start_script("'should-not-run'"),
+                Err(PowerShellSessionError::Closed)
+            ));
+        }
+    }
+
+    #[test]
+    fn blocked_stop_after_budget_or_channel_failure_is_bounded() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            for full_channel in [false, true] {
+                let transport = MockTransport::new();
+                *transport.stop_blocked.lock().unwrap() = true;
+                let mut pool = opened_mock_pool(&transport).await;
+                for id in [10, 11] {
+                    push_mock_pipeline_message(
+                        &transport,
+                        &pool,
+                        id,
+                        MessageType::PipelineOutput,
+                        "<S>output</S>".into(),
+                    );
+                }
+                let handle = Pipeline::new("x")
+                    .__with_forced_pid_for_test(pool.id())
+                    .start(&mut pool)
+                    .await
+                    .unwrap();
+                let (sender, _receiver) = mpsc::sync_channel(if full_channel { 0 } else { 4 });
+                let status = Arc::new(Mutex::new(PowerShellSessionStatus::Ready));
+                let options = PowerShellOptions {
+                    max_events_per_command: if full_channel { 4 } else { 1 },
+                    cancel_drain_timeout: Duration::from_millis(40),
+                    ..PowerShellOptions::default()
+                };
+                let health = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    drive_pipeline(
+                        handle,
+                        sender,
+                        Arc::new(Mutex::new(None)),
+                        CancellationToken::new(),
+                        &options,
+                        &status,
+                    ),
+                )
+                .await
+                .expect("blocked stop exceeded the cancellation deadline");
+                assert!(matches!(health, WorkerHealth::Invalidated));
+                assert!(*transport.stopped.lock().unwrap());
+                pool.close().await.unwrap();
+            }
+        });
+    }
+
     #[test]
     fn map_winrm_error_redacts_response_details() {
         let mapped = map_winrm_error(&WinrmError::AuthFailed("bad password for alice".into()));
@@ -1795,6 +2356,18 @@ mod tests {
     #[test]
     fn cancellation_protocol_error_invalidates_session() {
         let error = psrp_rs::PsrpError::Protocol("receive aborted after signal".into());
+        assert_eq!(
+            failure_kind_for_pipeline_error(&error, true),
+            PowerShellCommandFailureKind::Invalidated
+        );
+        assert!(pipeline_error_invalidates_worker(&error, true));
+    }
+
+    #[test]
+    fn acknowledgement_timeout_invalidates_even_during_cancellation() {
+        let error = psrp_rs::PsrpError::AckTimeout;
+        assert_eq!(map_psrp_error(&error), PowerShellSessionError::TimedOut);
+        assert!(invalidates_psrp(&error));
         assert_eq!(
             failure_kind_for_pipeline_error(&error, true),
             PowerShellCommandFailureKind::Invalidated

@@ -167,6 +167,19 @@ remoting client, or fall back to WSMan. The structured desktop result view and
 explicit stop/close lifecycle remain the same; no SSH terminal VT parser is
 used for PowerShell objects.
 
+The out-of-process transport waits for the matching command acknowledgement
+before sending pipeline data, then for each data, signal and close
+acknowledgement. Interleaved inbound data is bounded and preserved, and an
+unconfirmed or cancelled handshake invalidates the transport rather than
+reusing it. The operation timeout bounds each acknowledgement. Stop or close
+also interrupts a pipeline whose startup is awaiting one; Stop at that point
+invalidates the SSH session instead of reusing a shutdown-signalled or
+uncertain runspace.
+As the wire protocol has no per-packet sequence number, a duplicate
+acknowledgement that is still unread when a new request with the same kind and
+GUID is sent, or arrives afterward, is indistinguishable from the new
+acknowledgement.
+
 The opt-in interoperability fixture starts an in-process SSH server backed by
 an actual local `pwsh -sshs` process. This executable is the **test server**,
 not a production client dependency. No operating-system listener, test account
@@ -179,8 +192,9 @@ FESTERM_PSRP_SSH_PWSH_INTEROP=1 \
 
 Set `FESTERM_PSRP_SSH_PWSH_PATH` when `pwsh` is not on PATH. Opting in without
 an executable fails instead of silently skipping. Controlled local composition
-does not establish cross-host OpenSSH configuration, corporate authorization,
-phone device claims or native GUI accessibility acceptance.
+exercises fragmented scripts and streamed input, but does not establish
+cross-host OpenSSH configuration, corporate authorization, phone device claims
+or native GUI accessibility acceptance.
 
 ### HTTPS endpoint configuration
 

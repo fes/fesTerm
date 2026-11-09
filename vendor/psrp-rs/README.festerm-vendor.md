@@ -48,7 +48,18 @@ narrow patches needed before adoption:
 9. explicit `send_pipeline_fragment` destination routing for pipeline host
    responses, input/end-input and multi-fragment creation. Runspace messages
    retain nil routing rather than inheriting the last pipeline identity; the
-   transport default preserves existing non-SSH behavior.
+   transport default preserves existing non-SSH behavior;
+10. ordered out-of-process handshakes: wait for `CommandAck` before pipeline
+    data and for each `DataAck`, `SignalAck`, and `CloseAck` before proceeding.
+    Interleaved data is retained under bounded queue and envelope limits;
+    malformed data, timeout, or an abandoned transaction invalidates the SSH
+    transport. Pipeline-close errors preserve the observed terminal state.
+
+The out-of-process protocol has no per-packet acknowledgement sequence number.
+Stale acknowledgements already in the transport's frame buffer and late
+acknowledgements after a cancelled transaction are rejected, but a duplicate
+still unread when a new same-kind, same-GUID request is sent, or arriving
+afterward, cannot be distinguished from its acknowledgement.
 
 For WSMan, a successful PowerShell Signal response acknowledges the stop.
 This follows Microsoft's `ClientPowerShellDataStructureHandler.OnSignalCompleted`

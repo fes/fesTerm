@@ -363,6 +363,8 @@ impl Pipeline {
             input_closed: self.no_input,
             pending_events: Vec::new(),
             stop_signalled: false,
+            transport_closed: false,
+            terminal_state: None,
         })
     }
 
@@ -434,6 +436,8 @@ pub struct PipelineHandle<'p, T: PsrpTransport> {
     input_closed: bool,
     pending_events: Vec<PipelineEvent>,
     stop_signalled: bool,
+    transport_closed: bool,
+    terminal_state: Option<PipelineState>,
 }
 
 impl<T: PsrpTransport> std::fmt::Debug for PipelineHandle<'_, T> {
@@ -523,6 +527,20 @@ impl<T: PsrpTransport> PipelineHandle<'_, T> {
     ) -> Result<PipelineEvent> {
         loop {
             if let Some(event) = self.pending_events.pop() {
+                if let PipelineEvent::State(state) = &event {
+                    if state.is_terminal() {
+                        self.terminal_state = Some(*state);
+                        if !self.transport_closed {
+                            self.pool.close_transport_pipeline(self.pid).await.map_err(
+                                |source| PsrpError::PipelineClose {
+                                    state: *state,
+                                    source: Box::new(source),
+                                },
+                            )?;
+                            self.transport_closed = true;
+                        }
+                    }
+                }
                 return Ok(event);
             }
             if !self.stop_signalled && cancel.is_cancelled() {
@@ -561,6 +579,12 @@ impl<T: PsrpTransport> PipelineHandle<'_, T> {
     #[must_use]
     pub fn pid(&self) -> Uuid {
         self.pid
+    }
+
+    /// Terminal state already observed, including while transport cleanup is pending.
+    #[must_use]
+    pub fn observed_terminal_state(&self) -> Option<PipelineState> {
+        self.terminal_state
     }
 
     async fn drain_loop(
@@ -888,6 +912,84 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, PsrpError::Stopped));
         let _ = pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn terminal_pipeline_states_close_transport_once_and_surface_errors() {
+        for state in [
+            PipelineState::Completed,
+            PipelineState::Failed,
+            PipelineState::Stopped,
+        ] {
+            let t = MockTransport::new();
+            let mut pool = opened_pool_with(&t).await;
+            let rpid = pool.id();
+            let pid = Uuid::new_v4();
+            for oid in [10, 11] {
+                t.push_incoming(encode_message(
+                    oid,
+                    &make_state_message(
+                        MessageType::PipelineState,
+                        "PipelineState",
+                        state as i32,
+                        rpid,
+                        pid,
+                    ),
+                ));
+            }
+            let mut handle = Pipeline::new("x")
+                .__with_forced_pid_for_test(pid)
+                .start(&mut pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                handle.next_event().await.unwrap(),
+                PipelineEvent::State(state)
+            );
+            assert_eq!(handle.observed_terminal_state(), Some(state));
+            assert_eq!(
+                handle.next_event().await.unwrap(),
+                PipelineEvent::State(state)
+            );
+            assert_eq!(*t.closed_pipeline_ids.lock().unwrap(), vec![pid]);
+            drop(handle);
+            pool.close().await.unwrap();
+        }
+
+        let t = MockTransport::new();
+        let mut pool = opened_pool_with(&t).await;
+        let rpid = pool.id();
+        let pid = Uuid::new_v4();
+        t.push_incoming(encode_message(
+            10,
+            &make_state_message(
+                MessageType::PipelineState,
+                "PipelineState",
+                PipelineState::Completed as i32,
+                rpid,
+                pid,
+            ),
+        ));
+        *t.fail_close_pipeline.lock().unwrap() = true;
+        let mut handle = Pipeline::new("x")
+            .__with_forced_pid_for_test(pid)
+            .start(&mut pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            handle.next_event().await,
+            Err(PsrpError::PipelineClose {
+                state: PipelineState::Completed,
+                source,
+            }) if matches!(*source, PsrpError::Protocol(_))
+        ));
+        assert_eq!(
+            handle.observed_terminal_state(),
+            Some(PipelineState::Completed)
+        );
+        assert_eq!(*t.closed_pipeline_ids.lock().unwrap(), vec![pid]);
+        drop(handle);
+        pool.close().await.unwrap();
     }
 
     #[tokio::test]

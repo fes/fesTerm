@@ -2738,6 +2738,7 @@ dependencies = [
  "festerm-secret-store",
  "festerm-session",
  "festerm-ssh",
+ "festerm-test-support",
  "psrp-rs",
  "rpassword",
  "russh",
@@ -2950,6 +2951,7 @@ name = "festerm-test-support"
 version = "0.15.0"
 dependencies = [
  "festerm-core",
+ "psrp-rs",
 ]
 
 [[package]]

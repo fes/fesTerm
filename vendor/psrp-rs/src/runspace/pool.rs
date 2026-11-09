@@ -496,6 +496,10 @@ impl<T: PsrpTransport> RunspacePool<T> {
         self.transport.signal_stop(pipeline_id).await
     }
 
+    pub(crate) async fn close_transport_pipeline(&mut self, pipeline_id: Uuid) -> Result<()> {
+        self.transport.close_pipeline(pipeline_id).await
+    }
+
     pub(crate) async fn send_pipeline_message(
         &mut self,
         mt: MessageType,

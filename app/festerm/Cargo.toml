@@ -88,7 +88,7 @@ winresource = "0.1"
 
 [dev-dependencies]
 festerm-automation-mcp-client = { path = "../../crates/festerm-automation-mcp-client" }
-festerm-test-support = { path = "../../crates/festerm-test-support" }
+festerm-test-support = { path = "../../crates/festerm-test-support", features = ["powershell"] }
 festerm-syntax = { path = "../../crates/festerm-syntax", features = ["test-support"] }
 accesskit = "0.24"
 egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }

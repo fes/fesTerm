@@ -20,6 +20,8 @@ zeroize = "1"
 
 [dev-dependencies]
 festerm-session = { path = "../festerm-session" }
+festerm-test-support = { path = "../festerm-test-support", features = ["powershell"] }
+psrp-rs = { path = "../../vendor/psrp-rs", features = ["__internal"] }
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 static_assertions = "1"

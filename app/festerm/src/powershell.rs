@@ -14,7 +14,7 @@ use festerm_powershell::{
     PipelineEvent, PipelineState, PowerShellAuthMethod, PowerShellCommand,
     PowerShellCommandFailureKind, PowerShellCommandMessage, PowerShellCredentials,
     PowerShellEndpoint, PowerShellOptions, PowerShellSession, PowerShellSessionError,
-    PowerShellSessionStatus, PowerShellSshSession, PsValue,
+    PowerShellSessionStatus, PowerShellSshSession, PowerShellSshShutdownHandle, PsValue,
 };
 use festerm_secret_store::{SecretBytes, SecretReference, SecretStore};
 use festerm_ssh::{SshAuthentication, SshRawExecOptions};
@@ -132,6 +132,14 @@ struct WorkerControl {
     mailbox_drops: AtomicUsize,
     finished: AtomicBool,
     pending_lifecycle: Mutex<VecDeque<WorkerMessage>>,
+    ssh_shutdown: Mutex<WorkerSshShutdown>,
+}
+
+#[derive(Default)]
+struct WorkerSshShutdown {
+    handle: Option<PowerShellSshShutdownHandle>,
+    starting: bool,
+    startup_shutdown_requested: bool,
 }
 
 impl WorkerControl {
@@ -143,7 +151,79 @@ impl WorkerControl {
             mailbox_drops: AtomicUsize::new(0),
             finished: AtomicBool::new(false),
             pending_lifecycle: Mutex::new(VecDeque::new()),
+            ssh_shutdown: Mutex::new(WorkerSshShutdown::default()),
         }
+    }
+
+    fn request_close(&self) {
+        self.close_requested.store(true, Ordering::Release);
+        self.cancel_requested.store(true, Ordering::Release);
+        let mut current = self.ssh_shutdown.lock().expect("SSH shutdown mutex");
+        if let Some(shutdown) = current.handle.as_ref() {
+            shutdown.request_shutdown();
+            if current.starting {
+                current.startup_shutdown_requested = true;
+            }
+        }
+    }
+
+    fn request_cancel(&self) {
+        let mut current = self.ssh_shutdown.lock().expect("SSH shutdown mutex");
+        self.cancel_requested.store(true, Ordering::Release);
+        if current.starting {
+            if let Some(shutdown) = current.handle.as_ref() {
+                shutdown.request_shutdown();
+                current.startup_shutdown_requested = true;
+            }
+        }
+    }
+
+    fn set_ssh_shutdown(&self, shutdown: Option<PowerShellSshShutdownHandle>) {
+        let mut current = self.ssh_shutdown.lock().expect("SSH shutdown mutex");
+        current.handle = shutdown;
+        if self.close_requested.load(Ordering::Acquire) {
+            if let Some(shutdown) = current.handle.as_ref() {
+                shutdown.request_shutdown();
+            }
+        }
+    }
+
+    fn begin_startup(&self) -> WorkerStartupGuard<'_> {
+        let mut current = self.ssh_shutdown.lock().expect("SSH shutdown mutex");
+        current.starting = true;
+        current.startup_shutdown_requested = false;
+        if self.close_requested.load(Ordering::Acquire)
+            || self.cancel_requested.load(Ordering::Acquire)
+        {
+            if let Some(shutdown) = current.handle.as_ref() {
+                shutdown.request_shutdown();
+                current.startup_shutdown_requested = true;
+            }
+        }
+        WorkerStartupGuard(self)
+    }
+}
+
+struct WorkerStartupGuard<'a>(&'a WorkerControl);
+
+impl WorkerStartupGuard<'_> {
+    fn finish(self) -> bool {
+        let interrupted = {
+            let mut current = self.0.ssh_shutdown.lock().expect("SSH shutdown mutex");
+            current.starting = false;
+            current.startup_shutdown_requested
+        };
+        interrupted
+    }
+}
+
+impl Drop for WorkerStartupGuard<'_> {
+    fn drop(&mut self) {
+        self.0
+            .ssh_shutdown
+            .lock()
+            .expect("SSH shutdown mutex")
+            .starting = false;
     }
 }
 
@@ -155,8 +235,7 @@ pub(crate) struct PowerShellShutdownHandle {
 
 impl PowerShellShutdownHandle {
     pub(crate) fn request_shutdown(&self) {
-        self.control.close_requested.store(true, Ordering::Release);
-        self.control.cancel_requested.store(true, Ordering::Release);
+        self.control.request_close();
         if let Some(sender) = &self.sender {
             let _ = sender.try_send(WorkerRequest::Close);
         }
@@ -718,7 +797,7 @@ impl PowerShellTab {
             ));
             return;
         };
-        control.cancel_requested.store(true, Ordering::Release);
+        control.request_cancel();
         if let Some(sender) = &self.sender {
             match sender.try_send(WorkerRequest::Cancel) {
                 Ok(()) | Err(TrySendError::Full(_)) => {
@@ -740,8 +819,7 @@ impl PowerShellTab {
 
     fn request_worker_close(&mut self) {
         if let Some(control) = &self.control {
-            control.close_requested.store(true, Ordering::Release);
-            control.cancel_requested.store(true, Ordering::Release);
+            control.request_close();
         }
         if let Some(sender) = &self.sender {
             match sender.try_send(WorkerRequest::Close) {
@@ -1023,6 +1101,9 @@ trait WorkerBackend {
     ) -> Result<Option<PowerShellCommandMessage>, PowerShellSessionError>;
     fn cancel(&self, command: &Self::Command);
     fn close(&self, session: &Self::Session) -> Result<(), String>;
+    fn ssh_shutdown_handle(&self, _session: &Self::Session) -> Option<PowerShellSshShutdownHandle> {
+        None
+    }
     fn ready(&self, _session: &Self::Session) -> bool {
         true
     }
@@ -1097,9 +1178,27 @@ impl WorkerBackend for RealBackend {
         session.close().map_err(|error| error.to_string())
     }
 
+    fn ssh_shutdown_handle(&self, session: &Self::Session) -> Option<PowerShellSshShutdownHandle> {
+        match session {
+            NativePowerShellSession::Https(_) => None,
+            NativePowerShellSession::Ssh(session) => Some(session.shutdown_handle()),
+        }
+    }
+
     fn ready(&self, session: &Self::Session) -> bool {
         session.status() == PowerShellSessionStatus::Ready
     }
+}
+
+fn start_worker_script<B: WorkerBackend>(
+    backend: &B,
+    session: &B::Session,
+    script: String,
+    control: &WorkerControl,
+) -> (Result<B::Command, String>, bool) {
+    let starting = control.begin_startup();
+    let result = backend.start_script(session, script);
+    (result, starting.finish())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1194,6 +1293,7 @@ fn run_worker_with_backend<B: WorkerBackend>(
             return;
         }
     };
+    control.set_ssh_shutdown(backend.ssh_shutdown_handle(&session));
     if control.close_requested.load(Ordering::Acquire) {
         let close = backend.close(&session);
         let _ = send(WorkerMessageKind::Closed(close));
@@ -1204,6 +1304,7 @@ fn run_worker_with_backend<B: WorkerBackend>(
         return;
     }
     let mut active: Option<B::Command> = None;
+    let mut startup_interrupted = false;
     let mut closing = false;
     loop {
         if control.close_requested.load(Ordering::Acquire) {
@@ -1215,7 +1316,7 @@ fn run_worker_with_backend<B: WorkerBackend>(
                 let _ = send(WorkerMessageKind::Closed(close));
                 return;
             }
-        } else if control.cancel_requested.swap(false, Ordering::AcqRel) {
+        } else if active.is_some() && control.cancel_requested.swap(false, Ordering::AcqRel) {
             if let Some(command) = &active {
                 backend.cancel(command);
                 let _ = send(WorkerMessageKind::CommandEvent(
@@ -1234,7 +1335,14 @@ fn run_worker_with_backend<B: WorkerBackend>(
                             | PowerShellCommandMessage::Failed(_)
                     );
                     let mut kind = present_command_message(message);
-                    if terminal && !backend.ready(&session) {
+                    if terminal && startup_interrupted {
+                        // The session-wide token stays cancelled even if startup
+                        // won the race and the command subsequently stopped cleanly.
+                        kind = WorkerMessageKind::Invalidated(
+                            "SSH startup was interrupted; open a new connection explicitly."
+                                .to_owned(),
+                        );
+                    } else if terminal && !backend.ready(&session) {
                         kind = WorkerMessageKind::Invalidated(
                             "The command ended with uncertain runspace state; open a new connection explicitly.".to_owned(),
                         );
@@ -1280,10 +1388,15 @@ fn run_worker_with_backend<B: WorkerBackend>(
         }
         match request_rx.try_recv() {
             Ok(WorkerRequest::Run(script)) if active.is_none() => {
-                match backend.start_script(&session, script) {
-                    Ok(command) => active = Some(command),
+                let (started, interrupted) =
+                    start_worker_script(&backend, &session, script, &control);
+                match started {
+                    Ok(command) => {
+                        startup_interrupted = interrupted;
+                        active = Some(command);
+                    }
                     Err(error) => {
-                        if !backend.ready(&session) {
+                        if interrupted || !backend.ready(&session) {
                             let _ = send(WorkerMessageKind::Invalidated(format!(
                                 "PowerShell command could not start: {error}"
                             )));
@@ -1336,10 +1449,15 @@ fn run_worker_with_backend<B: WorkerBackend>(
                                     let _ = send(WorkerMessageKind::Closed(close));
                                     return;
                                 }
-                                match backend.start_script(&session, script) {
-                                    Ok(command) => active = Some(command),
+                                let (started, interrupted) =
+                                    start_worker_script(&backend, &session, script, &control);
+                                match started {
+                                    Ok(command) => {
+                                        startup_interrupted = interrupted;
+                                        active = Some(command);
+                                    }
                                     Err(error) => {
-                                        if !backend.ready(&session) {
+                                        if interrupted || !backend.ready(&session) {
                                             let _ = send(WorkerMessageKind::Invalidated(format!(
                                                 "PowerShell command could not start: {error}"
                                             )));
@@ -1781,6 +1899,9 @@ mod tests {
     use super::*;
     use egui_kittest::{kittest::Queryable, Harness};
     use festerm_powershell::PsObject;
+    use festerm_test_support::powershell::{
+        HeldStartupAck, StalledStartupPeer, StalledStartupStream,
+    };
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
     use std::time::Instant;
@@ -1912,6 +2033,94 @@ mod tests {
         }
     }
 
+    struct StalledSshBackend {
+        stream: Mutex<Option<StalledStartupStream>>,
+        startup_gate: Option<StartupHandoffGate>,
+    }
+
+    struct StartupHandoffGate {
+        entered: SyncSender<()>,
+        release: Mutex<Receiver<()>>,
+        outcome: SyncSender<PowerShellCommandMessage>,
+    }
+
+    impl WorkerBackend for StalledSshBackend {
+        type Session = NativePowerShellSession;
+        type Command = PowerShellCommand;
+
+        fn connect(
+            &self,
+            _profile: &PowerShellProfileConfiguration,
+            _local_bind_address: Option<IpAddr>,
+            _password: SecretBytes,
+        ) -> Result<Self::Session, String> {
+            let stream = self.stream.lock().unwrap().take().unwrap();
+            PowerShellSshSession::connect_stream(
+                stream,
+                PowerShellOptions {
+                    shutdown_timeout: Duration::from_millis(150),
+                    ..PowerShellOptions::default()
+                },
+            )
+            .map(NativePowerShellSession::Ssh)
+            .map_err(|error| error.to_string())
+        }
+
+        fn start_script(
+            &self,
+            session: &Self::Session,
+            script: String,
+        ) -> Result<Self::Command, String> {
+            let result = RealBackend.start_script(session, script);
+            if let (Some(gate), Ok(_)) = (&self.startup_gate, &result) {
+                gate.entered.send(()).unwrap();
+                gate.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("release startup handoff");
+            }
+            result
+        }
+
+        fn recv_timeout(
+            &self,
+            command: &mut Self::Command,
+            timeout: Duration,
+        ) -> Result<Option<PowerShellCommandMessage>, PowerShellSessionError> {
+            let result = RealBackend.recv_timeout(command, timeout);
+            if let (Some(gate), Ok(Some(message))) = (&self.startup_gate, &result) {
+                if matches!(
+                    message,
+                    PowerShellCommandMessage::Completed { .. }
+                        | PowerShellCommandMessage::Failed(_)
+                ) {
+                    gate.outcome.send(message.clone()).unwrap();
+                }
+            }
+            result
+        }
+
+        fn cancel(&self, command: &Self::Command) {
+            RealBackend.cancel(command);
+        }
+
+        fn close(&self, session: &Self::Session) -> Result<(), String> {
+            RealBackend.close(session)
+        }
+
+        fn ssh_shutdown_handle(
+            &self,
+            session: &Self::Session,
+        ) -> Option<PowerShellSshShutdownHandle> {
+            RealBackend.ssh_shutdown_handle(session)
+        }
+
+        fn ready(&self, session: &Self::Session) -> bool {
+            RealBackend.ready(session)
+        }
+    }
+
     fn test_profile() -> PowerShellProfileConfiguration {
         festerm_config::Profile::powershell("ps", "host.test", 5986, "alice")
             .unwrap()
@@ -1953,6 +2162,31 @@ mod tests {
             run_worker_with_backend(
                 fake,
                 profile,
+                None,
+                CredentialSource::Transient(SecretBytes::from_secret_string("pw".into())),
+                request_rx,
+                message_tx,
+                control,
+                egui::Context::default(),
+                7,
+            );
+        })
+    }
+
+    fn spawn_stalled_ssh_worker(
+        stream: StalledStartupStream,
+        request_rx: Receiver<WorkerRequest>,
+        message_tx: SyncSender<WorkerMessage>,
+        control: Arc<WorkerControl>,
+        startup_gate: Option<StartupHandoffGate>,
+    ) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            run_worker_with_backend(
+                StalledSshBackend {
+                    stream: Mutex::new(Some(stream)),
+                    startup_gate,
+                },
+                test_ssh_profile(),
                 None,
                 CredentialSource::Transient(SecretBytes::from_secret_string("pw".into())),
                 request_rx,
@@ -2100,6 +2334,182 @@ mod tests {
         ));
         handle.join().unwrap();
         assert_eq!(fake.state.closed.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn worker_close_and_stop_interrupt_unacknowledged_ssh_startup() {
+        for held in [HeldStartupAck::Command, HeldStartupAck::PipelineData] {
+            for stop in [false, true] {
+                let (peer, stream) = StalledStartupPeer::pair(held);
+                let (request_tx, request_rx) = mpsc::sync_channel(WORKER_QUEUE);
+                let (message_tx, message_rx) = mpsc::sync_channel(WORKER_QUEUE);
+                let control = Arc::new(WorkerControl::new());
+                let mut tab = PowerShellTab::new(test_ssh_profile());
+                tab.state = PowerShellState::Running;
+                tab.sender = Some(request_tx.clone());
+                tab.control = Some(Arc::clone(&control));
+                let worker = spawn_stalled_ssh_worker(
+                    stream,
+                    request_rx,
+                    message_tx,
+                    Arc::clone(&control),
+                    None,
+                );
+                assert!(matches!(
+                    recv_kind(&message_rx),
+                    WorkerMessageKind::Connected
+                ));
+                request_tx.send(WorkerRequest::Run("1".into())).unwrap();
+                assert!(
+                    peer.wait_until_stalled(Duration::from_secs(2)),
+                    "startup did not reach {held:?}"
+                );
+
+                if stop {
+                    tab.cancel_command();
+                    assert_eq!(tab.state, PowerShellState::Cancelling);
+                } else {
+                    tab.shutdown_handle().unwrap().request_shutdown();
+                }
+
+                assert!(matches!(
+                    recv_kind(&message_rx),
+                    WorkerMessageKind::Invalidated(_)
+                ));
+                assert!(matches!(
+                    recv_kind(&message_rx),
+                    WorkerMessageKind::Closed(Err(_))
+                ));
+                worker.join().unwrap();
+                assert!(control.finished.load(Ordering::Acquire));
+                assert!(peer.stream_disposed());
+            }
+        }
+    }
+
+    #[test]
+    fn worker_remembers_stop_before_ssh_startup_registration() {
+        let (peer, stream) = StalledStartupPeer::pair(HeldStartupAck::Command);
+        let (request_tx, request_rx) = mpsc::sync_channel(WORKER_QUEUE);
+        let (message_tx, message_rx) = mpsc::sync_channel(WORKER_QUEUE);
+        let control = Arc::new(WorkerControl::new());
+        let mut tab = PowerShellTab::new(test_ssh_profile());
+        tab.state = PowerShellState::Running;
+        tab.sender = Some(request_tx.clone());
+        tab.control = Some(Arc::clone(&control));
+        request_tx.send(WorkerRequest::Run("1".into())).unwrap();
+        tab.cancel_command();
+        let worker =
+            spawn_stalled_ssh_worker(stream, request_rx, message_tx, Arc::clone(&control), None);
+
+        assert!(matches!(
+            recv_kind(&message_rx),
+            WorkerMessageKind::Connected
+        ));
+        assert!(matches!(
+            recv_kind(&message_rx),
+            WorkerMessageKind::Invalidated(_)
+        ));
+        assert!(matches!(
+            recv_kind(&message_rx),
+            WorkerMessageKind::Closed(Err(_))
+        ));
+        worker.join().unwrap();
+        assert!(!peer.command_seen());
+        assert!(peer.stream_disposed());
+    }
+
+    #[test]
+    fn worker_stop_during_successful_ssh_start_handoff_invalidates_session() {
+        let (peer, stream) = StalledStartupPeer::pair(HeldStartupAck::Neither);
+        let (request_tx, request_rx) = mpsc::sync_channel(WORKER_QUEUE);
+        let (message_tx, message_rx) = mpsc::sync_channel(WORKER_QUEUE);
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::channel();
+        let (outcome_tx, outcome_rx) = mpsc::sync_channel(1);
+        let control = Arc::new(WorkerControl::new());
+        let mut tab = PowerShellTab::new(test_ssh_profile());
+        tab.state = PowerShellState::Running;
+        tab.sender = Some(request_tx.clone());
+        tab.control = Some(Arc::clone(&control));
+        let worker = spawn_stalled_ssh_worker(
+            stream,
+            request_rx,
+            message_tx,
+            Arc::clone(&control),
+            Some(StartupHandoffGate {
+                entered: entered_tx,
+                release: Mutex::new(release_rx),
+                outcome: outcome_tx,
+            }),
+        );
+        assert!(matches!(
+            recv_kind(&message_rx),
+            WorkerMessageKind::Connected
+        ));
+        request_tx.send(WorkerRequest::Run("1".into())).unwrap();
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("backend startup did not succeed");
+        tab.cancel_command();
+        release_tx.send(()).unwrap();
+
+        loop {
+            match recv_kind(&message_rx) {
+                WorkerMessageKind::CommandEvent(_) => {}
+                WorkerMessageKind::Invalidated(_) => break,
+                _ => panic!("a cancelled SSH session was reported as ready"),
+            }
+        }
+        assert!(matches!(
+            outcome_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            PowerShellCommandMessage::Failed(failure)
+                if failure.kind == PowerShellCommandFailureKind::Cancelled
+                    && failure.state == Some(PipelineState::Stopped)
+        ));
+        match recv_kind(&message_rx) {
+            WorkerMessageKind::Closed(result) => result.expect("close acknowledged SSH session"),
+            _ => panic!("worker did not close the interrupted SSH session"),
+        }
+        worker.join().unwrap();
+        assert!(peer.stream_disposed());
+    }
+
+    #[test]
+    fn worker_stop_after_startup_does_not_shutdown_ssh_session() {
+        let (peer, stream) = StalledStartupPeer::pair(HeldStartupAck::Command);
+        let session = Arc::new(
+            PowerShellSshSession::connect_stream(
+                stream,
+                PowerShellOptions {
+                    operation_timeout: Duration::from_secs(2),
+                    shutdown_timeout: Duration::from_millis(150),
+                    ..PowerShellOptions::default()
+                },
+            )
+            .unwrap(),
+        );
+        let control = WorkerControl::new();
+        control.set_ssh_shutdown(Some(session.shutdown_handle()));
+        drop(control.begin_startup());
+        control.request_cancel();
+
+        let running = Arc::clone(&session);
+        let (result_tx, result_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = result_tx.send(running.start_script("1").map(|_| ()));
+        });
+        let reached_command = peer.wait_until_stalled(Duration::from_secs(1));
+        let _ = session.close();
+        let result = result_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+
+        assert!(
+            reached_command,
+            "Stop unnecessarily shut down the SSH session"
+        );
+        assert!(matches!(result, Err(PowerShellSessionError::Closed)));
+        assert!(peer.stream_disposed());
     }
 
     #[test]
