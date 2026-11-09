@@ -70,8 +70,6 @@ enum LauncherItemKind<'a> {
     NewSftp,
     NewSerial,
     NewPowerShell,
-    NewRemoteSessions,
-    NewEnterprise,
     /// Opens a Markdown workspace: the file picker, then a viewer tab.
     NewMarkdown,
     LocalProfile(&'a str),
@@ -250,8 +248,6 @@ impl LauncherItem<'_> {
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
             | LauncherItemKind::NewPowerShell
-            | LauncherItemKind::NewRemoteSessions
-            | LauncherItemKind::NewEnterprise
             | LauncherItemKind::NewMarkdown
             | LauncherItemKind::RunningTunnel(_)
             | LauncherItemKind::ResumeSession(_)
@@ -292,9 +288,6 @@ impl LauncherItem<'_> {
             LauncherItemKind::NewPowerShell | LauncherItemKind::PowerShellProfile(_) => {
                 (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
             }
-            LauncherItemKind::NewRemoteSessions | LauncherItemKind::NewEnterprise => {
-                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
-            }
             LauncherItemKind::NewMarkdown => (Icon::MarkdownDocument, theme::ICON_SESSION_MARKDOWN),
         }
     }
@@ -330,8 +323,6 @@ impl LauncherItem<'_> {
                 kind: NewProfileKind::PowerShell,
             },
             LauncherItemKind::NewMarkdown => AppCommand::OpenMarkdownWorkspace,
-            LauncherItemKind::NewRemoteSessions => AppCommand::OpenRemoteSessions,
-            LauncherItemKind::NewEnterprise => AppCommand::OpenEnterprise,
             LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
             },
@@ -3730,7 +3721,7 @@ pub fn show_launcher(
     let profiles = configuration.profiles();
     let customize_local_shell = configuration.interface_settings().customize_local_shell();
     let now_unix_seconds = unix_now_seconds();
-    // Connection and discovery entry points, followed by saved profiles.
+    // Connection entry points, followed by saved profiles.
     let mut items = vec![
         LauncherItem::untabulated(
             "Local Shell".to_owned(),
@@ -3761,16 +3752,6 @@ pub fn show_launcher(
             "PowerShell".to_owned(),
             "Experimental structured HTTPS/NTLM or SSH PSRP".to_owned(),
             LauncherItemKind::NewPowerShell,
-        ),
-        LauncherItem::untabulated(
-            "Remote Sessions".to_owned(),
-            "Discover and resume an existing sessiond shell over SSH".to_owned(),
-            LauncherItemKind::NewRemoteSessions,
-        ),
-        LauncherItem::untabulated(
-            "Enterprise".to_owned(),
-            "Experimental Entra sign-in and Dev Box discovery".to_owned(),
-            LauncherItemKind::NewEnterprise,
         ),
     ];
     if cfg!(feature = "experimental-dev-tunnels") {
@@ -5426,33 +5407,20 @@ mod tests {
     }
 
     #[test]
-    fn remote_and_enterprise_cards_route_to_typed_discovery_actions() {
+    fn unreleased_discovery_cards_are_hidden_at_narrow_and_wide_tab_sizes() {
         for size in [egui::vec2(360.0, 516.0), egui::vec2(752.0, 516.0)] {
-            for (label, remote) in [
-                (
-                    "Remote Sessions — Discover and resume an existing sessiond shell over SSH",
-                    true,
-                ),
-                (
-                    "Enterprise — Experimental Entra sign-in and Dev Box discovery",
-                    false,
-                ),
+            let mut harness = harness_with_configuration_size(Configuration::empty(), size);
+            harness.run_ok();
+            for label in [
+                "Remote Sessions — Discover and resume an existing sessiond shell over SSH",
+                "Enterprise — Experimental Entra sign-in and Dev Box discovery",
             ] {
-                let mut harness = harness_with_configuration_size(Configuration::empty(), size);
-                harness.run_ok();
-                harness.get_by_label(label).scroll_to_me();
-                harness.run_ok();
-                harness.get_by_label(label).click();
-                harness.run_ok();
-                assert!(if remote {
-                    matches!(
-                        harness.state().command,
-                        Some(AppCommand::OpenRemoteSessions)
-                    )
-                } else {
-                    matches!(harness.state().command, Some(AppCommand::OpenEnterprise))
-                });
+                assert!(harness.query_by_label(label).is_none());
             }
+            assert!(harness
+                .query_by_label("PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP")
+                .is_some());
+            assert!(harness.state().command.is_none());
         }
     }
 
@@ -7252,7 +7220,7 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        let launch_cards = 8 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
+        let launch_cards = 6 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
         for _ in 0..launch_cards {
             harness.key_press(egui::Key::ArrowDown);
             harness.run();
