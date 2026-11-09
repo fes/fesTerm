@@ -259,6 +259,17 @@ class TunnelBundleTests(unittest.TestCase):
         self.assertIn("Copyright 2026 Mads Marquart", text)
         self.assertIn("Apple SDKs", text)
 
+    def test_macos_block2_rejects_tampered_reviewed_license(self):
+        shutil.rmtree(self.root / "dependency")
+        self.install_objc_fallbacks()
+        (self.root / "packaging/license-fallbacks/objc2-legacy-mit.txt").write_text("tampered\n")
+        metadata = copy.deepcopy(self.metadata)
+        metadata["packages"][-1].update({
+            "name": "block2", "version": "0.6.2", "license": "MIT",
+        })
+        with self.assertRaisesRegex(ValueError, "upstream fallback blob mismatch"):
+            bundle.third_party_notices(metadata, VERSION, self.root)
+
     def test_dependency_license_path_traversal_and_symlinks_are_rejected(self):
         for traversal in (True, False):
             with self.subTest(traversal=traversal):
