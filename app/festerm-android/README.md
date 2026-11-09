@@ -14,7 +14,7 @@ command-line tools. Set `JAVA_HOME` and `ANDROID_HOME`; put Java, `sdkmanager`,
 
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android
-sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
 python3 scripts/build-android.py
 python3 scripts/build-android.py --install --serial emulator-5580
 ```
@@ -24,10 +24,12 @@ Run commands from the repository root. The APK is
 source revision, dirty state, ABI, tool versions, signing mode and APK hash.
 `--abi x86_64` supports Intel emulators; `--offline` builds just the offline
 fixture. `--release` optimizes Rust but **still uses development signing**.
-Both ABIs target Android 10/API 29 or later, target API 35, and use 16-KiB
+Both ABIs target Android 10/API 29 or later, target API 36, and use 16-KiB
 native alignment. The SDK-only packager needs neither Gradle nor cargo-apk.
 JVM TLS dependencies are version-pinned and checksum-verified, including
 cached downloads; no host system CA file is copied into the application.
+For the separately signed Play App Bundle and console submission process, see
+[mobile signing and release](../../docs/mobile-signing-and-release.md#play-internal-testing-bundle-preparation).
 
 For a dedicated emulator, install a matching system image and create an AVD
 with `avdmanager`. ARM Macs need an ARM64 image; Linux CI needs x86_64.

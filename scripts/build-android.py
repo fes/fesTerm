@@ -16,9 +16,9 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app" / "festerm-android"
-API = 35
+API = 36
 MIN_API = 29
-BUILD_TOOLS = "35.0.0"
+BUILD_TOOLS = "36.0.0"
 NDK = "27.2.12479018"
 TARGETS = {
     "arm64-v8a": ("aarch64-linux-android", "aarch64-linux-android"),
@@ -72,10 +72,8 @@ def native_dependencies():
     return paths
 
 
-def build(args):
-    if args.recording_validation and args.release:
-        raise ValueError("Recording validation hooks are not allowed in release APKs")
-    sdk = Path(args.sdk).expanduser().resolve()
+def target_environment(sdk_path, abi, offline=False, recording_validation=False):
+    sdk = Path(sdk_path).expanduser().resolve()
     tools = sdk / "build-tools" / BUILD_TOOLS
     android_jar = sdk / "platforms" / f"android-{API}" / "android.jar"
     host = {"Darwin": "darwin-x86_64", "Linux": "linux-x86_64"}.get(platform.system())
@@ -88,7 +86,7 @@ def build(args):
     for command in ("cargo", "javac", "keytool"):
         if shutil.which(command) is None:
             raise ValueError(f"Missing build tool: {command}")
-    target, clang_target = TARGETS[args.abi]
+    target, clang_target = TARGETS[abi]
     env = os.environ.copy()
     env["ANDROID_HOME"] = str(sdk)
     env["ANDROID_NDK_HOME"] = str(sdk / "ndk" / NDK)
@@ -101,22 +99,77 @@ def build(args):
     env[f"AR_{key}"] = str(llvm / "llvm-ar")
     env["RUSTFLAGS"] = env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-z,max-page-size=16384"
     env.setdefault("CARGO_PROFILE_DEV_DEBUG", "0")
-    features = ["--no-default-features"] if args.offline else []
-    if args.recording_validation:
+    features = ["--no-default-features"] if offline else []
+    if recording_validation:
         features += ["--features", "native-recording-validation"]
     tree = run("cargo", "tree", "--locked", "-p", "festerm-android", "--target", target,
                "--edges", "normal,build", "--prefix", "none", *features, env=env, capture=True)
     check_dependency_tree(tree)
+    return tools, android_jar, target, env, features
+
+
+def build_library(target, env, features, release):
+    mode = "release" if release else "debug"
+    cargo_target = Path(env.get("CARGO_TARGET_DIR", ROOT / "target")).resolve()
+    run("cargo", "build", "--locked", "-p", "festerm-android", "--target", target,
+        *features, *(["--release"] if release else []), env=env)
+    library = cargo_target / target / mode / "libfesterm_android.so"
+    if not library.is_file() or not library.stat().st_size:
+        raise ValueError(f"Missing Android native library: {library}")
+    return library
+
+
+def compile_app(work, tools, android_jar, env, dependencies, recording_validation=False,
+                debug=False, proto_format=False):
+    classes, dex = work / "classes", work / "dex"
+    classes.mkdir()
+    dex.mkdir()
+    resource_dir = work / "res"
+    shutil.copytree(APP / "res", resource_dir)
+    jars = []
+    for dependency in dependencies:
+        if dependency.suffix == ".aar":
+            with zipfile.ZipFile(dependency) as archive:
+                jar = work / (dependency.stem + ".jar")
+                jar.write_bytes(archive.read("classes.jar"))
+                jars.append(jar)
+                security = resource_dir / "xml" / "network_security_config.xml"
+                security.parent.mkdir(exist_ok=True)
+                security.write_bytes(archive.read("res/xml/network_security_config.xml"))
+        else:
+            jars.append(dependency)
+    java = sorted((APP / "java").rglob("*.java"))
+    if recording_validation:
+        java += sorted((APP / "tests/hooks").rglob("*.java"))
+    run("javac", "-encoding", "UTF-8", "-source", "11", "-target", "11",
+        "-classpath", android_jar, "-d", classes, *java, env=env)
+    run(tools / "d8", "--lib", android_jar, "--min-api", MIN_API,
+        "--output", dex, *sorted(classes.rglob("*.class")), *jars, env=env)
+    dex_files = sorted(dex.glob("classes*.dex"))
+    if not dex_files:
+        raise ValueError("Android compiler produced no dex files")
+    resources = work / "resources.zip"
+    unsigned = work / "unsigned.apk"
+    run(tools / "aapt2", "compile", "--dir", resource_dir, "-o", resources, env=env)
+    run(tools / "aapt2", "link", "-I", android_jar, "--manifest", APP / "AndroidManifest.xml",
+        *(["--debug-mode"] if debug else []), *(["--proto-format"] if proto_format else []),
+        "-o", unsigned, resources, env=env)
+    return unsigned, dex_files
+
+
+def build(args):
+    if args.recording_validation and args.release:
+        raise ValueError("Recording validation hooks are not allowed in release APKs")
+    tools, android_jar, target, env, features = target_environment(
+        args.sdk, args.abi, args.offline, args.recording_validation,
+    )
     if args.check_dependencies:
         return
     dependencies = native_dependencies()
     mode = "release" if args.release else "debug"
     output = ROOT / "target" / "android" / args.abi / ("offline" if args.offline else "live")
     output.mkdir(parents=True, exist_ok=True)
-    cargo_target = Path(env.get("CARGO_TARGET_DIR", ROOT / "target")).resolve()
-    run("cargo", "build", "--locked", "-p", "festerm-android", "--target", target,
-        *features, *(["--release"] if args.release else []), env=env)
-    library = cargo_target / target / mode / "libfesterm_android.so"
+    library = build_library(target, env, features, args.release)
     keystore = ROOT / "target" / "android" / "development.keystore"
     if not keystore.exists():
         run("keytool", "-genkeypair", "-keystore", keystore, "-storepass", "android",
@@ -127,38 +180,13 @@ def build(args):
     apk = output / "fesTerm.apk"
     with tempfile.TemporaryDirectory(prefix="build-", dir=output) as directory:
         work = Path(directory)
-        classes, dex = work / "classes", work / "dex"
-        classes.mkdir()
-        dex.mkdir()
-        resource_dir = work / "res"
-        shutil.copytree(APP / "res", resource_dir)
-        jars = []
-        for dependency in dependencies:
-            if dependency.suffix == ".aar":
-                with zipfile.ZipFile(dependency) as archive:
-                    jar = work / (dependency.stem + ".jar")
-                    jar.write_bytes(archive.read("classes.jar"))
-                    jars.append(jar)
-                    security = resource_dir / "xml" / "network_security_config.xml"
-                    security.parent.mkdir(exist_ok=True)
-                    security.write_bytes(archive.read("res/xml/network_security_config.xml"))
-            else:
-                jars.append(dependency)
-        java = sorted((APP / "java").rglob("*.java"))
-        if args.recording_validation:
-            java += sorted((APP / "tests/hooks").rglob("*.java"))
-        run("javac", "-encoding", "UTF-8", "-source", "11", "-target", "11",
-            "-classpath", android_jar, "-d", classes,
-            *java, env=env)
-        run(tools / "d8", "--lib", android_jar, "--min-api", MIN_API,
-            "--output", dex, *sorted(classes.rglob("*.class")), *jars, env=env)
-        resources = work / "resources.zip"
-        unsigned = work / "unsigned.apk"
-        run(tools / "aapt2", "compile", "--dir", resource_dir, "-o", resources, env=env)
-        run(tools / "aapt2", "link", "-I", android_jar, "--manifest", APP / "AndroidManifest.xml",
-            *(["--debug-mode"] if not args.release else []), "-o", unsigned, resources, env=env)
+        unsigned, dex_files = compile_app(
+            work, tools, android_jar, env, dependencies,
+            recording_validation=args.recording_validation, debug=not args.release,
+        )
         with zipfile.ZipFile(unsigned, "a", compression=zipfile.ZIP_DEFLATED) as package:
-            package.write(dex / "classes.dex", "classes.dex")
+            for dex_file in dex_files:
+                package.write(dex_file, dex_file.name)
             package.write(library, f"lib/{args.abi}/libfesterm_android.so")
             package.write(APP / "NOTICE.txt", "assets/NOTICE.txt")
             package.write(ROOT / "vendor/egui-winit/LICENSE-APACHE", "assets/licenses/Apache-2.0.txt")

@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "app/festerm-android/dependencies.json": "e05d84ba2a3ccd029509b2d34b6aaf0990a5e8802e2d2e8d9ae724753dcd591d",
+    "app/festerm-android/dependencies.json": "d99043ed96426173198021b5d0b262ba404b484912a1b1047bf5a6b917460025",
     "assets/fonts/iosevka-term/LICENSE.md": "4ba53c7c1cb39279aae5f8d7d22054c485c71169920e5a36ed098b115e2e3c5d",
     "assets/fonts/iosevka-term/manifest.json": "f07c2bca4ad7d07003ae026d516f90785731c0e26bd3b94068fded52786d376c",
     "assets/fonts/jetbrains-mono/AUTHORS.txt": "33f99c94ef0a0909d7584a5d4bde1fb9b1630daa620f5a788c28c43327e79412",

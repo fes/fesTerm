@@ -1,0 +1,126 @@
+name: Prepare Android Play bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version matching the selected vMAJOR.MINOR.PATCH tag
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: android-play-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Require the green main release commit
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$GITHUB_REF" == "refs/tags/v$VERSION" ]]
+          git fetch origin main:refs/remotes/origin/main
+          [[ "$(git rev-parse "$GITHUB_SHA")" == "$(git rev-parse refs/remotes/origin/main)" ]]
+          [[ "$(git rev-list -n 1 "$GITHUB_REF")" == "$GITHUB_SHA" ]]
+          python3 - "$VERSION" <<'PY'
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
+          if version != sys.argv[1]:
+              raise SystemExit("Selected tag and workspace version differ")
+          PY
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --event push \
+            --limit 100 --json headSha,status,conclusion > "$RUNNER_TEMP/main-ci.json"
+          python3 - "$GITHUB_SHA" "$RUNNER_TEMP/main-ci.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          runs = [run for run in json.loads(Path(sys.argv[2]).read_text()) if run["headSha"] == sys.argv[1]]
+          if not runs or runs[0]["status"] != "completed" or runs[0]["conclusion"] != "success":
+              raise SystemExit("Main CI for the selected release commit is not green")
+          PY
+
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release-android
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Confirm the tag still matches main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          [[ "$(git rev-parse FETCH_HEAD)" == "$GITHUB_SHA" ]]
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-play-bundle
+      - name: Select Java 17
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018
+      - name: Build and verify the upload-signed bundle
+        shell: bash
+        env:
+          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          ANDROID_UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ vars.ANDROID_UPLOAD_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_UPLOAD_KEYSTORE_BASE64"
+          test -n "$ANDROID_UPLOAD_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_UPLOAD_KEY_ALIAS"
+          signing_dir=$(mktemp -d "$RUNNER_TEMP/festerm-android-signing.XXXXXXXX")
+          export ANDROID_UPLOAD_KEYSTORE="$signing_dir/upload.keystore"
+          trap 'rm -f -- "$ANDROID_UPLOAD_KEYSTORE"; rmdir -- "$signing_dir"' EXIT
+          python3 - <<'PY'
+          import base64
+          import os
+
+          encoded = "".join(os.environ["ANDROID_UPLOAD_KEYSTORE_BASE64"].split())
+          if not encoded or len(encoded) > 1024 * 1024:
+              raise SystemExit("Invalid Android upload keystore size")
+          data = base64.b64decode(encoded, validate=True)
+          if not data:
+              raise SystemExit("Empty Android upload keystore")
+          descriptor = os.open(os.environ["ANDROID_UPLOAD_KEYSTORE"], os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+          with os.fdopen(descriptor, "wb") as target:
+              target.write(data)
+          PY
+          unset ANDROID_UPLOAD_KEYSTORE_BASE64
+          python3 scripts/build-android-play.py --output-dir "$RUNNER_TEMP/festerm-android-play"
+      - name: Retain the verified bundle and receipt
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: festerm-android-play-${{ inputs.version }}
+          path: |
+            ${{ runner.temp }}/festerm-android-play/fesTerm.aab
+            ${{ runner.temp }}/festerm-android-play/build-receipt.json
+          if-no-files-found: error
+          retention-days: 7
