@@ -76,10 +76,10 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: '0'
-      ANDROID_UPLOAD_KEYSTORE_PASSWORD: android-test-only
-      ANDROID_UPLOAD_KEY_ALIAS: test-upload
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,x86_64-linux-android
@@ -94,19 +94,32 @@ jobs:
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
         with:
           packages: platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018
-      - name: Select a temporary key path
-        run: echo "ANDROID_UPLOAD_KEYSTORE=$RUNNER_TEMP/android-validation.p12" >> "$GITHUB_ENV"
-      - name: Create a disposable test key
+      - name: Build and verify an unsigned bundle
+        run: >-
+          python3 scripts/build-android-play.py --validation-only --version-code 1001
+          --output-dir "$RUNNER_TEMP/android-validation"
+      - name: Sign with a disposable test key
+        shell: bash
+        env:
+          ANDROID_UPLOAD_KEYSTORE_PASSWORD: android-test-only
+          ANDROID_UPLOAD_KEY_ALIAS: test-upload
         run: |
+          set -euo pipefail
+          export ANDROID_UPLOAD_KEYSTORE="$RUNNER_TEMP/android-validation.p12"
           keytool -genkeypair -keystore "$ANDROID_UPLOAD_KEYSTORE" -storetype PKCS12 \
             -alias "$ANDROID_UPLOAD_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 365 \
             -dname 'CN=fesTerm CI Validation Only' \
             -storepass:env ANDROID_UPLOAD_KEYSTORE_PASSWORD \
             -keypass:env ANDROID_UPLOAD_KEYSTORE_PASSWORD
-      - name: Build and verify a non-publishable bundle
-        run: python3 scripts/build-android-play.py --validation-only --output-dir "$RUNNER_TEMP/android-validation"
+          bundle="$RUNNER_TEMP/android-validation/fesTerm-unsigned.aab"
+          python3 scripts/sign-android-bundle.py "$bundle" \
+            --output "$RUNNER_TEMP/android-validation/fesTerm.aab" \
+            --sha256 "$(sha256sum "$bundle" | cut -d' ' -f1)"
       - name: Verify the generated universal APK
         shell: bash
+        env:
+          ANDROID_UPLOAD_KEYSTORE_PASSWORD: android-test-only
+          ANDROID_UPLOAD_KEY_ALIAS: test-upload
         run: |
           set -euo pipefail
           bundletool_version=$(python3 -c 'import json; print(json.load(open("app/festerm-android/dependencies.json"))["bundletool"]["version"])')
@@ -114,7 +127,7 @@ jobs:
             --bundle="$RUNNER_TEMP/android-validation/fesTerm.aab" \
             --output="$RUNNER_TEMP/validation.apks" --mode=universal \
             --aapt2="$ANDROID_HOME/build-tools/36.0.0/aapt2" \
-            --ks="$ANDROID_UPLOAD_KEYSTORE" --ks-key-alias="$ANDROID_UPLOAD_KEY_ALIAS" \
+            --ks="$RUNNER_TEMP/android-validation.p12" --ks-key-alias="$ANDROID_UPLOAD_KEY_ALIAS" \
             --ks-pass=pass:android-test-only --key-pass=pass:android-test-only
           unzip -p "$RUNNER_TEMP/validation.apks" universal.apk > "$RUNNER_TEMP/universal.apk"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$RUNNER_TEMP/universal.apk"

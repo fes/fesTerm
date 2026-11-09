@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and verify a Play-upload-signed Android App Bundle."""
+"""Build and verify an unsigned Android App Bundle for separate Play signing."""
 
 import argparse
 import hashlib
@@ -27,7 +27,11 @@ SPEC.loader.exec_module(android)
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 PACKAGE = "io.github.fes.festerm"
 ABIS = ("arm64-v8a", "x86_64")
-FINGERPRINT = re.compile(r"(?m)^\s*SHA256:\s*((?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2})\s*$")
+BUNDLE_CONFIG = {"optimizations": {"uncompressNativeLibraries": {"enabled": False}}}
+SIGNING_ENV = (
+    "ANDROID_UPLOAD_KEYSTORE", "ANDROID_UPLOAD_KEYSTORE_BASE64",
+    "ANDROID_UPLOAD_KEYSTORE_PASSWORD", "PLAY_ACCESS_TOKEN",
+)
 
 
 def manifest_details(xml, expected_version):
@@ -38,15 +42,16 @@ def manifest_details(xml, expected_version):
     code = root.get(ANDROID + "versionCode", "")
     if version != expected_version or not re.fullmatch(r"[1-9][0-9]*", code):
         raise ValueError("Android version name/code does not match the release")
-    if int(code) > 2_100_000_000:
+    if int(code) > android.MAX_VERSION_CODE:
         raise ValueError("Android versionCode exceeds the Google Play limit")
     sdk = root.find("uses-sdk")
     app = root.find("application")
     if sdk is None or sdk.get(ANDROID + "minSdkVersion") != str(android.MIN_API) \
             or sdk.get(ANDROID + "targetSdkVersion") != str(android.API):
         raise ValueError("Android minimum or target SDK does not match the release toolchain")
-    if app is None or app.get(ANDROID + "debuggable", "false") != "false":
-        raise ValueError("Play bundles must not be debuggable")
+    if app is None or app.get(ANDROID + "debuggable", "false") != "false" \
+            or app.get(ANDROID + "extractNativeLibs") != "true":
+        raise ValueError("Play bundles must not be debuggable and must extract native libraries")
     return version, int(code)
 
 
@@ -54,7 +59,8 @@ def bundletool(root=ROOT):
     pin = json.loads((root / "app/festerm-android/dependencies.json").read_text())["bundletool"]
     version = pin["version"]
     expected_url = f"https://github.com/google/bundletool/releases/download/{version}/bundletool-all-{version}.jar"
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version) or pin["url"] != expected_url \
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version) \
+            or pin["name"] != f"bundletool-all-{version}.jar" or pin["url"] != expected_url \
             or not re.fullmatch(r"[0-9a-f]{64}", pin["sha256"]):
         raise ValueError("Invalid bundletool version, URL, or checksum pin")
     path = root / "target/android-tools" / f"bundletool-all-{version}.jar"
@@ -89,53 +95,6 @@ def run(*args, env=None, capture=False, timeout=600):
         [str(arg) for arg in args], cwd=ROOT, env=env, check=True, timeout=timeout,
         text=True, capture_output=capture,
     ).stdout
-
-
-def fingerprint(output):
-    found = FINGERPRINT.findall(output)
-    if len(found) != 1:
-        raise ValueError("Expected exactly one SHA-256 signing certificate fingerprint")
-    return found[0].replace(":", "").upper()
-
-
-def upload_identity(keystore, alias, env):
-    if not keystore.is_file() or keystore.is_symlink():
-        raise ValueError("Android upload keystore must be a regular file")
-    if keystore.resolve() == (ROOT / "target/android/development.keystore").resolve():
-        raise ValueError("The Android development keystore cannot sign a Play bundle")
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", alias) or alias.lower() == "androiddebugkey":
-        raise ValueError("A non-development Android upload key alias is required")
-    if not env.get("ANDROID_UPLOAD_KEYSTORE_PASSWORD"):
-        raise ValueError("Set ANDROID_UPLOAD_KEYSTORE_PASSWORD without putting it on the command line")
-    details = run("keytool", "-list", "-v", "-keystore", keystore, "-alias", alias,
-                  "-storepass:env", "ANDROID_UPLOAD_KEYSTORE_PASSWORD", env=env, capture=True)
-    key = re.search(r"(?m)^Subject Public Key Algorithm:\s*([0-9,]+)-bit RSA key\s*$", details)
-    if "Entry type: PrivateKeyEntry" not in details or not key or int(key.group(1).replace(",", "")) < 2048:
-        raise ValueError("Play upload key must be a private RSA key of at least 2048 bits")
-    return fingerprint(details)
-
-
-def verify_signed_bundle(bundle, expected_fingerprint, env):
-    result = subprocess.run(
-        ["jarsigner", "-verify", "-strict", str(bundle)], cwd=ROOT, env=env,
-        text=True, capture_output=True, timeout=600,
-    )
-    output = result.stdout + result.stderr
-    if result.returncode == 4:
-        error_block = output.partition("Error:")[2].split("\n\n", 1)[0].strip().splitlines()
-        allowed = (
-            "This jar contains entries whose certificate chain is invalid.",
-            "This jar contains entries whose signer certificate is self-signed.",
-        )
-        if len(error_block) != 2 or not all(
-            any(line.startswith(prefix) for prefix in allowed) for line in error_block
-        ) or not any("self-signed" in line for line in error_block):
-            raise ValueError("Android bundle signature has unexpected certificate errors")
-    elif result.returncode != 0:
-        raise ValueError(f"Android bundle signature verification failed (exit {result.returncode})")
-    cert = run("keytool", "-printcert", "-jarfile", bundle, env=env, capture=True)
-    if fingerprint(cert) != expected_fingerprint:
-        raise ValueError("Android bundle signer does not match the selected upload key")
 
 
 def verify_native_library(library, abi, sdk, env):
@@ -196,6 +155,7 @@ def verify_bundle_contents(bundle, libraries, root=ROOT):
         expected = {
             "base/manifest/AndroidManifest.xml", "base/resources.pb", "base/dex/classes.dex",
             "base/assets/THIRD_PARTY_NOTICES.txt", "base/assets/NOTICE.txt",
+            "base/assets/licenses/Apache-2.0.txt",
         }
         expected.update(f"base/lib/{abi}/libfesterm_android.so" for abi in libraries)
         if not expected <= set(names):
@@ -203,8 +163,13 @@ def verify_bundle_contents(bundle, libraries, root=ROOT):
         if {name for name in names if name.startswith("base/lib/")} != \
                 {f"base/lib/{abi}/libfesterm_android.so" for abi in libraries}:
             raise ValueError("Android bundle contains unexpected native libraries")
-        if archive.read("base/assets/THIRD_PARTY_NOTICES.txt") != (root / "packaging/THIRD_PARTY_NOTICES.txt").read_bytes():
-            raise ValueError("Android bundle does not contain the reviewed notices")
+        for asset, path in (
+            ("THIRD_PARTY_NOTICES.txt", "packaging/THIRD_PARTY_NOTICES.txt"),
+            ("NOTICE.txt", "app/festerm-android/NOTICE.txt"),
+            ("licenses/Apache-2.0.txt", "vendor/egui-winit/LICENSE-APACHE"),
+        ):
+            if archive.read("base/assets/" + asset) != (root / path).read_bytes():
+                raise ValueError(f"Android bundle does not contain the reviewed notices: {asset}")
         for abi, library in libraries.items():
             with library.open("rb") as source:
                 expected_hash = hashlib.file_digest(source, "sha256").digest()
@@ -213,11 +178,15 @@ def verify_bundle_contents(bundle, libraries, root=ROOT):
 
 
 def build(args):
+    present = [name for name in SIGNING_ENV if os.environ.get(name)]
+    if present:
+        raise ValueError("Remove signing and Play credentials before building: " + ", ".join(present))
+    if not 1 <= args.version_code <= android.MAX_VERSION_CODE:
+        raise ValueError(f"--version-code must be between 1 and {android.MAX_VERSION_CODE}")
     env = dict(os.environ, LC_ALL="C")
-    keystore = Path(args.keystore).expanduser()
-    signer = upload_identity(keystore, args.alias, env)
     version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
-    version, code = manifest_details((android.APP / "AndroidManifest.xml").read_text(), version)
+    version, _ = manifest_details((android.APP / "AndroidManifest.xml").read_text(), version)
+    code = args.version_code
     dirty = bool(run("git", "status", "--porcelain", capture=True).strip())
     if dirty and not args.validation_only:
         raise ValueError("Play release bundle requires a clean worktree")
@@ -236,7 +205,7 @@ def build(args):
         ROOT / "target/android-play" / ("validation" if args.validation_only else f"{version}-{code}")
     )
     output.mkdir(parents=True, exist_ok=True)
-    destination = output / "fesTerm.aab"
+    destination = output / "fesTerm-unsigned.aab"
     receipt = output / "build-receipt.json"
     if destination.exists() or receipt.exists():
         raise ValueError("Refusing to overwrite an existing Android bundle or receipt")
@@ -244,17 +213,15 @@ def build(args):
         work = Path(directory)
         tools, android_jar, _, build_env, _ = contexts[ABIS[0]]
         resources, dex = android.compile_app(
-            work, tools, android_jar, build_env, dependencies, proto_format=True,
+            work, tools, android_jar, build_env, dependencies, proto_format=True, version_code=code,
         )
         module = work / "base.zip"
         make_module(module, resources, dex, libraries)
-        bundle = work / "fesTerm.aab"
+        config = work / "BundleConfig.json"
+        config.write_text(json.dumps(BUNDLE_CONFIG))
+        bundle = work / "fesTerm-unsigned.aab"
         run("java", "-jar", tool, "build-bundle", f"--modules={module}", f"--output={bundle}",
-            env=env, timeout=1200)
-        run("jarsigner", "-keystore", keystore, "-storepass:env", "ANDROID_UPLOAD_KEYSTORE_PASSWORD",
-            "-keypass:env", "ANDROID_UPLOAD_KEYSTORE_PASSWORD", "-digestalg", "SHA-256",
-            "-sigalg", "SHA256withRSA", bundle, args.alias, env=env, timeout=600)
-        verify_signed_bundle(bundle, signer, env)
+            f"--config={config}", env=env, timeout=1200)
         run("java", "-jar", tool, "validate", f"--bundle={bundle}", env=env, timeout=600)
         xml = run("java", "-jar", tool, "dump", "manifest", f"--bundle={bundle}", env=env, capture=True)
         if manifest_details(xml, version) != (version, code):
@@ -268,8 +235,7 @@ def build(args):
         "dirty": dirty, "validation_only": args.validation_only, "package": PACKAGE,
         "version_name": version, "version_code": code, "min_sdk": android.MIN_API,
         "target_sdk": android.API, "abis": list(ABIS),
-        "signing": "test-key" if args.validation_only else "selected-upload-key",
-        "signer_sha256": signer, "bundletool": tool_version, "sha256": sha256,
+        "signing": "unsigned", "bundletool": tool_version, "sha256": sha256,
     }
     receipt.write_text(json.dumps(record, indent=2) + "\n")
     print(destination)
@@ -278,8 +244,7 @@ def build(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", default=os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk")))
-    parser.add_argument("--keystore", default=os.environ.get("ANDROID_UPLOAD_KEYSTORE"), required=not os.environ.get("ANDROID_UPLOAD_KEYSTORE"))
-    parser.add_argument("--alias", default=os.environ.get("ANDROID_UPLOAD_KEY_ALIAS"), required=not os.environ.get("ANDROID_UPLOAD_KEY_ALIAS"))
+    parser.add_argument("--version-code", type=int, required=True, help="unique Play versionCode")
     parser.add_argument("--output-dir", help="new output directory for the bundle and its receipt")
     parser.add_argument("--validation-only", action="store_true", help="allow a dirty worktree and mark the bundle test-only")
     build(parser.parse_args())

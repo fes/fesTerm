@@ -9,8 +9,11 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 import tomllib
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -20,6 +23,7 @@ API = 36
 MIN_API = 29
 BUILD_TOOLS = "36.0.0"
 NDK = "27.2.12479018"
+MAX_VERSION_CODE = 2_100_000_000
 TARGETS = {
     "arm64-v8a": ("aarch64-linux-android", "aarch64-linux-android"),
     "x86_64": ("x86_64-linux-android", "x86_64-linux-android"),
@@ -46,6 +50,27 @@ def check_dependency_tree(tree):
         if required not in names:
             raise ValueError("Missing shared Android dependency: " + required)
 
+
+def download(url, limit, attempts=4):
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                return response.read(limit + 1)
+        except urllib.error.HTTPError as error:
+            error.close()
+            if error.code < 500 or attempt == attempts:
+                raise
+            reason = f"HTTP {error.code}"
+        except (urllib.error.URLError, TimeoutError) as error:
+            if attempt == attempts:
+                raise
+            reason = str(error)
+        delay = 5 * 2 ** (attempt - 1)
+        print(f"Android dependency download failed ({reason}); retrying in {delay}s",
+              file=sys.stderr, flush=True)
+        time.sleep(delay)
+
+
 def native_dependencies():
     manifest = json.loads((APP / "dependencies.json").read_text())
     lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
@@ -58,8 +83,7 @@ def native_dependencies():
     for artifact in manifest["artifacts"]:
         path = directory / artifact["name"]
         if not path.exists():
-            with urllib.request.urlopen(artifact["url"], timeout=60) as response:
-                data = response.read(8 * 1024 * 1024 + 1)
+            data = download(artifact["url"], 8 * 1024 * 1024)
             if len(data) > 8 * 1024 * 1024:
                 raise ValueError("Android dependency exceeds the download bound")
             if hashlib.sha256(data).hexdigest() != artifact["sha256"]:
@@ -120,7 +144,7 @@ def build_library(target, env, features, release):
 
 
 def compile_app(work, tools, android_jar, env, dependencies, recording_validation=False,
-                debug=False, proto_format=False):
+                debug=False, proto_format=False, version_code=None):
     classes, dex = work / "classes", work / "dex"
     classes.mkdir()
     dex.mkdir()
@@ -151,9 +175,11 @@ def compile_app(work, tools, android_jar, env, dependencies, recording_validatio
     resources = work / "resources.zip"
     unsigned = work / "unsigned.apk"
     run(tools / "aapt2", "compile", "--dir", resource_dir, "-o", resources, env=env)
+    version_args = (["--version-code", str(version_code), "--replace-version"]
+                    if version_code is not None else [])
     run(tools / "aapt2", "link", "-I", android_jar, "--manifest", APP / "AndroidManifest.xml",
         *(["--debug-mode"] if debug else []), *(["--proto-format"] if proto_format else []),
-        "-o", unsigned, resources, env=env)
+        *version_args, "-o", unsigned, resources, env=env)
     return unsigned, dex_files
 
 

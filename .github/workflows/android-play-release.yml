@@ -1,52 +1,82 @@
-name: Prepare Android Play bundle
+name: Android Play release
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       version:
-        description: Release version matching the selected vMAJOR.MINOR.PATCH tag
+        description: Workspace release version on main or its release tag
         required: true
         type: string
+      publish:
+        description: Upload to Internal only after the first Play Console upload
+        required: true
+        type: boolean
+        default: false
+      release_status:
+        description: Play Internal release status when publishing
+        required: true
+        type: choice
+        default: draft
+        options:
+          - draft
+          - completed
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: android-play-${{ github.ref }}
+  group: android-play-release
   cancel-in-progress: false
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      version: ${{ steps.release.outputs.version }}
+      version-code: ${{ steps.release.outputs.version-code }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Require the green main release commit
+        id: release
         shell: bash
         env:
-          VERSION: ${{ inputs.version }}
+          DISPATCH_VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$GITHUB_REF" == "refs/tags/v$VERSION" ]]
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$DISPATCH_VERSION"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" || "$GITHUB_REF" == "refs/tags/v$version" ]]
           git fetch origin main:refs/remotes/origin/main
-          [[ "$(git rev-parse "$GITHUB_SHA")" == "$(git rev-parse refs/remotes/origin/main)" ]]
-          [[ "$(git rev-list -n 1 "$GITHUB_REF")" == "$GITHUB_SHA" ]]
-          python3 - "$VERSION" <<'PY'
+          commit=$(git rev-parse "$GITHUB_SHA^{commit}")
+          [[ "$commit" == "$(git rev-parse refs/remotes/origin/main)" ]]
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ "$(git rev-list -n 1 "$GITHUB_REF")" == "$commit" ]]
+          fi
+          python3 - "$version" <<'PY'
           import sys
           import tomllib
           from pathlib import Path
 
           version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
           if version != sys.argv[1]:
-              raise SystemExit("Selected tag and workspace version differ")
+              raise SystemExit("Selected ref and workspace version differ")
           PY
           gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --event push \
             --limit 100 --json headSha,status,conclusion > "$RUNNER_TEMP/main-ci.json"
-          python3 - "$GITHUB_SHA" "$RUNNER_TEMP/main-ci.json" <<'PY'
+          python3 - "$commit" "$RUNNER_TEMP/main-ci.json" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -55,23 +85,31 @@ jobs:
           if not runs or runs[0]["status"] != "completed" or runs[0]["conclusion"] != "success":
               raise SystemExit("Main CI for the selected release commit is not green")
           PY
+          version_code=$((1000 + GITHUB_RUN_NUMBER))
+          [[ "$version_code" -le 2100000000 ]]
+          {
+            echo "commit=$commit"
+            echo "version=$version"
+            echo "version-code=$version_code"
+          } >> "$GITHUB_OUTPUT"
 
   build:
+    name: Build unsigned Play bundle
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    environment: release-android
+    timeout-minutes: 90
+    permissions:
+      contents: read
     env:
       CARGO_INCREMENTAL: '0'
+      VERSION_CODE: ${{ needs.validate.outputs.version-code }}
+    outputs:
+      sha256: ${{ steps.bundle.outputs.sha256 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Confirm the tag still matches main
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          [[ "$(git rev-parse FETCH_HEAD)" == "$GITHUB_SHA" ]]
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           targets: aarch64-linux-android,x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
@@ -85,7 +123,100 @@ jobs:
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
         with:
           packages: platforms;android-36 build-tools;36.0.0 ndk;27.2.12479018
-      - name: Build and verify the upload-signed bundle
+      - name: Build the verified unsigned bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build-android-play.py --sdk "$ANDROID_HOME" --version-code "$VERSION_CODE" \
+            --output-dir "$RUNNER_TEMP/android-bundle"
+          echo "sha256=$(sha256sum "$RUNNER_TEMP/android-bundle/fesTerm-unsigned.aab" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: festerm-android-unsigned-bundle
+          path: |
+            ${{ runner.temp }}/android-bundle/fesTerm-unsigned.aab
+            ${{ runner.temp }}/android-bundle/build-receipt.json
+          if-no-files-found: error
+          retention-days: 3
+
+  sign-and-publish:
+    name: Sign and optionally publish Play bundle
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release-android
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      VERSION_CODE: ${{ needs.validate.outputs.version-code }}
+      RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+      UNSIGNED_SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Select Java 17
+        run: echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+      - name: Decide whether publishing is enabled
+        id: mode
+        shell: bash
+        env:
+          REQUESTED_PUBLISH: ${{ inputs.publish }}
+          REQUESTED_STATUS: ${{ inputs.release_status }}
+          AUTO_PUBLISH: ${{ vars.ANDROID_PLAY_AUTO_PUBLISH }}
+          CONFIGURED_STATUS: ${{ vars.ANDROID_PLAY_RELEASE_STATUS }}
+        run: |
+          set -euo pipefail
+          [[ -z "$AUTO_PUBLISH" || "$AUTO_PUBLISH" == false || "$AUTO_PUBLISH" == true ]] || {
+            echo "::error::ANDROID_PLAY_AUTO_PUBLISH must be true or false"; exit 1; }
+          upload=false
+          status=
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$REQUESTED_PUBLISH" == true ]]; then
+            upload=true
+            status="$REQUESTED_STATUS"
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$AUTO_PUBLISH" == true ]]; then
+            upload=true
+            status="$CONFIGURED_STATUS"
+          fi
+          if [[ "$upload" == true && ! "$status" =~ ^(draft|completed)$ ]]; then
+            echo "::error::Choose an explicit draft or completed Play release status"; exit 1
+          fi
+          {
+            echo "upload=$upload"
+            echo "status=$status"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: festerm-android-unsigned-bundle
+          path: android-bundle
+      - name: Verify the build receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          [[ "$(git rev-parse FETCH_HEAD)" == "$RELEASE_COMMIT" ]]
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          receipt = json.loads(Path("android-bundle/build-receipt.json").read_text())
+          expected = {
+              "commit": os.environ["RELEASE_COMMIT"],
+              "version_name": os.environ["VERSION"],
+              "version_code": int(os.environ["VERSION_CODE"]),
+              "sha256": os.environ["UNSIGNED_SHA256"],
+              "signing": "unsigned",
+              "dirty": False,
+              "validation_only": False,
+          }
+          if any(receipt.get(key) != value for key, value in expected.items()):
+              raise SystemExit("Unsigned bundle receipt does not match the release build")
+          PY
+      - name: Sign with the Play upload key
         shell: bash
         env:
           ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
@@ -114,13 +245,45 @@ jobs:
               target.write(data)
           PY
           unset ANDROID_UPLOAD_KEYSTORE_BASE64
-          python3 scripts/build-android-play.py --output-dir "$RUNNER_TEMP/festerm-android-play"
-      - name: Retain the verified bundle and receipt
+          python3 scripts/sign-android-bundle.py android-bundle/fesTerm-unsigned.aab \
+            --output android-bundle/fesTerm.aab --sha256 "$UNSIGNED_SHA256" \
+            > android-bundle/signing-receipt.json
+      - name: Retain the signed bundle and receipts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: festerm-android-play-${{ inputs.version }}
+          name: festerm-android-play-${{ needs.validate.outputs.version }}
           path: |
-            ${{ runner.temp }}/festerm-android-play/fesTerm.aab
-            ${{ runner.temp }}/festerm-android-play/build-receipt.json
+            android-bundle/fesTerm.aab
+            android-bundle/build-receipt.json
+            android-bundle/signing-receipt.json
           if-no-files-found: error
           retention-days: 7
+      - name: Authenticate to Google Play
+        id: play-auth
+        if: steps.mode.outputs.upload == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_PLAY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          access_token_lifetime: 1800s
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Upload to Play Internal testing
+        if: steps.mode.outputs.upload == 'true'
+        env:
+          PLAY_ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
+          PLAY_RELEASE_STATUS: ${{ steps.mode.outputs.status }}
+        run: |
+          python3 scripts/upload-android-play-bundle.py android-bundle/fesTerm.aab \
+            --version-code "$VERSION_CODE" --release-name "$VERSION ($VERSION_CODE)" \
+            --status "$PLAY_RELEASE_STATUS" > android-bundle/play-upload-receipt.json
+          cat android-bundle/play-upload-receipt.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain the Play upload receipt
+        if: steps.mode.outputs.upload == 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: festerm-android-play-upload-receipt
+          path: android-bundle/play-upload-receipt.json
+          if-no-files-found: error

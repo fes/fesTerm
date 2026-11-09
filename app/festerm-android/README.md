@@ -82,6 +82,9 @@ input queue, not the host view.
   them; ciphertext is deliberately device-bound and excluded from backup.
 - APK signature mismatch: another checkout may have a different development
   key. Do not uninstall a valuable installation just to bypass the mismatch.
-- Store publication needs separate release signing, licensing/distribution
-  review, target-SDK review and native acceptance; the generated development
-  keystore must never be committed or used as a release key.
+- Store publication: the Android Play release workflow builds an unsigned AAB
+  without secrets, then signs it in a separate protected job. The first upload
+  is manual; subsequent Internal-track API uploads require explicit opt-in
+  (ADR 0083). Store listing, Data safety and native acceptance (`PLAY-01`)
+  remain manual. The development keystore must never be committed or used as
+  a release key; the signer refuses it.

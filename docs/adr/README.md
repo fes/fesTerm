@@ -100,6 +100,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0073: Android Host for the Shared Mobile Application](0073-android-shared-mobile-host.md) - Proposed; shared iOS UI/protocols with an Android native-service boundary, private document imports and development APK packaging
 
+- [ADR 0083: Android Google Play Release Pipeline](0083-android-play-release-pipeline.md) - Proposed; upload-key-signed multi-ABI AAB, run-number versionCode, keyless WIF upload to the Internal track only
+
 ## Status Values
 
 - **Proposed:** under discussion and not yet binding.
