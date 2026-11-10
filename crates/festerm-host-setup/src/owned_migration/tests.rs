@@ -197,7 +197,7 @@ impl Drop for Fixture {
 #[test]
 #[ignore = "requires an explicitly supplied current-source helper; no installed runtime or services"]
 fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existing_frontend() {
-    native_migration_fixture(false);
+    native_migration_fixture(false, None);
 }
 
 #[cfg(feature = "owner-enrollment")]
@@ -355,11 +355,20 @@ fn owned_migration_unsupported_helper_defers_without_binding_checkpoint_or_sourc
 #[test]
 #[ignore = "explicit current-source binaries and test-owned daemon only; no installed runtime or services"]
 fn owned_migration_native_authenticated_binding_switch_resume_release_preserve_frontend() {
-    native_migration_fixture(true);
+    native_migration_fixture(true, None);
+}
+
+#[cfg(all(unix, feature = "owner-enrollment"))]
+#[test]
+#[ignore = "explicit current-source binaries and test-owned daemon only; no installed runtime or services"]
+fn owned_migration_native_prepared_and_active_shell_exit_release_claims_and_unblock_enable() {
+    for active in [false, true] {
+        native_migration_fixture(true, Some(active));
+    }
 }
 
 #[cfg(unix)]
-fn native_migration_fixture(_binding: bool) {
+fn native_migration_fixture(_binding: bool, _exit_after_switch: Option<bool>) {
     use std::{
         io::{Read, Write},
         os::unix::net::UnixStream,
@@ -424,6 +433,151 @@ fn native_migration_fixture(_binding: bool) {
             parser.push(&bytes[..length]).unwrap();
         }
         panic!("no response on the original frontend");
+    }
+
+    #[cfg(feature = "owner-enrollment")]
+    fn exit_and_rollback(
+        fixture: &Fixture,
+        stream: &mut UnixStream,
+        selected: &festerm_sessiond::UnattachedSession,
+        active: bool,
+    ) {
+        let runtime = &fixture.inventory.legacy_runtime;
+        let journal = binding_status(&fixture.destination).unwrap();
+        let binding = journal.bindings.values().next().unwrap();
+        assert_eq!(journal.switched.len(), usize::from(active));
+        let runtime_directory = storage::private_directory(runtime, false).unwrap();
+        let key = format!(
+            "native-binding-{}-{}.key",
+            selected.pid, selected.created_at_unix_ms
+        );
+        assert!(runtime.join(&key).exists());
+        input(stream, b"MIGRATION-EXIT\n");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if !festerm_sessiond::daemon_generation_is_live(
+                runtime,
+                selected.pid,
+                selected.created_at_unix_ms,
+                &selected.endpoint,
+            )
+            .unwrap()
+                && festerm_sessiond::list_running_sessions_strict_in(runtime)
+                    .unwrap()
+                    .is_empty()
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "ordinary shell exit did not finish"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !runtime.join(&key).exists(),
+            "ordinary exit retained generation secret"
+        );
+        assert!(!runtime
+            .join(format!(
+                "lease-{}-{}",
+                selected.pid, selected.created_at_unix_ms
+            ))
+            .exists());
+        assert!(!Path::new(&selected.endpoint).exists());
+        let host_lock = format!("host-daemon-{}.lock", selected.created_at_unix_ms);
+        let lock =
+            storage::open_private_file(&runtime_directory, Path::new(&host_lock), false).unwrap();
+        fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+        assert!(fixture
+            .inventory
+            .release_bindings(&fixture.destination, &fixture.root.join("host"))
+            .is_err());
+        assert_eq!(
+            status(&fixture.destination).unwrap().phase,
+            Phase::RollbackPending
+        );
+        assert!(binding_status(&fixture.destination)
+            .unwrap()
+            .released
+            .is_empty());
+        assert!(fixture.inventory.rollback(&fixture.destination).is_err());
+        drop(lock);
+
+        let registry =
+            storage::read_private(&runtime_directory, Path::new("registry.json"), LIMIT).unwrap();
+        storage::replace_private(&runtime_directory, Path::new("registry.json"), b"broken")
+            .unwrap();
+        assert!(fixture
+            .inventory
+            .release_bindings(&fixture.destination, &fixture.root.join("host"))
+            .is_err());
+        assert!(binding_status(&fixture.destination)
+            .unwrap()
+            .released
+            .is_empty());
+        assert!(
+            !read::<Claim>(&fixture.source_directory(), CLAIM, LIMIT)
+                .unwrap()
+                .released
+        );
+        storage::replace_private(&runtime_directory, Path::new("registry.json"), &registry)
+            .unwrap();
+
+        if active {
+            std::fs::remove_file(runtime.join(&host_lock)).unwrap();
+            std::fs::remove_file(
+                runtime.join(format!("host-daemon-{}.json", selected.created_at_unix_ms)),
+            )
+            .unwrap();
+        }
+        let released = fixture
+            .inventory
+            .release_bindings(&fixture.destination, &fixture.root.join("host"))
+            .unwrap();
+        assert_eq!(released.released.len(), 1);
+        assert_eq!(
+            fixture
+                .inventory
+                .release_bindings(&fixture.destination, &fixture.root.join("host"))
+                .unwrap(),
+            released
+        );
+        assert_eq!(
+            fixture
+                .inventory
+                .rollback(&fixture.destination)
+                .unwrap()
+                .phase,
+            Phase::RolledBack
+        );
+        assert!(
+            read::<Claim>(&fixture.source_directory(), CLAIM, LIMIT)
+                .unwrap()
+                .released
+        );
+        fixture.destination.with_locked(admit_enable).unwrap();
+        assert!(fixture
+            .inventory
+            .bind_existing(
+                &fixture.destination,
+                &fixture.root.join("host"),
+                crate::enrollment::OwnerStorage::HeadlessProtectedFile
+            )
+            .is_err());
+        assert!(
+            festerm_sessiond::host_control::SessionControl::existing_only(
+                &fixture.root.join("host/daemon")
+            )
+            .unwrap()
+            .switch_binding(binding, |_| Ok(()))
+            .is_err()
+        );
+        assert!(festerm_sessiond::list_running_sessions_strict_in(runtime)
+            .unwrap()
+            .is_empty());
+        println!("ordinary native shell exit: phase={} pid={} generation={}; exact key/lease/socket removed; Busy/corrupt proof pending; authoritative absence releases claims/unblocks enable; no rebind/duplicate shell",
+            if active { "active" } else { "prepared" }, selected.pid, selected.created_at_unix_ms);
     }
 
     struct NativeCleanup {
@@ -513,7 +667,7 @@ fn native_migration_fixture(_binding: bool) {
             "--arg",
             "-c",
             "--arg",
-            "while IFS= read -r line; do printf 'MIGRATION-INPUT:%s\\n' \"$line\"; done",
+            "while IFS= read -r line; do if [ \"$line\" = 'MIGRATION-EXIT' ]; then exit 0; fi; printf 'MIGRATION-INPUT:%s\\n' \"$line\"; done",
             "--cwd",
         ])
         .arg(&fixture.root)
@@ -736,6 +890,11 @@ fn native_migration_fixture(_binding: bool) {
         );
         input(&mut stream, b"after-binding\n");
         marker(&mut stream, b"MIGRATION-INPUT:after-binding");
+        if _exit_after_switch == Some(false) {
+            exit_and_rollback(&fixture, &mut stream, &selected, false);
+            fixture.retain = false;
+            return;
+        }
         let control_directory =
             storage::private_directory(&fixture.root.join("host/daemon"), false).unwrap();
         let mut interrupted: serde_json::Value =
@@ -833,6 +992,11 @@ fn native_migration_fixture(_binding: bool) {
             status(&fixture.destination).unwrap().destination_host_id,
             reserved.destination_host_id
         );
+        if _exit_after_switch == Some(true) {
+            exit_and_rollback(&fixture, &mut stream, &selected, true);
+            fixture.retain = false;
+            return;
+        }
     }
     fixture.change("installation.json", |record| {
         record["target"]["generation"] = json!(selected.created_at_unix_ms + 1);
@@ -869,6 +1033,15 @@ fn native_migration_fixture(_binding: bool) {
             .unwrap();
         input(&mut stream, b"after-release\n");
         marker(&mut stream, b"MIGRATION-INPUT:after-release");
+        assert!(
+            runtime
+                .join(format!(
+                    "native-binding-{}-{}.key",
+                    selected.pid, selected.created_at_unix_ms
+                ))
+                .exists(),
+            "live release removed the server capability"
+        );
         let mut interrupted = binding_status(&fixture.destination).unwrap();
         interrupted.released.clear();
         write(
@@ -975,6 +1148,12 @@ fn native_migration_fixture(_binding: bool) {
         assert!(Instant::now() < deadline);
         thread::sleep(Duration::from_millis(20));
     }
+    assert!(!runtime
+        .join(format!(
+            "native-binding-{}-{}.key",
+            selected.pid, selected.created_at_unix_ms
+        ))
+        .exists());
     fixture.retain = false;
 }
 

@@ -175,6 +175,18 @@ a persistent watch on its existing sole writer loop, outside frontend admission.
 The transport reuses Unix sockets or the existing protected Windows pipe API;
 Windows execution and installed-platform qualification remain open.
 
+The on-disk capability is a live-generation secret, including for ordinary
+daemons that are never migrated. Its exclusive creation returns a separate
+resource owner: normal exit and failed-start unwind explicitly remove only that
+retained file identity, before releasing the lifetime lease. Reading/deserializing
+a capability never transfers cleanup ownership. Partial publication cleans only
+its own file; cleanup failures are reported and preserve generation artifacts and
+an exact retry record. Dead-generation recovery requires the exclusive exact
+lifetime lease and matching protected identity/spawn fingerprint; corrupt,
+foreign, redirected or untrusted keys refuse cleanup without permission repair.
+No directory sweep is performed. Release while the daemon is alive preserves
+its capability and PTY; released receipt tombstones are deliberately retained.
+
 The prepared native lease is private/revoked at initial grant epoch one. Switch
 journals its original intent and activates only that preparation; later revoked
 revisions cannot be reactivated. A lost acknowledgement resumes the same
@@ -194,6 +206,16 @@ retains a one-way generation-local tombstone, and only then releases original
 claims. Resume finishes an already journaled rollback without new stop consent.
 An uncertain result stays pending for the same operation; there is no automatic
 retry, native restart, provider cleanup or authority expansion.
+
+Ordinary shell exit does not strand a prepared or active binding. Release keeps
+the protected operation/owner/namespace/issuer checks and revokes an existing
+HOST lease first. Only the existing exact-identity/fingerprint native-generation
+observation returning authoritative absence can replace an unavailable native
+release reply, or permit an already-missing HOST lease. Unknown, Busy, foreign,
+corrupt and failed observations remain pending, never inferred absence from an
+I/O error. An absent generation needs no new native tombstone: the protected
+released binding checkpoint and original claim release remain one-way. Rollback
+can then finish and unblock the separate enable gate without recreating a shell.
 
 Focused deterministic fixtures cover reservation/receipt preservation, account/
 key/origin/name and generation conflicts, stale epochs, missing/corrupt/released

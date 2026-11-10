@@ -1,5 +1,25 @@
 # Milestone Progress Narrative
 
+## Closing migration capability ownership and ordinary-exit cleanup
+
+Review found two lifecycle gaps in the current-daemon migration increment:
+unused ordinary generations retained their disk capability, and an imported
+shell exiting before rollback could leave its claims permanently pending.
+Exclusive capability creation now returns a separate cleanup owner; readers
+only zeroize memory. Normal/failed-start unwind removes the retained file
+identity, while uncertain cleanup preserves a diagnosed exact retry handle.
+Dead-generation recovery is narrow and lease/identity/fingerprint-fenced; it
+does not sweep keys or prune released receipt tombstones.
+
+Release still revokes the existing HOST lease and repeats protected admission.
+Only authoritative exact-generation absence can substitute for a native reply,
+including an already-missing HOST lease. Unknown/Busy/corrupt observations stay
+pending. Focused deterministic fixtures cover both fixes, and a controlled
+current-source shell exits in each Prepared/Active phase before rollback,
+proving key removal, one-way claim release and an unblocked separate enable
+gate without a replacement shell. Installed-platform and old-release gates
+remain open; this follow-up does not repeat the full earlier qualification.
+
 ## Authenticating current-daemon migration without taking its frontend
 
 The frozen reservation foundation correctly refused ordinary-daemon adoption:

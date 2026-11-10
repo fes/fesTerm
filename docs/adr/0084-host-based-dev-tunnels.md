@@ -609,6 +609,18 @@ release/rollback and original PTY I/O with unchanged PID/generation/frontend.
 This is not old-release, signed installed-platform, provider, vault or GUI
 acceptance; those `HOSTMIG-01` gates remain open.
 
+The generation-capability lifecycle correction separates exclusive creation
+ownership from non-owning client readers. Normal/failed-start cleanup removes
+only the retained key identity; exact dead-generation recovery refuses
+live/foreign/corrupt/untrusted artifacts and leaves observable retry evidence
+on uncertainty. Released native receipt tombstones are retained. The ordinary
+shell-exit regression covers both prepared and active bindings: only existing
+authoritative exact-generation absence permits protected local release without
+a daemon acknowledgement, including an already-missing HOST lease. Busy and
+corrupt observations remain pending; claim release/rollback unblocks enable
+without rebinding or spawning. These focused fixtures do not close installed
+platform or old-release acceptance.
+
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation
 during proof, one original authentication deadline, framed persistent Busy and

@@ -1640,7 +1640,11 @@ persistent watch in place, and routes exact retained roots through existing
 shared authorization/adoption. Separate owner approval and switch do not enable
 the disabled installation. Its CLI never acquires a frontend or launches/stops a
 daemon; older helpers defer. Observed source/claim revocation cannot be resumed
-into an active grant. Controlled live fixtures are not service switching/rollback,
+into an active grant. Generation keys have creation-owner-only normal/failed-start
+cleanup; live release retains the key and released receipt tombstones. An ordinary
+shell exit permits release/claims rollback only with authoritative exact-generation
+absence; Busy/corrupt/unknown outcomes remain pending, not failed-I/O-as-absence.
+Controlled live fixtures are not service switching/rollback,
 installed/old-release or complete migration acceptance; the legacy Linux script
 path is not promoted to authenticated setup.
 

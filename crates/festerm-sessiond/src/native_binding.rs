@@ -1,6 +1,8 @@
 //! Generation-local challenge/response for explicit in-place HOST binding.
 //! The daemon creates the private capability before publication and retains it
-//! in memory. Possession is not owner consent: SessionControl separately requires
+//! in memory. Its separate creation owner explicitly retires the disk key before
+//! releasing the generation lease. Readers never own cleanup.
+//! Possession is not owner consent: SessionControl separately requires
 //! current protected policy at each durable publication.
 use crate::{host_lease::DaemonWatch, private_storage as storage, NativeSessionIdentity};
 use festerm_host_protocol::{Epoch, HostId, LogicalSessionId, OperationId, PrincipalId};
@@ -276,6 +278,69 @@ fn receipt_name(identity: &NativeSessionIdentity) -> String {
     )
 }
 
+/// Only exclusive creation yields this resource owner; deserializing a client
+/// capability cannot. Cleanup is explicit so failures reach daemon diagnostics.
+pub struct CapabilityOwner {
+    directory: File,
+    file: File,
+    name: PathBuf,
+}
+
+impl CapabilityOwner {
+    pub fn cleanup(self) -> io::Result<()> {
+        storage::remove_private_file_if_same(&self.directory, &self.name, &self.file)
+    }
+
+    fn publish(mut self, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<Self> {
+        let result = write(&mut self.file)
+            .and_then(|()| self.file.sync_all())
+            .and_then(|()| {
+                #[cfg(unix)]
+                self.directory.sync_all()?;
+                Ok(())
+            });
+        if let Err(error) = result {
+            return match self.cleanup() {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(io::Error::other(format!(
+                    "{error}; native binding capability cleanup failed: {cleanup}"
+                ))),
+            };
+        }
+        Ok(self)
+    }
+}
+
+/// Caller holds the exact generation's exclusive lifetime lease after exit.
+/// A missing key is idempotent; foreign/corrupt/untrusted entries are not absence.
+pub fn cleanup_dead_capability(
+    directory: &File,
+    identity: &NativeSessionIdentity,
+    fingerprint: Option<&str>,
+    lifetime_lease: Option<&File>,
+) -> io::Result<()> {
+    let name = PathBuf::from(capability_name(identity));
+    let mut file = match storage::open_private_file(directory, &name, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    lifetime_lease.ok_or_else(invalid)?.try_lock_exclusive()?;
+    if file.metadata()?.len() > 4096 {
+        return Err(invalid());
+    }
+    let mut bytes = Zeroizing::new(Vec::with_capacity(4097));
+    Read::by_ref(&mut file).take(4097).read_to_end(&mut bytes)?;
+    let capability: Capability = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    if capability.version != 1
+        || capability.identity != *identity
+        || Some(capability.fingerprint.as_str()) != fingerprint
+    {
+        return Err(invalid());
+    }
+    storage::remove_private_file_if_same(directory, &name, &file)
+}
+
 /// Created by the actual daemon while holding its original lifetime lease.
 pub struct DaemonBinding {
     directory: File,
@@ -396,7 +461,7 @@ impl DaemonBinding {
         root: &Path,
         identity: NativeSessionIdentity,
         fingerprint: String,
-    ) -> io::Result<Self> {
+    ) -> io::Result<(Self, CapabilityOwner)> {
         let directory = storage::private_directory(root, false)?;
         let capability = Capability {
             version: 1,
@@ -405,17 +470,22 @@ impl DaemonBinding {
             key: random(),
         };
         let bytes = Zeroizing::new(serde_json::to_vec(&capability).map_err(|_| invalid())?);
-        storage::write_new_private(
-            &directory,
-            Path::new(&capability_name(&capability.identity)),
-            &bytes,
-        )?;
-        Ok(Self {
-            directory,
-            root: root.into(),
-            capability,
-            receipt: None,
-        })
+        let name = PathBuf::from(capability_name(&capability.identity));
+        let owner = CapabilityOwner {
+            directory: directory.try_clone()?,
+            file: storage::open_private_file(&directory, &name, true)?,
+            name,
+        }
+        .publish(|file| file.write_all(&bytes))?;
+        Ok((
+            Self {
+                directory,
+                root: root.into(),
+                capability,
+                receipt: None,
+            },
+            owner,
+        ))
     }
 
     fn apply(&mut self, request: Request, watch: &mut Option<DaemonWatch>) -> io::Result<Reply> {
@@ -742,10 +812,10 @@ pub(crate) fn release(binding: &Binding) -> io::Result<Receipt> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn descriptor(root: &Path) -> Binding {
+    pub(crate) fn descriptor(root: &Path) -> Binding {
         Binding {
             operation: OperationId::new(),
             host: HostId::new(),
@@ -806,7 +876,7 @@ mod tests {
             .join(format!("target/binding-receipt-{}", uuid::Uuid::new_v4()));
         storage::private_directory(&root, true).unwrap();
         let binding = descriptor(&root);
-        let mut daemon = DaemonBinding::create(
+        let (mut daemon, owner) = DaemonBinding::create(
             &root,
             binding.identity.clone(),
             binding.spawn_fingerprint.clone(),
@@ -845,6 +915,7 @@ mod tests {
         assert!(daemon
             .recover_publication(&Request::Probe {}, &mut watch)
             .is_err());
+        owner.cleanup().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -887,7 +958,7 @@ mod tests {
             .unwrap();
         let mut watch =
             Some(DaemonWatch::open(&root, &binding.identity.name, generation.get()).unwrap());
-        let mut daemon = DaemonBinding::create(
+        let (mut daemon, owner) = DaemonBinding::create(
             &root,
             binding.identity.clone(),
             binding.spawn_fingerprint.clone(),
@@ -906,6 +977,7 @@ mod tests {
             .is_err());
         assert!(!watch.as_mut().unwrap().should_stop());
         assert!(daemon.receipt.is_none());
+        owner.cleanup().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -948,6 +1020,221 @@ mod tests {
         ] {
             assert!(verify(&key, domain, &nonce, body, &signature).is_err());
         }
+    }
+
+    #[test]
+    fn authenticated_binding_capability_owner_cleanup_preserves_live_readers_and_release_tombstone()
+    {
+        let root = storage::private_test_directory();
+        let binding = descriptor(root.path());
+        let (daemon, owner) = DaemonBinding::create(
+            root.path(),
+            binding.identity.clone(),
+            binding.spawn_fingerprint.clone(),
+        )
+        .unwrap();
+        let name = PathBuf::from(capability_name(&binding.identity));
+        let bytes = storage::read_private(&daemon.directory, &name, 4096).unwrap();
+        let reader: Capability = serde_json::from_slice(&bytes).unwrap();
+        drop(reader);
+        assert!(root.path().join(&name).exists());
+        let released = Receipt {
+            version: 1,
+            binding,
+            phase: BindingPhase::Released,
+        };
+        daemon.publish(None, &released).unwrap();
+        assert!(
+            root.path().join(&name).exists(),
+            "live release must preserve capability"
+        );
+        owner.cleanup().unwrap();
+        assert!(!root.path().join(&name).exists());
+        assert!(root
+            .path()
+            .join(receipt_name(&released.binding.identity))
+            .exists());
+    }
+
+    #[test]
+    fn authenticated_binding_capability_failed_publication_cleans_partial_owned_key_and_reports_failure(
+    ) {
+        let root = storage::private_test_directory();
+        let directory = storage::private_directory(root.path(), false).unwrap();
+        let name = PathBuf::from("partial.key");
+        let owner = CapabilityOwner {
+            directory: directory.try_clone().unwrap(),
+            file: storage::open_private_file(&directory, &name, true).unwrap(),
+            name: name.clone(),
+        };
+        let error = owner
+            .publish(|file| {
+                file.write_all(b"partial-secret")?;
+                Err(io::Error::other("fixture publication failure"))
+            })
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("fixture publication failure"));
+        assert!(!root.path().join(&name).exists());
+
+        let owner = CapabilityOwner {
+            directory: directory.try_clone().unwrap(),
+            file: storage::open_private_file(&directory, &name, true).unwrap(),
+            name: name.clone(),
+        };
+        let error = owner
+            .publish(|_| {
+                storage::replace_private(&directory, &name, b"foreign")?;
+                Err(io::Error::other("fixture publication failure"))
+            })
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("fixture publication failure"));
+        assert!(error.to_string().contains("cleanup failed"));
+        assert_eq!(
+            &*storage::read_private(&directory, &name, 4096).unwrap(),
+            b"foreign"
+        );
+    }
+
+    #[test]
+    fn authenticated_binding_capability_cleanup_refuses_replaced_foreign_corrupt_and_redirected_keys(
+    ) {
+        for replacement in [
+            "same-bytes",
+            "foreign",
+            "corrupt",
+            "redirected",
+            "untrusted",
+        ] {
+            let root = storage::private_test_directory();
+            let binding = descriptor(root.path());
+            let (daemon, owner) = DaemonBinding::create(
+                root.path(),
+                binding.identity.clone(),
+                binding.spawn_fingerprint.clone(),
+            )
+            .unwrap();
+            let name = PathBuf::from(capability_name(&binding.identity));
+            let lifetime =
+                storage::open_private_file(&daemon.directory, Path::new("lifetime"), true).unwrap();
+            let bytes = storage::read_private(&daemon.directory, &name, 4096).unwrap();
+            match replacement {
+                "same-bytes" => storage::replace_private(&daemon.directory, &name, &bytes).unwrap(),
+                "foreign" => {
+                    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    value["identity"]["created_at_unix_ms"] = serde_json::json!(999);
+                    storage::replace_private(
+                        &daemon.directory,
+                        &name,
+                        &serde_json::to_vec(&value).unwrap(),
+                    )
+                    .unwrap();
+                }
+                "corrupt" => {
+                    storage::replace_private(&daemon.directory, &name, b"corrupt").unwrap()
+                }
+                #[cfg(unix)]
+                "redirected" => {
+                    std::fs::rename(root.path().join(&name), root.path().join("sentinel")).unwrap();
+                    std::os::unix::fs::symlink("sentinel", root.path().join(&name)).unwrap();
+                }
+                #[cfg(unix)]
+                "untrusted" => {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(
+                        root.path().join(&name),
+                        std::fs::Permissions::from_mode(0o644),
+                    )
+                    .unwrap();
+                }
+                _ => continue,
+            }
+            assert!(owner.cleanup().is_err(), "{replacement}");
+            assert!(std::fs::symlink_metadata(root.path().join(&name)).is_ok());
+            if replacement != "same-bytes" {
+                assert!(
+                    cleanup_dead_capability(
+                        &daemon.directory,
+                        &binding.identity,
+                        Some(&binding.spawn_fingerprint),
+                        Some(&lifetime)
+                    )
+                    .is_err(),
+                    "{replacement}"
+                );
+            }
+            assert!(std::fs::symlink_metadata(root.path().join(&name)).is_ok());
+        }
+    }
+
+    #[test]
+    fn authenticated_binding_capability_dead_cleanup_requires_exact_identity_fingerprint_and_dead_lease(
+    ) {
+        let root = storage::private_test_directory();
+        let binding = descriptor(root.path());
+        let (daemon, owner) = DaemonBinding::create(
+            root.path(),
+            binding.identity.clone(),
+            binding.spawn_fingerprint.clone(),
+        )
+        .unwrap();
+        let name = PathBuf::from(capability_name(&binding.identity));
+        let lease =
+            storage::open_private_file(&daemon.directory, Path::new("lifetime"), true).unwrap();
+        let mut other_identity = binding.identity.clone();
+        other_identity.created_at_unix_ms += 1;
+        let (_other_daemon, other_owner) = DaemonBinding::create(
+            root.path(),
+            other_identity.clone(),
+            binding.spawn_fingerprint.clone(),
+        )
+        .unwrap();
+        lease.lock_exclusive().unwrap();
+        let observer =
+            storage::open_private_file(&daemon.directory, Path::new("lifetime"), false).unwrap();
+        assert!(cleanup_dead_capability(
+            &daemon.directory,
+            &binding.identity,
+            Some(&binding.spawn_fingerprint),
+            Some(&observer)
+        )
+        .is_err());
+        assert!(cleanup_dead_capability(
+            &daemon.directory,
+            &binding.identity,
+            Some(&binding.spawn_fingerprint),
+            None
+        )
+        .is_err());
+        assert!(root.path().join(&name).exists());
+        drop(lease);
+        assert!(cleanup_dead_capability(
+            &daemon.directory,
+            &binding.identity,
+            Some("foreign"),
+            Some(&observer)
+        )
+        .is_err());
+        assert!(root.path().join(&name).exists());
+        cleanup_dead_capability(
+            &daemon.directory,
+            &binding.identity,
+            Some(&binding.spawn_fingerprint),
+            Some(&observer),
+        )
+        .unwrap();
+        assert!(!root.path().join(&name).exists());
+        assert!(root.path().join(capability_name(&other_identity)).exists());
+        cleanup_dead_capability(
+            &daemon.directory,
+            &binding.identity,
+            Some(&binding.spawn_fingerprint),
+            Some(&observer),
+        )
+        .unwrap();
+        owner.cleanup().unwrap();
+        other_owner.cleanup().unwrap();
     }
 
     #[test]

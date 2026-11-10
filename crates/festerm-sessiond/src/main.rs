@@ -1294,67 +1294,88 @@ fn run_daemon(
     }));
     #[cfg(unix)]
     session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
-    let result = with_daemon_generation(&runtime_root, &record, |socket_owned| {
-        if DAEMON_HOST_WATCH.get().is_none() {
-            if let Some(fingerprint) = &record.spawn_fingerprint {
-                let binding = festerm_sessiond::native_binding::DaemonBinding::create(
-                    &runtime_root,
-                    identity.clone(),
-                    fingerprint.clone(),
-                )?;
-                let _ = DAEMON_BINDING.set(std::sync::Mutex::new(binding));
-            }
-        }
-        #[cfg(unix)]
-        {
-            let socket_path = Path::new(&record.socket);
-            let listener = bind_unix_listener(socket_path)?;
-            *socket_owned = true;
-            set_file_mode(socket_path, 0o600)?;
-            let mut spawned = spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
-                .inspect_err(|error| {
-                    lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
-                })?;
-            let mut terminal = Terminal::with_scrollback_limit(
-                Dimensions::new(cols as usize, rows as usize)?,
-                scrollback_limit_bytes,
-            )?;
-            save_registry_record(record.clone())?;
-            lifecycle_event(LifecycleEvent::Ready);
-            let reader = spawned.master()?.try_clone_reader()?;
-            let writer = spawned.master()?.take_writer()?;
-            daemon_client_loop(listener, reader, writer, &mut spawned, &name, &mut terminal)?;
-        }
+    let result = with_daemon_generation(
+        &runtime_root,
+        &record,
+        |socket_owned, preserve_artifacts| {
+            let mut capability_owner = None;
+            let result = (|| {
+                if DAEMON_HOST_WATCH.get().is_none() {
+                    if let Some(fingerprint) = &record.spawn_fingerprint {
+                        let (binding, owner) =
+                            festerm_sessiond::native_binding::DaemonBinding::create(
+                                &runtime_root,
+                                identity.clone(),
+                                fingerprint.clone(),
+                            )?;
+                        capability_owner = Some(owner);
+                        DAEMON_BINDING
+                            .set(std::sync::Mutex::new(binding))
+                            .map_err(|_| "native binding capability already initialized")?;
+                    }
+                }
+                #[cfg(unix)]
+                {
+                    let socket_path = Path::new(&record.socket);
+                    let listener = bind_unix_listener(socket_path)?;
+                    *socket_owned = true;
+                    set_file_mode(socket_path, 0o600)?;
+                    let mut spawned =
+                        spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
+                            .inspect_err(|error| {
+                                lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
+                            })?;
+                    let mut terminal = Terminal::with_scrollback_limit(
+                        Dimensions::new(cols as usize, rows as usize)?,
+                        scrollback_limit_bytes,
+                    )?;
+                    save_registry_record(record.clone())?;
+                    lifecycle_event(LifecycleEvent::Ready);
+                    let reader = spawned.master()?.try_clone_reader()?;
+                    let writer = spawned.master()?.take_writer()?;
+                    daemon_client_loop(
+                        listener,
+                        reader,
+                        writer,
+                        &mut spawned,
+                        &name,
+                        &mut terminal,
+                    )?;
+                }
 
-        #[cfg(windows)]
-        {
-            let _ = socket_owned;
-            let initial_listener = create_secure_pipe_listener(&record.socket, true)?;
-            let mut spawned = spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
-                .inspect_err(|error| {
-                    lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
-                })?;
-            let mut terminal = Terminal::with_scrollback_limit(
-                Dimensions::new(cols as usize, rows as usize)?,
-                scrollback_limit_bytes,
-            )?;
-            save_registry_record(record.clone())?;
-            lifecycle_event(LifecycleEvent::Ready);
-            let reader = spawned.master()?.try_clone_reader()?;
-            let writer = spawned.master()?.take_writer()?;
-            daemon_client_loop_windows(
-                &record.socket,
-                initial_listener,
-                reader,
-                writer,
-                &mut spawned,
-                &name,
-                &mut terminal,
-            )?;
-        }
-        lifecycle_event(LifecycleEvent::Stopping);
-        Ok(())
-    });
+                #[cfg(windows)]
+                {
+                    let _ = socket_owned;
+                    let initial_listener = create_secure_pipe_listener(&record.socket, true)?;
+                    let mut spawned =
+                        spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
+                            .inspect_err(|error| {
+                                lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
+                            })?;
+                    let mut terminal = Terminal::with_scrollback_limit(
+                        Dimensions::new(cols as usize, rows as usize)?,
+                        scrollback_limit_bytes,
+                    )?;
+                    save_registry_record(record.clone())?;
+                    lifecycle_event(LifecycleEvent::Ready);
+                    let reader = spawned.master()?.try_clone_reader()?;
+                    let writer = spawned.master()?.take_writer()?;
+                    daemon_client_loop_windows(
+                        &record.socket,
+                        initial_listener,
+                        reader,
+                        writer,
+                        &mut spawned,
+                        &name,
+                        &mut terminal,
+                    )?;
+                }
+                lifecycle_event(LifecycleEvent::Stopping);
+                Ok(())
+            })();
+            finish_daemon_capability(result, capability_owner, preserve_artifacts)
+        },
+    );
     if let Err(error) = &result {
         lifecycle_failure(FailureStage::Daemon, error.as_ref());
     }
@@ -1438,7 +1459,7 @@ fn combine_cleanup_result(
 fn with_daemon_generation(
     root: &Path,
     record: &SessionRecord,
-    serve: impl FnOnce(&mut bool) -> Result<(), Box<dyn std::error::Error>>,
+    serve: impl FnOnce(&mut bool, &mut bool) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     validate_artifact_root(root)?;
     let lease_path = generation_lease_path(root, record);
@@ -1455,19 +1476,50 @@ fn with_daemon_generation(
             .open(&lease_path)?,
     };
     let mut socket_owned = false;
+    let mut preserve_artifacts = false;
     let result = (|| {
         lease.lock_exclusive()?;
         set_file_mode(&lease_path, 0o600)?;
-        serve(&mut socket_owned)
+        serve(&mut socket_owned, &mut preserve_artifacts)
     })();
     // Release before taking the registry lock: kill holds that lock while
     // waiting for this generation's lease to become available.
     drop(lease);
-    let cleanup = with_registry_lock(|registry| {
-        cleanup_dead_generation(root, record, socket_owned)?;
-        remove_registry_record_if_generation_matches(registry, record);
-        Ok(())
+    let cleanup = if preserve_artifacts {
+        Err("native binding capability cleanup incomplete; generation artifacts retained".into())
+    } else {
+        cleanup_dead_generation(root, record, socket_owned)
+    };
+    let publication = with_registry_lock_in(
+        root,
+        |registry| {
+            if cleanup.is_err() {
+                if !registry.sessions.contains_key(&record.name) {
+                    registry
+                        .sessions
+                        .insert(record.name.clone(), record.clone());
+                }
+            } else {
+                remove_registry_record_if_generation_matches(registry, record);
+            }
+            Ok(())
+        },
+        || {},
+    );
+    combine_cleanup_result(result, combine_cleanup_result(cleanup, publication))
+}
+
+fn finish_daemon_capability(
+    result: Result<(), Box<dyn std::error::Error>>,
+    owner: Option<festerm_sessiond::native_binding::CapabilityOwner>,
+    preserve_artifacts: &mut bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cleanup = owner.map_or(Ok(()), |owner| {
+        owner.cleanup().map_err(|error| {
+            format!("native binding capability cleanup failed: {error}; generation retained; retry kill").into()
+        })
     });
+    *preserve_artifacts = cleanup.is_err();
     combine_cleanup_result(result, cleanup)
 }
 
@@ -4875,6 +4927,20 @@ fn cleanup_dead_generation(
             )
         })?;
     }
+    if record.spawn_fingerprint.is_some() {
+        let directory = festerm_sessiond::private_storage::private_directory(root, false)?;
+        festerm_sessiond::native_binding::cleanup_dead_capability(
+            &directory,
+            &festerm_sessiond::NativeSessionIdentity {
+                name: record.name.clone(),
+                pid: record.pid,
+                created_at_unix_ms: record.created_at_unix_ms,
+                endpoint: record.socket.clone(),
+            },
+            record.spawn_fingerprint.as_deref(),
+            lease.as_ref(),
+        )?;
+    }
     #[cfg(unix)]
     if socket_owned {
         // This is derived, never an arbitrary registry-supplied path.
@@ -7534,6 +7600,61 @@ mod tests {
     impl Drop for GenerationFixture {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn generation_binding_capability_cleanup_normal_failed_start_and_replacement_retains_retry_handle(
+    ) {
+        for outcome in ["normal", "failed-start", "replacement"] {
+            let fixture = GenerationFixture::new();
+            let mut record = fixture.record("owned", 123);
+            record.spawn_fingerprint = Some(format!("v1:{}", "a".repeat(64)));
+            let key = format!("native-binding-{}-123.key", record.pid);
+            let result = with_daemon_generation(&fixture.0, &record, |_, preserve| {
+                let (_daemon, owner) = festerm_sessiond::native_binding::DaemonBinding::create(
+                    &fixture.0,
+                    festerm_sessiond::NativeSessionIdentity {
+                        name: record.name.clone(),
+                        pid: record.pid,
+                        created_at_unix_ms: record.created_at_unix_ms,
+                        endpoint: record.socket.clone(),
+                    },
+                    record.spawn_fingerprint.clone().unwrap(),
+                )?;
+                if outcome == "replacement" {
+                    festerm_sessiond::private_storage::replace_private(
+                        &festerm_sessiond::private_storage::private_directory(&fixture.0, false)?,
+                        Path::new(&key),
+                        b"foreign-replacement",
+                    )?;
+                }
+                let result = if outcome == "normal" {
+                    Ok(())
+                } else {
+                    Err("fixture failed start".into())
+                };
+                finish_daemon_capability(result, Some(owner), preserve)
+            });
+            let registry =
+                with_registry_lock_in(&fixture.0, |registry| Ok(registry.clone()), || {}).unwrap();
+            if outcome == "replacement" {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("generation retained"));
+                assert_eq!(
+                    fs::read(fixture.0.join(&key)).unwrap(),
+                    b"foreign-replacement"
+                );
+                assert!(generation_lease_path(&fixture.0, &record).exists());
+                assert_eq!(registry.sessions.get(&record.name), Some(&record));
+            } else {
+                assert_eq!(result.is_ok(), outcome == "normal");
+                assert!(!fixture.0.join(&key).exists());
+                fixture.assert_removed(&record);
+                assert!(!registry.sessions.contains_key(&record.name));
+            }
         }
     }
 
