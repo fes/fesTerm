@@ -1,5 +1,30 @@
 # Milestone Progress Narrative
 
+## Matching replacement test helpers to their Unix-only consumers
+
+Required Windows CI for backend PR #707 at exact
+`d862fd5d212674cbca9397b14ed0e7aedd273555` failed strict workspace Clippy:
+job `130102020948`, run `42893952854`, reported four unused test helpers,
+not a native execution failure. The retained 158039-byte raw log has SHA-256
+`01260048c0819c1b30922c521fc136fd2ee04783022e8cd8d9709a1bd8bfa6f6`.
+Every caller of `version_fixture` and `authenticate_fixture_registered` is
+inside replacement's existing `#[cfg(all(test, unix))]` module. Their artifact
+helpers `host_version_fixture` and `verify_staging_fixture` have no other
+consumers. The correction aligns those four definitions and their artifact
+re-export with that existing Unix test boundary; it changes five cfg attributes,
+not tests, assertions, production admission or the required CI command.
+
+Bounded actual macOS Rust/Cargo 1.99.1 validation uses the private warm session
+target, jobs1, debug0 and incremental0. The native-services artifact/replacement
+selection passes **21 tests / zero failures / two existing ignores** (packager
+interoperability and explicit native daemon preservation). Strict all-target
+Clippy passes for native-services alone, all features and lifecycle alone.
+All changed items were already test-only: their bodies, every production item,
+manifests, feature defaults and CI remain unchanged. No helper rebuild, native14
+or full macOS suite rerun is attributed to this repair; the preserved native14
+result remains at exact28c below. Actual new-head Windows required CI remains
+necessary after publication. This does not qualify Windows services or PKI.
+
 ## Normally integrating the six gated backend source pins
 
 The separate `work/adr0084-backend-fanin-nov10` worktree starts at exact

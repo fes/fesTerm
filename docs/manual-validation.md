@@ -3907,6 +3907,13 @@ policy mismatch as failure; hosted evidence is not ordinary-user VM proof.
 See the [combined-source boundary](milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins).
 It invokes native online-enabled verification only, never registration/start,
 signing, Azure credentials or OS settings. It was **not run on macOS**.
+
+PR #707's exact-d862 Windows required Clippy failure is a separate test-helper
+cfg mismatch, not a native failure. The
+[test-only correction](milestone-progress.md#matching-replacement-test-helpers-to-their-unix-only-consumers)
+preserves production code and the existing native/helper provenance; its local
+targeted checks do not replace new-head Windows required CI or PKI acceptance.
+
 For a separately authorized ordinary-user Windows lab, record positive approved
 release verification after leaf expiry with a valid timestamp, and refusal of
 wrong subject/profile/chain/EKUs, altered bytes, missing/untrusted/non-RFC3161
