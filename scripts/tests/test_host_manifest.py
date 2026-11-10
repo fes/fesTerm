@@ -188,7 +188,9 @@ class HostManifestTests(unittest.TestCase):
             "      - name: Validate authenticated helper artifacts without desktop dependencies\n", 1
         )[1].split("      - name:", 1)[0]
         self.assertIn("\n        shell: bash\n", "\n" + step)
-        self.assertIn("cargo test --locked -p festerm-host-setup --features acquisition,native-services -p festerm-host", workflow)
+        self.assertIn("cargo test --locked -p festerm-host-setup --features acquisition,native-services -p festerm-host", step)
+        self.assertIn("cargo clippy --locked -p festerm-host-setup --features acquisition,native-services -p festerm-host", step)
+        self.assertIn("python scripts/check_host_notices.py", step)
         job = workflow.split("  helper-signature-compatibility:\n", 1)[1]
         job = job.split("  conformance:\n", 1)[0]
         self.assertIn("runs-on: ubuntu-latest", job)

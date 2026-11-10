@@ -178,6 +178,9 @@ both manifest families on six targets, unchanged legacy bytes, overwrite refusal
 rejection, workflow signing/verification order and signer-secret isolation.
 Recovery fixtures exercise
 the explicit old-tag exception and fail-closed ordinary releases.
+`scripts/tests/test_tunnel_bundle.py` also sends real UTF-8 subprocess output
+through a forced CP1252 default transport decoder, checking non-ASCII Cargo
+metadata is preserved without lossy decoding.
 
 `python_produced_six_bundles_and_manifests_authenticate_in_rust` invokes the real
 Python bundle **and** manifest producers for both families on all six targets, signs their exact

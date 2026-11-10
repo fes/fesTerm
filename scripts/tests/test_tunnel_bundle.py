@@ -2,6 +2,7 @@ import copy
 import hashlib
 import importlib.util
 import io
+import json
 import shutil
 import stat
 import subprocess
@@ -194,6 +195,37 @@ class TunnelBundleTests(unittest.TestCase):
         metadata["workspace_members"].remove("festerm-host")
         with self.assertRaisesRegex(ValueError, "missing dependency license"):
             bundle.third_party_notices(metadata, VERSION, self.root, host=True)
+
+    def test_native_notice_check_decodes_utf8_metadata_under_non_utf8_transport_locale(self):
+        with mock.patch.dict(sys.modules, {"build_tunnel_bundle": bundle}):
+            from scripts import check_host_notices as checker
+
+        metadata = copy.deepcopy(self.metadata)
+        metadata["packages"][-1]["repository"] = "https://example.invalid/Łódź"
+        fixture = self.root / "metadata.json"
+        fixture.write_bytes(json.dumps(metadata, ensure_ascii=False).encode("utf-8"))
+        check_output = subprocess.check_output
+
+        def output(command, **kwargs):
+            if command == ["rustc", "-vV"]:
+                return "host: x86_64-pc-windows-msvc\n"
+            self.assertEqual(command, [
+                "cargo", "metadata", "--locked", "--format-version", "1",
+                "--filter-platform", "x86_64-pc-windows-msvc",
+            ])
+            return check_output([
+                sys.executable, "-c",
+                "import pathlib,sys; sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())",
+                str(fixture),
+            ], **kwargs)
+
+        with mock.patch.object(checker, "ROOT", self.root), \
+                mock.patch.object(checker.subprocess, "check_output", side_effect=output), \
+                mock.patch("subprocess._text_encoding", return_value="cp1252"), \
+                mock.patch.object(checker, "third_party_notices", wraps=bundle.third_party_notices) as render, \
+                mock.patch("builtins.print"):
+            checker.main()
+        self.assertEqual(render.call_args.args[0], metadata)
 
     def test_invalid_or_mismatched_versions_fail_closed(self):
         for version in ("", "v1.2.3", "01.2.3", "1.2", "1.2.3\n", "1.2.4",
