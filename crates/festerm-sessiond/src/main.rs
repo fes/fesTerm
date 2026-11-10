@@ -122,6 +122,18 @@ fn host_commit_attachment(
     }
 }
 
+fn host_attachment_cancelled(
+    ticket: Option<&festerm_host_protocol::OperationId>,
+    kind: AttachKind,
+) -> bool {
+    match DAEMON_HOST_WATCH.get() {
+        Some(watch) => watch.lock().map_or(true, |watch| {
+            watch.attachment_cancelled(ticket, kind == AttachKind::Remote)
+        }),
+        None => ticket.is_some(),
+    }
+}
+
 fn lifecycle_failure(stage: FailureStage, error: &(dyn std::error::Error + 'static)) {
     lifecycle_event(LifecycleEvent::Failure {
         stage,
@@ -1056,6 +1068,9 @@ fn run_start(
         {
             Ok(child) => child,
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
+                if env::var_os("FESTERM_SESSIOND_HOST_CONTROL").is_some() {
+                    return Err("host session requires independent Windows job ownership; breakaway was denied".into());
+                }
                 eprintln!(
                     "festerm-sessiond: could not break away from the current job object \
                      (it likely disallows JOB_OBJECT_LIMIT_BREAKAWAY_OK); starting session \
@@ -2266,7 +2281,9 @@ fn replace_active_authorized<S: Read + Write + Send + 'static>(
         match adopted_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
             Ok(()) => break Ok(()),
             Err(mpsc::RecvTimeoutError::Timeout)
-                if Instant::now() < deadline && !host_daemon_should_stop() =>
+                if Instant::now() < deadline
+                    && !host_daemon_should_stop()
+                    && !host_attachment_cancelled(ticket, kind) =>
             {
                 continue
             }

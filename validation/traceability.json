@@ -5508,7 +5508,9 @@
         "failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create",
         "cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner",
         "lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace",
-        "lease_supervisor_refuses_revision_rollback_or_foreign_generation"
+        "lease_supervisor_refuses_revision_rollback_or_foreign_generation",
+        "protected_inventory_filters_before_labels_without_frontend_admission",
+        "scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_committed"
       ],
       "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
       "status": "partial",

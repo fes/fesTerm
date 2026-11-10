@@ -57,8 +57,12 @@ impl fmt::Display for ControlError {
 }
 impl std::error::Error for ControlError {}
 
-fn storage_error(_: io::Error) -> ControlError {
-    ControlError::Storage
+fn storage_error(error: io::Error) -> ControlError {
+    if crate::lock_is_contended(&error) {
+        ControlError::Busy
+    } else {
+        ControlError::Storage
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -839,7 +843,7 @@ impl SessionControl {
         drop(guard);
         drop(admission);
         let identity = record.native().ok_or(ControlError::Unknown)?;
-        let session = match &ticket {
+        let connected = match &ticket {
             Some(ticket) => PersistentSession::resume_host_reserved_in(
                 &identity,
                 &self.root,
@@ -855,8 +859,33 @@ impl SessionControl {
                 maximum_recovery_bytes,
                 notifier,
             ),
-        }
-        .map_err(|_| ControlError::Busy)?;
+        };
+        let session = match connected {
+            Ok(session) => session,
+            Err(_) => {
+                if let Some(ticket) = &ticket {
+                    let guard = LeaseGuard::acquire(&self.root, record.generation)
+                        .map_err(|_| ControlError::CommittedButNotPublished)?;
+                    let mut lease = guard
+                        .read()
+                        .map_err(|_| ControlError::CommittedButNotPublished)?;
+                    if lease.last_attachment.as_ref() == Some(ticket) {
+                        return Err(ControlError::CommittedButNotPublished);
+                    }
+                    if lease
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| &pending.ticket == ticket)
+                    {
+                        lease.pending = None;
+                        guard
+                            .replace(&mut lease)
+                            .map_err(|_| ControlError::CommittedButNotPublished)?;
+                    }
+                }
+                return Err(ControlError::Busy);
+            }
+        };
         let _publication = Self::admission(Some(record), owner, Effect::Attach, &mut admit)
             .map_err(|_| ControlError::CommittedButNotPublished)?;
         Ok(PendingAttachment {

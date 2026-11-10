@@ -524,6 +524,9 @@ changes are part of the stage-1 contract slice.
   `cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner`,
   `lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace` and
   `lease_supervisor_refuses_revision_rollback_or_foreign_generation`.
+  `protected_inventory_filters_before_labels_without_frontend_admission` and
+  `scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_committed`
+  additionally pin the routing integration boundary and scoped guard lifetime.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and

@@ -3356,6 +3356,9 @@ reconciliation, Windows ConPTY/job/breakaway and Linux service startup, update/
 uninstall independence, simultaneous routed sessions, fair output/control scheduling
 and physical mobile disconnect/reconnect. Later slices must extend DT-07/DT-08,
 CP-11 and MOB-03/MOB-06 with actual platform evidence before claiming acceptance.
+Host-controlled Windows startup refuses denied breakaway instead of claiming
+persistence inside the bridge's job; both denial and successful independent
+whole-ConPTY-tree cleanup require native evidence.
 Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
 HOST-04–06 setup/update/migration remain deferred behind their implementations;
 there is no new completed manual or usability scenario.
