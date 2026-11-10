@@ -3372,9 +3372,9 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 ## Host-based Dev Tunnels stages 1–2 classification (#681)
 
 The opt-in authenticated runtime source checkpoint adds an actual signed SSH
-stream handshake and control/terminal dispatch, with authored encrypted-channel
+stream handshake and control/terminal dispatch, with four passing native TCP SSH
 tests for inventory/terminal negotiation, revocation, replay and frame/client
-bounds. These tests are not yet run on this head. They use constrained test
+bounds. The authored owned-daemon case is still unrun. They use constrained test
 policy/vault state and do not qualify protected production enrollment or an
 actual multi-session shell host. HOSTAUTH-01, DT-07/DT-08, CP-11 and mobile gates
 remain manual/native or deferred behind the qualified final session correction,

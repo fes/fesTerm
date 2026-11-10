@@ -9015,7 +9015,26 @@ routes that same stream to inventory control or adopted terminal handling.
 Each stream proves itself; aggregate client admission survives cancelled
 blocking policy work. The portable client helper preserves existing native-vault
 keys and foreground trust rather than inventing an authority or weaker fallback.
-Encrypted-channel regression tests are authored, not yet executed at this
-checkpoint. The final session correction, production protected enrollment
+The four focused native TCP SSH tests pass. The first replay run encountered
+legitimate concurrent policy-read contention before its challenge, so the case
+now keeps the first exchange pending without holding its policy lease before
+starting the replay peer; it does not weaken the production contention refusal.
+The original failed run is retained separately from the green rerun.
+The owned-daemon case, final session correction, production protected enrollment
 adapter, actual daemon round trips and independent/native gates remain open.
 No installed host, remote creation, GUI change or acceptance is claimed.
+
+Runtime checkpoint validation used macOS Homebrew Rust/Cargo 1.97.1, a private
+target, `CARGO_BUILD_JOBS=1`, dev/test debug zero and incremental disabled:
+`cargo test -p festerm-tunnel-bridge --features host-routing --lib host_runtime`
+passed four cases with the one explicitly opt-in owned-daemon case unrun;
+`cargo test -p festerm-host-protocol --test contracts` passed all thirteen.
+The portable
+`cargo check -p festerm-tunnel-bridge --no-default-features --features host-routing --lib`
+and strict host-routing package/all-target clippy passed, as did fmt,
+traceability (311 edges) and diff checks. The vendored Dev Tunnels unused proxy
+helper warning remains; no dependency source was changed to suppress it.
+The earlier protocol `--lib` invocation selected zero tests and is not evidence;
+the explicit contracts command above supplies that evidence. These results
+precede consumption of the qualified final session head and do not transfer to
+that combined tree without rerunning the affected checks.

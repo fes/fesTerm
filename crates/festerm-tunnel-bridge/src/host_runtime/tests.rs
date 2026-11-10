@@ -373,18 +373,20 @@ async fn authenticated_runtime_rejects_proof_replayed_on_another_actual_ssh_chan
     let runtime_a = fixture.runtime.clone();
     let cancel_a = stop.clone();
     let server_a = tokio::spawn(async move { runtime_a.serve_stream(stream_a, cancel_a).await });
-    let runtime_b = fixture.runtime.clone();
-    let server_b = tokio::spawn(async move {
-        runtime_b
-            .serve_stream(stream_b, CancellationToken::new())
-            .await
-    });
     let budgets = Budgets::default();
     let frame = read_frame(&mut a, &budgets).await.unwrap();
     let Authentication::Challenge { challenge } = frame.decode().unwrap() else {
         panic!("challenge")
     };
     drop(frame);
+    // Keep the first exchange pending without holding its policy lease. This
+    // tests proof replay, not legitimate refusal of concurrent policy reads.
+    let runtime_b = fixture.runtime.clone();
+    let server_b = tokio::spawn(async move {
+        runtime_b
+            .serve_stream(stream_b, CancellationToken::new())
+            .await
+    });
     let proof = a
         .prove_owner_fixture(
             fixture.vault.as_ref(),

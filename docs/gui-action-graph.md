@@ -1578,9 +1578,9 @@ branch silently.
 
 HOST-01–03 additionally have an opt-in source implementation of actual
 SSH-stream owner challenge/proof framing and control/terminal dispatch
-(`host_runtime`). Authored encrypted-channel tests cover control inventory,
+(`host_runtime`). Four passing native TCP SSH tests cover control inventory,
 terminal negotiation, revoked policy, cross-connection proof replay and aggregate
-admission/frame bounds. Their execution, qualified session correction, consuming
+admission/frame bounds. The qualified session correction, consuming
 protected enrollment and actual multi-session daemon round trips remain pending;
 this adds no GUI transition or installed endpoint and does not change P/H/N status.
 

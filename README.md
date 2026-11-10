@@ -48,10 +48,10 @@ native failure fallback). Optional owner proof helpers now bind the actual pinne
 inner SSH connection/channel and transfer server authority with that exact
 stream; independent review, endpoint integration and native acceptance remain open.
 An opt-in `host_runtime` now supplies the actual SSH-stream owner handshake and
-control/terminal dispatcher composition. Source tests cover encrypted request
-routing, stream-bound proof rejection and bounds; execution/qualification of this
-checkpoint, protected enrollment composition and the final session correction
-remain pending. No installed endpoint or Ready state is enabled.
+control/terminal dispatcher composition. Four focused native TCP SSH tests pass
+for encrypted request routing, stream-bound proof rejection and bounds.
+Owned-daemon end-to-end testing, protected enrollment composition and the final
+session correction remain pending. No installed endpoint or Ready state is enabled.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, offline pinned-CLI staging and

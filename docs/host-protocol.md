@@ -43,7 +43,8 @@ Authored tests use signed SSH over exact-owned native loopback sockets,
 including queued rekey with original-binding preservation and cross-connection
 proof rejection. The opt-in native case additionally routes two owned daemon
 terminals and verifies exact input isolation, independent inventory and
-persistent detach. Tests still require execution against this checkpoint.
+persistent detach. The four focused native TCP SSH tests pass on macOS; the
+owned-daemon case awaits the qualified session correction.
 Constrained test policy/vault state is not production enrollment, native vault,
 Dev Tunnels service/rekey qualification or installed readiness. Consume the
 qualified final session correction and protected enrollment adapter before

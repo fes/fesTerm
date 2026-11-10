@@ -542,8 +542,9 @@ The opt-in
 `native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input`
 adds actual owned-daemon input/isolation, inventory and persistent detach over
 native TCP SSH, without widening the inventory-only remote control capability.
-These authored tests still require execution against this checkpoint. They use
-real encrypted signed SSH channels and local inventory, not native-vault/service
+The four focused tests passed on macOS; the owned-daemon case remains unrun
+pending the qualified session correction. They use
+real native TCP encrypted signed SSH channels and local inventory, not native-vault/service
 acceptance or an end-to-end multi-session shell claim. Native capabilities remain
 inventory-only; creation is not widened. Protected enrollment composition,
 qualified session correction, actual daemon round trips and independent gates
