@@ -184,6 +184,11 @@ at physical delivery and retire revoked connections/attachments.
   shells remain alive. The future endpoint owns closing already established
   revoked remote relays. No local administrative API becomes remote by default.
 
+Windows host-controlled starts refuse denied job breakaway rather than claiming
+bridge-independent lifetime while sharing its job; legacy native launches keep
+their documented fallback. Native qualification of that refusal and successful
+independent ConPTY-tree ownership remains required.
+
 The owned Unix integration fixtures launch repository `festerm-pty-test-child`
 processes and real detached daemons. Build that child before running
 `cargo test -p festerm-sessiond`. Windows ConPTY/job/breakaway, Linux service,

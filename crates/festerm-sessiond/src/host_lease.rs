@@ -210,6 +210,29 @@ impl DaemonWatch {
         }
     }
 
+    /// Contention is not cancellation; commit still performs a strict check.
+    pub fn attachment_cancelled(&self, ticket: Option<&OperationId>, remote: bool) -> bool {
+        let guard = match LeaseGuard::acquire(&self.root, self.generation) {
+            Ok(guard) => guard,
+            Err(error) if crate::lock_is_contended(&error) => return false,
+            Err(_) => return true,
+        };
+        let Ok(lease) = guard.read() else {
+            return true;
+        };
+        if lease.expired() || (remote && lease.remote_revoked) {
+            return true;
+        }
+        match (&lease.temporary, ticket) {
+            (None, None) => false,
+            (Some(_), Some(ticket)) => !lease
+                .pending
+                .as_ref()
+                .is_some_and(|pending| &pending.ticket == ticket && pending.deadline_ms > now_ms()),
+            _ => true,
+        }
+    }
+
     /// Called by the sole daemon writer loop after recovery adoption, directly
     /// before replacing the old writer. A failed transfer preserves that writer.
     pub fn commit_attachment(
