@@ -22,7 +22,7 @@ pub struct NativeControl<A: ProtectedPolicySource> {
     sessions: Arc<SessionControl>,
     policy: Arc<A>,
     terminal_routes: bool,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "relay", unix))]
     test_capabilities: bool,
 }
 
@@ -32,7 +32,7 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
             sessions: sessions.into(),
             policy,
             terminal_routes: false,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "relay", unix))]
             test_capabilities: false,
         }
     }
@@ -42,12 +42,12 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
             sessions,
             policy,
             terminal_routes: true,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "relay", unix))]
             test_capabilities: false,
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "relay", unix))]
     pub(super) fn with_test_capabilities(sessions: SessionControl, policy: Arc<A>) -> Self {
         Self {
             sessions: sessions.into(),
@@ -61,7 +61,7 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
         if self.terminal_routes {
             return current;
         }
-        #[cfg(test)]
+        #[cfg(all(test, feature = "relay", unix))]
         if self.test_capabilities {
             return current;
         }
@@ -77,7 +77,7 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
             // stream, never acquire a frontend on this control connection.
             return !matches!(request, Request::Attach { .. } | Request::Detach { .. });
         }
-        #[cfg(test)]
+        #[cfg(all(test, feature = "relay", unix))]
         if self.test_capabilities {
             return true;
         }
