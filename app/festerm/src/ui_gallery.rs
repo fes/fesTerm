@@ -1189,6 +1189,10 @@ fn render_launcher(
     screen_sessions: Vec<MultiplexerSession>,
 ) -> image::RgbaImage {
     let tab_id = AppState::for_test().active();
+    let resumable_sessions: Vec<_> = resumable_sessions
+        .into_iter()
+        .map(crate::discovery::NativeSession::fixture)
+        .collect();
     let mut harness = gallery_harness(
         egui::vec2(width, height),
         move |ui, ()| {

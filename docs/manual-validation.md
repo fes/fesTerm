@@ -97,6 +97,28 @@ foundation.
 
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-08)
 
+DT-08 also requires signed native qualification of ADR 0085: start with legacy
+inherited product/runtime permissions and an attached session; verify no ACL or
+registry repair, no automatic termination, retained unrelated/script-hosted
+sessions, durable deferral across app restart/Retry, explicit manual completion,
+existing-only restoration and ordinary local use when a
+portable profile lacks its host-local grant. Verify local `festerm-open` still
+addresses frontend IPC from the hosted shell. Check the exposure box before
+Save and verify immediate GitHub account selection, browser Cancel, compatible
+current-account reuse, refusal to switch with known desktop/default-script
+bindings, warning about undiscoverable custom-state script hosts, recovery account
+conflicts, unknown inventory, receipt expiry and changed-editor refusal. Re-save a
+Prepared grant after interrupted commit; an unreferenced Prepared grant is
+available for explicit protected cleanup, not automatic deletion. These remain
+native/real-service/usability checks; the isolated ACL, restart, inventory,
+account and UI regressions do not qualify live servicing or browser delivery.
+With a local or remote client attached, verify an ordinary hosted open does not
+disconnect it. Check the separate profile-editor and Running Sessions takeover
+confirmations default to Cancel and target the displayed generation, and that
+later hosted reconnects do not silently take over again. Verify selected
+generations on older daemons are refused without disconnecting a client and
+remain accessible or endable with their compatible fesTerm version.
+
 HOST-06's [authenticated helper foundation](host-release-artifacts.md) has
 synthetic-key rejection/allowlist tests and Python manifest/recovery fixtures.
 Cross-language tests verify both archive families on all six targets through
@@ -2249,6 +2271,9 @@ or recreate the session while confirmation is open and verify refusal rather
 than termination of the new/attached generation. Review keyboard navigation,
 focus and narrow-window wording on each native platform. These are additions
 to the existing inventory, not claims that signed-package/native gates passed.
+Also verify that ordinary reattach never displaces a concurrent client, that
+explicit takeover defaults to Cancel, and that stale generations and changed
+hosted profiles/consent are refused before a client is disconnected.
 
 ### Rendering performance
 
