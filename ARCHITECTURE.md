@@ -787,6 +787,11 @@ exporter, so both client/server owner-channel gates explicitly refuse.
 Pinned-channel integration and independent security review are mandatory before
 new remote capabilities; all new capabilities default denied. No remote endpoint
 or migration is enabled by these local foundations.
+Persistent consent contains no runtime issuer. Its distinct protected-permission
+verifier masks creation until an immutable projection receives the current issuer
+inside protected backend admission; public runtime policy validation remains
+strict, and projections retain the issuer rollback watermark without changing
+permission epochs or enrolled keys.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

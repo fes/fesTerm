@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Separating owner consent from the current host issuer
+
+The ADR 0084 contract correctly refuses Ensure/Create advertisements without
+the current protected issuance epoch, but enrollment persists permission rather
+than that runtime namespace. Applying wire validation to stored consent made
+an explicitly creation-enabled local owner invalid before runtime composition.
+Permission-shape validation is now separate from strict wire validation;
+enrollment never persists the runtime issuer, and an unscoped verifier masks
+creation advertisements. The server projects only the actual protected
+reservation epoch without changing owner keys or permission epochs, retaining
+the issuer rollback fence. New scopes do not refresh uncertain client requests.
+This closes a source composition prerequisite, not endpoint/native acceptance.
+
 ## Capturing issuance before remote shell creation
 
 Operation IDs alone cannot safely outlive a bounded host journal. The

@@ -351,15 +351,25 @@ impl Capabilities {
             Request::ExplicitEnd { .. } => self.explicit_end,
         }
     }
+
+    /// Validate protected local permission shape, not runtime advertisement.
+    /// Wire capabilities still require `Validate`, including a current issuer
+    /// when Ensure/Create are advertised.
+    pub fn validate_permissions(&self) -> Result<(), ContractError> {
+        if (self.ensure || self.create || self.temporary) && !self.attach
+            || self.temporary && !self.detach
+            || self.creation_allowed && !(self.ensure || self.create)
+        {
+            return Err(ContractError::Malformed);
+        }
+        Ok(())
+    }
 }
 
 impl Validate for Capabilities {
     fn validate(&self) -> Result<(), ContractError> {
-        if (self.ensure || self.create || self.temporary) && !self.attach
-            || self.temporary && !self.detach
-            || self.creation_allowed && !(self.ensure || self.create)
-            || (self.ensure || self.create) && self.issuance_epoch.is_none()
-        {
+        self.validate_permissions()?;
+        if (self.ensure || self.create) && self.issuance_epoch.is_none() {
             return Err(ContractError::Malformed);
         }
         Ok(())

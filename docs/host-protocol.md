@@ -108,8 +108,10 @@ its operation ledger. Rotation cannot discard active generations or revocation
 fences. Exact-target lifecycle requests remain generation/lease fenced and must
 omit the creation-issuance epoch. Legacy daemon/bridge wire is unchanged.
 
-A capability policy enabling Ensure or Create must advertise its protected
-issuance epoch, including when constructing or replacing an owner verifier.
+A runtime capability advertisement enabling Ensure or Create must carry its
+current protected issuance epoch. Protected enrollment templates omit it;
+project the actual runtime issuer under reservation before advertising or
+admitting creation.
 For Ensure/Create, owner admission returns Stale if the policy has no advertised
 epoch or the request's epoch is newer; older epochs remain unchanged for the
 durable ledger to decide.
@@ -396,16 +398,51 @@ metadata. Reopening refuses changed installation, host/key, account or owner;
 no OAuth credential borrowing is involved. Secret buffers are zeroized. Client
 key deletion is retryable and distinct from host-side revocation.
 
-### Concrete transport blocker — no owner signing adapter yet
+### Protected permissions and current runtime issuer
 
-The existing inner SSH `VerifiedHost` really verifies the exact approved host
-key; its encrypted transport fixtures reject changed keys before authentication.
-However `ClientConnection` retains a `ChannelStream` plus client handle, and
-server `HostStream` retains only stream/admission permits. The shared SSH
-session-ID/KEX transcript is private inside vendored russh and neither stream
-exports a shared connection **and channel** binding. A server-generated
-connection UUID or asserted verified boolean is not a substitute: proofs could
-otherwise be relayed/reflected between authenticated streams.
+Protected enrollment stores permission templates, not a runtime issuance
+namespace. `Capabilities::validate_permissions()` checks their logical flag
+relationships; wire `Capabilities::validate()` remains stricter and requires a
+current epoch for advertised Ensure/Create. Enrollment refuses a persisted
+runtime epoch. Enabling local creation permission without one is valid consent,
+not an advertisement or authority to create.
+
+Enrollment uses the distinct `OwnerVerifier::from_protected_permissions`
+constructor, which refuses a supplied runtime issuer. Public
+`OwnerPolicy::validate()` and `OwnerVerifier::new/replace` retain their strict
+runtime-policy requirements, including the existing missing-issuer regression.
+
+`OwnerVerifier::capabilities()` is the runtime advertisement view: without an
+issuer it removes Ensure/Create and creation permission while preserving
+read/attach/detach capabilities. Do not publish `policy().capabilities` as wire
+capabilities; that is the protected permission template.
+
+Inside the protected backend composition/admission reservation,
+`OwnerVerifier::with_issuance_epoch(actual)` creates an owned projection from
+the current protected runtime issuer, retaining enrolled keys, owner/session
+permission epochs and the private issuer high-water fence. It must reject a
+lower issuer even after a permission replacement stopped publishing an epoch.
+Only the issuer field changes; this is not a permission transition or owner
+revocation. Never supply a request header, guessed/default epoch or cached
+advertisement. A `None` hotpath state uses the original verifier and must not
+advertise creation.
+
+If issuing/inspecting the namespace rotates it under the reservation, capture
+the final current scope under the protected callback and verify that it equals
+the returned issuer before publication. Keep the existing protected admission
+guard through the backend decision. This integration requirement does not
+qualify an unimplemented endpoint or an unreviewed backend path.
+
+A new advertised issuer applies to newly captured operations only. Never
+refresh an uncertain client's original `IssuedOperation` or mutate its request;
+older issuances remain the durable ledger's decision.
+
+### Concrete transport integration gate
+
+These consumers still need the reviewed actual connection-and-channel exporter
+and enrolled-owner stream integration; a host-key pin alone is not enough.
+The existing inner SSH `VerifiedHost` verifies the exact approved host key and
+its encrypted fixtures reject changed keys before authentication.
 
 Both real stream types therefore expose `require_owner_channel_binding`, which
 returns the actionable `ChannelBindingUnavailable` error, even after genuine

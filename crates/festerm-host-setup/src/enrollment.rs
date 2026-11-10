@@ -64,7 +64,10 @@ pub struct EnrollmentSnapshot {
 impl EnrollmentSnapshot {
     fn validate(&self, installation: &Snapshot) -> io::Result<()> {
         self.binding.validate()?;
-        self.capabilities.validate()?;
+        self.capabilities.validate_permissions()?;
+        if self.capabilities.issuance_epoch.is_some() {
+            return Err(refused("owner.runtime_issuer_is_not_persistent_consent"));
+        }
         if self.version != 1
             || self.binding.installation != installation.installation
             || self.installation_epoch > installation.epoch
@@ -116,7 +119,7 @@ impl EnrollmentSnapshot {
             remote_access: self.remote_access && installation.phase == Phase::Provisioned,
             capabilities: self.capabilities,
         };
-        OwnerVerifier::new(policy, &keys).map_err(Into::into)
+        OwnerVerifier::from_protected_permissions(policy, &keys).map_err(Into::into)
     }
 }
 
@@ -332,6 +335,7 @@ impl OwnerEnrollment<'_> {
 
     /// Separate protected local permission consent. Importing a key never calls
     /// this. Creation additionally requires the existing host settings grant.
+    /// Runtime issuer epochs are never stored as consent.
     pub fn approve_permissions(
         &self,
         revision: Epoch,
