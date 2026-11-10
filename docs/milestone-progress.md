@@ -9,7 +9,14 @@ cfg and redacted first-Ensure diagnostics remain test-only. The ordinary merge
 exposes one fixture cfg overlap: acquisition needs `verify_staging_fixture` on
 every platform, while native replacement alone consumes it only on Unix.
 The union keeps acquisition portable and restricts native-only replacement
-helpers to their actual Unix consumers, without importing an acquisition repair.
+helpers to their actual Unix consumers. The second ordinary merge consumes only
+the subsequently authorized acquisition repair
+`09485ce130e529932c53df77454b8d787b5c8ada`: its deterministic shared-deadline
+fixture, necessary helper cfgs and public-only diagnostics are preserved.
+The backend's exact generation-lease contention and original-issued-operation
+replay assertions remain intact; only their diagnostics adopt the public
+response classifier. Neither historical fixture counts nor required-CI status
+are promoted to this integrated source.
 
 The frozen-primary source review also found one directly caused feature-specific
 regression: its Desktop-origin fixture expected mocked Windows installation even
@@ -28,8 +35,10 @@ Qualification uses actual Rust 1.99.1, jobs1/debug0/incremental0 and the existin
 worktree protects the frozen primary's original target/helper/test bytes and
 receipt. Only the exact small fixture under both feature configurations and
 affected setup/bridge compilation/strict checks are required; Desktop26 and the
-fourteen native routes are not rerun or relabeled. Current acquisition repair is
-not consumed until the parent provides a separately qualified immutable pin.
+fourteen native routes are not rerun or relabeled. The exact Desktop runner
+selector now passes one test in each configuration. Publication still awaits
+the parent's separately qualified immutable backend cleanup-fixture child;
+its Windows required-check failure is not repaired speculatively in this lane.
 Actual Windows runtime/native publisher, OS/vault/provider/GUI, install, signing,
 release, sharing and three-platform acceptance remain outside this increment.
 
@@ -1228,6 +1237,83 @@ cargo test --locked -p festerm-host -p festerm-host-setup
 cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
 cargo test --locked -p festerm-host --no-default-features
 cargo clippy --locked -p festerm-host --no-default-features --all-targets -- -D warnings
+```
+
+## Aligning acquisition test-helper cfgs and redacting Ensure diagnostics
+
+The normal child of qualified `0d9a8da9` addresses the three unused Unix-only
+helpers reported by Windows required job `130101987445`. Only
+`host_version_fixture`, `version_fixture`, `authenticate_fixture_registered`
+and the first helper's necessary re-export gain Unix guards. Their callers
+belong to the already Unix-only replacement test module. The acquisition
+tests still consume `verify_staging_fixture` across platforms; its definition
+and re-export remain unchanged. This adapts only the necessary cfg prior art
+from exact `20c4b085`, without importing backend changes.
+
+The separate Linux required failure (job `130101987441`, 13 passed / one failed)
+still has an **unknown** actual Ensure reply. Adapting the public classifier
+from exact `a8113f6a` adds only static response-variant/fieldless-refusal
+diagnostics to the existing native contention fixture, including its actual
+strict Ensured assertion. The earlier retry diagnostics no longer dump the
+response. Predicates, request counts, eight-second deadline, 25-ms retry wait
+and one-daemon assertion remain unchanged; this is not a speculative backend
+fix. Test identities and trace relationships do not change.
+
+Qualification is limited to the current-cfg deadline selector, affected test
+compilation/listing, existing strict configurations, fmt and traceability.
+The deadline selector passes one / 127 filtered; 13 replacement tests and the
+one affected native fixture compile and list without executing that fixture.
+Minimal acquisition and affected three-package all-target strict Clippy,
+fmt and trace311/zero-broken-reference gates exit 0 on pinned Rust 1.99.1.
+Evidence is retained separately in `target/adr84-acquisition-cfg-diag-evidence/`.
+No native fixture is rerun solely for diagnostics, and no Windows execution,
+required-CI-green, genuine HTTPS/CDN or publisher/installed acceptance is
+claimed. Earlier `0d` and `7fa` evidence and their remaining native/release gates
+are preserved.
+
+## Synchronizing the official-acquisition shared-deadline regression
+
+Required macOS CI for exact published `7fa17f01` (run `42893943871`, job
+`130101987554`) passed 125 setup tests, failed one and ignored two. The shared-
+budget case assumed at least two requests would arrive within 150 ms while
+three fixture bodies each slept 60 ms. Its request-count assertion failed;
+the actual count was not printed and remains **unknown**. Earlier local passes
+do not replace this retained required-check failure.
+
+The repair gates real loopback response bodies and uses the existing Tokio
+test-time utilities, not a new clock abstraction. The actual production receive
+future is factored unchanged into a private function shared with the test.
+Manifest and Signature each complete after consuming one third of the unchanged
+120-second budget in controlled time. Observing the third request proves both
+completed; Archive remains withheld. Advancing beyond the original total must
+return Deadline while the later request deadline, or a fresh total budget
+after either resource, would still be pending. Exactly three requests remain
+mandatory. Runnable handshake polling prevents automatic test-clock advancement
+from outrunning real IO; a separate wall-clock watchdog diagnoses stalled
+fixtures. Header/body cancellation and network-timeout cases remain intact.
+Production limits, cancellation, verifier/trust policy and update journals are
+unchanged; no new feature/dependency, public API or clock policy is introduced.
+
+Pinned Rust/Cargo 1.99.1, jobs 1, debug 0 and incremental 0 qualify the repair
+in the lane's released private warm target. The exact focused test passes with
+the current `acquisition,cloud,host-runtime,native-services` cfg (one passed /
+127 filtered); the broader minimal library selection passes 42 / one existing
+signer ignore. Standalone acquisition check, minimal and affected two-package
+all-target strict Clippy, fmt, diff and trace311/zero-broken-reference gates exit
+0. Free memory at gates is 49–52%. The original 194027-byte macOS failure, its
+SHA-256, actual commands/exits, compiler/source attribution and final hashes are
+retained separately under `target/adr84-acquisition-repair-evidence/`; earlier
+`7fa` evidence is not overwritten or relabeled. Owned fixtures/runtime/build
+processes are gone and the private slot is released.
+
+This is a deadline-fixture repair only. The parent's additional Ubuntu failure
+is a different native-bridge Ensure assertion whose actual reply is unknown;
+Windows reports three unrelated Unix-only test-helper cfg warnings. Neither is
+fixed or claimed green by this child. Genuine HTTPS/CDN success, protected release
+availability, native publisher/installed acceptance and first-verifier delivery
+remain the same explicit gaps. No live network, release, OS/provider, VM or
+signing operation is part of this qualification.
+
 ## Official schema-2 host-bundle acquisition boundary
 
 The isolated acquisition lane starts from exact qualified

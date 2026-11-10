@@ -408,8 +408,7 @@ fn native_service_desktop_runner_definition_is_origin_exact_without_headless_ado
         let snapshot = provision(&store);
         let manager = services(root.path(), &store, platform);
         let stage = trusted::fixture(root.path());
-        if platform == Platform::Windows
-            && !cfg!(all(feature = "cloud", feature = "host-runtime"))
+        if platform == Platform::Windows && !cfg!(all(feature = "cloud", feature = "host-runtime"))
         {
             assert_eq!(
                 manager

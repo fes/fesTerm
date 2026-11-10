@@ -1337,6 +1337,19 @@ pub(crate) mod native_routes {
     #[tokio::test]
     #[ignore = "requires explicitly built owned native helper and fixture child"]
     async fn native_committed_creation_policy_contention_is_uncertain_not_disconnect() {
+        fn public_response_kind(response: &Response) -> (&'static str, Option<Refusal>) {
+            match response {
+                Response::Capabilities { .. } => ("capabilities", None),
+                Response::Inventory { .. } => ("inventory", None),
+                Response::Lookup { .. } => ("lookup", None),
+                Response::Ensured { .. } => ("ensured", None),
+                Response::Attached { .. } => ("attached", None),
+                Response::Detached { .. } => ("detached", None),
+                Response::Ended { .. } => ("ended", None),
+                Response::Refused { reason } => ("refused", Some(*reason)),
+            }
+        }
+
         let fixture = NativeFixture::new(true);
         let (native, source) = fixture.backend();
         let backend = Arc::new(LostReply {
@@ -1369,16 +1382,7 @@ pub(crate) mod native_routes {
             tokio::select! {
                 result = &mut request => {
                     let response = result.unwrap();
-                    let (variant, refusal_code) = match &response.body {
-                        Response::Capabilities { .. } => ("capabilities", None),
-                        Response::Inventory { .. } => ("inventory", None),
-                        Response::Lookup { .. } => ("lookup", None),
-                        Response::Ensured { .. } => ("ensured", None),
-                        Response::Attached { .. } => ("attached", None),
-                        Response::Detached { .. } => ("detached", None),
-                        Response::Ended { .. } => ("ended", None),
-                        Response::Refused { reason } => ("refused", Some(*reason)),
-                    };
+                    let (variant, refusal_code) = public_response_kind(&response.body);
                     assert!(matches!(response.body, Response::Refused { reason: Refusal::Busy | Refusal::Unknown | Refusal::OutcomeUncertain }), "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
                     assert!(Instant::now() < deadline, "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
                     tokio::time::sleep(Duration::from_millis(25)).await;
@@ -1419,12 +1423,13 @@ pub(crate) mod native_routes {
             .request_issued(&operation, body.clone(), &cancel)
             .await
             .unwrap();
+        let (variant, refusal_code) = public_response_kind(&response.body);
         assert_eq!(
             response.body,
             Response::Refused {
                 reason: Refusal::Busy
             },
-            "{response:?}"
+            "original-operation lease replay response variant={variant}, refusal_code={refusal_code:?}"
         );
         assert_eq!(
             fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
@@ -1437,7 +1442,8 @@ pub(crate) mod native_routes {
                 .request_issued(&operation, body.clone(), &cancel)
                 .await
                 .unwrap();
-            assert!(Instant::now() < deadline, "{response:?}");
+            let (variant, refusal_code) = public_response_kind(&response.body);
+            assert!(Instant::now() < deadline, "original-operation replay response variant={variant}, refusal_code={refusal_code:?}");
             match &response.body {
                 Response::Ensured {
                     session,
@@ -1455,11 +1461,11 @@ pub(crate) mod native_routes {
                     assert_eq!(
                         fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
                         journal,
-                        "{response:?}"
+                        "original-operation replay response variant={variant}, refusal_code={refusal_code:?}"
                     );
                     tokio::task::yield_now().await;
                 }
-                _ => panic!("committed original-operation replay: {response:?}"),
+                _ => panic!("committed original-operation replay variant={variant}, refusal_code={refusal_code:?}"),
             }
         }
         assert_eq!(
