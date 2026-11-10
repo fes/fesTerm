@@ -54,6 +54,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 ## Proposed Decisions
 
+- [ADR 0084: Host-Based Dev Tunnels, Remote Session Creation, and Unified Host Installation](0084-host-based-dev-tunnels.md) - owner-requested design; explicit discovery, local resume-or-create recipes, shared setup, headless distribution and staged acceptance
+
 - [ADR 0077: Synchronized Local Terminal Recording and MP4 Export](0077-synchronized-terminal-recording-and-mp4-export.md) - explicitly selected sessions share a timeline and produce separate local MP4s; platform and privacy qualification required
 - [ADR 0078: Desktop Split-Pane Presentation](0078-desktop-split-pane-presentation.md) - issue #65; bounded live-view presentation trees, unchanged session/document ownership and staged desktop qualification
 - [ADR 0075: Mobile Accessibility Tree and UI Automation](0075-mobile-accessibility-tree.md) - lazily activated platform AccessKit adapters on iOS and Android, privacy-gated terminal rows, named fields without secrets and a shared Maestro suite

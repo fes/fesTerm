@@ -2511,7 +2511,15 @@ pub enum AppCommand {
     },
     #[cfg(feature = "experimental-dev-tunnels")]
     ConnectDevTunnel(crate::tunnel_activation::Launch),
+    #[allow(
+        dead_code,
+        reason = "Public discovery entry points are deliberately withheld."
+    )]
     OpenEnterprise,
+    #[allow(
+        dead_code,
+        reason = "Public discovery entry points are deliberately withheld."
+    )]
     OpenRemoteSessions,
     Enterprise {
         tab_id: TabId,

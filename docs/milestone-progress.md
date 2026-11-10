@@ -21,6 +21,25 @@ Isolated regressions cover inherited Windows ACLs, interrupted restart and stale
 account selection. Native signed servicing and real-service qualification remain
 DT-08 work; no live installation is migrated by these tests. See ADR 0085.
 
+## Stabilizing SSH-agent test startup
+
+The vendored SSH tests could connect between the agent creating its Unix
+socket and listening on it, producing intermittent connection refusals in CI.
+Their shared startup helper now waits for an actual connection, reports an
+early agent exit or a bounded timeout, and cleans up the child on failure.
+Focused tests cover a socket that exists but is not listening and an exited
+agent; production SSH behavior is unchanged.
+
+## Withholding remote and enterprise discovery entry points
+
+The experimental remote-session picker and Enterprise sign-in/discovery were
+appearing alongside ordinary connection types before their public GUI exposure
+was wanted. Their New Session cards are now removed, with no alternate menu,
+shortcut or palette entry. The internal commands, tabs and backend tests remain
+intact, so development can continue without advertising those workflows.
+Restoring public entry points requires explicit owner approval; PowerShell
+profiles and local Running Sessions are unchanged.
+
 ## Investigating Windows inherited stdout
 
 A separate, job-supervised native probe measures inherited stdout pipe mode
