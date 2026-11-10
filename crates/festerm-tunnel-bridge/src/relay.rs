@@ -202,7 +202,7 @@ pub(crate) struct VerifiedPinnedChannel {
 
 #[cfg(feature = "owner-auth")]
 impl VerifiedPinnedChannel {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "relay"))]
     pub(crate) fn from_fixture_stream(
         stream: &ChannelStream<client::Msg>,
         pinned_key: &str,

@@ -27,8 +27,10 @@ SSH owner proof and adopted terminal routing/detach. The default headless build
 now composes explicit signed setup, foreground account consent, separate
 owner-key/permission approval and run. Configuration defaults disabled; no
 listener starts from compilation/import. Combined-source review, real release/
-cloud/vault/service/device qualification and foreground client trust/session
-chooser evidence remain open. This source is not a native Ready/acceptance claim.
+cloud/vault/service/device qualification and native foreground client trust/session
+chooser evidence remain open. Experimental desktop and opt-in shared mobile
+HOST clients now execute inventory/attach/Create/Ensure with focused host fixtures,
+not native GUI/vault acceptance. This source is not a native Ready/acceptance claim.
 
 Issue #65 is owner-authorized desktop split-pane work (ADR 0078).
 The presentation slice adds live composition, bounded layouts, focused input,

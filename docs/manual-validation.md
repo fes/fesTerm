@@ -50,6 +50,45 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## ADR 0084 mobile HOST execution
+
+The opt-in shared `host-clients` application now executes selected HOST inventory,
+exact attachment and explicitly confirmed Create/Ensure through the bounded
+shared worker and actual `HostSession` frontend adopter. Android forwards the
+same optional boundary; the offline fixture and legacy live-SSH defaults do not
+change. Host tests exercise inert save/import, stale account/recipe rejection,
+bounded original-action retention, direct native-callback cancellation and
+framed snapshot-before-activation/no-replay behavior. The separately selected
+native helper fixture exercises signed SSH, independent real PTYs, exact
+original issuance and actual stored/presented output. These are not device,
+native-vault or GUI acceptance.
+
+In an explicitly owned iOS/Android native window, still verify:
+
+- opening/importing/saving while offline performs no discovery, sign-in or
+  trust/enrollment; only explicit Find/refresh uses the chosen signed-in account;
+  service omissions are not session absence;
+- native sandbox receipt privacy/backup policy and native vault
+  locked/unavailable/missing behavior, exact independently confirmed fingerprint,
+  host-local owner approval and imported-recipe first-execution consent;
+- exact host/principal/logical/generation/launch/lifetime selection, visible
+  fresh capability and creation/temporary permission, and truthful Busy,
+  unknown, denied, revoked, offline and lost-reply states;
+- active and parked terminals under real app-lock, foreground loss, suspend,
+  account removal and credential rotation: immediate input gating, no replay,
+  no automatic reconnect, no false detach; independently observe the daemon's
+  60-second generation/heartbeat-fenced grace and stale replacement immunity;
+- actual mobile terminal snapshot/output isolation, phone/tablet scrolling,
+  software-keyboard/safe-area behavior, accessibility labels/focus and actionable
+  approval/uncertainty errors.
+
+Original actions are bounded to sixteen **process-local** entries. Restart
+does not restore their tickets or grant a replacement action: reconcile uncertain
+host actions before another creation. Durable restart reconciliation, full mobile
+sharing/end/detach controls, live cloud/device/native-vault evidence and usability
+remain open. Desktop local Settings/Remote Access and local sharing are a
+separately owned HOST-03–05 slice, not implemented or claimed by this increment.
+
 ## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)
 
 Issue [#681](https://github.com/fes/fesTerm/issues/681) has automated public

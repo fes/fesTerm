@@ -1,10 +1,39 @@
-//! Desktop-local foreground owner receipts. Neither the index nor its opaque
+//! App-local foreground owner receipts. Neither the index nor its opaque
 //! references are portable recipe metadata or proof of host-local enrollment.
 
 use crate::owner_auth::{ClientOwnerKey, OwnerBinding, OwnerKeyError};
 use festerm_host_protocol::{HostId, Validate};
 use festerm_secret_store::{native_store, SecretReference, SecretStore, SecretStoreError};
+#[cfg(feature = "relay")]
 use festerm_sessiond::private_storage as storage;
+#[cfg(all(not(feature = "relay"), unix))]
+#[path = "approval_storage.rs"]
+mod storage;
+#[cfg(all(not(feature = "relay"), not(unix)))]
+mod storage {
+    use std::{fs::File, io, path::Path};
+    fn unsupported<T>() -> io::Result<T> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+    pub(super) fn trusted_directory(_: &Path, _: bool) -> io::Result<File> {
+        unsupported()
+    }
+    pub(super) fn private_directory(_: &Path, _: bool) -> io::Result<File> {
+        unsupported()
+    }
+    pub(super) fn open_trusted_lock(_: &File, _: &Path) -> io::Result<File> {
+        unsupported()
+    }
+    pub(super) fn read_private(_: &File, _: &Path, _: usize) -> io::Result<Vec<u8>> {
+        unsupported()
+    }
+    pub(super) fn publish_new(_: &File, _: &Path, _: &[u8]) -> io::Result<()> {
+        unsupported()
+    }
+    pub(super) fn replace_private(_: &File, _: &Path, _: &[u8]) -> io::Result<()> {
+        unsupported()
+    }
+}
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -115,6 +144,19 @@ impl Drop for Lease {
 }
 
 impl ReceiptIndex {
+    /// App-selected private sandbox, never a path from imported metadata.
+    pub fn in_app_sandbox(root: &Path) -> Result<Self, Error> {
+        // The native composition root, never imported metadata, supplies this
+        // existing application directory. Normalize OS aliases such as iOS /var
+        // once; all receipt traversal beneath it remains no-follow.
+        let root = root.canonicalize().map_err(storage_error)?;
+        storage::trusted_directory(&root, false).map_err(storage_error)?;
+        Ok(Self {
+            root: root.join("host-client-approvals"),
+        })
+    }
+
+    #[cfg(feature = "relay")]
     pub fn native() -> Result<Self, Error> {
         let runtime = festerm_sessiond::runtime_root().map_err(|_| Error::Storage)?;
         let root = runtime
@@ -226,8 +268,7 @@ impl ReceiptIndex {
                     ready: false,
                 };
                 let bytes = serde_json::to_vec(&record).map_err(|_| Error::Storage)?;
-                crate::setup_storage::publish_new_private(&directory, &name, &bytes)
-                    .map_err(storage_error)?;
+                Self::publish_new(&directory, &name, &bytes).map_err(storage_error)?;
                 record
             }
             Err(error) => return Err(error),
@@ -255,6 +296,16 @@ impl ReceiptIndex {
             storage::replace_private(&directory, &name, &bytes).map_err(storage_error)?;
         }
         Ok(receipt)
+    }
+
+    #[cfg(feature = "relay")]
+    fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
+        crate::setup_storage::publish_new_private(directory, name, bytes)
+    }
+
+    #[cfg(not(feature = "relay"))]
+    fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
+        storage::publish_new(directory, name, bytes)
     }
 
     fn load_with(
@@ -296,6 +347,6 @@ fn ensure_parent(path: &Path, remaining: u8) -> io::Result<()> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "relay", unix)))]
 #[path = "approval_tests.rs"]
 mod tests;

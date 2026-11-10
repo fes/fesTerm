@@ -36,6 +36,32 @@ fn context() -> ApprovedContext {
     .unwrap()
 }
 
+#[test]
+fn selected_host_mobile_pre_cancelled_boundary_refuses_before_vault_or_worker() {
+    let context = context();
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: context.binding().clone(),
+    };
+    let intent = Arc::new(CreationIntent::new(&context, CreationMode::Ensure, creation()).unwrap());
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    assert!(matches!(
+        Worker::start_with_cancellation(
+            context,
+            scope,
+            Operation::Create(intent.clone()),
+            &Budgets::default(),
+            Arc::new(|| {}),
+            cancel
+        ),
+        Err(Failure::Control(Error::Cancelled))
+    ));
+    assert!(intent.issued_operation().is_none());
+    assert!(!intent.is_presented());
+}
+
 fn creation() -> Creation {
     Creation {
         logical: LogicalSessionId::new(),

@@ -7,6 +7,8 @@ use super::profiles::{SessionSpec, TunnelSpec};
 use super::*;
 
 pub(super) struct SessionTab {
+    #[cfg(feature = "host-clients")]
+    pub host: bool,
     pub id: u64,
     pub title: String,
     /// `None` is the offline demo terminal.
@@ -139,6 +141,8 @@ impl MobileApp {
         let id = self.next_tab;
         self.next_tab += 1;
         self.tabs.push(SessionTab {
+            #[cfg(feature = "host-clients")]
+            host: false,
             id,
             title,
             spec,
@@ -154,11 +158,18 @@ impl MobileApp {
     }
 
     pub(super) fn open_local_tab(&mut self) {
-        if let Some(tab) = self
-            .tabs
-            .iter()
-            .find(|tab| tab.spec.is_none() && tab.tunnel.is_none())
-        {
+        if let Some(tab) = self.tabs.iter().find(|tab| {
+            tab.spec.is_none() && tab.tunnel.is_none() && {
+                #[cfg(feature = "host-clients")]
+                {
+                    !tab.host
+                }
+                #[cfg(not(feature = "host-clients"))]
+                {
+                    true
+                }
+            }
+        }) {
             let id = tab.id;
             self.activate_tab(id);
             return;
@@ -180,7 +191,18 @@ impl MobileApp {
     }
 
     pub(super) fn active_is_local(&self) -> bool {
+        #[cfg(feature = "host-clients")]
+        if self.active_is_host() {
+            return false;
+        }
         self.active_tab.is_some() && self.active_spec().is_none()
+    }
+
+    #[cfg(feature = "host-clients")]
+    pub(super) fn active_is_host(&self) -> bool {
+        self.tabs
+            .iter()
+            .any(|tab| Some(tab.id) == self.active_tab && tab.host)
     }
 
     #[cfg(feature = "live-ssh")]
@@ -245,6 +267,11 @@ impl MobileApp {
     /// says honestly whether the remote shell was replaced or reattached.
     #[cfg(feature = "live-ssh")]
     pub(super) fn reconnect_active(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        #[cfg(feature = "host-clients")]
+        if self.active_is_host() {
+            self.review_host_reconnection();
+            return Ok(());
+        }
         let spec = self
             .active_spec()
             .cloned()
@@ -386,6 +413,16 @@ impl MobileApp {
             .map(|tab| {
                 let active = self.active_tab == Some(tab.id);
                 let (kind, detail, state, status) = match &tab.spec {
+                    #[cfg(feature = "host-clients")]
+                    None if tab.host => {
+                        let (state, status) = self.tab_connection(tab.id, active);
+                        (
+                            SurfaceKind::DevTunnel,
+                            "HOST · protected owner · explicit reconnect".to_owned(),
+                            state,
+                            status,
+                        )
+                    }
                     None if tab.tunnel.is_some() => {
                         let (state, status) = self.tab_connection(tab.id, active);
                         let detail = tab

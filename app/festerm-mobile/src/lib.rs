@@ -14,6 +14,8 @@ mod files_shell;
 #[cfg_attr(not(feature = "live-ssh"), allow(dead_code))] // SFTP needs the SSH transport
 mod files_ui;
 mod forms;
+#[cfg(feature = "host-clients")]
+mod host_clients;
 mod host_setup;
 mod key_press;
 #[cfg(feature = "live-ssh")]
@@ -184,6 +186,8 @@ impl Lifecycle {
 #[cfg(feature = "live-ssh")]
 #[derive(Clone, Default)]
 pub struct SuspensionHandle {
+    #[cfg(feature = "host-clients")]
+    host: std::sync::Arc<host_clients::Privacy>,
     connection: Rc<RefCell<Option<live_ssh::LiveSsh>>>,
     /// Sessions of parked tabs, keyed by tab id.
     background: Rc<RefCell<Vec<(u64, live_ssh::LiveSsh)>>>,
@@ -278,7 +282,11 @@ impl SuspensionHandle {
     fn content_lock_callback(&self) -> impl Fn() + Send + Sync + 'static {
         let recording = self.recording.clone();
         let export = self.export.clone();
+        #[cfg(feature = "host-clients")]
+        let host = self.host.clone();
         move || {
+            #[cfg(feature = "host-clients")]
+            host.invalidate();
             Self::stop_shared_recording(&recording);
             Self::cancel_shared_export(&export);
         }
@@ -557,6 +565,8 @@ impl SuspensionHandle {
     }
 
     pub fn suspend(&self) {
+        #[cfg(feature = "host-clients")]
+        self.host.invalidate();
         self.stop_recording();
         if let Some(live) = self.connection.borrow_mut().as_mut() {
             live.suspend();
@@ -757,6 +767,8 @@ struct RecordingConsent {
 }
 
 pub struct MobileApp {
+    #[cfg(feature = "host-clients")]
+    hosts: host_clients::HostUi,
     #[cfg(all(
         target_os = "ios",
         target_abi = "sim",
@@ -850,6 +862,8 @@ fn mobile_terminal_view() -> TerminalView {
 impl MobileApp {
     pub fn new(lifecycle: Rc<Cell<Lifecycle>>) -> Self {
         Self {
+            #[cfg(feature = "host-clients")]
+            hosts: host_clients::HostUi::default(),
             #[cfg(all(
                 target_os = "ios",
                 target_abi = "sim",
@@ -1672,6 +1686,31 @@ impl MobileApp {
         if let Some(chrome) = &self.chrome_override {
             return chrome.clone();
         }
+        #[cfg(feature = "host-clients")]
+        if self.active_is_host() {
+            let live = self.live_view();
+            let state = match live.as_ref() {
+                Some(live) if live.input_enabled => SurfaceState::Connected,
+                Some(live) if !live.can_reset => SurfaceState::Connecting,
+                _ => SurfaceState::Disconnected,
+            };
+            return ChromeModel {
+                title: self
+                    .tabs
+                    .iter()
+                    .find(|tab| Some(tab.id) == self.active_tab)
+                    .map(|tab| tab.title.clone())
+                    .unwrap_or_default(),
+                subtitle: "HOST · protected account and owner".into(),
+                line: ConnectionLine {
+                    state,
+                    label: live
+                        .map_or("HOST transport closed", |live| live.status)
+                        .into(),
+                    context: Some("Explicit host review; no input replay".into()),
+                },
+            };
+        }
         if let Some(spec) = self.active_spec() {
             #[cfg_attr(not(feature = "live-ssh"), allow(unused_mut))]
             let mut state = SurfaceState::Disconnected;
@@ -1832,6 +1871,8 @@ impl MobileApp {
             self.poll_background(ui.ctx());
             self.poll_tunnels(ui.ctx());
             self.auto_reconnect_tunnel(ui.ctx());
+            #[cfg(feature = "host-clients")]
+            self.poll_hosts(ui.ctx());
         }
         #[cfg(feature = "live-ssh")]
         if lifecycle.active {
@@ -1858,6 +1899,11 @@ impl MobileApp {
         }
         #[cfg(all(feature = "live-ssh", any(target_os = "android", target_os = "ios")))]
         self.show_recording_status(ui);
+        #[cfg(feature = "host-clients")]
+        if self.hosts.open {
+            self.show_hosts(ui.ctx());
+            return;
+        }
         if self.editor.open {
             self.show_editor(ui);
             #[cfg(feature = "live-ssh")]
@@ -1982,6 +2028,8 @@ impl MobileApp {
                 }
                 ShellAction::EditProfile(id) => self.edit_profile(&id),
                 ShellAction::OpenHostSetup => self.host_setup.open(),
+                #[cfg(feature = "host-clients")]
+                ShellAction::OpenHosts => self.open_hosts(),
                 ShellAction::SetTextSize(size) => {
                     self.apply_text_size(size);
                     if let Some(Err(error)) = self.profiles.as_ref().map(|p| p.save_text_size(size))
@@ -3246,6 +3294,19 @@ impl MobileApp {
         let status = self
             .live_view()
             .map_or("Connection ended", |live| live.status);
+        #[cfg(feature = "host-clients")]
+        if self.active_is_host() {
+            return model::ReconnectBanner {
+                detail: Some("Session state is unknown, not absent. Keep the original issued action.".into()),
+                status: status.into(),
+                reattach: None,
+                custom: Some(model::BannerText {
+                    title: "HOST connection closed".into(),
+                    body: "Review the original host and generation explicitly. No new shell, legacy fallback or input replay is automatic.".into(),
+                    action: "Review host",
+                }),
+            };
+        }
         let custom = self
             .active_tunnel()
             .map(|_| self.tunnel_banner_text(status));

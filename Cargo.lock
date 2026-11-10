@@ -2719,6 +2719,7 @@ dependencies = [
  "festerm-android-platform",
  "festerm-core",
  "festerm-document",
+ "festerm-host-protocol",
  "festerm-host-setup",
  "festerm-ios-lock",
  "festerm-ios-window",
@@ -2734,6 +2735,7 @@ dependencies = [
  "festerm-sftp",
  "festerm-ssh",
  "festerm-tunnel-bridge",
+ "festerm-tunnel-client",
  "festerm-ui-egui",
  "festerm-unix-security",
  "log",
@@ -2743,6 +2745,7 @@ dependencies = [
  "sha2 0.11.0",
  "tempfile",
  "tokio",
+ "tokio-util",
  "winit",
  "zeroize",
 ]

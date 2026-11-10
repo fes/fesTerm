@@ -64,6 +64,31 @@ async fn selected_host_session_active_app_lock_closes_transport_without_detach_o
     presentation_round_trip(false).await;
 }
 
+#[test]
+fn selected_host_mobile_cancel_records_closed_state_after_shared_token_cancel() {
+    let cancel = CancellationToken::new();
+    let (_sender, events) = flume::bounded(2);
+    let session = HostSession::from_worker(
+        Worker {
+            scope: scope(),
+            cancel: cancel.clone(),
+            events,
+        },
+        Arc::new(Notify(tokio::sync::Notify::new())),
+    );
+    cancel.cancel();
+    session.cancel();
+    assert!(
+        matches!(session.lifecycle(), SessionLifecycle::Disconnected(_)),
+        "native privacy may cancel the admission token before its registered Session"
+    );
+    assert!(session.try_send_input(b"never-replay").is_err());
+    assert!(matches!(
+        session.try_recv_event(),
+        Ok(SessionEvent::Lifecycle(SessionLifecycle::Disconnected(_)))
+    ));
+}
+
 async fn presentation_round_trip(intentional_detach: bool) {
     let (stream, mut peer) = tokio::io::duplex(8192);
     let scope = scope();

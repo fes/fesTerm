@@ -77,7 +77,13 @@ adds protected foreground review, authorized inventory, existing attachment and
 explicit host-authorized Create/Ensure through the same actual worker and HOST
 protocol. Owned signed-SSH/native-PTY frontend isolation and headless consent/
 original-request regressions are automated evidence, not stage-6 acceptance.
-Mobile installation, account-wide Find hosts, local Settings/Remote Access,
+The opt-in shared mobile `host-clients` route now implements account-scoped
+Find/refresh, protected foreground owner review, authorized inventory,
+Connect/Create/Ensure and actual installed-terminal snapshot adoption. Direct
+native-callback cancellation and process-local original-ticket retention have
+headless/framed evidence; the independent signed-SSH/native-PTY session-adapter
+fixture is not physical mobile acceptance. Offline/live-SSH defaults remain
+unchanged. Native mobile installation, local Settings/Remote Access,
 durable restart reconciliation and signed/native/vault/service/device
 qualification remain open; public recipes never confer authority.
 

@@ -23,6 +23,13 @@ See "Historical refreshed candidate — native rerun never completed" below.)
 
 ## Status vocabulary
 
+The ADR 0084 opt-in shared mobile HOST execution increment has implementation
+and selected automated/framed/native-helper evidence only. It does not change
+milestone acceptance: physical iOS/Android, native vault, lifecycle/app-lock,
+live-service, accessibility and usability gates remain pending. See
+[the precise manual boundary](manual-validation.md#adr-0084-mobile-host-execution)
+and [fixed-head qualification](milestone-progress.md).
+
 - **Implemented:** capability exists in code with focused automated tests.
 - **Validation pending:** implementation exists, but required integration,
   rendered-frame, native-platform, or reference-application evidence remains.

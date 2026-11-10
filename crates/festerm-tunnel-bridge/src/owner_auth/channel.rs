@@ -180,7 +180,7 @@ impl crate::relay::ClientConnection {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "relay"))]
     pub(crate) fn prove_owner_fixture(
         &self,
         vault: &dyn SecretStore,

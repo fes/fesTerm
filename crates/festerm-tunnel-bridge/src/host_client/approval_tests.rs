@@ -65,6 +65,7 @@ fn selected_host_receipt_review_requires_exact_account_host_and_independent_pin(
             Err(Error::BindingMismatch)
         ));
     }
+
     assert!(matches!(
         ReviewedOwner::confirm(
             &"x".repeat(MAX_RECEIPT_BYTES + 1),
@@ -74,6 +75,34 @@ fn selected_host_receipt_review_requires_exact_account_host_and_independent_pin(
         ),
         Err(Error::BindingMismatch)
     ));
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_host_mobile_receipt_uses_native_app_root_but_refuses_linked_index() {
+    let (root, _, vault) = fixture();
+    let index = ReceiptIndex::in_app_sandbox(root.path()).unwrap();
+    let binding = binding();
+    let original = index.prepare_with(&vault, review(&binding)).unwrap();
+    assert_eq!(
+        index
+            .load_with(&vault, &binding.host.host, &binding.account)
+            .unwrap()
+            .public_key(),
+        original.public_key()
+    );
+    let retained = root.path().join("retained-native-index");
+    std::fs::rename(&index.root, &retained).unwrap();
+    std::os::unix::fs::symlink(&retained, &index.root).unwrap();
+    assert!(matches!(
+        index.load_with(&vault, &binding.host.host, &binding.account),
+        Err(Error::Storage)
+    ));
+    assert!(matches!(
+        index.prepare_with(&vault, review(&binding)),
+        Err(Error::Storage)
+    ));
+    assert!(std::fs::symlink_metadata(&index.root).unwrap().is_symlink());
 }
 
 #[test]
@@ -214,4 +243,45 @@ fn selected_host_receipt_symlink_is_refused_without_following_or_replacing_it() 
     ));
     assert!(std::fs::symlink_metadata(linked).unwrap().is_symlink());
     assert!(original.is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_host_receipt_hardlink_and_nonprivate_metadata_refuse_without_repair() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_root, index, vault) = fixture();
+    let binding = binding();
+    let original = index.prepare_with(&vault, review(&binding)).unwrap();
+    let name = ReceiptIndex::name(&binding.host.host, &binding.account, "json").unwrap();
+    let record = index.root.join(name);
+    let retained = index.root.join("retained-hardlink");
+    std::fs::hard_link(&record, &retained).unwrap();
+    assert!(matches!(
+        index.load_with(&vault, &binding.host.host, &binding.account),
+        Err(Error::Storage)
+    ));
+    assert!(matches!(
+        index.prepare_with(&vault, review(&binding)),
+        Err(Error::Storage)
+    ));
+    std::fs::remove_file(retained).unwrap();
+    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(
+        index.load_with(&vault, &binding.host.host, &binding.account),
+        Err(Error::Storage)
+    ));
+    assert!(matches!(
+        index.prepare_with(&vault, review(&binding)),
+        Err(Error::Storage)
+    ));
+    assert_eq!(
+        std::fs::metadata(record).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    assert_eq!(
+        ClientOwnerKey::open(&vault, original.reference(), &binding)
+            .unwrap()
+            .public_key(),
+        original.public_key()
+    );
 }

@@ -673,6 +673,166 @@ async fn native_selected_host_creation_worker_adopts_isolated_frontends_and_orig
 }
 
 #[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until_activation() {
+    use crate::host_client::{CreationIntent, CreationMode, HostSession, Scope, Worker};
+    use festerm_session::{Session, SessionEvent, SessionEventNotifier, SessionLifecycle};
+    struct Wake;
+    impl SessionEventNotifier for Wake {
+        fn notify(&self) {}
+    }
+    let mut fixture = NativeRuntimeFixture::new();
+    let context = fixture.client_context();
+    let mut creation = fixture.native.creation();
+    creation.recipe.args = vec![
+        "emit:OWNED-MOBILE".into(),
+        "read-line".into(),
+        "echo:MOBILE".into(),
+        "spin".into(),
+    ];
+    let intent = Arc::new(CreationIntent::new(&context, CreationMode::Ensure, creation).unwrap());
+    let created = client_create_worker(&mut fixture, intent.clone()).await;
+    let target = created.session().target.clone();
+    let issued = intent.issued_operation().unwrap();
+    assert!(!intent.is_presented());
+    let mut foreign_creation = fixture.native.creation();
+    foreign_creation.recipe.args = vec![
+        "read-line".into(),
+        "echo:FOREIGN-MOBILE".into(),
+        "spin".into(),
+    ];
+    let foreign_intent =
+        Arc::new(CreationIntent::new(&context, CreationMode::Create, foreign_creation).unwrap());
+    let foreign_created = client_create_worker(&mut fixture, foreign_intent.clone()).await;
+    let foreign_target = foreign_created.session().target.clone();
+    assert_ne!(target, foreign_target);
+    let mut foreign_pending = fixture
+        .pending(
+            foreign_target.clone(),
+            foreign_intent.creation().attachment.clone(),
+            false,
+        )
+        .await;
+    let mut foreign_frontend = foreign_pending.take_snapshot().unwrap();
+    let mut foreign = foreign_pending
+        .adopt(&CancellationToken::new())
+        .await
+        .unwrap()
+        .spawn()
+        .unwrap();
+    foreign.input(b"independent\n").unwrap();
+    let foreign_output = terminal_output_until(&mut foreign, b"FOREIGN-MOBILE:independent").await;
+    foreign_frontend.ingest(&foreign_output);
+    assert!(foreign_frontend
+        .text_snapshot()
+        .text()
+        .contains("FOREIGN-MOBILE:independent"));
+    assert!(!foreign_frontend
+        .text_snapshot()
+        .text()
+        .contains("OWNED-MOBILE"));
+    let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: fixture.binding(),
+    };
+    let selection = (target.clone(), intent.creation().attachment.clone());
+    let worker = Worker::spawn(
+        scope,
+        Arc::new(|| {}),
+        move |scope, cancel, events, wake| async move {
+            crate::host_client::attach_reserved_authenticated(
+                stream, permit, &scope, selection, &cancel, &events, &wake,
+            )
+            .await
+        },
+    )
+    .unwrap();
+    let mut session = HostSession::from_worker(worker, Arc::new(Wake));
+    session.set_creation_intent(Some(intent.clone()));
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while !session.has_pending_snapshot() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(session.lifecycle(), SessionLifecycle::Starting);
+    assert!(
+        !intent.is_presented(),
+        "starting a worker is not frontend presentation"
+    );
+    assert!(session.try_send_input(b"must-not-be-queued").is_err());
+    let mut frontend =
+        festerm_core::Terminal::new(festerm_core::Dimensions::new(40, 12).unwrap()).unwrap();
+    assert!(session.adopt_into(&mut frontend).unwrap());
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while session.lifecycle() != SessionLifecycle::Running {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(intent.is_presented());
+    assert_eq!(intent.issued_operation(), Some(issued));
+    session.try_send_input(b"once\n").unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if let Ok(SessionEvent::Output(bytes)) = session.try_recv_event() {
+                frontend.ingest(&bytes);
+            }
+            let text = frontend.text_snapshot();
+            assert!(!text.text().contains("FOREIGN-MOBILE"));
+            if text.text().contains("MOBILE:once") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(frontend.text_snapshot().text().contains("OWNED-MOBILE"));
+    session.cancel();
+    assert!(session.try_send_input(b"never-replay").is_err());
+    drop(session);
+    let mut control = fixture.control().await;
+    let operation = OperationId::new();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let response = control
+                .request(
+                    operation.clone(),
+                    Request::List { cursor: None },
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            match response.body {
+                Response::Refused {
+                    reason: festerm_host_protocol::Refusal::Busy,
+                } => tokio::time::sleep(Duration::from_millis(25)).await,
+                Response::Inventory { page } => {
+                    assert!(page.sessions.iter().any(|session| session.target == target));
+                    assert!(page
+                        .sessions
+                        .iter()
+                        .any(|session| session.target == foreign_target));
+                    break;
+                }
+                other => panic!("cancel is not detach, end, or absence: {other:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    drop(control);
+    drop(foreign);
+    fixture.shutdown().await;
+}
+
+#[cfg(unix)]
 impl NativeRuntimeFixture {
     fn binding(&self) -> Binding {
         Binding::new(

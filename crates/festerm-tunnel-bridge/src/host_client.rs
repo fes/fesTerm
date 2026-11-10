@@ -21,7 +21,6 @@ use tokio_util::sync::CancellationToken;
 use tunnels::contracts::TunnelEndpoint;
 use zeroize::Zeroizing;
 
-#[cfg(feature = "relay")]
 pub mod approvals;
 mod creation;
 #[cfg(test)]
@@ -31,6 +30,32 @@ pub(crate) use creation::create_authenticated;
 pub use creation::{Created, CreationIntent, CreationMode};
 pub use festerm_host_protocol::{AttachmentId, Budgets, Creation, LogicalSessionId, Target};
 pub use session::HostSession;
+#[cfg(feature = "testing")]
+pub mod testing {
+    use super::*;
+
+    /// Explicit stream injection for headless composition tests only.
+    pub fn session_from_stream<S>(
+        stream: S,
+        permit: ConnectionPermit,
+        scope: Scope,
+        target: Target,
+        notifier: Arc<dyn festerm_session::SessionEventNotifier>,
+    ) -> Result<Arc<HostSession>, Failure>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let notify = notifier.clone();
+        let worker = Worker::spawn(
+            scope,
+            Arc::new(move || notify.notify()),
+            move |scope, cancel, events, wake| async move {
+                attach_authenticated(stream, permit, &scope, target, &cancel, &events, &wake).await
+            },
+        )?;
+        Ok(Arc::new(HostSession::from_worker(worker, notifier)))
+    }
+}
 
 pub const ENROLLMENT_PREREQUISITE: &str =
     "This host needs foreground host-key approval and an owner key explicitly enrolled on that host. Reopen its protected native-vault credential for this installation, account and principal; importing or saving a recipe cannot authorize a connection.";
@@ -147,15 +172,22 @@ impl ApprovedContext {
         role: StreamRole,
         cancel: &CancellationToken,
     ) -> Result<(relay::ClientConnection, ConnectionPermit, Binding), Failure> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
         // The worker is already admitted. Vault access is blocking and never
         // runs in a GUI callback. It cannot generate a replacement on failure.
         let permit = Arc::new(permit);
         let charge = permit.clone();
         let approved = self.approved.clone();
         let reference = self.reference;
+        let key_cancel = cancel.clone();
         let key = tokio::task::spawn_blocking(move || {
             let _charge = charge;
-            ClientOwnerKey::open_native(reference, &approved)
+            if key_cancel.is_cancelled() {
+                return Err(Failure::Control(Error::Cancelled));
+            }
+            ClientOwnerKey::open_native(reference, &approved).map_err(Failure::OwnerKey)
         });
         let key = tokio::select! {
             biased;
@@ -163,7 +195,7 @@ impl ApprovedContext {
             value = tokio::time::timeout(Duration::from_secs(15), key) =>
                 value.map_err(|_| Failure::Control(Error::Deadline))?
                     .map_err(|_| Failure::WorkerUnavailable)?
-                    .map_err(Failure::OwnerKey)?,
+                    ?,
         };
         let permit = Arc::try_unwrap(permit).map_err(|_| Failure::WorkerUnavailable)?;
         let stream = tokio::select! {
@@ -296,22 +328,33 @@ impl ApprovedAttachment {
         budgets: &Budgets,
         notifier: Arc<dyn festerm_session::SessionEventNotifier>,
     ) -> Result<HostSession, Failure> {
-        let session = match self.attachment {
-            None => HostSession::start(self.context, self.scope, self.target, budgets, notifier),
-            Some(attachment) => HostSession::start_operation(
-                self.context,
-                self.scope,
-                Operation::AttachReserved {
-                    target: self.target,
-                    attachment,
-                },
-                budgets,
-                notifier,
-            ),
-        }?;
-        if let Some(intent) = self.creation_intent {
-            intent.mark_presented();
-        }
+        self.start_with_cancellation(budgets, notifier, CancellationToken::new())
+    }
+
+    pub fn start_with_cancellation(
+        self,
+        budgets: &Budgets,
+        notifier: Arc<dyn festerm_session::SessionEventNotifier>,
+        cancel: CancellationToken,
+    ) -> Result<HostSession, Failure> {
+        let operation = match self.attachment {
+            None => Operation::Attach {
+                target: self.target,
+            },
+            Some(attachment) => Operation::AttachReserved {
+                target: self.target,
+                attachment,
+            },
+        };
+        let mut session = HostSession::start_operation_with_cancellation(
+            self.context,
+            self.scope,
+            operation,
+            budgets,
+            notifier,
+            cancel,
+        )?;
+        session.set_creation_intent(self.creation_intent);
         Ok(session)
     }
 }
@@ -368,6 +411,27 @@ impl Worker {
         budgets: &Budgets,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<Self, Failure> {
+        Self::start_with_cancellation(
+            context,
+            scope,
+            operation,
+            budgets,
+            wake,
+            CancellationToken::new(),
+        )
+    }
+
+    pub fn start_with_cancellation(
+        context: ApprovedContext,
+        scope: Scope,
+        operation: Operation,
+        budgets: &Budgets,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cancel: CancellationToken,
+    ) -> Result<Self, Failure> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
         if context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
@@ -378,11 +442,17 @@ impl Worker {
         }
         // Admission precedes thread/runtime allocation, vault lookup and connect.
         let permit = ConnectionPermit::reserve(budgets)?;
-        Self::spawn(scope, wake, move |scope, cancel, events, wake| async move {
-            execute(context, permit, &scope, operation, &cancel, &events, &wake).await
-        })
+        Self::spawn_with_cancellation(
+            scope,
+            wake,
+            cancel,
+            move |scope, cancel, events, wake| async move {
+                execute(context, permit, &scope, operation, &cancel, &events, &wake).await
+            },
+        )
     }
 
+    #[cfg(any(all(test, feature = "relay"), feature = "testing"))]
     pub(crate) fn spawn<F, Fut>(
         scope: Scope,
         wake: Arc<dyn Fn() + Send + Sync>,
@@ -399,7 +469,29 @@ impl Worker {
             + 'static,
         Fut: std::future::Future<Output = Result<Outcome, Failure>>,
     {
-        let cancel = CancellationToken::new();
+        Self::spawn_with_cancellation(scope, wake, CancellationToken::new(), task)
+    }
+
+    fn spawn_with_cancellation<F, Fut>(
+        scope: Scope,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cancel: CancellationToken,
+        task: F,
+    ) -> Result<Self, Failure>
+    where
+        F: FnOnce(
+                Scope,
+                CancellationToken,
+                flume::Sender<Completion>,
+                Arc<dyn Fn() + Send + Sync>,
+            ) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = Result<Outcome, Failure>>,
+    {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
         let (events, receiver) = flume::bounded(2);
         let worker_cancel = cancel.clone();
         let worker_scope = scope.clone();

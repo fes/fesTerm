@@ -1603,9 +1603,13 @@ lifecycle features. The compatibility reexport retains the host-local API
 without duplicating formatting. The explicit Create/Ensure continuation checks
 fresh capabilities and protected permissions, retains the original issued action
 for in-process retry, and uses the same frontend snapshot/adoption path.
-HOST-01/02 remain partial: account-wide discovery, mobile installation, local
-Settings/Remote Access, durable client-action reconciliation and native
-acceptance are not supplied by this increment.
+HOST-01/02 remain partial. The subsequent opt-in shared mobile `host-clients`
+route adds explicit account-scoped discovery/refresh, protected owner review,
+inventory, Create/Ensure and installed-frontend adoption; it cancels HOST work
+from native callbacks without another frame. Framed mobile tests and the
+separate signed-SSH/native-PTY adapter fixture are automated evidence, not
+physical mobile/native-vault/GUI acceptance. Local Settings/Remote Access,
+sharing, durable client-action reconciliation and native acceptance remain open.
 The subsequent shared Session adapter consumes bounded frames with event-loop
 wakes, preserves recovery ordering and uses correlated detach. Typed desktop
 installation checks the originating editor and account credential before work;
@@ -1663,7 +1667,7 @@ Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
-| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state tests; UI/endpoint/H,N deferred |
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; desktop plus opt-in shared mobile protected foreground worker, account/recipe/native-lifetime fences; live cloud/native GUI/device H,N deferred |
 | `HOST-02` | Local recipe → resumed/new remote shell | Offline recipe management; separate protected foreground attach or explicit Create/atomic Ensure | Public metadata is not authority; exact launch/lifetime confirmation; visible fresh capability/creation/temporary grants; frozen owner/host/logical/attachment/original issuance; snapshot before activation; no input replay | Busy/unknown/denied/offline/stale is never absence; sixteen pending in-process actions survive review closure; changed recipe/credential and duplicate flight refuse; lost/unpresented reply retains original action; durable restart reconciliation remains open | P; headless application consent/registry, typed original-issued retry and actual worker→SSH→independent native PTY frontend isolation; signed/native GUI/accessibility/usability H,N deferred |
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; framed native detach/revocation plus daemon expiry, stale takeover, per-generation authority/heartbeat without global journal, stopped-detach receipt and revoked-live local end/reconsent tests; sharing/endpoint/H,N deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings boundary; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings; recover persisted ticket; preserve draft and exact late cleanup identity, never re-enable | P,H,N; partial boundary, native/UI deferred |

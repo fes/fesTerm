@@ -1,5 +1,68 @@
 # Milestone Progress Narrative
 
+## Executable shared mobile HOST client
+
+The mobile lane is a new child of immutable creation evidence head
+`1f28db0a58c4c73fd44e92a7703eb896fd7f5e85` (#700), preserving its fixed #693/#695
+stack. It consumes no later moving core, native-update or desktop-local Settings
+source. `host-clients` is separately opt-in on the shared mobile app and forwarded
+by Android; neither the offline default nor legacy `live-ssh` changes.
+
+Profiles now routes a typed foreground HOST review. Find/refresh is explicit
+and scoped to the complete selected signed-in account; service metadata is not
+availability, trust or absence. The same application owner performs protected
+native owner preparation/reopening, separately confirmed host-local enrollment,
+authorized inventory, exact-generation attachment and confirmed Create/Ensure.
+Public imported/saved recipes never become owner bindings or protected creation
+permission. The protected receipt journal reuses its existing native-vault key
+logic with a small portable no-follow/private-file backend, not host lifecycle
+dependencies. Only the authoritative native app-storage root is canonicalized
+for sandbox aliases; receipt files/indexes still reject links and nonprivate
+metadata without permission repair or key replacement.
+
+The installed mobile tab wraps the real shared `HostSession`, adopts recovery
+into its own terminal, then waits for actual host activation before input.
+HOST tabs and reconnect chrome are explicitly distinct from offline fixtures
+and legacy SSH: resetting the demo cannot overwrite their frontends, and
+reconnection opens protected review rather than promising a fresh shell.
+Native lock/suspension owns weak cancellation registrations and cancels pending
+work and active/parked HOST transports without another UI frame. A cancellation
+token now enters the shared executor before thread/vault/connection admission,
+closing the registration race. Abandoning transport never forges detach or ends
+the independent daemon; generation/heartbeat-fenced grace remains server-owned.
+An actual RED regression also caught cancellation arriving through the shared
+token before its Session registration: cancellation must still publish the
+disconnected lifecycle rather than leave a permanently Starting frontend.
+Legacy retention and liveness probes are preserved.
+
+Mobile keeps sixteen original creation actions across review closure and
+cancellation, refusing changed recipe/account or overflow. This also exposed and
+corrected a shared presentation boundary: starting a presentation worker alone
+must not retire an action. Retirement now requires frontend snapshot adoption
+and the host's activation receipt. Busy, unknown, denied, offline, cancellation
+and lost replies do not create absence, replay input or replace the original
+sealed issuance. This registry remains process-local; restart is not an
+automatic retry/reconciliation journal.
+An explicit local review action reselects an unsaved retained original without
+issuing it; all protected trust, endpoint and launch consent must be reviewed again.
+
+The nine new mobile fixtures cover inert metadata, native callback cancellation,
+stale account/recipe completion, original-action bounds and the real framed
+frontend adopter. A separate explicitly ignored native-helper fixture exercises
+the same Session adapter over signed SSH, actual independent PTYs, positive
+foreign-output observation/exclusion and original-ticket retention until
+activation. Neither kind of host fixture is physical mobile/native-vault/GUI
+acceptance. Raw toolchain/qualification evidence is kept under `target/mobile-*`
+in this owned worktree; final fixed-source receipts follow below.
+
+**Remaining ADR 0084 capsule:** physical iOS/Android native-vault, app-lock,
+suspend/resume, live cloud and GUI/accessibility/usability gates remain open.
+Mobile sharing/end/correlated-detach controls and durable restart reconciliation
+are not silently claimed. Desktop local Settings/Remote Access, local private
+shell sharing/unsharing and its native approval/setup gates remain the separate
+runtime-owned HOST-03–05 slice. No installed app, device/VM, production account,
+native vault, OS service/settings or signing operation is exercised here.
+
 ## Explicit desktop Create and atomic resume-or-create
 
 The creation lane normally merges exact corrected #693

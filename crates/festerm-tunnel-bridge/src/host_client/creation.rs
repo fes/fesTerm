@@ -65,7 +65,7 @@ impl CreationIntent {
         self.resolved.load(Ordering::Acquire)
     }
 
-    /// Handed to an admitted presentation session; this does not mean Attached.
+    /// The originating frontend adopted recovery and the host confirmed activation.
     pub fn is_presented(&self) -> bool {
         self.presented.load(Ordering::Acquire)
     }

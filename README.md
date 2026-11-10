@@ -158,8 +158,11 @@ private keys. Persistent host-key trust is explicit and non-secret.
 
 ADR 0084 now has a shared desktop/mobile [public host recipe metadata
 foundation](docs/configuration.md#public-host-recipes-adr-0084-foundation)
-under [#681](https://github.com/fes/fesTerm/issues/681). Live host UI/connection
-wiring and native acceptance remain deferred; legacy launch behavior is unchanged.
+under [#681](https://github.com/fes/fesTerm/issues/681). Experimental desktop and
+opt-in shared mobile `host-clients` now execute protected foreground inventory,
+attachment and explicit Create/Ensure; public recipes never grant trust or
+creation permission. Native GUI/vault/cloud/device acceptance remains open;
+offline defaults and legacy launch behavior are unchanged.
 
 Explicit [smart selection](docs/gui-design.md#smart-terminal-selection)
 highlights sentences, paragraphs or indented blocks from terminal cells before

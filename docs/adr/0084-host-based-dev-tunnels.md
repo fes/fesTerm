@@ -892,7 +892,13 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   and explicit-browse state evidence for `HOST-01`/`HOST-02` under
   [#681](https://github.com/fes/fesTerm/issues/681). Experimental desktop Profiles
   now has the reachable foreground review and authorized existing-session
-  selection route described above. End-to-end native GUI/mobile acceptance
+  selection route described above. The opt-in shared mobile `host-clients`
+  application additionally executes explicit account-scoped HOST discovery,
+  protected owner review, inventory, Connect/Create/Ensure and actual
+  `HostSession` frontend adoption. Callback-owned cancellation precedes worker
+  admission and does not wait for a UI frame. Original creation actions remain
+  process-local and are retired only after frontend adoption plus activation,
+  not merely worker admission. End-to-end native GUI/mobile acceptance
   remains deferred. `HOST-04`/`HOST-05` have partial shared boundary
   coverage. `HOST-06` has partial authenticity-foundation coverage only. Existing
   `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation coverage

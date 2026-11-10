@@ -71,9 +71,10 @@ of that same handler. The coordinator refuses obsolete editors before any
 effect and reports the transactional result only to the submitting editor.
 Preview uses the shared portable parser; import confirmation only saves metadata.
 Export returns JSON to the view for explicit clipboard copy and never saves.
-Desktop selected-host review and explicit creation are described below;
-mobile connection installation remains deferred under [#681](https://github.com/fes/fesTerm/issues/681),
-not delegated to legacy `SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
+Desktop selected-host review and explicit creation are described below.
+The opt-in shared mobile `host-clients` route uses `ShellAction::OpenHosts` and
+the mobile application's typed foreground HOST actions, not legacy
+`SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
 
 The shared `festerm-tunnel-bridge::host_client` executor performs actual
 selected-host inventory and existing-generation attachment only after its
@@ -138,6 +139,26 @@ Resumed and Recreated descriptions remain distinct; all use the existing
 `OpenApprovedHostFromProfiles` origin/account checks and installed-frontend
 snapshot/adoption path. This registry is process-local, not a durable restart
 reconciliation journal.
+
+The mobile composition root owns the same protected receipt/context, bounded
+worker, exact authorized session selection and original-action registry. Its
+native callback cancellation token is registered **before** worker/session
+creation, closing the lock/suspension admission race. Result installation checks
+the complete original account record, recipe, request and native lifetime epoch;
+account removal/credential replacement also cancels active and parked HOST
+transports. Imported metadata is never an owner binding or creation permission.
+The native app-owned storage root alone selects the private receipt index
+(canonicalized once for OS sandbox aliases); receipt traversal remains no-follow
+and signing material stays in the native vault.
+
+`LiveSsh::from_host` starts non-running, wraps the actual `HostSession`, and
+adopts its pending snapshot into the already installed mobile terminal. Only
+the subsequent correlated host activation admits input and retires a creation
+action. Starting a presentation worker alone does not retire it. Native lock
+and suspension cancel without a UI frame and never forge detach receipts or
+end the daemon-owned shell; no automatic reconnect or replay is added. Default
+offline and legacy live-SSH/bridge behavior remain separate. Physical/native
+mobile acceptance remains open under HOST-01–03/MOB-01–06.
 
 No implicit discovery, background sign-in or input replay is implemented by this
 executor. Shared framing, protected-file/memory-vault, headless application tests
