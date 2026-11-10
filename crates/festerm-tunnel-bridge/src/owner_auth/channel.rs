@@ -98,6 +98,11 @@ impl OwnerAuthenticationFailure {
 
 #[cfg(feature = "relay")]
 impl OwnerAuthenticatedStream {
+    #[cfg(feature = "host-routing")]
+    pub(crate) fn stream_mut(&mut self) -> &mut crate::relay::HostStream {
+        &mut self.stream
+    }
+
     /// Dispatch only this stream with these authority values. Retain the guard
     /// until stream shutdown and freshly authorize each operation.
     pub fn into_parts(

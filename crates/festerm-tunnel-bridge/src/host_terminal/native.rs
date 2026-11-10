@@ -27,13 +27,16 @@ use std::{
 };
 
 pub struct NativeTerminal<A: ProtectedPolicySource> {
-    sessions: SessionControl,
+    sessions: Arc<SessionControl>,
     policy: Arc<A>,
 }
 
 impl<A: ProtectedPolicySource> NativeTerminal<A> {
-    pub fn new(sessions: SessionControl, policy: Arc<A>) -> Self {
-        Self { sessions, policy }
+    pub fn new(sessions: impl Into<Arc<SessionControl>>, policy: Arc<A>) -> Self {
+        Self {
+            sessions: sessions.into(),
+            policy,
+        }
     }
 }
 
@@ -394,8 +397,8 @@ fn response_for(request: &Envelope<Request>, body: Response) -> Envelope<Respons
     response
 }
 
-/// Low-level composition only. `owner` and `guard` must have been produced on
-/// this exact supplied pinned channel. There is deliberately no endpoint here.
+/// Internal composition only. The runtime supplies `owner` and `guard` from
+/// consumed proof on this exact pinned channel. This installs no endpoint.
 #[allow(clippy::too_many_arguments)]
 pub async fn serve_terminal<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource>(
     stream: S,

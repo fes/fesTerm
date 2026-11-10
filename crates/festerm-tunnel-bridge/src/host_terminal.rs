@@ -3,22 +3,22 @@
 //! HOST request/reply frames never grant file, observation or MCP capabilities.
 use crate::protocol::*;
 use festerm_core::Terminal;
-#[cfg(all(test, feature = "relay"))]
+#[cfg(feature = "relay")]
 use festerm_host_protocol::ConnectionId;
 use festerm_host_protocol::{
     AttachmentId, BudgetPermit, ClientBytesPermit, Envelope, OperationId, Request, Resource,
     Response, Target as HostTarget, TemporaryLease, CONTROL_FRAME_BYTES, MAX_BYTES_PER_CLIENT,
 };
 use festerm_tunnel_client::host_control::{Binding, ConnectionPermit, Error};
-#[cfg(all(test, feature = "relay"))]
+#[cfg(feature = "relay")]
 use std::{collections::VecDeque, sync::Mutex};
 use std::{sync::Arc, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 mod client;
-#[cfg(all(test, feature = "relay"))]
-mod native;
+#[cfg(feature = "relay")]
+pub(crate) mod native;
 pub use client::TerminalHandle;
 #[cfg(test)]
 #[path = "host_terminal_tests.rs"]
@@ -33,16 +33,16 @@ const DEADLINE: Duration = Duration::from_secs(15);
 /// aggregate attachment permits. Scheduling never retains a lock or turn across
 /// network I/O: a slow socket can occupy only its own bounded in-flight chunk.
 #[derive(Clone, Default)]
-#[cfg(all(test, feature = "relay"))]
+#[cfg(feature = "relay")]
 pub(crate) struct OutputScheduler(Arc<Scheduling>);
 #[derive(Default)]
-#[cfg(all(test, feature = "relay"))]
+#[cfg(feature = "relay")]
 struct Scheduling {
     ready: Mutex<VecDeque<ConnectionId>>,
     wake: tokio::sync::Notify,
 }
 
-#[cfg(all(test, feature = "relay"))]
+#[cfg(feature = "relay")]
 impl OutputScheduler {
     async fn turn(
         &self,
@@ -234,7 +234,7 @@ async fn write(
     Ok(())
 }
 
-async fn write_contract<T: serde::Serialize + festerm_host_protocol::Validate>(
+pub(crate) async fn write_contract<T: serde::Serialize + festerm_host_protocol::Validate>(
     stream: &mut (impl AsyncWrite + Unpin),
     permit: &ConnectionPermit,
     kind: u8,

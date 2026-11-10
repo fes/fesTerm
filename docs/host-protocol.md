@@ -10,6 +10,45 @@ Independent antagonist/security review is required before exposure.
 
 ## Dependency and API boundary
 
+### Authenticated runtime composition (source checkpoint)
+
+The bridge's opt-in `host_runtime` module provides these concrete APIs:
+
+- Portable `authenticate_client(ClientConnection, ConnectionPermit,
+  ClientOwnerKey, OwnerBinding, StreamRole, CancellationToken)` consumes an
+  already pinned connection, reserved aggregate permit and existing native key.
+  It exchanges bounded owner challenge/proof frames and returns the same
+  connection/permit, never creates a key, trusts a changed host or retries.
+  Desktop/mobile callers must finish foreground trust/enrollment first.
+- `StreamRole::Control` then uses
+  `ControlClient::on_authenticated_stream`, `handshake` and `request`.
+  `StreamRole::Terminal` uses `host_terminal::establish`, snapshot adoption and
+  the existing terminal handle. The role byte is sent only after owner proof.
+  Every terminal stream authenticates independently; control authority is not
+  transferable to another channel.
+- Relay-only `HostRuntime::new(SessionControl, Arc<A>)`, where `A` implements
+  `ProtectedPolicySource`, shares actual native control and terminal adapters.
+  `Arc<HostRuntime>::serve(&mut HostConnection, CancellationToken)` consumes the
+  existing relay listener; `serve_stream(HostStream, CancellationToken)` handles
+  one actual SSH stream. Raw sockets, verified-owner arguments and asserted
+  principals are intentionally absent. Control remains inventory-only.
+
+The whole proof exchange and role admission have bounded deadlines; blocking
+protected-policy/vault work retains its aggregate client permit even if its
+waiter cancels. No policy guard spans network I/O. Existing frame/byte budgets,
+per-operation current-policy checks, native authorities, receipt-only detach
+publication and FIFO terminal output scheduling remain unchanged.
+
+Authored tests use signed SSH over exact-owned native loopback sockets,
+including queued rekey with original-binding preservation and cross-connection
+proof rejection. The opt-in native case additionally routes two owned daemon
+terminals and verifies exact input isolation, independent inventory and
+persistent detach. Tests still require execution against this checkpoint.
+Constrained test policy/vault state is not production enrollment, native vault,
+Dev Tunnels service/rekey qualification or installed readiness. Consume the
+qualified final session correction and protected enrollment adapter before
+native end-to-end exposure; installation/CLI activation remains separate.
+
 `festerm-host-protocol` contains transport-independent serde/UUID contracts.
 It has no sessiond, PTY, GUI, native-store, cloud or async dependency. A separate
 crate is necessary because placing shared contracts in the bridge would make

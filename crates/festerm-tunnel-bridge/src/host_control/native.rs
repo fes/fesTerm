@@ -19,16 +19,16 @@ use std::{
 };
 
 pub struct NativeControl<A: ProtectedPolicySource> {
-    sessions: SessionControl,
+    sessions: Arc<SessionControl>,
     policy: Arc<A>,
     #[cfg(test)]
     test_capabilities: bool,
 }
 
 impl<A: ProtectedPolicySource> NativeControl<A> {
-    pub fn new(sessions: SessionControl, policy: Arc<A>) -> Self {
+    pub fn new(sessions: impl Into<Arc<SessionControl>>, policy: Arc<A>) -> Self {
         Self {
-            sessions,
+            sessions: sessions.into(),
             policy,
             #[cfg(test)]
             test_capabilities: false,
@@ -38,7 +38,7 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
     #[cfg(test)]
     pub(super) fn with_test_capabilities(sessions: SessionControl, policy: Arc<A>) -> Self {
         Self {
-            sessions,
+            sessions: sessions.into(),
             policy,
             test_capabilities: true,
         }

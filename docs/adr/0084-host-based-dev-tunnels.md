@@ -525,6 +525,30 @@ changes are part of the stage-1 contract slice.
 
 ## Validation impact
 
+**Authenticated runtime source checkpoint (#681):** the non-default bridge
+`host_runtime` consumes only actual `HostStream`s, reserves aggregate admission
+before protected policy/proof work, bounds challenge/proof frames and deadlines,
+and consumes successful same-channel proof into either existing control framing
+or the native exact-generation terminal adapter. Every channel proves itself;
+neither bearer transport nor a sibling channel's proof grants authority.
+The portable native-vault client helper consumes an already approved pinned
+connection and existing owner key; there is no first-connect trust default,
+enrollment, new key or weaker-protocol retry.
+The source adds `authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation`,
+`authenticated_runtime_terminal_role_uses_separate_bounded_framing`,
+`authenticated_runtime_rejects_proof_replayed_on_another_actual_ssh_channel`
+and `authenticated_runtime_bounds_proof_frames_and_client_admission`.
+The opt-in
+`native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input`
+adds actual owned-daemon input/isolation, inventory and persistent detach over
+native TCP SSH, without widening the inventory-only remote control capability.
+These authored tests still require execution against this checkpoint. They use
+real encrypted signed SSH channels and local inventory, not native-vault/service
+acceptance or an end-to-end multi-session shell claim. Native capabilities remain
+inventory-only; creation is not widened. Protected enrollment composition,
+qualified session correction, actual daemon round trips and independent gates
+remain prerequisites before native exposure. No installed endpoint is enabled.
+
 **Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
 protected lifecycle journal; the separate GUI-free `festerm-host` supports
 disabled configure, recorded status, offline official-CLI pin staging and

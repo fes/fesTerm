@@ -804,6 +804,16 @@ Vendored russh now derives immutable bindings from its signed original session
 identifier and role-ordered actual channel IDs, excluding no-KEX outer relays.
 Client signing requires its privately captured actual pin and matching current
 stream; server authentication transfers that stream and owner/guard together.
+The opt-in bridge `host_runtime` composes that exact stream with bounded owner
+challenge/proof framing, then a control or terminal role. Its host shares one
+aggregate budget and FIFO output scheduler; protected policy work retains client
+admission through cancellation. Control remains inventory-only, while separately
+proven terminal channels use the existing exact-generation adoption/receipt
+adapter. No raw socket, principal string or fabricated owner can enter the
+runtime. The portable client handshake creates no key and changes no trust.
+This source checkpoint does not install/enable a listener: consuming protected
+enrollment, the qualified final session correction and native end-to-end gates
+remain mandatory before exposure.
 Endpoint integration and independent security review are mandatory before
 new remote capabilities; all new capabilities default denied. No session routing,
 creation, migration or lifetime-supervisor implementation is claimed by this slice.

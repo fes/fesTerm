@@ -44,7 +44,7 @@ getrandom = { version = "0.3", optional = true }
 
 [dev-dependencies]
 festerm-sessiond = { path = "../festerm-sessiond", features = ["test-support"] }
-tokio = { version = "1", features = ["test-util"] }
+tokio = { version = "1", features = ["test-util", "net"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "ring", "std", "tls12"] }
 
 [[bin]]

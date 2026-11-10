@@ -11,6 +11,8 @@ pub mod host_control;
 #[cfg(feature = "relay")]
 pub mod host_identity;
 #[cfg(feature = "host-routing")]
+pub mod host_runtime;
+#[cfg(feature = "host-routing")]
 pub mod host_terminal;
 #[cfg(feature = "client")]
 pub mod mobile;

@@ -3371,6 +3371,16 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 
 ## Host-based Dev Tunnels stages 1–2 classification (#681)
 
+The opt-in authenticated runtime source checkpoint adds an actual signed SSH
+stream handshake and control/terminal dispatch, with authored encrypted-channel
+tests for inventory/terminal negotiation, revocation, replay and frame/client
+bounds. These tests are not yet run on this head. They use constrained test
+policy/vault state and do not qualify protected production enrollment or an
+actual multi-session shell host. HOSTAUTH-01, DT-07/DT-08, CP-11 and mobile gates
+remain manual/native or deferred behind the qualified final session correction,
+protected enrollment adapter and consuming native endpoint. No service is
+installed or Ready state asserted; legacy qualification is unchanged.
+
 [ADR 0084](adr/0084-host-based-dev-tunnels.md) remains Proposed.
 [HOST contract primitives](host-protocol.md) have automated codec, canonical
 signature, default-deny owner/session admission, revocation/replay, privacy/

@@ -9005,3 +9005,17 @@ unexposed integration milestone, not complete ADR0084 or native acceptance.
 The main/enrollment/opaque-authority union is now source-frozen only; its own
 native-nine/clippy and different-source-family antagonist checks remain pending.
 Historical nine-of-nine evidence is not qualification of this new union.
+
+### ADR 0084 authenticated stream composition source checkpoint
+
+The earlier routing core could accept opaque owner authorities but did not
+consume the actual SSH owner proof into a dispatcher. The opt-in runtime now
+owns bounded challenge/proof exchange on the signed original SSH stream, then
+routes that same stream to inventory control or adopted terminal handling.
+Each stream proves itself; aggregate client admission survives cancelled
+blocking policy work. The portable client helper preserves existing native-vault
+keys and foreground trust rather than inventing an authority or weaker fallback.
+Encrypted-channel regression tests are authored, not yet executed at this
+checkpoint. The final session correction, production protected enrollment
+adapter, actual daemon round trips and independent/native gates remain open.
+No installed host, remote creation, GUI change or acceptance is claimed.

@@ -1576,6 +1576,14 @@ branch silently.
 
 ## Proposed host-based Dev Tunnels (ADR 0084)
 
+HOST-01–03 additionally have an opt-in source implementation of actual
+SSH-stream owner challenge/proof framing and control/terminal dispatch
+(`host_runtime`). Authored encrypted-channel tests cover control inventory,
+terminal negotiation, revoked policy, cross-connection proof replay and aggregate
+admission/frame bounds. Their execution, qualified session correction, consuming
+protected enrollment and actual multi-session daemon round trips remain pending;
+this adds no GUI transition or installed endpoint and does not change P/H/N status.
+
 The stage-1 [HOST contracts](host-protocol.md) provide codec, identity,
 authorization and budget evidence for HOST-01–03; their end-to-end UI/remote
 transitions remain deferred behind endpoint integration and independent review

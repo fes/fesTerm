@@ -1,7 +1,7 @@
-//! Unexposed HOST dispatcher core. No relay listener calls this module.
+//! HOST dispatcher core, composed only by the explicit authenticated runtime.
 //!
-//! Enrollment's pinned-channel exporter and protected native session adapter
-//! are mandatory integration gates; a bearer connection is not an owner.
+//! Installed endpoint activation and protected enrollment remain integration
+//! gates; a bearer connection is not an owner.
 
 use crate::owner_auth::{OwnerConnectionGuard, OwnerVerifier, VerifiedOwner};
 use festerm_host_protocol::{
@@ -98,7 +98,7 @@ impl Drop for InventoryLifetime {
 }
 
 impl OperationAdmission {
-    #[cfg(all(test, feature = "relay"))]
+    #[cfg(feature = "relay")]
     pub(crate) fn terminal(
         owner: Arc<VerifiedOwner>,
         source: Arc<dyn AuthorizationSource>,
