@@ -1,5 +1,31 @@
 # Milestone Progress Narrative
 
+## ADR 0084 explicit desktop consent coverage on every CI platform
+
+This CI-only child of frozen `e7cf6271` changes no Rust, manifest, lockfile,
+test body or production behavior. The existing Ubuntu/macOS/Windows matrix
+now explicitly runs six lifecycle/settings CAS, protected-owner revision and
+original-ticket setup guards with `cloud,host-runtime,native-services`, plus
+all 17 `desktop_remote_access` model/adapter/headless-render tests with
+`local-host-settings`. This no longer relies on workspace feature unification
+or the workspace-unit step that Windows excludes. These are mock/private-file
+and CPU-only rendering checks; no ignored native test is enabled.
+
+Local qualification lists both exact selections before running each once with
+actual Rust/Cargo 1.99.1, private warm target, jobs1/debug0/incremental0 and the
+30%-start/15%-pause memory policy. It uses the frozen e7 source worktree to
+reuse its private compiled artifacts; this child's compilation inputs are
+byte-identical. Exact commands, selected/pass names, numeric exits and raw/source
+hashes are retained in the private CI handoff. The listings contain exactly six
+and 17 names; both selections passed once, with zero failures/ignores and
+separately captured exit 0. Every Cargo command started at 54% free memory.
+No 133-test or full-workspace
+rerun, native GUI/provider/manager/vault operation, unrelated Windows fixture
+repair or moving-source integration is included. Real Windows/Linux execution
+and the three new exact-head CI gates remain parent-owned qualification;
+existing native/sharing/signed-delivery prerequisites and partial status stay
+unchanged.
+
 ## ADR 0084 desktop-local Settings composition
 
 Scope: current-milestone §7 desktop setup, not client Create, native update,
