@@ -268,6 +268,7 @@ pub fn encode_snapshot(terminal: &Terminal) -> io::Result<Vec<u8>> {
     encode_snapshot_bounded(terminal, SNAPSHOT_LIMIT)
 }
 
+#[cfg(feature = "host-routing")]
 pub(crate) fn encode_json_bounded<T: Serialize>(value: &T, maximum: usize) -> io::Result<Vec<u8>> {
     let mut output = LimitedJson {
         bytes: Vec::new(),
@@ -313,6 +314,15 @@ pub(crate) fn encode_snapshot_bounded(terminal: &Terminal, maximum: usize) -> io
 mod tests {
     use super::*;
     use festerm_core::Dimensions;
+
+    #[cfg(feature = "host-routing")]
+    #[test]
+    fn host_json_encoding_enforces_the_exact_encoded_byte_budget() {
+        let value = ["bounded", "sync"];
+        let bytes = serde_json::to_vec(&value).unwrap();
+        assert_eq!(encode_json_bounded(&value, bytes.len()).unwrap(), bytes);
+        assert!(encode_json_bounded(&value, bytes.len() - 1).is_err());
+    }
 
     #[test]
     fn remote_snapshot_roundtrips_and_rejects_malformed_and_oversized_state() {

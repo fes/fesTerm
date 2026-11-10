@@ -10,8 +10,7 @@ default = ["relay"]
 # discovery and the host-independent session client. `relay` adds the host side
 # and the desktop persistent-session adapter (ADR 0057).
 client = ["dep:uuid", "dep:tunnels", "dep:russh", "dep:tokio", "dep:tokio-util", "dep:reqwest", "dep:flume", "dep:zeroize"]
-# Contract primitives only. No listener advertises or routes HOST until the
-# separate security/admission gate and endpoint implementation are complete.
+# Owner-proof primitives; only explicit host-routing consumers compose a consent-gated HOST listener.
 owner-auth = ["dep:ed25519-dalek", "dep:getrandom", "dep:zeroize", "dep:festerm-secret-store", "dep:base64", "dep:sha2"]
 host-routing = ["owner-auth", "client", "dep:festerm-tunnel-client"]
 relay = ["client", "dep:festerm-sessiond", "dep:fs2", "dep:uuid", "dep:rpassword", "dep:festerm-unix-security", "dep:festerm-windows-security", "dep:cap-std", "dep:cap-fs-ext", "dep:notify", "dep:sha2"]
