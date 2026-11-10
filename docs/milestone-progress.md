@@ -1,5 +1,24 @@
 # Milestone Progress Narrative
 
+## Integrating the qualified cleanup-fixture child into primary Setup
+
+The separate final CI child preserves frozen desktop head `9a2d6db2` and its
+private evidence, then normally merges only the parent-authorized immutable
+backend child `fd0b79d168a85aaea8e28ba23cdfc205470e6d68` of `a8113f6a`.
+Its CLI source is retained exactly. The unchanged status JSON statements move
+only into their private renderer; no native receipt lookup, admission/ACL,
+Desktop workflow, acquisition policy, CI selector or sharing authority changes.
+Both histories below retain their original source-specific evidence.
+
+Qualification is restricted to listing and executing the two affected cleanup
+CLI tests, affected host all-target strict compilation, formatting,
+range-aware traceability and source equivalence. The original 57 primary
+passes at `fe62b372` and three selected executions at `9a2d6db2` are inherited
+at those sources, not rerun or attributed as fresh results here. A new private
+copy-on-write target protects both frozen worktrees and retained executable
+bytes. Genuine Windows/runtime/native, signed-release, vault/provider/GUI and
+three-platform acceptance remain separate gates; no binding pin is consumed.
+
 ## Repairing inherited primary-Setup CI without changing admission
 
 The separate desktop-primary CI-repair child starts at frozen `fe62b372` and
@@ -147,6 +166,45 @@ No ignored native fixture, full workspace, real GUI/network/provider/native vaul
 manager, VM, permissions, signing or release operation was run. Publication and
 the prerequisite CI repairs remain parent-owned; the private build slot is
 released after the stable handoff.
+## Isolating headless cleanup display fixtures from native account admission
+
+Required Windows CI at exact `a8113f6a15fe99f9604bb977635409e645f21723`,
+run `42900070377` / job `130123368383`, passed the cfg-helper Clippy correction,
+then reported seven binary unit passes and two failures in 0.73s. Both cleanup
+tests unwrapped `CloudHostAdapter::foreground(&ticket, 42)` at main.rs876 with
+`PermissionDenied`. The retained 187180-byte raw log has SHA-256
+`7a1c0f5df1ed71241637d79b3e9cf5a56933ce83a4f7173bbb4115c82d72b639`.
+That outer API includes protected storage and native-account admission; the
+specific denied inner call and principal subtype remain **UNKNOWN**.
+
+The display fixture incorrectly used production foreground/disable operations
+to prepare synthetic receipt metadata. It now creates only its own protected
+directory, identity and cloud record through existing private-storage helpers,
+then advances its synthetic lifecycle through the existing Store API. No native
+registration or process was created, and no manager, account, installed-path
+permission repair or production admission waiver is involved. Its fixed fixture
+account deliberately cannot authenticate as the native process account.
+
+The production status path retains the same native receipt lookup and fail-closed
+handling. Only its existing JSON decoration block is extracted unchanged into a
+private pure renderer. Positive display/typed-diagnostic assertions use synthetic
+public `CleanupContext` metadata; they are **not native receipt authentication**.
+The real status-command assertion additionally requires uncertain/null context,
+withheld binding, and unchanged protected journal/record for that foreign fixture.
+The existing three library `host_cloud_manual_cleanup_` tests separately retain
+positive per-instance fixture-context validation, native/foreign-account refusal,
+exact epoch/receipt checks, raced authority refusal and raw-URL redaction.
+
+Bounded actual macOS Rust/Cargo1.99.1 validation passes both original
+`headless_cleanup_` tests (two passed, zero failed/ignored), those three existing
+library tests (three passed, zero failed/ignored), and strict host all-target
+Clippy with all features and without default features. Jobs1/debug0/incremental0,
+fmt and traceability checks apply. No assertions, names, ignores, feature defaults,
+CI commands or cloud/native admission policy are relaxed. Production reinlining
+reproduces the parent status implementation exactly; all other production inputs
+are unchanged. No native14/full-suite/helper rebuild or Windows execution is
+claimed. Fresh default Windows CI remains required after parent publication.
+
 ## Recording redacted first-Ensure failure classifications
 
 Parent-retained PR #706 exact7fa Linux job `130101987441` again reports
