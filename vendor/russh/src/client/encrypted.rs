@@ -392,6 +392,11 @@ impl Session {
                 };
 
                 if let Some(channel) = self.channels.get(&local_id) {
+                    channel.window_size().set_channel_binding(
+                        self.common.encrypted.as_ref().and_then(|enc| {
+                            enc.channel_binding(local_id.0, msg.sender_channel)
+                        }),
+                    );
                     channel
                         .send(ChannelMsg::Open {
                             id: local_id,
@@ -722,6 +727,11 @@ impl Session {
                     self.common.config.channel_buffer_size,
                 );
 
+                channel_ref.window_size().set_channel_binding(
+                    self.common.encrypted.as_ref().and_then(|enc| {
+                        enc.channel_binding(id.0, msg.recipient_channel)
+                    }),
+                );
                 let pending = crate::PendingChannelOpen {
                     recipient_channel: msg.recipient_channel,
                     sender_channel: id,

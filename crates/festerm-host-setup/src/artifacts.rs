@@ -434,6 +434,11 @@ fn validate_archive(
     Ok(entries)
 }
 
+#[cfg(all(test, feature = "lifecycle"))]
+pub(crate) fn staging_fixture() -> VerifiedArtifact {
+    tests::staging_fixture()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,6 +605,34 @@ mod tests {
         let data = serde_json::to_vec(manifest).unwrap();
         let (key, signature) = sign(&data, 42);
         verify_with_key(&data, &signature, archive, expected, &key)
+    }
+
+    #[cfg(feature = "lifecycle")]
+    pub(super) fn staging_fixture() -> VerifiedArtifact {
+        let platform = match std::env::consts::OS {
+            "windows" => Platform::Windows,
+            "macos" => Platform::Macos,
+            _ => Platform::Linux,
+        };
+        let architecture = match std::env::consts::ARCH {
+            "aarch64" => Architecture::Aarch64,
+            _ => Architecture::X86_64,
+        };
+        let expected = ExpectedArtifact {
+            version: crate::VERSION,
+            platform,
+            architecture,
+            package: Package::Helpers,
+        };
+        let mut files = files(platform);
+        files.iter_mut().find(|file| file.0 == "VERSION").unwrap().1 =
+            format!("{}\n", crate::VERSION).into_bytes();
+        let archive = if platform == Platform::Windows {
+            zip(&files)
+        } else {
+            tar(&files)
+        };
+        verify_fixture(&manifest(&archive, &expected), &archive, &expected).unwrap()
     }
 
     #[test]

@@ -32,6 +32,44 @@ within the shared limit and reports/quarantines rejected entries. Typed adapter
 errors distinguish conflicts and portable-input failures, while desktop export
 has its own status rather than claiming a save. Focused regressions exercise
 recovery across an unrelated save and the actual experimental CI feature path.
+## Separating owner consent from the current host issuer
+
+The ADR 0084 contract correctly refuses Ensure/Create advertisements without
+the current protected issuance epoch, but enrollment persists permission rather
+than that runtime namespace. Applying wire validation to stored consent made
+an explicitly creation-enabled local owner invalid before runtime composition.
+Permission-shape validation is now separate from strict wire validation;
+enrollment never persists the runtime issuer, and an unscoped verifier masks
+creation advertisements. The server projects only the actual protected
+reservation epoch without changing owner keys or permission epochs. Its issuer
+watermark survives within one projection chain, not fresh enrollment reloads;
+the protected durable backend guards rollback across reservations.
+New scopes do not refresh uncertain client requests.
+This closes a source composition prerequisite, not endpoint/native acceptance.
+
+Qualification of frozen source `91cf2880`: protocol contracts 13/13, focused
+bridge owner/channel fixtures 15/15 and protected-enrollment fixtures 12/12 pass.
+Strict release-profile clippy passes for protocol all-targets, bridge
+relay/owner-auth all-targets, portable client/owner-auth library and enrollment
+all-targets. Formatting, trace311, workflow5 and headless/portable plus
+iOS/Android default/live-SSH dependency checks pass. Only diagnosed foreign
+russh dev metadata missing the unchanged channel exporter was invalidated
+(26 files, 37.5 MiB); this is not evidence about native startup failures.
+Native actual-current reservation/rotation composition, vault/device and
+first-connect qualification remain required.
+
+## Keeping Windows host fixtures inside the real storage policy
+
+The [#681](https://github.com/fes/fesTerm/issues/681) Windows configure,
+journal and staging tests assumed the checkout's ancestor ACLs were trusted.
+Native CI correctly refused those fixtures before publication. They now reuse
+sessiond's policy-validated fixture-root selection through an off-default,
+dev-dependency-only test-support feature, with owned cleanup. No production
+ACL, reparse-point, ownership or atomic-publication check is relaxed.
+Ancestor refusal now has a content-free diagnostic rather than an unexplained
+PermissionDenied. Native startup/service acceptance remains separately gated.
+The shared multi-command helper validation step explicitly uses fail-fast Bash
+on all platforms, so a later successful clippy cannot hide failed Windows tests.
 
 ## Capturing issuance before remote shell creation
 
@@ -83,7 +121,7 @@ so signer-format/mode incompatibilities are caught before protected publication.
 The [bootstrap and staging contract](host-release-artifacts.md) deliberately
 does not claim that downloading both verifier and key establishes trust.
 Existing artifact names/consumers remain compatible; host CLI inclusion,
-installer integration, private atomic staging, service switching/rollback,
+native installer/executable publication, service switching/rollback,
 migration and native signing evidence remain #681 gates. ADR 0084 stays Proposed.
 
 ## Stabilizing SSH-agent test startup
@@ -8731,6 +8769,29 @@ command. Failed signals still fail, and transports that need a later state
 event retain that requirement. The native oracle still requires the same
 runspace's marker to survive cancellation.
 
+### ADR 0084's paired framed-control core stays behind the authentication gate
+
+The next #681 slice adds bounded sequential HOST RPC and an opt-in dispatcher
+that accepts actual cryptographically verified owner proof, not a principal or
+bearer assertion. Owned duplex tests cover privacy, current policy revocation,
+pending record revision/generation changes, framing/correlation and cancellation.
+Admission precedes worker allocation; late blocking work retains its resource
+charges until reconciliation. No terminal input is replayed.
+
+The core now calls real sessiond through its scoped protected-policy callbacks,
+with an off-by-default headless adapter to actual local enrollment. Three
+explicitly invoked owned Unix daemon fixtures exercise real creation/retry,
+nonattaching inventory, denial without false absence, and exact end
+reconciliation. A withheld committed reply does not block independent control
+or authorize a duplicate spawn. Attach/Detach remain Unsupported and only
+inventory is advertised until adopted terminal routing is integrated.
+
+This is deliberately not an exposed host endpoint. The actual inner SSH stream
+does not yet carry a shared session/channel exporter needed to prevent owner
+proof forwarding. Actual channel authentication and separate fair terminal
+routing remain integration prerequisites. Legacy behavior and native acceptance
+are unchanged; no credentials, services or cloud resources were modified.
+
 ### ADR 0084 starts with contracts, not a remotely callable shell service
 
 The host-oriented tunnel design ([#681](https://github.com/fes/fesTerm/issues/681))
@@ -8758,3 +8819,254 @@ current reauthorization rather than copied fences. The same review tightened
 version-first refusal, zero-field schemas and cursor progress. Optional owner
 proofs are explicitly enabled in every platform's CI test/lint combinations;
 this closes a coverage gap, not the remaining native/exposure gates.
+
+### A shell's lifetime cannot belong to its bridge (#681)
+
+ADR 0084's second slice connects the contracts to the real native daemon rather
+than a successful-looking in-memory manager. A private durable reservation binds
+owner, logical identity, operation intent and generation before spawn. Concurrent
+Connect and lost replies reuse that generation; uncertainty never authorizes
+another shell. Existing native launch/start locks preserve ordinary managed
+repair and attached sessions.
+
+Temporary cleanup moved into the actual daemon's loop, with protected deadlines
+and generation/lease epochs. The existing recovery-adoption barrier exposed a
+subtle boundary: returning a stream is not yet a completed takeover. The new
+local ticket commits lease ownership beside the sole-writer replacement only
+after adoption; callers receive PendingAttachment until then. Scoped admission
+guards are released during native startup waits, then reacquired against the
+actual committed state. Real owned child-daemon tests exercise failure,
+cancellation, stale disconnect, revocation and bridge-independent expiry.
+
+No HOST listener, enrollment shortcut, GUI, service registration or cloud action
+is introduced. Native reboot/ConPTY/service/mobile evidence and independent
+review remain prerequisites; the ADR stays Proposed.
+
+### Protected owner enrollment without inventing authenticated transport
+
+ADR 0084's owner proof needs more than a bearer and an account label.
+The stages 1/3 prerequisite ([#681](https://github.com/fes/fesTerm/issues/681))
+now binds explicit local public-key consent to the exact installation, stable
+host/key, account and locally generated owner. Enrollment/rotation/revocation
+use compare-and-swap revisions under the setup lease; native-vault policy
+high-water and revoked-key tombstones refuse disk rollback and stale results.
+Importing a key enables neither access nor creation. Client seeds and their
+approved bindings stay in the native vault behind opaque references, without
+automatic plaintext fallback.
+
+Reliability review then found three practical gaps: a vault-first crash could
+strand the policy, settings denial could accidentally block revocation, and
+full policy JSON would exceed Windows' 2,560-byte credential limit well before
+64 historical keys. The anchor is now a compact revision/digest/predecessor;
+prepared private records and pre-reserved native references permit validated
+forward reconciliation. Settings mask effective creation while removal remains
+available. Initial owner consent must match an already provisioned exact account
+and stable host identity. A deliberate product decision additionally permits
+headless-only protected-file credential/anchor storage, explicitly bound to its
+origin/installation and never selected after native failure. It has weaker
+whole-store/home rollback protection; GUI/native defaults do not change.
+
+The follow-up review tightened the crash receipt itself: it persists and checks
+the selected backend/origin/installation before any resumed creation or recovery,
+so an interrupted native setup cannot silently become a separate file authority.
+Windows credential deletion now opens the exact no-reparse file with DELETE
+access and validates its privacy; the real private-store fixture exercises
+create/reopen/delete/Missing rather than treating an API call as deletion proof.
+Windows-specific handle behavior still requires a passing native CI run.
+
+Scope review clarified one important trust boundary: the host Store really checks
+protected Headless journal origin, but a general library cannot identify whether
+its caller is a GUI or CLI. The bridge/client file-store marker is a namespace,
+not an origin capability. Explicit headless-only selection therefore remains a
+trusted composition-root obligation, with no GUI/default caller added and a
+named future desktop/mobile/headless-CLI acceptance gate under `HOSTAUTH-01`.
+
+The transport investigation also found a real stop condition: pinned inner SSH
+verified its host key, but handed-off streams did not expose a shared
+connection-and-channel transcript. A separate narrow vendor patch now derives
+that immutable binding from the actual signed original SSH session identifier
+and role-ordered channel IDs, excluding the anonymous outer relay. Client proof
+compares its private verified pin/exporter capture against the current stream;
+server success transfers the actual stream with its owner and lifetime guard.
+Real encrypted fixtures exercise relay/replay, unbound signatures, foreign
+credentials, expiry/revocation and swapped streams. Strict release-profile
+Clippy passes for host/all-target and portable client-only builds; normal/build
+iOS, Android and headless graphs exclude inappropriate desktop dependencies and
+production test-support. Final merged-source validation passes all 11 selected
+owner/paired-channel/sibling/publication tests and the vendored exporter
+regression. This is not permission to
+expose HOST: independent review, native qualification, foreground first-connect
+consent and endpoint routing integration remain prerequisites. No services,
+cloud resources, normal setup controls or legacy capabilities change.
+
+The bounded channel review follow-up retains the exact unauthenticated stream
+and typed error after failed authentication, consuming the challenge without
+returning authority. The caller can send a bounded Denied/Stale reply under its
+deadline and then close; real SSH fixtures cover both reasons. Portable
+client-only owner clippy is now separately required by CI. Challenge expiry is
+host-local monotonic state, not a signed TTL field.
+
+## A headless host boundary without pretending the endpoint exists
+
+ADR 0084 separates installing a host from creating a shell. The legacy installer
+cannot implement that by being called under a different name: it provisions one
+shell and has different ownership. Stage 4 therefore starts with shared,
+protected host-local configuration and an epoch-fenced lifecycle journal, plus a
+GUI-free `festerm-host` binary for real disabled configuration, recorded status
+and offline official-CLI pin staging. Desktop and headless origins cannot
+silently adopt each other; late setup results retain exact stop/cleanup evidence
+instead of restoring cancelled consent. Persistent shells are never targets.
+
+This is deliberately not a completed host installer. Setup, run, update and
+uninstall return failure until the new endpoint, secure foreground sign-in,
+native adapters and authenticated artifacts are wired. Portable tests prove the
+boundary, not cross-platform service or pre-login readiness. The remaining work
+stays explicit under [#681](https://github.com/fes/fesTerm/issues/681).
+
+The next boundary connects the shared artifact verifier rather than inventing a
+second signing scheme. Headless `stage-package` authenticates exact-version,
+native-target helper artifacts with the existing updater trust and stages their
+immutable entries plus exact signed provenance for restart verification. Cached
+bytes must still match; a completion marker is not authority. Nothing is
+executed or registered, and legacy helpers are not rebranded as the new endpoint.
+
+Review tightened the consent boundary: enabling now commits only the exact
+foreground-approved settings and persists them with the operation ticket;
+configuration changes require reconfirmation. The exact ticket can be recovered
+after a crash rather than rebuilt from portable config. Initial journals and
+pinned CLI copies now share atomic no-replace publication with helper staging,
+and recordless directories require explicit manual ownership review. Generic
+setup refusal is not claimed as generation-specific migration confirmation;
+that workflow remains deferred until its real API exists.
+
+The incremental reliability pass also distinguishes an initializer holding its
+lease from an abandoned recordless directory. Protected cache comparisons now
+classify oversized entries as the same specific mismatch as other changed
+bytes, keeping bounded reads and refusing overwrite for CLI and helper staging.
+
+The stage-3 core review found that advertising inventory-only was not enough:
+both peers now enforce operation flags, and native effect tests use a test-only
+advertisement instead of silently bypassing the production boundary. Idle time
+no longer consumes an operation's execution deadline. Protected policy I/O runs
+off the async executor; ordinary contention returns a correlated Busy, while
+contention after a possible commit preserves OutcomeUncertain. Reply capacity
+stays reserved through publication, so competing work cannot steal a committed
+reply's allocation. Owned duplex and real-daemon fixtures prove these fixes;
+terminal adoption, encrypted endpoint integration and dependency reviews remain
+separate gates under #681.
+
+Independent antagonist review (#687) caught a dangerous fallthrough: reconciling a
+reservation with no native launch journal could still execute the helper before
+fresh admission. The read-only path now stops before every fresh reservation,
+and revoked records do no native work. Active, non-stopped lease regressions
+cover the original failure rather than relying on prior termination to hide it.
+
+The same review exposed historical bookkeeping masquerading as active capacity.
+An initial archive-based remedy was rejected because disk still grew forever.
+Captured authenticated issuance scopes now retire old operation namespaces
+atomically, keeping a bounded compact ledger without archives. Old requests
+stay Stale; new explicit operations can keep their logical ID and get fresh
+generations. Fixed native slots bound name locks/lifecycle history, while exact
+generation cleanup requires sealed helpers and positive absence proof.
+Reclamation never sweeps other owners or revoked fences. Revoked live shells
+remain accounted and locally manageable until exact end and new local consent.
+Transient observations no longer turn Running into Launching.
+
+The full native takeover test then exposed the actual registry contention:
+durable checkpoint staging and directory synchronization held the same lock
+used by discovery/admission readers. Instrumented owned runs held it for
+105–426 ms even when passing, close to the unchanged 500-ms refusal deadline.
+Checkpoints now prepare and synchronize outside that lock, then revalidate and
+atomically publish under a short lock. Disjoint updates rebase without replaying
+effects; same-name replacements refuse. Directory synchronization follows
+unlock. Read-only/no-op operations no longer checkpoint, and exact-generation
+bridge admission performs native IPC outside the registry lock. Deterministic
+stalled-preparation/disjoint-writer and conflicting-generation regressions cover
+the boundary rather than increasing deadlines.
+
+The paired terminal slice now has separate bounded HOST binary framing rather
+than an unbounded multiplexer. The client exposes immutable connection bindings,
+explicit recovery adoption, bounded full-duplex queues and a correlated detach
+receipt, with no reconnect or terminal-input replay. Native routing uses the
+existing daemon/session machinery, fresh protected action guards and exact
+temporary leases; FIFO output turns release before network I/O.
+
+This remains unexposed and partial under #681. Portable fixtures qualify the
+transport boundary, not the endpoint. Owned native fixtures found that the
+existing synchronous candidate-adoption wait stops old-writer progress until a
+new snapshot is adopted or cancelled. That assertion remained in place while
+the native owner fixed the actual candidate wait, rather than weakening it.
+No listener, control-capability widening or native/manual acceptance is claimed.
+
+The focused bridge run passes 88 library cases; six new portable terminal cases
+also run without native helpers (five in client-only mode). Explicit owned
+native routing passes all five existing control cases plus two-session routing,
+temporary cancellation/detach and slow-output revocation with independent control.
+The pending-takeover case initially failed for that identified daemon wait.
+Protected short-root fixtures now
+wait for recorded daemon PIDs to exit, not merely disappear from discovery,
+before removing state; final shutdown diagnostics otherwise recreate the root.
+
+The native fix now queues one bounded candidate without blocking the old
+writer. It preserves post-snapshot terminal/control deltas and accepts candidate
+input only after actual adoption and writer commit; saturation cancels only
+the candidate. Rebuilding the owned helper and rerunning the unchanged routing
+fixtures passed all nine cases at `1a66a935`. Unix CI runs the four terminal cases with
+the five existing control cases. This resolves the local takeover regression,
+not the still-pending authority/receipt, issuance/history and consuming
+authenticated-stream integration. The terminal server remains fixture-only.
+A second real takeover regression found adoption waiting on the daemon's sole
+event loop, starving the old writer. One bounded nonblocking candidate now stages
+post-snapshot output and activates input only after actual writer commit.
+Per-generation opaque authorities remove the global session journal from relay
+and heartbeat hotpaths; intentional detach has a separate receipt-only publication
+check, never permission to act on a stopped lease. Healthy inventory remains
+available beside authorized per-target Unknown. Owned-daemon tests cover churn,
+concurrent generations, cancellation, revocation and interrupted cleanup; no
+installed services, accounts or user sessions were touched. Endpoint integration,
+independent gates and native/device qualification remain open.
+
+The paired control consumer retains an immutable destination-bound issued
+operation across reconnects, never freshens uncertain creation, and correlates
+the original namespace on every reply/refusal. New framed fixtures cover
+account/endpoint/host changes, missing/forbidden/wrongly echoed scopes and
+healthy-plus-private-filtered-Unknown inventory. Native attachment consumers
+use original opaque authorities for persistent and temporary routing and
+freshly authorize exact detach receipts before publication. This remains an
+unexposed integration milestone, not complete ADR0084 or native acceptance.
+The main/enrollment/opaque-authority union is now source-frozen only; its own
+native-nine/clippy and different-source-family antagonist checks remain pending.
+Historical nine-of-nine evidence is not qualification of this new union.
+
+### ADR 0084 authenticated stream composition source checkpoint
+
+The earlier routing core could accept opaque owner authorities but did not
+consume the actual SSH owner proof into a dispatcher. The opt-in runtime now
+owns bounded challenge/proof exchange on the signed original SSH stream, then
+routes that same stream to inventory control or adopted terminal handling.
+Each stream proves itself; aggregate client admission survives cancelled
+blocking policy work. The portable client helper preserves existing native-vault
+keys and foreground trust rather than inventing an authority or weaker fallback.
+The four focused native TCP SSH tests pass. The first replay run encountered
+legitimate concurrent policy-read contention before its challenge, so the case
+now keeps the first exchange pending without holding its policy lease before
+starting the replay peer; it does not weaken the production contention refusal.
+The original failed run is retained separately from the green rerun.
+The owned-daemon case, final session correction, production protected enrollment
+adapter, actual daemon round trips and independent/native gates remain open.
+No installed host, remote creation, GUI change or acceptance is claimed.
+
+Runtime checkpoint validation used macOS Homebrew Rust/Cargo 1.97.1, a private
+target, `CARGO_BUILD_JOBS=1`, dev/test debug zero and incremental disabled:
+`cargo test -p festerm-tunnel-bridge --features host-routing --lib host_runtime`
+passed four cases with the one explicitly opt-in owned-daemon case unrun;
+`cargo test -p festerm-host-protocol --test contracts` passed all thirteen.
+The portable
+`cargo check -p festerm-tunnel-bridge --no-default-features --features host-routing --lib`
+and strict host-routing package/all-target clippy passed, as did fmt,
+traceability (311 edges) and diff checks. The vendored Dev Tunnels unused proxy
+helper warning remains; no dependency source was changed to suppress it.
+The earlier protocol `--lib` invocation selected zero tests and is not evidence;
+the explicit contracts command above supplies that evidence. These results
+precede consumption of the qualified final session head and do not transfer to
+that combined tree without rerunning the affected checks.

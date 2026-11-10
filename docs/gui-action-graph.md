@@ -1585,6 +1585,47 @@ behavior. Experimental desktop Profiles now manages saved recipe metadata only;
 no host endpoint/connection executor is provided. Existing TUNNEL edges
 retain their current coverage until explicit migration. The single
 `host-protocol-owner-contracts` trace group combines these evidence sets.
+HOST-01–03 additionally have an opt-in source implementation of actual
+SSH-stream owner challenge/proof framing and control/terminal dispatch
+(`host_runtime`). Four passing native TCP SSH tests cover control inventory,
+terminal negotiation, revoked policy, cross-connection proof replay and aggregate
+admission/frame bounds. The qualified session correction, consuming
+protected enrollment and actual multi-session daemon round trips remain pending;
+this adds no GUI transition or installed endpoint and does not change P/H/N status.
+
+The stage-1 [HOST contracts](host-protocol.md) provide codec, identity,
+authorization and budget evidence for HOST-01–03; their end-to-end UI/remote
+transitions remain deferred behind endpoint integration and independent review
+in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
+Existing TUNNEL edges retain their current coverage until implementation migrates them.
+
+HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
+Actual pinned SSH proof helpers bind the signed connection and role-ordered
+channel IDs, transferring authority only with that exact stream. Failure retains
+the unauthenticated stream for bounded denial and close. These are tested
+helpers, not authenticated endpoint coverage; first-connect controls/native
+vault qualification remain deferred.
+
+The unexposed dispatcher/client now enforce negotiated operation flags,
+preserve correlated Busy/uncertain refusals, separate idle/exchange deadlines
+and retain reply capacity through publication. HOST-01–03 retain the same
+partial status; native effect fixtures use an explicit cfg(test)-only backend
+advertisement, not production capability widening.
+
+The unexposed paired terminal module adds bounded adoption/correlation, frame
+and byte-budget, no-replay and FIFO-turn fixtures for HOST-02/03. Native
+fixtures passed all nine owned control/terminal cases at `1a66a935`, including unchanged
+old-writer progress while a takeover candidate waits and independent control
+under slow output. The bounded nonblocking candidate fixes the former native
+stall. Endpoint qualification still requires the backend hotpath/history work.
+Actual consuming owner-channel integration and all H/N gates remain deferred.
+The current source union awaits its own native-nine/clippy and cross-family
+antagonist qualification; the older result is not transferred automatically.
+
+Additional paired control fixtures bind issued creation operations across
+reconnects, refuse account/endpoint/host changes before writing, reject
+missing/forbidden or wrongly echoed scopes, and preserve privacy-filtered
+Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
@@ -1593,6 +1634,11 @@ retain their current coverage until explicit migration. The single
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; partial lifetime/generation schemas; supervisor/H,N deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared typed setup, no default shell, protected consent, no outgoing-client install | Preserve draft; report partial setup; revoke before cleanup | P,H,N; deferred |
 | `HOST-05` | Headless package → configured service | Setup/status/configure/update/uninstall | Same setup policy; correct OS user; boot versus sign-in explicit; no JSON transfer required | Journal/reconcile exact owned resources | P,H,N; deferred |
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy and framed duplex dispatcher tests; real pinned-channel exporter/native endpoint H,N deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P; framed control/terminal fixtures plus real-daemon ensure/crash/conflict/cancellation, bounded issuance rotation, own-record positive-proof retirement and healthy-plus-Unknown inventory tests; actual channel/endpoint/H,N deferred |
+| `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; framed native detach/revocation plus daemon expiry, stale takeover, per-generation authority/heartbeat without global journal, stopped-detach receipt and revoked-live local end/reconsent tests; sharing/endpoint/H,N deferred |
+| `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings boundary; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings; recover persisted ticket; preserve draft and exact late cleanup identity, never re-enable | P,H,N; partial boundary, native/UI deferred |
+| `HOST-05` | Headless package → configured service | Configure/status/pinned CLI and authenticated helper staging; setup/run/update/uninstall refuse | Shared disabled settings and exact-owned receipt policy; no shell/service changes; pre-login unavailable | Busy/corrupt/foreign state fails closed; retain cleanup and signed artifact evidence | P,H,N; partial boundary, endpoint/headless package/native deferred |
 | `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: manifest/verifier foundation; H,N: switching/migration deferred |
 
 HOST-06 currently has only the independently testable

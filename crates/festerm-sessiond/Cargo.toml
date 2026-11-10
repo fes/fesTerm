@@ -7,10 +7,14 @@ authors.workspace = true
 repository.workspace = true
 description = "Minimal local persistence daemon for fesTerm sessions."
 
+[features]
+test-support = []
+
 [dependencies]
 festerm-core = { path = "../festerm-core" }
 festerm-pty = { path = "../festerm-pty" }
 festerm-session = { path = "../festerm-session" }
+festerm-host-protocol = { path = "../festerm-host-protocol" }
 festerm-ssh = { path = "../festerm-ssh" }
 # Not Windows-gated: the crate's `layout` module describes where the ConPTY
 # sidecar belongs, and the helper's staging tests run on every platform.
@@ -27,7 +31,7 @@ zeroize = "1"
 
 [target.'cfg(unix)'.dependencies]
 festerm-unix-security = { path = "../festerm-unix-security" }
-nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["process", "signal", "fs", "user"] }
 socket2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]

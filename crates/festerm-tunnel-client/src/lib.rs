@@ -2,6 +2,7 @@
 //! Native, host-independent identity and service discovery. No subprocesses,
 //! browser implementation, native FFI, daemon IPC, or global account slot.
 
+pub mod host_control;
 pub mod identity;
 pub mod service;
 #[cfg(test)]

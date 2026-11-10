@@ -712,8 +712,48 @@ Performance benchmarks should initially report trends rather than block every co
 
 ## Experimental remote session bridge
 
+ADR 0084 stage 4 adds the opt-in `festerm-host-setup::lifecycle` policy and
+standalone `app/festerm-host` composition root without GUI/graphics dependencies.
+Both desktop and headless callers can use its protected, origin-scoped
+configuration/consent journal, operation epochs and exact-owned cleanup receipts.
+Consent commits the exact foreground-approved settings under the journal lease;
+persisted operation tickets remain recoverable after interruption. Initial
+journals and staged CLI/helper files share atomic no-replace publication.
+It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
+the shared authenticated-artifact verifier. Verified helper entries and their
+exact signed provenance are staged immutably without execution;
+default legacy/mobile installer-review dependencies remain unchanged.
+No new endpoint, native service adapter, Ready result or shell-launch ownership
+is implied. Current CLI configuration/status/staging are local-only; service
+operations explicitly refuse until new endpoint/native integration. See the
+[headless boundary and adapter contract](docs/headless-host.md).
+
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
 adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
+The opt-in bridge `host-routing` module and paired
+`festerm-tunnel-client::host_control` transport reuse the shared HOST contracts
+for bounded framed control RPC. The bridge consumes non-serializable verified
+owner proof and delegates reservation/grant checks to the session backend;
+the client owns immutable account/endpoint/host correlation, not authority.
+Creation RPCs retain an opaque issued operation bound to that destination and
+the original negotiated namespace across reconnects; lifecycle RPCs never
+inherit a creation scope. Correlation includes the exact echoed namespace.
+`host_control::native::NativeControl` uses actual sessiond reservations and owned
+policy guards; the off-by-default headless `owner-routing` composition adapts
+protected enrollment, not portable configuration. Owned native fixtures cover
+control routing/retry without frontend leases. No listener uses these modules.
+The unexposed `host_terminal` module pairs bounded binary terminal framing with
+an immutable client handle and a fixture-only actual native attachment actor. Recovery
+adoption and observed native writer admission precede Attached; exact temporary
+leases distinguish intentional detach from transport loss. FIFO output turns
+are released before network I/O; current authorization can cancel slow output.
+The native actor retains original opaque generation/attachment authority, and
+freshly checks an intentional-detach receipt before publishing stopped success;
+no client lease fields can mint replacement authority.
+Actual consuming same-channel authentication integration, backend hotpath/history
+qualification and fair control-under-load remain gates; legacy exact-generation relay
+and independent grants are unchanged.
+
 The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small
 `festerm-host-protocol` serde/UUID crate for shared HOST identities, bounded
 messages, authorized pagination and reservation/freshness helpers. This avoids
@@ -722,6 +762,69 @@ dependency. The bridge's non-default `owner-auth` feature provides enrolled-owne
 Ed25519 challenge/admission primitives, not provider identity or a listener.
 Legacy bearer connectivity is not principal proof. Protected enrollment,
 pinned-channel integration and independent security review are mandatory before
+new remote capabilities; all new capabilities default denied. Stage 2 adds
+`festerm-sessiond -> festerm-host-protocol`, never a dependency on the bridge.
+Its local `host_control::SessionControl` journals owner/logical identity,
+immutable launch intent, reserved generations, operation results and revocation
+revisions through the existing private no-follow/atomic storage boundary. It
+uses the real detached native launcher and single-writer daemon admission.
+Read-only reconciliation cannot create a fresh reservation. A durable issuance
+namespace bounds the entire 128-entry operation ledger without receipt archives;
+old captured scopes become Stale, never fresh creation. The 64 logical records
+use a fixed native slot pool, with generation artifacts reclaimed only after
+sealed supervision and positive native absence proof. Capacity reclamation takes
+only one requesting-owner known-Absent record, never another owner's or a revoked
+fence. Revoked live shells remain accounted and locally manageable; exact local
+end and new explicit consent are required before retiring their fence.
+Opaque attachment authorities retain current policy and per-generation
+grant/writer/liveness guards across nonblocking local actions, without parsing or
+locking the global journal. Intentional detach yields a publication-only receipt,
+not renewed terminal access. Missing/unsupported authority journals fail closed;
+there is no automatic namespace reset or prerelease-state migration.
+The daemon's own loop enforces temporary heartbeat/grace deadlines from
+generation/lease-fenced private records, independently of bridge/client lifetime.
+Temporary ownership changes commit beside the writer replacement only after
+recovery adoption; a pending attachment is not an Attached success. Persistent
+shells never acquire temporary cleanup merely through attachment. Endpoint
+routing must not stall an existing writer while a candidate adopts: the native
+daemon queues one candidate, bounds its post-snapshot output/control delta to
+512 KiB, and cancels only that candidate on saturation. The candidate's input
+worker waits for the daemon's actual writer commit before accepting commands.
+The existing writer remains usable until that commit. Endpoint
+routing, protected enrollment/channel integration, migration and native
+reboot/device qualification remain gated; this is not remote exposure.
+The non-default
+`festerm-host-setup/owner-enrollment` feature persists exact-installation
+owner/key/account policy under the lifecycle lease, with compact native-vault
+revision/digest fencing, durable prepared-record forward recovery and monotonic
+revocation revisions. Bridge `ClientOwnerKey` uses opaque credential references;
+native storage remains default and GUI policy unchanged. An explicit headless-only
+protected-file credential/anchor backend binds origin/storage/installation;
+whole protected-store/home rollback is not resisted by that weaker mode.
+Enrollment does not enable access or creation; settings deny masks creation
+without blocking key revocation or permission removal.
+Persistent consent contains no runtime issuer. Its distinct protected-permission
+verifier masks creation until an immutable projection receives the current issuer
+inside protected backend admission; public runtime policy validation remains
+strict. A projection retains its receiver's in-memory issuer watermark without
+changing permission epochs or enrolled keys. Fresh enrollment reloads have no
+such watermark; rollback protection across reservations belongs to the protected
+durable backend, not cached owner policy.
+Vendored russh now derives immutable bindings from its signed original session
+identifier and role-ordered actual channel IDs, excluding no-KEX outer relays.
+Client signing requires its privately captured actual pin and matching current
+stream; server authentication transfers that stream and owner/guard together.
+The opt-in bridge `host_runtime` composes that exact stream with bounded owner
+challenge/proof framing, then a control or terminal role. Its host shares one
+aggregate budget and FIFO output scheduler; protected policy work retains client
+admission through cancellation. Control remains inventory-only, while separately
+proven terminal channels use the existing exact-generation adoption/receipt
+adapter. No raw socket, principal string or fabricated owner can enter the
+runtime. The portable client handshake creates no key and changes no trust.
+This source checkpoint does not install/enable a listener: consuming protected
+enrollment, the qualified final session correction and native end-to-end gates
+remain mandatory before exposure.
+Endpoint integration and independent security review are mandatory before
 new remote capabilities; all new capabilities default denied. No session routing,
 creation, migration or lifetime-supervisor implementation is claimed by this slice.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal

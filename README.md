@@ -35,12 +35,33 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 [Host protocol contracts](docs/host-protocol.md) provide the first ADR 0084
 foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
-messages and opt-in owner-key authentication primitives. No HOST endpoint or
-remote creation is exposed; security review and later implementation/native
+messages, opt-in owner-key authentication primitives and an unexposed bounded
+dispatcher/paired framed-client core. Stage 2 adds a local
+durable session-control backend with real detached daemons and daemon-enforced
+temporary leases. No HOST endpoint or remote creation is exposed; independent
+review, enrollment/channel integration and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
 Experimental desktop Profiles also manages public host/session recipe metadata
 offline (add/edit/copy/delete and reviewed JSON import/export); it exposes no
 live HOST connection or execution approval.
+Protected local owner enrollment, compact native-vault anchors, validated forward
+recovery and explicit headless-only private-file credentials have fixture
+coverage (file mode has weaker whole-store rollback protection and is never a
+native failure fallback). Optional owner proof helpers now bind the actual pinned
+inner SSH connection/channel and transfer server authority with that exact
+stream; independent review, endpoint integration and native acceptance remain open.
+An opt-in `host_runtime` now supplies the actual SSH-stream owner handshake and
+control/terminal dispatcher composition. Four focused native TCP SSH tests pass
+for encrypted request routing, stream-bound proof rejection and bounds.
+Owned-daemon end-to-end testing, protected enrollment composition and the final
+session correction remain pending. No installed endpoint or Ready state is enabled.
+
+ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
+GUI-free disabled configuration, journal status, offline pinned-CLI staging and
+authenticated helper-artifact staging without execution.
+New host setup/run/update/uninstall remain unavailable pending endpoint and
+authenticated-package integration ([#681](https://github.com/fes/fesTerm/issues/681));
+the legacy installer is unchanged.
 
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),

@@ -1,5 +1,22 @@
 # Configuration Foundation
 
+ADR 0084's headless host settings are **host-local**, not portable profile TOML.
+See [headless lifecycle configuration](headless-host.md): `festerm-host configure`
+saves disabled intent with creation denied and manual startup by default. It
+does not enable access, register startup or create a shell. Existing desktop and
+headless origin journals cannot adopt each other.
+
+Owner enrollment is separately protected host-local policy
+([authentication API and blockers](host-protocol.md#enrollment-and-secret-boundary-transport-integration-still-gated)).
+Public-key import requires exact fingerprint confirmation; it never grants
+remote access or creation. Revocation revisions and the selected policy anchor
+cannot be reconstructed from TOML/startup metadata. Client owner seeds and
+approved bindings use native-vault opaque references by default. Deliberate
+headless-only protected-file storage records origin/installation/storage consent
+separately from portable configuration; it is not a GUI option or automatic
+native-vault-failure fallback. Whole private-store/home rollback is not resisted
+in that weaker mode. No seed belongs in profiles, recipes or connection JSON.
+
 `festerm-config` owns versioned, strict TOML parsing, explicit file I/O, and
 in-memory transactional load state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
@@ -749,3 +766,45 @@ for a minute (the Running Sessions refresh button re-lists). Choosing one
 connects once with that account's stored sign-in; no profile is saved. The
 New Session **Dev Tunnel** card opens a compact form that connects the same way
 and saves a profile only when **Save as profile** is checked.
+
+### HOST session-control state (ADR 0084 stage 2)
+
+The local session-control API adds no portable TOML setting or network listener.
+Its `Recipe` is an argument vector plus optional shell/cwd, not an administrative
+command string. Original intent and the resolved executable/cwd fingerprint are
+journaled separately. A conflicting running recipe refuses; an explicit Connect
+after authoritative absence may use an edited future recipe and fresh generation.
+Reusing an operation ID with changed intent always refuses.
+
+`Persistent {}` survives bridge/client/UI/installer exit, not reboot.
+`Temporary { reconnect_grace_seconds: 60 }` requires an owning attachment/lease.
+The actual daemon enforces its protected deadline; the bridge must renew an
+adopted owning lease more frequently than 60 seconds. Intentional disconnect
+ends only that exact lease; unexpected loss starts grace once, and bridge crash
+expires the last renewal without requiring another bridge process. Restart does
+not reset grace. Takeover fences the previous lease epoch only when recovery
+adoption and daemon writer replacement commit. Ordinary persistent shared shells
+never inherit this policy, and legacy clients cannot bypass the temporary lease
+handshake. Native mobile grace qualification remains required.
+
+Private version-2 `host-sessions.json`, bounded launch journals and generation-scoped
+`host-daemon-*.json` files are host-local runtime authority, not synchronized
+profiles, credentials or import/export metadata. Never copy or delete them to
+retry an uncertain spawn. Ambiguous unbound reservations remain Unknown; local
+ownership investigation or protected exact-generation `retire_local` abandonment
+is required, not an automatic fresh shell. The entire operation ledger is capped
+at 128 compact entries: durable issuance rotation makes old captured requests
+Stale without historical archive files. Never refresh an uncertain request's
+captured scope automatically. The 64 logical records use fixed private native
+slots; dead generation artifacts are reclaimed only after sealed supervision
+and positive native absence proof. Ambiguous evidence remains Unknown; contention
+is Busy. Reclamation takes only one requesting-owner known-Absent record, never
+another owner's or a revoked fence. A new explicit operation may reuse the same
+logical ID with a fresh generation.
+
+Revoked live shells retain resource accounting and exact local observation/end.
+Their fence requires known absence and explicit new local consent before removal.
+Missing/unsupported journal state fails closed; prerelease version-1 records are
+not automatically migrated or reset. Do not copy/delete authority files or treat
+setup/sharing consent as permission to stop a live generation. The separate
+default-No exact-generation migration stop confirmation remains mandatory.

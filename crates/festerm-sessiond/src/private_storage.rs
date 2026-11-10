@@ -227,6 +227,50 @@ pub fn read_private(directory: &File, name: &Path, max: usize) -> io::Result<Zer
     Ok(bytes)
 }
 
+/// Removes only an existing private regular file inside the retained directory.
+/// The caller must fence every writer and prove the artifact is retired.
+pub(crate) fn remove_private_file(directory: &File, name: &Path) -> io::Result<()> {
+    let file = match open_private_file(directory, name, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    #[cfg(unix)]
+    {
+        let _retained = file;
+        festerm_unix_security::remove_private_staging_file(directory, name)?;
+        directory.sync_all()
+    }
+    #[cfg(windows)]
+    {
+        let deleting = festerm_windows_security::open_file_no_reparse_for_move(directory, name)?;
+        if !festerm_windows_security::same_file_identity(&file, &deleting)? {
+            return Err(invalid());
+        }
+        festerm_windows_security::remove_private_staging_file(&deleting)
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn remove_private_socket(directory: &File, name: &Path) -> io::Result<()> {
+    file_name(name)?;
+    private(directory, true)?;
+    let stat =
+        match nix::sys::stat::fstatat(directory, name, nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW) {
+            Ok(stat) => stat,
+            Err(nix::errno::Errno::ENOENT) => return Ok(()),
+            Err(error) => return Err(io::Error::from(error)),
+        };
+    if stat.st_uid != nix::unistd::geteuid().as_raw()
+        || stat.st_mode & nix::libc::S_IFMT != nix::libc::S_IFSOCK
+        || stat.st_mode & 0o077 != 0
+    {
+        return Err(invalid());
+    }
+    festerm_unix_security::remove_private_staging_file(directory, name)?;
+    directory.sync_all()
+}
+
 /// Exclusively creates and synchronizes a private file. A partial failed write
 /// is left in place for explicit owner recovery, never silently overwritten.
 /// Concurrent readers can fail closed while creation is still in progress.
@@ -243,43 +287,86 @@ pub fn write_new_private(directory: &File, name: &Path, bytes: &[u8]) -> io::Res
 /// Existing targets must already be private regular files. Only a fresh
 /// caller-owned staging entry is removed if publication fails.
 pub fn replace_private(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
-    file_name(name)?;
-    private(directory, true)?;
-    match open_private_file(directory, name, false) {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    let staging = std::path::PathBuf::from(format!(".checkpoint-{}", uuid::Uuid::new_v4()));
-    let mut file = open_private_file(directory, &staging, true)?;
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        // Recheck immediately before publication; don't replace a symlink or
-        // foreign/permissive entry that appeared during the write.
+    let mut prepared = PreparedCheckpoint::prepare(directory, name, bytes)?;
+    prepared.publish()?;
+    prepared.sync()
+}
+
+/// Prepare slow durable I/O before taking a publication lock. Publication must
+/// be serialized and the caller must revalidate its source immediately before
+/// `publish`; `sync` follows after releasing the short publication lock.
+pub struct PreparedCheckpoint {
+    directory: File,
+    name: std::path::PathBuf,
+    staging: std::path::PathBuf,
+    file: File,
+    published: bool,
+}
+
+impl PreparedCheckpoint {
+    pub fn prepare(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<Self> {
+        file_name(name)?;
+        private(directory, true)?;
         match open_private_file(directory, name, false) {
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        #[cfg(unix)]
-        festerm_unix_security::replace_private_file(directory, &staging, name)?;
-        #[cfg(windows)]
-        festerm_windows_security::replace_private_file(&file, directory, name)?;
-        #[cfg(unix)]
-        directory.sync_all()?;
-        Ok(())
-    })();
-    if result.is_err() {
-        #[cfg(unix)]
-        let _ = festerm_unix_security::remove_private_staging_file(directory, &staging);
-        #[cfg(windows)]
-        let _ = festerm_windows_security::remove_private_staging_file(&file);
+        let staging = std::path::PathBuf::from(format!(".checkpoint-{}", uuid::Uuid::new_v4()));
+        let owned_directory = directory.try_clone()?;
+        let file = open_private_file(directory, &staging, true)?;
+        let mut prepared = Self {
+            directory: owned_directory,
+            name: name.into(),
+            staging,
+            file,
+            published: false,
+        };
+        prepared.file.write_all(bytes)?;
+        prepared.file.sync_all()?;
+        Ok(prepared)
     }
-    result
+
+    pub fn publish(&mut self) -> io::Result<()> {
+        if self.published {
+            return Err(io::Error::other("checkpoint already published"));
+        }
+        match open_private_file(&self.directory, &self.name, false) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        #[cfg(unix)]
+        festerm_unix_security::replace_private_file(&self.directory, &self.staging, &self.name)?;
+        #[cfg(windows)]
+        festerm_windows_security::replace_private_file(&self.file, &self.directory, &self.name)?;
+        self.published = true;
+        Ok(())
+    }
+
+    pub fn sync(self) -> io::Result<()> {
+        if !self.published {
+            return Err(io::Error::other("checkpoint not published"));
+        }
+        #[cfg(unix)]
+        self.directory.sync_all()?;
+        Ok(())
+    }
 }
 
-#[cfg(test)]
+impl Drop for PreparedCheckpoint {
+    fn drop(&mut self) {
+        if !self.published {
+            #[cfg(unix)]
+            let _ =
+                festerm_unix_security::remove_private_staging_file(&self.directory, &self.staging);
+            #[cfg(windows)]
+            let _ = festerm_windows_security::remove_private_staging_file(&self.file);
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn test_directory() -> std::path::PathBuf {
     #[cfg(windows)]
     let parents = [
@@ -288,19 +375,80 @@ pub(crate) fn test_directory() -> std::path::PathBuf {
     ];
     #[cfg(unix)]
     let parents = [std::env::current_dir().unwrap()];
-    for parent in parents {
+    for (index, parent) in parents.into_iter().enumerate() {
         let path = parent.join(format!("festerm-private-{}", uuid::Uuid::new_v4()));
-        if let Ok(directory) = private_directory(&path, true) {
-            drop(directory);
-            return path;
+        match private_directory(&path, true) {
+            Ok(directory) => {
+                drop(directory);
+                return path;
+            }
+            Err(error) => {
+                eprintln!("private fixture candidate {index} refused: {error}");
+            }
         }
     }
     panic!("no policy-compliant private fixture directory");
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub struct PrivateTestDirectory(std::path::PathBuf);
+
+#[cfg(any(test, feature = "test-support"))]
+impl PrivateTestDirectory {
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for PrivateTestDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Test-only fixture selection uses the real private-storage policy, never
+/// permission repair. Windows checkout/profile ancestors need not be trusted.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn private_test_directory() -> PrivateTestDirectory {
+    PrivateTestDirectory(test_directory())
+}
+
+/// Keeps Unix socket fixture paths short without changing process-wide cwd.
+/// Windows always retains the policy-validated candidate-parent selection.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn private_test_directory_in(unix_parent: &Path) -> PrivateTestDirectory {
+    #[cfg(unix)]
+    {
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let path = unix_parent.join(format!("ft-{}", &nonce[..16]));
+        drop(private_directory(&path, true).expect("private fixture directory refused"));
+        PrivateTestDirectory(path)
+    }
+    #[cfg(windows)]
+    {
+        let _ = unix_parent;
+        private_test_directory()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn private_fixture_short_unix_parent_supports_native_socket_and_owned_cleanup() {
+        let root = private_test_directory_in(&std::env::current_dir().unwrap());
+        let path = root.path().to_owned();
+        let socket = std::os::unix::net::UnixListener::bind(path.join("host.sock")).unwrap();
+        drop(socket);
+        drop(root);
+        assert!(!path.exists());
+    }
 
     #[test]
     fn private_state_creation_and_replacement_are_bounded_and_exclusive() {

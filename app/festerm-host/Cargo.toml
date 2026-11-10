@@ -1,0 +1,26 @@
+[package]
+name = "festerm-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Headless host lifecycle configuration and diagnostics (ADR 0084)."
+publish = false
+
+[features]
+default = []
+owner-routing = ["festerm-host-setup/owner-enrollment", "dep:festerm-tunnel-bridge", "dep:festerm-host-protocol"]
+
+[dependencies]
+festerm-host-setup = { path = "../../crates/festerm-host-setup", features = ["lifecycle"] }
+festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional = true, features = ["host-routing"] }
+festerm-host-protocol = { path = "../../crates/festerm-host-protocol", optional = true }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+festerm-sessiond = { path = "../../crates/festerm-sessiond", features = ["test-support"] }
+
+[lints]
+workspace = true

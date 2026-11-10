@@ -190,6 +190,60 @@ pub struct ClientConnection {
     pub(crate) _session: Arc<client::Handle<VerifiedHost>>,
     pub(crate) port: u16,
     pub(crate) observation_expiry: Option<tokio::time::Instant>,
+    #[cfg(feature = "owner-auth")]
+    pub(crate) owner_transport: Option<VerifiedPinnedChannel>,
+}
+
+#[cfg(feature = "owner-auth")]
+pub(crate) struct VerifiedPinnedChannel {
+    binding: russh::ChannelBinding,
+    fingerprint: String,
+}
+
+#[cfg(feature = "owner-auth")]
+impl VerifiedPinnedChannel {
+    #[cfg(test)]
+    pub(crate) fn from_fixture_stream(
+        stream: &ChannelStream<client::Msg>,
+        pinned_key: &str,
+    ) -> io::Result<Option<Self>> {
+        let fingerprint = host_fingerprint(pinned_key)?;
+        Ok(stream.channel_binding().cloned().map(|binding| Self {
+            binding,
+            fingerprint,
+        }))
+    }
+}
+
+#[cfg(feature = "owner-auth")]
+impl ClientConnection {
+    pub fn require_owner_channel_binding(&self) -> Result<(), crate::owner_auth::OwnerKeyError> {
+        self.owner_channel_binding().map(|_| ())
+    }
+
+    pub(crate) fn owner_channel_binding(
+        &self,
+    ) -> Result<&russh::ChannelBinding, crate::owner_auth::OwnerKeyError> {
+        let captured = self
+            .owner_transport
+            .as_ref()
+            .ok_or(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable)?;
+        if self.stream.channel_binding() != Some(&captured.binding) {
+            return Err(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable);
+        }
+        Ok(&captured.binding)
+    }
+
+    pub(crate) fn owner_pinned_fingerprint(
+        &self,
+    ) -> Result<&str, crate::owner_auth::OwnerKeyError> {
+        self.owner_channel_binding()?;
+        Ok(&self
+            .owner_transport
+            .as_ref()
+            .ok_or(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable)?
+            .fingerprint)
+    }
 }
 
 impl tokio::io::AsyncRead for ClientConnection {
@@ -357,11 +411,24 @@ pub async fn connect_endpoint(
         .await
         .map_err(|_| invalid())?
         .into_stream();
+    #[cfg(feature = "owner-auth")]
+    let owner_transport = {
+        let fingerprint = host_fingerprint(&endpoint.host_public_keys[0])?;
+        stream
+            .channel_binding()
+            .cloned()
+            .map(|binding| VerifiedPinnedChannel {
+                binding,
+                fingerprint,
+            })
+    };
     Ok(ClientConnection {
         stream,
         _session: Arc::new(session),
         port,
         observation_expiry: crate::observation_client::ObservationDriver::token_expiry(token),
+        #[cfg(feature = "owner-auth")]
+        owner_transport,
     })
 }
 
