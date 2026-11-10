@@ -3642,6 +3642,15 @@ policy-checked helper, with handle-safe fixture lifetime; production checkout
 refusal/DACL checks and all publication-lock/rebase assertions remain unchanged.
 Local macOS registry/storage selectors passed 6/3 respectively. This is a fixture
 correction, not Windows acceptance; fresh exact-head Windows CI remains required.
+Linux primary job `129964171286` at `dbe998d0` later retained 25 host-control
+passes and a foreign-retirement denial mismatch; the actual returned error was
+not printed. A held-journal control independently reproduced Busy before the
+owner check. Retirement now permits only a deny-only bounded protected checkpoint
+read on that contention path; matching owners still get Busy and all effects
+retain full locked authorization/positive native-absence proof. Controlled
+journal/start Busy, registry Unknown, corrupt-checkpoint Storage and foreign
+Denied preserve exact PID/generation/issued evidence. Six selected macOS
+retirement/ensure/capacity cases pass; this is not fresh Linux/native acceptance.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
@@ -3653,6 +3662,47 @@ Host-controlled Windows startup refuses denied breakaway instead of claiming
 persistence inside the bridge's job; both denial and successful independent
 whole-ConPTY-tree cleanup require native evidence.
 Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
+Exact frozen core `9b1d2a68` failed its explicit fourteen-route primary checks:
+Linux job `129987309001` passed 13/failed 1; macOS job `129987309476` passed
+12/failed 2. Original hashed logs remain retained. The takeover refusal was
+OutcomeUncertain, with a secondary cleanup Storage diagnostic; macOS also
+returned actual precommit Busy where its fixture assumed durable stop intent.
+Controlled lease/commit/pending-adoption barriers correct the fixture state
+assumptions without accepting arbitrary refusals or changing production policy.
+At immutable `1947c416`, the corrected macOS source passes all fourteen actual
+routes, zero failed or
+ignored, in 166.28 seconds from one aggregate execution; portable controls pass
+16 with nine unchanged native ignores. Two focused native passes are a subset.
+The retirement CI error remains separately unknown, not labeled by these logs.
+The normal core/session/Windows-fixture fan-in initially exposed a separate
+local socket-path boundary: its first aggregate passed two/failed twelve in
+27.36 seconds. A real maximum-PID/HOST-generation socket bind is retained RED
+against the old root and GREEN after shortening only the exclusively created,
+policy-checked Unix fixture child. Production path policy and Windows selection
+are unchanged; helper construction, measurement and artifact-lifecycle limits
+are recorded in [Native helper provenance](milestone-progress.md#native-helper-provenance-core-session-correction).
+First-run Linux `920715a5`, run `42869778017`, job `130017607117`, separately
+passed 13/failed one native route in 165.00 seconds. Its committed-creation
+Ensure replay assertion did not print its actual response: it remains unknown.
+A controlled held-generation lease independently reproduces typed Busy at that
+assertion. The corrected fixture requires unchanged full journal/lease, then
+same-operation/same-generation/original-Created success within the original
+deadline; other replies fail with their actual typed values. This neither
+identifies that CI error nor qualifies a new Linux run.
+At source `61f67fc5`, the bounded core/session/Windows-fixture union passed one
+complete macOS native aggregate: 14 passed/zero failed/zero ignored in 178.74
+seconds, using the earlier default-feature helper under the
+[build, runner-measurement and mutable-artifact qualifications](milestone-progress.md#native-helper-provenance-core-session-correction),
+not a helper freshly rebuilt at that source or new evidence from this
+documentation correction.
+Selected macOS groups additionally pass six session cases, four storage cases,
+31 Windows-derived/new setup cases, 12 standalone-cloud cases and 16 portable
+bridge cases with nine existing native ignores; the focused replay pass and
+maximum-socket pass are subsets, not extra native/storage cases. Both affected
+strict feature configurations pass. Exact source/commands/names and retained
+first-failure/RED evidence are in `target/adr84-core-fanin-evidence/`.
+Corrected owned Unix route evidence does not establish Windows, native-manager,
+installed service, cloud/vault or whole-ADR acceptance.
 HOST-04–06 setup/update/migration retain partial foundations described below;
 there is no new completed manual or usability scenario.
 Migration qualification must preserve protected state/account binding, retain
@@ -3712,6 +3762,17 @@ absence still cannot bypass an active runtime lease or missing runtime lock with
 existing run history. Present cloud generations retain CleanupPending; only
 authenticated absence may complete Removed. No real manager, native vault or
 cloud operation was performed, so HOSTSETUP-01 remains open.
+The core9b Windows primary failure (run `42861153896`, job `129987309097`)
+exposed native account discovery inside these otherwise pure fixtures, not a
+private-root creation error. Explicit per-adapter test accounts and typed fake
+Windows context now isolate them; any manager request panics. Real Services,
+private state identity, epoch/runtime-lock and foreign-receipt checks remain.
+At immutable `34db0136`, macOS-only results are 110 library passes with one
+existing ignore,
+12 standalone-cloud passes and two strict feature checks; all 26 original
+failing names pass locally. See milestone progress for raw-log SHA and commands.
+This is not fresh Windows execution; Windows primary CI and native ordinary-user
+token/task/daemon-preservation acceptance remain required.
 The coupled CI build correction has fresh pinned Rust/Cargo 1.99.1 and Clippy
 0.1.99 host/no-host checks, portable snapshot tests and strict
 `aarch64-apple-ios` bridge compilation. The host JSON helper is absent without

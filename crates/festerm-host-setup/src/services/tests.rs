@@ -357,6 +357,20 @@ fn services<'a>(root: &Path, store: &'a Store, platform: Platform) -> Services<'
     }
 }
 
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[test]
+#[should_panic(expected = "pure unpublished-registration fixture must not call a native manager")]
+fn native_service_unpublished_fixture_forbids_native_manager_effects() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    let fixture = super::fixture_services(&store, &state).unwrap();
+    let _ = fixture.runner.execute(&NativeRequest::Task {
+        name: "fixture-only-never-native".into(),
+        action: TaskAction::Query,
+    });
+}
+
 fn provision(store: &Store) -> Snapshot {
     let ticket = store
         .request_enable(&store.snapshot().unwrap().settings)

@@ -107,6 +107,8 @@ pub enum Cleanup {
 /// Desktop and headless share this adapter. Construction has no side effects.
 pub struct CloudHostAdapter<'a> {
     store: &'a Store,
+    #[cfg(test)]
+    fixture_user: Option<&'static str>,
 }
 
 trait Network {
@@ -244,7 +246,28 @@ impl Network for NativeNetwork {
 
 impl<'a> CloudHostAdapter<'a> {
     pub fn new(store: &'a Store) -> Self {
-        Self { store }
+        Self {
+            store,
+            #[cfg(test)]
+            fixture_user: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture(store: &'a Store) -> Self {
+        // Fake network fixtures must not require or authorize a native process token.
+        Self {
+            store,
+            fixture_user: Some("fixture:ordinary-account"),
+        }
+    }
+
+    fn os_user(&self) -> io::Result<String> {
+        #[cfg(test)]
+        if let Some(user) = self.fixture_user {
+            return Ok(user.into());
+        }
+        os_user()
     }
 
     /// Open only the pinned zero-shell endpoint using its stable protected key.
@@ -363,7 +386,7 @@ impl<'a> CloudHostAdapter<'a> {
         }
         self.store.with_locked(|directory, snapshot| {
             current_ticket(snapshot, ticket, true)?;
-            let user = os_user()?;
+            let user = self.os_user()?;
             if let Some(mut record) = read(directory)? {
                 if record.account_id != expected_github_subject {
                     return Err(refused("host.cloud_account_changed"));
@@ -371,7 +394,7 @@ impl<'a> CloudHostAdapter<'a> {
                 // A new foreground ticket may reuse the same disabled identity,
                 // resource and protected credential, never another account.
                 record.ticket = ticket.clone();
-                validate(&record, snapshot, directory)?;
+                validate(&record, snapshot, directory, || self.os_user())?;
                 write(directory, &record)?;
                 return Ok(Foreground { record });
             }
@@ -549,7 +572,7 @@ impl<'a> CloudHostAdapter<'a> {
         self.require_scope(record, foreground)?;
         self.check_cancelled(record, cancel)?;
         self.store.with_locked(|directory, snapshot| {
-            validate(record, snapshot, directory)?;
+            validate(record, snapshot, directory, || self.os_user())?;
             current_ticket(snapshot, &record.ticket, true)
         })
     }
@@ -1040,14 +1063,14 @@ impl<'a> CloudHostAdapter<'a> {
     fn load(&self) -> io::Result<Record> {
         self.store.with_locked(|directory, snapshot| {
             let record = read(directory)?.ok_or_else(|| refused("host.cloud_not_configured"))?;
-            validate(&record, snapshot, directory)?;
+            validate(&record, snapshot, directory, || self.os_user())?;
             Ok(record)
         })
     }
 
     fn save(&self, record: &Record) -> io::Result<()> {
         self.store.with_locked(|directory, snapshot| {
-            validate(record, snapshot, directory)?;
+            validate(record, snapshot, directory, || self.os_user())?;
             write(directory, record)
         })
     }
@@ -1108,7 +1131,12 @@ fn pin_receipt(record: &mut Record, receipt: Receipt) -> io::Result<()> {
     Ok(())
 }
 
-fn validate(record: &Record, snapshot: &Snapshot, directory: &File) -> io::Result<()> {
+fn validate(
+    record: &Record,
+    snapshot: &Snapshot,
+    directory: &File,
+    os_user: impl FnOnce() -> io::Result<String>,
+) -> io::Result<()> {
     if record.version != 1
         || record.installation != snapshot.installation
         || record.origin != snapshot.origin
@@ -1421,6 +1449,46 @@ mod tests {
         adapter.foreground(&ticket, 42).unwrap()
     }
 
+    #[test]
+    fn host_cloud_fixture_account_is_instance_scoped_and_rejects_another_os_user() {
+        let (_root, store, _secrets) = fixture();
+        let adapter = CloudHostAdapter::fixture(&store);
+        foreground(&adapter);
+        let other = CloudHostAdapter {
+            store: &store,
+            fixture_user: Some("fixture:another-account"),
+        };
+        assert_eq!(
+            other.load().err().unwrap().to_string(),
+            "host.cloud_scope_changed"
+        );
+        assert!(adapter.load().is_ok());
+        let native = CloudHostAdapter::new(&store);
+        assert!(native.fixture_user.is_none());
+        assert!(match (native.os_user(), os_user()) {
+            (Ok(actual), Ok(expected)) => actual == expected,
+            (Err(actual), Err(expected)) => actual.kind() == expected.kind(),
+            _ => false,
+        });
+    }
+
+    #[test]
+    fn host_cloud_record_validation_preserves_native_account_denial() {
+        let (_root, store, _secrets) = fixture();
+        let adapter = CloudHostAdapter::fixture(&store);
+        let foreground = foreground(&adapter);
+        store
+            .with_locked(|directory, snapshot| {
+                let error = validate(&foreground.record, snapshot, directory, || {
+                    Err(io::ErrorKind::PermissionDenied.into())
+                })
+                .unwrap_err();
+                assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+                Ok(())
+            })
+            .unwrap();
+    }
+
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     struct ControllerBoundary<'a> {
         network: FixtureNetwork<'a>,
@@ -1431,6 +1499,10 @@ mod tests {
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     impl crate::controller::SetupBoundary for ControllerBoundary<'_> {
+        fn fixture_cloud<'a>(&self, store: &'a Store) -> CloudHostAdapter<'a> {
+            CloudHostAdapter::fixture(store)
+        }
+
         async fn sign_in(
             &self,
             cloud: &CloudHostAdapter<'_>,
@@ -1716,7 +1788,7 @@ mod tests {
             assert!(!root.path().join("host/daemon").exists());
             if after == "provision" {
                 assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
-                assert!(CloudHostAdapter::new(&store)
+                assert!(CloudHostAdapter::fixture(&store)
                     .load()
                     .unwrap()
                     .receipt
@@ -1857,7 +1929,7 @@ mod tests {
         let (root, store, secrets) = fixture();
         let path = root.path().join("host").join(HOST_IDENTITY_FILE);
         assert!(!path.exists());
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let approved = foreground(&adapter);
         let created = HostIdentity::load(&path).unwrap();
         let host_id = created.host_id();
@@ -1898,7 +1970,7 @@ mod tests {
         assert_eq!(network.state.borrow().sign_ins, 1);
 
         let (other_root, other_store, _other_secrets) = fixture();
-        let other_adapter = CloudHostAdapter::new(&other_store);
+        let other_adapter = CloudHostAdapter::fixture(&other_store);
         let other = foreground(&other_adapter);
         let missing = other_root.path().join("host").join(HOST_IDENTITY_FILE);
         std::fs::remove_file(&missing).unwrap();
@@ -1910,7 +1982,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_relay_uses_existing_identity_and_scoped_token_without_enrollment() {
         let (_root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let approval = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -1943,7 +2015,7 @@ mod tests {
     async fn host_cloud_relay_refuses_revoke_cancel_replacement_and_absent_identity() {
         for refusal in ["revoke", "cancel", "replacement", "identity", "credential"] {
             let (_root, store, secrets) = fixture();
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let approval = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();
@@ -2003,7 +2075,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create() {
         let (root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let initial = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2042,7 +2114,7 @@ mod tests {
         assert_eq!(network.state.borrow().sign_ins, 1);
         assert!(store.request_cleanup().is_err());
         let state = root.path().join("host");
-        let disabled = crate::controller::disable(&store, &state).unwrap();
+        let disabled = crate::controller::fixture_disable(&store, &state).unwrap();
         assert_eq!(disabled.lifecycle.phase, Phase::Disabled);
         assert_eq!(
             disabled.native_process.unwrap().process,
@@ -2050,7 +2122,7 @@ mod tests {
         );
         store.request_cleanup().unwrap();
         assert_eq!(
-            crate::controller::uninstall_with(
+            crate::controller::fixture_uninstall(
                 &store,
                 &state,
                 &cancel,
@@ -2071,7 +2143,7 @@ mod tests {
         for cancel_after_publish in [false, true] {
             let (root, store, secrets) = fixture();
             let state = root.path().join("host");
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let initial = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();
@@ -2086,7 +2158,7 @@ mod tests {
             assert_eq!(provisioned.is_err(), cancel_after_publish);
             let receipt = adapter.load().unwrap().receipt.unwrap();
             assert!(!state.join("native-service.json").exists());
-            let disabled = crate::controller::disable(&store, &state).unwrap();
+            let disabled = crate::controller::fixture_disable(&store, &state).unwrap();
             assert_eq!(disabled.lifecycle.phase, Phase::Disabled);
             assert_eq!(
                 disabled.native_process.unwrap().process,
@@ -2095,7 +2167,7 @@ mod tests {
             store.request_cleanup().unwrap();
             let cleanup_cancel = CancellationToken::new();
             assert_eq!(
-                crate::controller::uninstall_with(
+                crate::controller::fixture_uninstall(
                     &store,
                     &state,
                     &cleanup_cancel,
@@ -2109,7 +2181,7 @@ mod tests {
             assert_eq!(adapter.load().unwrap().receipt.as_ref(), Some(&receipt));
             network.state.borrow_mut().created = None;
             assert_eq!(
-                crate::controller::uninstall_with(
+                crate::controller::fixture_uninstall(
                     &store,
                     &state,
                     &cleanup_cancel,
@@ -2129,7 +2201,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts() {
         let (_root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let initial = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2199,7 +2271,7 @@ mod tests {
     async fn host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource() {
         for refusal in ["cancelled", "missing-credential", "account", "resource"] {
             let (_root, store, secrets) = fixture();
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let initial = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();
@@ -2256,7 +2328,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced() {
         let (root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let foreground = foreground(&adapter);
         assert!(adapter.foreground(&foreground.record.ticket, 99).is_err());
         let network = FixtureNetwork::new(&store);
@@ -2309,7 +2381,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable() {
         let (root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let foreground = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2326,7 +2398,7 @@ mod tests {
         assert!(record.submitted && record.receipt.is_none());
         store.revoke().unwrap();
         let reopened = Store::open(&root.path().join("host"), Origin::Headless).unwrap();
-        let recovered = CloudHostAdapter::new(&reopened);
+        let recovered = CloudHostAdapter::fixture(&reopened);
         assert_eq!(
             recovered
                 .reconcile_with(&cancel, &network, &secrets)
@@ -2357,7 +2429,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker() {
         let (root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let foreground = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2398,7 +2470,7 @@ mod tests {
             .await
             .is_err());
         network.state.borrow_mut().confirm_error = None;
-        crate::controller::disable(&store, &root.path().join("host")).unwrap();
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
         assert_eq!(
             adapter
@@ -2441,7 +2513,7 @@ mod tests {
     {
         for lose_reply in [false, true] {
             let (_root, store, secrets) = fixture();
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let foreground = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();
@@ -2483,7 +2555,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity() {
         let (root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let foreground = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2534,7 +2606,7 @@ mod tests {
             .await
             .unwrap();
         let original = store.snapshot().unwrap().binding.unwrap();
-        crate::controller::disable(&store, &root.path().join("host")).unwrap();
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         let next = super::tests::foreground(&adapter);
         assert!(adapter
             .sign_in_with(&foreground, &cancel, |_| panic!(), &network, &secrets)
@@ -2567,7 +2639,7 @@ mod tests {
     async fn host_cloud_local_no_send_and_rejection_resolve_without_widening_consent() {
         for scenario in 0..3 {
             let (_root, store, secrets) = fixture();
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let foreground = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();
@@ -2630,7 +2702,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation() {
         let (_root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let foreground = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2703,7 +2775,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create() {
         let (_root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let foreground = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2731,7 +2803,7 @@ mod tests {
     async fn host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup() {
         for reconcile in [false, true] {
             let (root, store, secrets) = fixture();
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let initial = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();
@@ -2745,7 +2817,7 @@ mod tests {
                 .unwrap();
             let binding = store.snapshot().unwrap().binding.unwrap();
             let receipt = adapter.load().unwrap().receipt;
-            crate::controller::disable(&store, &root.path().join("host")).unwrap();
+            crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
             network.state.borrow_mut().created = None;
             let next = foreground(&adapter);
             let phase = if reconcile {
@@ -2771,7 +2843,7 @@ mod tests {
             let mut wrong = binding.clone();
             wrong.host_key_fingerprint = format!("{}x", wrong.host_key_fingerprint);
             assert!(store.confirm_stopped(stopped.epoch, &wrong).is_err());
-            crate::controller::disable(&store, &root.path().join("host")).unwrap();
+            crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
             store.request_cleanup().unwrap();
             assert_eq!(
                 adapter
@@ -2788,7 +2860,7 @@ mod tests {
     async fn host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource(
     ) {
         let (_root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let initial = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2824,7 +2896,7 @@ mod tests {
             .foreground_recovery(&initial.record.ticket, epoch, 42)
             .unwrap();
         let (_other_root, other_store, _) = fixture();
-        let other_adapter = CloudHostAdapter::new(&other_store);
+        let other_adapter = CloudHostAdapter::fixture(&other_store);
         let other_foreground = foreground(&other_adapter);
         assert!(adapter
             .foreground_recovery(&other_foreground.record.ticket, epoch, 42)
@@ -2905,7 +2977,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states() {
         let (root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let initial = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2942,7 +3014,7 @@ mod tests {
             .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
             .is_err());
         assert!(store.request_cleanup().is_err());
-        crate::controller::disable(&store, &root.path().join("host")).unwrap();
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         assert!(adapter.acknowledge_uncertain_submission(&recovery).is_err());
         assert!(adapter.load().unwrap().receipt.is_some());
     }
@@ -2951,7 +3023,7 @@ mod tests {
     async fn host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt() {
         for scenario in 0..3 {
             let (_root, store, secrets) = fixture();
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let initial = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();

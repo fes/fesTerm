@@ -548,6 +548,12 @@ Private-registry reader/rebase fixture roots use the existing policy-checked
 test directory rather than assuming Windows checkout ancestors are trusted.
 Production ancestor/DACL refusal and actual publication-lock/once-only-effect
 assertions remain unchanged; corrected Windows CI remains a separate gate.
+Local retirement's contended-journal checkpoint is deny-only: it can refuse a
+foreign/missing owner, never admit an action. Matching owners remain Busy and
+all effects retain locked owner/generation/revocation validation plus positive
+native absence. Controlled journal/start/registry barriers preserve exact
+PID/generation/issued state under refusal; the original Linux mismatch did not
+record its error variant and is not retrospectively classified as Busy.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
@@ -790,8 +796,13 @@ directory identity. Three service regressions prove unpublished-receipt own
 absence with zero fake-manager calls and untouched foreign definitions, lease/
 epoch/instance refusal and corrupt/foreign/non-file/missing-lock receipt refusal.
 `host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup`
-and the acknowledged-uncertainty adoption case pass through actual controller
-disable/uninstall and Services, substituting only the cloud network/credentials.
+and the acknowledged-uncertainty adoption case execute actual controller
+disable/uninstall and Services logic with explicit fake network/credentials,
+per-adapter test accounts and typed fake native context. The unpublished-only
+runner panics on any manager request. Production account admission and private
+storage policy remain unchanged; ordinary Windows process-token admission is
+not a prerequisite for pure fixtures. Account drift/native denial, foreign
+state and cleanup-denial ordering regressions retain fail-closed boundaries.
 Successful direct `confirm_stopped` shortcuts are removed from those cloud and
 controller integration fixtures; active runtime ownership and missing-lock/history
 guards still block Disabled. These tests require the explicit combined controller
@@ -1214,6 +1225,23 @@ duplex tests cover idle-versus-exchange deadlines, typed handshake refusals,
 correlated resource/policy Busy, retained reply allocation through publication
 and post-commit policy contention. These are PR688 core reliability/scope
 remediations, not endpoint or dependency qualification.
+
+Frozen-core native fixture qualification now distinguishes precommit Busy
+(held exact generation lease, unchanged PID/generation/issued state) from a
+durable StopRequested commit paused before reply publication. A competing
+attachment is checked once behind an actual unadopted takeover reservation,
+not by repeatedly retrying an intentional occupied-writer refusal. Real old
+writer I/O, unchanged pending/committed authority, exactly one adoption epoch,
+stale generation and no input replay remain mandatory. No production refusal,
+admission or native transport behavior changes in this fixture correction.
+The committed-creation publication fixture additionally holds the real exact
+generation lease during original-operation replay: Busy must preserve the whole
+journal/lease, then the same original operation must publish its original Created
+result within the existing deadline. Other refusals remain typed failures.
+The Unix fixture-root regression binds the maximum HOST generation/PID socket
+identity, with exclusive private creation and unchanged production path policy.
+The distinct Linux `920715a5` assertion did not print its actual response;
+controlled Busy evidence does not retroactively label that CI failure.
 
 The unexposed paired terminal slice adds bounded binary framing, explicit
 frontend adoption/observed native writer admission, immutable client bindings,

@@ -311,8 +311,14 @@ then the caller retries Busy with its original unchanged operation and scope.
 not a wire operation. It can retire a known-Absent identity or abandon an
 ambiguous Launching reservation. Abandonment seals its generation lease under
 the native start lock, then must acquire the lifetime daemon lock and positively
-verify exact registry/generation absence. Contention is Busy; malformed/missing
-required evidence is Unknown, never absence. A durable artifacts-retired
+verify exact registry/generation absence. On journal contention, a bounded
+read-only protected checkpoint can only return Denied for a foreign/missing
+logical owner; a matching owner still receives Busy, never authority from that
+snapshot. A corrupt checkpoint fails closed as Storage. The locked transaction
+revalidates every ownership/generation/revocation check before any effect.
+Owner journal/native-start contention is Busy; unavailable native registry
+evidence (including its contended lock) or malformed/missing required evidence
+is Unknown, never absence. A durable artifacts-retired
 checkpoint precedes deletion, so crash recovery completes cleanup idempotently.
 Delayed helpers cannot recreate removed old generation locks or obtain a live
 lease. Only successful proof restores capacity and permits later same-ID creation;
@@ -368,6 +374,13 @@ at physical delivery and retire revoked connections/attachments.
   journaled, resent or replayed. A temporary unadopted result also supplies opaque
   `initial_lease_authority`: `cancel_initial_lease` can stop only that original
   creation before any pending/adopted transfer, never authorize terminal access.
+- Replaying an already committed Ensure still reconciles its exact native lease
+  under nonblocking locks. A held generation lease can therefore return Busy
+  before publishing the stored result, without changing its journal, lease or
+  issued ledger. Retain the original issued operation and immutable creation
+  intent across that contention; do not submit another spawn or infer absence.
+  Success must retain the exact generation and original creation disposition.
+  Busy is not success, and another refusal is not an interchangeable retry hint.
 - Reconciliation with no exact launch journal cannot write a fresh reservation
   or execute a helper, even when an active persistent daemon lease exists.
   Revoked records do no native reconciliation. Transient native observation
@@ -385,8 +398,11 @@ at physical delivery and retire revoked connections/attachments.
   beside writer replacement, after adoption. An obsolete disconnect cannot end
   the new owner. Legacy admission cannot bypass a temporary lease. Existing
   persistent/legacy daemon attachment and takeover remain unchanged.
-  Registry/per-generation lock contention is nonblocking Busy, including the
-  first attachment after Ensure. A caller retains its original issued creation
+  Before reservation, registry/per-generation lock contention is nonblocking
+  Busy, including the first attachment after Ensure. Once a pending reservation
+  is written, failure to prove cleanup or publish admission can instead return
+  OutcomeUncertain; neither refusal proves frontend adoption or writer transfer.
+  A caller retains its original issued creation
   operation, exact target and attachment intent; Busy is not absence or authority
   to issue another creation. Fixture coverage holds the exact lease lock and
   proves unchanged lease bytes/operation ledger before admitting that attachment.
@@ -433,6 +449,10 @@ at physical delivery and retire revoked connections/attachments.
   outcome/cancellation/heartbeat/cleanup; never mint a fresh fence from a stale one.
 - `end` returns **`EndOutcome::StopRequested`**, a durable exact-generation stop,
   not observed process exit. Reconcile absence before sending an Ended result.
+  Before that stop intent commits, contention returns Busy without changing
+  the target/lease. The control route deliberately returns OutcomeUncertain
+  after durable StopRequested, never Ended. Retain the same operation and exact
+  target across precommit Busy; do not repeat stop after observing its commit.
   Local consent revocation fences pending/native remote admission; persistent
   shells remain alive. The future endpoint owns closing already established
   revoked remote relays. No local administrative API becomes remote by default.
