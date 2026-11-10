@@ -204,6 +204,11 @@ pages alongside the healthy session page. `capture_with_unknowns` filters both
 sets by protected owner/sharing/revocation before publication. One uncertain
 record cannot hide healthy peers, and a partial/omitted inventory never proves
 absence; exact Lookup/Ensure must still reconcile protected native evidence.
+In protected native inventory, a private-source fence's Unknown/Busy becomes
+only that entry's Unknown metadata, without its label/summary. Fresh per-record
+owner policy and aggregate publication admission still run; their errors,
+including Unknown/Busy, remain hard refusals. Foreign/revoked records stay
+filtered. This never grants attachment, declares absence or revokes the source.
 
 The unreleased HOST envelope additionally carries `issuance_epoch` on
 Ensure/Create requests, which require it. All other requests must omit it;
@@ -1042,6 +1047,19 @@ records provide private preparation, separate explicit activation and exact
 irreversible reduction; journal lookup is observation, never admission/readiness.
 No owner-key, creation grant, new endpoint, legacy receipt fabrication or frontend
 attachment is introduced.
+
+Ordinary `connect_or_start` resolves its runtime root once and deliberately pins
+`FESTERM_SESSIOND_RUNTIME_ROOT` in the helper's inherited environment, matching
+the existing detached launch path. Its normal shell children consequently see
+that same namespace, not a second/default-resolved root. No process-global
+environment is mutated and the path is metadata, not sharing authority.
+
+Private source fencing is a point-in-time capability/MAC and live held-lifetime
+observation. Retained directory/lifetime handles do not hold a shared installer
+lock or freeze the process/capability after that observation. Fresh operation
+and frame admission must recheck it. Legacy installation sources instead hold
+their shared installer/consent locks against cooperating writers; these distinct
+exclusion guarantees must not be conflated.
 
 The separate local [owned-migration boundary](owned-installation-migration.md#authenticated-binding-and-retained-root-boundary)
 authenticates explicitly selected capability-enabled current daemons over their

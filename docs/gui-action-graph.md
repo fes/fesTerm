@@ -1637,6 +1637,10 @@ or cached permission; interrupted Bind reuses its original operation and never
 implies Switch. See [ADR 0084 §7](adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing).
 The controlled real-daemon fixture is not actual native-vault/installed/GUI or
 provider acceptance, and does not resolve existing native CI contention failures.
+HOST-01 additionally has a deterministic private-source uncertainty regression:
+healthy authorized entries remain visible beside authorized Unknown target
+metadata, while record/global/publication authority refusals still fail closed.
+Private liveness is point-in-time, unlike legacy shared installer-lock exclusion.
 
 HOST-06 currently has the independently testable
 [helper authenticity boundary](host-release-artifacts.md) and separate

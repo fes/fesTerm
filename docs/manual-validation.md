@@ -3714,14 +3714,30 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 
 `HOST-03` additionally has the opt-in
 `private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_preserves_frontend`
-fixture. It starts an ordinary private daemon without legacy installation,
-claim, consent or host-key files; uses the existing in-memory NativeVault fixture
-for an already-Provisioned Desktop host; and checks original PID/generation,
+fixture defines checks for an ordinary private daemon without legacy installation,
+claim, consent or host-key files, using the existing in-memory NativeVault fixture
+for an already-Provisioned Desktop host. Its assertions check original PID/generation,
 Local frontend, PTY I/O, unchanged master settings and capability retention/exit
 cleanup through explicit private Bind, Switch, original-operation lookup/resume,
 revocation and exact release/rollback. Deterministic tests separately reject
-stale revision/account, replaced state directory, foreign/portable/headless/
+stale revision/account, replaced state directory, foreign/headless/
 locked/corrupt authority, missing narrow approval and metadata-only provenance.
+The Desktop authority test additionally exercises the actual public boundary
+refusing explicit `HeadlessProtectedFile` selection; this is not a portable
+profile-import test.
+
+The final retained execution at exact source
+`1839157a713513b8711a1ce708fc3a6cec533c76` (tree
+`5e663433c60a3fbfc75bd672350b71816cb4e065`, Rust/Cargo 1.99.1) ran this named
+case: **1 pass / 0 fail / 0 ignored / 65 filtered**, 6.65 seconds. Owner-retained
+`source-increment/final-native-private.log` has SHA-256
+`dd15ef66ae4c9ce894384e410cb3ec393e18dc033858a39c297a8a33aaa47883`;
+its sealed handoff has SHA-256
+`c11f1594a759c7468e5be35baeab7de79f38a5cf98f31aefffbe597692c8e8f6`.
+An earlier provisional execution of this same case also passed; these are two
+executions of one case, not two distinct native cases or new installed-platform
+acceptance. The followup inventory regression is deterministic structured
+registry/held-lease evidence, not another native helper execution.
 
 Run the named case with `cargo test --locked -p festerm-host-setup --features
 owner-enrollment --lib private_session_sharing::tests::private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_preserves_frontend

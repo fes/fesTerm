@@ -38,9 +38,15 @@ fn approve(owners: &OwnerEnrollment<'_>) -> (crate::enrollment::EnrollmentSnapsh
 }
 
 #[test]
-fn private_sharing_requires_current_desktop_native_vault_not_portable_or_headless_authority() {
+fn private_sharing_requires_current_desktop_native_vault_not_file_or_headless_authority() {
     let (root, store, vault) = setup_origin(Origin::Desktop);
     let state = root.path().join("installation");
+    assert!(
+        store
+            .owner_enrollment_with_storage(crate::enrollment::OwnerStorage::HeadlessProtectedFile)
+            .is_err(),
+        "Desktop must reject explicit protected-file authority, not fall back from NativeVault"
+    );
     let owners = fixture_owners(&store, vault.clone());
     let (approved, _) = approve(&owners);
     let sharing = Sharing::open(&store, &state, owners).unwrap();

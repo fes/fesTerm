@@ -692,6 +692,22 @@ impl SessionControl {
             .and_then(|record| record.binding.as_ref())
             .map(|imported| Self::binding_source(&imported.binding))
             .transpose()?;
+        let guard = Self::policy_admission(record, owner, effect, admit)?;
+        Ok(NativeAdmission {
+            _policy: guard,
+            _source: source,
+        })
+    }
+
+    fn policy_admission<G>(
+        record: Option<&Record>,
+        owner: &PrincipalId,
+        effect: Effect,
+        admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<G, ControlError> {
+        if record.is_some_and(|record| &record.owner != owner) {
+            return Err(ControlError::Denied);
+        }
         let state = AdmissionState {
             grant: record.map(Record::grant),
             grant_epoch: record.map(|record| record.epoch),
@@ -702,10 +718,7 @@ impl SessionControl {
         if record.is_some_and(|record| record.revoked) {
             return Err(ControlError::Revoked);
         }
-        Ok(NativeAdmission {
-            _policy: guard,
-            _source: source,
-        })
+        Ok(guard)
     }
 
     fn binding_source(
@@ -949,8 +962,27 @@ impl SessionControl {
         for record in tx.state.sessions.values().filter(|record| {
             &record.owner == owner && !record.revoked && !matches!(record.phase, Phase::Absent)
         }) {
-            let _admission = Self::admission(Some(record), owner, Effect::Lookup, &mut admit)?;
-            let summary = if uncertain.contains(&record.logical) {
+            let (_source, source_uncertain) = match record
+                .binding
+                .as_ref()
+                .map(|imported| Self::binding_source(&imported.binding))
+                .transpose()
+            {
+                Ok(source) => (source, false),
+                Err(ControlError::Unknown | ControlError::Busy)
+                    if record
+                        .binding
+                        .as_ref()
+                        .is_some_and(|imported| !imported.binding.source_authority.is_legacy()) =>
+                {
+                    (None, true)
+                }
+                Err(error) => return Err(error),
+            };
+            // Source uncertainty may hide this summary, never owner-policy denial.
+            let _admission =
+                Self::policy_admission(Some(record), owner, Effect::Lookup, &mut admit)?;
+            let summary = if source_uncertain || uncertain.contains(&record.logical) {
                 None
             } else {
                 self.summary(record).ok()

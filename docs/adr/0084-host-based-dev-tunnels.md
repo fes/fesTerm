@@ -318,6 +318,13 @@ the original local frontend, PTY, PID, generation and persistent lifetime and
 cannot resurrect revoked exposure. No new journal, endpoint or creation grant
 is introduced.
 
+Private source liveness is rechecked point-in-time, not protected by the legacy
+shared installer/consent exclusion lock. Unknown/Busy source observations in
+inventory retain only authorized per-target Unknown metadata alongside healthy
+entries; fresh owner/account/namespace/permission and publication denials remain
+hard refusals. Unknown is never absence, attach permission or automatic source
+revocation.
+
 Offer accurately labeled startup choices: manual, at user sign-in, and after
 reboot before interactive login only on qualified platforms/configurations.
 Do not claim that sign-in registration provides pre-login availability.
@@ -632,6 +639,8 @@ uses an in-memory NativeVault implementation, **not** actual native-vault,
 installed service, GUI, remote endpoint or provider acceptance. Required native
 CI contention failures remain independently unresolved; this adapter is not
 their fix.
+`HOST-01` additionally covers the deterministic mixed healthy/private-uncertain
+inventory regression and per-record/publication denial checks.
 
 The owned-installation increment adds executable headless protected inventory,
 exact preview mapping, destination identity/source-claim reservation, interrupted

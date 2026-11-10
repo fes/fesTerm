@@ -1,5 +1,24 @@
 # Milestone Progress Narrative
 
+## Keeping healthy inventory visible beside an uncertain private source
+
+Review found a concrete coupled gap: protected inventory recorded a private
+generation's uncertainty, then the source fence's Unknown aborted the whole
+aggregate before that entry could join the existing Unknown list. A deterministic
+mixed-record counterexample reproduced the failure. Inventory now isolates only
+private-source Unknown/Busy; current per-entry owner policy and final publication
+remain hard fences, including when those callbacks return Unknown/Busy.
+Foreign/revoked filtering, strict lookup, no-absence/no-auto-revocation semantics
+and exact reduction are unchanged. The regression uses structured native metadata
+and held lifetime files, not a real helper or an authorization fallback.
+
+The qualified fixture sibling is integrated through a normal exact-parent merge.
+Documentation distinguishes pinned helper/root environment inheritance, private
+point-in-time liveness versus legacy installer-lock exclusion, and the actual
+Desktop protected-file-selection refusal. The ordinary-private preservation
+evidence remains the retained exact-183 native execution, not merely an ignored
+test declaration or new platform acceptance.
+
 ## Sharing an ordinary private generation without inventing migration authority
 
 Desktop sharing exposed a missing seam: legacy migration correctly required
@@ -14,8 +33,10 @@ Opening/lookup cannot initialize a namespace, and lookup is observation rather
 than readiness. Legacy migration policy remains unchanged.
 
 Deterministic tests cover authority/provenance/domain refusal and older-helper
-compatibility; the controlled ordinary-private Local fixture proves unchanged
-PID/generation/frontend/PTY through bind/switch/resume/revocation/release/rollback.
+compatibility. The retained exact-183 execution of the controlled ordinary-private
+Local fixture passed its unchanged PID/generation/frontend/PTY assertions through
+bind/switch/resume/revocation/release/rollback; see the exact counts/source/raw
+hashes in [manual validation](manual-validation.md).
 Its NativeVault is in-memory: actual vault, installed platforms, GUI/endpoint and
 provider acceptance remain separate. Existing required native CI contention
 failures remain unresolved and are not attributed to or fixed by this adapter.

@@ -840,6 +840,200 @@ mod tests {
     }
 
     #[test]
+    fn private_inventory_source_uncertainty_preserves_healthy_authorized_entries() {
+        fn native_registry(root: &Path, record: &Record) -> File {
+            let directory = storage::private_directory(root, false).unwrap();
+            let identity = record.native().unwrap();
+            let lifetime = storage::open_private_file(
+                &directory,
+                Path::new(&format!(
+                    "lease-{}-{}",
+                    identity.pid, identity.created_at_unix_ms
+                )),
+                true,
+            )
+            .unwrap();
+            fs2::FileExt::try_lock_exclusive(&lifetime).unwrap();
+            storage::replace_private(
+                &directory,
+                Path::new("registry.json"),
+                &serde_json::to_vec(&serde_json::json!({"sessions": {
+                    (identity.name): {
+                        "name": record.name,
+                        "pid": identity.pid,
+                        "created_at_unix_ms": identity.created_at_unix_ms,
+                        "socket": identity.endpoint,
+                        "spawn_fingerprint": record.fingerprint,
+                        "protocol_version": crate::PROTOCOL_VERSION,
+                        "snapshot_schema_version": crate::RECOVERY_SNAPSHOT_SCHEMA_VERSION
+                    }
+                }}))
+                .unwrap(),
+            )
+            .unwrap();
+            lifetime
+        }
+        let root = storage::private_test_directory();
+        let (sessions, mut binding) = release_fixture(root.path(), true, true);
+        binding.account = "github:42".into();
+        binding.source_authority = native_binding::SourceAuthority::PrivateSessionV1 {
+            tag: "0".repeat(64),
+        };
+        binding.source_installation.clear();
+        binding.source_host = binding.host.clone();
+        binding.source_key_fingerprint.clear();
+        binding.source_receipt_digest.clear();
+        binding.source_root = binding.runtime_root.clone();
+        binding.source_profile = false;
+        binding.source_installation_digest.clear();
+        binding.source_ownership_digest.clear();
+        binding.source_key_digest.clear();
+        binding.source_claim_digest.clear();
+        let endpoint = |root: &Path, generation: u128| {
+            #[cfg(unix)]
+            {
+                root.join(format!("{}-{generation}.sock", std::process::id()))
+                    .to_string_lossy()
+                    .into_owned()
+            }
+            #[cfg(windows)]
+            {
+                let _ = root;
+                format!(
+                    r"\\.\pipe\festerm-sessiond-{}-{generation}",
+                    std::process::id()
+                )
+            }
+        };
+        binding.identity.endpoint = endpoint(root.path(), binding.identity.created_at_unix_ms);
+        binding.validate().unwrap();
+        let mut tx = sessions.transaction().unwrap();
+        let private = tx.state.sessions.get_mut(&binding.logical).unwrap();
+        private.identity.as_mut().unwrap().endpoint = binding.identity.endpoint.clone();
+        private.binding.as_mut().unwrap().binding = binding.clone();
+        let private_lifetime = native_registry(root.path(), private);
+        let mut healthy = private.clone();
+        healthy.logical = LogicalSessionId::new();
+        healthy.generation = GenerationId::new(124).unwrap();
+        healthy.name = native_slot(0);
+        healthy.display_name = "healthy authorized label".into();
+        healthy.launch = OperationId::new();
+        healthy.binding = None;
+        healthy.identity.as_mut().unwrap().endpoint = endpoint(&sessions.root, 124);
+        LeaseGuard::reserve(&sessions.root, healthy.generation)
+            .unwrap()
+            .create(&DaemonLease {
+                version: 1,
+                name: healthy.name.clone(),
+                generation: healthy.generation,
+                revision: 1,
+                lifetime: Lifetime::Persistent {},
+                temporary: None,
+                deadline_ms: None,
+                connected: false,
+                stopped: false,
+                remote_revoked: false,
+                pending: None,
+                last_attachment: None,
+                grant: healthy.grant(),
+                writer_epoch: Epoch::new(1).unwrap(),
+                native_pid: Some(binding.identity.pid),
+            })
+            .unwrap();
+        let healthy_lifetime = native_registry(&sessions.root, &healthy);
+        let mut foreign = healthy.clone();
+        foreign.owner = PrincipalId::new();
+        foreign.logical = LogicalSessionId::new();
+        foreign.generation = GenerationId::new(125).unwrap();
+        foreign.name = native_slot(1);
+        foreign.launch = OperationId::new();
+        tx.state.last_generation = 125;
+        tx.state
+            .sessions
+            .insert(healthy.logical.clone(), healthy.clone());
+        tx.state.sessions.insert(foreign.logical.clone(), foreign);
+        tx.save().unwrap();
+        drop(tx);
+        assert!(detached::host_generation_state(
+            root.path(),
+            &binding.identity,
+            &binding.spawn_fingerprint
+        )
+        .unwrap());
+        assert!(matches!(
+            SessionControl::binding_source(&binding),
+            Err(ControlError::Unknown)
+        ));
+        let inventory = sessions.inventory(&binding.principal, |_| Ok(())).unwrap();
+        assert_eq!(inventory.sessions.len(), 1);
+        assert_eq!(inventory.sessions[0].summary.name, healthy.display_name);
+        assert_eq!(inventory.sessions[0].summary.target, healthy.target());
+        assert_eq!(inventory.unknown.len(), 1);
+        assert_eq!(
+            inventory.unknown[0].target,
+            Target {
+                logical: binding.logical.clone(),
+                generation: GenerationId::new(123).unwrap()
+            }
+        );
+        assert_eq!(inventory.unknown[0].grant.state, LogicalState::Unknown);
+        for error in [
+            ControlError::Denied,
+            ControlError::Revoked,
+            ControlError::Stale,
+            ControlError::Unknown,
+            ControlError::Busy,
+        ] {
+            assert!(matches!(sessions.inventory(&binding.principal, |state| {
+                if state.grant.as_ref().is_some_and(|grant| grant.logical == binding.logical) { Err(error) } else { Ok(()) }
+            }), Err(actual) if actual == error));
+        }
+        let mut publications = 0;
+        assert!(matches!(
+            sessions.inventory(&binding.principal, |state| {
+                if state.grant.is_none() {
+                    publications += 1;
+                }
+                if publications == 2 {
+                    Err(ControlError::Revoked)
+                } else {
+                    Ok(())
+                }
+            }),
+            Err(ControlError::Revoked)
+        ));
+        assert!(matches!(
+            sessions.lookup(&binding.principal, &binding.logical, |_| Ok(())),
+            Err(ControlError::Unknown)
+        ));
+        assert!(!sessions.transaction().unwrap().state.sessions[&binding.logical].revoked);
+        assert!(
+            !LeaseGuard::acquire(root.path(), GenerationId::new(123).unwrap())
+                .unwrap()
+                .read()
+                .unwrap()
+                .remote_revoked
+        );
+        assert_eq!(
+            sessions.release_existing_with(
+                &binding,
+                |_| Ok(()),
+                || Err(ControlError::Unknown),
+                || panic!("uncertain native state must not invent a release acknowledgement"),
+            ),
+            Err(ControlError::Unknown)
+        );
+        let remaining = sessions.inventory(&binding.principal, |_| Ok(())).unwrap();
+        assert_eq!(remaining.sessions.len(), 1);
+        assert_eq!(remaining.sessions[0].summary.target, healthy.target());
+        assert!(
+            remaining.unknown.is_empty(),
+            "explicitly revoked private record must remain hidden"
+        );
+        drop((private_lifetime, healthy_lifetime));
+    }
+
+    #[test]
     fn imported_binding_namespace_is_stable_and_lost_state_never_reinitializes() {
         let root = root();
         let sessions = SessionControl::existing_only(&root).unwrap();
