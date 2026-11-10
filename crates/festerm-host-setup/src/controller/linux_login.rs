@@ -158,7 +158,7 @@ mod parse {
         let mut ids = BTreeSet::new();
         let mut paths = BTreeSet::new();
         let mut result = Vec::new();
-        for pair in fields[2..].chunks_exact(2) {
+        for pair in fields[2..].as_chunks::<2>().0 {
             let id = quoted(pair[0])?;
             let path = quoted(pair[1])?;
             let suffix = path
