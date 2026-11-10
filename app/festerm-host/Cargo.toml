@@ -9,7 +9,7 @@ description = "Headless host lifecycle configuration and diagnostics (ADR 0084).
 publish = false
 
 [features]
-default = []
+default = ["owner-routing"]
 owner-routing = ["festerm-host-setup/host-runtime", "dep:festerm-tunnel-bridge", "dep:festerm-host-protocol"]
 
 [dependencies]
@@ -17,7 +17,7 @@ festerm-host-setup = { path = "../../crates/festerm-host-setup", features = ["ac
 festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional = true, features = ["host-routing"] }
 festerm-host-protocol = { path = "../../crates/festerm-host-protocol", optional = true }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "net", "time"] }
+tokio = { version = "1", features = ["rt", "net", "time", "signal"] }
 tokio-util = "0.7"
 
 [dev-dependencies]

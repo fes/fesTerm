@@ -10,8 +10,63 @@ fn headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments() 
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         let error = String::from_utf8(output.stderr).unwrap();
-        assert!(error.contains("endpoint_adapter_unavailable"));
+        let expected = if cfg!(feature = "owner-routing") && matches!(operation, "setup" | "run") {
+            "invalid_arguments"
+        } else {
+            "endpoint_adapter_unavailable"
+        };
+        assert!(error.contains(expected), "{error}");
         assert!(!error.contains("fixture-do-not-echo"));
+    }
+}
+
+#[cfg(feature = "owner-routing")]
+#[test]
+fn headless_run_requires_current_consent_and_history_never_claims_liveness() {
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let state = root.path().join("host");
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["configure", "--name", "Fixture", "--state-dir"])
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["run", "--state-dir"])
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(std::fs::read_dir(&state).unwrap().count(), 2);
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["run-status", "--state-dir"])
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["last_run"].is_null());
+    assert_eq!(report["current_lifecycle"]["phase"], "disabled");
+    assert_eq!(report["meaning"], "history-only-not-liveness-or-ready");
+}
+
+#[cfg(feature = "owner-routing")]
+#[test]
+fn headless_setup_and_owner_approval_require_explicit_foreground_confirmation() {
+    for (command, args) in [
+        ("setup", vec!["--account-id", "42"]),
+        ("approve-owner", vec!["--public-key", "fixture-do-not-echo"]),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .arg(command)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let diagnostic = String::from_utf8(output.stderr).unwrap();
+        assert!(diagnostic.contains("invalid_arguments"));
+        assert!(!diagnostic.contains("fixture-do-not-echo"));
     }
 }
 

@@ -589,9 +589,9 @@ authenticated helper staging through the shared verifier, retaining exact signed
 provenance and comparing immutable cache entries without execution.
 Epoch fencing retains late provisioned identity for exact stop/cleanup, preserves
 identity on re-enable and refuses desktop/headless origin adoption. These are
-local boundary operations, not a working endpoint installer. Setup/run/update/
-uninstall explicitly fail until real endpoint, sign-in/qualified native adapters and
-authenticated-package integration exist. No Ready or native acceptance is claimed.
+local boundary operations, not native endpoint acceptance. Shared source now
+composes explicit setup, separate local owner approval and authenticated run;
+update/uninstall remain unavailable. No Ready or native acceptance is claimed.
 See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 
 **Native service component progress (#681):** Off-default `native-services`
@@ -600,8 +600,8 @@ shared lifecycle. Sealed current-native updater-authenticated executable
 receipts, private atomic definitions, exact installation/origin/creation-epoch
 ownership and current-epoch fences precede observed manager status/control.
 Late task creation preserves observed normalized identity after revocation.
-No CLI setup/run command invokes this component, and process Running is not
-Ready. Signed native install/start/cleanup, endpoint integration and persistent
+CLI setup/run now invoke this component through the shared controller, and process
+Running is not Ready. Signed native install/start/cleanup and persistent
 daemon/startup qualification remain gates; see
 [native component boundaries](../native-host-services.md).
 

@@ -14,7 +14,7 @@ native-services = ["owner-enrollment", "dep:tokio", "festerm-windows-security/ho
 native-service-fixtures = ["native-services"]
 cloud = ["lifecycle", "dep:festerm-tunnel-client", "dep:festerm-secret-store", "dep:tokio-util"]
 owner-enrollment = ["lifecycle", "festerm-tunnel-bridge/owner-auth", "dep:festerm-host-protocol", "dep:festerm-secret-store"]
-host-runtime = ["owner-enrollment", "festerm-tunnel-bridge/host-routing", "festerm-tunnel-bridge/relay"]
+host-runtime = ["owner-enrollment", "festerm-tunnel-bridge/host-routing", "festerm-tunnel-bridge/relay", "dep:zeroize"]
 acquisition = ["lifecycle", "dep:reqwest", "dep:tokio"]
 lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 artifacts = [
@@ -54,6 +54,7 @@ tokio-util = { version = "0.7", features = ["rt"], optional = true }
 festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge", optional = true }
 fs2 = { version = "0.4", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
+zeroize = { version = "1", optional = true }
 tar = { version = "0.4", optional = true }
 zip = { version = "4.6", default-features = false, features = ["deflate"], optional = true }
 

@@ -11,6 +11,12 @@ pub mod acquisition;
 pub mod artifacts;
 #[cfg(feature = "cloud")]
 pub mod cloud;
+#[cfg(all(
+    feature = "cloud",
+    feature = "host-runtime",
+    feature = "native-services"
+))]
+pub mod controller;
 #[cfg(feature = "owner-enrollment")]
 pub mod enrollment;
 #[cfg(feature = "lifecycle")]

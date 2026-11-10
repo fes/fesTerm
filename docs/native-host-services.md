@@ -103,6 +103,30 @@ Microsoft Artifact Signing account/profile
 `fesLabs-CodeSign` / `fesTermPublicTrust`, plus chain/EKU and explicit revocation
 freshness/offline-failure policy. Account/profile names alone are not a signer
 pin; neither a downloaded artifact nor its manifest may supply this authority.
+
+Proposed narrow owner policy, **not approved or implemented**: pin the exact
+maintainer-confirmed publisher subject/organization and approved Microsoft
+Artifact Signing profile chain/EKU, rather than a short-lived leaf certificate.
+Permit automatic leaf rotation only within that exact approved publisher/profile
+policy; publisher/chain changes require a reviewed compiled-policy update.
+Require native chain/code-signing EKU and trusted RFC3161 timestamp verification
+(the release workflow already requests SHA256 and
+`timestamp.acs.microsoft.com`). Revoked, unknown, stale or unavailable revocation
+status must refuse; valid cached CRL/OCSP may be used only within its authenticated
+freshness interval, never by disabling revocation. Missing verified inputs are
+the owner's independently supplied exact publisher/profile certificate policy,
+the approved rotation rules and the decision on strict offline refusal. Existing
+workflow `Get-AuthenticodeSignature.Status == Valid` is not that publisher pin.
+
+For Windows stop, the proposed missing transaction is a current-user-protected
+local control channel bound to installation/origin/current epoch/run ID and the
+exact retained host-process identity. The host drains its own relay/workers,
+acknowledges and exits; the controller separately observes that exact process
+absent. A timeout is unknown/pending, never scheduler-wide/job-tree termination.
+No daemon or shell stop is implied. This requires implementation and ordinary-
+user named-pipe/process-identity qualification; there is no approved destructive
+fallback. These Windows decisions do not block Linux source/fixture progress.
+
 The receipt retains verified file/directory handles; registration/start reopens
 no-follow and rechecks file identity, ownership, permissions and exact bytes.
 Changed or foreign cache entries are refused, never overwritten or repaired.
@@ -265,4 +289,7 @@ interrupted registration/cleanup, real same-user identity, persistent daemon
 survival and login/reboot observations. Fixtures and native CI compilation do
 not qualify those behaviors. Endpoint integration, foreground sign-in/consent,
 update/rollback and migration remain separate gates; the
-[headless CLI](headless-host.md) continues to refuse setup/run/update/uninstall.
+[headless CLI](headless-host.md) now has shared explicit setup/owner-approval/run
+source, while update/uninstall remain unavailable. This source is not signed
+native acceptance; real release input, native-vault/service qualification and
+client protected first-connect approval remain prerequisites.

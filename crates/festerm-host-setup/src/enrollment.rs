@@ -397,13 +397,43 @@ impl OwnerEnrollment<'_> {
         })
     }
 
+    /// Fence a foreground setup completion against its original consent epoch.
+    pub fn initialize_at_epoch(
+        &self,
+        identity_file: &Path,
+        account: String,
+        expected_epoch: u64,
+    ) -> io::Result<EnrollmentSnapshot> {
+        self.initialize_fenced_with(
+            identity_file,
+            account,
+            Some(expected_epoch),
+            |directory, reference| {
+                protected_state::publish_new(directory, Path::new(ANCHOR), reference)
+            },
+        )
+    }
+
     fn initialize_with(
         &self,
         identity_file: &Path,
         account: String,
         publish_reference: impl FnOnce(&File, &[u8]) -> io::Result<()>,
     ) -> io::Result<EnrollmentSnapshot> {
+        self.initialize_fenced_with(identity_file, account, None, publish_reference)
+    }
+
+    fn initialize_fenced_with(
+        &self,
+        identity_file: &Path,
+        account: String,
+        expected_epoch: Option<u64>,
+        publish_reference: impl FnOnce(&File, &[u8]) -> io::Result<()>,
+    ) -> io::Result<EnrollmentSnapshot> {
         self.installation.with_locked(|directory, installation| {
+            if expected_epoch.is_some_and(|epoch| installation.epoch != epoch) {
+                return Err(refused("owner.stale_operation"));
+            }
             let provisioned = installation
                 .binding
                 .as_ref()
@@ -940,6 +970,25 @@ mod tests {
                 &owner_key_fingerprint(&key.public_key()).unwrap(),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn protected_owner_initialization_fences_original_foreground_epoch_before_publication() {
+        let (_root, store, vault) = setup();
+        let enrollment = OwnerEnrollment {
+            installation: &store,
+            vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
+        };
+        let epoch = store.snapshot().unwrap().epoch;
+        assert!(enrollment
+            .initialize_at_epoch(Path::new("host-identity"), "github:1234".into(), epoch + 1,)
+            .is_err());
+        let initial = enrollment
+            .initialize_at_epoch(Path::new("host-identity"), "github:1234".into(), epoch)
+            .unwrap();
+        assert!(initial.keys.is_empty());
+        assert!(!initial.remote_access);
     }
 
     #[test]
