@@ -3375,10 +3375,10 @@ advertisement; there is no production bypass or new manual acceptance.
 
 The unexposed paired terminal module adds automated portable adoption,
 correlation, strict-generation/refusal, frame/deadline, byte-budget and FIFO-turn
-fixtures. Native terminal fixtures remain explicitly invoked and unqualified:
-the existing daemon candidate-adoption wait blocks old-writer progress while
-a newer recovery snapshot is pending. Do not remove that assertion, increase its
-timeout or count this slice as DT/CP/mobile acceptance. Actual consuming
+fixtures. All nine owned native control/terminal fixtures now pass and run
+explicitly in Unix CI. The nonblocking candidate preserves old-writer progress
+while recovery is pending; its original assertion and deadlines remain.
+Do not count this local fixture evidence as DT/CP/mobile acceptance. Actual consuming
 owner-channel integration and backend hotpath/history qualification remain
 required; no production listener or readiness state is added.
 

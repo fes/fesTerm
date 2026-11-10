@@ -1583,9 +1583,10 @@ advertisement, not production capability widening.
 
 The unexposed paired terminal module adds bounded adoption/correlation, frame
 and byte-budget, no-replay and FIFO-turn fixtures for HOST-02/03. Native
-qualification remains blocked by the daemon's synchronous pending-candidate
-adoption wait and the backend hotpath/history replacement; these regressions
-must pass without weakening old-writer progress or control fairness assertions.
+fixtures now pass all nine owned control/terminal cases, including unchanged
+old-writer progress while a takeover candidate waits and independent control
+under slow output. The bounded nonblocking candidate fixes the former native
+stall. Endpoint qualification still requires the backend hotpath/history work.
 Actual consuming owner-channel integration and all H/N gates remain deferred.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |

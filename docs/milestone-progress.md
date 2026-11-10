@@ -8858,15 +8858,24 @@ temporary leases; FIFO output turns release before network I/O.
 This remains unexposed and partial under #681. Portable fixtures qualify the
 transport boundary, not the endpoint. Owned native fixtures found that the
 existing synchronous candidate-adoption wait stops old-writer progress until a
-new snapshot is adopted or cancelled. That assertion remains in place for the
-native owner to fix, alongside the independently reviewed hotpath/history work.
+new snapshot is adopted or cancelled. That assertion remained in place while
+the native owner fixed the actual candidate wait, rather than weakening it.
 No listener, control-capability widening or native/manual acceptance is claimed.
 
 The focused bridge run passes 88 library cases; six new portable terminal cases
 also run without native helpers (five in client-only mode). Explicit owned
 native routing passes all five existing control cases plus two-session routing,
 temporary cancellation/detach and slow-output revocation with independent control.
-The pending-takeover old-writer-progress case still fails for the identified
-daemon wait and is not counted as passing. Protected short-root fixtures now
+The pending-takeover case initially failed for that identified daemon wait.
+Protected short-root fixtures now
 wait for recorded daemon PIDs to exit, not merely disappear from discovery,
 before removing state; final shutdown diagnostics otherwise recreate the root.
+
+The native fix now queues one bounded candidate without blocking the old
+writer. It preserves post-snapshot terminal/control deltas and accepts candidate
+input only after actual adoption and writer commit; saturation cancels only
+the candidate. Rebuilding the owned helper and rerunning the unchanged routing
+fixtures passes all nine cases. Unix CI now runs the four terminal cases with
+the five existing control cases. This resolves the local takeover regression,
+not the still-pending authority/receipt, issuance/history and consuming
+authenticated-stream integration. The terminal server remains fixture-only.

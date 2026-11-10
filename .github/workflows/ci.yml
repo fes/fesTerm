@@ -215,14 +215,14 @@ jobs:
         run: cargo clippy -p festerm -p festerm-tunnel-bridge -p festerm-host --all-targets --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/relay,festerm-tunnel-bridge/host-routing,festerm-host/owner-routing -- -D warnings
       - name: Test the experimental bridge protocol, relay and unexposed owner routing
         run: cargo test -p festerm-tunnel-bridge --features relay,host-routing
-      - name: Test owned native HOST control routing fixtures
+      - name: Test owned native HOST control and terminal routing fixtures
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           cargo build --locked -p festerm-sessiond -p festerm-pty-test-child --bins
           FESTERM_HOST_TEST_HELPER="$CARGO_TARGET_DIR/debug/festerm-sessiond" \
             cargo test --locked -p festerm-tunnel-bridge --features host-routing \
-              host_control::tests::native_routes --lib -- --ignored --test-threads=1
+              native_routes --lib -- --ignored --test-threads=1
       - name: Test Dev Tunnel profiles and account isolation
         run: cargo test -p festerm --features experimental-dev-tunnels dev_tunnel
       - name: Test shared remote file routing

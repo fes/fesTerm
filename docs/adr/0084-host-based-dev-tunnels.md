@@ -669,12 +669,13 @@ Portable fixtures cover correlated confirmation, generation/uncertainty refusal,
 legacy/file refusal, retained byte quotas and abandoned FIFO scheduling turns.
 Owned native terminal fixtures additionally exercise real routed sessions,
 pending cancellation/takeover, temporary detach and revocation under slow output.
-Those native fixtures are not endpoint acceptance: the existing synchronous
-daemon candidate-adoption wait stalls the old writer while a candidate remains
-pending, and the backend hotpath/issuance-history replacement is still pending.
-Keep that regression assertion and require the native fix rather than changing
-timeouts or claiming a passing gate. Actual consuming owner-channel integration,
-cross-platform/native service and physical-device gates remain separate.
+All nine owned native control/terminal fixtures now pass after the daemon
+candidate-adoption fix: the old writer progresses while a bounded candidate
+waits, then post-snapshot deltas reach the adopted replacement. The assertion
+and deadlines are unchanged. This is not endpoint acceptance: the backend
+hotpath/issuance-history replacement and consuming owner-channel integration
+remain pending. Cross-platform/native service and physical-device gates remain
+separate; the terminal server/scheduler are still fixture-only.
 
 | Area | Required evidence (planned test names are illustrative) |
 | --- | --- |

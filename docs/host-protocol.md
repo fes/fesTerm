@@ -577,6 +577,13 @@ control-under-load evidence remain integration gates. Control capabilities
 remain inventory-only; no listener, automatic fallback, file/observation/MCP
 grant, setup authority or remote sharing/enrollment operation is added.
 
+All nine explicitly invoked owned native routing fixtures now pass, including
+old-writer progress while a takeover snapshot is pending, exact two-session
+bytes, temporary cancellation/detach and independent control during slow-output
+revocation. Unix CI selects both control and terminal fixture modules. This is
+local bounded fixture evidence, not production endpoint or native-service
+acceptance.
+
 **Exposure remains blocked:** the actual inner SSH channel currently does not
 export its shared session/channel binding to both peers. A host-key pin alone
 cannot supply the required same-channel non-forwardable owner proof. Enrollment
