@@ -136,7 +136,7 @@ rollback is not resisted in this weaker mode. `reconcile()` only forward-publish
 the exact digest/revision committed by the selected store; it cannot invent
 consent. Initialization requires the existing exact Provisioned account/host
 binding. No CLI storage/enrollment controls are exposed yet.
-See the [API and concrete channel blocker](host-protocol.md#concrete-transport-blocker--no-owner-signing-adapter-yet).
+See the [actual pinned-channel proof API](host-protocol.md#real-pinned-ssh-channel-owner-proof).
 First-connect foreground handoff versus advanced explicit public-key import
 remains a bounded UX prerequisite. Neither bearer presence nor a provisioning
 account string enrolls an owner.
@@ -146,7 +146,8 @@ account string enrolls an owner.
 never dispatch to the legacy one-shell scripts/helpers. Requirements still open:
 
 - New zero-shell host endpoint and observed health/principal-authentication gate.
-- Foreground, explicit secure account sign-in and protected host consent.
+- Composition of foreground secure account sign-in and protected host consent
+  into setup (the shared library adapter below is available).
   Background/startup/update must return SignInRequired if credentials are
   unavailable; plaintext fallback and secrets in arguments/environment are forbidden.
 - Integration and native qualification of the same-user
@@ -217,7 +218,152 @@ Neither configuration nor a `provisioned` phase authorizes remote access.
 Desktop cancellation must preserve its own draft and reconcile this journal;
 there is no new desktop control in this slice.
 
+## In-process cloud adapter (library only)
+
+The opt-in `festerm-host-setup/cloud` feature supplies
+`cloud::CloudHostAdapter::new(&Store)` for desktop/headless composition. It reuses
+`festerm-tunnel-client::identity`'s official GitHub public-client device flow,
+refresh and authenticated `/user` checks, plus Microsoft's vendored Dev Tunnels
+contracts and authorization scheme. No CLI is launched, no downloaded path is
+executable authority, and no shell/session/profile identity is created.
+
+1. Call `foreground(&ticket, expected_github_subject)` only after explicit local
+   approval of that exact `Store::request_enable` ticket/settings and selected
+   account. The subject is the verified numeric GitHub ID, **not** login/display
+   name. The resulting `Foreground` cannot be deserialized. The protected scope
+   also binds installation, desktop/headless origin and the OS-resolved ordinary
+   user (never `$USER`, `$HOME` or other environment identity assertions).
+2. `sign_in(&foreground, cancel, prompt)` displays the shared short-lived
+   `DevicePrompt` only in that foreground surface. Never log/persist the prompt.
+   The native credential store is mandatory for this account adapter, including
+   headless; there is no native-failure file fallback. The enrollment API's
+   separate explicit headless credential policy is unchanged. The journal
+   pre-reserves an opaque credential reference, not token/code material.
+   Interrupted credential publication can reopen the exact reference after
+   account verification. Expiry/denial requires explicit foreground reauthentication;
+   maintenance can refresh but never starts an interactive sign-in.
+3. `provision(&foreground, cancel)` reserves an official recommended cluster,
+   random exact tunnel ID, independent ownership label and immutable creation
+   description before a conditional create request. The only port is TCP 2222
+   marked `festerm-host-v1`; its private ACL selects the same GitHub subject.
+   No anonymous/organization ACL, bearer
+   owner principal, PTY, endpoint listener or default shell is involved.
+   The existing protected `HostIdentity` format is stored at
+   `cloud::HOST_IDENTITY_FILE` (`host-identity`), distinct from profile identity.
+   `Binding.account` is canonical `github:<numeric subject>`; it is provisioning
+   metadata, never enrollment or owner-proof authority.
+4. `reconcile(cancel)` resolves a proven never-submitted reservation under the
+   operation lease without cloud access or a credential store, or observes a
+   possibly submitted request without another create. Request construction and
+   local expiry validation happen before journaling possible submission.
+   Cancellation before transport polling and definitive 400/401/403 rejections
+   restore only this attempt's previous submission state, never erase older
+   uncertainty. Lost/error/cancelled replies retain the exact reservation. A later
+   matching GET pins the semantically parsed service creation timestamp before
+   publication. Successful PUT is always followed by an authoritative GET:
+   its timestamp is never pinned from PUT-only precision. Equivalent UTC/zero
+   spellings normalize, while genuinely different GET timestamps fail closed.
+   The read-only GET may complete after cancellation (existing 20-second HTTP
+   deadline) to retain late cleanup evidence, never to restore enable intent.
+   If it fails, possible submission remains journaled without a guessed receipt.
+   Revocation retains late results in StopRequested, never re-enables access.
+   Observed cancellation fences only the matching lifecycle ticket/epoch.
+   A UI abandoning/dropping a pending future must still call `Store::revoke`
+   before dismissing it; dropping a future is not a cancellation notification.
+   Only another explicit `provision` on the still-active foreground ticket may
+   retry an unpinned reservation after same-account authenticated exact absence.
+   It sends the identical ID/cluster/labels/body with `If-None-Match: *`, never a
+   fresh ID or incarnation; 409/412 triggers exact reconciliation. Maintenance,
+   denied/unknown observations and revoked consent never resubmit. An older
+   submitted journal lacking its immutable description cannot be retried by
+   guessing that body. A crash between submission journaling and transport
+   polling remains honestly uncertain. Generic DNS/connect/TLS/transport errors
+   are also conservative: this transport does not expose a documented
+   attempt-level proof excluding all prior sends, so they are not classified as
+   NotSent from a broad error category.
+   If a pinned resource disappears, provisioning/reconciliation retains the
+   exact receipt/binding, clears the matching pending intent and requests native
+   stop. Cloud absence is **not** native-stop proof: exact `confirm_stopped`
+   remains necessary before requesting cleanup. A pinned incarnation is never
+   recreated.
+5. `health(cancel)` really queries the exact cloud resource and reconfirms the
+   account. Its only present state is `PresentEndpointUnqualified`, **not Ready**.
+   An authenticated exact-ID/cluster 404 is `Absent`; denial, refresh failure,
+   offline, malformed, foreign ownership/port/ACL and changed incarnation are
+   errors, never absence. Service/channel/principal health is not implemented.
+
+For an **unbound cancelled uncertain submission**, there is a specific offline
+foreground exit, not a directory-deletion/manual workaround:
+
+- Read the current `Snapshot` and show explicit acknowledgement that a cloud
+  resource may still exist and will be retained. Use its exact pending ticket,
+  displayed epoch and selected verified numeric account with
+  `foreground_recovery(ticket, expected_epoch, expected_github_subject)`.
+- Only after that foreground acknowledgement, call
+  `acknowledge_uncertain_submission(&UncertainRecovery)`. It validates the same
+  account/origin/OS-user/journal/ticket/current epoch again, advances the epoch
+  and releases pending intent to Disabled. It does **not** assert Absent/Removed,
+  clear `submitted`, erase credentials/receipt debt or grant creation consent.
+- Any binding, pinned receipt or native-stop lifecycle state forbids this exit.
+  Stale/mismatched recovery handles cannot clear a newer ticket or native proof.
+  Background `reconcile` neither acknowledges nor creates: while Disabled with
+  retained unbound uncertainty it reports that lifecycle phase without cloud or
+  vault access, **not** absence. Do not delete the installation directory.
+- A later separately approved `request_enable`/`foreground` reuses the same
+  immutable reservation and credential. A late exact resource is observed and
+  bound; otherwise only authenticated exact absence permits the same conditional
+  request. No new resource ID/incarnation is silently selected.
+
+**Uninstall from acknowledged, unbound uncertainty is unsupported.** It requires
+a deferred read-only exact-resource adoption/cleanup-binding operation that does
+not enable the host or grant creation consent (`HOSTSETUP-01`). Do not request
+enable/creation consent just to uninstall. Retain the protected cloud record,
+credential and installation directory while this debt is unresolved; deleting
+them is not a recovery/uninstall procedure. The generation-atomic deletion
+qualification below remains a separate prerequisite even after cleanup binding.
+
+`cleanup(cancel)` requires the lifecycle's exact binding, current cleanup epoch
+and confirmed native stop. It rechecks current account, exact ID/cluster,
+ownership labels, private ACL, port and creation incarnation. Exact authenticated
+absence can commit the removed tombstone. A matching existing resource returns
+`Cleanup::GenerationConditionalDeleteUnavailable`, retains CleanupPending and
+**sends no DELETE**. The official SDK exposes ID-only deletion, not a documented
+generation-atomic delete precondition. A check-then-delete would race replacement;
+we do not invent an ETag/creation-time header or claim cleanup succeeded.
+Qualifying a service-side incarnation-conditional destructive contract remains
+a genuine prerequisite to automatic cloud removal. Credentials and protected
+tombstones are retained; this API does not claim complete uninstall.
+Live-service creation-incarnation stability across repeated authoritative GETs,
+`If-None-Match: *` atomicity, authenticated exact-cluster 404/ownership semantics
+and cluster routing/no-redirect behavior remain unqualified. Native-vault
+behavior also requires native qualification; fixtures establish none of these
+live/native gates.
+
+The request contract follows the vendored Microsoft Rust management client and
+the [official TypeScript SDK at reviewed source
+37956c6](https://github.com/microsoft/dev-tunnels/blob/37956c63675e3339b42c7f852a5af5da1566c5b9/ts/src/management/tunnelManagementHttpClient.ts)
+(`createTunnel` uses `If-None-Match: *`, whose
+[HTTP precondition semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.2)
+prevent overwriting an existing resource; `deleteTunnel` has no incarnation
+argument). These are reviewed source/HTTP contracts, not live service qualification.
+Production network authority is fixed HTTPS, without configurable
+test origins. Private fake HTTP transports exercise actual request construction
+and bounded response/ownership parsing; setup fixtures exercise consent,
+credential references and lifecycle receipts. No real sign-in, cloud operation,
+vault write, downloaded binary or installed service is exercised by these tests.
+There is no new setup command/UI, trust bypass, grant model or pairing service.
+Normal first-connect UX and runtime/service composition remain separate gates.
+
 ## Evidence
+
+The merged cloud/main/enrollment/channel tree at `a2da40e` passed the bounded
+Rust 1.99.0 package validation: setup with `cloud,owner-enrollment` had 49 passed
+and one existing external-signer test ignored; the tunnel client had 20 passed.
+Strict package all-target clippy and the no-default setup check passed. A
+diagnosed stale protocol dev artifact required package-only invalidation;
+unchanged source then passed. No cloud fixture migration or policy relaxation
+was needed. This is local fixture evidence, not any live/native qualification
+listed above.
 
 Focused journal, staging and executable CLI tests cover inert configuration,
 origin isolation, stale completions, exact stop/removal receipts, immutable

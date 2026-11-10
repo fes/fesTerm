@@ -41,8 +41,9 @@ gates remain open. Legacy Dev Tunnels behavior is unchanged.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
 coverage (file mode has weaker whole-store rollback protection and is never a
-native failure fallback); real pinned SSH streams still refuse owner authentication until a
-shared connection/channel binding exporter is implemented and reviewed.
+native failure fallback). Optional owner proof helpers now bind the actual pinned
+inner SSH connection/channel and transfer server authority with that exact
+stream; independent review, endpoint integration and native acceptance remain open.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition
@@ -52,6 +53,9 @@ adds receipt-bound control APIs, not CLI integration or native qualification.
 New host setup/run/update/uninstall remain unavailable pending endpoint and
 native executable/endpoint integration ([#681](https://github.com/fes/fesTerm/issues/681));
 the legacy installer is unchanged.
+An opt-in shared library adds foreground native-vault GitHub authentication and
+zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;
+generation-atomic cloud deletion remains an explicit qualification blocker.
 
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),

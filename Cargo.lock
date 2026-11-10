@@ -2615,6 +2615,7 @@ dependencies = [
  "festerm-secret-store",
  "festerm-sessiond",
  "festerm-tunnel-bridge",
+ "festerm-tunnel-client",
  "festerm-unix-security",
  "festerm-windows-security",
  "flate2",
@@ -2627,6 +2628,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "tokio-util",
  "uuid",
  "zip",
 ]

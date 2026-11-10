@@ -201,7 +201,7 @@ impl Store {
         operation(&self.directory, &self.read()?, lease)
     }
 
-    #[cfg(feature = "owner-enrollment")]
+    #[cfg(any(feature = "owner-enrollment", feature = "cloud"))]
     pub(crate) fn with_locked<T>(
         &self,
         operation: impl FnOnce(&File, &Snapshot) -> io::Result<T>,
@@ -391,6 +391,79 @@ impl Store {
                 Phase::Disabled
             };
             Ok(())
+        })
+    }
+
+    #[cfg(feature = "cloud")]
+    pub(crate) fn cancel_enable(&self, ticket: &Ticket) -> io::Result<()> {
+        self.change(|record| {
+            if record.installation != ticket.installation || record.epoch != ticket.epoch {
+                return Ok(());
+            }
+            if record.pending.as_ref() != Some(ticket) && record.phase != Phase::Provisioned {
+                return Ok(());
+            }
+            advance(record)?;
+            record.phase = if record.pending.is_some() {
+                Phase::Reconciling
+            } else {
+                Phase::StopRequested
+            };
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "cloud")]
+    pub(crate) fn release_uncertain_enable(&self, ticket: &Ticket, epoch: u64) -> io::Result<()> {
+        self.change(|record| {
+            pending(record, ticket)?;
+            if record.epoch != epoch
+                || record.epoch <= ticket.epoch
+                || record.phase != Phase::Reconciling
+                || record.binding.is_some()
+            {
+                return Err(refused("host.cloud_uncertain_recovery_unavailable"));
+            }
+            advance(record)?;
+            record.pending = None;
+            record.phase = Phase::Disabled;
+            Ok(())
+        })
+    }
+
+    /// A cloud absence is not native stop evidence. Retain the exact binding,
+    /// fence enable intent and require the ordinary exact native-stop receipt.
+    #[cfg(feature = "cloud")]
+    pub(crate) fn record_missing_resource(
+        &self,
+        ticket: &Ticket,
+        binding: Binding,
+    ) -> io::Result<Phase> {
+        binding.validate()?;
+        self.change(|record| {
+            if record.installation != ticket.installation {
+                return Err(refused("host.stale_operation"));
+            }
+            if record.binding.as_ref().is_some_and(|old| old != &binding) {
+                return Err(refused("host.identity_change_requires_migration"));
+            }
+            if record.pending.is_none() && record.binding.as_ref() == Some(&binding) {
+                if record.phase != Phase::Provisioned {
+                    return Ok(record.phase);
+                }
+                if record.epoch != ticket.epoch {
+                    return Err(refused("host.stale_operation"));
+                }
+            } else {
+                pending(record, ticket)?;
+            }
+            if record.epoch == ticket.epoch {
+                advance(record)?;
+            }
+            record.binding = Some(binding);
+            record.pending = None;
+            record.phase = Phase::StopRequested;
+            Ok(record.phase)
         })
     }
 

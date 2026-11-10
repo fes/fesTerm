@@ -520,6 +520,20 @@ its existing x64-emulation selector. Native publisher qualification,
 trusted first delivery and executable/service qualification remain blocked;
 signed/staged bytes alone are not Ready or a trusted launch receipt.
 
+The next opt-in stage-4 library slice adds shared foreground GitHub account
+authentication, native credential references and in-process zero-shell HOST
+cloud reservation/create/reconciliation/status. It uses exact lifecycle
+tickets/settings, OS user/origin and verified numeric account binding, not
+profile identity or an independent grant. HTTP fixtures cover actual private
+ACL/port requests and response ownership parsing; lifecycle fixtures cover
+late cancellation, lost replies, credential recovery and identity-preserving
+re-enable. Cloud presence is explicitly endpoint-unqualified, never Ready.
+Found-resource deletion remains fail-closed: official ID-only delete has no
+documented incarnation-atomic precondition, so cleanup retains its receipt and
+reports `GenerationConditionalDeleteUnavailable`; only authenticated exact
+absence can commit removal. This is a genuine qualification prerequisite,
+not successful uninstall. See the [cloud adapter contract](../headless-host.md#in-process-cloud-adapter-library-only).
+
 - **Invariants introduced or changed:** One host endpoint can expose multiple
   authorized sessions; explicit remote creation and client-local resume-or-create
   recipes; no implicit launcher network; shared setup and independent daemon
@@ -574,18 +588,34 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   `native_owner_vault_failure_never_creates_a_fallback_key` exercise actual
   local persistence/native-reference APIs with synthetic vaults and keys.
   `encrypted_transport_pins_host_and_exports_only_one_preconfigured_port` now
-  additionally proves both real pinned SSH stream endpoints refuse owner
-  authentication without a shared connection/channel exporter; the changed-key
-  fixture still refuses before authentication. This is a concrete remaining
-  transport prerequisite, not successful channel-bound proof qualification.
+  additionally proves matching real inner-SSH channel exporters and distinct
+  sibling channels; the changed-key fixture still refuses before authentication.
+  `host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority`
+  exercises actual pinned transport proof, exact stream transfer, foreign
+  credentials, cross-connection relay/replay, old unbound signatures,
+  expiry/revocation and public stream replacement. The vendor exporter uses the
+  signed original KEX identifier and role-ordered actual channel IDs, never
+  caller-generated identity bytes. This closes the missing exporter/helper seam,
+  not endpoint/native/first-connect qualification.
+  The vendored-library regression
+  `ssh_channel_binding_separates_connection_and_role_ordered_channel_ids`
+  additionally checks connection/role/channel separation and refusal of empty
+  or short session identifiers.
+  `host_owner_authentication_failure_retains_stream_for_bounded_denial`
+  exercises actual Denied/Stale failures retaining their unauthenticated SSH
+  stream for bounded replies before closing; no owner authority is returned.
   `host_owner_permission_templates_require_runtime_projection_for_creation`
   separates persistent consent from strict runtime advertisements;
   `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`
-  preserves original issued operations across fixture issuer projection and
-  refuses unadvertised future epochs. Native composition
+  reuses a live owner proof across actual issuer projection, preserves original
+  issued operations and refuses unadvertised future epochs. Native composition
   must obtain that issuer under the actual protected backend reservation.
   Fresh enrollment templates have no observed issuer watermark; durable backend
   fencing, not cached owner policy, protects across reservations.
+  Frozen projection source `91cf2880` passes protocol13, owner/channel15 and
+  protected-enrollment12 focused tests plus strict protocol, relay/owner-auth,
+  portable client/owner-auth and enrollment clippy. These are portable/synthetic
+  prerequisite results, not native endpoint or first-connect acceptance.
   `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
   no UI, listener, broad pairing service or full ADR acceptance is claimed.
   Reliability remediation adds
@@ -633,6 +663,22 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   package-smoke fixtures check raw-pin hashes and native codesign wiring without
   downloads. The native CI smoke downloads both pinned architectures and verifies
   their hashes and signatures without executing either binary.
+  Additional cloud/account adapter evidence:
+  `host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port`,
+  `host_cloud_response_refuses_foreign_resources_and_non_authoritative_absence`,
+  `host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced`,
+  `host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable`,
+  `host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker`,
+  `host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty`,
+  `host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity`,
+  `host_cloud_create_distinguishes_preflight_not_sent_rejection_conflict_and_uncertainty`,
+  `host_cloud_local_no_send_and_rejection_resolve_without_widening_consent`,
+  `host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation`,
+  `host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create`,
+  `host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup`,
+  `host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource`,
+  `host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states`,
+  `host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt`.
   Windows configuration/journal/staging fixtures share the existing
   policy-validated private-storage fixture-root selection, not an assumption
   that checkout ancestors are safe. The native

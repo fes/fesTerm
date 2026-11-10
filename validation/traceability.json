@@ -5561,6 +5561,8 @@
         "protected_owner_observed_epoch_commit_recovers_only_forward_after_disk_failure",
         "reserved_secret_creation_never_replaces_existing_authority",
         "protected_owner_interrupted_initialization_cannot_switch_credential_storage",
+        "host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority",
+        "host_owner_authentication_failure_retains_stream_for_bounded_denial",
         "native_owner_reference_reopens_only_exact_approved_binding",
         "native_owner_vault_failure_never_creates_a_fallback_key",
         "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",
@@ -5586,7 +5588,7 @@
       "manual_scenarios": ["DT-05", "DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681 stages 1/3: protected local enrollment/native-vault APIs implemented, no HOST endpoint or GUI controls. Existing real pinned SSH stream gates refuse owner authentication because shared connection/channel transcript export is missing; implement and independently review role-bound anti-relay/reflection signing adapter before exposure",
+        "Issue #681 stages 1/3: protected enrollment and actual signed inner-SSH connection/channel exporter + role-bound proof helpers implemented. Server success transfers the exact stream with owner/lifetime guard; native defaults unchanged. Independent review, bounded endpoint composition and native/first-connect qualification remain mandatory before exposure; no listener or GUI controls",
         "Native vault/private-path/restart qualification and first-connect foreground public-key consent UX remain deferred under HOSTAUTH-01. Explicit validated forward policy reconciliation is implemented; headless-only protected-file storage requires deliberate origin-bound selection and has weaker whole-store/home rollback protection; no portable config adoption, bearer auto-enrollment or automatic seed fallback",
         "Issue #681: reviewed pinned/encrypted host endpoint and enrolled-key verified principal/account binding; public account/host IDs are metadata hints, never authorization",
         "Issue #681: bounded authorized inventory and authoritative absence/atomic ensure, exact-generation attach, idempotent reconciliation/cancellation and real desktop/iOS/Android UI wiring; no Connect executor or legacy fallback exists in this foundation",
@@ -5645,16 +5647,34 @@
         "native_service_start_reconciles_bounded_transitions_without_duplicate_start",
         "native_service_windows_recovery_is_reserved_exact_and_stop_has_no_destructive_fallback",
         "native_service_exhausted_operation_budget_refuses_effect_before_spawn",
-        "task_recovery_security_requires_exact_owner_system_protected_dacl"
+        "task_recovery_security_requires_exact_owner_system_protected_dacl",
+        "host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port",
+        "host_cloud_response_refuses_foreign_resources_and_non_authoritative_absence",
+        "host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced",
+        "host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable",
+        "host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker",
+        "host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty",
+        "host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity",
+        "host_cloud_create_distinguishes_preflight_not_sent_rejection_conflict_and_uncertainty",
+        "host_cloud_local_no_send_and_rejection_resolve_without_widening_consent",
+        "host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation",
+        "host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create",
+        "host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup",
+        "host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource",
+        "host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states",
+        "host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt"
       ],
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681 stages 3–5/7: new zero-shell host endpoint, verified principal channel, real observed health and foreground secure sign-in/consent integration; setup/run/update/uninstall refuse until functional",
+        "Issue #681 stages 3–5/7: new zero-shell host endpoint, verified principal channel, real observed service health and foreground secure sign-in/consent composition; shared cloud/account adapter has fixture coverage, setup/run/update/uninstall refuse until functional",
         "Integrate and natively qualify the exact-owned same-user service component and persistent-daemon independence; signed native releases and compatible update/rollback",
         "Windows registration/start and running-task stop remain unavailable pending authenticated graceful stop and native reservation-recovery/daemon independence qualification",
         "Exact-generation separate default-No migration confirmation is deferred until the migration API; setup command refusals do not establish that behavior",
-        "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance"
+        "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance",
+        "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable and retains CleanupPending without DELETE",
+        "Live-service creation-incarnation stability across repeated authoritative GETs, If-None-Match atomicity, authenticated exact-cluster 404/ownership semantics, cluster routing/no-redirect behavior and native-vault behavior remain unqualified; fixtures do not establish live/native acceptance",
+        "HOSTSETUP-01: uninstall from acknowledged unbound uncertainty is unsupported until read-only exact-resource adoption/cleanup binding exists without enable/creation consent; retain the protected record and credential, do not delete the installation directory or grant creation consent just to uninstall; generation-atomic deletion remains separately gated"
       ]
     },
     {

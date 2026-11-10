@@ -5,7 +5,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::io::{ChannelCloseOnDrop, ChannelRx, ChannelTx};
-use super::{ChannelId, ChannelMsg};
+use super::{ChannelBinding, ChannelId, ChannelMsg};
 
 /// AsyncRead/AsyncWrite wrapper for SSH Channels
 pub struct ChannelStream<S>
@@ -14,14 +14,24 @@ where
 {
     tx: ChannelTx<S>,
     rx: ChannelRx<ChannelCloseOnDrop<S>>,
+    binding: Option<ChannelBinding>,
 }
 
 impl<S> ChannelStream<S>
 where
     S: From<(ChannelId, ChannelMsg)> + Send,
 {
-    pub(super) fn new(tx: ChannelTx<S>, rx: ChannelRx<ChannelCloseOnDrop<S>>) -> Self {
-        Self { tx, rx }
+    pub(super) fn new(
+        tx: ChannelTx<S>,
+        rx: ChannelRx<ChannelCloseOnDrop<S>>,
+        binding: Option<ChannelBinding>,
+    ) -> Self {
+        Self { tx, rx, binding }
+    }
+
+    /// Immutable actual SSH connection/channel binding, absent for no-KEX relays.
+    pub fn channel_binding(&self) -> Option<&ChannelBinding> {
+        self.binding.as_ref()
     }
 }
 

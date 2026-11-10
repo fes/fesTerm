@@ -39,6 +39,7 @@ pub enum OwnerKeyError {
     Vault(SecretStoreError),
     InvalidBinding,
     KeyGenerationUnavailable,
+    ProofDenied,
     ChannelBindingUnavailable,
 }
 
@@ -54,8 +55,9 @@ impl std::fmt::Display for OwnerKeyError {
             Self::Vault(_) => "native owner credential operation failed; no fallback",
             Self::InvalidBinding => "owner credential does not match the approved installation, host, account or owner",
             Self::KeyGenerationUnavailable => "owner key generation unavailable; retry when system randomness is available",
+            Self::ProofDenied => "owner proof denied for this channel, host, account or owner",
             Self::ChannelBindingUnavailable =>
-                "HOST owner authentication disabled: verified SSH transport lacks a shared connection-and-channel binding exporter",
+                "HOST owner authentication refused: current stream has no matching verified SSH channel binding; reconnect to the approved pinned host",
         })
     }
 }
@@ -76,6 +78,16 @@ pub struct ClientOwnerKey {
 }
 
 impl ClientOwnerKey {
+    #[cfg(feature = "client")]
+    pub(super) fn uses_native_storage(&self) -> bool {
+        self.headless_installation.is_none()
+    }
+
+    #[cfg(feature = "relay")]
+    pub(super) fn uses_headless_storage(&self, installation: &str) -> bool {
+        self.headless_installation.as_deref() == Some(installation)
+    }
+
     /// The composition root must approve headless-only file storage. The store
     /// marker is not proof of caller origin; this API checks exact installation.
     #[cfg(feature = "relay")]
@@ -147,7 +159,10 @@ impl ClientOwnerKey {
         Ok(())
     }
 
-    fn generate(vault: &dyn SecretStore, approved: &OwnerBinding) -> Result<Self, OwnerKeyError> {
+    pub(super) fn generate(
+        vault: &dyn SecretStore,
+        approved: &OwnerBinding,
+    ) -> Result<Self, OwnerKeyError> {
         approved
             .validate()
             .map_err(|_| OwnerKeyError::InvalidBinding)?;
@@ -169,11 +184,25 @@ impl ClientOwnerKey {
         reference: SecretReference,
         approved: &OwnerBinding,
     ) -> Result<Self, OwnerKeyError> {
+        let public_key = Self::with_key(vault, &reference, approved, |key| Ok(key.public_key()))?;
+        Ok(Self {
+            reference,
+            public_key,
+            headless_installation: None,
+        })
+    }
+
+    pub(super) fn with_key<T>(
+        vault: &dyn SecretStore,
+        reference: &SecretReference,
+        approved: &OwnerBinding,
+        action: impl FnOnce(&OwnerSigningKey) -> Result<T, OwnerKeyError>,
+    ) -> Result<T, OwnerKeyError> {
         approved
             .validate()
             .map_err(|_| OwnerKeyError::InvalidBinding)?;
-        let secret = vault.get(&reference)?;
-        let public_key = secret.with_bytes(|bytes| {
+        let secret = vault.get(reference)?;
+        secret.with_bytes(|bytes| {
             if bytes.len() > 2048 || !bytes.starts_with(KEY_RECORD) {
                 return Err(OwnerKeyError::InvalidBinding);
             }
@@ -187,12 +216,7 @@ impl ClientOwnerKey {
             if stored != *approved {
                 return Err(OwnerKeyError::InvalidBinding);
             }
-            Ok(OwnerSigningKey::from_seed(seed).public_key())
-        })?;
-        Ok(Self {
-            reference,
-            public_key,
-            headless_installation: None,
+            action(&OwnerSigningKey::from_seed(seed))
         })
     }
 }
