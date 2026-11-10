@@ -72,7 +72,7 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
                 .SetXmlText(&BSTR::from(xml.as_str()))
                 .map_err(map)?;
             return Ok(TaskObservation {
-                xml: Some(bounded(definition.XmlText().map_err(map)?)?),
+                xml: Some(read_task_xml(|xml| definition.XmlText(xml))?),
                 security: Some(task_security_policy(&sid)),
                 state: 0,
                 last_exit: 0,
@@ -128,7 +128,8 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
             }
             _ => {}
         }
-        let xml = bounded(task.Definition().map_err(map)?.XmlText().map_err(map)?)?;
+        let definition = task.Definition().map_err(map)?;
+        let xml = read_task_xml(|xml| definition.XmlText(xml))?;
         let raw_security = bounded(task.GetSecurityDescriptor(5).map_err(map)?)?;
         let security = checked_task_security(&raw_security, &sid)?;
         let state = task.State().map_err(map)?.0;
@@ -144,6 +145,12 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
             last_exit: task.LastTaskResult().map_err(map)?,
         })
     }
+}
+
+fn read_task_xml(read: impl FnOnce(&mut BSTR) -> windows::core::Result<()>) -> io::Result<String> {
+    let mut xml = BSTR::default();
+    read(&mut xml).map_err(|_| io::Error::other("host.service_task_scheduler_unavailable"))?;
+    bounded(xml)
 }
 
 fn bounded(text: BSTR) -> io::Result<String> {
@@ -261,6 +268,53 @@ fn checked_task_security(sddl: &str, user: &str) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_xml_reads_initialized_owned_out_parameter() {
+        let xml = read_task_xml(|output| {
+            assert!(output.is_empty());
+            *output = BSTR::from("<Task/>");
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(xml, "<Task/>");
+        assert_eq!(read_task_xml(|_| Ok(())).unwrap(), "");
+    }
+
+    #[test]
+    fn task_xml_failure_never_publishes_partial_output() {
+        let error = read_task_xml(|output| {
+            *output = BSTR::from("<Task/>");
+            Err(windows::core::Error::from_hresult(windows::core::HRESULT(
+                0x80004005_u32 as i32,
+            )))
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "host.service_task_scheduler_unavailable");
+    }
+
+    #[test]
+    fn task_xml_bounds_utf16_and_utf8_output() {
+        let limit = 64 * 1024;
+        assert_eq!(
+            read_task_xml(|output| {
+                *output = BSTR::from("a".repeat(limit).as_str());
+                Ok(())
+            })
+            .unwrap()
+            .len(),
+            limit
+        );
+        for value in ["a".repeat(limit + 1), "界".repeat(limit / 3 + 1)] {
+            let error = read_task_xml(|output| {
+                *output = BSTR::from(value.as_str());
+                Ok(())
+            })
+            .unwrap_err();
+            assert_eq!(error.to_string(), "host.service_task_output_limit");
+        }
+    }
 
     #[test]
     fn task_recovery_security_requires_exact_owner_system_protected_dacl() {

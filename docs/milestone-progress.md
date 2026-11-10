@@ -73,6 +73,57 @@ Postcommit range checking caught separately paragraphed trailers; the corrected
 single Git-parsed trailer block changes no source. The failed trace is retained
 as `no-receipt-range-trace-first.log`, alongside the final passing trace.
 
+## Correcting the pinned Windows Task Scheduler XML output binding
+
+A sibling branch starts at exact core
+`1debea976d62c32344c0d79cbfa74026a152264d`; qualified update head
+`7cb89be911df8873914f29fdb038f1e26ec002d2` is untouched. Windows x64 package
+job `129946451560` exposed four E0061/E0308 errors at the two `XmlText()` calls.
+Pinned `windows` 0.62.2 requires an initialized owning `BSTR` output parameter
+and returns HRESULT success/failure, not the string. The same four errors were
+reproduced locally before the fix; raw CI and local RED evidence remain.
+
+Both prepare and observed-definition reads now use one private output helper.
+It initializes the owned `BSTR`, checks the getter result before publishing any
+output, retains the existing sanitized error, 64K UTF-16-code-unit limit and
+64-KiB UTF-8 limit,
+and releases the allocation on success or error. Three Windows-only regressions
+cover initialized/empty output, failure after partial output and both size
+bounds. All three are cross-compiled, **not executed**. No scheduler operation,
+release/publisher policy, native lifecycle or update behavior was added.
+
+The existing named `stable-aarch64-apple-darwin` toolchain is
+**rustc 1.99.1 (58cf8f9c3 2026-10-13)**, Cargo 1.99.1 and Clippy 0.1.99.
+Only its official `x86_64-pc-windows-msvc` standard-library target was installed,
+after the original check reported missing `core`. The first post-install check
+still selected PATH's Homebrew rustc 1.97.1; that failure is also retained.
+Pinning Cargo's subprocess compiler to the existing named toolchain produced
+the four actual API REDs and then the successful checks below. No default
+toolchain, dependency, lockfile or target configuration was changed.
+
+With jobs1, private `target/adr84-com-check`, dev/test debug0, incremental0 and
+`TMPDIR="$PWD/target/adr84-com-evidence"`:
+
+```sh
+export RUSTC="$(rustup which --toolchain stable rustc)"
+export RUSTDOC="$(rustup which --toolchain stable rustdoc)"
+export PATH="$(dirname "$RUSTC"):$PATH"
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 1debea976d62c32344c0d79cbfa74026a152264d
+git diff --check
+```
+
+Windows x64 all-target checking and strict Clippy pass, including the three new
+test functions; **zero Windows tests were executed**. Format, traceability
+311 edges/zero broken references and diff checks pass. Logs are retained under
+`target/adr84-com-evidence/`. Actual Windows COM execution, ARM compilation,
+native manager/signing/cloud/vault and product acceptance remain pending.
+No VM, native manager, credential or signing operation was performed.
+The host Cargo slot is released; the owned-worktree Cargo/rustc/Clippy CWD
+process check found zero matches. There was no push or PR creation.
+
 ## Freezing the runtime/native core with exact primary-CI corrections
 
 The frozen publication union normally merges exact
