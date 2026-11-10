@@ -9192,3 +9192,15 @@ selected-store authority for each admission and keeps Busy distinct from denial.
 The app remains a thin delegator with native vault as its default and explicit
 headless file selection only. A generic trait regression exercises lease retention
 and fresh revocation; native endpoint/service acceptance remains separately gated.
+
+### ADR 0084 same-bundle runnable-host artifact dependency
+
+A registered host could retain its own executable receipt but had no trusted
+same-version executable sessiond or way to recover release authority after
+restart. Native publication now qualifies every executable in the signed host
+bundle before promoting fresh bytes, retains file identities, and exposes only
+the exact revalidated daemon helper. Registration also retains signed provenance;
+restart must reauthenticate that provenance rather than promote a cache marker
+or journal digest into trust. Legacy receipt-only registrations remain removable.
+This closes an artifact-composition prerequisite, not the remaining scoped relay
+credential, foreground enrollment, runnable controller or native acceptance gates.

@@ -3529,6 +3529,14 @@ now covers the production runtime trait adapter's actual enrollment lease,
 Busy refusal and fresh revocation policy through explicitly selected headless
 file storage. This is not native-vault, endpoint, signed-service or first-connect
 qualification; those HOSTAUTH-01/HOSTSETUP-01 prerequisites remain open.
+Runnable-host artifact prerequisites now have same-bundle helper-publication
+and signed-provenance restart fixtures. They reject changed sessiond bytes,
+partial helper publisher qualification and receipt-only restart authority.
+They do not supply a real signed release, start a service, prove persistence,
+or qualify Windows publisher/stop policy.
+Two scoped-host-token HTTP fixtures cover the official host-only scope and
+exact resource/account/incarnation checks, including absence and cancellation.
+They do not exercise live credentials/cloud operations or remote owner approval.
 
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;

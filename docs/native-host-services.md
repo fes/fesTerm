@@ -30,9 +30,11 @@ or storage fallback.
 narrow runtime authority source. Every `current_policy()` freshly selects the
 explicit original store and obtains an owned protected lease; contention is
 `ContractError::Busy`, while missing/corrupt/foreign/revoked authority is Denied.
-It never caches a verifier or retries native failure using files. Runtime trait
-wiring still requires normally integrating the separately gated runtime source;
-this source-only checkpoint does not activate a listener.
+It never caches a verifier or retries native failure using files. Setup's
+`host-runtime` feature now implements the runtime traits directly, with the
+actual enrollment lease retained by the guard. The app wrapper delegates and
+defaults to native vault. Compiled trait-adapter evidence does not activate or
+qualify a listener.
 
 `qualify-package` consumes private absolute `--manifest`, `--signature`,
 `--archive`, `--cache-root` inputs, uses the same embedded updater/native
@@ -45,12 +47,27 @@ testable without exposing an unqualified endpoint.
 `services::TrustedStage::publish(&VerifiedArtifact, cache_root)` is the only
 public launch-receipt constructor. It requires the updater-authenticated
 schema-2 `Package::Host`, exact current build version and native target, and its
-immutable executable `festerm-host` entry. Neither an arbitrary executable path,
+immutable executable `festerm-host` entry. Every executable helper in that same
+authenticated bundle is independently native-publisher-qualified before any
+fresh file is promoted; `sessiond_path()` returns only the exact signed,
+same-version daemon after rechecking all retained file identities and bytes.
+Neither an arbitrary executable path,
 `StagedArtifact::path()` nor CLI acquisition's returned path is launch authority.
 There is no production key, hash or native-signature override.
 
 Original signed metadata/archive/entries remain in the private non-executable
 data cache. Separate atomic owner-only executable publication checks the digest.
+Native registration retains that signed provenance location. On restart,
+`Services::reopen_stage(epoch)` reauthenticates its original manifest, signature
+and archive with the compiled updater/native policy and requires the exact
+registered host bytes and path. A registration digest or `.complete` marker is
+not authority. Older registrations without provenance remain manageable for
+removal but cannot recover executable authority through this API.
+`festerm_tunnel_client::host::Management::host_token` is the matching relay
+credential primitive: it requests only `tokenScopes=host` from the official
+authority and revalidates the pinned account/resource/creation receipt before
+returning a short-lived zeroizing token. It is not owner authentication and
+cannot enroll a key or approve a host. No token is persisted or placed in argv.
 Linux publisher authority is the embedded updater key. macOS additionally
 requires strict all-architecture verification against Apple's Developer ID
 Application chain and the pinned TeamIdentifier **F884J4784J**, then verifies

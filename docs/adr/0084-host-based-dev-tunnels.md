@@ -802,6 +802,17 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `native_service_status_rejects_manager_overrides_ambiguous_properties_and_cross_origin`,
   `authenticated_executable_publication_keeps_data_private_and_refuses_changed_cache`
   and `failed_native_qualification_never_adds_execute_permission`.
+  `authenticated_runtime_bundle_qualifies_every_helper_and_fences_changed_sessiond`,
+  `authenticated_runtime_bundle_helper_rejection_never_promotes_fresh_host` and
+  `native_service_restart_requires_signed_provenance_without_adopting_cached_receipts`
+  cover the same-bundle daemon executable dependency, all-helper publisher
+  qualification before fresh promotion, and restart refusal of unsigned or
+  provenance-free receipt authority. Positive signed native restart/run remains
+  a separate prerequisite; synthetic fixture keys are never shipping trust.
+  `host_cloud_scoped_host_token_requires_exact_receipt_and_never_uses_management_token`
+  and `host_cloud_scoped_host_token_refuses_replacement_account_absence_and_cancellation`
+  cover official host-only scoped-token requests against an exact pinned
+  account/resource/incarnation, not owner enrollment or client trust approval.
   These cover manual/sign-in definitions, no install-time launch, failed
   observations, native-vault refusal and late exact-owned reconciliation using
   fake managers/private filesystem fixtures, not actual installed services.

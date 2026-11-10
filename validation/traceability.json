@@ -5733,6 +5733,8 @@
         "native_service_exhausted_operation_budget_refuses_effect_before_spawn",
         "task_recovery_security_requires_exact_owner_system_protected_dacl",
         "host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port",
+        "host_cloud_scoped_host_token_requires_exact_receipt_and_never_uses_management_token",
+        "host_cloud_scoped_host_token_refuses_replacement_account_absence_and_cancellation",
         "host_cloud_response_refuses_foreign_resources_and_non_authoritative_absence",
         "host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced",
         "host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable",
@@ -5787,6 +5789,9 @@
         "rejects_oversized_headers_without_allocating_entry_and_trailing_gzip",
         "authenticated_executable_publication_keeps_data_private_and_refuses_changed_cache",
         "failed_native_qualification_never_adds_execute_permission",
+        "authenticated_runtime_bundle_qualifies_every_helper_and_fences_changed_sessiond",
+        "authenticated_runtime_bundle_helper_rejection_never_promotes_fresh_host",
+        "native_service_restart_requires_signed_provenance_without_adopting_cached_receipts",
         "native_publisher_admission_never_substitutes_generic_signature_trust",
         "macos_publisher_policy_requires_exact_team_nonadhoc_and_hardened_runtime",
         "macos_native_gate_rejects_apple_signed_foreign_publisher"
