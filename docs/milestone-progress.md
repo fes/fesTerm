@@ -8721,12 +8721,13 @@ bytes, keeping bounded reads and refusing overwrite for CLI and helper staging.
 
 ### A distributable headless command, without pretending it is an installer
 
-The bounded ADR 0084 stage-7 slice adds `festerm-host` to all six existing
-authenticated helper targets, their native signing paths and dependency notices.
-Schema 2 makes inclusion mandatory; old-tag recovery retains its actual older
-payload rather than silently promoting it. Real Python producers, the pinned
-cargo-packager signer and Rust admission now interoperate across all six targets
-with synthetic keys and no release secrets.
+The bounded ADR 0084 stage-7 slice publishes separate authenticated
+`fesTerm-host-*` assets for all six targets, with native signing paths and
+dependency notices. Their schema-2 manifests require `festerm-host`; the legacy
+`fesTerm-tunnel-*` helper archives retain schema 1 and their unchanged payloads,
+including during old-tag recovery. Real Python producers, the pinned
+cargo-packager signer and Rust admission now interoperate for both packages
+across all six targets with synthetic keys and no release secrets.
 
 `acquire-cli` connects the existing reviewed Microsoft executable hashes to
 versioned official HTTPS URLs, bounded receiving and the same protected atomic

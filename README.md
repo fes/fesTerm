@@ -35,7 +35,7 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition
-and authenticated schema-2 headless/helper staging without execution.
+and authenticated schema-2 host-package staging without execution.
 New host setup/run/update/uninstall remain unavailable pending endpoint and
 native executable/endpoint integration ([#681](https://github.com/fes/fesTerm/issues/681));
 the legacy installer is unchanged.
