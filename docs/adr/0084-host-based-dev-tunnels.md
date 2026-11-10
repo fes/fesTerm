@@ -487,6 +487,25 @@ Healthy inventory survives bounded per-target Unknown. Missing/unsupported
 journals fail closed; there is no automatic prerelease-state migration.
 Pending daemon ownership commit retries contention within its bounded deadline;
 candidate adoption no longer stalls the old writer or replays terminal input.
+Post-snapshot staging is byte bounded, including allocation headroom, rather
+than limited to the live client's 64 frames; delayed adoption preserves ordered
+small output chunks. Closed/rejected clients cannot terminate the daemon/PTY.
+Namespace rotation reauthorizes the actual resulting epoch before publication
+and holds that fresh policy guard through the durable checkpoint. Capacity Busy
+may require authorized inventory/inspection reconciliation before unchanged retry.
+Owned concurrent runs also reproduced native startup refusal when a read-only
+checkpoint reader held the shared registry lock beyond the unchanged 500-ms
+mutation deadline. Private atomic snapshot readers no longer pin that lock;
+mutations keep serialized CAS and retained-directory protections. Deterministic
+stalled-reader and directory-replacement tests cover those boundaries.
+Integration with current main preserves ADR 0085's owned-launch policy:
+HOST creation and reconciliation require the exact native launch journal,
+not merely matching live generation/recipe metadata. The
+`host_reservation_requires_its_exact_native_launch_journal` regression refuses
+missing/foreign journals and wrong generations without displacing an attachment.
+`second_client_replaces_first_client_and_first_receives_stolen_notice` now
+observes attachment only after actual recovery adoption/writer activation;
+abandoned candidates emit no successful attachment event.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
@@ -606,6 +625,9 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor`,
   `current_absence_requires_fresh_create_permission_but_live_resume_does_not`,
   `failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create`,
+  `host_reservation_requires_its_exact_native_launch_journal`,
+  `protected_publication_preserves_shared_no_replace_boundary`,
+  `second_client_replaces_first_client_and_first_receives_stolen_notice`,
   `cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner`,
   `lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace` and
   `lease_supervisor_refuses_revision_rollback_or_foreign_generation`.

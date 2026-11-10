@@ -1146,6 +1146,53 @@ mod tests {
     }
 
     #[test]
+    fn host_reservation_requires_its_exact_native_launch_journal() {
+        let fixture = Fixture::new();
+        let profile = fixture.profile();
+        let fingerprint = spawn_fingerprint(&profile).unwrap();
+        let owner = Uuid::new_v4().to_string();
+        let foreign = Uuid::new_v4().to_string();
+        let identity = fixture.publish(101, Some(&fingerprint), true, Some(&owner));
+        let helper = fixture.root.join("must-not-launch");
+        for request in [&owner, &foreign] {
+            for may_launch in [false, true] {
+                assert!(ensure_host_reserved(
+                    &fixture.root,
+                    fixture.request(&profile, request),
+                    101,
+                    may_launch,
+                    &helper,
+                )
+                .is_err());
+                assert!(!fixture.root.join(format!("launch-{request}.json")).exists());
+            }
+        }
+        fixture.reserve(&owner, &profile, 101);
+        for may_launch in [false, true] {
+            assert_eq!(
+                ensure_host_reserved(
+                    &fixture.root,
+                    fixture.request(&profile, &owner),
+                    101,
+                    may_launch,
+                    &helper,
+                )
+                .unwrap(),
+                identity
+            );
+            assert!(ensure_host_reserved(
+                &fixture.root,
+                fixture.request(&profile, &owner),
+                102,
+                may_launch,
+                &helper,
+            )
+            .is_err());
+        }
+        assert!(registry(&fixture.directory).unwrap().sessions["owned"].attached);
+    }
+
+    #[test]
     fn legacy_start_lock_shares_access_with_ordinary_starts() {
         let fixture = Fixture::new();
         let root = fixture.root.join("legacy");
