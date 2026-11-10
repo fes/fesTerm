@@ -6,6 +6,8 @@ pub mod file_protocol;
 pub mod files;
 #[cfg(feature = "relay")]
 pub mod filesystem;
+#[cfg(feature = "host-routing")]
+pub mod host_control;
 #[cfg(feature = "relay")]
 pub mod host_identity;
 #[cfg(feature = "client")]

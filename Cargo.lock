@@ -2974,6 +2974,7 @@ dependencies = [
  "festerm-host-protocol",
  "festerm-session",
  "festerm-sessiond",
+ "festerm-tunnel-client",
  "festerm-unix-security",
  "festerm-windows-security",
  "flume",
@@ -2999,6 +3000,7 @@ dependencies = [
 name = "festerm-tunnel-client"
 version = "0.16.0"
 dependencies = [
+ "festerm-host-protocol",
  "http",
  "reqwest 0.13.5",
  "serde",

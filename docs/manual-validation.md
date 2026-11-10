@@ -3341,6 +3341,14 @@ pagination and budget evidence. This is not a native host endpoint, installation
 owner-enrollment ceremony, actual pinned-channel proof or temporary supervisor.
 No live credentials/services were used or installed by this slice.
 
+The stage-3 unexposed dispatcher/paired transport adds automated owned-duplex
+framing, deadline/cancellation/correlation, real owner-proof fixture, protected
+revocation and pending logical-revision/generation tests. No native endpoint
+acceptance is added: the actual inner SSH session/channel exporter is absent,
+so same-channel proof integration must fail closed. Native backend/scoped-policy
+adapters, concurrent terminal routing and fair output/control scheduling remain
+prerequisites, not fixture claims.
+
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
 reconciliation, simultaneous sessions and leases, fair output/control scheduling

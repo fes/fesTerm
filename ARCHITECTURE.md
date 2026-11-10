@@ -688,6 +688,15 @@ Performance benchmarks should initially report trends rather than block every co
 
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
 adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
+The opt-in bridge `host-routing` module and paired
+`festerm-tunnel-client::host_control` transport reuse the shared HOST contracts
+for bounded framed control RPC. The bridge consumes non-serializable verified
+owner proof and delegates reservation/grant checks to the session backend;
+the client owns immutable account/endpoint/host correlation, not authority.
+No listener uses these modules. Actual same-channel authentication export,
+native backend/policy integration and separately bounded terminal scheduling
+remain gates; legacy exact-generation relay and independent grants are unchanged.
+
 The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small
 `festerm-host-protocol` serde/UUID crate for shared HOST identities, bounded
 messages, authorized pagination and reservation/freshness helpers. This avoids

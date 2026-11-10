@@ -5498,12 +5498,22 @@
         "host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed",
         "host_owner_admission_requires_current_shared_exact_generation_and_absence",
         "host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys",
-        "host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes"
+        "host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes",
+        "real_proof_framed_inventory_filters_private_foreign_and_unknown_lookup",
+        "revision_or_generation_change_while_pending_fences_publication",
+        "protected_revocation_during_work_never_publishes_inventory_or_absence",
+        "connection_admission_is_aggregate_and_released_by_raii",
+        "framed_handshake_and_denial_never_become_absence",
+        "wrong_operation_or_host_permanently_retires_stream",
+        "deadline_and_cancellation_fence_late_replies",
+        "dropped_exchange_cannot_adopt_a_late_reply",
+        "frame_lengths_refuse_without_reading_body_and_release_budget",
+        "legacy_protocol_and_wrong_reply_shape_have_no_fallback"
       ],
       "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681: contract primitives only; no HOST endpoint or GUI control is exposed. Independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
+        "Issue #681: contracts and unexposed framed dispatcher/paired transport core only; no HOST endpoint or GUI control is exposed. Actual inner SSH session/channel exporter is absent; independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
         "Implement durable authoritative ensure/reservations, recipe conflicts and temporary lease supervision independently of bridge lifetime; reconcile uncertain outcomes, never infer absence from denial/offline/partial inventory",
         "Implement authenticated multi-session routing, fair output/control scheduling, aggregate permit/deadline integration and legacy adapter without grant expansion",
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth fixtures do not qualify it"

@@ -35,7 +35,8 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 [Host protocol contracts](docs/host-protocol.md) provide the first ADR 0084
 foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
-messages and opt-in owner-key authentication primitives. No HOST endpoint or
+messages, opt-in owner-key authentication primitives and an unexposed bounded
+dispatcher/paired framed-client core. No HOST endpoint or
 remote creation is exposed; security review and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
 

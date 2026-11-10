@@ -1571,7 +1571,7 @@ Existing TUNNEL edges retain their current coverage until implementation migrate
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
-| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy tests; H,N deferred |
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy and framed duplex dispatcher tests; real pinned-channel exporter/native endpoint H,N deferred |
 | `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P; partial codec/absence/admission tests; H,N deferred |
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; partial lifetime/generation schemas; supervisor/H,N deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared typed setup, no default shell, protected consent, no outgoing-client install | Preserve draft; report partial setup; revoke before cleanup | P,H,N; deferred |

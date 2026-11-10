@@ -249,6 +249,43 @@ backward or skipped cursors refuse rather than trapping the client in a loop.
 
 ## Evidence and remaining gates
 
+### Unexposed stage-3 framed dispatcher and paired transport core
+
+`festerm-tunnel-client::host_control` implements the four-byte big-endian
+framing, length-before-allocation refusal, aggregate connection/control/byte
+permits, immutable account/endpoint/host binding and sequential RPC correlation.
+Capabilities must complete before other requests. Each exchange has one
+15-second deadline including writes; cancellation, dropped futures, invalid
+correlation, incompatible versions and transport failures permanently retire
+the stream. Replies preserve refusal/uncertain states; no failure becomes
+absence and no request/input is automatically retried.
+
+The bridge's opt-in `host-routing` feature provides `host_control::serve_control`,
+not a listener. Its connection permit must be reserved before socket/task
+allocation. It consumes a real `VerifiedOwner` and connection guard, checks the
+current protected host gate before work/publication, and dispatches through the
+minimal `SessionBackend`/`OperationAdmission` reservation seam. Workers retain
+aggregate control/create charges after timeout/disconnect until blocking work
+finishes reconciliation; disconnect drops the owner's guard and cancels late
+admission. Pipelining is refused rather than queued. The backend must use fresh
+protected grants/revisions under its reservation, not two copies of a fence.
+
+Owned duplex fixtures exercise real cryptographic owner proof, private/foreign
+inventory filtering, unknown/private lookup denial, pending revision/generation
+changes, protected revocation, capacity release and paired transport failures.
+They do **not** establish native routing or authenticated endpoint readiness.
+The low-level client stream constructor supplies framing only, not a credential.
+
+**Exposure remains blocked:** the actual inner SSH channel currently does not
+export its shared session/channel binding to both peers. A host-key pin alone
+cannot supply the required same-channel non-forwardable owner proof. Enrollment
+integration must provide that actual binding; no asserted principal, bearer,
+arbitrary trusted boolean or random substitute is acceptable. Native reservation
+and scoped protected-policy adapters, separate terminal attachment routing and
+fair terminal/control scheduling remain integration gates. No default listener,
+HOST advertisement, terminal/file/observation/MCP grant expansion, or legacy
+reinterpretation is added by this core.
+
 `crates/festerm-host-protocol/tests/contracts.rs` exercises the canonical ensure
 fixture, malformed/version/legacy refusal, real operation/absence roundtrips,
 recipes/lifetimes, privacy/pagination fences, concurrent aggregate budgets and

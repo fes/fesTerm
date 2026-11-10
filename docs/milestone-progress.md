@@ -8645,6 +8645,21 @@ command. Failed signals still fail, and transports that need a later state
 event retain that requirement. The native oracle still requires the same
 runspace's marker to survive cancellation.
 
+### ADR 0084's paired framed-control core stays behind the authentication gate
+
+The next #681 slice adds bounded sequential HOST RPC and an opt-in dispatcher
+that accepts actual cryptographically verified owner proof, not a principal or
+bearer assertion. Owned duplex tests cover privacy, current policy revocation,
+pending record revision/generation changes, framing/correlation and cancellation.
+Admission precedes worker allocation; late blocking work retains its resource
+charges until reconciliation. No terminal input is replayed.
+
+This is deliberately not an exposed host endpoint. The actual inner SSH stream
+does not yet carry a shared session/channel exporter needed to prevent owner
+proof forwarding. Native session/enrollment adapters and separate fair terminal
+routing remain integration prerequisites. Legacy behavior and native acceptance
+are unchanged; no credentials, services or cloud resources were modified.
+
 ### ADR 0084 starts with contracts, not a remotely callable shell service
 
 The host-oriented tunnel design ([#681](https://github.com/fes/fesTerm/issues/681))

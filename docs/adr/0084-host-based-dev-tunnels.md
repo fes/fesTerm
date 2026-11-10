@@ -499,6 +499,16 @@ changes are part of the stage-1 contract slice.
 
 ### Acceptance matrix
 
+Stage-3 core evidence adds real-proof owned-duplex dispatcher tests
+`real_proof_framed_inventory_filters_private_foreign_and_unknown_lookup`,
+`revision_or_generation_change_while_pending_fences_publication`,
+`protected_revocation_during_work_never_publishes_inventory_or_absence`, and
+paired transport deadline/cancellation/correlation/legacy-refusal tests in
+`festerm-tunnel-client::host_control`. These qualify only the unexposed bounded
+core, not native endpoint or whole-ADR acceptance. Actual inner SSH
+session/channel binding export, protected native adapters and fair terminal
+routing remain prerequisites. No listener or capabilities are published.
+
 | Area | Required evidence (planned test names are illustrative) |
 | --- | --- |
 | Network-free UI | `launcher_and_profile_save_do_not_network`; explicit find/select/refresh only; stale results fenced on account switch |
