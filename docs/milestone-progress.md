@@ -1,5 +1,87 @@
 # Milestone Progress Narrative
 
+## Providing explicit, receipt-bound manual cloud cleanup remediation
+
+The owner approved `allow_explicit_manual_fallback`: the pinned SDK does not
+document generation-atomic DELETE, and PUT's preconditions are not DELETE
+authority. Automatic deletion remains unavailable, but a stopped installation
+must offer more than an opaque unsuccessful CleanupPending error. This increment
+is a separate source child of frozen `9b1d2a688e35cad8dead2afa4b228c152c2cadb9`
+on `work/adr0084-manual-cleanup-nov10`, in
+`fesTerm-adr84-runtime-manual-cleanup-nov10`. The published runtime branch is
+unchanged; no native update, client, Windows publisher or Linux logon increment
+is integrated.
+
+The cloud result and shared controller now carry a typed, sanitized
+`CleanupContext` for an authenticated matching present receipt. Before publishing
+it, the adapter rechecks the full current snapshot/epoch and original protected
+record after network/account confirmation. Account/ownership/incarnation changes,
+receipt/credential races, stale epochs (including the same cleanup phase),
+corrupt/missing evidence, cancellation, denial and offline/unknown cannot become
+verified removal targets. No installation lease spans network I/O. There is no
+DELETE, GET-then-DELETE, speculative conditional header or new sign-in path.
+
+Headless uninstall still exits unsuccessfully and retains CleanupPending while
+present, but explains independent provider review/removal for the displayed
+installation/epoch, numeric account, cluster/tunnel ID, ownership label and
+creation incarnation. The operator must stop on any changed or unprovable
+identifier. No browser/portal/external action is launched. The same explicit
+uninstall retry commits Removed only after authenticated exact absence; native
+removal alone and manual action are not completion. Persistent daemons, grants,
+protected records and tombstones remain untouched.
+
+Local-only status reads no credential store and starts no network/manager work.
+It labels validated stored receipt context **unverified**, or reports actionable
+uncertainty without a target. Raw binding metadata is withheld during
+CleanupPending, not declared absent. A typed CLI diagnostic, rather than raw
+error-string interpolation, controls the manual-action message. Context contains
+no token, seed, credential reference, host private material or diagnostic URL.
+ADR 0084, HOST-04/05/06 graph/trace and HOSTSETUP-01 now explicitly allow the
+manual fallback as a migration acceptance path only with separately verified
+source receipts/selection/consent and authenticated absence. This component does
+not implement legacy inventory/binding, stopping consent or actual migration.
+
+With host memory initially 49% free, the existing exclusive warm target and
+jobs1/debug0/incremental0 settings use genuinely pinned Rust/Cargo 1.99.1 and
+Clippy 0.1.99, not PATH's Homebrew compiler:
+
+```sh
+export RUSTC="$(rustup which --toolchain stable rustc)"
+export RUSTDOC="$(rustup which --toolchain stable rustdoc)"
+export PATH="$(dirname "$RUSTC"):$PATH"
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0
+export CARGO_TARGET_DIR=/Users/fes/src/fesTerm-adr84-runtime-nov10/.runtime-target
+cargo test --locked -p festerm-host -p festerm-host-setup
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo test --locked -p festerm-host --no-default-features
+cargo clippy --locked -p festerm-host --no-default-features --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9
+git diff --check
+```
+
+Fresh full affected qualification is **124 passes / one existing dedicated
+signer ignore**: 108 setup-library, seven headless units and nine actual binary
+CLI tests. Six added tests include fourteen refusal/race subcases, exact
+read-only context, raw-URL refusal and typed CLI/status uncertainty. Existing
+controller and acknowledged-uncertainty cleanup tests retain real Services
+disable/uninstall, not direct stopped-transition bypasses. Separately, the
+no-owner CLI configuration passes **ten tests / zero ignores** (four units,
+six binary cases). Both strict configurations, fmt, base-`9b` trace **311
+edges/zero broken references** and diff checks pass.
+
+Exact logs are untracked `.runtime-validation/manual-cleanup-*` in the new
+worktree. The initial test compile caught a fixture bool/unit mismatch; the
+first trace run caught duplicate edge ownership and a stale API anchor. Both
+REDs are retained, corrected rather than waived. Existing vendor and
+rust-objcopy/libLLVM warnings remain unsuppressed. The known Windows C SDK
+`assert.h` cross-build blocker is unchanged; no MSVC retry/install, workspace
+build, fourteen-native-route rerun, OS manager, native vault, production cloud,
+guest, signing or release operation was performed. Actual provider removal/
+retry and native/platform/client/migration acceptance remain **UNRUN**, not
+implied by these mock-boundary results. Publication/reviews remain parent-owned.
+
 ## Aligning the frozen core's Windows cfg boundaries
 
 Fresh Windows primary CI for `b5e3bead` found two strict-build failures:

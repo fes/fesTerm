@@ -5709,8 +5709,10 @@
       "id": "host-shared-lifecycle-headless-boundary",
       "edges": ["HOST-04", "HOST-05"],
       "requirements": [
+        "docs/adr/0084-host-based-dev-tunnels.md#3-host-settings-and-state",
         "docs/adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing",
         "docs/adr/0084-host-based-dev-tunnels.md#8-headless-installation-and-common-management",
+        "docs/headless-host.md#in-process-cloud-adapter-shared-clilibrary-api",
         "docs/headless-host.md#shared-desktopendpoint-integration-api",
         "docs/native-host-services.md#shared-lifecycle-api"
       ],
@@ -5797,6 +5799,12 @@
         "host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced",
         "host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable",
         "host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker",
+        "host_cloud_manual_cleanup_context_is_exact_read_only_and_epoch_fenced",
+        "host_cloud_manual_cleanup_refuses_unknown_foreign_and_raced_authority",
+        "host_cloud_manual_cleanup_never_displays_raw_receipt_urls",
+        "headless_cleanup_status_is_read_only_unverified_receipt_context",
+        "headless_cleanup_uninstall_diagnostics_are_typed_and_uncertainty_safe",
+        "headless_binary_cleanup_without_receipt_is_uncertain_not_removal_guidance",
         "host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty",
         "host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity",
         "host_cloud_create_distinguishes_preflight_not_sent_rejection_conflict_and_uncertainty",
@@ -5822,9 +5830,10 @@
         "Windows registration/start and running-task stop remain unavailable pending authenticated graceful stop and native reservation-recovery/daemon independence qualification",
         "Exact-generation separate default-No migration confirmation is deferred until the migration API; setup command refusals do not establish that behavior",
         "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance",
-        "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable and retains CleanupPending without DELETE",
+        "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable with freshly receipt/account/incarnation/epoch-verified display context and retains CleanupPending without DELETE. Approved explicit manual provider review/removal is an alternative, not a local tombstone or deletion authority; status context is unverified and uncertain/foreign/stale evidence has no removal instruction",
+        "Owner decision allow_explicit_manual_fallback requires stopped local access and independent current provider ownership/incarnation review. No automatic browser, portal, sign-in or DELETE; GET-then-DELETE and undocumented If-Match DELETE remain forbidden. Read-only status withholds raw binding metadata and gives no removal instructions; actual provider review/removal/retry and native/cloud/vault acceptance remain HOSTSETUP-01 prerequisites",
         "Live-service creation-incarnation stability across repeated authoritative GETs, If-None-Match atomicity, authenticated exact-cluster 404/ownership semantics, cluster routing/no-redirect behavior and native-vault behavior remain unqualified; fixtures do not establish live/native acceptance",
-        "HOSTSETUP-01: read-only exact-resource cleanup adoption exists without enable/creation consent, retaining uncertainty on missing/failed observations and pinning raced receipts for retry. Real signed service/vault/cloud qualification remains required; no lifecycle tombstone until exact native stop and conditional cloud cleanup",
+        "HOSTSETUP-01: read-only exact-resource cleanup adoption exists without enable/creation consent, retaining uncertainty on missing/failed observations and pinning raced receipts for retry. Real signed service/vault/cloud qualification remains required; no lifecycle tombstone until exact native stop and authenticated exact cloud absence, including after explicit manual provider removal",
         "Opt-in disposable Unix guest test native_service_live_exact_owned_lifecycle_preserves_independent_child exercises the real manager with a synthetic test executable only, not production publisher/vault/cloud or full sessiond lifetime acceptance"
       ]
     },
@@ -5833,6 +5842,7 @@
       "edges": ["HOST-06"],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#9-packaging-integrity-and-upgrades",
+        "docs/adr/0084-host-based-dev-tunnels.md#11-migration-and-rollout",
         "docs/host-release-artifacts.md#verification-and-staging-api"
       ],
       "decisions": ["ADR-0084"],
@@ -5855,16 +5865,20 @@
         "native_service_restart_requires_signed_provenance_without_adopting_cached_receipts",
         "native_publisher_admission_never_substitutes_generic_signature_trust",
         "macos_publisher_policy_requires_exact_team_nonadhoc_and_hardened_runtime",
-        "macos_native_gate_rejects_apple_signed_foreign_publisher"
+        "macos_native_gate_rejects_apple_signed_foreign_publisher",
+        "host_cloud_manual_cleanup_context_is_exact_read_only_and_epoch_fenced",
+        "host_cloud_manual_cleanup_refuses_unknown_foreign_and_raced_authority",
+        "headless_cleanup_status_is_read_only_unverified_receipt_context"
       ],
-      "manual_scenarios": ["DT-05", "DT-08"],
+      "manual_scenarios": ["DT-05", "DT-08", "HOSTSETUP-01"],
       "status": "partial",
       "prerequisites": [
         "Issue #681: integrate and natively qualify the new endpoint installer/executable-publication component; ordinary private data staging does not authorize launch or service switching",
         "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
         "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence",
         "Natively qualify the pinned macOS Developer ID/team/runtime gate against actual protected fesTerm releases; Windows promotion refuses pending authoritative publisher/certificate, rotation and revocation policy; generic signatures and candidate-derived identities are not accepted",
-        "Issue #681 / ADR 0084 section 11: migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow, including stale-generation refusal, before migration exposure"
+        "Issue #681 / ADR 0084 section 11: migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow, including stale-generation refusal, before migration exposure",
+        "Owner-approved explicit manual provider cleanup is allowed only with separately verified protected source receipts and exact selection/consent; only authenticated exact absence completes removal. This component supplies HOST receipt context and uncertainty fixtures, not legacy inventory/binding, frontend admission, live stop consent or actual migrated-resource removal"
       ]
     }
   ]

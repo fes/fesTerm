@@ -95,13 +95,26 @@ pub enum Health {
     Absent,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Sanitized, display-only protected receipt metadata, never deletion authority.
+/// A stored context alone does not establish current provider ownership.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CleanupContext {
+    pub installation: String,
+    pub epoch: u64,
+    pub account_id: u64,
+    pub cluster: String,
+    pub tunnel_id: String,
+    pub ownership_label: String,
+    pub incarnation: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Cleanup {
     /// Exact authenticated absence was observed; the tombstone was committed.
     Removed,
     /// The official API has no documented generation-atomic delete contract.
     /// No DELETE was sent and the protected receipt remains pending.
-    GenerationConditionalDeleteUnavailable,
+    GenerationConditionalDeleteUnavailable { context: CleanupContext },
 }
 
 /// Desktop and headless share this adapter. Construction has no side effects.
@@ -950,6 +963,53 @@ impl<'a> CloudHostAdapter<'a> {
         self.cleanup_with(cancel, &network, &*secrets).await
     }
 
+    /// Read local receipt context only, without credentials or network access.
+    /// Callers must label it unverified and must not offer removal instructions.
+    pub fn pending_cleanup_context(&self, expected: &Snapshot) -> io::Result<CleanupContext> {
+        self.cleanup_context(expected, None)
+    }
+
+    fn cleanup_context(
+        &self,
+        expected: &Snapshot,
+        original: Option<&Record>,
+    ) -> io::Result<CleanupContext> {
+        self.store.with_locked(|directory, current| {
+            if current != expected || current.phase != Phase::CleanupPending {
+                return Err(refused("host.cloud_cleanup_scope_changed"));
+            }
+            let record = read(directory)?.ok_or_else(|| refused("host.cloud_not_configured"))?;
+            validate(&record, current, directory)?;
+            if original.is_some_and(|original| original != &record) {
+                return Err(refused("host.cloud_cleanup_scope_changed"));
+            }
+            let exact = record
+                .receipt
+                .as_ref()
+                .ok_or_else(|| refused("host.cloud_receipt_missing"))?;
+            if !record.authenticated || current.binding.as_ref() != Some(&binding(&record, exact)) {
+                return Err(refused("host.cloud_binding_changed"));
+            }
+            if exact.created.len() > 64
+                || !exact
+                    .created
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || b"-:TZ.+".contains(&byte))
+            {
+                return Err(refused("host.cloud_cleanup_context_unavailable"));
+            }
+            Ok(CleanupContext {
+                installation: current.installation.clone(),
+                epoch: current.epoch,
+                account_id: record.account_id,
+                cluster: exact.resource.cluster.clone(),
+                tunnel_id: exact.resource.tunnel_id.clone(),
+                ownership_label: exact.resource.ownership_label.clone(),
+                incarnation: exact.created.clone(),
+            })
+        })
+    }
+
     async fn cleanup_with(
         &self,
         cancel: &CancellationToken,
@@ -980,9 +1040,13 @@ impl<'a> CloudHostAdapter<'a> {
             .confirm(&identity, cancel)
             .await
             .map_err(account_error)?;
+        if cancel.is_cancelled() {
+            return Err(refused("host.cloud_cancelled"));
+        }
+        let context = self.cleanup_context(&snapshot, Some(&record))?;
         match observed {
             Observation::Present(receipt) if receipt == exact => {
-                Ok(Cleanup::GenerationConditionalDeleteUnavailable)
+                Ok(Cleanup::GenerationConditionalDeleteUnavailable { context })
             }
             Observation::Present(_) => Err(refused("host.cloud_generation_changed")),
             Observation::Absent => {
@@ -1233,6 +1297,8 @@ mod tests {
         observe_error_after_create: Option<AccountError>,
         observes: usize,
         revoke_observe: bool,
+        rewrite_on_observe: Option<fn(&Store)>,
+        account_change_on_observe: bool,
     }
     struct FixtureNetwork<'a> {
         store: &'a Store,
@@ -1384,6 +1450,12 @@ mod tests {
             state.observes += 1;
             if state.revoke_observe {
                 self.store.revoke().unwrap();
+            }
+            if let Some(rewrite) = state.rewrite_on_observe {
+                rewrite(self.store);
+            }
+            if state.account_change_on_observe {
+                state.confirm_error = Some(AccountError::AccountChanged);
             }
             if let Some(error) = state.observe_error {
                 return Err(error);
@@ -2058,7 +2130,11 @@ mod tests {
             )
             .await
             .unwrap(),
-            crate::controller::UninstallResult::NativeRemovedCloudCleanupPending
+            crate::controller::UninstallResult::NativeRemovedCloudCleanupPending {
+                context: adapter
+                    .pending_cleanup_context(&store.snapshot().unwrap())
+                    .unwrap(),
+            }
         );
         assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
         assert!(!state.join("native-service.json").exists());
@@ -2103,7 +2179,11 @@ mod tests {
                 )
                 .await
                 .unwrap(),
-                crate::controller::UninstallResult::NativeRemovedCloudCleanupPending
+                crate::controller::UninstallResult::NativeRemovedCloudCleanupPending {
+                    context: adapter
+                        .pending_cleanup_context(&store.snapshot().unwrap())
+                        .unwrap(),
+                }
             );
             assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
             assert_eq!(adapter.load().unwrap().receipt.as_ref(), Some(&receipt));
@@ -2405,7 +2485,11 @@ mod tests {
                 .cleanup_with(&cancel, &network, &secrets)
                 .await
                 .unwrap(),
-            Cleanup::GenerationConditionalDeleteUnavailable
+            Cleanup::GenerationConditionalDeleteUnavailable {
+                context: adapter
+                    .pending_cleanup_context(&store.snapshot().unwrap())
+                    .unwrap(),
+            }
         );
         assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
         network.state.borrow_mut().created.as_mut().unwrap().created =
@@ -2434,6 +2518,233 @@ mod tests {
             Cleanup::Removed
         );
         assert_eq!(store.snapshot().unwrap().phase, Phase::Removed);
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_manual_cleanup_context_is_exact_read_only_and_epoch_fenced() {
+        let (root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::new(&store);
+        let approval = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&approval, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        adapter
+            .provision_with(&approval, &cancel, &network, &secrets)
+            .await
+            .unwrap();
+        assert!(adapter
+            .pending_cleanup_context(&store.snapshot().unwrap())
+            .is_err());
+        crate::controller::disable(&store, &root.path().join("host")).unwrap();
+        store.request_cleanup().unwrap();
+        let before = store.snapshot().unwrap();
+        let original = adapter.load().unwrap();
+        let context = adapter.pending_cleanup_context(&before).unwrap();
+        let exact = original.receipt.as_ref().unwrap();
+        assert_eq!(context.installation, before.installation);
+        assert_eq!(context.epoch, before.epoch);
+        assert_eq!(context.account_id, 42);
+        assert_eq!(context.cluster, exact.resource.cluster);
+        assert_eq!(context.tunnel_id, exact.resource.tunnel_id);
+        assert_eq!(context.ownership_label, exact.resource.ownership_label);
+        assert_eq!(context.incarnation, exact.created);
+        for _ in 0..2 {
+            assert_eq!(
+                adapter
+                    .cleanup_with(&cancel, &network, &secrets)
+                    .await
+                    .unwrap(),
+                Cleanup::GenerationConditionalDeleteUnavailable {
+                    context: context.clone(),
+                }
+            );
+            assert_eq!(store.snapshot().unwrap(), before);
+            assert!(adapter.load().unwrap() == original);
+        }
+        let serialized = serde_json::to_string(&context).unwrap();
+        for private in [
+            "PRIVATE_FIXTURE_ACCESS",
+            "PRIVATE_FIXTURE_DEVICE",
+            &original.credential,
+            "https://",
+            "fingerprint",
+        ] {
+            assert!(!serialized.contains(private));
+        }
+        secrets.delete(&reference(&original).unwrap()).unwrap();
+        assert_eq!(adapter.pending_cleanup_context(&before).unwrap(), context);
+        assert!(adapter
+            .cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert_eq!(network.state.borrow().sign_ins, 1);
+        assert_eq!(network.state.borrow().creates, 1);
+        store.revoke().unwrap();
+        assert!(adapter.pending_cleanup_context(&before).is_err());
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_manual_cleanup_refuses_unknown_foreign_and_raced_authority() {
+        for refusal in [
+            "offline",
+            "denied",
+            "account",
+            "account-race",
+            "credential",
+            "generation",
+            "epoch",
+            "epoch-same-phase",
+            "receipt-race",
+            "credential-race",
+            "foreign",
+            "missing",
+            "corrupt",
+            "cancel",
+        ] {
+            let (root, store, secrets) = fixture();
+            let adapter = CloudHostAdapter::new(&store);
+            let approval = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&approval, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            adapter
+                .provision_with(&approval, &cancel, &network, &secrets)
+                .await
+                .unwrap();
+            crate::controller::disable(&store, &root.path().join("host")).unwrap();
+            store.request_cleanup().unwrap();
+            match refusal {
+                "offline" => network.state.borrow_mut().observe_error = Some(AccountError::Network),
+                "denied" => network.state.borrow_mut().observe_error = Some(AccountError::Denied),
+                "account" => {
+                    network.state.borrow_mut().confirm_error = Some(AccountError::AccountChanged)
+                }
+                "account-race" => network.state.borrow_mut().account_change_on_observe = true,
+                "credential" => {
+                    secrets
+                        .delete(&reference(&adapter.load().unwrap()).unwrap())
+                        .unwrap();
+                }
+                "generation" => {
+                    network.state.borrow_mut().created.as_mut().unwrap().created =
+                        "2026-11-10T00:00:00Z".into();
+                }
+                "epoch" => network.state.borrow_mut().revoke_observe = true,
+                "epoch-same-phase" => {
+                    network.state.borrow_mut().rewrite_on_observe = Some(|store| {
+                        store
+                            .with_locked(|directory, snapshot| {
+                                let mut snapshot = snapshot.clone();
+                                snapshot.epoch += 1;
+                                storage::replace_private(
+                                    directory,
+                                    Path::new("host-lifecycle.json"),
+                                    &serde_json::to_vec(&snapshot).unwrap(),
+                                )
+                            })
+                            .unwrap();
+                    });
+                }
+                "receipt-race" => {
+                    network.state.borrow_mut().rewrite_on_observe = Some(|store| {
+                        store
+                            .with_locked(|directory, _| {
+                                let mut record = read(directory)?.unwrap();
+                                record.receipt.as_mut().unwrap().created =
+                                    "2026-11-10T00:00:00Z".into();
+                                write(directory, &record)
+                            })
+                            .unwrap();
+                    });
+                }
+                "credential-race" => {
+                    network.state.borrow_mut().rewrite_on_observe = Some(|store| {
+                        store
+                            .with_locked(|directory, _| {
+                                let mut record = read(directory)?.unwrap();
+                                record.authenticated = false;
+                                write(directory, &record)
+                            })
+                            .unwrap();
+                    });
+                }
+                "foreign" | "missing" | "corrupt" => store
+                    .with_locked(|directory, _| {
+                        if refusal == "corrupt" {
+                            return storage::replace_private(directory, Path::new(RECORD), b"{");
+                        }
+                        let mut record = read(directory)?.unwrap();
+                        if refusal == "foreign" {
+                            record.receipt.as_mut().unwrap().resource.account_id = 43;
+                        } else {
+                            record.receipt = None;
+                        }
+                        write(directory, &record)
+                    })
+                    .unwrap(),
+                "cancel" => cancel.cancel(),
+                _ => unreachable!(),
+            }
+            assert!(
+                adapter
+                    .cleanup_with(&cancel, &network, &secrets)
+                    .await
+                    .is_err(),
+                "{refusal}"
+            );
+            assert_ne!(store.snapshot().unwrap().phase, Phase::Removed, "{refusal}");
+            assert_eq!(network.state.borrow().sign_ins, 1);
+            assert_eq!(network.state.borrow().creates, 1);
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_manual_cleanup_never_displays_raw_receipt_urls() {
+        let (root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::new(&store);
+        let approval = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&approval, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        adapter
+            .provision_with(&approval, &cancel, &network, &secrets)
+            .await
+            .unwrap();
+        crate::controller::disable(&store, &root.path().join("host")).unwrap();
+        store.request_cleanup().unwrap();
+        store
+            .with_locked(|directory, snapshot| {
+                let raw = "https://private.invalid/?access_token=PRIVATE_FIXTURE_ACCESS";
+                let mut record = read(directory)?.unwrap();
+                record.receipt.as_mut().unwrap().created = raw.into();
+                write(directory, &record)?;
+                let mut snapshot = snapshot.clone();
+                snapshot.binding.as_mut().unwrap().cloud_incarnation = raw.into();
+                storage::replace_private(
+                    directory,
+                    Path::new("host-lifecycle.json"),
+                    &serde_json::to_vec(&snapshot).unwrap(),
+                )
+            })
+            .unwrap();
+        let error = adapter
+            .pending_cleanup_context(&store.snapshot().unwrap())
+            .unwrap_err();
+        assert_eq!(error.to_string(), "host.cloud_cleanup_context_unavailable");
+        assert!(!error.to_string().contains("PRIVATE_FIXTURE_ACCESS"));
+        assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
     }
 
     #[tokio::test(start_paused = true)]
