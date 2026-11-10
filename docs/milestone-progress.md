@@ -10,6 +10,10 @@ GUI-free shared verifier returns only immutable, bounded, allowlisted regular
 file bytes; the offline command does no extraction or execution.
 Synthetic-key Rust and Python fixtures cover metadata rejection, unsafe archives
 and old-tag recovery without touching secrets or installed services.
+Cross-language tests now feed all six actual Python-produced bundles/manifests
+through genuine synthetic signatures into the Rust verifier. A separate Linux
+normal-CI job uses pinned cargo-packager 0.11.8 with a generated throwaway key,
+so signer-format/mode incompatibilities are caught before protected publication.
 The [bootstrap and staging contract](host-release-artifacts.md) deliberately
 does not claim that downloading both verifier and key establishes trust.
 Existing artifact names/consumers remain compatible; host CLI inclusion,

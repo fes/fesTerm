@@ -502,6 +502,12 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `rejects_signed_unsafe_tar_entries_duplicates_missing_files_and_wrong_version`,
   `rejects_signed_zip_paths_symlinks_modes_and_duplicates` and
   `rejects_oversized_headers_without_allocating_entry_and_trailing_gzip`.
+  `python_produced_six_bundles_and_manifests_authenticate_in_rust` checks the
+  actual Python producer output on all six targets. The dedicated normal-CI
+  signer job runs the otherwise-ignored
+  `pinned_cargo_packager_signatures_authenticate_python_produced_manifest`
+  using cargo-packager 0.11.8, a generated throwaway key and the private test
+  verifier seam; it proves the real signing mode without release secrets.
   Python `test_host_manifest.py`, `test_tunnel_bundle.py` and
   `test_recover_desktop_release.py` cover producer compatibility and release
   wiring/recovery. The remaining matrix is planned, not implemented evidence.
@@ -529,7 +535,7 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
 | Profiles | `save_recipe_is_local_only`; first create, later resume, post-reboot replacement toast, duplicate identity policy, second-client shortcut |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
-| Integrity | Implemented: authenticated `stage-package`, existing pinned official-CLI offline staging and shared private atomic no-replace publication with interrupted-write/cache-corruption fixtures. Deferred: network acquisition, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
+| Integrity | Implemented: authenticated `stage-package`, pinned official-CLI offline staging, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, actual Python producer interop and pinned signer's throwaway-key mode check in normal CI. Deferred: network acquisition, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 
