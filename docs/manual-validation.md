@@ -70,7 +70,9 @@ assertions with the feature enabled; this does not replace native network eviden
 The experimental desktop **Profiles → Host/session recipes** panel has
 deterministic interaction coverage for network-free navigation, typed editing,
 import preview/inspection before save, content-free validation errors, fresh
-versus exact-target copies, export and confirmed deletion. Identified request
+versus exact-target copies, export and confirmed deletion (initial Cancel focus,
+Escape cancellation and changed-record refusal). All five GUI regressions use
+the existing experimental CI `dev_tunnel` selector. Identified request
 tests retain failed drafts and refuse stale results; the actual application
 save regression covers the identified handler with unavailable credential storage
 and no tunnel/browser start. No new snapshots or native screenshots are claimed.

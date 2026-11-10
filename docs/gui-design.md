@@ -1890,6 +1890,8 @@ generation targets, with add/edit, duplicate, confirmed delete, reviewed JSON
 import and explicit JSON export/copy. Arguments use a JSON string vector so
 quoting and empty arguments survive edits. Host/logical IDs cannot be retargeted
 by editing. Failed writes retain the draft; results are bound to its tab/request.
+Delete initially focuses Cancel, Escape cancels without a command, and changed
+or removed records require reopening the confirmation rather than stale deletion.
 Import review is metadata inspection only, never persisted execution approval.
 All rows say execution review is required; this slice neither records provenance
 nor claims any recipe has a verified host or approval. No Connect, Create,

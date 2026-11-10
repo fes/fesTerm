@@ -33,7 +33,10 @@ enum RecipePage {
         source: PublicRecipe,
         name: String,
     },
-    Delete(PublicRecipe),
+    Delete {
+        recipe: PublicRecipe,
+        focus_cancel: bool,
+    },
     Export(String),
 }
 
@@ -248,7 +251,7 @@ impl HostRecipesState {
                                             intent = Some(MetadataCommand::Export(recipe.id.clone()));
                                         }
                                         if ui.button("Delete recipe…").clicked() {
-                                            next = Some(RecipePage::Delete(recipe.clone()));
+                                            next = Some(RecipePage::Delete { recipe: recipe.clone(), focus_cancel: true });
                                         }
                                     });
                                 });
@@ -356,16 +359,29 @@ impl HostRecipesState {
                             }
                         });
                     }
-                    RecipePage::Delete(recipe) => {
+                    RecipePage::Delete { recipe, focus_cancel } => {
                         ui.heading("Delete local recipe?");
                         ui.strong(&recipe.name);
                         identity(ui, recipe);
                         ui.label("Only local recipe metadata is removed. No remote shell is ended and no host, account or trust is changed.");
+                        let current = configuration.host_recipes().get(&recipe.id) == Some(recipe);
+                        if !current {
+                            ui.label("Recipe changed or was removed. Cancel and reopen deletion to review current metadata.");
+                        }
+                        let cancelled = ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                        if cancelled {
+                            next = Some(RecipePage::List);
+                        }
                         ui.horizontal_wrapped(|ui| {
-                            if action_button(ui, ActionButtonRole::Secondary, "Cancel").clicked() {
+                            let cancel = action_button(ui, ActionButtonRole::Secondary, "Cancel");
+                            if *focus_cancel {
+                                cancel.request_focus();
+                                *focus_cancel = false;
+                            }
+                            if cancel.clicked() {
                                 next = Some(RecipePage::List);
                             }
-                            if action_button(ui, ActionButtonRole::DangerOutline, "Delete metadata").clicked() {
+                            if action_button_enabled(ui, current && !cancelled, ActionButtonRole::DangerOutline, "Delete metadata").clicked() {
                                 intent = Some(MetadataCommand::Delete(recipe.id.clone()));
                             }
                         });
@@ -536,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn host_recipe_profiles_navigation_is_metadata_only() {
+    fn dev_tunnel_host_recipe_profiles_navigation_is_metadata_only() {
         let configuration = festerm_config::Configuration::new(vec![Profile::dev_tunnel(
             "legacy",
             "legacy-public.json",
@@ -560,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn host_recipe_editor_routes_typed_save_and_retains_failed_draft() {
+    fn dev_tunnel_host_recipe_editor_routes_typed_save_and_retains_failed_draft() {
         let original = recipe();
         let mut draft = RecipeDraft::from_recipe(original.clone());
         draft.name = "Future recipe".into();
@@ -616,7 +632,7 @@ mod tests {
     }
 
     #[test]
-    fn host_recipe_import_requires_review_and_reports_content_free_errors() {
+    fn dev_tunnel_host_recipe_import_requires_review_and_reports_content_free_errors() {
         let recipe = recipe();
         let text = recipe.export().unwrap();
         let mut harness = harness(festerm_config::Configuration::empty());
@@ -665,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn host_recipe_duplicate_routes_fresh_or_deliberate_exact_identity() {
+    fn dev_tunnel_host_recipe_duplicate_routes_fresh_or_deliberate_exact_identity() {
         let mut source = recipe();
         let generation = GenerationId::new(73).unwrap();
         source.behavior = ConnectionBehavior::AttachOnly { generation };
@@ -706,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn host_recipe_export_and_confirmed_delete_route_without_ui_mutation() {
+    fn dev_tunnel_host_recipe_export_and_confirmed_delete_route_without_ui_mutation() {
         let recipe = recipe();
         let (configuration, _) = festerm_config::Configuration::empty()
             .with_host_recipe_command(MetadataCommand::Save(recipe.clone()))
@@ -740,10 +756,33 @@ mod tests {
         harness.get_by_label("Delete recipe…").click();
         harness.run_ok();
         assert!(harness.state().command.is_none());
+        assert!(harness.get_by_label("Cancel").is_focused());
+        harness.key_press(egui::Key::Escape);
+        harness.run_ok();
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("Edit metadata");
+        harness.get_by_label("Delete recipe…").click();
+        harness.run_ok();
+        assert!(harness.get_by_label("Cancel").is_focused());
         harness.get_by_label("Delete metadata").click();
         harness.run_ok();
         assert!(matches!(harness.state().command.as_ref(),
             Some(AppCommand::HostRecipeFromProfiles { command: MetadataCommand::Delete(id), .. }) if id == &recipe.id));
         assert_eq!(harness.state().configuration, configuration);
+        harness.state_mut().command = None;
+        install(
+            &harness,
+            RecipePage::Delete {
+                recipe: recipe.clone(),
+                focus_cancel: true,
+            },
+        );
+        harness.state_mut().configuration = festerm_config::Configuration::empty();
+        harness.run_ok();
+        assert!(harness
+            .get_by_label("Delete metadata")
+            .accesskit_node()
+            .is_disabled());
+        assert!(harness.state().command.is_none());
     }
 }

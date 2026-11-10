@@ -535,11 +535,11 @@ changes are introduced by the contract or client-local metadata foundations.
   These do not prove protected-state migration, a live-shell stop confirmation,
   network execution, actual shell creation
   or stage 6 end-to-end acceptance; the remaining matrix is still required.
-- **Desktop metadata UI evidence:** `host_recipe_profiles_navigation_is_metadata_only`,
-  `host_recipe_editor_routes_typed_save_and_retains_failed_draft`,
-  `host_recipe_import_requires_review_and_reports_content_free_errors`,
-  `host_recipe_duplicate_routes_fresh_or_deliberate_exact_identity` and
-  `host_recipe_export_and_confirmed_delete_route_without_ui_mutation`.
+- **Desktop metadata UI evidence:** `dev_tunnel_host_recipe_profiles_navigation_is_metadata_only`,
+  `dev_tunnel_host_recipe_editor_routes_typed_save_and_retains_failed_draft`,
+  `dev_tunnel_host_recipe_import_requires_review_and_reports_content_free_errors`,
+  `dev_tunnel_host_recipe_duplicate_routes_fresh_or_deliberate_exact_identity` and
+  `dev_tunnel_host_recipe_export_and_confirmed_delete_route_without_ui_mutation`.
   The existing desktop persistence regression now also exercises identified
   editor requests and stale-request refusal. Import inspection is not protected
   execution/trust approval. Live inventory/Connect/ensure, native accessibility
