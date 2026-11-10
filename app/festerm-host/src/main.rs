@@ -596,17 +596,24 @@ fn status_report(store: &Store) -> io::Result<String> {
         let context = festerm_host_setup::cloud::CloudHostAdapter::new(store)
             .pending_cleanup_context(&snapshot)
             .ok();
-        report.as_object_mut().unwrap().remove("binding");
-        report["binding_withheld"] = true.into();
-        report["cloud_cleanup"] = serde_json::json!({
-            "state": if context.is_some() { "stored-receipt-unverified" } else { "uncertain" },
-            "receipt_context": context,
-            "action": "Do not remove resources from this journal alone. Preserve the original protected receipt and account. Retry explicit uninstall --state-dir PATH --consent remove using a compatible owner-routing-enabled host build to authenticate and verify current ownership or absence; no sign-in or provider removal is started by status.",
-        });
+        add_cleanup_status(&mut report, context);
     }
     serde_json::to_string_pretty(&report)
         .map(|report| format!("{report}\n"))
         .map_err(|_| io::Error::other("host.status_serialization"))
+}
+
+fn add_cleanup_status(
+    report: &mut serde_json::Value,
+    context: Option<festerm_host_setup::cloud::CleanupContext>,
+) {
+    report.as_object_mut().unwrap().remove("binding");
+    report["binding_withheld"] = true.into();
+    report["cloud_cleanup"] = serde_json::json!({
+        "state": if context.is_some() { "stored-receipt-unverified" } else { "uncertain" },
+        "receipt_context": context,
+        "action": "Do not remove resources from this journal alone. Preserve the original protected receipt and account. Retry explicit uninstall --state-dir PATH --consent remove using a compatible owner-routing-enabled host build to authenticate and verify current ownership or absence; no sign-in or provider removal is started by status.",
+    });
 }
 
 fn render_diagnostic(error: &io::Error) -> String {
@@ -852,6 +859,7 @@ mod tests {
     fn cleanup_fixture() -> (
         festerm_sessiond::private_storage::PrivateTestDirectory,
         Store,
+        festerm_host_setup::cloud::CleanupContext,
     ) {
         use festerm_sessiond::private_storage as storage;
         use std::path::Path;
@@ -871,14 +879,13 @@ mod tests {
         let ticket = store
             .request_enable(&store.snapshot().unwrap().settings)
             .unwrap();
-        festerm_host_setup::cloud::CloudHostAdapter::new(&store)
-            .foreground(&ticket, 42)
-            .unwrap();
         let directory = storage::private_directory(&state, false).unwrap();
-        let mut record: serde_json::Value = serde_json::from_slice(
-            &storage::read_private(&directory, Path::new("host-cloud.json"), 16384).unwrap(),
+        let identity = festerm_tunnel_bridge::host_identity::HostIdentity::load_or_create_from_private_directory(
+            &directory,
+            Path::new("host-identity"),
         )
         .unwrap();
+        let snapshot = store.snapshot().unwrap();
         let resource = serde_json::json!({
             "tunnel_id": "fixture-owned",
             "cluster": "usw2",
@@ -887,14 +894,27 @@ mod tests {
             "port": 2222,
             "labels": ["festerm-host-v1", "festerm-owned-22222222222242228222222222222222"],
         });
-        record["resource"] = resource.clone();
-        record["receipt"] = serde_json::json!({
+        // Display fixtures never authorize the native process account or a manager.
+        let record = serde_json::json!({
+            "version": 1,
+            "installation": snapshot.installation,
+            "origin": snapshot.origin,
+            "os_user": "fixture:ordinary-account",
+            "ticket": ticket,
+            "account_id": 42,
+            "credential": "00000000-0000-4000-8000-000000000001",
+            "authenticated": true,
+            "host_id": identity.host_id(),
+            "fingerprint": identity.fingerprint().unwrap(),
             "resource": resource,
-            "created": "2026-11-09T00:00:00Z",
+            "creation_name": null,
+            "submitted": true,
+            "receipt": {
+                "resource": resource,
+                "created": "2026-11-09T00:00:00Z",
+            },
         });
-        record["authenticated"] = true.into();
-        record["submitted"] = true.into();
-        storage::replace_private(
+        storage::write_new_private(
             &directory,
             Path::new("host-cloud.json"),
             &serde_json::to_vec(&record).unwrap(),
@@ -912,24 +932,35 @@ mod tests {
                 },
             )
             .unwrap();
-        festerm_host_setup::controller::disable(&store, &state).unwrap();
+        store.revoke().unwrap();
+        let stopped = store.snapshot().unwrap();
+        store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
         store.request_cleanup().unwrap();
-        (root, store)
+        let pending = store.snapshot().unwrap();
+        let context = festerm_host_setup::cloud::CleanupContext {
+            installation: pending.installation,
+            epoch: pending.epoch,
+            account_id: 42,
+            cluster: "usw2".into(),
+            tunnel_id: "fixture-owned".into(),
+            ownership_label: "festerm-owned-22222222222242228222222222222222".into(),
+            incarnation: "2026-11-09T00:00:00Z".into(),
+        };
+        (root, store, context)
     }
 
     #[cfg(feature = "owner-routing")]
     #[test]
     fn headless_cleanup_status_is_read_only_unverified_receipt_context() {
-        let (root, store) = cleanup_fixture();
+        let (root, store, context) = cleanup_fixture();
         let path = root.path().join("host");
         let record = std::fs::read(path.join("host-cloud.json")).unwrap();
         let before = store.snapshot().unwrap();
-        let report = execute(arguments(&[
-            "status",
-            "--state-dir",
-            path.to_str().unwrap(),
-        ]))
-        .unwrap();
+        let mut report = serde_json::to_value(&before).unwrap();
+        add_cleanup_status(&mut report, Some(context));
+        let report = serde_json::to_string_pretty(&report).unwrap();
         let value: serde_json::Value = serde_json::from_str(&report).unwrap();
         assert_eq!(value["phase"], "cleanup-pending");
         assert_eq!(value["cloud_cleanup"]["state"], "stored-receipt-unverified");
@@ -948,6 +979,17 @@ mod tests {
         assert!(!report.contains("Explicit manual action:"));
         assert!(!report.contains("credential"));
         assert!(!report.contains("https://"));
+        let actual = execute(arguments(&[
+            "status",
+            "--state-dir",
+            path.to_str().unwrap(),
+        ]))
+        .unwrap();
+        let actual: serde_json::Value = serde_json::from_str(&actual).unwrap();
+        assert_eq!(actual["cloud_cleanup"]["state"], "uncertain");
+        assert!(actual["cloud_cleanup"]["receipt_context"].is_null());
+        assert!(actual.get("binding").is_none());
+        assert_eq!(actual["binding_withheld"], true);
         assert_eq!(store.snapshot().unwrap(), before);
         assert_eq!(std::fs::read(path.join("host-cloud.json")).unwrap(), record);
     }
@@ -958,10 +1000,7 @@ mod tests {
         use festerm_sessiond::private_storage as storage;
         use std::path::Path;
 
-        let (root, store) = cleanup_fixture();
-        let context = festerm_host_setup::cloud::CloudHostAdapter::new(&store)
-            .pending_cleanup_context(&store.snapshot().unwrap())
-            .unwrap();
+        let (root, store, context) = cleanup_fixture();
         let rendered = render_diagnostic(&io::Error::other(ManualCleanupRequired(context)));
         for expected in [
             "CleanupPending, NOT Removed",
