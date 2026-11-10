@@ -33,7 +33,7 @@ class SecurityValidationPolicyTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertRegex(source, rf"#\[test\]\s*fn {name}\(")
 
-    def test_ci_requires_the_privileged_suite_without_a_conditional_or_waiver(self):
+    def test_ci_requires_the_privileged_suite_except_read_only_pki_dispatch(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         job = re.search(
             r"(?ms)^  windows-security-privileged:\n(.*?)(?=^  [\w-]+:|\Z)",
@@ -46,7 +46,12 @@ class SecurityValidationPolicyTests(unittest.TestCase):
             "run: cargo test --locked -p festerm-windows-security --lib -- --ignored --nocapture",
             body,
         )
-        self.assertNotRegex(body, r"(?m)^\s*(if|continue-on-error):")
+        self.assertEqual(
+            re.findall(r"(?m)^\s*if: (.+)$", body),
+            ["github.event_name != 'workflow_dispatch' || !inputs.windows_native_pki"],
+            "only the explicit read-only PKI dispatch may omit privileged work",
+        )
+        self.assertNotRegex(body, r"(?m)^\s*continue-on-error:")
 
 
 if __name__ == "__main__":

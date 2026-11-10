@@ -1062,12 +1062,22 @@ blocked and a pending result is not successful uninstall. See the
   historical exit PID, journaled interrupted definition retirement and
   exact-unit failed-state reset, bounded asynchronous start reconciliation,
   immutable pre-submission task reservation recovery and rejection of foreign
-  task ACL/configuration. Windows running-task stop/registration/start remain
-  unavailable pending authenticated graceful stop; macOS enforces the pinned
-  release Developer ID team/runtime and Windows promotion refuses pending
-  authoritative native publisher policy. Generic
+  task ACL/configuration. Windows registration/start require the compiled runtime
+  controller; stop reconciles protected lifecycle revocation, exact run-lease
+  release and owned native task quiescence, with timeout pending and no
+  destructive Scheduler stop. macOS enforces the pinned release Developer ID
+  team/runtime; Windows promotion now implements the owner-approved Artifact
+  Signing subject/profile/Microsoft chain, trusted RFC3161 and online-enabled
+  fail-closed revocation (see the canonical native/release policy). Generic
   native signature validity is not publisher acceptance. These refusal gates
   and native-independent fixtures do not qualify real native services.
+  The existing ignored Windows native publisher test also has a separately
+  authorized, default-false hosted PKI-only dispatch with fixed public v0.16.0
+  legacy fixture acquisition and retained command/exit/log-hash provenance.
+  Its binary is never executed; integrity hashes are not updater authentication.
+  Source contracts do not establish native evidence, and a later hosted pass
+  would not qualify ordinary-user VM, tasks, daemons, GUI or whole-bundle release
+  acceptance. Genuine policy mismatches remain failures without waivers.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic

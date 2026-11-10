@@ -48,6 +48,48 @@ pub(super) fn retain_operation() -> Option<Arc<Lease>> {
 pub const OUTPUT_LIMIT: usize = 64 * 1024;
 const DEADLINE: Duration = Duration::from_secs(15);
 
+#[cfg(windows)]
+pub(super) fn signature_publisher(file: &std::fs::File, path: &std::path::Path) -> io::Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let until = UNTIL.with(|slot| slot.get().unwrap_or_else(|| Instant::now() + DEADLINE));
+    remaining(until)?;
+    static BUSY: AtomicBool = AtomicBool::new(false);
+    if BUSY
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "host.publisher_verification_busy",
+        ));
+    }
+    struct Slot;
+    impl Drop for Slot {
+        fn drop(&mut self) {
+            BUSY.store(false, Ordering::Release);
+        }
+    }
+    let slot = Slot;
+    let file = file.try_clone()?;
+    let path = path.to_owned();
+    let ownership = retain_operation();
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("host-publisher".into())
+        .spawn(move || {
+            let _ownership = ownership;
+            let result = remaining(until)
+                .and_then(|_| festerm_windows_security::host_publisher::verify(&file, &path));
+            // The next bundle helper may be verified as soon as it receives
+            // this result; all native state has already closed inside verify.
+            drop(slot);
+            let _ = send.send(result);
+        })?;
+    receive
+        .recv_timeout(remaining(until)?)
+        .map_err(|_| super::refused("host.service_native_timeout"))?
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskAction {
     Prepare(String),
@@ -325,6 +367,15 @@ mod tests {
             result.err().unwrap().to_string(),
             "host.service_native_timeout"
         );
+        #[cfg(windows)]
+        {
+            let path = std::env::current_exe().unwrap();
+            let file = std::fs::File::open(&path).unwrap();
+            assert_eq!(
+                signature_publisher(&file, &path).unwrap_err().to_string(),
+                "host.service_native_timeout"
+            );
+        }
         drop(guard);
         assert!(UNTIL.with(|slot| slot.get()).is_none());
     }

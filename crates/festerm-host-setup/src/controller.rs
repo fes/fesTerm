@@ -27,6 +27,31 @@ use tokio_util::sync::CancellationToken;
 const LOCK: &str = "host-runtime.lock";
 const RECORD: &str = "host-runtime.json";
 
+/// Protected revocation is the stop request; runtime-lease release and exact
+/// native task quiescence together are completion, never a PID/name or history.
+pub(crate) fn revoked_runtime_released(store: &Store, expected: &Snapshot) -> io::Result<bool> {
+    store.with_locked(|directory, current| {
+        if current != expected || current.phase != Phase::StopRequested {
+            return Err(refused("host.runtime_consent_changed"));
+        }
+        read_run_record(directory, current)?;
+        match storage::open_private_file(directory, Path::new(LOCK), false) {
+            Ok(file) => match Lease::exclusive(file) {
+                Ok(_lease) => Ok(true),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
+                Err(error) => Err(error),
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                match storage::open_private_file(directory, Path::new(RECORD), false) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+                    _ => Err(refused("host.runtime_lock_missing_reconciliation_required")),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    })
+}
+
 /// Separate host-local approval after the client reviewed its exact binding.
 pub struct OwnerConsent {
     pub owner_public_key: [u8; 32],
@@ -482,25 +507,29 @@ pub struct RunRecord {
 }
 
 pub fn last_run(store: &Store) -> io::Result<Option<RunRecord>> {
-    store.with_locked(|directory, snapshot| {
-        let bytes = match storage::read_private(directory, Path::new(RECORD), 8192) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let record: RunRecord =
-            serde_json::from_slice(&bytes).map_err(|_| refused("host.invalid_runtime_journal"))?;
-        if record.version != 1
-            || record.installation != snapshot.installation
-            || uuid::Uuid::parse_str(&record.run_id).is_err()
-            || record.epoch > snapshot.epoch
-            || (record.state == RunState::Failed) != record.failure.is_some()
-        {
-            return Err(refused("host.invalid_runtime_journal"));
-        }
+    store.with_locked(read_run_record)
+}
 
-        Ok(Some(record))
-    })
+fn read_run_record(
+    directory: &std::fs::File,
+    snapshot: &Snapshot,
+) -> io::Result<Option<RunRecord>> {
+    let bytes = match storage::read_private(directory, Path::new(RECORD), 8192) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let record: RunRecord =
+        serde_json::from_slice(&bytes).map_err(|_| refused("host.invalid_runtime_journal"))?;
+    if record.version != 1
+        || record.installation != snapshot.installation
+        || uuid::Uuid::parse_str(&record.run_id).is_err()
+        || record.epoch > snapshot.epoch
+        || (record.state == RunState::Failed) != record.failure.is_some()
+    {
+        return Err(refused("host.invalid_runtime_journal"));
+    }
+    Ok(Some(record))
 }
 
 /// Use the independently delivered new release's updater after explicit disable.
@@ -879,6 +908,69 @@ mod tests {
         assert_eq!(last_run(&store).unwrap().unwrap(), record);
         drop(lease);
         assert!(reserve(&store).is_err());
+    }
+
+    #[test]
+    fn host_runtime_revocation_proof_requires_current_snapshot_released_lease_and_valid_history() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (lease, provisioned, record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        assert!(revoked_runtime_released(&store, &provisioned).is_err());
+        store.revoke().unwrap();
+        let current = store.snapshot().unwrap();
+        assert!(!revoked_runtime_released(&store, &current).unwrap());
+        assert!(reserve(&store).is_err());
+        drop(lease);
+        assert!(revoked_runtime_released(&store, &current).unwrap());
+        let mut foreign = current.clone();
+        foreign.installation = uuid::Uuid::new_v4().to_string();
+        assert!(revoked_runtime_released(&store, &foreign).is_err());
+        std::fs::remove_file(root.path().join("host").join(LOCK)).unwrap();
+        assert_eq!(
+            revoked_runtime_released(&store, &current)
+                .unwrap_err()
+                .to_string(),
+            "host.runtime_lock_missing_reconciliation_required"
+        );
+        std::fs::write(root.path().join("host").join(RECORD), b"corrupt").unwrap();
+        assert!(revoked_runtime_released(&store, &current).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_revocation_waits_for_serving_shutdown_and_run_lease_release() {
+        let (_root, store) = fixture();
+        provision(&store);
+        let (lease, expected, record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        let shutdown = CancellationToken::new();
+        let (finish, finished) = tokio::sync::oneshot::channel::<()>();
+        let serving = {
+            let shutdown = shutdown.clone();
+            async move {
+                shutdown.cancelled().await;
+                let _ = finished.await;
+            }
+        };
+        let watched = supervise(
+            &store,
+            &expected,
+            CancellationToken::new(),
+            shutdown.clone(),
+            serving,
+        );
+        tokio::pin!(watched);
+        store.revoke().unwrap();
+        let current = store.snapshot().unwrap();
+        assert!(tokio::time::timeout(Duration::from_secs(2), &mut watched)
+            .await
+            .is_err());
+        assert!(shutdown.is_cancelled());
+        assert!(!revoked_runtime_released(&store, &current).unwrap());
+        finish.send(()).unwrap();
+        assert!(watched.await.is_err());
+        drop(lease);
+        assert!(revoked_runtime_released(&store, &current).unwrap());
     }
 
     #[test]

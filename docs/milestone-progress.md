@@ -1041,6 +1041,127 @@ Linux native service, persistent-logout survival, Ready or ADR acceptance.
 The host Cargo slot is released at this fixed checkpoint. The owned-worktree
 compiler/query/sessiond/PTY-helper CWD process check found zero matches.
 No push, PR creation or integration of a moving dependency was performed.
+## Selecting one Python application before launching public PKI validation
+
+The separately authorized `2ff42e25` hosted Windows run
+[42876689716, attempt 1](https://github.com/fes/fesTerm/actions/runs/42876689716)
+passed **22 source contracts**, then failed before acquisition or native PKI:
+PowerShell returned both hosted CPython and WindowsApps applications, and the
+launcher treated their `Source` array as one executable. The retained raw log,
+artifact and hashes show no `report.json` and zero native PKI tests. That grant
+is consumed; these source passes are not PKI acceptance.
+
+The narrow source-only correction selects the first PATH-priority application
+before reading `Source`. It adds no fallback, policy change or new authority.
+The existing unittest/preflight harness now loads the actual launcher functions
+through the repository's PowerShell AST pattern, mocks only two ordered
+application discoveries and executes owned harmless fixtures. It requires the
+first alone to run and preserves its real exit 0/37 without trying the second.
+PowerShell is unavailable locally: both execution regressions explicitly skip;
+on Windows missing PowerShell fails the existing preflight. The portable source
+contract retains controlled RED against byte-exact `2ff` and passes after the
+fix. Local validation records **23 publisher contracts passed / 2 PowerShell
+skips**, three security-routing contracts, Python syntax, base-`2ff` traceability
+and diff checks. No download, dispatch, native verification or Rust rebuild is
+part of this change. Three exact-source gates and a separate new run grant
+remain required.
+
+## Rejecting Windows rooted evidence paths before checkout binding
+
+Parent functional review of frozen `408bec4d` found that Windows root-relative
+`/outside` and `\outside` have neither an absolute-path result nor a drive, yet
+joining them to the checkout escapes to the drive root. The workflow's fixed
+default was safe, but the advertised CLI contract was not. The guard now
+rejects every nonempty path anchor before joining ROOT or accessing the
+filesystem, covering POSIX absolute and Windows rooted/drive-relative/UNC forms.
+
+A portable `PureWindowsPath` regression places a failing trap at ROOT join.
+Against the byte-exact `408` guard it produces a retained **controlled RED**
+(exit 1, two rooted-path subtest failures), not a misleading POSIX
+missing-parent refusal. The corrected guard passes all **22 offline publisher
+contracts**, including positive/new-directory, existing-output preservation and
+link refusal. Python syntax, base-408 traceability and diff checks pass.
+Raw red/green logs, source and log hashes remain in `.pki-path-validation/`.
+No Rust rebuild, workflow/download/native execution or policy change is included.
+The prior source reviews do not lift the functional execution hold: the child
+requires fresh exact-source review and a separate run authorization.
+
+## Preparing a narrowly authorized Windows public PKI evidence route
+
+The existing ignored Windows publisher test had no bounded hosted acquisition/
+operator route; Ubuntu's pinned cargo-packager interoperability job is synthetic
+manifest signing, not WinTrust. Exact all-three-source-gated `9e5c7902` now has
+a source-only child preparing a default-false `windows_native_pki` input in the
+existing CI workflow. On a future separately authorized dispatch it selects
+only one 20-minute, read-only `windows-latest` PKI job, not primary CI,
+privileged security tests, sampler or GUI work. PR/push checks are unchanged.
+The [operator contract](host-release-artifacts.md#opt-in-windows-public-pki-fixture)
+requires three exact-source gates and a separate owner grant before one run.
+This preparation neither dispatches CI nor grants that run.
+
+A standard-library repository script acquires only the fixed public v0.16.0
+legacy x64 ZIP/member and approved integrity hashes. It bounds redirects,
+download/decompression time/bytes, ZIP entry types/names/counts and fresh
+checkout-relative publication; stale evidence is refused, not overwritten.
+Only `festerm-sessiond.exe` is extracted as data, **never executed**. The script
+runs the unchanged existing facade-only signed-fixture/unsigned-test-binary
+test under the compiled native policy, with online fail-closed revocation.
+It preserves actual command exits/timeouts, source/tool versions, runner/run
+metadata and SHA256 log hashes; zero selected tests or policy mismatch cannot
+pass. Both the single-suite and full optional PowerShell aggregate reuse it;
+the single-suite path returns before any unrelated native/GUI suite.
+Public research hashes are integrity only, not cohosted-checksum authentication.
+The compiled publisher policy/native OS trust must independently pass; no policy
+or production capability changes are included.
+
+Fresh local macOS validation is **21 offline Python contracts**, **four pure
+publisher policy tests**, affected facade all-target strict Clippy, workspace
+formatting and traceability. Directly affected existing sampler/Markdown
+contracts have **six passes, 27 Windows/PowerShell skips**. CI YAML parses using
+the existing system Psych AST parser; five additional existing privilege/helper/
+CI source contracts pass (**32 passes, 27 skips** in the combined Python run).
+Python source compiles. PowerShell/native
+Windows runtime execution is unavailable locally and is not claimed. No package,
+SDK or framework was installed, no known Windows/ring cross-check was retried,
+and the private target uses exact Rust/Cargo 1.99.1, jobs=1, debug=0,
+incremental=0. Logs are retained in `.pki-validation/`.
+
+**Zero public-fixture downloads, workflow dispatches or genuine Windows PKI
+executions** occurred for this increment. A later authorized hosted pass would
+qualify only the legacy fixture's PKI and unsigned rejection under that runner,
+not ordinary-user VM proof, InteractiveToken/ACL/task stop, daemon/GUI behavior,
+new-host whole-bundle authentication, updater provenance or release acceptance.
+Genuine fixture/policy incompatibility must remain a failure without a waiver.
+
+## Windows native admission without destructive stop
+
+Windows registration/start require the compiled runtime controller.
+Protected lifecycle revocation cancels the existing host watcher; stop confirms
+exclusive run-lease release and exact native task quiescence, never Scheduler
+Stop or process-tree termination. Timeout remains pending. The portable
+supervision regression proves serving shutdown and run-lease release only,
+not independent daemon survival.
+
+Windows promotion implements the independently owner-approved Artifact Signing
+subject/profile and Microsoft chain, trusted RFC3161 and online-enabled
+fail-closed revocation. At `2d3a7894`, actual Rust/Cargo 1.99.1 on macOS passed
+only these official x64 MSVC **security-facade** checks:
+
+```sh
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets -- -D warnings
+```
+
+These compile the facade library/tests, not the Windows `festerm-host-setup`
+integration in `services.rs`, `services/native.rs`, `trusted.rs` or the combined
+headless host. Earlier broader check and Clippy attempts at core `9b1d2a68`
+both exited 101 in `ring` because Windows SDK `assert.h` was missing; they were
+not retried at `2d3a7894`. That Windows integration remains locally uncompiled.
+Pure policy/runtime fixtures are not real Windows PKI/COM/task/runtime/daemon
+qualification; there were zero native Windows executions. Required CI and
+ordinary-user signed-release evidence remain open.
+
+
 ## Aligning the frozen core's Windows cfg boundaries
 
 Fresh Windows primary CI for `b5e3bead` found two strict-build failures:
@@ -1714,19 +1835,16 @@ from current `MainPID`, journals definition retirement for crash-safe scoped
 failed-unit cleanup, and bounds transition reconciliation under one native
 budget. Task registration reserves immutable marker/configuration/ACL evidence
 before submission and can recover matching late observations without restoring
-consent. Windows registration/start and running-task stop explicitly refuse
-until an authenticated graceful-stop path preserves independent daemons.
+consent.
+
 macOS admission now pins the actual release environment's Developer ID team
 and requires Apple's chain and hardened runtime, rather than learning trust
-from an artifact or arbitrary app. Windows promotion refuses pending its
-authoritative publisher/certificate and revocation policy; any trusted signer
-is not that policy.
+from an artifact or arbitrary app.
 
 Cargo emits UTF-8 metadata independently of the Windows console code page.
 The host notice check now decodes that transport explicitly as UTF-8. A portable
 subprocess regression preserves non-ASCII dependency metadata while forcing a
 CP1252 default decoder; no lossy decoding or production locale override is used.
-
 
 ## Capturing issuance before remote shell creation
 

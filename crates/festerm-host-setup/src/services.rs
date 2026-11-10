@@ -545,7 +545,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     /// Registers the exact definition. Linux UserSignIn also activates the
     /// guarded launcher; Manual registration never starts a process.
     pub fn install(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
-        if self.context.platform == Platform::Windows {
+        if self.context.platform == Platform::Windows
+            && !cfg!(all(feature = "cloud", feature = "host-runtime"))
+        {
             return Err(refused(
                 "host.service_windows_authenticated_graceful_stop_unavailable",
             ));
@@ -708,7 +710,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         epoch: u64,
         credentials: impl Fn() -> io::Result<()>,
     ) -> io::Result<Observation> {
-        if self.context.platform == Platform::Windows {
+        if self.context.platform == Platform::Windows
+            && !cfg!(all(feature = "cloud", feature = "host-runtime"))
+        {
             return Err(refused(
                 "host.service_windows_authenticated_graceful_stop_unavailable",
             ));
@@ -752,7 +756,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                         &format!("gui/{}/{}", record.user, record.resource),
                     ])?;
                 }
-                Platform::Windows => unreachable!(),
+                Platform::Windows => {
+                    self.task(&record, TaskAction::Start)?;
+                }
             }
         }
         self.fence(epoch, Phase::Provisioned)?;
@@ -785,6 +791,14 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         let Some(record) = record else {
             return self.unregistered_observation(&snapshot, &_lease);
         };
+        #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+        if self.context.platform == Platform::Windows {
+            return self.wait_windows_revocation(
+                &snapshot,
+                &record,
+                std::time::Duration::from_secs(10),
+            );
+        }
         let state = self.observe(&record)?;
         if matches!(state, ProcessState::Running | ProcessState::Transitioning) {
             self.fence(epoch, Phase::StopRequested)?;
@@ -810,6 +824,37 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             return Err(refused("host.service_stop_not_observed"));
         }
         Ok(observation(&snapshot, process))
+    }
+
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    fn wait_windows_revocation(
+        &self,
+        snapshot: &Snapshot,
+        record: &Registration,
+        wait: std::time::Duration,
+    ) -> io::Result<Observation> {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            self.fence(snapshot.epoch, Phase::StopRequested)?;
+            let released = crate::controller::revoked_runtime_released(self.store, snapshot)?;
+            let process = self.observe(record)?;
+            self.fence(snapshot.epoch, Phase::StopRequested)?;
+            if released
+                && matches!(
+                    process,
+                    ProcessState::Stopped | ProcessState::Failed | ProcessState::Absent
+                )
+            {
+                return Ok(observation(snapshot, process));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "host.runtime_stop_pending",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
     }
 
     /// Local service cleanup only. Does not remove cloud resources, identity,
