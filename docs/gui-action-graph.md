@@ -1680,3 +1680,9 @@ ownership observation from effect authority: foreign/missing owners stay Denied,
 matching-owner journal/start Busy and unavailable-native-registry Unknown cannot
 establish absence. Controlled refusals preserve exact PID/generation/issued state;
 successful retirement still fences every captured old scope.
+HOST-02/03 native routing fixtures distinguish held-lease precommit Busy from
+durable exact-generation stop intent before reply publication. A real old-writer
+I/O barrier and an unadopted takeover reservation establish the competing
+attachment's Busy state; its one refusal preserves the entire lease/journal.
+Only subsequent adoption may advance the exact writer epoch once, retaining
+native PID/generation/grant and all stale/no-input-replay assertions.

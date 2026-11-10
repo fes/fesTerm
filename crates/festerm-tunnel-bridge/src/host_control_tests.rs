@@ -863,6 +863,14 @@ pub(crate) mod native_routes {
             SessionControl::with_helper(&self.root, &self.helper).unwrap()
         }
 
+        pub(crate) fn checkpoint(&self, name: &str, limit: usize) -> serde_json::Value {
+            let directory = private_storage::private_directory(&self.root, false).unwrap();
+            let bytes =
+                private_storage::read_private(&directory, std::path::Path::new(name), limit)
+                    .unwrap();
+            serde_json::from_slice(&bytes).unwrap()
+        }
+
         fn daemons_stopped(&self) -> bool {
             let path = self.root.join("lifecycle");
             let directory = match private_storage::private_directory(&path, false) {
@@ -1022,8 +1030,17 @@ pub(crate) mod native_routes {
     #[ignore = "requires explicitly built owned native helper and fixture child"]
     async fn native_framed_ensure_create_inventory_and_exact_end_use_real_daemons() {
         let fixture = NativeFixture::new(true);
-        let (backend, source) = fixture.backend();
-        let (mut client, server) = fixture.connect(backend, source, &Budgets::default()).await;
+        let (native, source) = fixture.backend();
+        let backend = Arc::new(LostReply {
+            native,
+            first: AtomicBool::new(false),
+            committed: tokio::sync::Notify::new(),
+            release: Condvar::new(),
+            paused: Mutex::new(false),
+        });
+        let (mut client, server) = fixture
+            .connect(backend.clone(), source, &Budgets::default())
+            .await;
         let cancel = CancellationToken::new();
         let mut targets = Vec::new();
         for create_only in [false, true] {
@@ -1110,24 +1127,75 @@ pub(crate) mod native_routes {
                 reason: Refusal::Stale
             }
         );
+        let directory = private_storage::private_directory(&fixture.root, false).unwrap();
         for target in targets {
+            let operation = OperationId::new();
+            let body = Request::ExplicitEnd {
+                target: target.clone(),
+            };
+            let held_lease = private_storage::open_private_file(
+                &directory,
+                std::path::Path::new(&format!("host-daemon-{}.lock", target.generation.get())),
+                false,
+            )
+            .unwrap();
+            fs2::FileExt::lock_exclusive(&held_lease).unwrap();
+            let before = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
+            let lease_name = format!("host-daemon-{}.json", target.generation.get());
+            let lease_before = fixture.checkpoint(&lease_name, 4096);
             assert_eq!(
                 client
-                    .request(
-                        OperationId::new(),
-                        Request::ExplicitEnd {
-                            target: target.clone()
-                        },
-                        &cancel
-                    )
+                    .request(operation.clone(), body.clone(), &cancel)
                     .await
                     .unwrap()
                     .body,
                 Response::Refused {
-                    reason: Refusal::OutcomeUncertain
+                    reason: Refusal::Busy
                 }
             );
+            assert_eq!(
+                fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
+                before
+            );
+            assert_eq!(fixture.checkpoint(&lease_name, 4096), lease_before);
+            drop(held_lease);
+            *backend.paused.lock().unwrap() = true;
+            backend.first.store(true, Ordering::Release);
             let deadline = Instant::now() + Duration::from_secs(8);
+            loop {
+                let request = client.request(operation.clone(), body.clone(), &cancel);
+                tokio::pin!(request);
+                tokio::select! {
+                    response = &mut request => {
+                        let response = response.unwrap();
+                        assert_eq!(response.body, Response::Refused { reason: Refusal::Busy });
+                        assert!(Instant::now() < deadline, "{response:?}");
+                        tokio::task::yield_now().await;
+                    }
+                    _ = backend.committed.notified() => {
+                        let committed = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
+                        let before_record = &before["sessions"][target.logical.as_str()];
+                        let committed_record = &committed["sessions"][target.logical.as_str()];
+                        assert_eq!(committed_record["phase"], "Ending");
+                        assert_eq!(committed_record["generation"], before_record["generation"]);
+                        assert_eq!(committed_record["identity"], before_record["identity"]);
+                        assert_eq!(committed_record["epoch"].as_u64().unwrap(), before_record["epoch"].as_u64().unwrap() + 1);
+                        assert_eq!(committed["operations"], before["operations"]);
+                        assert_eq!(committed["issuance_epoch"], before["issuance_epoch"]);
+                        let stopped = fixture.checkpoint(&lease_name, 4096);
+                        assert_eq!(stopped["stopped"], true);
+                        assert_eq!(stopped["native_pid"], lease_before["native_pid"]);
+                        assert_eq!(stopped["generation"], lease_before["generation"]);
+                        assert_eq!(stopped["writer_epoch"], lease_before["writer_epoch"]);
+                        *backend.paused.lock().unwrap() = false;
+                        backend.release.notify_all();
+                        let response = request.await.unwrap();
+                        assert_eq!(response.operation, operation);
+                        assert_eq!(response.body, Response::Refused { reason: Refusal::OutcomeUncertain });
+                        break;
+                    }
+                }
+            }
             loop {
                 let result = client
                     .request(
@@ -1217,10 +1285,12 @@ pub(crate) mod native_routes {
             admission: &OperationAdmission,
         ) -> Result<Response, Refusal> {
             let result = self.native.execute(request, admission);
-            if matches!(result, Ok(Response::Ensured { .. }))
-                && matches!(request.body, Request::Ensure { .. })
-                && self.first.swap(false, Ordering::AcqRel)
-            {
+            let committed = matches!(
+                (&request.body, &result),
+                (Request::Ensure { .. }, Ok(Response::Ensured { .. }))
+                    | (Request::ExplicitEnd { .. }, Err(Refusal::OutcomeUncertain))
+            );
+            if committed && self.first.swap(false, Ordering::AcqRel) {
                 self.committed.notify_one();
                 let pause = self.paused.lock().unwrap();
                 let _pause = self

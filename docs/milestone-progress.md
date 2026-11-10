@@ -1,5 +1,80 @@
 # Milestone Progress Narrative
 
+## Establishing native refusal state before asserting its exact outcome
+
+The normal exact-core/session merge `239db48c` remains intact. Frozen `9b1d2a68`
+primary run `42861153896` then supplied concrete native failures: Linux job
+`129987309001` passed 13/failed 1 in 160.30 seconds; macOS job `129987309476`
+passed 12/failed 2 in 164.17 seconds. Both reported OutcomeUncertain at the
+takeover fixture's expected-Busy assertion and a secondary cleanup Storage
+diagnostic. macOS additionally reported actual Busy where the exact-end fixture
+expected OutcomeUncertain. Original `adr84-core9b-{linux,macos}-primary-failed.log`
+bytes/hashes are preserved; no required CI rerun is substituted for them.
+
+The fixtures confused precommit contention with a post-reservation/stop outcome.
+The terminal test used its positive-attachment eight-second Busy retry helper
+for an **intentional refusal**, repeatedly making occupied native attempts.
+After a protected reservation, a failed cleanup/admission publication must stay
+OutcomeUncertain, never fabricated Busy or Attached success. The original CI
+did not identify which post-reservation guard failed. The end test likewise
+assumed its first nonblocking request necessarily committed stop intent. Holding
+the exact generation lease against unchanged production deterministically
+reproduced its old assertion: **actual Busy versus expected OutcomeUncertain**,
+zero passes/one failure. That RED remains `native-explicit-end-held-lease-red.log`.
+It establishes a real precommit case, not an invented identity for the CI lock.
+
+The correction is confined to the existing native test fixtures:
+
+- The exact-end test first holds the lease and requires Busy with the complete
+  lease/journal unchanged. It retains the **same operation and exact target**
+  through subsequent precommit Busy. The existing lost-publication barrier
+  pauses only after actual durable stop intent; before releasing its reply,
+  assertions require Ending, exactly one grant-revision advance, unchanged
+  PID/generation/writer epoch/issued ledger and a sealed stopped lease. Only
+  then is OutcomeUncertain required. The original eight-second bound is shared
+  with positive absence reconciliation, not increased; no stop is replayed
+  after its observed commit.
+- The takeover test first proves real old-writer I/O, then obtains the actual
+  unadopted takeover snapshot. That protected pending ticket is the deterministic
+  admission barrier. One original non-takeover request must return Busy without
+  changing any lease/journal field; it is not retried until some other refusal
+  appears. Old-writer I/O still works before adoption. Only adoption advances
+  the writer epoch once to that pending ticket, with unchanged native
+  PID/generation/grant. Stale-generation and old-input no-replay assertions stay.
+
+No production native transport, policy, authority, cleanup, timeout or admission
+code changes. No arbitrary Busy/Unknown/OutcomeUncertain success alternative,
+new sleep, deadline increase or ignore is added. Both focused real-daemon cases
+passed together before the final aggregate gate; the takeover's obsolete-owner
+Stale cleanup diagnostic remains visible rather than suppressed.
+
+Using the same exclusively owned session target, jobs1/debug0/incremental0 and
+actual Rust/Cargo 1.99.1 plus Clippy 0.1.99, qualification executes:
+
+```sh
+cargo build --locked -p festerm-sessiond -p festerm-pty-test-child --bins
+cargo clippy --locked -p festerm-tunnel-bridge --features host-routing --all-targets -- -D warnings
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib -- host_control::tests host_terminal::tests --test-threads=2
+FESTERM_HOST_TEST_HELPER="$CARGO_TARGET_DIR/debug/festerm-sessiond" cargo test --locked -p festerm-tunnel-bridge --features host-routing native_ --lib -- --ignored --test-threads=1
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9
+git diff --check
+```
+
+Final corrected-source results are **16 portable passes/nine existing native
+ignores** and **all 14 actual native routes passed, zero failed/ignored,
+166.28 seconds**, from one complete aggregate execution. The two focused
+native passes are a subset, not extra aggregate cases. Strict affected
+all-target Clippy, format, base-`9b` traceability (311 edges/zero broken) and
+diff checks pass. Logs, command/exit receipts, source provenance and immutable
+first-failure hashes remain under `target/adr84-core-fanin-evidence/`.
+Existing vendor/stripping warnings are retained. The earlier 30-case fan-in
+qualification stays attributed to `239db48c`. No frozen source is rewritten,
+no moving sibling source is integrated, and no VM/native-manager/cloud/vault
+operation, Windows/Linux rerun or platform/product acceptance is claimed.
+The retirement CI error remains separately UNKNOWN; its controlled Busy
+counterexample is not relabeled by these native failures.
+
 ## Normally integrating the exact retirement correction into frozen core
 
 The separate `work/adr0084-core-session-fanin-nov10` worktree starts at exact

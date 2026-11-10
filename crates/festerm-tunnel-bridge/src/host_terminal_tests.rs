@@ -379,40 +379,19 @@ mod native_routes {
         Result<PendingTerminal<tokio::io::DuplexStream>, Error>,
         tokio::task::JoinHandle<Result<(), Error>>,
     ) {
-        let operation = OperationId::new();
+        let request = Envelope::new(
+            fixture.policy.host.host.clone(),
+            OperationId::new(),
+            Request::Attach {
+                target,
+                attachment,
+                takeover,
+            },
+        );
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
-            let (owner, guard, _) = verified(&fixture.policy);
-            let (stream, peer) = duplex(4096);
-            let server = tokio::spawn(native::serve_terminal(
-                peer,
-                ConnectionPermit::reserve(budgets).unwrap(),
-                owner,
-                guard,
-                Arc::new(native::NativeTerminal::new(
-                    fixture.control(),
-                    source.clone(),
-                )),
-                scheduler.clone(),
-                CancellationToken::new(),
-            ));
-            let binding = Binding::new(
-                fixture.policy.host.host.clone(),
-                "owned-account".into(),
-                "owned-endpoint".into(),
-            )
-            .unwrap();
-            let pending = establish(
-                stream,
-                permit(),
-                binding,
-                operation.clone(),
-                target.clone(),
-                attachment.clone(),
-                takeover,
-                &CancellationToken::new(),
-            )
-            .await;
+            let (pending, server) =
+                pending_once(fixture, source.clone(), &request, budgets, scheduler).await;
             if matches!(pending, Err(Error::Refused(Refusal::Busy))) && Instant::now() < deadline {
                 assert!(server.await.unwrap().is_err());
                 tokio::time::sleep(Duration::from_millis(25)).await;
@@ -420,6 +399,55 @@ mod native_routes {
                 return (pending, server);
             }
         }
+    }
+
+    async fn pending_once(
+        fixture: &NativeFixture,
+        source: Arc<Policy>,
+        request: &Envelope<Request>,
+        budgets: &Budgets,
+        scheduler: &OutputScheduler,
+    ) -> (
+        Result<PendingTerminal<tokio::io::DuplexStream>, Error>,
+        tokio::task::JoinHandle<Result<(), Error>>,
+    ) {
+        let Request::Attach {
+            target,
+            attachment,
+            takeover,
+        } = &request.body
+        else {
+            panic!("owned attachment request")
+        };
+        let (owner, guard, _) = verified(&fixture.policy);
+        let (stream, peer) = duplex(4096);
+        let server = tokio::spawn(native::serve_terminal(
+            peer,
+            ConnectionPermit::reserve(budgets).unwrap(),
+            owner,
+            guard,
+            Arc::new(native::NativeTerminal::new(fixture.control(), source)),
+            scheduler.clone(),
+            CancellationToken::new(),
+        ));
+        let binding = Binding::new(
+            fixture.policy.host.host.clone(),
+            "owned-account".into(),
+            "owned-endpoint".into(),
+        )
+        .unwrap();
+        let pending = establish(
+            stream,
+            permit(),
+            binding,
+            request.operation.clone(),
+            target.clone(),
+            attachment.clone(),
+            *takeover,
+            &CancellationToken::new(),
+        )
+        .await;
+        (pending, server)
     }
 
     async fn live(
@@ -600,6 +628,8 @@ mod native_routes {
         creation.recipe.args = vec![
             "emit:ready".into(),
             "read-line".into(),
+            "echo:active".into(),
+            "read-line".into(),
             "echo:before".into(),
             "read-line".into(),
             "echo:after".into(),
@@ -621,24 +651,51 @@ mod native_routes {
             &scheduler,
         )
         .await;
-        let (refused, refused_server) = pending(
+        old.input(b"old-active\n").unwrap();
+        until(&mut old, b"active:old-active").await;
+        let lease_name = format!("host-daemon-{}.json", target.generation.get());
+        let old_lease = fixture.checkpoint(&lease_name, 4096);
+        let (new, new_server) = pending(
             &fixture,
             source.clone(),
             target.clone(),
-            false,
+            true,
             &budgets,
             &scheduler,
         )
         .await;
+        let mut new = new.unwrap();
+        new.take_snapshot().unwrap();
+        let pending_lease = fixture.checkpoint(&lease_name, 4096);
+        assert_eq!(pending_lease["writer_epoch"], old_lease["writer_epoch"]);
+        assert_eq!(
+            pending_lease["last_attachment"],
+            old_lease["last_attachment"]
+        );
+        assert!(!pending_lease["pending"].is_null());
+        let before_refusal = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
+        let request = Envelope::new(
+            fixture.policy.host.host.clone(),
+            OperationId::new(),
+            Request::Attach {
+                target,
+                attachment: AttachmentId::new(),
+                takeover: false,
+            },
+        );
+        let (refused, refused_server) =
+            pending_once(&fixture, source, &request, &budgets, &scheduler).await;
         assert!(
             matches!(refused, Err(Error::Refused(Refusal::Busy))),
             "refusal: {:?}",
             refused.as_ref().err()
         );
         assert!(refused_server.await.unwrap().is_err());
-        let (new, new_server) = pending(&fixture, source, target, true, &budgets, &scheduler).await;
-        let mut new = new.unwrap();
-        new.take_snapshot().unwrap();
+        assert_eq!(fixture.checkpoint(&lease_name, 4096), pending_lease);
+        assert_eq!(
+            fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
+            before_refusal
+        );
         old.input(b"old-before\n").unwrap();
         until(&mut old, b"before:old-before").await;
         let mut new = new
@@ -647,6 +704,19 @@ mod native_routes {
             .unwrap()
             .spawn()
             .unwrap();
+        let committed_lease = fixture.checkpoint(&lease_name, 4096);
+        assert!(committed_lease["pending"].is_null());
+        assert_eq!(
+            committed_lease["writer_epoch"].as_u64().unwrap(),
+            old_lease["writer_epoch"].as_u64().unwrap() + 1
+        );
+        assert_eq!(
+            committed_lease["last_attachment"],
+            pending_lease["pending"]["ticket"]
+        );
+        assert_eq!(committed_lease["native_pid"], old_lease["native_pid"]);
+        assert_eq!(committed_lease["generation"], old_lease["generation"]);
+        assert_eq!(committed_lease["grant"], old_lease["grant"]);
         let _ = old.input(b"must-not-replay");
         new.input(b"new-after\n").unwrap();
         let output = until(&mut new, b"after:new-after").await;

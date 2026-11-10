@@ -3606,6 +3606,19 @@ Host-controlled Windows startup refuses denied breakaway instead of claiming
 persistence inside the bridge's job; both denial and successful independent
 whole-ConPTY-tree cleanup require native evidence.
 Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
+Exact frozen core `9b1d2a68` failed its explicit fourteen-route primary checks:
+Linux job `129987309001` passed 13/failed 1; macOS job `129987309476` passed
+12/failed 2. Original hashed logs remain retained. The takeover refusal was
+OutcomeUncertain, with a secondary cleanup Storage diagnostic; macOS also
+returned actual precommit Busy where its fixture assumed durable stop intent.
+Controlled lease/commit/pending-adoption barriers correct the fixture state
+assumptions without accepting arbitrary refusals or changing production policy.
+The corrected macOS source passes all fourteen actual routes, zero failed or
+ignored, in 166.28 seconds from one aggregate execution; portable controls pass
+16 with nine unchanged native ignores. Two focused native passes are a subset.
+The retirement CI error remains separately unknown, not labeled by these logs.
+Corrected owned Unix route evidence does not establish Windows, native-manager,
+installed service, cloud/vault or whole-ADR acceptance.
 HOST-04–06 setup/update/migration retain partial foundations described below;
 there is no new completed manual or usability scenario.
 Migration qualification must preserve protected state/account binding, retain

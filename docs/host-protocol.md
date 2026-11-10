@@ -391,8 +391,11 @@ at physical delivery and retire revoked connections/attachments.
   beside writer replacement, after adoption. An obsolete disconnect cannot end
   the new owner. Legacy admission cannot bypass a temporary lease. Existing
   persistent/legacy daemon attachment and takeover remain unchanged.
-  Registry/per-generation lock contention is nonblocking Busy, including the
-  first attachment after Ensure. A caller retains its original issued creation
+  Before reservation, registry/per-generation lock contention is nonblocking
+  Busy, including the first attachment after Ensure. Once a pending reservation
+  is written, failure to prove cleanup or publish admission can instead return
+  OutcomeUncertain; neither refusal proves frontend adoption or writer transfer.
+  A caller retains its original issued creation
   operation, exact target and attachment intent; Busy is not absence or authority
   to issue another creation. Fixture coverage holds the exact lease lock and
   proves unchanged lease bytes/operation ledger before admitting that attachment.
@@ -439,6 +442,10 @@ at physical delivery and retire revoked connections/attachments.
   outcome/cancellation/heartbeat/cleanup; never mint a fresh fence from a stale one.
 - `end` returns **`EndOutcome::StopRequested`**, a durable exact-generation stop,
   not observed process exit. Reconcile absence before sending an Ended result.
+  Before that stop intent commits, contention returns Busy without changing
+  the target/lease. The control route deliberately returns OutcomeUncertain
+  after durable StopRequested, never Ended. Retain the same operation and exact
+  target across precommit Busy; do not repeat stop after observing its commit.
   Local consent revocation fences pending/native remote admission; persistent
   shells remain alive. The future endpoint owns closing already established
   revoked remote relays. No local administrative API becomes remote by default.

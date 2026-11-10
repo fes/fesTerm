@@ -1036,6 +1036,15 @@ correlated resource/policy Busy, retained reply allocation through publication
 and post-commit policy contention. These are PR688 core reliability/scope
 remediations, not endpoint or dependency qualification.
 
+Frozen-core native fixture qualification now distinguishes precommit Busy
+(held exact generation lease, unchanged PID/generation/issued state) from a
+durable StopRequested commit paused before reply publication. A competing
+attachment is checked once behind an actual unadopted takeover reservation,
+not by repeatedly retrying an intentional occupied-writer refusal. Real old
+writer I/O, unchanged pending/committed authority, exactly one adoption epoch,
+stale generation and no input replay remain mandatory. No production refusal,
+admission or native transport behavior changes in this fixture correction.
+
 The unexposed paired terminal slice adds bounded binary framing, explicit
 frontend adoption/observed native writer admission, immutable client bindings,
 bounded full-duplex queues, partial-frame deadlines and non-replaying input.
