@@ -513,9 +513,10 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   and `reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback`.
   `legacy_cli_selector_preserves_windows_arm_x64_emulation` and
   `new_acquisition_refuses_windows_arm_before_network_or_staging` distinguish
-  retained legacy behavior from native-only acquisition. macOS package-smoke
-  fixtures cover raw pinned executable hashes and retained native codesign
-  requirements on both architectures without downloading or executing binaries.
+  retained legacy behavior from native-only acquisition. Portable macOS
+  package-smoke fixtures check raw-pin hashes and native codesign wiring without
+  downloads. The native CI smoke downloads both pinned architectures and verifies
+  their hashes and signatures without executing either binary.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic
