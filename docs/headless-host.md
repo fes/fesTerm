@@ -110,9 +110,15 @@ asset names and contains the CLI plus existing helpers. Schema-1
 Staging them does **not** make them a new zero-shell host endpoint or run their
 one-shell setup policy. Release CI requires native signing/notarization of the host CLI on the
 same paths as the other helpers. Actual protected release/native rejection
-evidence, executable publication and the new endpoint remain separate gates.
+evidence, executable-publication qualification and the new endpoint remain separate gates.
 
 ## Explicitly unavailable operations
+
+The off-default `native-services` library now provides real same-user
+registration/control and authenticated executable-publication APIs, with
+deterministic native-adapter fixtures. It is not connected to CLI commands or
+desktop controls and does not qualify the incomplete endpoint. See the
+[API, startup semantics and native prerequisites](native-host-services.md).
 
 The opt-in library `owner-enrollment` API supports protected local public-key
 enrollment/revocation/status and separate permission consent under the same
@@ -132,11 +138,11 @@ never dispatch to the legacy one-shell scripts/helpers. Requirements still open:
 - Foreground, explicit secure account sign-in and protected host consent.
   Background/startup/update must return SignInRequired if credentials are
   unavailable; plaintext fallback and secrets in arguments/environment are forbidden.
-- Same-user native registration/start/stop/status adapters proving exact
-  installation/service ownership; privileges confined to explicit registration.
-  Persistent daemon lifetime must not depend on these adapters.
+- Integration and native qualification of the same-user
+  registration/start/stop/status component's exact installation/service
+  ownership. Persistent daemon lifetime must not depend on these adapters.
 - Authenticated **new host endpoint** release artifacts, native executable
-  publisher admission/publication, compatible switching/rollback and
+  publisher admission/publication qualification, compatible switching/rollback and
   referenced-helper retention. The headless CLI and legacy helper artifacts
   can be staged now, but checksums beside downloads cannot authorize a release.
 - Qualified cleanup observations before committing exact-owned cloud removal.
@@ -207,7 +213,10 @@ origin isolation, stale completions, exact stop/removal receipts, immutable
 identity, pre-login refusal, private/corrupt/busy state, pin mismatch and refusal
 exit codes. They also cover foreground settings changing before consent commit,
 publish-time drift, recovered in-flight tickets and interrupted atomic writes.
-Tests use synthetic data and private directories under the checkout.
+Tests use synthetic data. Private fixture directories live under the checkout on
+Unix; on Windows they use a user or system Temp parent that passes the
+private-storage policy. The fixture guard attempts cleanup of only its own
+directory when dropped.
 They do not access accounts, secrets, cloud resources, installed applications or
 native services. Native/service/package qualification remains in `HOSTSETUP-01`
 in [manual validation](manual-validation.md).

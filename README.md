@@ -45,6 +45,8 @@ shared connection/channel binding exporter is implemented and reviewed.
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition
 and authenticated schema-2 headless/helper staging without execution.
+An off-default [same-user native service component](docs/native-host-services.md)
+adds receipt-bound control APIs, not CLI integration or native qualification.
 New host setup/run/update/uninstall remain unavailable pending endpoint and
 native executable/endpoint integration ([#681](https://github.com/fes/fesTerm/issues/681));
 the legacy installer is unchanged.

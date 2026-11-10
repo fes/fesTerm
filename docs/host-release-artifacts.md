@@ -198,7 +198,7 @@ from normal CI. No production trust override is exposed.
 
 No actual release key, release dispatch or live installation is used by tests.
 Native protected-release signing/download/rejection evidence on all six targets,
-native installer/executable publication,
+native installer/executable-publication qualification,
 service switching/rollback, legacy migration and independently trusted first
 Linux installation remain required under HOST-06/DT-05/DT-08 and #681.
 The [shared setup boundary](headless-host.md) implements private atomic
@@ -206,3 +206,7 @@ no-replace staging for authenticated helper entries and reviewed Microsoft CLI
 pins, with bounded HTTP acquisition covered by local synthetic fixtures.
 Native installation/publisher qualification and service switching remain
 deferred; cache files are not executable publication.
+The off-default [native service component](native-host-services.md) has a
+separate sealed executable-receipt factory for exact verified `Package::Host`
+bytes. Ordinary staging/acquisition paths remain data only; the component is
+not wired to incomplete endpoint/CLI setup and does not qualify native releases.

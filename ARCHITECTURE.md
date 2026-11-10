@@ -723,9 +723,13 @@ It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
 the shared authenticated-artifact verifier. Verified helper entries and their
 exact signed provenance are staged immutably without execution;
 default legacy/mobile installer-review dependencies remain unchanged.
-No new endpoint, native service adapter, Ready result or shell-launch ownership
-is implied. Current CLI configuration/status/staging are local-only; service
-operations explicitly refuse until new endpoint/native integration. See the
+The off-default `native-services` feature adds a
+[same-user native control component](docs/native-host-services.md):
+sealed updater-authenticated executable receipts, protected exact-owned
+registration and epoch-fenced native observations/control. It has no endpoint,
+Ready result or shell-launch ownership. CLI configuration/status/staging remain
+local-only; service commands explicitly refuse until endpoint/native integration
+and qualification. Default legacy/mobile dependencies remain unchanged. See the
 [headless boundary and adapter contract](docs/headless-host.md).
 
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,

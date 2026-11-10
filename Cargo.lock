@@ -3121,6 +3121,7 @@ version = "0.16.0"
 dependencies = [
  "festerm-windows-job",
  "tracing",
+ "windows",
  "windows-sys 0.61.2",
 ]
 

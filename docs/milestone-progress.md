@@ -27,10 +27,30 @@ Ancestor refusal now has a content-free diagnostic rather than an unexplained
 PermissionDenied. Native startup/service acceptance remains separately gated.
 The shared multi-command helper validation step explicitly uses fail-fast Bash
 on all platforms, so a later successful clippy cannot hide failed Windows tests.
+Native socket fixtures can request an explicit Unix parent with a short random
+name; they retain the same storage policy and Windows vetted-root selection
+without changing process-wide cwd.
 The acquisition deadline/refusal fixtures, host-versus-helper cache-separation
 fixture and acquisition-only CLI fixture also use this shared validated factory.
 Pure archive producer/verifier fixtures remain project-local; fresh Windows CI
 must still confirm the protected-storage paths.
+
+## Separating native host control from endpoint readiness
+
+The [#681](https://github.com/fes/fesTerm/issues/681) stage-4 follow-up now has
+an off-default [same-user service component](native-host-services.md), rather
+than teaching desktop and headless callers separate setup policy. A sealed
+receipt admits only current-target updater-authenticated host-package bytes;
+ordinary staging paths cannot authorize launch. Private exact-owned definitions
+and creation-epoch receipts precede native effects, with current-epoch fences
+and observed process state instead of Ready-shaped command success.
+
+Deterministic native-runner/filesystem fixtures cover Windows tasks, macOS
+LaunchAgents and Linux user units without changing services or reading secrets.
+Late task creation retains its observed identity after revocation, so cleanup
+does not lose ownership evidence. CLI setup/run remain unavailable; the actual
+endpoint, foreground sign-in, native signing/startup/cleanup and daemon-lifetime
+qualification remain prerequisites. ADR 0084 stays Proposed.
 
 ## Establishing helper publisher authenticity without a second trust root
 

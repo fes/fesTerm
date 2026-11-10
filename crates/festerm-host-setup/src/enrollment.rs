@@ -445,8 +445,8 @@ mod tests {
             self.0.memory.delete(reference)
         }
     }
-    fn setup() -> (tempfile::TempDir, Store, Arc<Vault>) {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    fn setup() -> (storage::PrivateTestDirectory, Store, Arc<Vault>) {
+        let root = storage::private_test_directory();
         let store = Store::create(
             &root.path().join("installation"),
             Origin::Headless,

@@ -15,6 +15,8 @@ pub mod enrollment;
 pub mod lifecycle;
 #[cfg(feature = "lifecycle")]
 mod protected_state;
+#[cfg(feature = "native-services")]
+pub mod services;
 #[cfg(feature = "lifecycle")]
 pub mod staging;
 

@@ -2,6 +2,8 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(all(windows, feature = "host-service"))]
+pub mod host_service;
 #[cfg(windows)]
 pub mod named_pipe;
 

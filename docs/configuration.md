@@ -6,6 +6,12 @@ saves disabled intent with creation denied and manual startup by default. It
 does not enable access, register startup or create a shell. Existing desktop and
 headless origin journals cannot adopt each other.
 
+The off-default [native service component](native-host-services.md) keeps
+exact resource/executable/creation-epoch receipts in protected host-local state,
+not TOML. It accepts approved journal settings and a sealed authenticated
+executable receipt; a configured path is not launch authority. Manual/sign-in
+registration does not qualify pre-login availability or endpoint readiness.
+
 Owner enrollment is separately protected host-local policy
 ([authentication API and blockers](host-protocol.md#enrollment-and-secret-boundary-transport-integration-still-gated)).
 Public-key import requires exact fingerprint confirmation; it never grants

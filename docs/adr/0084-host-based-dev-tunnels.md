@@ -485,9 +485,20 @@ provenance and comparing immutable cache entries without execution.
 Epoch fencing retains late provisioned identity for exact stop/cleanup, preserves
 identity on re-enable and refuses desktop/headless origin adoption. These are
 local boundary operations, not a working endpoint installer. Setup/run/update/
-uninstall explicitly fail until real endpoint, sign-in/native adapters and
+uninstall explicitly fail until real endpoint, sign-in/qualified native adapters and
 authenticated-package integration exist. No Ready or native acceptance is claimed.
 See [API/dependencies](../headless-host.md); the ADR remains Proposed.
+
+**Native service component progress (#681):** Off-default `native-services`
+now supplies actual same-user task/LaunchAgent/user-unit control behind the
+shared lifecycle. Sealed current-native updater-authenticated executable
+receipts, private atomic definitions, exact installation/origin/creation-epoch
+ownership and current-epoch fences precede observed manager status/control.
+Late task creation preserves observed normalized identity after revocation.
+No CLI setup/run command invokes this component, and process Running is not
+Ready. Signed native install/start/cleanup, endpoint integration and persistent
+daemon/startup qualification remain gates; see
+[native component boundaries](../native-host-services.md).
 
 **Bounded stage 7 progress (#681):** Separate host package schema 2 requires `festerm-host` on
 all six existing targets. Optional shared HTTP acquisition and headless
@@ -495,7 +506,7 @@ all six existing targets. Optional shared HTTP acquisition and headless
 it or modify account/service state. New Windows ARM dependency acquisition is
 explicitly unavailable, without x64 fallback; legacy hosting/verification keeps
 its existing x64-emulation selector. Native publisher qualification,
-trusted first delivery and executable/service publication remain blocked;
+trusted first delivery and executable/service qualification remain blocked;
 signed/staged bytes alone are not Ready or a trusted launch receipt.
 
 - **Invariants introduced or changed:** One host endpoint can expose multiple
@@ -586,6 +597,18 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   `staging_parent_rejects_a_dacl_that_allows_child_substitution` regression
   retains strict ancestor refusal; fixture selection does not qualify startup
   or service behavior.
+  Native-component fixtures add
+  `native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs`,
+  `native_service_locked_vault_failed_start_and_foreign_definitions_fail_closed`,
+  `native_service_late_start_after_revocation_retains_exact_cleanup_receipt_without_success`,
+  `native_service_late_task_creation_retains_normalized_identity_for_exact_cleanup`,
+  `native_service_outstanding_effect_retains_cross_instance_exclusion_after_timeout`,
+  `native_service_status_rejects_manager_overrides_ambiguous_properties_and_cross_origin`,
+  `authenticated_executable_publication_keeps_data_private_and_refuses_changed_cache`
+  and `failed_native_qualification_never_adds_execute_permission`.
+  These cover manual/sign-in definitions, no install-time launch, failed
+  observations, native-vault refusal and late exact-owned reconciliation using
+  fake managers/private filesystem fixtures, not actual installed services.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic
@@ -637,7 +660,7 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   and actual native
   desktop/iOS/Android UI wiring. Existing native/manual evidence remains required.
   `HOSTSETUP-01` registers stage-4 native prerequisites explicitly; deterministic
-  boundary fixtures are not service/startup qualification.
+  boundary/native-adapter fixtures are not service/startup qualification.
   Migration must preserve protected state/account binding and separately qualify
   default-No exact-generation stop confirmation and manual deferral; setup or
   sharing consent is never restart consent.
@@ -660,7 +683,7 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
 | Profiles | Metadata-only save, serialization, duplicate/shortcut identity and compatibility tests above; first create, later resume, post-reboot replacement toast and actual second-client attachment remain deferred |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
-| Integrity | Implemented: schema-2 authenticated `stage-package` including the GUI-free host CLI, pinned official-CLI offline staging and bounded HTTPS acquisition, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, six-target Python producer/actual signer/Rust verifier interop. Deferred: Microsoft native-publisher qualification/redistribution review, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
+| Integrity | Implemented: schema-2 authenticated `stage-package` including the GUI-free host CLI, pinned official-CLI offline staging and bounded HTTPS acquisition, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, six-target Python producer/actual signer/Rust verifier interop; separate authenticated executable-publication component. Deferred: Microsoft native-publisher qualification/redistribution review, endpoint installer integration, trusted first-verifier delivery and signed native executable/install/update evidence |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 
