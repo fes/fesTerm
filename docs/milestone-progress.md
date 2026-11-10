@@ -1,5 +1,51 @@
 # Milestone Progress Narrative
 
+## Keeping update-status CLI assertions consistent with real native admission
+
+Required run `42901808856` for exact `09485ce130e529932c53df77454b8d787b5c8ada`
+has different outcomes, not a repeated download-deadline failure. Ubuntu job
+`130129426052` succeeds: the owned native selection passes 14 / zero failed /
+zero ignored in 163.46 seconds, including the contention, revocation and takeover
+fixtures. Both logged deadline executions pass in setup selections of 125 /
+zero / two ignored. The actual checkout is
+`71c240e9391b806b2629628fbc044e927cb07c2f`; its Git tree
+`16c422c2627782d8e235b4b85e6245e39b6d0828` equals exact `0948`. All 2016
+recursive entry modes/types/blob IDs and preserved physical source bytes are
+compared, rather than inferring source equality from ancestry or run labels.
+
+macOS job `130129426313` also passes the deadline test (setup 126 / zero /
+two ignored), then fails a separate native selection, 12 / two / zero in
+167.53 seconds: revocation inventory reports OutcomeUncertain at
+`host_terminal_tests.rs:513`, and takeover reports OutcomeUncertain at line 633
+with Storage cleanup failure. These remain separately owned native failures;
+this child neither retries the selection nor changes timing or production code.
+Windows job `130129425973` passes strict checking and five host-main tests,
+then passes eight CLI tests and fails update-status's unconditional success
+assertion. That assertion did not print the actual exit or diagnostic; neither
+is invented here.
+
+Only the first CLI admission-parity hunk from published exact
+`bb0888d0adb2e7799f9a00200609809f80254b58` is ported. An independent real
+`Services::current_user` construction probes the same protected installation
+without native manager calls. Admitted accounts must still produce success,
+empty stderr and JSON null history. Only independently observed PermissionDenied
+permits exit 1, empty stdout and the exact static private-storage refusal.
+Other errors fail. Protected snapshots must remain equal; the two-entry
+inventory and all subsequent original assertions remain intact. No cleanup
+fixture hunk, backend merge, account override, skip or warning waiver is added.
+
+Original raw failures, Ubuntu success, full checkout/tree/physical-source
+fingerprints and bounded local qualification are retained separately in
+`target/adr84-cli-parity-evidence/`. Earlier `0948` proofs remain unchanged.
+Pinned Rust 1.99.1, jobs 1, debug 0 and incremental 0 pass the focused CLI case
+(one / eight filtered), all nine CLI tests, both minimal/affected all-target
+strict configurations, fmt and trace311/zero-broken-reference gates. Memory
+gates are 57–58%. The local test does not print which admission branch it took;
+no Windows PermissionDenied execution is inferred from this local pass.
+Windows-native, genuine HTTPS/CDN, publisher/installed and first-verifier
+acceptance are not established by this test-only child; required CI and the
+parent's exact-source gates remain separate prerequisites.
+
 ## Aligning acquisition test-helper cfgs and redacting Ensure diagnostics
 
 The normal child of qualified `0d9a8da9` addresses the three unused Unix-only

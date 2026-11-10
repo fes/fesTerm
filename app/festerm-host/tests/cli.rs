@@ -3,6 +3,11 @@ use std::process::Command;
 #[cfg(feature = "owner-routing")]
 #[test]
 fn headless_update_is_explicit_stopped_signed_transaction_and_status_is_not_readiness() {
+    use festerm_host_setup::{
+        lifecycle::{Origin, Store},
+        services::Services,
+    };
+
     let root = festerm_sessiond::private_storage::private_test_directory();
     let state = root.path().join("state");
     let binary = env!("CARGO_BIN_EXE_festerm-host");
@@ -12,16 +17,43 @@ fn headless_update_is_explicit_stopped_signed_transaction_and_status_is_not_read
         .status()
         .unwrap()
         .success());
+    let store = Store::open(&state, Origin::Headless).unwrap();
+    let before = store.snapshot().unwrap();
+    // Construction checks the real account and protected state, without manager calls.
+    let admission = Services::current_user(&store, &state)
+        .map(|_| ())
+        .map_err(|error| error.kind());
     let output = Command::new(binary)
         .args(["update-status", "--state-dir"])
         .arg(&state)
         .output()
         .unwrap();
-    assert!(output.status.success());
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
-        serde_json::Value::Null
-    );
+    let private_refusal = output.stderr
+        == b"host.private_storage_required; use the configured non-system user and owner-only storage\n";
+    match admission {
+        Ok(()) => {
+            assert!(
+                output.status.success(),
+                "admitted update-status: exit={:?}, private_storage_required={private_refusal}",
+                output.status.code(),
+            );
+            assert!(output.stderr.is_empty());
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+                serde_json::Value::Null
+            );
+        }
+        Err(kind) => {
+            assert_eq!(kind, std::io::ErrorKind::PermissionDenied);
+            assert_eq!(output.status.code(), Some(1));
+            assert!(output.stdout.is_empty());
+            assert!(
+                private_refusal,
+                "denied update-status must retain its exact sanitized diagnostic"
+            );
+        }
+    }
+    assert_eq!(store.snapshot().unwrap(), before);
     assert_eq!(std::fs::read_dir(&state).unwrap().count(), 2);
     let output = Command::new(binary)
         .args(["update", "--state-dir"])
