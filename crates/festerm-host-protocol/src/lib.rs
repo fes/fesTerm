@@ -55,6 +55,10 @@ pub trait Validate {
         false
     }
 
+    fn issuance_epoch_allowed(&self) -> bool {
+        true
+    }
+
     /// Versioned envelopes inspect bounded headers before decoding a body
     /// whose schema may belong to a newer or legacy protocol.
     fn validate_wire_header(_bytes: &[u8]) -> Result<(), ContractError>
