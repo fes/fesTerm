@@ -3579,6 +3579,13 @@ passed 245 tests with 7 existing ignored, including all 26 host-control and
 6 real SSH cases. Original CI failures are preserved; fresh exact-head primary
 CI remains required. Separately assigned Windows legacy fixture failures are
 not corrected or qualified by this session-only change.
+Fresh Windows primary job `129938153330` at `181eb572` then retained 62 daemon
+binary passes and two private-registry fixture failures at ancestor validation.
+Those two fixtures now select their root through the existing private-storage
+policy-checked helper, with handle-safe fixture lifetime; production checkout
+refusal/DACL checks and all publication-lock/rebase assertions remain unchanged.
+Local macOS registry/storage selectors passed 6/3 respectively. This is a fixture
+correction, not Windows acceptance; fresh exact-head Windows CI remains required.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
@@ -3637,6 +3644,27 @@ and cancelled/history-only uninstall without native/cloud calls. They do not
 qualify real manager termination, signed update or generation-atomic deletion;
 `HOSTSETUP-01` still requires real ordinary-user host stop and independent
 persistent-daemon survival with the combined signed runnable head.
+The unpublished-native-receipt correction now passes real Services/controller
+removal after cloud publication (including cancellation) and acknowledged
+uncertainty adoption, without a successful direct lifecycle-stop shortcut.
+Absence is scoped only to this installation's never-published native registration
+under the Services lease and fresh phase/epoch/full-snapshot/directory fences;
+status remains no-observation. Typed fake-manager regressions assert zero manager
+calls, preserve a foreign running definition and refuse corrupt/foreign receipts,
+non-file evidence, missing locks and stale/contended ownership. Actual Services
+absence still cannot bypass an active runtime lease or missing runtime lock with
+existing run history. Present cloud generations retain CleanupPending; only
+authenticated absence may complete Removed. No real manager, native vault or
+cloud operation was performed, so HOSTSETUP-01 remains open.
+The coupled CI build correction has fresh pinned Rust/Cargo 1.99.1 and Clippy
+0.1.99 host/no-host checks, portable snapshot tests and strict
+`aarch64-apple-ios` bridge compilation. The host JSON helper is absent without
+host-routing; shared snapshot codecs remain compiled/tested. This is iOS
+device-target compilation, not a simulator run, GUI launch or mobile acceptance.
+The normally integrated Task Scheduler API regressions are Windows x64
+cross-compiled only, with zero Windows test executions; the registry fixture
+correction has fresh macOS tests, not fresh Windows execution. Required primary
+and iOS CI results remain independent gates.
 Before the subsequent review corrections, the compiled checkpoint passed 9 runtime
 controller cases plus the production
 foreground identity-initialization regression; affected host/setup packages

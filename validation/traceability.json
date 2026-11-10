@@ -5532,6 +5532,7 @@
       "decisions": ["ADR-0084", "ADR-0054"],
       "automated_tests": [
         "host_wire_fixture_is_canonical_and_not_legacy_protocol",
+        "host_json_encoding_enforces_the_exact_encoded_byte_budget",
         "host_wire_rejects_malformed_oversized_and_version_mismatched_input",
         "host_version_header_precedes_future_or_real_legacy_body_decoding",
         "host_zero_field_variants_reject_embedded_authority_and_lifetime_fields",
@@ -5754,6 +5755,7 @@
         "host_controller_setup_retries_failed_install_without_duplicate_cloud_or_owner_identity",
         "host_controller_creation_requires_configuration_and_independent_owner_consent",
         "host_controller_cancelled_or_missing_account_consent_has_no_identity_or_account_effect",
+        "host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup",
         "headless_run_requires_current_consent_and_history_never_claims_liveness",
         "headless_setup_and_owner_approval_require_explicit_foreground_confirmation",
         "headless_temporary_permission_is_explicit_and_never_grants_creation",
@@ -5778,6 +5780,9 @@
         "headless_package_staging_refuses_unauthenticated_input_before_writing",
         "staging_parent_rejects_a_dacl_that_allows_child_substitution",
         "native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs",
+        "native_service_unpublished_receipt_proves_only_owned_absence_without_manager_calls",
+        "native_service_unpublished_receipt_requires_exclusive_lease_and_current_instance",
+        "native_service_invalid_receipt_never_becomes_owned_absence",
         "native_service_locked_vault_failed_start_and_foreign_definitions_fail_closed",
         "native_service_late_start_after_revocation_retains_exact_cleanup_receipt_without_success",
         "native_service_late_task_creation_retains_normalized_identity_for_exact_cleanup",
@@ -5819,6 +5824,7 @@
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",
       "prerequisites": [
+        "Never-published native registration receipts permit only installation-owned absence in current StopRequested/CleanupPending under the exclusive Services lease and exact full-snapshot/epoch/state-directory fences; no manager calls, fabricated receipt or foreign definition probe/removal. Missing receipt remains no-observation for status; corrupt/foreign/non-file evidence or uncertain ownership refuses. Real controller/Services removal tests cover provisioning, cancellation and acknowledged-uncertainty adoption with fake cloud only; active runtime lease and missing-lock/history guards remain mandatory. Native/cloud/vault acceptance and generation-conditional deletion remain open",
         "Issue #681 stages 3–5/7: default headless build implements explicit authenticated zero-shell setup, foreground account consent, separate owner approval, run, revoke-first disable and exact stopped native cleanup; configuration stays disabled and permissions default denied. Update/replacement remains unavailable. Existing cloud resources retain unsuccessful CleanupPending without unqualified DELETE. Actual controller-core setup/approval tests use real private lifecycle/enrollment with typed fake network/credentials/native registration, not native/cloud/vault acceptance",
         "Production run supervision retries transient Store lease contention without inferring consent absence, revocation or success; changed current snapshots and nonbusy errors fail closed. Regression holds the real installation lease across multiple serving ticks then revokes. Temporary permission requires independent default-No foreground approval and never grants creation; creation requires configured and owner consent",
         "Linux UserSignIn implements the explicit owner-approved actual-UID Class=user graphical/interactive TTY/SSH and retain-through-lock-idle-until-last-eligible-logout policy. Bounded fixed-system-bus/root-issuer login1 proof, inventory recheck and per-run watcher refuse/drop hosting on uncertainty, never native absence. Owned enable/start and delayed fresh retry cover existing managers; Manual remains inert. Real manager/logind/cgroup/last-logout and persistent-daemon survival remain HOSTSETUP-01 prerequisites; no linger/OS-policy changes or synthetic proof substitution. Bounded cloud-operation serialization may span network; short installation/policy/journal guards do not",

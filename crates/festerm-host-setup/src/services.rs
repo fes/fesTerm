@@ -280,6 +280,23 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         })
     }
 
+    fn unregistered_observation(
+        &self,
+        expected: &Snapshot,
+        _operation: &native::OperationGuard,
+    ) -> io::Result<Observation> {
+        self.with_record(|directory, current| {
+            if current != expected || self.read_registration(directory, current)?.is_some() {
+                return Err(refused(
+                    "host.service_operation_superseded_reconcile_owned_resource",
+                ));
+            }
+            // Install publishes a retained receipt under this same native lease
+            // before any manager effect. No receipt proves only our own absence.
+            Ok(observation(current, ProcessState::Absent))
+        })
+    }
+
     fn save(&self, record: &Registration, epoch: u64, phase: Phase) -> io::Result<()> {
         self.with_record(|directory, snapshot| {
             if snapshot.epoch != epoch
@@ -717,7 +734,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::StopRequested)?;
         let (_, record) = self.reconciled_registration()?;
-        let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
+        let Some(record) = record else {
+            return self.unregistered_observation(&snapshot, &_lease);
+        };
         let state = self.observe(&record)?;
         if matches!(state, ProcessState::Running | ProcessState::Transitioning) {
             self.fence(epoch, Phase::StopRequested)?;
@@ -751,7 +770,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::CleanupPending)?;
         let (_, record) = self.reconciled_registration()?;
-        let mut record = record.ok_or_else(|| refused("host.service_not_installed"))?;
+        let Some(mut record) = record else {
+            return self.unregistered_observation(&snapshot, &_lease);
+        };
         let before = self.observe(&record)?;
         if record.removed {
             if before != ProcessState::Absent

@@ -556,6 +556,10 @@ no-adoption and old-writer preservation assertions remain unchanged.
 Exact `9d521174` x64 Windows native CI subsequently passed both bridge cases;
 the original failures and newly exposed primary failures remain recorded in
 the manual qualification entry. This does not qualify installed-service behavior.
+Private-registry reader/rebase fixture roots use the existing policy-checked
+test directory rather than assuming Windows checkout ancestors are trusted.
+Production ancestor/DACL refusal and actual publication-lock/once-only-effect
+assertions remain unchanged; corrected Windows CI remains a separate gate.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
@@ -608,6 +612,13 @@ during proof, one original authentication deadline, framed persistent Busy and
 cancelled-work client-charge recovery. These preserve original SSH/channel/role
 binding and add no cached authority or client proof retry; native-vault,
 installed endpoint and product acceptance remain independently gated.
+The CI build follow-up retains those Busy assertions using the existing
+compare-exchange pattern, without a new compiler minimum or deprecation waiver.
+Bounded generic JSON encoding is compiled only with its actual host-routing
+consumers; portable snapshot codecs and their tests remain available without
+that feature. An exact-byte-budget regression covers the host helper. Fresh
+pinned stable host/portable checks and iOS device-target strict compilation are
+build evidence, not simulator execution, signed endpoint or mobile acceptance.
 
 The actual-runtime/session union normally integrates qualified session head
 `8ebbaf29` at `ae1ef27a`, preserving ADR 0085. Fresh macOS owned-helper evidence
@@ -654,6 +665,20 @@ dependent on the separately gated runtime source.
 These cover HOST-04/HOST-05 revocation, actionable unavailable credentials,
 native management/publication refusals and read-only cleanup adoption, not
 successful endpoint startup or cloud deletion.
+The no-registration removal correction exercises real Services stop/cleanup
+under the exclusive native lease, current phase/epoch/full snapshot and exact
+directory identity. Three service regressions prove unpublished-receipt own
+absence with zero fake-manager calls and untouched foreign definitions, lease/
+epoch/instance refusal and corrupt/foreign/non-file/missing-lock receipt refusal.
+`host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup`
+and the acknowledged-uncertainty adoption case pass through actual controller
+disable/uninstall and Services, substituting only the cloud network/credentials.
+Successful direct `confirm_stopped` shortcuts are removed from those cloud and
+controller integration fixtures; active runtime ownership and missing-lock/history
+guards still block Disabled. These tests require the explicit combined controller
+features; standalone cloud tests do not substitute lifecycle confirmation.
+Native status still refuses absent receipts, and real native-manager/cloud/vault
+qualification and generation-conditional deletion remain separate gates.
 `native_service_live_exact_owned_lifecycle_preserves_independent_child` is
 ignored by default and requires an explicitly authorized disposable Unix guest.
 Its synthetic executable/native-manager evidence is not release publisher,

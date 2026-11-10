@@ -370,6 +370,156 @@ fn provision(store: &Store) -> Snapshot {
 }
 
 #[test]
+fn native_service_unpublished_receipt_proves_only_owned_absence_without_manager_calls() {
+    for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {
+        let root = storage::private_test_directory();
+        let state = root.path().join("state");
+        let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+        let provisioned = provision(&store);
+        let services = services(root.path(), &store, platform);
+        let registration =
+            storage::private_directory(&services.context.registration, true).unwrap();
+        let foreign_name = services.runner.definition.file_name().unwrap();
+        storage::write_new_private(
+            &registration,
+            Path::new(foreign_name),
+            b"foreign definition",
+        )
+        .unwrap();
+        {
+            let mut manager = services.runner.state.borrow_mut();
+            manager.registered = true;
+            manager.running = true;
+        }
+        assert!(services.stop(provisioned.epoch).is_err());
+        assert!(services.cleanup(provisioned.epoch).is_err());
+        store.revoke().unwrap();
+        let stopped = store.snapshot().unwrap();
+        assert!(services.stop(provisioned.epoch).is_err());
+        assert!(services.cleanup(stopped.epoch).is_err());
+        let observed = services.stop(stopped.epoch).unwrap();
+        assert_eq!(observed.process, ProcessState::Absent);
+        assert_eq!(observed.installation, stopped.installation);
+        assert_eq!(observed.origin, stopped.origin);
+        assert_eq!(observed.epoch, stopped.epoch);
+        store
+            .confirm_stopped(observed.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        assert!(services.stop(observed.epoch).is_err());
+        assert!(services.cleanup(observed.epoch).is_err());
+        store.request_cleanup().unwrap();
+        let pending = store.snapshot().unwrap();
+        assert!(services.stop(pending.epoch).is_err());
+        assert!(services.cleanup(stopped.epoch).is_err());
+        let cleaned = services.cleanup(pending.epoch).unwrap();
+        assert_eq!(cleaned.process, ProcessState::Absent);
+        assert_eq!(cleaned.installation, pending.installation);
+        assert_eq!(cleaned.origin, pending.origin);
+        assert_eq!(cleaned.epoch, pending.epoch);
+        assert_eq!(
+            services.status().err().unwrap().to_string(),
+            "host.service_not_installed_no_native_observation"
+        );
+        assert!(!state.join(RECORD).exists());
+        assert_eq!(
+            std::fs::read(&services.runner.definition).unwrap(),
+            b"foreign definition"
+        );
+        let manager = services.runner.state.borrow();
+        assert!(manager.calls.is_empty());
+        assert!(manager.registered && manager.running);
+    }
+}
+
+#[test]
+fn native_service_unpublished_receipt_requires_exclusive_lease_and_current_instance() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    provision(&store);
+    let mut services = services(root.path(), &store, Platform::Windows);
+    store.revoke().unwrap();
+    let stopped = store.snapshot().unwrap();
+    let lease = services.lease().unwrap();
+    assert_eq!(
+        services.stop(stopped.epoch).err().unwrap().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    store.revoke().unwrap();
+    assert!(services.unregistered_observation(&stopped, &lease).is_err());
+    drop(lease);
+    assert!(services.stop(stopped.epoch).is_err());
+    let other = root.path().join("foreign");
+    let _foreign = Store::create(&other, Origin::Headless, settings()).unwrap();
+    services.state = other;
+    assert!(services.stop(store.snapshot().unwrap().epoch).is_err());
+    assert!(services.runner.state.borrow().calls.is_empty());
+    assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+}
+
+#[test]
+fn native_service_invalid_receipt_never_becomes_owned_absence() {
+    for cleanup in [false, true] {
+        for fault in 0..7 {
+            let root = storage::private_test_directory();
+            let state = root.path().join("state");
+            let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+            let provisioned = provision(&store);
+            let services = services(root.path(), &store, Platform::Windows);
+            let stage = trusted::fixture(root.path());
+            services
+                .install_reserved(&stage, provisioned.epoch)
+                .unwrap();
+            store.revoke().unwrap();
+            let stopped = store.snapshot().unwrap();
+            if cleanup {
+                let observed = services.stop(stopped.epoch).unwrap();
+                store
+                    .confirm_stopped(observed.epoch, stopped.binding.as_ref().unwrap())
+                    .unwrap();
+                store.request_cleanup().unwrap();
+            }
+            let before = store.snapshot().unwrap();
+            let mut receipt = services.registration().unwrap().1.unwrap();
+            let directory = storage::private_directory(&state, false).unwrap();
+            match fault {
+                0 => storage::replace_private(&directory, Path::new(RECORD), b"{").unwrap(),
+                1..=4 => {
+                    match fault {
+                        1 => receipt.installation = uuid::Uuid::new_v4().to_string(),
+                        2 => receipt.origin = Origin::Desktop,
+                        3 => receipt.epoch = before.epoch + 1,
+                        4 => receipt.binding.account.push_str("-foreign"),
+                        _ => unreachable!(),
+                    }
+                    storage::replace_private(
+                        &directory,
+                        Path::new(RECORD),
+                        &serde_json::to_vec(&receipt).unwrap(),
+                    )
+                    .unwrap();
+                }
+                5 => {
+                    std::fs::remove_file(state.join(RECORD)).unwrap();
+                    storage::private_directory(&state.join(RECORD), true).unwrap();
+                }
+                6 => std::fs::remove_file(state.join(LOCK)).unwrap(),
+                _ => unreachable!(),
+            }
+            services.runner.state.borrow_mut().calls.clear();
+            let result = if cleanup {
+                services.cleanup(before.epoch)
+            } else {
+                services.stop(before.epoch)
+            };
+            assert!(result.is_err(), "fault {fault}, cleanup {cleanup}");
+            assert!(services.runner.state.borrow().calls.is_empty());
+            assert_eq!(store.snapshot().unwrap(), before);
+        }
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn native_service_restart_requires_signed_provenance_without_adopting_cached_receipts() {
     let root = storage::private_test_directory();
