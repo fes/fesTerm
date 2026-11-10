@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = festerm_sessiond::private_storage::private_test_directory();
         let destination = root.path().join("cache");
         let bytes = b"synthetic inert CLI";
         let pin = fixture_pin(bytes);
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = festerm_sessiond::private_storage::private_test_directory();
         let pin = fixture_pin(b"good");
         let client = client(false, Duration::from_secs(2)).unwrap();
         for response in [
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn bounded_http_acquisition_deadline_and_production_origin_fail_closed() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = festerm_sessiond::private_storage::private_test_directory();
         let pin = fixture_pin(b"good");
         let (url, task) = server(
             b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ngood".to_vec(),
@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn new_acquisition_refuses_windows_arm_before_network_or_staging() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = festerm_sessiond::private_storage::private_test_directory();
         let destination = root.path().join("must-not-stage");
         assert_eq!(
             acquire_for_target("windows", "aarch64", &destination)
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn slow_body_cannot_extend_the_absolute_acquisition_deadline() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = festerm_sessiond::private_storage::private_test_directory();
         let destination = root.path().join("cache");
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = Url::parse(&format!(

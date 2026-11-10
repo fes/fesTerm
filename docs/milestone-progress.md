@@ -27,6 +27,10 @@ Ancestor refusal now has a content-free diagnostic rather than an unexplained
 PermissionDenied. Native startup/service acceptance remains separately gated.
 The shared multi-command helper validation step explicitly uses fail-fast Bash
 on all platforms, so a later successful clippy cannot hide failed Windows tests.
+The acquisition deadline/refusal fixtures, host-versus-helper cache-separation
+fixture and acquisition-only CLI fixture also use this shared validated factory.
+Pure archive producer/verifier fixtures remain project-local; fresh Windows CI
+must still confirm the protected-storage paths.
 
 ## Establishing helper publisher authenticity without a second trust root
 

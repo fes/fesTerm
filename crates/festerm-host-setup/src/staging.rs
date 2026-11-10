@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn host_staging_keeps_package_identity_separate_from_legacy_helpers() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = storage::private_test_directory();
         let host = crate::artifacts::host_staging_fixture();
         let helpers = crate::artifacts::staging_fixture();
         let cache = root.path().join("cache");
