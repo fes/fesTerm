@@ -16,15 +16,22 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 pub struct NativeSession {
     pub session: festerm_sessiond::UnattachedSession,
     pub runtime_root: PathBuf,
-    pub hosted: bool,
+    pub source: NativeSource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeSource {
+    Default,
+    Hosted,
+    PreviousHosted,
 }
 
 impl NativeSession {
     pub fn display_name(&self) -> String {
-        if self.hosted {
-            format!("{} · Hosted", self.session.name)
-        } else {
-            self.session.name.clone()
+        match self.source {
+            NativeSource::Default => self.session.name.clone(),
+            NativeSource::Hosted => format!("{} · Hosted", self.session.name),
+            NativeSource::PreviousHosted => format!("{} · Hosted (previous)", self.session.name),
         }
     }
 
@@ -33,7 +40,7 @@ impl NativeSession {
         Self {
             session,
             runtime_root: std::env::temp_dir().join("festerm-discovery-fixture"),
-            hosted: false,
+            source: NativeSource::Default,
         }
     }
 }
@@ -58,21 +65,34 @@ impl Inventory {
     fn discover() -> Self {
         let mut result = Self::default();
         match festerm_sessiond::runtime_root() {
-            Ok(root) => result.discover_native(&root, false),
+            Ok(root) => result.discover_native(&root, NativeSource::Default),
             Err(error) => result.errors.push(format!("fesTerm Native: {error}")),
         }
         #[cfg(feature = "experimental-dev-tunnels")]
-        match festerm_tunnel_bridge::profile_hosting::hosted_runtime() {
-            Ok(root) => match festerm_sessiond::private_storage::private_directory(&root, false) {
-                Ok(_directory) => result.discover_native(&root, true),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        for (root, source) in [
+            (
+                festerm_tunnel_bridge::profile_hosting::hosted_runtime(),
+                NativeSource::Hosted,
+            ),
+            (
+                festerm_tunnel_bridge::profile_hosting::previous_hosted_runtime(),
+                NativeSource::PreviousHosted,
+            ),
+        ] {
+            match root {
+                Ok(root) => {
+                    match festerm_sessiond::private_storage::private_directory(&root, false) {
+                        Ok(_directory) => result.discover_native(&root, source),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => result
+                            .errors
+                            .push(format!("Hosted native sessions: {error}")),
+                    }
+                }
                 Err(error) => result
                     .errors
                     .push(format!("Hosted native sessions: {error}")),
-            },
-            Err(error) => result
-                .errors
-                .push(format!("Hosted native sessions: {error}")),
+            }
         }
         match multiplexer_sessions::list_tmux_sessions() {
             Ok(sessions) => result.tmux = sessions,
@@ -85,18 +105,18 @@ impl Inventory {
         result
     }
 
-    fn discover_native(&mut self, root: &Path, hosted: bool) {
+    fn discover_native(&mut self, root: &Path, source: NativeSource) {
         match festerm_sessiond::list_unattached_sessions_in(root) {
             Ok(sessions) => self
                 .native
                 .extend(sessions.into_iter().map(|session| NativeSession {
                     session,
                     runtime_root: root.to_owned(),
-                    hosted,
+                    source,
                 })),
             Err(error) => self.errors.push(format!(
                 "{}: {error}",
-                if hosted {
+                if source != NativeSource::Default {
                     "Hosted native sessions"
                 } else {
                     "fesTerm Native"
@@ -299,9 +319,10 @@ mod tests {
         let root = std::fs::canonicalize(fixture.path()).unwrap();
         let legacy = root.join("legacy");
         let hosted = root.join("hosted");
+        let previous = root.join("previous");
         let pid = std::process::id();
         let mut leases = Vec::new();
-        for (root, generation) in [(&legacy, 41), (&hosted, 42)] {
+        for (root, generation) in [(&legacy, 41), (&hosted, 42), (&previous, 43)] {
             std::fs::create_dir(root).unwrap();
             let endpoint = root.join(format!("{pid}-{generation}.sock"));
             std::fs::write(&endpoint, b"").unwrap();
@@ -322,14 +343,20 @@ mod tests {
             leases.push(lease);
         }
         let mut inventory = Inventory::default();
-        inventory.discover_native(&legacy, false);
-        inventory.discover_native(&hosted, true);
+        inventory.discover_native(&legacy, NativeSource::Default);
+        inventory.discover_native(&hosted, NativeSource::Hosted);
+        inventory.discover_native(&previous, NativeSource::PreviousHosted);
         assert!(inventory.errors.is_empty());
-        assert_eq!(inventory.native.len(), 2);
+        assert_eq!(inventory.native.len(), 3);
         assert_eq!(inventory.native[0].runtime_root, legacy);
         assert_eq!(inventory.native[0].display_name(), "shared");
         assert_eq!(inventory.native[1].runtime_root, hosted);
         assert_eq!(inventory.native[1].display_name(), "shared · Hosted");
+        assert_eq!(inventory.native[2].runtime_root, previous);
+        assert_eq!(
+            inventory.native[2].display_name(),
+            "shared · Hosted (previous)"
+        );
         assert_ne!(
             inventory.native[0].created_at_unix_ms,
             inventory.native[1].created_at_unix_ms

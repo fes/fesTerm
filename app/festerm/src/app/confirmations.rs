@@ -1204,6 +1204,78 @@ impl FesTermApp {
         }
     }
 
+    pub(super) fn show_native_takeover_confirmation(
+        &mut self,
+        context: &egui::Context,
+        escape: bool,
+    ) {
+        use crate::overlay_state::NativeTakeoverSelection;
+
+        let Some(pending) = self.overlays.pending_native_takeover.as_ref().cloned() else {
+            return;
+        };
+        let (name, pid, generation) = match &pending.selection {
+            NativeTakeoverSelection::Discovered(session) => (
+                session.display_name(),
+                session.pid,
+                session.created_at_unix_ms,
+            ),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            NativeTakeoverSelection::HostedProfile { target, .. } => {
+                (target.name.clone(), target.pid, target.generation)
+            }
+        };
+        let mut cancel = escape;
+        let mut confirm = false;
+        crate::software_background::show_modal(
+            context,
+            egui::Modal::new(egui::Id::new("native_session_takeover_confirmation"))
+                .backdrop_color(egui::Color32::from_black_alpha(128)),
+            |ui| {
+                prepare_confirmation(ui, context, 440.0);
+                confirmation_body(ui, |ui| {
+                    ui.heading("Take over native session?");
+                    ui.add_space(6.0);
+                    ui.label(format!(
+                        "Take over '{name}' (PID {pid}, generation {generation})? \
+                         Any current local or remote client will be disconnected. \
+                         The shell continues running; no replacement is started."
+                    ));
+                });
+                ui.add_space(12.0);
+                ui.horizontal_wrapped(|ui| {
+                    let cancel_button = dialog_action(ui, ActionButtonRole::Secondary, "Cancel");
+                    if !pending.cancel_focus_requested {
+                        cancel_button.request_focus();
+                    }
+                    cancel |= cancel_button.clicked();
+                    confirm =
+                        dialog_action(ui, ActionButtonRole::DangerOutline, "Take over session")
+                            .clicked();
+                });
+            },
+        );
+        if let Some(current) = self.overlays.pending_native_takeover.as_mut() {
+            current.cancel_focus_requested = true;
+        }
+        if cancel {
+            self.overlays.pending_native_takeover = None;
+        } else if confirm {
+            self.overlays.pending_native_takeover = None;
+            match pending.selection {
+                NativeTakeoverSelection::Discovered(session) => self
+                    .state
+                    .dispatch(AppCommand::TakeOverDiscoveredSession { session }, context),
+                #[cfg(feature = "experimental-dev-tunnels")]
+                NativeTakeoverSelection::HostedProfile { profile, target } => {
+                    if let Err(message) = self.confirm_hosted_takeover(&profile, &target, context) {
+                        self.secure_storage_feedback = Some(message);
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn cancel_settings_reset_confirmation(&mut self) {
         self.overlays.pending_settings_reset = None;
     }

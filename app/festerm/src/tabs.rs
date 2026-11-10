@@ -1356,18 +1356,50 @@ impl SessionTab {
             allow_start,
         );
         (
-            Self::from_local_session_result(
-                result.map(ApplicationSession::Persistent),
-                dimensions,
-                profile.identifier(),
-                local_profile_secondary(&native),
-                Some(profile.identifier().to_owned()),
-                local.persistence().map(|persistence| InspectorPersistence {
-                    provider_label: persistence.provider().label(),
-                    session_name: persistence.session_name().to_owned(),
-                }),
-            ),
+            Self::hosted_profile_result(profile, dimensions, &native, result),
             bound,
+        )
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn start_hosted_takeover(
+        profile: &festerm_config::Profile,
+        target: &festerm_tunnel_bridge::profile_hosting::Target,
+        context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
+        configuration_valid: &std::sync::atomic::AtomicBool,
+    ) -> Self {
+        let local = profile.as_local().expect("local hosted profile");
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
+        let native = crate::environment::with_corrected_local_path(local.to_local_profile());
+        let result = crate::app::profile_hosting::take_over_profile(
+            profile,
+            target,
+            make_notifier(context),
+            configuration_valid,
+        );
+        Self::hosted_profile_result(profile, dimensions, &native, result)
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn hosted_profile_result(
+        profile: &festerm_config::Profile,
+        dimensions: Dimensions,
+        native: &LocalProfile,
+        result: Result<PersistentSession, String>,
+    ) -> Self {
+        let local = profile.as_local().expect("local hosted profile");
+        Self::from_local_session_result(
+            result.map(ApplicationSession::Persistent),
+            dimensions,
+            profile.identifier(),
+            local_profile_secondary(native),
+            Some(profile.identifier().to_owned()),
+            local.persistence().map(|persistence| InspectorPersistence {
+                provider_label: persistence.provider().label(),
+                session_name: persistence.session_name().to_owned(),
+            }),
         )
     }
 
@@ -1412,14 +1444,33 @@ impl SessionTab {
     fn start_resumed_session(
         selected: &crate::discovery::NativeSession,
         context: &egui::Context,
+        takeover: bool,
     ) -> Self {
         let name = &selected.name;
         let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
-        let result = PersistentSession::resume_discovered_in(
-            &selected.session,
-            &selected.runtime_root,
-            make_notifier(context),
-        )
+        let result = if takeover {
+            let identity = festerm_sessiond::NativeSessionIdentity {
+                name: selected.name.clone(),
+                pid: selected.pid,
+                created_at_unix_ms: selected.created_at_unix_ms,
+                endpoint: selected.endpoint.clone(),
+            };
+            festerm_sessiond::session_correlation_in(&selected.runtime_root, &identity).and_then(
+                |_| {
+                    PersistentSession::take_over_discovered_in(
+                        &selected.session,
+                        &selected.runtime_root,
+                        make_notifier(context),
+                    )
+                },
+            )
+        } else {
+            PersistentSession::resume_discovered_in(
+                &selected.session,
+                &selected.runtime_root,
+                make_notifier(context),
+            )
+        }
         .map(ApplicationSession::Persistent)
         .map_err(|error| error.to_string());
         let inspector_persistence = Some(InspectorPersistence {
@@ -3013,6 +3064,10 @@ pub enum AppCommand {
     ResumeUnattachedSession {
         session: crate::discovery::NativeSession,
     },
+    /// Requires explicit confirmation before displacing another client.
+    TakeOverDiscoveredSession {
+        session: crate::discovery::NativeSession,
+    },
     /// Attaches only to the selected locally running tmux or GNU screen session,
     /// surfaced via the Launcher's "tmux sessions"/"GNU Screen sessions"
     /// quick-connect widgets. Unlike `ResumeUnattachedSession`, an already
@@ -3108,6 +3163,7 @@ pub enum LocalHostAction {
     CancelSignIn,
     RecreateMissing,
     NewShell,
+    TakeOver,
     RevokeUnreferenced,
 }
 
@@ -3299,6 +3355,8 @@ struct PendingResume {
     recording_auto_enrollment: Option<festerm_recording::RecordingId>,
     target: TabId,
     source_profile: Option<festerm_config::Profile>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    takeover_configuration_valid: Option<Arc<std::sync::atomic::AtomicBool>>,
     receiver: std::sync::mpsc::Receiver<(Result<SessionTab, String>, bool)>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -3840,6 +3898,21 @@ impl AppState {
     /// Launcher choices. Existing session tabs retain their live transports
     /// and are never stopped or reconfigured.
     pub fn replace_configuration(&mut self, configuration: Configuration) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if let Some(pending) = &self.pending_resume {
+            if let (Some(profile), Some(valid)) = (
+                &pending.source_profile,
+                &pending.takeover_configuration_valid,
+            ) {
+                if configuration.profile(profile.identifier()) != Some(profile)
+                    || configuration
+                        .validate_hosted_session_name(Some(profile.identifier()), profile, false)
+                        .is_err()
+                {
+                    valid.store(false, Ordering::Release);
+                }
+            }
+        }
         for tab in &mut self.tabs {
             if let TabContent::PowerShell(powershell) = &mut tab.content {
                 if let Some(profile) = configuration
@@ -4984,7 +5057,13 @@ impl AppState {
             AppCommand::ResumeUnattachedSession { session } => {
                 let context = context.clone();
                 self.begin_resume(move || {
-                    Ok(SessionTab::start_resumed_session(&session, &context))
+                    Ok(SessionTab::start_resumed_session(&session, &context, false))
+                });
+            }
+            AppCommand::TakeOverDiscoveredSession { session } => {
+                let context = context.clone();
+                self.begin_resume(move || {
+                    Ok(SessionTab::start_resumed_session(&session, &context, true))
                 });
             }
             AppCommand::ResumeMultiplexerSession { provider, session } => {
@@ -6191,6 +6270,8 @@ impl AppState {
                     recording_auto_enrollment,
                     target: self.active,
                     source_profile: None,
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    takeover_configuration_valid: None,
                     receiver,
                     handle: Some(handle),
                 })
@@ -6483,6 +6564,55 @@ impl AppState {
             dimensions,
             self.scrollback_limit,
         ));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn start_hosted_takeover(
+        &mut self,
+        profile: festerm_config::Profile,
+        target: festerm_tunnel_bridge::profile_hosting::Target,
+        context: &egui::Context,
+    ) -> Result<(), &'static str> {
+        if self.pending_resume.is_some() || self.pending_native_termination.is_some() {
+            return Err("Another session operation is in progress. No client was disconnected.");
+        }
+        if self.configuration.profile(profile.identifier()) != Some(&profile)
+            || self
+                .configuration
+                .validate_hosted_session_name(Some(profile.identifier()), &profile, false)
+                .is_err()
+        {
+            return Err(
+                "The profile changed or its session name is ambiguous. No client was disconnected.",
+            );
+        }
+        let valid = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let worker_valid = Arc::clone(&valid);
+        let guard = profile.clone();
+        let context = context.clone();
+        let dimensions = self.current_session_dimensions();
+        self.hosted_open_error = None;
+        self.begin_attach_with_outcome(
+            move || {
+                let session = SessionTab::start_hosted_takeover(
+                    &profile,
+                    &target,
+                    &context,
+                    dimensions,
+                    &worker_valid,
+                );
+                (Ok(session), false)
+            },
+            false,
+            None,
+        );
+        if let Some(pending) = &mut self.pending_resume {
+            pending.source_profile = Some(guard);
+            pending.takeover_configuration_valid = Some(valid);
+            Ok(())
+        } else {
+            Err("Could not start the takeover. No client was disconnected.")
+        }
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -10770,6 +10900,35 @@ mod tests {
             }
             assert_eq!(state.take_completed_hosted_profile(), Some(profile));
         }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn pending_hosted_takeover_is_invalidated_by_configuration_replacement() {
+        let context = egui::Context::default();
+        let profile = hosted_open_test_profile();
+        let mut state = AppState::for_test_with_configuration(
+            Configuration::new(vec![profile.clone()]).unwrap(),
+        );
+        let (release, wait) = std::sync::mpsc::channel();
+        state.begin_attach_with_outcome(
+            move || {
+                wait.recv().unwrap();
+                (Err("cancelled for test".to_owned()), false)
+            },
+            false,
+            None,
+        );
+        let valid = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let pending = state.pending_resume.as_mut().unwrap();
+        pending.source_profile = Some(profile);
+        pending.takeover_configuration_valid = Some(Arc::clone(&valid));
+
+        state.replace_configuration(Configuration::new(Vec::new()).unwrap());
+        let was_invalidated = !valid.load(std::sync::atomic::Ordering::SeqCst);
+        release.send(()).unwrap();
+        finish_hosted_open(&mut state, &context);
+        assert!(was_invalidated);
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]

@@ -3568,6 +3568,12 @@ fn show_native_session_menu(
             session: session.clone(),
         });
     }
+    if ui.button("Take over session...").clicked() {
+        ui.close();
+        return Some(AppCommand::TakeOverDiscoveredSession {
+            session: session.clone(),
+        });
+    }
     ui.separator();
     if ui.button("Terminate session...").clicked() {
         ui.close();
@@ -6764,7 +6770,11 @@ mod tests {
                 created_at_unix_ms: 456,
             },
             runtime_root: std::env::temp_dir().join(if hosted { "hosted" } else { "legacy" }),
-            hosted,
+            source: if hosted {
+                crate::discovery::NativeSource::Hosted
+            } else {
+                crate::discovery::NativeSource::Default
+            },
         };
         let expected = make(true);
         for terminate in [false, true] {

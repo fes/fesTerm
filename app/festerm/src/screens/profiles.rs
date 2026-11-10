@@ -47,6 +47,7 @@ pub(crate) struct LocalHostView {
     pub sign_in: bool,
     pub recreate: bool,
     pub new_shell: bool,
+    pub takeover: bool,
     pub unreferenced: bool,
 }
 
@@ -1988,6 +1989,7 @@ pub(crate) fn show_profiles(
                                             ("Retry hosting / cleanup", LocalHostAction::Retry, !hosting.busy && draft.original_hosting.is_some()),
                                             ("Recreate missing tunnel", LocalHostAction::RecreateMissing, hosting.recreate),
                                             ("Start a new persistent shell and expose it", LocalHostAction::NewShell, hosting.new_shell),
+                                            ("Take over session...", LocalHostAction::TakeOver, hosting.takeover && !hosting.busy),
                                         ] {
                                             if visible && ui.button(label).clicked() {
                                                 command = Some(AppCommand::LocalTunnelHost {

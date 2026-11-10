@@ -7186,6 +7186,7 @@ impl FesTermApp {
                 || self.overlays.pending_file_drop.is_some()
                 || self.overlays.pending_settings_reset.is_some()
                 || self.overlays.pending_native_termination.is_some()
+                || self.overlays.pending_native_takeover.is_some()
                 || self.overlays.pending_document_close.is_some()
                 || self.overlays.pending_quit.is_some());
         let port_forward_manager_escape =
@@ -8209,6 +8210,19 @@ impl FesTermApp {
                             });
                     }
                 }
+                AppCommand::TakeOverDiscoveredSession { session } => {
+                    if !self.state.native_termination_pending() {
+                        self.palette.close();
+                        self.overlays.pending_native_takeover =
+                            Some(crate::overlay_state::PendingNativeTakeoverConfirmation {
+                                selection:
+                                    crate::overlay_state::NativeTakeoverSelection::Discovered(
+                                        session,
+                                    ),
+                                cancel_focus_requested: false,
+                            });
+                    }
+                }
                 AppCommand::ResolveHostKeyTrust { tab, decision } => {
                     let context = ui.ctx().clone();
                     if matches!(decision, HostKeyTrustDecision::AcceptAndPersist) {
@@ -8264,6 +8278,8 @@ impl FesTermApp {
             self.show_settings_reset_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_native_termination.is_some() {
             self.show_native_termination_confirmation(ui.ctx(), confirmation_escape);
+        } else if self.overlays.pending_native_takeover.is_some() {
+            self.show_native_takeover_confirmation(ui.ctx(), confirmation_escape);
         } else if self.overlays.pending_file_drop.is_some() {
             self.show_file_drop_confirmation(ui.ctx(), confirmation_escape);
         } else {
@@ -13405,6 +13421,50 @@ mod tests {
             .pending_native_termination
             .is_none());
         assert!(!harness.state().state.native_termination_pending());
+    }
+
+    #[test]
+    fn native_takeover_confirmation_defaults_to_cancel_and_escape_never_attaches() {
+        use crate::overlay_state::{NativeTakeoverSelection, PendingNativeTakeoverConfirmation};
+
+        let context = egui::Context::default();
+        let mut app = FesTermApp::for_test_with_configuration(Configuration::empty());
+        app.state
+            .dispatch(AppCommand::ToggleShowResumableSessions, &context);
+        let original = app.state.active();
+        let pending = PendingNativeTakeoverConfirmation {
+            selection: NativeTakeoverSelection::Discovered(
+                crate::discovery::NativeSession::fixture(festerm_sessiond::UnattachedSession {
+                    name: "selected".into(),
+                    pid: 123,
+                    endpoint: "endpoint".into(),
+                    created_at_unix_ms: 456,
+                    shell: "shell".into(),
+                    arguments: Vec::new(),
+                    working_directory: None,
+                }),
+            ),
+            cancel_focus_requested: false,
+        };
+        app.overlays.pending_native_takeover = Some(pending.clone());
+        assert!(app.overlays.blocks_terminal_input());
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 700.0))
+            .build_ui_state(|ui, app: &mut FesTermApp| app.ui_content(ui), app);
+        harness.run();
+        assert!(harness.get_by_label("Cancel").is_focused());
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        assert!(harness.state().overlays.pending_native_takeover.is_none());
+        assert_eq!(harness.state().state.active(), original);
+
+        harness.state_mut().overlays.pending_native_takeover = Some(pending);
+        harness.step();
+        harness.key_press(egui::Key::Escape);
+        harness.step();
+        assert!(harness.state().overlays.pending_native_takeover.is_none());
+        assert_eq!(harness.state().state.active(), original);
+        assert!(harness.state().state.resume_error.is_none());
     }
 
     #[test]

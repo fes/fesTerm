@@ -375,7 +375,8 @@ fn connect_profile_inner(
     };
     let root = launch.runtime_root.clone();
     let restart = deferred_restart(&grant).cloned();
-    if root != profile_hosting::hosted_runtime().map_err(|_| "profile_host.runtime_namespace")?
+    if !profile_hosting::accepts_hosted_runtime(&root)
+        .map_err(|_| "profile_host.runtime_namespace")?
         || fingerprint(profile)? != grant.spawn_fingerprint
     {
         return Err(
@@ -478,6 +479,15 @@ fn attach_target(
     target: &Target,
     notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
 ) -> Result<festerm_sessiond::PersistentSession, String> {
+    attach_selected_target(target, notifier, false, None)
+}
+
+fn attach_selected_target(
+    target: &Target,
+    notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
+    takeover: bool,
+    configuration_valid: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<festerm_sessiond::PersistentSession, String> {
     let running = festerm_sessiond::list_running_sessions_in(&target.runtime_root)
         .map_err(|error| error.to_string())?
         .into_iter()
@@ -491,12 +501,101 @@ fn attach_target(
         .ok_or(
             "The selected hosted generation is unavailable. No replacement shell was started.",
         )?;
-    festerm_sessiond::PersistentSession::resume_discovered_in(
+    let connect = if takeover {
+        festerm_sessiond::session_correlation_in(&target.runtime_root, &selected(target)).map_err(
+            |_| "The selected session's exact generation could not be verified; no client was disconnected.",
+        )?;
+        festerm_sessiond::PersistentSession::take_over_once_in
+    } else {
+        festerm_sessiond::PersistentSession::resume_unattached_in
+    };
+    // Claim once against in-process configuration invalidation before connecting.
+    if configuration_valid
+        .is_some_and(|valid| !valid.swap(false, std::sync::atomic::Ordering::AcqRel))
+    {
+        return Err("The profile changed while connecting. No client was disconnected.".into());
+    }
+    connect(
         &running.session,
         &target.runtime_root,
         notifier,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| {
+        if takeover {
+            error.to_string()
+        } else {
+            format!("{error} To disconnect an existing client explicitly, use Take over session in the profile editor.")
+        }
+    })
+}
+
+fn takeover_target(profile: &Profile, grant: &Consent) -> Result<Target, &'static str> {
+    let binding = binding(profile).ok_or("The hosting binding changed. Open the profile again.")?;
+    let persistence = profile
+        .as_local()
+        .and_then(|local| local.persistence())
+        .ok_or("The profile changed. Open it again.")?;
+    if !binding.enabled()
+        || !grant.phase.allows_hosting()
+        || grant.consent != binding.consent()
+        || grant.session_name != persistence.session_name()
+    {
+        return Err("The hosting consent or profile changed. No client was disconnected.");
+    }
+    let target = if let Some(launch) = &grant.hosted_launch {
+        if !profile_hosting::accepts_hosted_runtime(&launch.runtime_root)
+            .map_err(|_| "The hosting runtime is unavailable.")?
+        {
+            return Err("The hosting runtime changed. No client was disconnected.");
+        }
+        match (&grant.target, &launch.legacy) {
+            (Some(target), _) if target.runtime_root == launch.runtime_root => target,
+            (None, Some(legacy))
+                if legacy.runtime_root
+                    == festerm_sessiond::runtime_root()
+                        .map_err(|_| "The native runtime is unavailable.")? =>
+            {
+                legacy
+            }
+            _ => return Err("The recorded session changed. No client was disconnected."),
+        }
+    } else {
+        grant
+            .target
+            .as_ref()
+            .ok_or("No hosted session is recorded. No client was disconnected.")?
+    };
+    if target.name != persistence.session_name()
+        || !profile_hosting::accepts_runtime(&target.runtime_root)
+            .map_err(|_| "The native runtime is unavailable.")?
+    {
+        return Err("The recorded session changed. No client was disconnected.");
+    }
+    Ok(target.clone())
+}
+
+pub(crate) fn take_over_profile(
+    profile: &Profile,
+    expected: &Target,
+    notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
+    configuration_valid: &std::sync::atomic::AtomicBool,
+) -> Result<festerm_sessiond::PersistentSession, String> {
+    let binding = binding(profile).ok_or("The hosting binding changed.")?;
+    let approved = grant(binding).map_err(|_| "The hosting consent is unavailable.")?;
+    if takeover_target(profile, &approved)? != *expected
+        || fingerprint(profile)? != approved.spawn_fingerprint
+    {
+        return Err("The profile or selected session changed. No client was disconnected.".into());
+    }
+    let current = grant(binding).map_err(|_| "The hosting consent changed.")?;
+    if takeover_target(profile, &current)? != *expected
+        || current.spawn_fingerprint != approved.spawn_fingerprint
+    {
+        return Err(
+            "The hosting consent or selected session changed. No client was disconnected.".into(),
+        );
+    }
+    attach_selected_target(expected, notifier, true, Some(configuration_valid))
 }
 
 fn connect_unbound_profile(
@@ -508,7 +607,10 @@ fn connect_unbound_profile(
     allow_start: bool,
     recorded: Option<&Target>,
 ) -> Result<festerm_sessiond::PersistentSession, String> {
-    let hosted = profile_hosting::hosted_runtime().map_err(|_| "profile_host.runtime_namespace")?;
+    let hosted = [
+        profile_hosting::hosted_runtime().map_err(|_| "profile_host.runtime_namespace")?,
+        profile_hosting::previous_hosted_runtime().map_err(|_| "profile_host.runtime_namespace")?,
+    ];
     let legacy = festerm_sessiond::runtime_root().map_err(|_| "profile_host.runtime_namespace")?;
     if let Some(target) = recorded.filter(|target| target.name == name) {
         if !profile_hosting::accepts_runtime(&target.runtime_root)
@@ -541,19 +643,19 @@ fn connect_unbound_profile(
         return Err("No recorded session is available. Restoration never attaches an unverified generation.".into());
     }
     if let Some((root, session)) = unbound_existing_session_in(&hosted, &legacy, name)? {
-        return festerm_sessiond::PersistentSession::resume_discovered_in(
+        return festerm_sessiond::PersistentSession::resume_unattached_in(
             &session, &root, notifier,
         )
         .map_err(|error| error.to_string());
     }
-    festerm_sessiond::PersistentSession::start_with_notifier(
+    festerm_sessiond::PersistentSession::start_unattached_with_notifier(
         name, profile, size, scrollback, notifier,
     )
     .map_err(|error| error.to_string())
 }
 
 fn unbound_existing_session_in(
-    hosted: &Path,
+    hosted: &[PathBuf],
     legacy: &Path,
     name: &str,
 ) -> Result<Option<(PathBuf, festerm_sessiond::UnattachedSession)>, String> {
@@ -565,13 +667,12 @@ fn unbound_existing_session_in(
     {
         return Ok(Some((legacy.to_owned(), running.session)));
     }
-    let hosted_sessions = festerm_sessiond::list_running_sessions_strict_in(hosted)
-        .map_err(|_| "Session inventory is unavailable; no replacement was started.")?;
-    if hosted_sessions
-        .iter()
-        .any(|running| running.session.name == name)
-    {
-        return Err("An unverified hosted session already uses this name; no session was attached or started.".into());
+    for root in hosted {
+        let sessions = festerm_sessiond::list_running_sessions_strict_in(root)
+            .map_err(|_| "Session inventory is unavailable; no replacement was started.")?;
+        if sessions.iter().any(|running| running.session.name == name) {
+            return Err("An unverified hosted session already uses this name; no session was attached or started.".into());
+        }
     }
     Ok(None)
 }
@@ -1040,6 +1141,7 @@ impl Controller {
                 sign_in: grant.failure == Some(Failure::SignInRequired),
                 recreate: grant.phase == Phase::CloudMissing,
                 new_shell: grant.failure == Some(Failure::NewShellApprovalRequired),
+                takeover: takeover_target(profile, &grant).is_ok(),
                 message: phase_message(&grant).into(),
                 ..Default::default()
             };
@@ -1066,6 +1168,7 @@ impl Controller {
             {
                 view.message = failure_message("profile_host.profile_conflict").into();
                 view.share = None;
+                view.takeover = false;
             }
             views.insert(profile.identifier().to_owned(), view);
         }
@@ -1759,6 +1862,32 @@ impl FesTermApp {
         self.local_hosting.accounts.begin(context, tab, request);
     }
 
+    pub(super) fn confirm_hosted_takeover(
+        &mut self,
+        profile: &Profile,
+        expected: &Target,
+        context: &egui::Context,
+    ) -> Result<(), &'static str> {
+        let configuration = self.state.configuration();
+        if configuration.profile(profile.identifier()) != Some(profile)
+            || configuration
+                .validate_hosted_session_name(Some(profile.identifier()), profile, false)
+                .is_err()
+        {
+            return Err(
+                "The profile changed or its session name is ambiguous. No client was disconnected.",
+            );
+        }
+        let binding = binding(profile).ok_or("The hosting binding changed.")?;
+        let grant =
+            grant_view(binding).map_err(|_| "The hosting consent changed or is unavailable.")?;
+        if takeover_target(profile, &grant)? != *expected {
+            return Err("The selected session changed. No client was disconnected.");
+        }
+        self.state
+            .start_hosted_takeover(profile.clone(), expected.clone(), context)
+    }
+
     fn confirm_local_host_action(
         &mut self,
         profile_id: &str,
@@ -1936,6 +2065,30 @@ impl FesTermApp {
                     Some((profile_id.to_owned(), binding.clone(), action));
                 self.local_hosting.focus_confirmation = true;
             }
+            LocalHostAction::TakeOver => {
+                if self
+                    .state
+                    .configuration()
+                    .validate_hosted_session_name(Some(profile_id), &profile, false)
+                    .is_err()
+                {
+                    self.secure_storage_feedback = Some("This profile shares a native session name with a hosted profile. Resolve the conflict before taking over a session.");
+                } else {
+                    match takeover_target(&profile, &grant) {
+                        Ok(target) => {
+                            self.overlays.pending_native_takeover =
+                                Some(crate::overlay_state::PendingNativeTakeoverConfirmation {
+                                    selection: crate::overlay_state::NativeTakeoverSelection::HostedProfile {
+                                        profile,
+                                        target,
+                                    },
+                                    cancel_focus_requested: false,
+                                });
+                        }
+                        Err(message) => self.secure_storage_feedback = Some(message),
+                    }
+                }
+            }
             LocalHostAction::CancelSignIn | LocalHostAction::RevokeUnreferenced => {}
         }
     }
@@ -1950,9 +2103,11 @@ mod tests {
         let fixture = tempfile::tempdir().unwrap();
         let hosted = fixture.path().join("hosted");
         let legacy = fixture.path().join("legacy");
-        assert!(unbound_existing_session_in(&hosted, &legacy, "shell")
-            .unwrap()
-            .is_none());
+        assert!(
+            unbound_existing_session_in(std::slice::from_ref(&hosted), &legacy, "shell")
+                .unwrap()
+                .is_none()
+        );
         std::fs::create_dir(&hosted).unwrap();
         std::fs::create_dir(&legacy).unwrap();
         let endpoint = fixture.path().join("legacy.sock");
@@ -1967,7 +2122,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            unbound_existing_session_in(&hosted, &legacy, "shell")
+            unbound_existing_session_in(std::slice::from_ref(&hosted), &legacy, "shell")
                 .unwrap()
                 .unwrap()
                 .0,
@@ -1979,22 +2134,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            unbound_existing_session_in(&hosted, &legacy, "shell")
+            unbound_existing_session_in(std::slice::from_ref(&hosted), &legacy, "shell")
                 .unwrap()
                 .unwrap()
                 .0,
             legacy
         );
         std::fs::remove_file(legacy.join("registry.json")).unwrap();
-        assert!(unbound_existing_session_in(&hosted, &legacy, "shell")
-            .unwrap_err()
-            .contains("unverified hosted"));
+        let current_hosted = fixture.path().join("current-hosted");
+        assert!(
+            unbound_existing_session_in(&[current_hosted, hosted.clone()], &legacy, "shell")
+                .unwrap_err()
+                .contains("unverified hosted")
+        );
         std::fs::write(
             hosted.join("registry.json"),
             br#"{"sessions":{"shell":{"socket":42,"protocol_version":9}}}"#,
         )
         .unwrap();
-        assert!(unbound_existing_session_in(&hosted, &legacy, "shell").is_err());
+        assert!(
+            unbound_existing_session_in(std::slice::from_ref(&hosted), &legacy, "shell").is_err()
+        );
     }
 
     fn fixture() -> (LocalTunnelHosting, Consent, Profile) {
@@ -2031,6 +2191,102 @@ mod tests {
             .with_local_tunnel_hosting(Some(binding.clone()))
             .unwrap();
         (binding, grant, profile)
+    }
+
+    #[test]
+    fn hosted_takeover_pins_active_consent_and_the_recorded_generation() {
+        let (_, mut grant, profile) = fixture();
+        let root = profile_hosting::hosted_runtime().unwrap();
+        let target = Target {
+            runtime_root: root.clone(),
+            name: "fixture".into(),
+            pid: 123,
+            generation: 456,
+            endpoint: "fixture-endpoint".into(),
+        };
+        grant.hosted_launch = Some(HostedLaunch {
+            runtime_root: root,
+            legacy: None,
+        });
+        grant.target = Some(target.clone());
+        assert_eq!(takeover_target(&profile, &grant).unwrap(), target);
+
+        grant.phase = Phase::Revoked;
+        assert!(takeover_target(&profile, &grant).is_err());
+        grant.phase = Phase::Exposed;
+        grant.target.as_mut().unwrap().runtime_root = PathBuf::from("/other/sessiond");
+        assert!(takeover_target(&profile, &grant).is_err());
+        grant.target = None;
+        assert!(takeover_target(&profile, &grant).is_err());
+        grant.consent = uuid::Uuid::new_v4().to_string();
+        assert!(takeover_target(&profile, &grant).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hosted_takeover_rejects_stale_identity_and_invalidated_configuration() {
+        use fs2::FileExt;
+        let fixture = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(fixture.path()).unwrap();
+        let pid = std::process::id();
+        let generation = 456;
+        let endpoint = root.join(format!("{pid}-{generation}.sock"));
+        std::fs::write(&endpoint, b"").unwrap();
+        let lease = std::fs::File::create(root.join(format!("lease-{pid}-{generation}"))).unwrap();
+        lease.lock_exclusive().unwrap();
+        std::fs::write(
+            root.join("registry.json"),
+            serde_json::to_vec(&serde_json::json!({"sessions": {"fixture": {
+                "name": "fixture", "pid": pid, "socket": endpoint,
+                "created_at_unix_ms": generation
+            }}}))
+            .unwrap(),
+        )
+        .unwrap();
+        let target = Target {
+            runtime_root: root,
+            name: "fixture".into(),
+            pid,
+            generation,
+            endpoint: endpoint.to_string_lossy().into_owned(),
+        };
+        let invalid = std::sync::atomic::AtomicBool::new(false);
+        assert!(attach_selected_target(
+            &target,
+            festerm_session::noop_session_event_notifier(),
+            true,
+            Some(&invalid)
+        )
+        .err()
+        .unwrap()
+        .contains("profile changed"));
+        let valid = std::sync::atomic::AtomicBool::new(true);
+        assert!(attach_selected_target(
+            &target,
+            festerm_session::noop_session_event_notifier(),
+            true,
+            Some(&valid)
+        )
+        .is_err());
+        assert!(!valid.load(std::sync::atomic::Ordering::Acquire));
+        assert!(attach_selected_target(
+            &target,
+            festerm_session::noop_session_event_notifier(),
+            true,
+            Some(&valid)
+        )
+        .err()
+        .unwrap()
+        .contains("profile changed"));
+        let mut stale = target;
+        stale.generation += 1;
+        assert!(attach_selected_target(
+            &stale,
+            festerm_session::noop_session_event_notifier(),
+            true,
+            None
+        )
+        .is_err());
     }
 
     #[test]
@@ -2301,6 +2557,15 @@ mod tests {
             .unwrap_err()
             .contains("too long"));
         assert!(!namespace.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn short_hosted_root_fits_a_typical_macos_home() {
+        assert!(verify_hosted_endpoint_capacity(Path::new(
+            "/Users/example/.local/state/festerm/h/festerm/sessiond"
+        ))
+        .is_ok());
     }
 
     #[test]

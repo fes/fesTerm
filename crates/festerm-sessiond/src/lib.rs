@@ -1188,8 +1188,39 @@ impl PersistentSession {
             .validate()
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
 
-        let connection = connect_or_start(name.as_str(), profile, size, scrollback_limit_bytes)?;
+        let connection =
+            connect_or_start(name.as_str(), profile, size, scrollback_limit_bytes, true)?;
         Self::from_named_stream(connection, notifier, name.as_str().to_owned())
+    }
+
+    /// Opens an ordinary named profile without taking over a concurrent client.
+    pub fn start_unattached_with_notifier(
+        name: &str,
+        profile: &LocalProfile,
+        size: TerminalSize,
+        scrollback_limit_bytes: usize,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        let name = PersistentSessionName::new(name.to_owned())
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        profile
+            .validate()
+            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+        let connection =
+            connect_or_start(name.as_str(), profile, size, scrollback_limit_bytes, false)?;
+        let identity = connection.identity.clone().ok_or_else(|| {
+            PersistentSessionError::new("the started daemon did not report its generation")
+        })?;
+        let selected = UnattachedSession {
+            name: identity.name,
+            pid: identity.pid,
+            endpoint: identity.endpoint,
+            created_at_unix_ms: identity.created_at_unix_ms,
+            shell: String::new(),
+            arguments: Vec::new(),
+            working_directory: None,
+        };
+        Self::from_discovered_stream(connection, selected, runtime_root()?, true, notifier)
     }
 
     /// Attaches to an already-running, unattached `festerm-sessiond` session
@@ -1227,7 +1258,7 @@ impl PersistentSession {
         root: &std::path::Path,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
-        Self::resume_local_in(selected, root, true, notifier)
+        Self::resume_local_in(selected, root, true, false, notifier)
     }
 
     /// Deliberately takes a session that another client already holds. The
@@ -1238,13 +1269,32 @@ impl PersistentSession {
         root: &std::path::Path,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
-        Self::resume_local_in(selected, root, false, notifier)
+        Self::resume_local_in(selected, root, false, false, notifier)
+    }
+
+    /// Attach only while unattached, including on later manual reconnects.
+    pub fn resume_unattached_in(
+        selected: &UnattachedSession,
+        root: &std::path::Path,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::resume_local_in(selected, root, true, true, notifier)
+    }
+
+    /// Take over once; later reconnects require the generation to be unattached.
+    pub fn take_over_once_in(
+        selected: &UnattachedSession,
+        root: &std::path::Path,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        Self::resume_local_in(selected, root, false, true, notifier)
     }
 
     fn resume_local_in(
         selected: &UnattachedSession,
         root: &std::path::Path,
         require_unattached: bool,
+        reconnect_requires_unattached: bool,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
         let connection = connect_discovered_with_cancel(
@@ -1254,19 +1304,31 @@ impl PersistentSession {
             &AtomicBool::new(false),
             None,
         )?;
+        Self::from_discovered_stream(
+            connection,
+            selected.clone(),
+            root.to_owned(),
+            reconnect_requires_unattached,
+            notifier,
+        )
+    }
+
+    fn from_discovered_stream(
+        connection: ConnectedSession,
+        selected: UnattachedSession,
+        root: PathBuf,
+        reconnect_requires_unattached: bool,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
         let snapshot_protocol = connection.protocol_version >= 2;
-        let selected = selected.clone();
-        let root = root.to_owned();
         Self::from_stream_with_reconnector(
             connection,
             notifier,
             Some(Arc::new(move |cancelled| {
-                // Manual reconnect retains steal-on-reconnect, but only for
-                // the generation selected from this registry.
                 connect_discovered_with_cancel(
                     &selected,
                     &root,
-                    false,
+                    reconnect_requires_unattached,
                     cancelled,
                     Some(snapshot_protocol),
                 )
@@ -1769,7 +1831,18 @@ fn connect_discovered_with_cancel(
             "The selected native daemon is no longer running. Refresh Running Sessions.",
         ));
     }
-    connect_record_with_cancel(record, cancelled)
+    if record.protocol_version < 3 {
+        return Err(PersistentSessionError::new(
+            "This older native daemon cannot verify the selected generation at admission. Use its compatible fesTerm version to access or end the session.",
+        ));
+    }
+    connect_record_admitted(
+        record,
+        cancelled,
+        !require_unattached,
+        AttachKind::Local,
+        MAX_RECOVERY_SNAPSHOT_BYTES as u32,
+    )
 }
 
 fn connect_existing_with_cancel(
@@ -2604,6 +2677,7 @@ fn connect_or_start(
     profile: &LocalProfile,
     size: TerminalSize,
     scrollback_limit_bytes: usize,
+    takeover: bool,
 ) -> Result<ConnectedSession, PersistentSessionError> {
     let registry = load_registry()?;
     if let Some(declared) = registry.unreadable.get(name) {
@@ -2613,8 +2687,18 @@ fn connect_or_start(
     }
     if let Some(record) = registry.sessions.get(name) {
         ensure_protocol_compatible(record)?;
-        if let Ok(stream) = connect_record(record) {
-            return Ok(stream);
+        if !takeover && record.name != name {
+            return Err(PersistentSessionError::new(
+                "The native session registry identity changed; no client was disconnected.",
+            ));
+        }
+        if !takeover && process_alive(record.pid) {
+            return connect_unattached_record(record);
+        }
+        if takeover {
+            if let Ok(stream) = connect_record(record) {
+                return Ok(stream);
+            }
         }
     }
 
@@ -2668,19 +2752,52 @@ fn connect_or_start(
     }
 
     let deadline = Instant::now() + Duration::from_secs(2);
+    let mut last_refusal = None;
     loop {
         if let Some(record) = load_registry()?.sessions.get(name) {
-            if let Ok(stream) = connect_record(record) {
-                return Ok(stream);
+            if !takeover && record.name != name {
+                return Err(PersistentSessionError::new(
+                    "The native session registry identity changed; no client was disconnected.",
+                ));
+            }
+            let connection = if takeover {
+                connect_record(record)
+            } else {
+                connect_unattached_record(record)
+            };
+            match connection {
+                Ok(stream) => return Ok(stream),
+                Err(error) if !takeover => last_refusal = Some(error),
+                Err(_) => {}
             }
         }
         if Instant::now() >= deadline {
+            if let Some(error) = last_refusal {
+                return Err(error);
+            }
             return Err(PersistentSessionError::new(format!(
                 "timed out attaching to persistent session '{name}'"
             )));
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+fn connect_unattached_record(
+    record: &SessionRecord,
+) -> Result<ConnectedSession, PersistentSessionError> {
+    if record.attached || record.protocol_version < 3 {
+        return Err(PersistentSessionError::new(
+            "The native session is attached or uses an older daemon that cannot guarantee an unattached-only connection. No client was disconnected.",
+        ));
+    }
+    connect_record_admitted(
+        record,
+        &AtomicBool::new(false),
+        false,
+        AttachKind::Local,
+        MAX_RECOVERY_SNAPSHOT_BYTES as u32,
+    )
 }
 
 fn connect_record(record: &SessionRecord) -> Result<ConnectedSession, PersistentSessionError> {
@@ -6132,6 +6249,80 @@ mod registry_filtering_tests {
 
     #[cfg(unix)]
     #[test]
+    fn discovered_resume_requests_non_takeover_admission_and_rejects_unverifiable_daemons() {
+        use std::os::unix::net::UnixListener;
+
+        let fixture = RegistryFixture::new();
+        let pid = std::process::id();
+        let generation = 123;
+        let endpoint =
+            PathBuf::from(fixture.0.file_name().unwrap()).join(format!("{pid}-{generation}.sock"));
+        let listener = UnixListener::bind(&endpoint).unwrap();
+        let _lease = live_lease(&fixture, pid, generation);
+        let mut record = serde_json::json!({
+            "name": "demo", "pid": pid, "socket": endpoint,
+            "created_at_unix_ms": generation, "attached": false,
+            "protocol_version": 3, "snapshot_schema_version": 2
+        });
+        let write = |record: &serde_json::Value| {
+            std::fs::write(
+                fixture.0.join("registry.json"),
+                serde_json::to_vec(&serde_json::json!({"sessions": {"demo": record}})).unwrap(),
+            )
+            .unwrap();
+        };
+        write(&record);
+        let selected = list_unattached_sessions_in(&fixture.0).unwrap().remove(0);
+        let server = std::thread::spawn(move || {
+            for takeover in [false, true, false] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; ADMISSION_BYTES];
+                stream.read_exact(&mut request).unwrap();
+                assert_eq!(
+                    decode_admission_header(&request),
+                    Some((takeover, AttachKind::Local))
+                );
+                stream.write_all(&[u8::from(takeover)]).unwrap();
+            }
+        });
+        let cancelled = AtomicBool::new(false);
+        assert!(
+            connect_discovered_with_cancel(&selected, &fixture.0, true, &cancelled, None)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("refused")
+        );
+        assert!(
+            connect_discovered_with_cancel(&selected, &fixture.0, false, &cancelled, None).is_ok()
+        );
+        let entry = load_registry_in(&fixture.0)
+            .unwrap()
+            .sessions
+            .remove("demo")
+            .unwrap();
+        assert!(connect_unattached_record(&entry).is_err());
+        server.join().unwrap();
+        record["protocol_version"] = 2.into();
+        write(&record);
+        assert!(
+            connect_discovered_with_cancel(&selected, &fixture.0, true, &cancelled, None)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("cannot verify the selected generation")
+        );
+        assert!(
+            connect_discovered_with_cancel(&selected, &fixture.0, false, &cancelled, None)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("cannot verify the selected generation")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn discovered_reconnect_after_eof_keeps_root_and_rejects_each_changed_identity() {
         use super::tests::wait_for_lifecycle;
         use std::os::unix::net::UnixListener;
@@ -6152,7 +6343,8 @@ mod registry_filtering_tests {
         lease.lock_exclusive().unwrap();
         let original = serde_json::json!({
             "name":"demo", "pid":pid, "socket":endpoint,
-            "created_at_unix_ms":123, "attached":false
+            "created_at_unix_ms":123, "attached":false,
+            "protocol_version":3, "snapshot_schema_version":RECOVERY_SNAPSHOT_SCHEMA_VERSION
         });
         let write = |record: &serde_json::Value| {
             std::fs::write(
@@ -6163,15 +6355,51 @@ mod registry_filtering_tests {
         };
         write(&original);
         let selected = list_unattached_sessions_in(&fixture.0).unwrap().remove(0);
-        let session = PersistentSession::resume_discovered_in(
+        let acceptor = listener.try_clone().unwrap();
+        let (accepted, connections) = std::sync::mpsc::channel();
+        let server_thread = thread::spawn(move || {
+            let terminal = Terminal::new(festerm_core::Dimensions::new(8, 2).unwrap()).unwrap();
+            let snapshot = encode_recovery_snapshot(&terminal).unwrap();
+            for takeover in [true, false] {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match acceptor.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "admission stalled");
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(error) => panic!("admission failed: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                let mut request = [0; ADMISSION_BYTES];
+                stream.read_exact(&mut request).unwrap();
+                assert_eq!(
+                    decode_admission_header(&request),
+                    Some((takeover, AttachKind::Local))
+                );
+                stream.write_all(&[1]).unwrap();
+                stream.write_all(&snapshot).unwrap();
+                accepted.send(stream).unwrap();
+            }
+        });
+        let session = PersistentSession::take_over_once_in(
             &selected,
             &fixture.0,
             noop_session_event_notifier(),
         )
         .unwrap();
         let id = session.id();
-        let (server, _) = listener.accept().unwrap();
+        let mut server = connections.recv_timeout(Duration::from_secs(5)).unwrap();
         wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
+        session.take_recovered_terminal().unwrap();
+        let mut adopted = [0; 9];
+        server
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        server.read_exact(&mut adopted).unwrap();
+        assert_eq!(adopted[4], FRAME_RECOVERY_ADOPTED);
         drop(server);
         wait_for_lifecycle(&session, |state| {
             matches!(state, SessionLifecycle::Disconnected(_))
@@ -6180,9 +6408,22 @@ mod registry_filtering_tests {
         attached["attached"] = true.into();
         write(&attached);
         session.try_reconnect().unwrap();
+        wait_for_lifecycle(
+            &session,
+            |state| matches!(state, SessionLifecycle::Disconnected(error) if error.message().contains("attached elsewhere")),
+        );
+        write(&original);
+        session.try_reconnect().unwrap();
         wait_for_lifecycle(&session, |state| matches!(state, SessionLifecycle::Running));
-        let (server, _) = listener.accept().unwrap();
+        let mut server = connections.recv_timeout(Duration::from_secs(5)).unwrap();
+        server_thread.join().unwrap();
         assert_eq!(session.id(), id);
+        session.take_recovered_terminal().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        server.read_exact(&mut adopted).unwrap();
+        assert_eq!(adopted[4], FRAME_RECOVERY_ADOPTED);
         drop(server);
         wait_for_lifecycle(&session, |state| {
             matches!(state, SessionLifecycle::Disconnected(_))

@@ -25,11 +25,13 @@ Hosting consent never authorizes stopping a session.
 ## Decision
 
 Keep the existing ancestor policy unchanged. Create or validate only the
-protected `profile-hosts` subtree; never repair the legacy product or runtime
-permissions. New desktop hosting requests use a dedicated runtime at
-`profile-hosts/runtime/<platform-product>/sessiond`. The product component is
-`fesTerm` on Windows and `festerm` on Unix, preserving the existing managed
-runtime shape. Previously bound hosts retain their recorded default root.
+protected `profile-hosts` subtree and a separate private runtime; never repair
+the legacy product or runtime permissions. New desktop hosting requests use
+`<product>/h/<platform-product>/sessiond`, keeping Unix socket paths short.
+The inner product component is `fesTerm` on Windows and `festerm` on Unix,
+preserving the managed runtime shape. Previously bound hosts retain their
+recorded default root or the earlier `profile-hosts/runtime/<platform-product>/sessiond`
+root; both hosted roots remain discoverable and subject to collision checks.
 
 Persist the new launch root and any exact legacy generation awaiting restart
 in the protected hosting consent record, not ordinary configuration or a
@@ -83,6 +85,20 @@ connection-form draft. Errors remain visible on the originating surface and
 do not assert that a shell was never started when launch may have occurred.
 Successful target binding triggers hosting reconciliation even if the user
 navigates away or attachment subsequently fails.
+Ordinary hosted attachment refuses an occupied daemon using non-takeover
+admission. Older daemons without generation-aware admission are not eligible
+for either hosted attachment or takeover; use a compatible fesTerm version
+to access or end those sessions. A later reconnect does not renew takeover
+consent and also refuses an occupied generation.
+The profile editor offers a separate confirmation, defaulting to Cancel and
+warning that the current client will disconnect. It rechecks the saved profile,
+consent, command and exact lease-backed generation, never starts a replacement,
+and declines if identity cannot be verified.
+An in-process conflicting configuration replacement cancels a pending takeover
+only if it wins the single-use admission flag before the connection worker does.
+Once the worker claims that flag, a later change cannot recall the in-flight
+local admission; the flag does not synchronize independent processes or revoke
+an already admitted operation.
 
 Missing or foreign host-local consent does not adopt remote authority and does
 not make a portable Local profile unusable. An explicit open can attach an

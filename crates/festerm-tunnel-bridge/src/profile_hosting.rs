@@ -92,13 +92,28 @@ pub fn installation_path(installation: &str) -> io::Result<PathBuf> {
 
 pub fn hosted_runtime() -> io::Result<PathBuf> {
     let product = if cfg!(windows) { "fesTerm" } else { "festerm" };
+    let namespace = namespace()?;
+    Ok(namespace
+        .parent()
+        .ok_or_else(|| refused("profile_host.runtime_namespace"))?
+        .join("h")
+        .join(product)
+        .join("sessiond"))
+}
+
+pub fn previous_hosted_runtime() -> io::Result<PathBuf> {
+    let product = if cfg!(windows) { "fesTerm" } else { "festerm" };
     Ok(namespace()?.join("runtime").join(product).join("sessiond"))
+}
+
+pub fn accepts_hosted_runtime(root: &Path) -> io::Result<bool> {
+    Ok(root == hosted_runtime()? || root == previous_hosted_runtime()?)
 }
 
 pub fn accepts_runtime(root: &Path) -> io::Result<bool> {
     let legacy =
         festerm_sessiond::runtime_root().map_err(|_| refused("profile_host.runtime_namespace"))?;
-    Ok(root == legacy || root == hosted_runtime()?)
+    Ok(root == legacy || accepts_hosted_runtime(root)?)
 }
 
 /// Foreground login takes an exclusive lease; desktop account-bound mutations
@@ -1243,6 +1258,37 @@ mod tests {
         );
         drop(store);
         std::fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn hosted_runtime_accepts_short_and_previous_namespaces_only() {
+        let legacy = festerm_sessiond::runtime_root().unwrap();
+        let current = hosted_runtime().unwrap();
+        let previous = previous_hosted_runtime().unwrap();
+        let product = if cfg!(windows) { "fesTerm" } else { "festerm" };
+        assert_eq!(
+            current,
+            legacy
+                .parent()
+                .unwrap()
+                .join("h")
+                .join(product)
+                .join("sessiond")
+        );
+        assert_eq!(
+            previous,
+            namespace()
+                .unwrap()
+                .join("runtime")
+                .join(product)
+                .join("sessiond")
+        );
+        assert_ne!(current, previous);
+        assert!(accepts_runtime(&legacy).unwrap());
+        assert!(accepts_hosted_runtime(&current).unwrap());
+        assert!(accepts_hosted_runtime(&previous).unwrap());
+        assert!(!accepts_hosted_runtime(&legacy).unwrap());
+        assert!(!accepts_runtime(&legacy.with_file_name("other")).unwrap());
     }
 
     #[test]

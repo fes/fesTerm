@@ -772,6 +772,12 @@ enabled host and retain the editor draft. Builds without hosting support show
 an error rather than opening a hosted profile in the default runtime. Delayed
 opens preserve newly entered drafts, report failures on the originating
 surface and reconcile a bound target even after navigation or attachment failure.
+An occupied hosted profile offers explicit **Take over session...** with
+Cancel focused; it revalidates the profile, consent and exact generation and
+warns that the current local/remote client will disconnect. It never starts a
+replacement. Running Sessions offers the same confirmation for its selected
+generation. Older daemons without generation-aware admission must be accessed
+or ended with a compatible fesTerm version.
 
 For `TUNNEL-15`/`TUNNEL-16`, interrupted staging is retryable: executable
 permissions precede atomic publication, and a cached CLI's mode is repaired only

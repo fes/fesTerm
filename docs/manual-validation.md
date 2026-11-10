@@ -2204,6 +2204,9 @@ or recreate the session while confirmation is open and verify refusal rather
 than termination of the new/attached generation. Review keyboard navigation,
 focus and narrow-window wording on each native platform. These are additions
 to the existing inventory, not claims that signed-package/native gates passed.
+Also verify that ordinary reattach never displaces a concurrent client, that
+explicit takeover defaults to Cancel, and that stale generations and changed
+hosted profiles/consent are refused before a client is disconnected.
 
 ### Rendering performance
 
