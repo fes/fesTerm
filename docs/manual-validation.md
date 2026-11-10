@@ -3838,11 +3838,34 @@ requires qualification; these fixtures perform no real cloud or vault mutations.
 acknowledged uncertain exact resource through read-only observation, without
 enable/creation consent. Unknown/absent observations retain uncertainty;
 epoch-raced authoritative receipts remain pinned for retry. Native stop and
-generation-atomic cloud deletion remain independently gated. Retain protected
+automatic generation-atomic cloud deletion remain independently gated. Retain protected
 records/credentials; do not delete the installation directory or grant creation
 consent just to uninstall. Live GET stability, `If-None-Match: *` atomicity,
 authenticated exact-cluster 404/ownership, cluster routing/no-redirect and native
 vault behavior still require live/native qualification.
+
+**HOSTSETUP-01 explicit manual cleanup fallback (owner-approved):** Automated
+generation-atomic DELETE remains unavailable, not a prerequisite to choosing
+manual provider review/removal. On a disposable, separately authorized real
+account/installation, require stopped/revoked local access first. Run explicit
+uninstall and verify its unsuccessful CleanupPending output shows only the
+protected installation/epoch, numeric account, cluster/tunnel ID, ownership
+label and creation incarnation from a fresh authenticated matching observation.
+Independently review those identifiers/current ownership in the provider's
+management interface; remove only on a complete current match, stopping on
+replacement or ambiguity. Verify fesTerm opens no browser/portal, initiates no
+sign-in and sends no DELETE. Retry uninstall with the original state/account:
+only authenticated exact absence may commit Removed. Confirm denial, offline,
+unknown, changed/foreign receipt, stale epoch and cancellation never report
+Removed or offer a verified deletion target. Read-only status must label stored
+receipt context unverified, withhold raw binding metadata and provide no removal
+instruction; missing/corrupt context must be actionable uncertainty. Preserve
+independent daemons, grants, revocation tombstones and protected records.
+For migration, require separately verified protected source receipts and exact
+selection/consent; this component does not qualify legacy binding or cleanup.
+Automated protected-receipt/controller/CLI fixtures cover the safe publication,
+uncertainty and absence-retry rules only. **Actual provider removal/retry and
+native/cloud/vault acceptance remain UNRUN.**
 
 The ignored Unix guest test
 `native_service_live_exact_owned_lifecycle_preserves_independent_child`

@@ -176,6 +176,27 @@ exact cloud receipt. Authenticated cloud absence can commit Removed. A still
 present resource has no qualified generation-atomic delete operation, so no
 DELETE is sent: the command exits unsuccessfully with
 `host.native_removed_cloud_cleanup_pending`, retaining all retry/cleanup evidence.
+It now carries sanitized protected installation/epoch, numeric account,
+cluster/tunnel ID, ownership label and creation-incarnation context, verified
+during that foreground attempt. Independently open the provider's resource
+management interface for that account; review **all** identifiers and current
+ownership before deliberately removing that exact resource. Stop on any changed
+incarnation or uncertain ownership. fesTerm does not open a browser, launch a
+portal, sign in automatically or perform provider deletion. Retry the same
+explicit uninstall command with the original protected state/account; only
+authenticated verified absence commits Removed. Denied/offline/unknown or
+changed/foreign receipt/epoch results provide uncertainty guidance, not a
+verified manual removal target.
+
+`status --state-dir PATH` remains a local-only journal read, without credentials,
+network or manager effects. For CleanupPending it adds `cloud_cleanup.state`
+(`stored-receipt-unverified` or `uncertain`) and a sanitized `receipt_context`
+only when the protected record matches the current binding. The raw `binding`
+field is withheld in this phase (`binding_withheld: true`), **not declared
+absent**, so corrupt metadata cannot masquerade as an actionable target.
+Status never supplies a provider-removal instruction; it asks for preservation
+and explicit authenticated uninstall retry. A stored context is not current
+provider ownership or deletion authority.
 Persistent daemon/session state is never a removal target. Repeating an already
 Removed tombstone reports recorded history, not fresh resource observation.
 
@@ -451,20 +472,31 @@ without enabling access or granting creation consent (`HOSTSETUP-01`). Missing,
 foreign or uncertain evidence cannot bind. Present authoritative evidence is
 pinned before StopRequested, allowing retry after an epoch race. Retain the
 protected cloud record, credential and installation directory; deleting them is
-not a recovery/uninstall procedure. The generation-atomic deletion qualification
-below remains a separate prerequisite even after cleanup binding.
+not a recovery/uninstall procedure. Automatic generation-atomic deletion remains
+unavailable; explicit manual review/removal below is an approved alternative,
+not inferred from cleanup binding alone.
 
 `cleanup(cancel)` requires the lifecycle's exact binding, current cleanup epoch
 and confirmed native stop. It rechecks current account, exact ID/cluster,
 ownership labels, private ACL, port and creation incarnation. Exact authenticated
 absence can commit the removed tombstone. A matching existing resource returns
-`Cleanup::GenerationConditionalDeleteUnavailable`, retains CleanupPending and
+`Cleanup::GenerationConditionalDeleteUnavailable { context }`, retains CleanupPending and
 **sends no DELETE**. The official SDK exposes ID-only deletion, not a documented
 generation-atomic delete precondition. A check-then-delete would race replacement;
 we do not invent an ETag/creation-time header or claim cleanup succeeded.
 Qualifying a service-side incarnation-conditional destructive contract remains
 a genuine prerequisite to automatic cloud removal. Credentials and protected
 tombstones are retained; this API does not claim complete uninstall.
+The returned `CleanupContext` is display-only public metadata, never a destructive
+operation or permission. Before returning it, cleanup reacquires the installation
+lease and rechecks the full snapshot/epoch and original protected record after
+the authenticated observation/account confirmation. A changed receipt,
+credential scope or lifecycle refuses publication. `pending_cleanup_context`
+performs the same local receipt/binding checks without any network/vault access,
+but its result must remain explicitly unverified and cannot authorize removal.
+Under ADR 0084's `allow_explicit_manual_fallback` decision, foreground consumers
+may explain independent provider review/removal only for the fresh matching
+present result; only authenticated absence on a later retry changes lifecycle.
 Live-service creation-incarnation stability across repeated authoritative GETs,
 `If-None-Match: *` atomicity, authenticated exact-cluster 404/ownership semantics
 and cluster routing/no-redirect behavior remain unqualified. Native-vault
