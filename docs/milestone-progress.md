@@ -1,5 +1,61 @@
 # Milestone Progress Narrative
 
+## Freezing the runtime/native core with exact primary-CI corrections
+
+The frozen publication union normally merges exact
+`181eb5722f279e7482002582e0fd3067757a4695` into qualified
+`e49bb89ac6c595b40ecf2b8c2b9db89b11d5e778` at
+`45f6903e14d514e27c53b0712f93793fdb58c3e9`, without conflicts.
+No native update (`c75d03d7`), client producer or moving branch is consumed.
+Daemon and authenticated host runtime/lifecycle implementation bytes remain
+unchanged from `e49bb89a`; the delta carries exact session fixtures, setup
+fixtures/bounded diagnostics, their Windows-only process-console query and docs.
+All 96 ordered markers, original snapshot refusal reasons, real writer I/O
+barrier, same-lease/issued-operation Busy assertions, original 15-second
+authentication budget and two-daemon adoption/isolation oracles are preserved.
+
+Fresh coupled qualification uses private `.runtime-target`, jobs1, dev/test
+debug0 and incremental0:
+
+```sh
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/.runtime-target"
+unset FESTERM_SESSIOND_TEST_RUNTIME_ROOT
+cargo test --locked -p festerm-sessiond --test host_control temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease -- --exact --test-threads=1
+cargo test --locked -p festerm-sessiond --test remote_ssh -- --test-threads=2
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams -- --exact --nocapture
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge --features festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9d5211745c126c2cdc417062d153c324d024b188
+git diff --check
+```
+
+Actual final-source results: **one host-control pass** (3.53 seconds), **all six
+real SSH passes** (3.85 seconds), and **one portable bounded-evidence pass**
+(0.12 seconds), all zero failed/ignored. Affected strict all-target Clippy,
+fmt, base-`9d` traceability (311 edges/zero broken or unclassified) and diff
+checks pass. Logs are retained as `.runtime-validation/frozen-181-*.log`.
+The first SSH invocation explicitly selected the longer lane-local `s` root:
+all six refused the conservative socket-path preflight before daemon creation.
+That failure is retained; the unchanged fixtures passed with their canonical
+short workspace-parent `.f` root and unique owned children. No permission repair,
+symlink workaround or source/deadline change was made. An initial standalone
+sessiond Clippy selection failed on the existing unused bridge
+`encode_json_bounded` under its narrower feature union; the final strict command
+above enables the frozen core's real `host-routing` feature, with no lint waiver
+or source change. Both failures remain separate logs, not erased by the reruns.
+
+The **14 actual native SSH routes in 127.73 seconds** and the broader combined
+runtime/native counts remain attributed to the actual `e49bb89a` source
+qualification below; no full native aggregate was rerun or relabelled for this
+test-only coupled delta. The full sessiond **245 passes/seven existing ignores**
+remain attributed only to `d7d2d94d`. Required primary-platform CI, independent
+combined reviews, actual Windows console/argv/CIM evidence and installed signed
+native/cloud/vault/device acceptance remain open. This frozen source handoff
+does not claim Ready or ADR completion. Parent owns the new stacked Draft
+publication; no push, force update, administrative merge or service operation
+is performed by this lane.
+
 ## Combining the narrow primary-CI corrections
 
 The session branch normally merges exact Windows fixture checkpoint
