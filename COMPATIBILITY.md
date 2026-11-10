@@ -78,6 +78,12 @@ frontend/control identity and exact helper path/bytes; deletion/replacement and
 daemon-end controls fail the same oracle. Its current-source binary in a
 synthetic old-version package/test signatures and fake native manager are not
 genuine older-release, publisher, native switching or cross-version acceptance.
+The optional GUI-free official schema-2 host-bundle acquisition seam uses only
+the trusted current build/native target and unchanged updater root, returning
+authenticated owned bytes without host effects. Six-target signed synthetic
+fixtures are not real release/native evidence; missing assets/404 block, never
+latest/older/legacy fallback. Desktop wiring and genuine release/first-verifier/
+native qualification remain open.
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 

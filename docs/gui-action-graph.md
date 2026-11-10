@@ -1646,7 +1646,16 @@ HOST-06 currently has the independently testable
 [helper authenticity boundary](host-release-artifacts.md) and separate
 [private executable-publication component](native-host-services.md):
 signed exact-target metadata, immutable verified bytes and bounded archive
-allowlists. It does not
+allowlists. HOST-05/HOST-06 additionally have a GUI-free
+[official schema-2 acquisition seam](host-release-artifacts.md#official-host-bundle-acquisition):
+trusted current-build/native-target policy, fixed HTTPS release URLs,
+allowlisted bounded public-asset redirects, proxy/auth off, bounded streamed
+manifest/signature/archive and cancellation/deadline-fenced authenticated owned
+bytes. Controlled six-target synthetic signatures and negative fixtures are
+source-only; 404/missing assets block without latest/older/schema-1 fallback.
+No Desktop/headless-command wiring or new host effects are introduced.
+Genuine release availability, trusted first-verifier delivery and native
+publisher/installed qualification remain gates. The seam does not
 implement service switching, rollback or migration; the legacy Linux script
 path is not promoted to authenticated setup.
 

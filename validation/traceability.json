@@ -5767,6 +5767,15 @@
         "bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache",
         "bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation",
         "bounded_http_acquisition_deadline_and_production_origin_fail_closed",
+        "official_host_bundle_identity_is_exact_current_native_host_only",
+        "official_host_bundle_six_signed_targets_return_owned_authenticated_bytes",
+        "official_host_bundle_rejects_signed_identity_mismatch_tamper_and_untrusted_key",
+        "official_host_bundle_absent_assets_are_blocking_without_legacy_retry",
+        "official_host_bundle_refuses_unsafe_redirects_before_following",
+        "official_host_bundle_rejects_zero_oversize_encoded_truncated_and_stream_overflow",
+        "official_host_bundle_cancellation_and_deadline_cover_headers_body_and_total_budget",
+        "official_host_bundle_late_verification_never_returns_capability",
+        "official_host_bundle_requires_owned_blocking_worker",
         "slow_body_cannot_extend_the_absolute_acquisition_deadline",
         "headless_acquisition_rejects_provenance_overrides_without_network_or_state",
         "reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback",
@@ -5828,6 +5837,7 @@
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",
       "prerequisites": [
+        "Official schema-2 host-bundle acquisition is a GUI-free source-only library seam: current trusted build version/native compilation target, fixed GitHub release assets, strict bounded HTTPS release-assets redirects, proxy/auth off, bounded streamed manifest/signature/archive and cancellation/deadline-fenced updater-root VerifiedArtifact bytes only. Six-target positives use synthetic signatures; the production root rejects that key. Missing/404 assets are explicit publication BLOCKs without latest/older/schema-1 fallback. Desktop wiring, genuine schema-2 availability, trusted first-verifier delivery and native publisher/installed acceptance remain open. No staging/execution/host effects or changes to qualified 9dcc update/no-receipt/journal/old-helper semantics",
         "Never-published native registration receipts permit only installation-owned absence in current StopRequested/CleanupPending under the exclusive Services lease and exact full-snapshot/epoch/state-directory fences; no manager calls, fabricated receipt or foreign definition probe/removal. Missing receipt remains no-observation for status; corrupt/foreign/non-file evidence or uncertain ownership refuses. Real controller/Services removal tests cover provisioning, cancellation and acknowledged-uncertainty adoption with fake cloud only; active runtime lease and missing-lock/history guards remain mandatory. Pending update journals take precedence over missing active receipts: stop reconciles both targets; cleanup cannot infer Aborted from None. Two interrupted-update states with stale/current revoked epochs and corrupt/foreign crash journals are covered. Native/cloud/vault acceptance and generation-conditional deletion remain open",
         "Issue #681 stages 3–5/7: default headless build implements explicit authenticated zero-shell setup, foreground account consent, separate owner approval, run, revoke-first disable, authenticated stopped-version update and exact native cleanup; configuration stays disabled and permissions default denied. Explicit update verifies current complete new bundle and selected signed old version, reserves/journals exact old/new native receipts, preserves identity/account/resource/grants and daemon state, and never automatically enables, downgrades or repairs changed cache. Existing cloud resources retain unsuccessful CleanupPending without unqualified DELETE. Controller/core tests use real private lifecycle/enrollment with typed fake network/credentials/native registration, not native/cloud/vault acceptance",
         "HOSTSETUP-01: stopped replacement failure injections cover reload-unknown, epoch revocation, same-target retry, candidate/provenance tamper, post-active-receipt interruption, missing mutex/corrupt journal and both-resource cleanup. Coupled owned-daemon regression launches the authenticated OLD stage/sessiond entry in installation state/daemon, adopts a real frontend, runs actual replacement, and checks identical PID/generation/endpoint, running frontend ID/control authority and record bytes, bounded PTY input/echo before/after, exact old cached helper path/bytes and read-only helper execution. The same oracle rejects deleted/replaced cached helper and ended daemon; restored helper passes again. Earlier disconnected-helper runs did not establish old-cache preservation. Current-source binary in synthetic 0.15.0 metadata, test signatures/qualifier and fake Linux manager are not genuine older-release, publisher or native switching proof; cross-version/native acceptance remains unqualified",
@@ -5849,10 +5859,20 @@
       "edges": ["HOST-06"],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#9-packaging-integrity-and-upgrades",
-        "docs/host-release-artifacts.md#verification-and-staging-api"
+        "docs/host-release-artifacts.md#verification-and-staging-api",
+        "docs/host-release-artifacts.md#official-host-bundle-acquisition"
       ],
       "decisions": ["ADR-0084"],
       "automated_tests": [
+        "official_host_bundle_identity_is_exact_current_native_host_only",
+        "official_host_bundle_six_signed_targets_return_owned_authenticated_bytes",
+        "official_host_bundle_rejects_signed_identity_mismatch_tamper_and_untrusted_key",
+        "official_host_bundle_absent_assets_are_blocking_without_legacy_retry",
+        "official_host_bundle_refuses_unsafe_redirects_before_following",
+        "official_host_bundle_rejects_zero_oversize_encoded_truncated_and_stream_overflow",
+        "official_host_bundle_cancellation_and_deadline_cover_headers_body_and_total_budget",
+        "official_host_bundle_late_verification_never_returns_capability",
+        "official_host_bundle_requires_owned_blocking_worker",
         "python_produced_six_bundles_and_manifests_authenticate_in_rust",
         "pinned_cargo_packager_signatures_authenticate_python_produced_manifest",
         "host_and_legacy_package_identity_schema_and_filenames_cannot_substitute",
@@ -5876,6 +5896,7 @@
       "manual_scenarios": ["DT-05", "DT-08"],
       "status": "partial",
       "prerequisites": [
+        "Official schema-2 acquisition is source-only; controlled six-target fixtures authenticate synthetic signatures/owned bytes and refuse wrong identity/key/tamper, missing/404/status, unsafe redirects, zero/oversized/encoded/truncated/chunked data, cancellation/timeouts and late verified results. Existing synchronous verifier keeps expanded/entry limits and is not preempted mid-decoder. Genuine published assets/404 remain an explicit BLOCK, not legacy fallback. Desktop integration and real release/native/first-verifier qualification are separate gates; no new signing workflow or trust root",
         "Issue #681: integrate and natively qualify the new endpoint installer/executable-publication component; ordinary private data staging does not authorize launch or service switching",
         "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
         "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence",

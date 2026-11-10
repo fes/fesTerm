@@ -134,6 +134,59 @@ retains the old helper set without claiming host inclusion; the reviewed macOS
 packager override defaults to that same legacy set.
 That payload cannot receive a schema-2 manifest.
 
+## Official host-bundle acquisition
+
+The optional `festerm-host-setup/acquisition` feature exposes the GUI-free
+`acquisition::host_bundle::acquire_current_host_bundle(&CancellationToken)`
+boundary. Its installation policy is deliberately fixed: this trusted build's
+`CARGO_PKG_VERSION` and native compilation OS/architecture, schema 2,
+`Package::Host`. Unknown targets/invalid versions refuse before requests. There
+are no caller-selected versions, URLs, keys, latest lookup, downgrade, older
+retry or legacy helper fallback. The six target policies include Windows ARM64;
+this does not change Microsoft CLI acquisition's separate ARM64 refusal.
+
+It constructs exactly
+`https://github.com/fes/fesTerm/releases/download/vVERSION/fesTerm-host-VERSION-PLATFORM-ARCH.EXT`
+and the adjacent `.manifest.json` and `.manifest.json.sig`, never `.sha256`.
+Only HTTPS redirects to port 443 on the exact
+`release-assets.githubusercontent.com` host under
+`/github-production-release-asset/` are allowed, at most three hops. Userinfo,
+fragments, HTTP downgrade and all other hosts/paths refuse. Host acquisition
+reads raw Location itself before request construction; automatic
+redirect following is disabled so normalization cannot erase credentials or
+fragments before policy checks. Missing/duplicate/relative locations refuse.
+The shared bounded transport disables proxies and automatic decompression and requests identity
+encoding; the host client disables Referer and sends no authentication headers.
+Redirect signed queries and response/transport details never enter typed errors.
+
+Explicit callers must use a blocking worker outside a Tokio runtime. One owned
+current-thread runtime bounds all three receives together to 120 seconds,
+with 15-second connection and 120-second request limits. Cancellation drops
+the asynchronous work, not a detached DNS/download thread. Manifest/signature
+are each capped at 4 KiB while streaming; archive at 256 MiB, including unknown
+length/chunked responses. Empty, oversized, encoded, truncated and non-200
+responses refuse. `HostBundleError::NotPublished(asset)` on 404 is an explicit
+publication **BLOCK**, not successful absence or a reason to fetch old helpers.
+
+The existing embedded `packaging/updater.pub` and `artifacts::verify` authenticate
+the exact owned bytes and apply the existing expanded/entry allowlists and
+limits. Cancellation/deadline are checked before and after synchronous bounded
+verification; it is not preempted mid-decoder and no capability is returned
+after cancellation/deadline. The result is only `VerifiedArtifact`: no extraction
+to disk, staging, chmod, execution, registration, enable, grants, account/provider
+or OS changes. Existing first-verifier trust and release producer/signing
+workflow are unchanged. This library seam is not yet wired to Desktop setup or
+headless commands; advanced manual signed paths remain as documented.
+
+Controlled loopback fixtures use a private test-only signer and verifier for all
+six targets, exact identity/path/bytes, missing assets, unsafe redirects,
+stream/length/encoding limits, timeout/cancellation and tamper/wrong-key refusal.
+The production embedded-key verifier rejects that synthetic signer. These are
+source-only acquisition tests, not genuine published release, native-publisher
+or older-release compatibility evidence. Genuine schema-2 availability is not
+qualified: unpublished assets/404 remain blocked until a protected release
+actually publishes them. No real release asset download is part of these tests.
+
 ## Microsoft CLI acquisition
 
 The optional shared `acquisition` feature and explicit headless `acquire-cli`

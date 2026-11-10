@@ -1,5 +1,92 @@
 # Milestone Progress Narrative
 
+## Official schema-2 host-bundle acquisition boundary
+
+The isolated acquisition lane starts from exact qualified
+`9dcc7c4cde495d4930e2edfa24d57da07f6ce35f`, preserving its update/no-receipt/
+sticky-journal and coupled old-helper/PTY semantics without edits. Scope is the
+smallest GUI-free typed library seam before future Desktop setup integration,
+not new Desktop/mobile/binding/FFI, Linux startup policy or a release producer.
+The protected six-target producer/signing workflow already exists and is not
+duplicated.
+
+`acquisition::host_bundle::acquire_current_host_bundle` fixes expected schema 2/
+`Package::Host` identity to the trusted current build's exact version and native
+compilation target. It builds fixed GitHub release manifest/signature/archive
+URLs; only bounded HTTPS public release-asset redirects are allowed. The
+existing streaming/proxy-off/identity-encoding/async-DNS transport is reused
+without relaxing Microsoft CLI's no-redirect contract. Cancellation, connection/
+request limits and one overall receive deadline fence all three downloads.
+Only the existing updater-root `artifacts::verify` can return the owned
+`VerifiedArtifact`; synchronous bounded verification is acceptance-fenced before
+and after, not preempted mid-decoder. No disk extraction/staging/chmod/execution,
+registration, enable, grants, sign-in/provider or OS effects are introduced.
+The feature adds only the already-locked optional `tokio-util` cancellation
+dependency edge, not a new crate/version or public generic HTTP framework.
+
+Nine deterministic test functions include six-target synthetic positives, exact
+expected identity/paths/owned bytes, wrong identity/key/tamper, typed redacted
+404/missing/status failures, unsafe redirect rejection, zero/oversized bytes
+(including unknown-length/chunked streams), encoding/truncation refusal,
+cancellation/timeouts across headers/
+body/combined budget, late verification fences and runtime-worker rejection.
+Valid declared-length, EOF-delimited and chunked signed bodies are covered.
+The real embedded-key verifier rejects the fixture signer. No real release
+asset is fetched; genuine schema-2 availability remains unqualified and 404 is
+an explicit **BLOCK**, never latest/older/legacy fallback. Trusted first-verifier
+delivery, real native publisher/installed acceptance, genuine older-release
+compatibility and Desktop removal of advanced manual paths remain separate
+gates. Prior qualified source evidence below is not relabeled.
+
+First failures are retained, not reclassified as passes. The first run's **8
+pass / 6 fail** exposed macOS accepted sockets inheriting the fixture listener's
+nonblocking mode. The **12 pass / 2 fail** retry exposed reqwest's automatic
+redirect normalization of URI credentials and an invalid tamper oracle that
+modified Minisign's unauthenticated comment instead of its signature packet.
+The discarded redirect candidate returned HTTP 618 for a synthetic CDN URL,
+not an authenticated release archive. Production now checks raw Location before
+request construction with automatic redirects disabled; final fixtures also
+override every named destination to loopback, preventing a broken oracle from
+using real assets/DNS. The signature negative control changes authenticated
+packet bytes. Missing, duplicate, relative and credential/fragment redirects
+are explicitly refused.
+
+Final source qualification uses pinned Rust/Cargo **1.99.1**, Clippy **0.1.99**,
+native `aarch64-apple-darwin`, jobs **1**, dev/test debug **0**, incremental **0**.
+It reuses this lane's released, source-attributed private
+`fesTerm-a84-update-test/target/adr84-update` target, with no concurrent owner and
+no prebuilt daemon helper. Logs, first failures, exact compiler/environment,
+source hashes and command exits are retained under the new worktree's
+`target/adr84-acquisition-evidence/`; `qualification.json` and `raw.sha256`
+provide the handoff index.
+
+The final minimal acquisition/artifact/lifecycle library suite passes **42**,
+with **one existing opt-in pinned cargo-packager signer ignore**. This includes
+all nine new acquisition functions, all five existing CLI acquisition functions
+and six-target Python-producer/synthetic-signature verifier interop. Standalone
+production acquisition checks and both minimal/affected strict all-target
+Clippy pass. Final command gates have **48–50%** free host memory.
+
+```text
+cargo test --locked --offline -p festerm-host-setup --features acquisition --lib -- --test-threads=1
+cargo check --locked --offline -p festerm-host-setup --no-default-features --features acquisition --lib
+cargo clippy --locked --offline -p festerm-host-setup --no-default-features --features acquisition --all-targets -- -D warnings
+cargo clippy --locked --offline -p festerm-host-setup -p festerm-host --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py
+git diff --check
+```
+
+All commands exit **0**; traceability remains **311 edges / zero broken
+references**, with the changed-range declaration checked against exact `9dcc`.
+Existing vendor warnings and `rust-objcopy`/missing `libLLVM.dylib` stripping
+warnings are retained, not repaired or hidden. Windows native/MSVC qualification
+is not rerun; the known missing Windows SDK `assert.h` blocker remains. No
+workspace/GUI/native-manager suite, VM, real asset download, cloud/vault,
+production signing/release, tool install or push is performed. Fixtures are
+joined/cleaned and the private build slot is released. The prior `9dcc`
+actual-daemon/PTY/journal evidence stays attributed below, not rerun or relabeled.
+
 ## Integrating exact published Windows cfg correction into the update union
 
 The combined update branch normally merges exact published core

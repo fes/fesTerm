@@ -353,6 +353,18 @@ executable hashes with versioned official HTTPS URLs, no redirects/proxy or
 provenance overrides, bounded length/time and protected non-executable staging.
 Microsoft native-publisher qualification/redistribution rights, consuming
 native installer/executable publication and service switching are not claimed.
+The additive GUI-free official host acquisition seam fixes expected identity to
+the trusted current build's exact version/native compilation target and
+`Package::Host` schema 2. It constructs fixed `fes/fesTerm` GitHub release URLs,
+allows only bounded HTTPS public release-asset redirects, disables proxy/auth
+headers, and reuses bounded streaming plus the embedded updater-root verifier.
+It returns only owned `VerifiedArtifact` bytes: no staging or execution/host
+effects. Missing schema-2 assets/404 explicitly block; there is no latest/older/
+legacy fallback or downloaded trust key. Cancellation/deadline fence receives
+and acceptance after bounded synchronous verification. Desktop wiring, genuine
+published asset availability and native release acceptance remain separate
+gates; [the acquisition contract](../host-release-artifacts.md#official-host-bundle-acquisition)
+documents the non-preempted verifier and unchanged trusted-first-verifier path.
 Legacy scripts and old-tag recovery retain their
 old contracts, without a new Linux authentication claim (#681).
 
@@ -785,6 +797,20 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   has partial authenticity-foundation coverage.
   Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
   retain their current implementation coverage until each migration slice lands.
+- **Official schema-2 acquisition evidence (`HOST-05`/`HOST-06`):**
+  `official_host_bundle_identity_is_exact_current_native_host_only`,
+  `official_host_bundle_six_signed_targets_return_owned_authenticated_bytes`,
+  `official_host_bundle_rejects_signed_identity_mismatch_tamper_and_untrusted_key`,
+  `official_host_bundle_absent_assets_are_blocking_without_legacy_retry`,
+  `official_host_bundle_refuses_unsafe_redirects_before_following`,
+  `official_host_bundle_rejects_zero_oversize_encoded_truncated_and_stream_overflow`,
+  `official_host_bundle_cancellation_and_deadline_cover_headers_body_and_total_budget`,
+  `official_host_bundle_late_verification_never_returns_capability` and
+  `official_host_bundle_requires_owned_blocking_worker` cover only the bounded
+  library boundary, using controlled HTTP and synthetic signed target fixtures.
+  Production refuses the fixture key. These do not qualify real published
+  availability, native signing, first-verifier delivery or Desktop integration.
+  Existing `9dcc7c4c` update journal/no-receipt/old-helper semantics are unchanged.
 - **Automated evidence (stage 1):**
   `host_wire_fixture_is_canonical_and_not_legacy_protocol`,
   `host_wire_rejects_malformed_oversized_and_version_mismatched_input`,

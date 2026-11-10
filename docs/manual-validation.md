@@ -3434,6 +3434,29 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 | --- | --- | --- | --- |
 | CP-22 | On macOS, Windows and Linux with multiple local addresses, exercise Automatic, fixed source and Ask on first connection for SSH/SFTP and the native PSRP fixed-source CLI. Observe the source at an authorized server. Cancel before connection; choose an unavailable address; disconnect its VPN/interface before reconnect; confirm no unbound fallback. Open SFTP from the live SSH session and exercise a separate transfer connection. Confirm profile edits do not alter the live session, new Ask sessions prompt again, and workspace restore does not persist a prompted source. | Deterministic config/UI/socket regressions plus native network and usability evidence; partial | Requires authorized IPv4/IPv6 endpoints and a controlled multi-adapter/VPN environment per platform. Adapter labels aid address selection only. DNS, proxy policy, strict interface binding and VPN-only enforcement are not established by socket source binding. IPv6 link-local scope selection is unsupported. No corporate interfaces, routes or policies are changed automatically. |
 
+## Official host-bundle acquisition source boundary (HOST-05/HOST-06)
+
+The GUI-free optional acquisition API is a source-only library seam, not a new
+Desktop control or headless command. It fetches only the trusted current build's
+exact native schema-2 `Package::Host` manifest/signature/archive from fixed
+`fes/fesTerm` release URLs, authenticating with the unchanged updater root.
+Controlled six-target synthetic fixtures exercise exact identity/owned bytes,
+wrong identity/key/tamper, missing/404 assets, unsafe redirects, zero/oversized/
+encoded/truncated/chunked data, configured connection/request/overall bounds and
+cancellation/late-verification acceptance fences. Existing bounded transport is
+shared without relaxing pinned Microsoft CLI's no-redirect rule.
+
+These are not genuine publisher, native execution or released older-version
+evidence. The synchronous verifier retains its existing bounded expanded/entry
+limits and is not preempted mid-decoder; late/cancelled results are rejected.
+No real assets are downloaded by fixtures. Genuine schema-2 release availability
+remains unqualified, and 404 is an explicit **BLOCK**, never fallback. Trusted
+first-verifier delivery, signed native release admission and Desktop integration
+removing advanced manual paths remain required under HOSTSETUP-01/DT-05/DT-08.
+No extraction, executable staging/chmod/execution, service registration, sign-in,
+grants, OS policy or prior `9dcc7c4c` replacement/journal behavior changes.
+See [the exact acquisition contract](host-release-artifacts.md#official-host-bundle-acquisition).
+
 ## Host-based Dev Tunnels stages 1–2 classification (#681)
 
 The opt-in authenticated runtime source checkpoint adds an actual signed SSH

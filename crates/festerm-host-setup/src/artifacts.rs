@@ -281,7 +281,7 @@ fn verify_with_key(
     })
 }
 
-fn stable_version(version: &str) -> bool {
+pub(super) fn stable_version(version: &str) -> bool {
     version.len() <= 32 && {
         let parts: Vec<_> = version.split('.').collect();
         parts.len() == 3
@@ -470,10 +470,14 @@ pub(crate) fn host_staging_fixture() -> VerifiedArtifact {
     tests::host_staging_fixture()
 }
 
+#[cfg(all(test, feature = "acquisition"))]
+pub(crate) use tests::host_acquisition_fixture;
+#[cfg(all(test, feature = "native-services"))]
+pub(crate) use tests::host_version_fixture;
 #[cfg(all(test, feature = "native-services", unix))]
 pub(crate) use tests::host_version_fixture_with_sessiond;
-#[cfg(all(test, feature = "native-services"))]
-pub(crate) use tests::{host_version_fixture, verify_staging_fixture};
+#[cfg(all(test, any(feature = "native-services", feature = "acquisition")))]
+pub(crate) use tests::verify_staging_fixture;
 
 #[cfg(test)]
 mod tests {
@@ -650,6 +654,19 @@ mod tests {
         verify_with_key(&data, &signature, archive, expected, &key)
     }
 
+    #[cfg(feature = "acquisition")]
+    pub(crate) fn host_acquisition_fixture(expected: &ExpectedArtifact<'_>) -> VerifiedArtifact {
+        let mut files = files_for_package(expected.platform, expected.package);
+        files.iter_mut().find(|file| file.0 == "VERSION").unwrap().1 =
+            format!("{}\n", expected.version).into_bytes();
+        let archive = if expected.platform == Platform::Windows {
+            zip(&files)
+        } else {
+            tar(&files)
+        };
+        verify_fixture(&manifest(&archive, expected), &archive, expected).unwrap()
+    }
+
     #[cfg(feature = "lifecycle")]
     pub(super) fn staging_fixture() -> VerifiedArtifact {
         staging_fixture_for_package(Package::Helpers)
@@ -673,7 +690,7 @@ mod tests {
         staging_version_fixture_with_sessiond(Package::Host, version, Some(sessiond))
     }
 
-    #[cfg(feature = "native-services")]
+    #[cfg(any(feature = "native-services", feature = "acquisition"))]
     pub(crate) fn verify_staging_fixture(
         manifest: &[u8],
         signature: &[u8],

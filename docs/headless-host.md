@@ -228,6 +228,20 @@ replacement and daemon end. This is a current-source binary packaged with
 synthetic 0.15.0 metadata/test signatures, a test qualifier and fake Linux
 manager—not genuine older-release, native publisher or native switching evidence.
 
+## Official host-bundle acquisition library boundary
+
+The shared optional
+[`acquisition::host_bundle::acquire_current_host_bundle`](host-release-artifacts.md#official-host-bundle-acquisition)
+API acquires only current-build/native-target schema-2 authenticated owned
+bytes, with fixed release URLs, bounded public-asset redirects, streaming limits,
+timeouts and cancellation. It is not a new CLI command and does not replace the
+manual signed paths above or wire Desktop setup yet. Missing assets/404 block
+without latest/older/legacy fallback. Synthetic six-target tests do not establish
+genuine release availability, native publisher admission, trusted verifier
+bootstrap or cross-version acceptance. No staging, execution, registration or
+authority changes occur; stopped-update and old-cache/journal semantics remain
+unchanged.
+
 ## Management and remaining qualification
 
 Supported management is deliberately narrower than installation:
