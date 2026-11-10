@@ -82,7 +82,11 @@ Find/refresh, protected foreground owner review, authorized inventory,
 Connect/Create/Ensure and actual installed-terminal snapshot adoption. Direct
 native-callback cancellation and process-local original-ticket retention have
 headless/framed evidence; the independent signed-SSH/native-PTY session-adapter
-fixture is not physical mobile acceptance. Offline/live-SSH defaults remain
+fixture passes in combined `c5f2d024` qualification (all sixteen actual-helper
+routes pass individually once with fresh private1.98 helpers). The combined
+Simulator executable links; neither result is physical mobile acceptance.
+The prior a13a 2/14 native RED remains separately recorded.
+Offline/live-SSH defaults remain
 unchanged. Native mobile installation, local Settings/Remote Access,
 durable restart reconciliation and signed/native/vault/service/device
 qualification remain open; public recipes never confer authority.

@@ -1607,8 +1607,12 @@ HOST-01/02 remain partial. The subsequent opt-in shared mobile `host-clients`
 route adds explicit account-scoped discovery/refresh, protected owner review,
 inventory, Create/Ensure and installed-frontend adoption; it cancels HOST work
 from native callbacks without another frame. Framed mobile tests and the
-separate signed-SSH/native-PTY adapter fixture are automated evidence, not
-physical mobile/native-vault/GUI acceptance. Local Settings/Remote Access,
+separate signed-SSH/native-PTY adapter fixture are automated evidence. Combined
+source `c5f2d024` passes all sixteen individual actual-helper routes once,
+with fresh private1.98 helper-copy hashes preserved before/after each command,
+and links the Simulator binary; the a13a 2/14 native RED is retained separately.
+These do not establish physical mobile/native-vault/GUI acceptance.
+Local Settings/Remote Access,
 sharing, durable client-action reconciliation and native acceptance remain open.
 The subsequent shared Session adapter consumes bounded frames with event-loop
 wakes, preserves recovery ordering and uses correlated detach. Typed desktop

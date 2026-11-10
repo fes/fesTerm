@@ -24,7 +24,10 @@ See "Historical refreshed candidate — native rerun never completed" below.)
 ## Status vocabulary
 
 The ADR 0084 opt-in shared mobile HOST execution increment has implementation
-and selected automated/framed/native-helper evidence only. It does not change
+and selected automated/framed/native-helper evidence only. Fixed combined
+source `c5f2d024` has sixteen individually passing actual-helper routes and a
+freshly linked Simulator executable, with private1.98 helper-copy provenance;
+the original a13a 2/14 native RED remains retained. It does not change
 milestone acceptance: physical iOS/Android, native vault, lifecycle/app-lock,
 live-service, accessibility and usability gates remain pending. See
 [the precise manual boundary](manual-validation.md#adr-0084-mobile-host-execution)

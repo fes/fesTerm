@@ -909,7 +909,13 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `HostSession` frontend adoption. Callback-owned cancellation precedes worker
   admission and does not wait for a UI frame. Original creation actions remain
   process-local and are retired only after frontend adoption plus activation,
-  not merely worker admission. End-to-end native GUI/mobile acceptance
+  not merely worker admission. Combined fixed source `c5f2d024` passes all
+  sixteen separately selected actual-helper SSH/native-PTY routes, including
+  mobile adoption, original-operation replay and both collector/frontend
+  isolation oracles, with fresh private1.98 helper copies and per-command
+  before/after hashes. Its Simulator executable also links; neither is device
+  execution. The original a13a 2/14 RED remains recorded separately.
+  End-to-end native GUI/mobile acceptance
   remains deferred. `HOST-04`/`HOST-05` have partial shared boundary
   coverage. `HOST-06` has partial authenticity-foundation coverage only. Existing
   `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation coverage

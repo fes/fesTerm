@@ -61,7 +61,13 @@ bounded original-action retention, direct native-callback cancellation and
 framed snapshot-before-activation/no-replay behavior. The separately selected
 native helper fixture exercises signed SSH, independent real PTYs, exact
 original issuance and actual stored/presented output. These are not device,
-native-vault or GUI acceptance.
+native-vault or GUI acceptance. Fixed combined source `c5f2d024` passes all
+sixteen actual-helper routes, individually selected once with freshly built
+private helper copies measured before/after each command. The new mobile
+adoption route and both frontend/collector oracles pass; the original a13a
+2-pass/14-fail receipt remains retained. The combined Simulator executable
+links but was not launched. Exact source/tool/helper attribution and remaining
+gates are in [the qualification receipt](milestone-progress.md#qualifying-the-combined-executable-mobile-host-client).
 
 In an explicitly owned iOS/Android native window, still verify:
 

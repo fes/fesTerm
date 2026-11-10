@@ -1,6 +1,93 @@
 # Milestone Progress Narrative
 
-## Executable shared mobile HOST client
+## Qualifying the combined executable mobile HOST client
+
+Qualified source is normal two-parent merge
+`c5f2d0245efb0b77cac0f886275d7eac7bc8472f`: mobile evidence
+`2c9555a213fc0ed18ede3fe834f94886f45da031` plus **only** parent-authorized
+immutable core `3d91702715945383866b9759a30084d8f43a56f7`. The sole conflict
+was additive milestone prose; both complete histories were retained. No moving
+backend, future FFI/binding, stopped update or desktop-local Settings source
+was consumed. Mobile/Android sources and Cargo.lock have **zero byte delta**
+from a13a. This following evidence-only documentation commit changes no Rust,
+manifest, lock or workflow input.
+
+The original a13a sixteen individual results remain intact in
+`target/mobile-native-evidence-a13a-red/`: **2 refusal passes / 14
+Unknown-or-Stale pre-adoption failures**. The direct socket diagnostic remains
+`target/mobile-native-socket-boundary.log` (111-byte old path rejected,
+103-byte short path binds). That established a specific prerequisite, not the
+sole cause of every original response. On the combined source, every selected
+route now reaches its original assertions and passes. No assertion weakening,
+fallback, retry-after-failure or repeat-to-green was used.
+
+Before native tests, actual private Rust/Cargo1.98 freshly built both helpers:
+
+```sh
+cargo build --locked --offline -p festerm-sessiond -p festerm-pty-test-child --bins
+```
+
+Both executables were copied into the new private, nonwritable
+`target/mobile-combined-native-tools/` directory. Every test explicitly sets
+`FESTERM_HOST_TEST_HELPER` to its absolute `festerm-sessiond` pathname; the
+fixture selects its sibling PTY child. Before/after **every** native command,
+and again after all qualification, those copied bytes match:
+
+- sessiond: `913f55f71f4bad8663566616d0e9962a9bbe70f4408127fb30a83fade8cccd9a`;
+- PTY child: `79012c917bb0d837d5dcbcfea7655b6e5db58719d8e1197785b001025dca9675`.
+
+The later selected Cargo tests did republish mutable
+`target/adr84-mobile-rust198/debug/festerm-sessiond` as
+`86c245b8585fb714fe501001ce3e828ffbce4a1de27f5c1254ab8691bb56f582`;
+that is **not the native runner's execution pathname** and did not change either
+private copy. These are explicit runner-path and byte-hash measurements, not
+a per-child exec trace. Build logs, helper-source file hashes and exact
+compiler paths/versions are in `target/mobile-combined-evidence/`.
+`final-provenance.log` distinguishes the private1.98 rustup list from the
+explicit unset-`RUSTUP_HOME`/`RUSTUP_TOOLCHAIN` global list, still only stable
+active/default. No global toolchain, override or manifest version was changed.
+
+`target/mobile-combined-native-once.py` selected each of the **sixteen native
+routes once in its own process: 16 pass / 0 fail / 0 ignored**, exit0.
+The sum of individual command durations is209.94s, **not an aggregate-run
+claim**. This includes original committed-operation Busy/replay and lost-reply
+issuance, the actual mobile HostSession adoption/activation route, desktop
+Create/Ensure frontend isolation, collector/snapshot-before-adopt, both
+two-daemon frontend oracles, temporary lifetime/heartbeat, takeover and
+revocation. The runner stops at the first failing typed response; it encountered
+none. Exact names, commands, exits, memory and per-case helper hashes are in
+`target/mobile-combined-evidence/native/{summary.json,*.log}`.
+
+Fresh **combined-source**, not inherited a13a, nonnative results:
+mobile **213 pass/4 existing ignores**, offline **134/1**, bridge **146/16
+explicit native ignores**, portable approvals **29/0**, client **35/0**,
+desktop selected **52/0**, private-storage **4/0**, retirement **4/0**.
+All have zero failures. Six-package all-target strict Clippy (mobile,
+bridge, client, desktop and both helpers), separate mobile/portable/legacy
+strict configurations, fmt, diff and base#700 trace (**311 edges/0 broken**)
+pass. `target/mobile-combined-checks.sh` retains exact commands; its selected
+command logs in `target/mobile-combined-evidence/` pin source/tool/command/exit.
+
+The real private1.98 Simulator library check **and arm64 executable link were
+rerun and pass** on combined inputs, using the existing SDK/std, not merely
+carried forward. The Mach-O executable SHA-256 is
+`bc93642364e6359081102108f806aa0230820d00c052aac08574c8ef93fcb133`.
+No simulator was launched and no device build/bundle/signing was performed.
+Existing debug-stripping/vendor tool warnings remain disclosed below.
+Qualification started with58% free memory; recorded cases/stages stayed at48–56%,
+jobs1/debug0/incremental0 throughout. The final scoped audit found **zero
+owned Cargo/rustc/sessiond/PTY processes and zero owned fixture roots**; the
+host Cargo slot is **released**.
+
+Remaining gates are unchanged: three-OS required CI and independent source
+reviews; physical iOS/Android and native-vault/privacy/suspend/60-second grace;
+real cloud, GUI/accessibility/usability and Android NDK/device compilation;
+mobile sharing/end/correlated-detach controls and durable restart reconciliation.
+Desktop Local Settings/Remote Access/local sharing remains runtime-owned.
+No provider/account/VM/OS permission/release operation or source push occurred.
+ADR0084 and milestone acceptance remain incomplete.
+
+## Executable shared mobile HOST client (retained a13a source history)
 
 The mobile lane is a new child of immutable creation evidence head
 `1f28db0a58c4c73fd44e92a7703eb896fd7f5e85` (#700), preserving its fixed #693/#695
@@ -63,7 +150,7 @@ shell sharing/unsharing and its native approval/setup gates remain the separate
 runtime-owned HOST-03–05 slice. No installed app, device/VM, production account,
 native vault, OS service/settings or signing operation is exercised here.
 
-### Mobile fixed-source qualification and native blocker
+### Original mobile fixed-source qualification and retained native blocker (a13a)
 
 Compiled source is `a13a1bcaccec557a186db02ebd002ae85df460da`, a normal child
 of frozen #700 `1f28db0a58c4c73fd44e92a7703eb896fd7f5e85`. The following
