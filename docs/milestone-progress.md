@@ -8753,7 +8753,10 @@ and role-ordered channel IDs, excluding the anonymous outer relay. Client proof
 compares its private verified pin/exporter capture against the current stream;
 server success transfers the actual stream with its owner and lifetime guard.
 Real encrypted fixtures exercise relay/replay, unbound signatures, foreign
-credentials, expiry/revocation and swapped streams. This is not permission to
+credentials, expiry/revocation and swapped streams. Strict release-profile
+Clippy passes for host/all-target and portable client-only builds; normal/build
+iOS, Android and headless graphs exclude inappropriate desktop dependencies and
+production test-support. This is not permission to
 expose HOST: independent review, native qualification, foreground first-connect
 consent and endpoint routing integration remain prerequisites. No services,
 cloud resources, normal setup controls or legacy capabilities change.

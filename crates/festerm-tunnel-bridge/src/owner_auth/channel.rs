@@ -44,11 +44,13 @@ impl Validate for ChannelOwnerProof {
     }
 }
 
+#[cfg(feature = "relay")]
 pub struct PendingChannelOwnerChallenge {
     pending: PendingOwnerChallenge,
     challenge: ChannelOwnerChallenge,
 }
 
+#[cfg(feature = "relay")]
 impl PendingChannelOwnerChallenge {
     pub fn challenge(&self) -> &ChannelOwnerChallenge {
         &self.challenge

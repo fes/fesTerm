@@ -31,10 +31,10 @@ pub use headless_store::ExplicitHeadlessFileStore;
 mod channel;
 #[cfg(all(test, feature = "relay"))]
 pub(crate) use channel::fixture_key;
-#[cfg(feature = "relay")]
-pub use channel::OwnerAuthenticatedStream;
 #[cfg(feature = "client")]
-pub use channel::{ChannelOwnerChallenge, ChannelOwnerProof, PendingChannelOwnerChallenge};
+pub use channel::{ChannelOwnerChallenge, ChannelOwnerProof};
+#[cfg(feature = "relay")]
+pub use channel::{OwnerAuthenticatedStream, PendingChannelOwnerChallenge};
 
 const DOMAIN: &[u8] = b"fesTerm HOST owner authentication v1\0";
 pub const MAX_OWNER_KEYS: usize = 4;

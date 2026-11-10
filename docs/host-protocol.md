@@ -263,7 +263,9 @@ channel binding; replacing its public stream invalidates owner signing. Server
 client-supplied identity. Neither side accepts public trust booleans or caller-
 constructed exporter bytes.
 
-With the optional `owner-auth` feature, the API is:
+The portable `client,owner-auth` build includes client challenge/proof helpers;
+server pending and authenticated-stream types additionally require `relay`.
+The API is:
 
 1. `HostStream::challenge_owner(&OwnerVerifier)` returns noncloneable
    `PendingChannelOwnerChallenge`; transmit its `challenge()` as bounded JSON.
