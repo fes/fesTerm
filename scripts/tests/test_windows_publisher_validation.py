@@ -316,7 +316,114 @@ class FixtureContracts(unittest.TestCase):
         self.assertFalse(any(PKI.MEMBER in command["argv"][0] for command in report["commands"]))
 
 
+@unittest.skipUnless(shutil.which("pwsh") or os.name == "nt",
+                     "PowerShell 7 unavailable locally; launcher execution not tested")
+class PublisherLauncherContracts(unittest.TestCase):
+    def probe(self, exit_code):
+        powershell = shutil.which("pwsh")
+        self.assertIsNotNone(powershell, "Windows preflight requires PowerShell 7")
+        directory = ROOT / (".pki launcher-" + uuid.uuid4().hex)
+        directory.mkdir()
+        self.addCleanup(shutil.rmtree, directory)
+        commands = []
+        for name in ("first", "second"):
+            parent = directory / name
+            parent.mkdir()
+            command = parent / ("python.cmd" if os.name == "nt" else "python")
+            code = exit_code if name == "first" else 0
+            if os.name == "nt":
+                command.write_text(
+                    f'@echo off\necho {name}>>"%FESTERM_LAUNCHER_MARKER%"\nexit /b {code}\n'
+                )
+            else:
+                command.write_text(
+                    f'#!/bin/sh\nprintf "{name}\\n" >> "$FESTERM_LAUNCHER_MARKER"\nexit {code}\n'
+                )
+                command.chmod(0o700)
+            commands.append(command)
+        marker = directory / "invocations.txt"
+        environment = os.environ.copy()
+        environment.update({
+            "FESTERM_OPTIONAL_SCRIPT": str(ROOT / "scripts/run-optional-validation.ps1"),
+            "FESTERM_FIRST_COMMAND": str(commands[0]),
+            "FESTERM_SECOND_COMMAND": str(commands[1]),
+            "FESTERM_LAUNCHER_MARKER": str(marker),
+            "FESTERM_LAUNCHER_EXIT": str(exit_code),
+        })
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", r"""
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+function Assert($condition, $message) { if (-not $condition) { throw $message } }
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile(
+    $env:FESTERM_OPTIONAL_SCRIPT, [ref]$tokens, [ref]$errors)
+Assert ($errors.Count -eq 0) 'Aggregate script parses'
+foreach ($name in @('Invoke-NativeCommand', 'Invoke-WindowsPublisherValidation')) {
+    $definition = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $name
+    }, $true)
+    Assert ($null -ne $definition) 'Actual launcher function exists'
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
+$script:applications = @(
+    Microsoft.PowerShell.Core\Get-Command $env:FESTERM_FIRST_COMMAND -CommandType Application
+    Microsoft.PowerShell.Core\Get-Command $env:FESTERM_SECOND_COMMAND -CommandType Application
+)
+Assert ($script:applications.Count -eq 2) 'Two executable matches'
+foreach ($application in $script:applications) {
+    Assert ($application -is [Management.Automation.ApplicationInfo]) 'Real application metadata'
+}
+# Mock only discovery, preserving PATH-priority order; execute only owned fixtures.
+function Get-Command {
+    [CmdletBinding()]
+    param([string] $Name, [Management.Automation.CommandTypes] $CommandType)
+    Assert ($Name -eq 'python') 'Only Python is resolved'
+    Assert ($CommandType -eq [Management.Automation.CommandTypes]::Application) 'Application only'
+    $script:applications
+}
+$rejected = $false
+try { Invoke-WindowsPublisherValidation } catch {
+    Assert ($_.Exception.Message -like 'Read-only Windows publisher validation failed*') 'Native failure retained'
+    $rejected = $true
+}
+$nativeExit = $LASTEXITCODE
+Assert ($nativeExit -eq [int]$env:FESTERM_LAUNCHER_EXIT) 'Actual native exit preserved'
+Assert ($rejected -eq ($nativeExit -ne 0)) 'Nonzero is never accepted'
+$invocations = @(Get-Content -LiteralPath $env:FESTERM_LAUNCHER_MARKER)
+Assert ($invocations.Count -eq 1 -and $invocations[0] -eq 'first') 'Second executable never invoked'
+Write-Output 'launcher_fixture_only=true native_pki_tested=false'
+exit $nativeExit
+"""],
+            cwd=ROOT, env=environment, capture_output=True, text=True, timeout=20, check=False,
+        )
+        self.assertEqual(result.returncode, exit_code, result.stdout + result.stderr)
+        self.assertIn("launcher_fixture_only=true native_pki_tested=false", result.stdout)
+        self.assertEqual(marker.read_text().splitlines(), ["first"])
+
+    def test_two_application_matches_execute_only_first(self):
+        self.probe(0)
+
+    def test_two_application_matches_preserve_first_native_failure_without_fallback(self):
+        self.probe(37)
+
+
 class WorkflowContracts(unittest.TestCase):
+    def test_publisher_launcher_selects_one_application_before_source(self):
+        script = (ROOT / "scripts/run-optional-validation.ps1").read_text()
+        self.assertRegex(
+            script,
+            r"\$python\s*=\s*\(Get-Command python -CommandType Application -ErrorAction Stop"
+            r"\s*\|\s*Select-Object -First 1\)\.Source",
+        )
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        job = workflow.split("  windows-native-pki:", 1)[1].split(
+            "  windows-sampler-diagnostics:", 1
+        )[0]
+        self.assertIn('test_windows_publisher_validation.py', job.split("id: publisher", 1)[0])
+
     def test_dispatch_is_default_false_read_only_bounded_and_only_runs_pki_job(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         setting = workflow.split("      windows_native_pki:", 1)[1].split(

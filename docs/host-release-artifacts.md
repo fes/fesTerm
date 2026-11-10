@@ -306,7 +306,14 @@ policy waiver, alternate fixture or automatic retry is provided.
 Both `FESTERM_RUN_OPTIONAL_VALIDATION=1` and
 `FESTERM_RUN_ADR84_PUBLISHER_NATIVE=1` are required for local opt-in.
 The single-suite aggregate returns before other optional/native/GUI suites.
-The evidence artifact retains `report.json`, source/tool-version/command logs,
+Python resolution selects the first PATH-priority application before reading
+its `Source`; multiple executable matches are never joined or retried.
+The existing offline preflight includes owned-fixture PowerShell regressions
+for two matches, first-only execution and actual nonzero exit preservation.
+They explicitly skip where PowerShell 7 is unavailable locally, but missing
+PowerShell on Windows fails preflight rather than silently skipping.
+Once the Python runner starts, the evidence artifact retains `report.json`,
+source/tool-version/command logs,
 actual exit codes, timeouts and SHA256 log hashes even on failure; binaries and
 build outputs are not uploaded. Verify its exact source HEAD against the
 reviewed head and its run ID/attempt against the authorized dispatch; old
@@ -314,5 +321,14 @@ reports are not new evidence. Zero selected tests cannot pass; genuine-fixture/p
 remain failures. A hosted PKI pass would prove only this public signed fixture
 and unsigned-test-binary rejection under that runner's current OS trust and
 online revocation—not ordinary-user VM, Task Scheduler, daemon, GUI, whole-bundle
-or new-host/release acceptance. **No dispatch or genuine Windows execution has
-been performed for this source increment.**
+or new-host/release acceptance.
+
+The separately authorized historical [run 42876689716, attempt 1](https://github.com/fes/fesTerm/actions/runs/42876689716)
+at exact `2ff42e255742019c8201b36ffeedcf1e41e09437` failed during PowerShell
+launcher resolution of hosted CPython plus WindowsApps. Its 22 hosted Windows
+source contracts passed, but the Python runner/acquisition/native PKI never
+started. Only a failure summary was uploaded: no `report.json`, downloaded
+fixture or PKI result exists. Raw logs/artifact and their hashes remain retained;
+that one-run authorization is consumed. The source-only launcher correction is
+not a retry or PKI acceptance and requires three fresh exact-source gates and a
+separate new one-run authorization before any further dispatch.

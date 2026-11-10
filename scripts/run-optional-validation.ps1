@@ -70,7 +70,8 @@ function Invoke-MarkdownScrollingValidation {
 }
 
 function Invoke-WindowsPublisherValidation {
-    $python = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+    $python = (Get-Command python -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1).Source
     Invoke-NativeCommand { & $python "$PSScriptRoot\run_windows_publisher_validation.py" }
     if ($LASTEXITCODE -ne 0) {
         throw 'Read-only Windows publisher validation failed; retain its report and logs.'

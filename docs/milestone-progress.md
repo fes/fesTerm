@@ -1,5 +1,30 @@
 # Milestone Progress Narrative
 
+## Selecting one Python application before launching public PKI validation
+
+The separately authorized `2ff42e25` hosted Windows run
+[42876689716, attempt 1](https://github.com/fes/fesTerm/actions/runs/42876689716)
+passed **22 source contracts**, then failed before acquisition or native PKI:
+PowerShell returned both hosted CPython and WindowsApps applications, and the
+launcher treated their `Source` array as one executable. The retained raw log,
+artifact and hashes show no `report.json` and zero native PKI tests. That grant
+is consumed; these source passes are not PKI acceptance.
+
+The narrow source-only correction selects the first PATH-priority application
+before reading `Source`. It adds no fallback, policy change or new authority.
+The existing unittest/preflight harness now loads the actual launcher functions
+through the repository's PowerShell AST pattern, mocks only two ordered
+application discoveries and executes owned harmless fixtures. It requires the
+first alone to run and preserves its real exit 0/37 without trying the second.
+PowerShell is unavailable locally: both execution regressions explicitly skip;
+on Windows missing PowerShell fails the existing preflight. The portable source
+contract retains controlled RED against byte-exact `2ff` and passes after the
+fix. Local validation records **23 publisher contracts passed / 2 PowerShell
+skips**, three security-routing contracts, Python syntax, base-`2ff` traceability
+and diff checks. No download, dispatch, native verification or Rust rebuild is
+part of this change. Three exact-source gates and a separate new run grant
+remain required.
+
 ## Rejecting Windows rooted evidence paths before checkout binding
 
 Parent functional review of frozen `408bec4d` found that Windows root-relative
