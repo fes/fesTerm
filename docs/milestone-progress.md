@@ -5,7 +5,9 @@
 The separate final CI child preserves frozen desktop head `9a2d6db2` and its
 private evidence, then normally merges only the parent-authorized immutable
 backend child `fd0b79d168a85aaea8e28ba23cdfc205470e6d68` of `a8113f6a`.
-Its CLI source is retained exactly. The unchanged status JSON statements move
+Its exact CLI correction is retained alongside the existing Desktop-origin
+`run-desktop` additions, not substituted for the whole application file.
+The unchanged status JSON statements move
 only into their private renderer; no native receipt lookup, admission/ACL,
 Desktop workflow, acquisition policy, CI selector or sharing authority changes.
 Both histories below retain their original source-specific evidence.
@@ -18,6 +20,19 @@ at those sources, not rerun or attributed as fresh results here. A new private
 copy-on-write target protects both frozen worktrees and retained executable
 bytes. Genuine Windows/runtime/native, signed-release, vault/provider/GUI and
 three-platform acceptance remain separate gates; no binding pin is consumed.
+The exact two-name listing is followed by two passed / zero failed / zero
+ignored cleanup units on actual Rust/Cargo 1.99.1. Host all-target strict Clippy
+passes both all-features and no-default-features configurations. These are fresh
+source/mock results only; neither earlier 57/three-result attribution nor
+backend native-platform evidence is relabeled. The final private receipt
+records command exits, source maps, raw hashes and preservation of both frozen
+worktrees. Parent independent source gates and required CI remain prerequisites
+to publication/acceptance; the owned Cargo slot is released at handoff.
+Formatting, diff and trace311/zero-broken-reference checks pass. Reinlining
+the renderer reproduces the complete frozen-9a production prefix byte for byte;
+the normalized cleanup correction matches exact `fd0` versus `a811`, and all
+other 2,040 tracked inputs are unchanged. Memory starts satisfy the 30% gate,
+with no pause; exact per-command observations remain in the private receipt.
 
 ## Repairing inherited primary-Setup CI without changing admission
 
