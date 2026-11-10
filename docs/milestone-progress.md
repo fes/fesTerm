@@ -60,6 +60,67 @@ remain open. Desktop local Settings/Remote Access stays with its separate owner.
 The parent's Android native-library-only proof belongs to exact42/194 inputs,
 not this changed lifecycle child; no APK/device/runtime claim is transferred.
 
+### Lifecycle qualification receipt
+
+Qualified lifecycle source is
+`fa1770b88779cb5bd08dc79ae7d02b6a0d0791e1`, a normal descendant of published
+`19442f6c`. Its final full mobile library is **218 pass/0 fail/4 ignored**,
+and its host-client all-target strict Clippy, arm64 iOS Simulator check and
+actual executable link each exit **0**. The preserved executable is Mach-O
+arm64, SHA-256
+`0d0bf5dafd440ba5b453adaebfdc4fae9c8236a339cb2cc3e7a2898c6cdba2cd`;
+it was not launched, bundled, installed or signed.
+
+The same lifecycle implementation's additional selected checks are:
+
+| Selection | Actual pass/fail/ignored | Exit |
+| --- | --- | --- |
+| Offline mobile library | 134/0/1 | 0 |
+| Default/host-routing bridge library | 150/0/17 | 0 |
+| Non-relay host-routing bridge library, including four portable receipt regressions | 84/0/0 | 0 |
+| Desktop experimental HOST compatibility selector | 52/0/0 | 0 |
+| Shared exact-End selector | 4/0/0 | 0 |
+| Actual native End/original-retry/replacement route, individually once | 1/0/0 | 0 |
+| Actual native persistent/temporary retirement/frontend route, individually once | 1/0/0 | 0 |
+
+Default bridge, `client,owner-auth` non-relay, offline mobile and legacy live-SSH
+all-target strict profiles also exit0; fmt and full-base#700 trace pass (311
+edges, zero broken references). These are not warning-free-toolchain claims:
+the existing rust-objcopy/libLLVM fallback and vendor diagnostics remain in raw
+logs. There is no workspace-wide or fresh seventeen-native-route aggregate.
+The final registry correction changes only two HOST-feature mobile Rust inputs
+after source12: final mobile218/strict/Simulator were rerun, while named native
+bridge/helper inputs and the offline/desktop implementation remain unchanged.
+
+All commands use absolute Cargo/rustc from private
+`/Users/fes/src/fesTerm-adr84-clients-nov10/target/adr84-rustup/toolchains/1.98.0-aarch64-apple-darwin/bin`,
+with that private `RUSTUP_HOME`, jobs1/debug0/incremental0 and project-local
+scratch/target. `rustc -vV` records1.98.0/`88d9e12ae178`, Cargo `-vV`
+records1.98.0/`797e8a9bca27`; no Homebrew plus-flag dispatch, global default,
+manifest/lock or MSRV change is involved. Both helpers were built first,
+copied into explicit private non-writable paths and measured before/after each
+native selection: sessiond
+`5817e2394c1aa3e23b3c3b2d1211d4d88688d7fe5d27fd41eff5741fba40882c`,
+PTY child
+`79012c917bb0d837d5dcbcfea7655b6e5db58719d8e1197785b001025dca9675`.
+Their27 named source/manifest inputs match the frozen c5f snapshot. These are
+measured named-input/path scopes, not immutable execution seals or complete
+dependency attestations.
+
+Raw command/environment/head/working-diff/exits are retained in the owned
+lifecycle tree's `target/lifecycle-evidence/qualification.jsonl` and named
+`.log` files; named input snapshots, helper before/after measurements,
+`frozen-preservation.json` and the final handoff/hash index accompany them.
+Both native runs compiled the working source subsequently committed as12c71;
+the final fa1770 correction leaves those named native inputs unchanged. All41
+earlier receipt/CI raw files, the six named old/current executable artifacts,
+the original source12 Simulator and all earlier RED/non-evidence receipts are
+preserved. Parent-reported actual194 Linux/macOS portable-receipt CI passes
+remain attributed to194. Its newly recovered Windows unused-worker and
+Rust1.99 mobile atomic deprecation failures require a separate dependent
+minimal compatibility repair before publication; they are not erased by this
+private1.98 lifecycle qualification.
+
 ## Keeping the portable receipt crash regressions in mandatory CI
 
 The retained reliability review found that default bridge tests enable relay
