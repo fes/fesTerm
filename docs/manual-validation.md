@@ -54,7 +54,10 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 HOST-06's [authenticated helper foundation](host-release-artifacts.md) has
 synthetic-key rejection/allowlist tests and Python manifest/recovery fixtures.
-Cross-language tests verify all six actual Python-produced bundles/manifests;
+Cross-language tests verify both archive families on all six targets through
+actual Python producers; legacy installer fixtures consume the unchanged
+producer allowlist and exercise the real archive admission code. Real Cargo
+metadata validates the host notice closure, including the app-owned package;
 the Linux normal-CI signer check uses pinned cargo-packager 0.11.8 and a
 generated throwaway key, not the protected release identity.
 DT-05/DT-08 still require protected real-release signatures, independently

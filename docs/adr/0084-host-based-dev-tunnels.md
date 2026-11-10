@@ -319,14 +319,15 @@ The first downloaded verifier/package needs a documented authenticity path too;
 an unauthenticated bootstrap cannot establish its own trust.
 
 The implemented independent [existing-helper authenticity slice](../host-release-artifacts.md)
-uses strict per-archive schema-2 metadata signed by pinned cargo-packager with
-the embedded existing updater key. The GUI-free shared verifier binds all
+uses strict per-archive schema-1 legacy/schema-2 host metadata signed by pinned
+cargo-packager with the embedded existing updater key. The GUI-free shared verifier binds all
 identity fields and returns bounded immutable regular-file entries, not an
 archive path to reopen. No auto key discovery, unsigned fallback or downgrade
 is permitted; source-reviewed updater-key rotation and installation-owner
 version/rollback policy remain explicit. Schema 2 requires the GUI-free host CLI
-alongside the legacy helpers, built and native-signed in the existing six-target
-release matrix. Acquisition-only `acquire-cli` uses the existing reviewed raw
+alongside the helpers in separate `fesTerm-host-*` assets; legacy `fesTerm-tunnel-*`
+archives keep their exact published allowlists. Both are built and native-signed
+in the existing six-target release matrix. Acquisition-only `acquire-cli` uses the existing reviewed raw
 executable hashes with versioned official HTTPS URLs, no redirects/proxy or
 provenance overrides, bounded length/time and protected non-executable staging.
 Microsoft native-publisher qualification/redistribution rights, consuming
@@ -466,11 +467,12 @@ uninstall explicitly fail until real endpoint, sign-in/native adapters and
 authenticated-package integration exist. No Ready or native acceptance is claimed.
 See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 
-**Bounded stage 7 progress (#681):** Helper schema 2 requires `festerm-host` on
+**Bounded stage 7 progress (#681):** Separate host package schema 2 requires `festerm-host` on
 all six existing targets. Optional shared HTTP acquisition and headless
 `acquire-cli` stage only the pinned official Microsoft executable, never execute
-it or modify account/service state. Windows ARM dependency acquisition is
-explicitly unavailable, without x64 fallback. Native publisher qualification,
+it or modify account/service state. New Windows ARM dependency acquisition is
+explicitly unavailable, without x64 fallback; legacy hosting/verification keeps
+its existing x64-emulation selector. Native publisher qualification,
 trusted first delivery and executable/service publication remain blocked;
 signed/staged bytes alone are not Ready or a trusted launch receipt.
 
@@ -509,6 +511,11 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   `bounded_http_acquisition_deadline_and_production_origin_fail_closed`,
   `headless_acquisition_rejects_provenance_overrides_without_network_or_state`
   and `reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback`.
+  `legacy_cli_selector_preserves_windows_arm_x64_emulation` and
+  `new_acquisition_refuses_windows_arm_before_network_or_staging` distinguish
+  retained legacy behavior from native-only acquisition. macOS package-smoke
+  fixtures cover raw pinned executable hashes and retained native codesign
+  requirements on both architectures without downloading or executing binaries.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic

@@ -15,7 +15,7 @@ festerm-host configure --state-dir /absolute/private/new-host --name "My compute
 festerm-host status --state-dir /absolute/private/new-host
 festerm-host stage-cli --source-dir /absolute/private/source --cache-dir /absolute/private/cache
 festerm-host acquire-cli --cache-dir /absolute/private/cache
-festerm-host stage-package --manifest /absolute/private/download/helpers.manifest.json --signature /absolute/private/download/helpers.manifest.json.sig --archive /absolute/private/download/helpers.tar.gz --cache-root /absolute/private/releases
+festerm-host stage-package --manifest /absolute/private/download/host.manifest.json --signature /absolute/private/download/host.manifest.json.sig --archive /absolute/private/download/host.tar.gz --cache-root /absolute/private/releases
 ```
 
 The initial state directory must not already exist; its parent must exist and
@@ -75,14 +75,17 @@ Errors do not echo response bodies, URLs, credentials or paths.
 
 The pin is `1.0.2115+e16833f284`, using the executable hashes already reviewed
 for offline staging; see [provenance and qualification](host-release-artifacts.md#microsoft-cli-acquisition).
-Windows ARM64 has no established pin and fails explicitly; it never falls back
-to x64. No Microsoft executable is redistributed in the helper bundle.
+New acquisition on Windows ARM64 has no established native pin and fails
+explicitly; it never falls back to x64. The legacy `cli_pins::current`/`verify`
+selector and offline staging retain the existing x64-emulation policy on
+Windows ARM64. Acquisition instead uses exact `cli_pins::for_target(OS, ARCH)`.
+No Microsoft executable is redistributed in the helper bundle.
 Acquisition neither makes bytes executable nor performs native publisher
 qualification, sign-in, service/account changes or readiness checks.
 Native executable admission/publication remains a separate blocked gate, not a
 property of the returned cache path.
 
-`stage-package` authenticates a helper manifest with the existing updater public
+`stage-package` authenticates a schema-2 host manifest with the existing updater public
 key, verifies the exact current build version, native platform/architecture,
 archive length/hash and bounded exact regular entries, then stages immutable
 verified bytes. Its three inputs must be regular private files in trusted
@@ -101,7 +104,9 @@ that provenance and compare **every** staged entry before use; `.complete` is
 only a completion receipt, not authority. There is no unauthenticated execution
 or downgrade override.
 
-The authenticated schema-2 package contains `festerm-host` plus the existing legacy helpers.
+The authenticated schema-2 `festerm-host` package uses separate `fesTerm-host-*`
+asset names and contains the CLI plus existing helpers. Schema-1
+`fesTerm-tunnel-*` assets retain their exact legacy installer allowlists.
 Staging them does **not** make them a new zero-shell host endpoint or run their
 one-shell setup policy. Release CI requires native signing/notarization of the host CLI on the
 same paths as the other helpers. Actual protected release/native rejection

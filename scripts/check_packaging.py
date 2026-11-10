@@ -254,11 +254,13 @@ def verify_desktop_helper_workflows(
         "timeout-minutes: 6",
         "crates/festerm-tunnel-bridge/devtunnel-cli-pins.json",
         '["aarch64", "x86_64"]',
-        'hashlib.sha256(archive.read_bytes()).hexdigest() != pin["archive_sha256"]',
+        'pin["format"] != "executable" or pin["download"] != expected_url',
+        'pin["archive_sha256"] != pin["executable_sha256"]',
+        "1.0.2115+e16833f284/osx-{asset_architecture}-devtunnel",
+        'response.stdout != "200"',
+        "not 0 < executable.stat().st_size <= limit",
+        "source.read(limit + 1)",
         'hashlib.sha256(executable_bytes).hexdigest() != pin["executable_sha256"]',
-        "len(entries) != 1",
-        'entry.filename != "devtunnel"',
-        "stat.S_ISLNK(entry.external_attr >> 16)",
         'tempfile.TemporaryDirectory(prefix=".macos-cli-smoke-", dir=Path.cwd())',
         '"--connect-timeout", "15", "--max-time", "90"',
         '["/usr/bin/codesign", "-dv", str(executable)]',
@@ -267,7 +269,7 @@ def verify_desktop_helper_workflows(
     ):
         if snippet not in cli_smoke:
             errors.append(
-                "macOS package smoke must verify both pinned CLI archives and "
+                "macOS package smoke must verify both pinned raw CLI executables and "
                 f"their runtime signature prerequisite: missing {snippet}"
             )
 

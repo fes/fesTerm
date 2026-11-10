@@ -31,10 +31,20 @@ struct Manifest {
 }
 
 pub fn current() -> io::Result<CliPin> {
-    for_target(std::env::consts::OS, std::env::consts::ARCH)
+    legacy_for_target(std::env::consts::OS, std::env::consts::ARCH)
 }
 
-fn for_target(platform: &str, architecture: &str) -> io::Result<CliPin> {
+fn legacy_for_target(platform: &str, architecture: &str) -> io::Result<CliPin> {
+    let architecture = if platform == "windows" && architecture == "aarch64" {
+        "x86_64"
+    } else {
+        architecture
+    };
+    for_target(platform, architecture)
+}
+
+/// Exact native-target pin selection without legacy Windows ARM x64 emulation.
+pub fn for_target(platform: &str, architecture: &str) -> io::Result<CliPin> {
     let manifest: Manifest = serde_json::from_str(include_str!("../devtunnel-cli-pins.json"))
         .map_err(|_| io::Error::other("profile_host.cli_manifest"))?;
     if manifest.reviewed.is_empty() {
@@ -69,6 +79,19 @@ mod pin_tests {
         }
         assert!(for_target("windows", "aarch64").is_err());
         assert!(for_target("linux", "riscv64").is_err());
+    }
+
+    #[test]
+    fn legacy_cli_selector_preserves_windows_arm_x64_emulation() {
+        let legacy = legacy_for_target("windows", "aarch64").unwrap();
+        let x64 = for_target("windows", "x86_64").unwrap();
+        assert_eq!(legacy.architecture, "x86_64");
+        assert_eq!(legacy.executable_sha256, x64.executable_sha256);
+        assert_eq!(legacy.download, x64.download);
+        let current = current().unwrap();
+        let expected = legacy_for_target(std::env::consts::OS, std::env::consts::ARCH).unwrap();
+        assert_eq!(current.architecture, expected.architecture);
+        assert_eq!(current.executable_sha256, expected.executable_sha256);
     }
 }
 
@@ -244,7 +267,7 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let result = verify_with_pin(&path, &for_target("windows", "x86_64").unwrap());
+        let result = verify(&path);
         let _ = child.kill();
         child.wait().unwrap();
         let Err(error) = result else {

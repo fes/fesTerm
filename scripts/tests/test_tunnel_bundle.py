@@ -35,7 +35,7 @@ class TunnelBundleTests(unittest.TestCase):
         self.binaries = self.root / "bin"
         self.binaries.mkdir()
         for platform in bundle.PLATFORMS:
-            for name in bundle.binary_names(platform):
+            for name in bundle.binary_names(platform, host=True):
                 (self.binaries / name).write_bytes(f"mock binary {name}".encode())
         dependency = self.root / "dependency"
         dependency.mkdir()
@@ -46,9 +46,9 @@ class TunnelBundleTests(unittest.TestCase):
             "packages": [
                 {
                     "id": name, "name": name, "version": VERSION, "license": "MIT",
-                    "manifest_path": str(self.root / "crates" / name / "Cargo.toml"),
+                    "manifest_path": str(self.root / ("app" if name == "festerm-host" else "crates") / name / "Cargo.toml"),
                 }
-                for name in bundle.PACKAGES
+                for name in bundle.HOST_PACKAGES
             ] + [{
                 "id": "dependency", "name": "dependency", "version": "2.0.0",
                 "license": "MIT", "license_file": None,
@@ -59,8 +59,9 @@ class TunnelBundleTests(unittest.TestCase):
                     "id": name, "deps": [{
                         "pkg": "dependency", "dep_kinds": [{"kind": None}],
                     }],
-                } for name in bundle.PACKAGES
+                } for name in bundle.HOST_PACKAGES
             ] + [{"id": "dependency", "deps": []}]},
+            "workspace_members": list(bundle.HOST_PACKAGES),
         }
 
     def build(self, platform="linux", arch="x86_64", output="dist", **kwargs):
@@ -108,7 +109,7 @@ class TunnelBundleTests(unittest.TestCase):
                     contents = self.contents(archive, platform)
                     self.assertEqual(set(contents), set(bundle.entry_names(platform)))
                     host = "festerm-host.exe" if platform == "windows" else "festerm-host"
-                    self.assertEqual(contents[host][0], f"mock binary {host}".encode())
+                    self.assertNotIn(host, contents)
                     self.assertEqual(contents["VERSION"][0], b"1.2.3\n")
                     for name, (content, mode) in contents.items():
                         self.assertTrue(content)
@@ -168,18 +169,31 @@ class TunnelBundleTests(unittest.TestCase):
                     self.build()
                 self.assertFalse((self.root / "dist").exists())
 
-    def test_legacy_recovery_payload_excludes_host_and_is_not_current_admission(self):
+    def test_separate_host_payload_preserves_exact_legacy_installer_abi(self):
         for platform in bundle.PLATFORMS:
             with self.subTest(platform=platform):
                 host = "festerm-host.exe" if platform == "windows" else "festerm-host"
-                (self.binaries / host).unlink(missing_ok=True)
-                archive = self.build(platform, output=f"legacy-{platform}", legacy=True)
+                archive = self.build(platform, output=f"legacy-{platform}")
                 self.assertNotIn(host, self.contents(archive, platform))
-                bundle.verify_bundle(archive, VERSION, platform, legacy=True)
+                bundle.verify_bundle(archive, VERSION, platform)
+                hosted = self.build(platform, output=f"host-{platform}", host=True)
+                self.assertIn(host, self.contents(hosted, platform))
+                self.assertTrue(hosted.name.startswith("fesTerm-host-"))
+                bundle.verify_bundle(hosted, VERSION, platform, host=True)
                 with self.assertRaisesRegex(ValueError, "exactly"):
-                    bundle.verify_bundle(archive, VERSION, platform)
+                    bundle.verify_bundle(hosted, VERSION, platform)
+                (self.binaries / host).unlink(missing_ok=True)
                 with self.assertRaisesRegex(ValueError, host):
-                    self.build(platform, output=f"current-{platform}")
+                    self.build(platform, output=f"current-{platform}", host=True)
+                (self.binaries / host).write_bytes(b"synthetic host")
+
+    def test_host_notices_use_actual_workspace_membership_for_app_package(self):
+        notices = bundle.third_party_notices(self.metadata, VERSION, self.root, host=True)
+        self.assertIn(b"actual upstream license", notices)
+        metadata = copy.deepcopy(self.metadata)
+        metadata["workspace_members"].remove("festerm-host")
+        with self.assertRaisesRegex(ValueError, "missing dependency license"):
+            bundle.third_party_notices(metadata, VERSION, self.root, host=True)
 
     def test_invalid_or_mismatched_versions_fail_closed(self):
         for version in ("", "v1.2.3", "01.2.3", "1.2", "1.2.3\n", "1.2.4",

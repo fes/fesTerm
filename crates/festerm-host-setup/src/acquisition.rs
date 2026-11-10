@@ -3,9 +3,9 @@
 
 use crate::staging;
 use festerm_tunnel_bridge::cli_pins::{self, CliPin};
-use reqwest::{blocking::Client, header, redirect::Policy, Url};
+use reqwest::{header, redirect::Policy, Client, Url};
 use std::{
-    io::{self, Read},
+    io,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -23,7 +23,16 @@ fn refused(reason: &'static str) -> io::Error {
 /// Returns private staged bytes only; native signer/admission checks are still
 /// required before any future executable publication or launch.
 pub fn acquire_cli(destination: &Path) -> io::Result<PathBuf> {
-    let pin = cli_pins::current()?;
+    acquire_for_target(std::env::consts::OS, std::env::consts::ARCH, destination)
+}
+
+fn acquire_for_target(
+    platform: &str,
+    architecture: &str,
+    destination: &Path,
+) -> io::Result<PathBuf> {
+    let pin = cli_pins::for_target(platform, architecture)
+        .map_err(|_| refused("host.cli_target_unavailable"))?;
     let url = approved_url(&pin)?;
     let client = client(true, REQUEST_TIMEOUT)?;
     acquire(&client, url, &pin, destination, cli_pins::DOWNLOAD_LIMIT)
@@ -56,8 +65,13 @@ fn approved_url(pin: &CliPin) -> io::Result<Url> {
     Url::parse(&expected).map_err(|_| refused("host.cli_download_policy"))
 }
 
-fn client(https_only: bool, timeout: Duration) -> io::Result<Client> {
-    Client::builder()
+struct Downloader {
+    client: Client,
+    timeout: Duration,
+}
+
+fn client(https_only: bool, timeout: Duration) -> io::Result<Downloader> {
+    let client = Client::builder()
         .https_only(https_only)
         // The exact versioned blob URL needs no redirect. Refuse all 3xx,
         // including same-origin, aka.ms, HTTPS downgrade and credential URLs.
@@ -67,23 +81,47 @@ fn client(https_only: bool, timeout: Duration) -> io::Result<Client> {
         .no_brotli()
         .no_deflate()
         .no_zstd()
+        // Async DNS is cancelled with the request; no detached blocking
+        // getaddrinfo worker can outlive the overall deadline.
+        .hickory_dns(true)
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(timeout)
         .build()
-        .map_err(|_| refused("host.cli_download_failed"))
+        .map_err(|_| refused("host.cli_download_failed"))?;
+    Ok(Downloader { client, timeout })
 }
 
 fn acquire(
-    client: &Client,
+    downloader: &Downloader,
     url: Url,
     pin: &CliPin,
     destination: &Path,
     limit: u64,
 ) -> io::Result<PathBuf> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(refused("host.cli_blocking_worker_required"));
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| refused("host.cli_download_failed"))?;
+    let bytes = runtime.block_on(async {
+        let deadline = tokio::time::Instant::now() + downloader.timeout;
+        tokio::time::timeout_at(deadline, receive(&downloader.client, url, limit))
+            .await
+            .map_err(|_| refused("host.cli_download_failed"))?
+    })?;
+    // Dropping the bounded runtime cancels all remaining asynchronous IO.
+    drop(runtime);
+    staging::stage_cli_bytes(&bytes, destination, pin)
+}
+
+async fn receive(client: &Client, url: Url, limit: u64) -> io::Result<Vec<u8>> {
     let mut response = client
         .get(url)
         .header(header::ACCEPT_ENCODING, "identity")
         .send()
+        .await
         .map_err(|_| refused("host.cli_download_failed"))?;
     if response.status() != reqwest::StatusCode::OK {
         return Err(refused("host.cli_download_status"));
@@ -100,26 +138,43 @@ fn acquire(
         return Err(refused("host.cli_download_limit"));
     }
     let mut bytes = Vec::new();
-    (&mut response)
-        .take(limit + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| refused("host.cli_download_failed"))?;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| refused("host.cli_download_failed"))?
+    {
+        if chunk.len() as u64 > limit.saturating_sub(bytes.len() as u64) {
+            return Err(refused("host.cli_download_limit"));
+        }
+        let required = bytes.len() + chunk.len();
+        if required > bytes.capacity() {
+            let capacity = required
+                .max(bytes.capacity().saturating_mul(2))
+                .min(limit as usize);
+            bytes
+                .try_reserve_exact(capacity - bytes.len())
+                .map_err(|_| refused("host.cli_download_limit"))?;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     if bytes.is_empty() || bytes.len() as u64 > limit {
         return Err(refused("host.cli_download_limit"));
     }
     if length.is_some_and(|length| length != bytes.len() as u64) {
         return Err(refused("host.cli_download_failed"));
     }
-    // Raw upstream executable, not an archive; the same pinned digest covers
-    // transport bytes and executable bytes. Reuse offline staging admission.
-    staging::stage_cli_bytes(&bytes, destination, pin)
+    Ok(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
-    use std::{io::Write, net::TcpListener, thread};
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
 
     fn fixture_pin(bytes: &[u8]) -> CliPin {
         let hash: String = Sha256::digest(bytes)
@@ -269,11 +324,14 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/must-not-connect", listener.local_addr().unwrap());
-        assert!(super::client(true, Duration::from_secs(1))
-            .unwrap()
-            .get(url)
-            .send()
-            .is_err());
+        assert!(acquire(
+            &super::client(true, Duration::from_secs(1)).unwrap(),
+            Url::parse(&url).unwrap(),
+            &pin,
+            &destination,
+            64
+        )
+        .is_err());
         assert_eq!(
             listener.accept().unwrap_err().kind(),
             io::ErrorKind::WouldBlock
@@ -296,5 +354,64 @@ mod tests {
             approved_url(&arm_windows).unwrap_err().to_string(),
             "host.cli_target_unavailable"
         );
+    }
+
+    #[test]
+    fn new_acquisition_refuses_windows_arm_before_network_or_staging() {
+        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let destination = root.path().join("must-not-stage");
+        assert_eq!(
+            acquire_for_target("windows", "aarch64", &destination)
+                .unwrap_err()
+                .to_string(),
+            "host.cli_target_unavailable"
+        );
+        assert!(!destination.exists());
+        #[cfg(all(windows, target_arch = "aarch64"))]
+        assert_eq!(
+            acquire_cli(&destination).unwrap_err().to_string(),
+            "host.cli_target_unavailable"
+        );
+    }
+
+    #[test]
+    fn slow_body_cannot_extend_the_absolute_acquisition_deadline() {
+        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let destination = root.path().join("cache");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = Url::parse(&format!(
+            "http://{}/fixture",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let task = thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            connection
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0; 4096];
+            let _ = connection.read(&mut request);
+            connection
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n")
+                .unwrap();
+            for byte in b"good" {
+                thread::sleep(Duration::from_millis(70));
+                if connection.write_all(&[*byte]).is_err() {
+                    break;
+                }
+            }
+        });
+        let started = std::time::Instant::now();
+        assert!(acquire(
+            &client(false, Duration::from_millis(170)).unwrap(),
+            url,
+            &fixture_pin(b"good"),
+            &destination,
+            64
+        )
+        .is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(!destination.exists());
+        task.join().unwrap();
     }
 }

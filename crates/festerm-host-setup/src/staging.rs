@@ -53,7 +53,7 @@ pub fn stage_release_files(
             version: crate::VERSION,
             platform,
             architecture,
-            package: Package::Helpers,
+            package: Package::Host,
         },
     )
     .map_err(|_| io::Error::other("host.artifact_authentication_failed"))?;
@@ -82,7 +82,12 @@ fn read_input(path: &Path, max: usize) -> io::Result<Vec<u8>> {
 pub fn stage_artifact(artifact: &VerifiedArtifact, root: &Path) -> io::Result<StagedArtifact> {
     let manifest = artifact.manifest();
     let key = format!(
-        "helpers-{}-{}-{}-{}",
+        "{}-{}-{}-{}-{}",
+        if manifest.package == Package::Host {
+            "host"
+        } else {
+            "helpers"
+        },
         manifest.version,
         manifest.platform.name(),
         manifest.architecture.name(),
@@ -173,6 +178,19 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     #[test]
+    fn host_staging_keeps_package_identity_separate_from_legacy_helpers() {
+        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let host = crate::artifacts::host_staging_fixture();
+        let helpers = crate::artifacts::staging_fixture();
+        let cache = root.path().join("cache");
+        let staged_host = stage_artifact(&host, &cache).unwrap();
+        let staged_helpers = stage_artifact(&helpers, &cache).unwrap();
+        assert_ne!(staged_host.path(), staged_helpers.path());
+        assert_eq!(host.manifest().package, Package::Host);
+        assert_eq!(helpers.manifest().package, Package::Helpers);
+    }
+
+    #[test]
     fn authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache() {
         let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
         let verified = crate::artifacts::staging_fixture();
@@ -188,6 +206,7 @@ mod tests {
                 entry.bytes()
             );
         }
+
         for (name, bytes) in [
             (".manifest.json", verified.manifest_bytes()),
             (".manifest.json.sig", verified.signature_bytes()),
