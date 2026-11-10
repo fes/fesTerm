@@ -1,5 +1,64 @@
 # Milestone Progress Narrative
 
+## Isolating Windows core cloud/controller fixtures from native account admission
+
+Actual Windows primary CI for exact core
+`9b1d2a688e35cad8dead2afa4b228c152c2cadb9`, run `42861153896`,
+job `129987309097`, failed **72 passed / 26 failed / 1 ignored**, exit 101,
+in 18.20 seconds. The raw log SHA-256 is
+`5c50f293e48ea144d97684c1e4579e52e37a4330f81c2cb3fec212a9a085a80f`.
+All 26 panic blocks were checked: 19 unwrap the shared foreground helper at
+`cloud.rs:1421`, three unwrap setup reaching that same account lookup, two
+assert setup side effects that never occurred after this early failure, and
+two controller tests reach native Services account discovery.
+The first failure is **foreground**, not private-root creation.
+Pure fake-network/credential/native-registration tests inadvertently required
+the runner's real Windows ordinary-user process-token admission. Elevated or
+service tokens deliberately return the observed bare `Kind(PermissionDenied)`;
+the log does not record token details, so it does not distinguish those branches.
+The existing policy-checked private-root wrapper is already used and is retained;
+the session registry root-selection correction is not the missing fix here.
+
+Cloud fixtures now select a **per-adapter, cfg(test)-only fake OS account**;
+the explicit fake setup boundary selects that adapter too. There is no global,
+thread-local or environment override. Ordinary construction still uses the real
+native resolver, and account mismatch/native resolver denial regressions remain.
+Unpublished-registration controller fixtures use a typed fake Windows context
+and a runner that panics on **any** native-manager request, while executing real
+Services stop/cleanup, private directory identity, receipt, epoch and runtime
+lease checks. The uninstall orchestration's internal injected stop/cleanup seam
+preserves the production native callbacks and their order; native cleanup denial
+cannot poll cloud cleanup. Foreign state, active runtime ownership, missing-lock
+history, cancellation, removed history and independent-daemon invariants remain.
+There is no production authorization/storage-policy relaxation, ACL repair,
+ignored-test addition, task/process termination or native capability increment.
+
+Fresh **macOS-only** Rust/Cargo 1.99.1 validation uses a separately cloned private
+warm target, jobs=1, dev/test debug=0 and incremental=0:
+
+```sh
+cargo test --locked -p festerm-host-setup --features acquisition,native-services,cloud,host-runtime --lib
+cargo clippy --locked -p festerm-host-setup --features acquisition,native-services,cloud,host-runtime --all-targets -- -D warnings
+cargo test --locked -p festerm-host-setup --no-default-features --features owner-enrollment,cloud --lib cloud::tests
+cargo clippy --locked -p festerm-host-setup --no-default-features --features owner-enrollment,cloud --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9
+git diff --check
+```
+
+The full affected library passes **110 tests, zero failures, one existing
+ignored external-signer test**; the standalone cloud selection passes **12**,
+with 43 filtered. Both strict feature configurations pass. Five new regressions
+cover explicit account isolation/default resolver, native denial propagation,
+foreign state, forbidden manager effects and cleanup-denial ordering. All 26
+original failing test names pass locally. Logs, the raw source log and the
+per-panic catalog are in `.win-fixture-validation/`.
+No new Windows execution or full MSVC composition check is claimed; the known
+`ring`/missing Windows SDK `assert.h` cross-check blocker was not retried.
+Fresh actual Windows primary CI remains mandatory, as do the separately gated
+native contexts and eventual combined retirement-deny qualification.
+Published #698 at `2d3a7894` is unchanged.
+
 ## Establishing native refusal state before asserting its exact outcome
 
 The normal exact-core/session merge `239db48c` remains intact. Frozen `9b1d2a68`

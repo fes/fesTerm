@@ -3678,6 +3678,16 @@ absence still cannot bypass an active runtime lease or missing runtime lock with
 existing run history. Present cloud generations retain CleanupPending; only
 authenticated absence may complete Removed. No real manager, native vault or
 cloud operation was performed, so HOSTSETUP-01 remains open.
+The core9b Windows primary failure (run `42861153896`, job `129987309097`)
+exposed native account discovery inside these otherwise pure fixtures, not a
+private-root creation error. Explicit per-adapter test accounts and typed fake
+Windows context now isolate them; any manager request panics. Real Services,
+private state identity, epoch/runtime-lock and foreign-receipt checks remain.
+Fresh macOS-only results are 110 library passes with one existing ignore,
+12 standalone-cloud passes and two strict feature checks; all 26 original
+failing names pass locally. See milestone progress for raw-log SHA and commands.
+This is not fresh Windows execution; Windows primary CI and native ordinary-user
+token/task/daemon-preservation acceptance remain required.
 The coupled CI build correction has fresh pinned Rust/Cargo 1.99.1 and Clippy
 0.1.99 host/no-host checks, portable snapshot tests and strict
 `aarch64-apple-ios` bridge compilation. The host JSON helper is absent without
