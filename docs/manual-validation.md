@@ -3623,7 +3623,8 @@ local socket-path boundary: its first aggregate passed two/failed twelve in
 27.36 seconds. A real maximum-PID/HOST-generation socket bind is retained RED
 against the old root and GREEN after shortening only the exclusively created,
 policy-checked Unix fixture child. Production path policy and Windows selection
-are unchanged; the same native helper binary is used on both sides.
+are unchanged; helper construction, measurement and artifact-lifecycle limits
+are recorded in [Native helper provenance](milestone-progress.md#native-helper-provenance-core-session-correction).
 First-run Linux `920715a5`, run `42869778017`, job `130017607117`, separately
 passed 13/failed one native route in 165.00 seconds. Its committed-creation
 Ensure replay assertion did not print its actual response: it remains unknown.
@@ -3632,9 +3633,12 @@ assertion. The corrected fixture requires unchanged full journal/lease, then
 same-operation/same-generation/original-Created success within the original
 deadline; other replies fail with their actual typed values. This neither
 identifies that CI error nor qualifies a new Linux run.
-The final bounded core/session/Windows-fixture union passes one complete macOS
-native aggregate: 14 passed/zero failed/zero ignored in 178.74 seconds, using
-the same native helper executable as the first failed local aggregate.
+At source `61f67fc5`, the bounded core/session/Windows-fixture union passed one
+complete macOS native aggregate: 14 passed/zero failed/zero ignored in 178.74
+seconds, using the earlier default-feature helper under the
+[build, runner-measurement and mutable-artifact qualifications](milestone-progress.md#native-helper-provenance-core-session-correction),
+not a helper freshly rebuilt at that source or new evidence from this
+documentation correction.
 Selected macOS groups additionally pass six session cases, four storage cases,
 31 Windows-derived/new setup cases, 12 standalone-cloud cases and 16 portable
 bridge cases with nine existing native ignores; the focused replay pass and

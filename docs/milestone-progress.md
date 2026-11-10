@@ -20,9 +20,10 @@ directory; no existing permissions are repaired. Its existing regression now
 binds a real socket containing `u32::MAX` and `u64::MAX` under the same checkout
 parent used by native routes, then verifies owned cleanup. Windows root
 selection and all production private-storage/admission behavior are unchanged.
-The same native helper executable is retained for the failing and corrected
-route checks; shortening the fixture path does not substitute another checkout,
-helper implementation, deadline or isolated case for the actual aggregate.
+Helper build/source and artifact-lifecycle limits are recorded in
+[Native helper provenance](#native-helper-provenance-core-session-correction).
+Shortening the fixture path does not substitute another checkout, deadline or
+isolated case for the actual aggregate.
 
 Separately, first-run Linux CI at exact
 `920715a510b0485eed79761900efaec081b7e978`, run `42869778017`,
@@ -47,7 +48,7 @@ every other response is printed and fails. There is no new sleep, timeout,
 success fallback, ignored case, frontend admission or duplicate spawn.
 The controlled Busy proof does not identify the unprinted Linux CI response.
 
-Fresh final-source **macOS-only** validation with actual Rust/Cargo 1.99.1,
+Existing source `61f67fc5` **macOS-only** validation with actual Rust/Cargo 1.99.1,
 Clippy 0.1.99, the exclusive warm session target, jobs=1, dev/test debug=0 and
 incremental=0 passes:
 
@@ -64,13 +65,40 @@ The focused committed-replay pass is a subset of the fourteen, not an
 additional native case. The four incoming host-setup Rust files remain exactly
 `34db0136`; its older 110-pass/one-ignore result and `1947c416`'s 166.28-second
 aggregate below remain attributed to those immutable sources, not relabeled.
-The final aggregate retains the same helper SHA-256
-`0a3d7983027f653a383b939d97e5ffe2b8bf42fa4b0b9713be1c936d9f556c85`
-as the first failing local aggregate.
+Its helper measurements are subject to the
+[build, measurement and mutable-artifact qualifications below](#native-helper-provenance-core-session-correction),
+not an immutable-retention or fresh-helper-build claim.
 
-The actual aggregate command remains:
+### Native helper provenance (core-session correction)
+
+The recorded 178.74-second aggregate exercised source/test harness `61f67fc5`
+using the actual default-feature helper built in this integration worktree after
+normal merge `239db48c` (exact core `9b1d2a68` plus session `918815ac`), **not a
+helper freshly rebuilt at `61f67fc5`**. Effective production-helper inputs are
+identical through `61f67fc5`: the only later sessiond source delta is private
+fixture code under cfg(test)/test-support, excluded from the default-feature
+executable; its dependency/build-manifest inputs are unchanged. The runner
+configured `$CARGO_TARGET_DIR/debug/festerm-sessiond` and measured SHA-256
+`0a3d7983027f653a383b939d97e5ffe2b8bf42fa4b0b9713be1c936d9f556c85`
+before and after the aggregate; **these are runner file measurements, not a
+per-child exec audit**. The existing matching
+`$CARGO_TARGET_DIR/debug/deps/festerm_sessiond-32afff8d73606bcf` is a currently
+matching Cargo-managed artifact, **not a sealed immutable copy**. The mutable
+top-level `debug/festerm-sessiond` path was subsequently republished by
+`combined-final-retirement4` with the test-support artifact, SHA-256
+`5a4981cba77e998d7b17b0afed8c7ccc8aca86db48f3812ba798b8049af6d6f9`;
+this pathname change is not an artifact-source failure. Existing
+`native-helper-build.log`, `winfanin-native-helpers.log`,
+`combined-final-native-all14.log` and `combined-final-helper-provenance.json`
+under `target/adr84-core-fanin-evidence/` record the original build, later reuse,
+actual aggregate and attribution limits. This documentation correction neither
+rebuilds nor reruns or relabels the existing source-61 evidence.
+
+For reproduction, build the helpers before the native command; these commands
+were not rerun for this documentation-only correction:
 
 ```sh
+cargo build --locked -p festerm-sessiond -p festerm-pty-test-child --bins
 FESTERM_HOST_TEST_HELPER="$CARGO_TARGET_DIR/debug/festerm-sessiond" \
   cargo test --locked -p festerm-tunnel-bridge --features host-routing \
   native_ --lib -- --ignored --test-threads=1
