@@ -1664,3 +1664,6 @@ The native binary bridge fixture batches its 96 pending input lines and verifies
 all echoes before adoption and all ordered deltas afterward, rather than spending
 the unchanged adoption deadline on serialized ConPTY round trips. Deterministic
 unit coverage, not native PTY chunking, proves the more-than-64-chunk boundary.
+Both observed native buffers require all 96 child-output markers exactly once in
+increasing byte order, then the final marker exactly once; matcher fixtures reject
+reordering, duplicates/replay and missing chunks or final marker.

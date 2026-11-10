@@ -741,15 +741,8 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
         pending_output.extend_from_slice(&buffer[..count]);
         assert!(pending_output.len() < 512 * 1024);
     }
-    for index in 0..96 {
-        let expected = format!("INPUT:pending-chunk-{index:02}");
-        assert!(
-            pending_output
-                .windows(expected.len())
-                .any(|bytes| bytes == expected.as_bytes()),
-            "old writer missing {expected}"
-        );
-    }
+    validate_pending_marker_order(&pending_output)
+        .unwrap_or_else(|error| panic!("old writer pending output: {error}"));
     eprintln!(
         "bridge pending backlog observed in {:?}",
         pending_started.elapsed()
@@ -767,15 +760,8 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
         ));
         assert!(delta.len() < 512 * 1024);
     }
-    for index in 0..96 {
-        let expected = format!("INPUT:pending-chunk-{index:02}");
-        assert!(
-            delta
-                .windows(expected.len())
-                .any(|bytes| bytes == expected.as_bytes()),
-            "missing {expected}"
-        );
-    }
+    validate_pending_marker_order(&delta)
+        .unwrap_or_else(|error| panic!("post-snapshot delta: {error}"));
     bounded_poll(
         || {
             festerm_sessiond::list_running_sessions_in(&runtime_registry_root(&runtime))
@@ -2911,6 +2897,98 @@ fn read_bridge_frame_until(
         }
     }
     panic!("expected bridge frame did not arrive");
+}
+
+fn validate_pending_marker_order(bytes: &[u8]) -> Result<(), String> {
+    let markers = (0..96)
+        .map(|index| format!("INPUT:pending-chunk-{index:02}"))
+        .chain(std::iter::once("INPUT:before-candidate-adopts".to_owned()));
+    let mut previous_end = 0;
+    for marker in markers {
+        // Match child output, not the terminal's ordinary input echo.
+        let mut positions = bytes
+            .windows(marker.len())
+            .enumerate()
+            .filter_map(|(offset, window)| (window == marker.as_bytes()).then_some(offset));
+        let offset = positions
+            .next()
+            .ok_or_else(|| format!("missing {marker}"))?;
+        if positions.next().is_some() {
+            return Err(format!("duplicate {marker}"));
+        }
+        if offset < previous_end {
+            return Err(format!("out-of-order {marker}"));
+        }
+        previous_end = offset + marker.len();
+    }
+    Ok(())
+}
+
+#[test]
+fn pending_marker_order_accepts_ordered_child_output_amid_terminal_bytes() {
+    let mut output = b"\x1b[?25l".to_vec();
+    for index in 0..96 {
+        output.extend_from_slice(
+            format!("pending-chunk-{index:02}\r\nINPUT:pending-chunk-{index:02}\r\n").as_bytes(),
+        );
+    }
+    output.extend_from_slice(b"\x1b[0mINPUT:before-candidate-adopts\r\n\x1b[?25h");
+    assert_eq!(validate_pending_marker_order(&output), Ok(()));
+}
+
+#[test]
+fn pending_marker_order_rejects_reordered_chunks_and_early_final_marker() {
+    let ordered: Vec<_> = (0..96)
+        .map(|index| format!("INPUT:pending-chunk-{index:02}\r\n"))
+        .chain(std::iter::once(
+            "INPUT:before-candidate-adopts\r\n".to_owned(),
+        ))
+        .collect();
+    for pair in [(0, 1), (47, 48), (95, 96)] {
+        let mut reordered = ordered.clone();
+        reordered.swap(pair.0, pair.1);
+        assert!(
+            validate_pending_marker_order(reordered.concat().as_bytes())
+                .unwrap_err()
+                .starts_with("out-of-order"),
+            "accepted swapped markers {pair:?}"
+        );
+    }
+}
+
+#[test]
+fn pending_marker_order_rejects_duplicate_chunks_and_replayed_final_marker() {
+    let mut output = (0..96)
+        .map(|index| format!("INPUT:pending-chunk-{index:02}\r\n"))
+        .collect::<String>();
+    output.push_str("INPUT:before-candidate-adopts\r\n");
+    for marker in [
+        "INPUT:pending-chunk-00",
+        "INPUT:pending-chunk-95",
+        "INPUT:before-candidate-adopts",
+    ] {
+        let replayed = format!("{output}{marker}\r\n");
+        assert_eq!(
+            validate_pending_marker_order(replayed.as_bytes()),
+            Err(format!("duplicate {marker}"))
+        );
+    }
+}
+
+#[test]
+fn pending_marker_order_rejects_missing_chunks_and_missing_final_marker() {
+    let ordered: Vec<_> = (0..96)
+        .map(|index| format!("INPUT:pending-chunk-{index:02}"))
+        .chain(std::iter::once("INPUT:before-candidate-adopts".to_owned()))
+        .collect();
+    for missing in [0, 47, 95, 96] {
+        let mut incomplete = ordered.clone();
+        let marker = incomplete.remove(missing);
+        assert_eq!(
+            validate_pending_marker_order(incomplete.join("\r\n").as_bytes()),
+            Err(format!("missing {marker}"))
+        );
+    }
 }
 
 fn terminal_contains(terminal: &Terminal, expected: &[u8]) -> bool {
