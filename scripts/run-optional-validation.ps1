@@ -166,6 +166,7 @@ function Write-OptionalResult {
     $resultWriter.Write($Text)
 }
 Write-OptionalResult 'status=running'
+Write-OptionalResult "`nsuite=owned-migration-native status=skipped reason=unix-fixture-only-not-windows-acceptance"
 try {
 
 if ($env:FESTERM_RUN_ADR84_PUBLISHER_NATIVE -eq '1') {

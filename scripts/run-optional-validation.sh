@@ -148,6 +148,21 @@ else
     status=fail
 fi
 
+if [ "${FESTERM_RUN_OWNED_MIGRATION_NATIVE:-}" = 1 ]; then
+    if [ -n "${FESTERM_ADR84_MIGRATION_HELPER:-}" ] &&
+        [ -n "${FESTERM_ADR84_MIGRATION_HOST:-}" ] &&
+        cargo test --locked -p festerm-host-setup --features lifecycle --lib \
+            owned_migration::tests::owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existing_frontend \
+            -- --ignored --exact --nocapture --test-threads=1; then
+        printf 'suite=owned-migration-native status=pass\n' >>"$result_path"
+    else
+        printf 'suite=owned-migration-native status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=owned-migration-native status=skipped reason=explicit-current-source-binaries-required\n' >>"$result_path"
+fi
+
 if python3 scripts/check_running_sessions.py; then
     printf 'suite=running-session-churn status=pass\n' >>"$result_path"
 else

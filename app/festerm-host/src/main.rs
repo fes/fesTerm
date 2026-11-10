@@ -1,6 +1,7 @@
 use festerm_host_setup::{
     acquisition,
     lifecycle::{Origin, Phase, Settings, Startup, Store},
+    owned_migration,
     services::{Services, TrustedStage},
     staging,
 };
@@ -43,6 +44,20 @@ update --state-dir PATH --from-version VERSION --manifest PATH --signature PATH 
     Authenticated stopped-only forward replacement; retain identity/grants/daemons, never automatic enable or rollback.
 update-status --state-dir PATH
     Durable old/new reservation history and recovery provenance, not liveness or Ready.
+migration-inventory --selection PATH --account-id ID
+    Inventory ONLY explicitly selected protected legacy installations; no account discovery.
+migration-preview --state-dir PATH --selection PATH --account-id ID
+    Review exact source/account/key/generation mapping into a fresh disabled destination.
+migration-reserve --state-dir PATH --selection PATH --account-id ID --preview-id SHA256 --consent reserve
+    Journal identity/claims only. Authenticated live daemon binding is unavailable; legacy use is unchanged.
+migration-status --state-dir PATH
+    Protected reservation/rollback history, not migration completion or source liveness.
+migration-resume --state-dir PATH
+    Revalidate/resume the SAME reservation, never create a new host or shell.
+migration-defer --state-dir PATH
+    Retain the reservation and leave legacy use unchanged.
+migration-rollback --state-dir PATH --consent rollback
+    Release only this operation's local claims. Never restores revoked grants or deletes resources.
 
 Manual startup requires an explicit run. Sign-in is user sign-in, NOT pre-login.
 No native startup registration is performed by configure. Paths must be absolute,
@@ -79,6 +94,23 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     let command = command.to_str().ok_or_else(invalid)?;
     let allowed: &[&str] = match command {
         "configure" => &["--state-dir", "--name", "--creation", "--startup"],
+        "migration-inventory" => &["--selection", "--account-id"],
+        "migration-preview" => &["--state-dir", "--selection", "--account-id"],
+        "migration-reserve" => &[
+            "--state-dir",
+            "--selection",
+            "--account-id",
+            "--preview-id",
+            "--consent",
+        ],
+        "migration-status" | "migration-resume" | "migration-defer" => &["--state-dir"],
+        "migration-rollback" => &["--state-dir", "--consent"],
+        "migration-switch" => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "host.migration_authenticated_binding_unavailable",
+            ));
+        }
         "status" | "service-status" | "disable" | "cleanup-local" | "recover-cleanup" => {
             &["--state-dir"]
         }
@@ -144,6 +176,57 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         Ok(path)
     };
     match command {
+        "migration-inventory" | "migration-preview" | "migration-reserve" => {
+            let account = options
+                .get("--account-id")
+                .and_then(|value| value.to_str())
+                .ok_or_else(invalid)?;
+            let selection_path = path("--selection")?;
+            let values = owned_migration::read_selections(&selection_path)?;
+            let inventory = owned_migration::Inventory::current_user()?;
+            if command == "migration-inventory" {
+                return serde_json::to_string(&inventory.inventory(&values, account)?)
+                    .map_err(|_| invalid());
+            }
+            let state = path("--state-dir")?;
+            let store = Store::open(&state, Origin::Headless)?;
+            if command == "migration-preview" {
+                return serde_json::to_string(&inventory.preview(&store, &values, account)?)
+                    .map_err(|_| invalid());
+            }
+            if options.get("--consent").and_then(|value| value.to_str()) != Some("reserve") {
+                return Err(invalid());
+            }
+            let approved = options
+                .get("--preview-id")
+                .and_then(|value| value.to_str())
+                .ok_or_else(invalid)?;
+            serde_json::to_string(&inventory.reserve(&store, &values, account, approved)?)
+                .map_err(|_| invalid())
+        }
+        "migration-status" | "migration-resume" | "migration-defer" | "migration-rollback" => {
+            let state = path("--state-dir")?;
+            let store = Store::open(&state, Origin::Headless)?;
+            let journal = if command == "migration-status" {
+                owned_migration::status(&store)?
+            } else {
+                let inventory = owned_migration::Inventory::current_user()?;
+                match command {
+                    "migration-resume" => inventory.resume(&store)?,
+                    "migration-defer" => inventory.defer(&store)?,
+                    "migration-rollback" => {
+                        if options.get("--consent").and_then(|value| value.to_str())
+                            != Some("rollback")
+                        {
+                            return Err(invalid());
+                        }
+                        inventory.rollback(&store)?
+                    }
+                    _ => return Err(invalid()),
+                }
+            };
+            serde_json::to_string(&journal).map_err(|_| invalid())
+        }
         #[cfg(feature = "owner-routing")]
         "update-status" => {
             let state = path("--state-dir")?;
@@ -541,6 +624,9 @@ fn diagnostic(error: &io::Error) -> &'static str {
     if error.to_string() == "host.runtime_stop_pending" {
         return "host.runtime_stop_pending; access revoked but foreground host exit is not confirmed; preserve the exact receipt and retry";
     }
+    if error.to_string() == "host.migration_authenticated_binding_unavailable" {
+        return "host.migration_authenticated_binding_unavailable; defer or roll back the protected reservation; no daemon restart, attachment or exposure switch was performed";
+    }
     match error.kind() {
         io::ErrorKind::Unsupported => return "host.endpoint_adapter_unavailable (#681); no operation performed",
         io::ErrorKind::PermissionDenied => return "host.private_storage_required; use the configured non-system user and owner-only storage",
@@ -549,6 +635,26 @@ fn diagnostic(error: &io::Error) -> &'static str {
         _ => {}
     }
     match error.to_string().as_str() {
+        "host.migration_authenticated_binding_unavailable"
+        | "host.migration_native_binding_required_or_rollback" =>
+            "host.migration_authenticated_binding_unavailable; defer or roll back the protected reservation; no daemon restart, attachment or exposure switch was performed",
+        "host.migration_preview_changed_reconfirm" =>
+            "host.migration_preview_changed_reconfirm; review the exact current mapping again; old preview is not consent",
+        "host.migration_source_not_reservable"
+        | "host.migration_source_changed_preserve_legacy"
+        | "host.migration_native_generation_replaced"
+        | "host.migration_native_generation_unavailable" =>
+            "host.migration_source_unavailable_or_changed; preserve legacy use and protected evidence; never resume-or-create or stop",
+        "host.migration_source_account_key_or_identity_mismatch"
+        | "host.migration_source_receipt_mismatch"
+        | "host.migration_foreign_source_origin"
+        | "host.migration_foreign_runtime_namespace" =>
+            "host.migration_owned_source_mismatch; original protected installation/account/key/namespace required; no adoption",
+        "host.migration_stale_destination_epoch_or_settings"
+        | "host.migration_requires_fresh_disabled_destination" =>
+            "host.migration_destination_changed; stale reservation cannot enable or create; preserve evidence and explicitly reconcile or roll back",
+        "host.migration_source_already_reserved_or_revoked" =>
+            "host.migration_source_already_reserved_or_revoked; no second destination or grant restoration",
         "host.sign_in_required"
         | "host.secure_store_unavailable"
         | "owner.vault_locked_or_unavailable_unlock_native_store_and_retry"
@@ -1042,5 +1148,25 @@ mod tests {
         }
         assert!(!diagnostic(&io::Error::other("PRIVATE_FIXTURE_SECRET"))
             .contains("PRIVATE_FIXTURE_SECRET"));
+    }
+    #[test]
+    fn headless_migration_rejects_stop_takeover_and_implicit_reservation_consent() {
+        for command in [
+            "migration-inventory",
+            "migration-preview",
+            "migration-reserve",
+            "migration-status",
+            "migration-resume",
+            "migration-defer",
+            "migration-rollback",
+        ] {
+            for flag in ["--stop", "--restart", "--takeover", "--yes", "--token"] {
+                assert!(execute(arguments(&[command, flag, "fixture-do-not-echo"])).is_err());
+            }
+        }
+        let error = execute(arguments(&["migration-switch"])).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(diagnostic(&error).contains("authenticated_binding_unavailable"));
+        assert!(!HELP.contains("migration-stop"));
     }
 }

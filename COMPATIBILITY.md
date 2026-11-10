@@ -79,6 +79,13 @@ daemon-end controls fail the same oracle. Its current-source binary in a
 synthetic old-version package/test signatures and fake native manager are not
 genuine older-release, publisher, native switching or cross-version acceptance.
 
+The separate [owned-installation reservation](docs/owned-installation-migration.md)
+implements protected explicit inventory/preview, stable identity/source claims,
+resume/defer and local rollback only. It preserves legacy protocols, keys,
+grants, native generation and frontend. Actual legacy-to-HOST daemon binding,
+exposure switching and native/old-release migration acceptance remain unsupported;
+reservation never enables or silently restarts a source.
+
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 
 The sourced implementation references and cross-project lessons that guide this

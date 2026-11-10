@@ -201,7 +201,6 @@ impl Store {
         operation(&self.directory, &self.read()?, lease)
     }
 
-    #[cfg(any(feature = "owner-enrollment", feature = "cloud"))]
     pub(crate) fn with_locked<T>(
         &self,
         operation: impl FnOnce(&File, &Snapshot) -> io::Result<T>,
@@ -336,6 +335,7 @@ impl Store {
     pub fn request_enable(&self, approved_settings: &Settings) -> io::Result<Ticket> {
         approved_settings.validate()?;
         self.change(|record| {
+            crate::owned_migration::admit_enable(&self.directory, record)?;
             if record.phase != Phase::Disabled {
                 return Err(refused("host.reconcile_before_enable"));
             }

@@ -81,6 +81,11 @@ version update now journals/reconciles exact old/new native registrations withou
 reenabling access, regenerating identity/grants or touching persistent daemons.
 Signed native switching/compatibility acceptance remains unqualified.
 The legacy installer is unchanged.
+Explicit [owned-installation migration reservation](docs/owned-installation-migration.md)
+now has protected inventory/preview, exact-source claims, stable new host-identity
+reservation, resume/defer and local rollback. Actual authenticated live-daemon
+binding and exposure switching remain blocked; unsupported helpers are preserved,
+never restarted or attached by migration.
 An opt-in shared library adds foreground native-vault GitHub authentication and
 zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;
 generation-atomic cloud deletion remains an explicit qualification blocker.
@@ -183,7 +188,7 @@ remains [#27](https://github.com/fes/fesTerm/issues/27).
 reuse the updater trust root for all six standalone helper targets
 ([#681](https://github.com/fes/fesTerm/issues/681), proposed ADR 0084).
 Schema 2 includes the headless CLI; native executable/installer integration,
-service switching/rollback and legacy migration remain separate gates.
+service switching/rollback and complete legacy migration remain separate gates.
 Existing Linux scripts are not upgraded
 to publisher authentication by merely publishing these additive manifests.
 

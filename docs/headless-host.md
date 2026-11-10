@@ -33,6 +33,15 @@ is not Ready. Missing/corrupt/busy/foreign-origin state fails rather than lookin
 like an absent installation that can be recreated. No default directories,
 credential stores or installed services are consulted.
 
+The separate [owned-installation migration reservation](owned-installation-migration.md)
+commands inventory only explicitly selected protected legacy sources, preview
+their exact account/key/generation mapping, reserve a new disabled host identity
+and source claims, resume/defer that operation and release it through journaled
+local rollback. They do not inherit owner/sharing/create grants or stop shells.
+This release has no authenticated live legacy daemon binding API; rows say so,
+setup refuses an outstanding migration reservation and no switch is claimed.
+Deferral/rollback preserve legacy use and never restore revoked exposure.
+
 The initial journal and both CLI/helper staging paths publish private bytes via
 temporary-file write, sync and atomic no-replace rename, never a torn final file.
 Failed writes remove only their own temporary entry. A crash can still leave an
