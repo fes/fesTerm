@@ -567,6 +567,8 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   reuses a live owner proof across actual issuer projection, preserves original
   issued operations and refuses unadvertised future epochs. Native composition
   must obtain that issuer under the actual protected backend reservation.
+  Fresh enrollment templates have no observed issuer watermark; durable backend
+  fencing, not cached owner policy, protects across reservations.
   Frozen projection source `91cf2880` passes protocol13, owner/channel15 and
   protected-enrollment12 focused tests plus strict protocol, relay/owner-auth,
   portable client/owner-auth and enrollment clippy. These are portable/synthetic
