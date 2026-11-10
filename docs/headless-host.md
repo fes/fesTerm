@@ -273,6 +273,14 @@ foreground exit, not a directory-deletion/manual workaround:
   bound; otherwise only authenticated exact absence permits the same conditional
   request. No new resource ID/incarnation is silently selected.
 
+**Uninstall from acknowledged, unbound uncertainty is unsupported.** It requires
+a deferred read-only exact-resource adoption/cleanup-binding operation that does
+not enable the host or grant creation consent (`HOSTSETUP-01`). Do not request
+enable/creation consent just to uninstall. Retain the protected cloud record,
+credential and installation directory while this debt is unresolved; deleting
+them is not a recovery/uninstall procedure. The generation-atomic deletion
+qualification below remains a separate prerequisite even after cleanup binding.
+
 `cleanup(cancel)` requires the lifecycle's exact binding, current cleanup epoch
 and confirmed native stop. It rechecks current account, exact ID/cluster,
 ownership labels, private ACL, port and creation incarnation. Exact authenticated
@@ -284,8 +292,11 @@ we do not invent an ETag/creation-time header or claim cleanup succeeded.
 Qualifying a service-side incarnation-conditional destructive contract remains
 a genuine prerequisite to automatic cloud removal. Credentials and protected
 tombstones are retained; this API does not claim complete uninstall.
-Live-service creation-incarnation stability across repeated authoritative GETs
-remains unqualified; fixture precision coverage is not live-service evidence.
+Live-service creation-incarnation stability across repeated authoritative GETs,
+`If-None-Match: *` atomicity, authenticated exact-cluster 404/ownership semantics
+and cluster routing/no-redirect behavior remain unqualified. Native-vault
+behavior also requires native qualification; fixtures establish none of these
+live/native gates.
 
 The request contract follows the vendored Microsoft Rust management client and
 the [official TypeScript SDK at reviewed source

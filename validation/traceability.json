@@ -5578,7 +5578,8 @@
         "Exact-generation separate default-No migration confirmation is deferred until the migration API; setup command refusals do not establish that behavior",
         "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance",
         "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable and retains CleanupPending without DELETE",
-        "Live-service creation-incarnation stability across repeated authoritative GETs remains unqualified; fixture PUT/GET precision differences do not establish native/live-service acceptance"
+        "Live-service creation-incarnation stability across repeated authoritative GETs, If-None-Match atomicity, authenticated exact-cluster 404/ownership semantics, cluster routing/no-redirect behavior and native-vault behavior remain unqualified; fixtures do not establish live/native acceptance",
+        "HOSTSETUP-01: uninstall from acknowledged unbound uncertainty is unsupported until read-only exact-resource adoption/cleanup binding exists without enable/creation consent; retain the protected record and credential, do not delete the installation directory or grant creation consent just to uninstall; generation-atomic deletion remains separately gated"
       ]
     },
     {

@@ -3390,6 +3390,16 @@ Successful PUT receipts are pinned only after authoritative GET, including late
 cancelled results. Live-service incarnation stability across repeated GETs still
 requires qualification; these fixtures perform no real cloud or vault mutations.
 
+**HOSTSETUP-01 deferred uninstall prerequisite:** acknowledged unbound
+uncertainty cannot currently be adopted/bound for cleanup through a read-only
+operation. Uninstall from that state is unsupported until exact-resource
+adoption/cleanup binding exists without enable/creation consent. Retain its
+protected record and credential; do not delete the installation directory or
+grant creation consent just to uninstall. Generation-atomic cloud deletion
+remains independently gated. Live GET stability, `If-None-Match: *` atomicity,
+authenticated exact-cluster 404/ownership, cluster routing/no-redirect and native
+vault behavior still require live/native qualification.
+
 ## ADR 0084 owner enrollment qualification
 
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
