@@ -50,6 +50,43 @@ control integration suite is Unix-only), ignored native smoke/churn, installed
 service/reboot/job/breakaway behavior and physical mobile reconnect grace.
 No endpoint, native-service, GUI or whole-ADR acceptance is claimed.
 
+## Making headless cleanup observable without granting access again
+
+The native lane normally integrates current main, reviewed packaging/enrollment
+and the frozen cloud adapter rather than replacing their account/storage rules.
+The moved atomic publication helper retains its shared interrupted-write test;
+the setup wrapper additionally checks no-replace behavior.
+
+Headless management now separates journal intent, exact native observations and
+unavailable endpoint readiness. Disable fences before native stop; local cleanup
+cannot manufacture cloud removal. Acknowledged uncertain cloud creation can be
+adopted for cleanup by read-only authenticated observation without enabling
+access or requesting another create. Authoritative receipts precede lifecycle
+binding and survive epoch races; absence remains uncertain. Signed native
+admission has a standalone no-registration command.
+
+A feature-gated, ignored disposable-guest test exercises real user-manager
+install/start/stop/removal and an independently surviving bounded child without
+shells, credentials or cloud. Source/portable fixture evidence is kept separate
+from native execution and release-signer qualification. Windows still requires
+approved publisher/rotation/revocation policy and graceful exact-host stop;
+endpoint startup and safe update switching remain explicit dependencies.
+
+## Preserving published helper ABI while adding bounded host acquisition
+
+The GUI-free host now has its own schema-2 `festerm-host` identity and
+`fesTerm-host-*` release assets. Existing `fesTerm-tunnel-*` archives keep their
+exact legacy entries, because already-published installers reject extra files.
+Release production signs and verifies both identities independently. Dependency
+notices recognize actual Cargo workspace membership, including `app/festerm-host`,
+and CI validates the real metadata closure rather than only synthetic paths.
+Pinned Microsoft acquisition uses cancellable async HTTP/DNS under one absolute
+request-and-body deadline; slow-body fixtures prevent per-read timeout refresh.
+macOS raw-asset smoke retains exact hashing and native codesign qualification.
+The new native-only acquisition selector refuses Windows ARM without removing
+legacy x64-emulation hosting/verification. These remain acquisition/data-staging
+boundaries, not native endpoint readiness or first-bootstrap qualification.
+
 ## Separating owner consent from the current host issuer
 
 The ADR 0084 contract correctly refuses Ensure/Create advertisements without
@@ -88,6 +125,49 @@ Ancestor refusal now has a content-free diagnostic rather than an unexplained
 PermissionDenied. Native startup/service acceptance remains separately gated.
 The shared multi-command helper validation step explicitly uses fail-fast Bash
 on all platforms, so a later successful clippy cannot hide failed Windows tests.
+Native socket fixtures can request an explicit Unix parent with a short random
+name; they retain the same storage policy and Windows vetted-root selection
+without changing process-wide cwd.
+The acquisition deadline/refusal fixtures, host-versus-helper cache-separation
+fixture and acquisition-only CLI fixture also use this shared validated factory.
+Pure archive producer/verifier fixtures remain project-local; fresh Windows CI
+must still confirm the protected-storage paths.
+
+## Separating native host control from endpoint readiness
+
+The [#681](https://github.com/fes/fesTerm/issues/681) stage-4 follow-up now has
+an off-default [same-user service component](native-host-services.md), rather
+than teaching desktop and headless callers separate setup policy. A sealed
+receipt admits only current-target updater-authenticated host-package bytes;
+ordinary staging paths cannot authorize launch. Private exact-owned definitions
+and creation-epoch receipts precede native effects, with current-epoch fences
+and observed process state instead of Ready-shaped command success.
+
+Deterministic native-runner/filesystem fixtures cover Windows tasks, macOS
+LaunchAgents and Linux user units without changing services or reading secrets.
+Late task creation retains its observed identity after revocation, so cleanup
+does not lose ownership evidence. CLI setup/run remain unavailable; the actual
+endpoint, foreground sign-in, native signing/startup/cleanup and daemon-lifetime
+qualification remain prerequisites. ADR 0084 stays Proposed.
+
+The native component now treats historical systemd exit identity separately
+from current `MainPID`, journals definition retirement for crash-safe scoped
+failed-unit cleanup, and bounds transition reconciliation under one native
+budget. Task registration reserves immutable marker/configuration/ACL evidence
+before submission and can recover matching late observations without restoring
+consent. Windows registration/start and running-task stop explicitly refuse
+until an authenticated graceful-stop path preserves independent daemons.
+macOS admission now pins the actual release environment's Developer ID team
+and requires Apple's chain and hardened runtime, rather than learning trust
+from an artifact or arbitrary app. Windows promotion refuses pending its
+authoritative publisher/certificate and revocation policy; any trusted signer
+is not that policy.
+
+Cargo emits UTF-8 metadata independently of the Windows console code page.
+The host notice check now decodes that transport explicitly as UTF-8. A portable
+subprocess regression preserves non-ASCII dependency metadata while forcing a
+CP1252 default decoder; no lossy decoding or production locale override is used.
+
 
 ## Capturing issuance before remote shell creation
 
@@ -138,9 +218,31 @@ normal-CI job uses pinned cargo-packager 0.11.8 with a generated throwaway key,
 so signer-format/mode incompatibilities are caught before protected publication.
 The [bootstrap and staging contract](host-release-artifacts.md) deliberately
 does not claim that downloading both verifier and key establishes trust.
-Existing artifact names/consumers remain compatible; host CLI inclusion,
-native installer/executable publication, service switching/rollback,
+Existing artifact names/consumers remain compatible; host CLI inclusion is in
+separate authenticated host assets. Remaining native installer/executable
+publication, service switching/rollback,
 migration and native signing evidence remain #681 gates. ADR 0084 stays Proposed.
+
+## Saving host recipes without creating shells
+
+ADR 0084 separates a reusable client recipe from a running remote shell.
+The [#681](https://github.com/fes/fesTerm/issues/681) foundation now shares
+strict public metadata, duplication identity policy and offline commands
+between desktop, iOS and Android without a desktop dependency in mobile.
+Saving/importing/deleting cannot connect, sign in, install a host or end a
+shell. Existing generation-pinned profiles remain separate.
+
+Portable serialization, actual desktop save outcomes, mobile restart/failure
+handling and explicit browsing intent are tested. Verified endpoint wiring,
+authorized resume/create, native UI and physical-device lifecycle evidence
+remain prerequisites; this is not stage 6 end-to-end acceptance.
+
+Reliability review found that one malformed mobile recipe could discard the
+entire collection on the next save. Loading now retains valid unique entries
+within the shared limit and reports/quarantines rejected entries. Typed adapter
+errors distinguish conflicts and portable-input failures, while desktop export
+has its own status rather than claiming a save. Focused regressions exercise
+recovery across an unrelated save and the actual experimental CI feature path.
 
 ## Stabilizing SSH-agent test startup
 
@@ -9021,6 +9123,65 @@ lease from an abandoned recordless directory. Protected cache comparisons now
 classify oversized entries as the same specific mismatch as other changed
 bytes, keeping bounded reads and refusing overwrite for CLI and helper staging.
 
+### A distributable headless command, without pretending it is an installer
+
+The bounded ADR 0084 stage-7 slice publishes separate authenticated
+`fesTerm-host-*` assets for all six targets, with native signing paths and
+dependency notices. Their schema-2 manifests require `festerm-host`; the legacy
+`fesTerm-tunnel-*` helper archives retain schema 1 and their unchanged payloads,
+including during old-tag recovery. Real Python producers, the pinned
+cargo-packager signer and Rust admission now interoperate for both packages
+across all six targets with synthetic keys and no release secrets.
+
+`acquire-cli` connects the existing reviewed Microsoft executable hashes to
+versioned official HTTPS URLs, bounded receiving and the same protected atomic
+staging policy. It rejects redirects, mutable aliases, unsupported Windows ARM
+and provenance overrides. Local HTTP fixtures exercise failures without fetching
+or executing dependency binaries. This is acquisition only: native Microsoft
+publisher qualification, executable publication, independently authenticated
+first delivery and working endpoint/service management remain explicit gates.
+
+The integration pass preserves the legacy Windows ARM64 x64-emulation selector
+for existing hosting and verification; only new acquisition requires an exact
+native target. It also updates the actual two-architecture macOS prerequisite
+smoke to consume the new raw executable pins, retaining exact hash and strict
+native codesign checks instead of leaving the former ZIP consumer behind.
+
+## Zero-shell cloud setup without borrowing a profile or trusting a CLI path
+
+The next ADR 0084 setup slice reuses the native GitHub account/device-flow
+primitives and official Dev Tunnels contracts in process. Foreground approval
+binds the exact lifecycle ticket/settings, origin, OS user and verified numeric
+account. Native credentials stay behind pre-reserved opaque references; the
+protected receipt pins the one submitted tunnel ID, cluster, ownership label,
+port and incarnation. Lost replies are reconciled, not retried as another
+resource, and late cancellation retains cleanup truth without restoring access.
+This provisions no shell and starts no endpoint or service; observed cloud
+presence is explicitly not Ready.
+
+Recovery now distinguishes local preflight/no-send/definitive rejection from
+uncertain transport outcomes. Only explicit still-active foreground intent plus
+authenticated exact absence can retry the identical unpinned conditional
+reservation/body; background reconciliation never creates. Equivalent service
+timestamp precision is normalized. A disappeared pinned resource retains its
+binding and requires exact native stop before cleanup, never silent recreation.
+Unbound uncertainty after revoked consent now has a named foreground recovery:
+an exact ticket/account/current-epoch acknowledgement releases pending intent
+to Disabled while retaining possible submission, credentials and the identical
+reservation. It is not absence/removal or renewed creation consent; bound or
+pinned/native-stop state forbids it. A later explicit enable observes late
+creation using that same identity. Successful PUTs pin only a follow-up
+authoritative GET, including late cancelled receipts, never PUT-only precision.
+
+Research also found a destructive-operation boundary that cannot honestly be
+papered over: the official API offers ID-only deletion without a documented
+incarnation-atomic precondition. The adapter verifies exact ownership, but refuses
+to delete a found resource rather than race a replacement. It can commit exact
+authenticated absence; otherwise CleanupPending retains its receipt and names
+the qualification blocker. Private HTTP/lifecycle fixtures prove these policies,
+not real cloud/native acceptance. Desktop/headless command composition, normal
+first-connect UX and runtime/service health remain separate work.
+
 The stage-3 core review found that advertising inventory-only was not enough:
 both peers now enforce operation flags, and native effect tests use a test-only
 advertisement instead of silently bypassing the production boundary. Idle time
@@ -9140,3 +9301,15 @@ The earlier protocol `--lib` invocation selected zero tests and is not evidence;
 the explicit contracts command above supplies that evidence. These results
 precede consumption of the qualified final session head and do not transfer to
 that combined tree without rerunning the affected checks.
+
+### ADR 0084 protected runtime policy adapter recovery
+
+The interrupted native adapter wiring left runtime trait implementations nested
+inside an inherent implementation. The first actual Rust build reproduced that
+compiler failure; recovery moved the implementations to module scope without
+replacing the preserved enrollment source. The setup-owned adapter now supplies
+the actual installation lease through the runtime policy traits, reacquires
+selected-store authority for each admission and keeps Busy distinct from denial.
+The app remains a thin delegator with native vault as its default and explicit
+headless file selection only. A generic trait regression exercises lease retention
+and fresh revocation; native endpoint/service acceptance remains separately gated.

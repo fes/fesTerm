@@ -10,7 +10,12 @@ publish = false
 
 [features]
 default = []
+native-services = ["owner-enrollment", "dep:tokio", "festerm-windows-security/host-service"]
+native-service-fixtures = ["native-services"]
+cloud = ["lifecycle", "dep:festerm-tunnel-client", "dep:festerm-secret-store", "dep:tokio-util"]
 owner-enrollment = ["lifecycle", "festerm-tunnel-bridge/owner-auth", "dep:festerm-host-protocol", "dep:festerm-secret-store"]
+host-runtime = ["owner-enrollment", "festerm-tunnel-bridge/host-routing", "festerm-tunnel-bridge/relay"]
+acquisition = ["lifecycle", "dep:reqwest", "dep:tokio"]
 lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 artifacts = [
     "dep:base64",
@@ -27,6 +32,11 @@ name = "festerm-verify-artifact"
 path = "src/bin/festerm-verify-artifact.rs"
 required-features = ["artifacts"]
 
+[[bin]]
+name = "festerm-host-service-test-child"
+path = "src/bin/festerm-host-service-test-child.rs"
+required-features = ["native-service-fixtures"]
+
 [dependencies]
 base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
@@ -34,9 +44,13 @@ minisign-verify = { version = "0.2.5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 sha2 = "0.11"
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "hickory-dns"], optional = true }
+tokio = { version = "1", features = ["rt", "net", "process", "io-util", "time"], optional = true }
 festerm-sessiond = { path = "../festerm-sessiond", optional = true }
 festerm-host-protocol = { path = "../festerm-host-protocol", optional = true }
 festerm-secret-store = { path = "../festerm-secret-store", optional = true }
+festerm-tunnel-client = { path = "../festerm-tunnel-client", optional = true }
+tokio-util = { version = "0.7", features = ["rt"], optional = true }
 festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge", optional = true }
 fs2 = { version = "0.4", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
@@ -54,6 +68,7 @@ festerm-sessiond = { path = "../festerm-sessiond", features = ["test-support"] }
 blake2 = "0.10"
 ed25519-dalek = "3"
 tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros", "test-util"] }
 
 [lints]
 workspace = true

@@ -251,6 +251,11 @@ fn dev_tunnel_import_defaults_take_over_and_never_replaces() {
         panic!()
     };
     assert!(tunnel.take_over_if_attached);
+    assert!(store.host_recipes().is_empty());
+    let festerm_mobile_profiles::TunnelSource::Imported { destination } = &tunnel.source else {
+        panic!("legacy import must keep its exact destination");
+    };
+    assert_eq!(destination.target.generation, "123");
 
     let again = PublicProfileImport::parse(&text).unwrap();
     assert!(matches!(

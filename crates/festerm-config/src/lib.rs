@@ -17,6 +17,8 @@ use file_io::{
 };
 use profiles::CredentialReference;
 
+pub use festerm_client_recipes as host_recipes;
+
 mod errors;
 mod file_io;
 mod keyboard;
@@ -72,6 +74,8 @@ pub(crate) static NEXT_TEMPORARY_FILE_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Configuration {
     schema_version: u32,
+    #[serde(default, skip_serializing_if = "host_recipes::RecipeBook::is_empty")]
+    host_recipes: host_recipes::RecipeBook,
     #[serde(default)]
     profiles: Vec<Profile>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -120,10 +124,32 @@ impl UpdateCheckRecord {
 }
 
 impl Configuration {
+    /// Public client-local metadata, never host consent or live session state.
+    pub fn host_recipes(&self) -> &host_recipes::RecipeBook {
+        &self.host_recipes
+    }
+
+    /// Builds a replacement to persist before publishing the metadata outcome.
+    /// Export returns an unchanged replacement and needs no write.
+    pub fn with_host_recipe_command(
+        &self,
+        command: host_recipes::MetadataCommand,
+    ) -> Result<(Self, host_recipes::MetadataOutcome), ConfigError> {
+        let (book, outcome) = self
+            .host_recipes
+            .apply(command)
+            .map_err(ConfigError::from)?;
+        let mut next = self.clone();
+        next.host_recipes = book;
+        next.validate()?;
+        Ok((next, outcome))
+    }
+
     /// Creates and validates a document using the current schema version.
     pub fn new(profiles: Vec<Profile>) -> Result<Self, ConfigError> {
         let configuration = Self {
             schema_version: SCHEMA_VERSION,
+            host_recipes: host_recipes::RecipeBook::empty(),
             profiles,
             workspace_enabled: false,
             workspace: None,
@@ -146,6 +172,7 @@ impl Configuration {
     ) -> Result<Self, ConfigError> {
         let configuration = Self {
             schema_version: SCHEMA_VERSION,
+            host_recipes: host_recipes::RecipeBook::empty(),
             profiles,
             workspace_enabled: true,
             workspace: Some(workspace),
@@ -648,6 +675,7 @@ impl Configuration {
     pub const fn empty() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
+            host_recipes: host_recipes::RecipeBook::empty(),
             profiles: Vec::new(),
             workspace_enabled: false,
             workspace: None,
@@ -666,6 +694,7 @@ impl Configuration {
         let raw: RawConfiguration = toml::from_str(document).map_err(parse_error)?;
         let configuration = Self {
             schema_version: raw.schema_version,
+            host_recipes: raw.host_recipes,
             profiles: raw.profiles,
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
@@ -823,6 +852,7 @@ impl Configuration {
         if self.schema_version != SCHEMA_VERSION {
             return Err(ConfigError::new(ConfigErrorKind::UnsupportedSchemaVersion));
         }
+        self.host_recipes.validate().map_err(ConfigError::from)?;
 
         let mut identifiers = HashSet::with_capacity(self.profiles.len());
         let mut host_installations = HashSet::new();
@@ -923,6 +953,8 @@ impl Configuration {
 struct RawConfiguration {
     schema_version: u32,
     #[serde(default)]
+    host_recipes: host_recipes::RecipeBook,
+    #[serde(default)]
     profiles: Vec<Profile>,
     #[serde(default)]
     workspace_enabled: bool,
@@ -949,6 +981,7 @@ impl<'de> Deserialize<'de> for Configuration {
         let raw = RawConfiguration::deserialize(deserializer)?;
         let configuration = Self {
             schema_version: raw.schema_version,
+            host_recipes: raw.host_recipes,
             profiles: raw.profiles,
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,

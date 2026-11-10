@@ -52,11 +52,29 @@ impl Architecture {
     }
 }
 
-/// This schema deliberately does not claim that a host-management CLI is bundled.
+/// Schema 2 requires the GUI-free host-management CLI alongside legacy helpers.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Package {
     #[serde(rename = "festerm-helpers")]
     Helpers,
+    #[serde(rename = "festerm-host")]
+    Host,
+}
+
+impl Package {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Helpers => "festerm-helpers",
+            Self::Host => "festerm-host",
+        }
+    }
+
+    const fn schema(self) -> u32 {
+        match self {
+            Self::Helpers => 1,
+            Self::Host => 2,
+        }
+    }
 }
 
 /// The signature authenticates the exact JSON bytes, not reserialized JSON.
@@ -168,7 +186,12 @@ pub fn filename(expected: &ExpectedArtifact<'_>) -> String {
         "tar.gz"
     };
     format!(
-        "fesTerm-tunnel-{}-{}-{}.{extension}",
+        "fesTerm-{}-{}-{}-{}.{extension}",
+        if expected.package == Package::Host {
+            "host"
+        } else {
+            "tunnel"
+        },
         expected.version,
         expected.platform.name(),
         expected.architecture.name()
@@ -218,7 +241,7 @@ fn verify_with_key(
         .map_err(|_| ArtifactError::Signature)?;
     let manifest: Manifest =
         serde_json::from_slice(manifest_bytes).map_err(|_| ArtifactError::Manifest)?;
-    if manifest.schema != 1
+    if manifest.schema != manifest.package.schema()
         || !stable_version(&manifest.version)
         || manifest.sha256.len() != 64
         || !manifest
@@ -270,7 +293,7 @@ fn stable_version(version: &str) -> bool {
     }
 }
 
-fn allowed_names(platform: Platform) -> Vec<String> {
+fn allowed_names(platform: Platform, package: Package) -> Vec<String> {
     let suffix = if platform == Platform::Windows {
         ".exe"
     } else {
@@ -283,6 +306,9 @@ fn allowed_names(platform: Platform) -> Vec<String> {
     ]
     .map(|name| format!("{name}{suffix}"))
     .into();
+    if package == Package::Host {
+        names.push(format!("festerm-host{suffix}"));
+    }
     if platform == Platform::Windows {
         names.push("festerm-tunnel-worker.exe".into());
     }
@@ -298,7 +324,7 @@ fn read_entry(
     manifest: &Manifest,
     entries: &mut Vec<VerifiedEntry>,
 ) -> Result<(), ArtifactError> {
-    let allowed = allowed_names(manifest.platform);
+    let allowed = allowed_names(manifest.platform, manifest.package);
     let executable = name.starts_with("festerm-");
     let limit = if executable {
         MAX_ENTRY_BYTES
@@ -358,7 +384,7 @@ fn validate_archive(
                     .ok_or(ArtifactError::Archive)?..,
             )
             .ok_or(ArtifactError::Archive)?;
-        let count = allowed_names(manifest.platform).len() as u16;
+        let count = allowed_names(manifest.platform, manifest.package).len() as u16;
         if eocd[..4] != *b"PK\x05\x06"
             || eocd[4..8] != [0; 4]
             || u16::from_le_bytes([eocd[8], eocd[9]]) != count
@@ -376,7 +402,7 @@ fn validate_archive(
         }
         let mut zip =
             zip::ZipArchive::new(Cursor::new(archive)).map_err(|_| ArtifactError::Archive)?;
-        if zip.len() != allowed_names(manifest.platform).len() {
+        if zip.len() != allowed_names(manifest.platform, manifest.package).len() {
             return Err(ArtifactError::Archive);
         }
         for index in 0..zip.len() {
@@ -428,7 +454,7 @@ fn validate_archive(
             return Err(ArtifactError::Archive);
         }
     }
-    if entries.len() != allowed_names(manifest.platform).len() {
+    if entries.len() != allowed_names(manifest.platform, manifest.package).len() {
         return Err(ArtifactError::Archive);
     }
     Ok(entries)
@@ -437,6 +463,11 @@ fn validate_archive(
 #[cfg(all(test, feature = "lifecycle"))]
 pub(crate) fn staging_fixture() -> VerifiedArtifact {
     tests::staging_fixture()
+}
+
+#[cfg(all(test, feature = "lifecycle"))]
+pub(crate) fn host_staging_fixture() -> VerifiedArtifact {
+    tests::host_staging_fixture()
 }
 
 #[cfg(test)]
@@ -494,7 +525,7 @@ mod tests {
             version: "1.2.3",
             platform,
             architecture,
-            package: Package::Helpers,
+            package: Package::Host,
         }
     }
 
@@ -542,7 +573,14 @@ mod tests {
     }
 
     fn files(platform: Platform) -> Vec<(String, Vec<u8>, u32, tar::EntryType)> {
-        allowed_names(platform)
+        files_for_package(platform, Package::Host)
+    }
+
+    fn files_for_package(
+        platform: Platform,
+        package: Package,
+    ) -> Vec<(String, Vec<u8>, u32, tar::EntryType)> {
+        allowed_names(platform, package)
             .into_iter()
             .map(|name| {
                 let bytes = if name == "VERSION" {
@@ -583,8 +621,8 @@ mod tests {
 
     fn manifest(archive: &[u8], expected: &ExpectedArtifact<'_>) -> Manifest {
         Manifest {
-            schema: 1,
-            package: Package::Helpers,
+            schema: expected.package.schema(),
+            package: expected.package,
             version: expected.version.into(),
             platform: expected.platform,
             architecture: expected.architecture,
@@ -609,6 +647,16 @@ mod tests {
 
     #[cfg(feature = "lifecycle")]
     pub(super) fn staging_fixture() -> VerifiedArtifact {
+        staging_fixture_for_package(Package::Helpers)
+    }
+
+    #[cfg(feature = "lifecycle")]
+    pub(crate) fn host_staging_fixture() -> VerifiedArtifact {
+        staging_fixture_for_package(Package::Host)
+    }
+
+    #[cfg(feature = "lifecycle")]
+    fn staging_fixture_for_package(package: Package) -> VerifiedArtifact {
         let platform = match std::env::consts::OS {
             "windows" => Platform::Windows,
             "macos" => Platform::Macos,
@@ -622,9 +670,9 @@ mod tests {
             version: crate::VERSION,
             platform,
             architecture,
-            package: Package::Helpers,
+            package,
         };
-        let mut files = files(platform);
+        let mut files = files_for_package(platform, package);
         files.iter_mut().find(|file| file.0 == "VERSION").unwrap().1 =
             format!("{}\n", crate::VERSION).into_bytes();
         let archive = if platform == Platform::Windows {
@@ -638,24 +686,43 @@ mod tests {
     #[test]
     fn python_produced_six_bundles_and_manifests_authenticate_in_rust() {
         let (_directory, produced) = python_produced_bundles();
-        for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {
-            for architecture in [Architecture::X86_64, Architecture::Aarch64] {
-                let expected = expected(platform, architecture);
-                let filename = filename(&expected);
-                let archive = std::fs::read(produced.join(&filename)).unwrap();
-                let metadata =
-                    std::fs::read(produced.join(format!("{filename}.manifest.json"))).unwrap();
-                let (key, signature) = sign(&metadata, 42);
-                let verified =
-                    verify_with_key(&metadata, &signature, &archive, &expected, &key).unwrap();
-                assert_eq!(verified.manifest_bytes(), metadata);
-                assert_eq!(verified.archive_bytes(), archive);
-                assert_eq!(verified.entries().len(), allowed_names(platform).len());
-                for entry in verified.entries().iter().filter(|entry| entry.executable()) {
+        for package in [Package::Helpers, Package::Host] {
+            for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {
+                for architecture in [Architecture::X86_64, Architecture::Aarch64] {
+                    let mut expected = expected(platform, architecture);
+                    expected.package = package;
+                    let filename = filename(&expected);
+                    let archive = std::fs::read(produced.join(&filename)).unwrap();
+                    let metadata =
+                        std::fs::read(produced.join(format!("{filename}.manifest.json"))).unwrap();
+                    let (key, signature) = sign(&metadata, 42);
+                    let verified =
+                        verify_with_key(&metadata, &signature, &archive, &expected, &key).unwrap();
+                    assert_eq!(verified.manifest_bytes(), metadata);
+                    assert_eq!(verified.archive_bytes(), archive);
                     assert_eq!(
-                        entry.bytes(),
-                        format!("Repository-owned synthetic helper: {}\n", entry.name()).as_bytes()
+                        verified.entries().len(),
+                        allowed_names(platform, expected.package).len()
                     );
+                    assert_eq!(
+                        package == Package::Host,
+                        verified.entries().iter().any(|entry| {
+                            entry.name()
+                                == if platform == Platform::Windows {
+                                    "festerm-host.exe"
+                                } else {
+                                    "festerm-host"
+                                }
+                                && entry.executable()
+                        })
+                    );
+                    for entry in verified.entries().iter().filter(|entry| entry.executable()) {
+                        assert_eq!(
+                            entry.bytes(),
+                            format!("Repository-owned synthetic helper: {}\n", entry.name())
+                                .as_bytes()
+                        );
+                    }
                 }
             }
         }
@@ -677,37 +744,94 @@ mod tests {
                 .arg("--path")
                 .arg(&key_path),
         );
-        let expected = expected(Platform::Linux, Architecture::X86_64);
-        let filename = filename(&expected);
-        let manifest_path = produced.join(format!("{filename}.manifest.json"));
-        command_succeeds(
-            packager()
-                .args(["signer", "sign", "--password", "synthetic-only"])
-                .arg("--private-key")
-                .arg(&key_path)
-                .arg(&manifest_path),
-        );
-        let archive = std::fs::read(produced.join(&filename)).unwrap();
-        let metadata = std::fs::read(&manifest_path).unwrap();
-        let signature =
-            std::fs::read(produced.join(format!("{filename}.manifest.json.sig"))).unwrap();
         let key = std::fs::read_to_string(directory.path().join("throwaway-test.key.pub")).unwrap();
-        let signature_text = String::from_utf8(STANDARD.decode(&signature).unwrap()).unwrap();
-        let packet = STANDARD
-            .decode(signature_text.lines().nth(1).unwrap())
-            .unwrap();
-        assert_eq!(&packet[..2], b"ED", "signer must use modern prehashed mode");
-        verify_with_key(&metadata, &signature, &archive, &expected, &key).unwrap();
-        // The shipping API must still refuse this throwaway publisher.
+        for package in [Package::Helpers, Package::Host] {
+            for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {
+                for architecture in [Architecture::X86_64, Architecture::Aarch64] {
+                    let mut expected = expected(platform, architecture);
+                    expected.package = package;
+                    let filename = filename(&expected);
+                    let manifest_path = produced.join(format!("{filename}.manifest.json"));
+                    command_succeeds(
+                        packager()
+                            .args(["signer", "sign", "--password", "synthetic-only"])
+                            .arg("--private-key")
+                            .arg(&key_path)
+                            .arg(&manifest_path),
+                    );
+                    let archive = std::fs::read(produced.join(&filename)).unwrap();
+                    let metadata = std::fs::read(&manifest_path).unwrap();
+                    let signature =
+                        std::fs::read(produced.join(format!("{filename}.manifest.json.sig")))
+                            .unwrap();
+                    let signature_text =
+                        String::from_utf8(STANDARD.decode(&signature).unwrap()).unwrap();
+                    let packet = STANDARD
+                        .decode(signature_text.lines().nth(1).unwrap())
+                        .unwrap();
+                    assert_eq!(&packet[..2], b"ED", "signer must use modern prehashed mode");
+                    let verified =
+                        verify_with_key(&metadata, &signature, &archive, &expected, &key).unwrap();
+                    let host = if platform == Platform::Windows {
+                        "festerm-host.exe"
+                    } else {
+                        "festerm-host"
+                    };
+                    assert_eq!(
+                        package == Package::Host,
+                        verified
+                            .entries()
+                            .iter()
+                            .any(|entry| entry.name() == host && entry.executable())
+                    );
+                    // The shipping API must still refuse this throwaway publisher.
+                    assert_eq!(
+                        verify(&metadata, &signature, &archive, &expected).unwrap_err(),
+                        ArtifactError::Signature
+                    );
+                    let mut changed = metadata;
+                    changed.push(b' ');
+                    assert_eq!(
+                        verify_with_key(&changed, &signature, &archive, &expected, &key)
+                            .unwrap_err(),
+                        ArtifactError::Signature
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn host_and_legacy_package_identity_schema_and_filenames_cannot_substitute() {
+        let host_expected = expected(Platform::Linux, Architecture::X86_64);
+        let host_archive = archive(Platform::Linux);
+        let host_manifest = manifest(&host_archive, &host_expected);
+        let legacy_expected = ExpectedArtifact {
+            package: Package::Helpers,
+            ..host_expected
+        };
         assert_eq!(
-            verify(&metadata, &signature, &archive, &expected).unwrap_err(),
-            ArtifactError::Signature
+            verify_fixture(&host_manifest, &host_archive, &legacy_expected).unwrap_err(),
+            ArtifactError::Target
         );
-        let mut changed = metadata;
-        changed.push(b' ');
+        let mut mislabeled = host_manifest.clone();
+        mislabeled.package = Package::Helpers;
         assert_eq!(
-            verify_with_key(&changed, &signature, &archive, &expected, &key).unwrap_err(),
-            ArtifactError::Signature
+            verify_fixture(&mislabeled, &host_archive, &legacy_expected).unwrap_err(),
+            ArtifactError::Manifest
+        );
+        mislabeled.schema = 1;
+        mislabeled.filename = filename(&legacy_expected);
+        assert_eq!(
+            verify_fixture(&mislabeled, &host_archive, &legacy_expected).unwrap_err(),
+            ArtifactError::Archive
+        );
+        let legacy_archive = tar(&files_for_package(Platform::Linux, Package::Helpers));
+        let legacy_manifest = manifest(&legacy_archive, &legacy_expected);
+        verify_fixture(&legacy_manifest, &legacy_archive, &legacy_expected).unwrap();
+        assert_eq!(
+            verify_fixture(&legacy_manifest, &legacy_archive, &host_expected).unwrap_err(),
+            ArtifactError::Target
         );
     }
 
@@ -736,7 +860,8 @@ mod tests {
                 )
                 .unwrap();
                 for entry in verified.entries() {
-                    assert!(allowed_names(platform).contains(&entry.name().to_owned()));
+                    assert!(allowed_names(platform, expected.package)
+                        .contains(&entry.name().to_owned()));
                     assert!(!entry.bytes().is_empty());
                     assert_eq!(entry.executable(), entry.name().starts_with("festerm-"));
                 }
@@ -838,7 +963,7 @@ mod tests {
         for field in [
             r#""unexpected":true,"#,
             r#""package":"other-product","#,
-            r#""schema":2,"#,
+            r#""schema":3,"#,
             r#""version":"01.2.3","#,
         ] {
             let data = serde_json::to_string(&original).unwrap();
@@ -852,7 +977,7 @@ mod tests {
         for change in ["schema", "length", "version", "hash"] {
             let mut metadata = manifest(&archive, &expected);
             match change {
-                "schema" => metadata.schema = 2,
+                "schema" => metadata.schema = 1,
                 "length" => metadata.length = MAX_ARCHIVE_BYTES as u64 + 1,
                 "version" => metadata.version = "1.2.3-rc.1".into(),
                 _ => metadata.sha256 = "ABCDEF".repeat(10),
@@ -880,6 +1005,7 @@ mod tests {
             "extra",
             "duplicate",
             "missing",
+            "missing-host",
             "symlink",
             "hardlink",
             "mode",
@@ -898,10 +1024,14 @@ mod tests {
                 "missing" => {
                     files.pop();
                 }
+                "missing-host" => files.retain(|file| file.0 != "festerm-host"),
                 "symlink" => files[0].3 = tar::EntryType::Symlink,
                 "hardlink" => files[0].3 = tar::EntryType::Link,
                 "mode" => files[0].2 = 0o4755,
-                "version" => files[3].1 = b"1.2.2\n".to_vec(),
+                "version" => {
+                    files.iter_mut().find(|file| file.0 == "VERSION").unwrap().1 =
+                        b"1.2.2\n".to_vec();
+                }
                 _ => files[0].1.clear(),
             }
             let archive = tar(&files);
@@ -951,6 +1081,7 @@ mod tests {
             "symlink",
             "mode",
             "missing",
+            "missing-host",
             "version",
         ] {
             let mut files = files(expected.platform);
@@ -960,7 +1091,11 @@ mod tests {
                 "missing" => {
                     files.pop();
                 }
-                "version" => files[4].1 = b"1.2.2\n".to_vec(),
+                "missing-host" => files.retain(|file| file.0 != "festerm-host.exe"),
+                "version" => {
+                    files.iter_mut().find(|file| file.0 == "VERSION").unwrap().1 =
+                        b"1.2.2\n".to_vec();
+                }
                 name => files[0].0 = name.into(),
             }
             let archive = zip(&files);

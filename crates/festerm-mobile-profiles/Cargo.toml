@@ -9,6 +9,7 @@ description = "UI-agnostic persistent profiles, host-key trust and SSH key manag
 publish = false
 
 [dependencies]
+festerm-client-recipes = { path = "../festerm-client-recipes" }
 festerm-secret-store = { path = "../festerm-secret-store" }
 festerm-ssh = { path = "../festerm-ssh" }
 russh = { version = "0.62.5", default-features = false, features = ["ring"] }

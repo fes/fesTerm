@@ -1879,6 +1879,41 @@ For private-key and certificate authentication:
 
 ![Profile editor target](images/gui-mockups/profile-editor.png)
 
+For ADR 0084's new host flow, [public host recipes](configuration.md#public-host-recipes-adr-0084-foundation)
+currently have shared offline metadata commands/persistence only
+([#681](https://github.com/fes/fesTerm/issues/681)). They are separate from
+legacy Dev Tunnel forms and the installed Local-profile exposure flow below.
+No new working Connect control, online indicator or sign-in-on-save is implied.
+The eventual desktop/iOS/Android UI must use those shared commands: Save,
+edit, duplicate, import/export and delete do not create or end a shell.
+Default duplication means a fresh logical session; saving another shortcut
+to an existing session is deliberate and generation-pinned.
+
+Recipe status retains content-free conflict, missing, invalid, unsupported,
+oversize and limit distinctions; export must never claim a save succeeded or
+failed. Mobile recovery retains valid entries and uses the existing skipped-entry
+count/quarantine notification convention instead of silently clearing recipes.
+
+Opening the new host card/launcher shows local metadata only. Find hosts and
+single-host selection/Refresh are explicit network intents; cancellation and
+account changes fence results. Never inherit legacy automatic discovery or
+display cached hosts as online. Actual controls/workers, account/key binding,
+trust, authorized inventory, Connect and native qualification remain deferred
+behind the reviewed host endpoint contract, not simulated in this foundation.
+
+Import never grants execution consent. Before first executing an imported
+recipe, the future Connect UI must explicitly review/reconfirm its shell,
+argument vector, remote cwd, lifetime and connection behavior with the
+verified host/account/principal. No imported field may stand in for that
+approval; native UI and execution-gate tests remain deferred under #681.
+
+Migrating a legacy host must preserve protected state/account binding. Any
+stop/restart of its live shell requires a separate, default-No confirmation
+for that exact generation; setup or sharing approval cannot substitute for
+it. Cancellation or unsafe migration preserves the live session and permits
+manual deferral. No migration/restart control is supplied by the metadata
+foundation.
+
 Profile creation and editing is separate from the immediate launch path. The
 common case requires one selection or a small amount of connection information,
 not completion of a large settings form.

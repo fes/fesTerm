@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Versioned, secret-free fesTerm profile configuration."
 
 [dependencies]
+festerm-client-recipes = { path = "../festerm-client-recipes" }
 festerm-pty = { path = "../festerm-pty" }
 festerm-session = { path = "../festerm-session" }
 festerm-secret-store = { path = "../festerm-secret-store" }

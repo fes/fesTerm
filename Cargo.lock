@@ -2517,9 +2517,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-client-recipes"
+version = "0.16.0"
+dependencies = [
+ "festerm-host-protocol",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "festerm-config"
 version = "0.16.0"
 dependencies = [
+ "festerm-client-recipes",
  "festerm-pty",
  "festerm-secret-store",
  "festerm-serial",
@@ -2584,6 +2595,8 @@ dependencies = [
  "festerm-tunnel-bridge",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -2606,16 +2619,20 @@ dependencies = [
  "festerm-secret-store",
  "festerm-sessiond",
  "festerm-tunnel-bridge",
+ "festerm-tunnel-client",
  "festerm-unix-security",
  "festerm-windows-security",
  "flate2",
  "fs2",
  "minisign-verify",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tar",
  "tempfile",
+ "tokio",
+ "tokio-util",
  "uuid",
  "zip",
 ]
@@ -2741,6 +2758,7 @@ dependencies = [
 name = "festerm-mobile-profiles"
 version = "0.16.0"
 dependencies = [
+ "festerm-client-recipes",
  "festerm-secret-store",
  "festerm-ssh",
  "russh",
@@ -3112,6 +3130,7 @@ version = "0.16.0"
 dependencies = [
  "festerm-windows-job",
  "tracing",
+ "windows",
  "windows-sys 0.61.2",
 ]
 

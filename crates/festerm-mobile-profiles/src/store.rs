@@ -30,6 +30,11 @@ struct Document {
     version: u32,
     profiles: Vec<Profile>,
     accounts: Vec<TunnelAccount>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::host_recipes::RecipeBook::is_empty"
+    )]
+    host_recipes: crate::host_recipes::RecipeBook,
     /// Secrets whose deletion failed (for example, a locked Keychain); retried
     /// until they are gone so a deleted profile never leaves credentials behind.
     pending_secret_deletions: Vec<SecretRef>,
@@ -145,6 +150,26 @@ impl ProfileStore {
     }
 
     fn collect(value: &Value, document: &mut Document, report: &mut LoadReport) {
+        if let Some(value) = value.get("host_recipes") {
+            match value.as_array() {
+                Some(entries) => {
+                    for entry in entries {
+                        let candidate = serde_json::from_value(entry.clone())
+                            .map_err(|_| crate::host_recipes::RecipeError::Invalid)
+                            .and_then(|recipe| {
+                                document
+                                    .host_recipes
+                                    .apply(crate::host_recipes::MetadataCommand::Save(recipe))
+                            });
+                        match candidate {
+                            Ok((book, _)) => document.host_recipes = book,
+                            Err(_) => report.dropped_entries += 1,
+                        }
+                    }
+                }
+                None => report.dropped_entries += 1,
+            }
+        }
         let entries = |key: &str| {
             value
                 .get(key)
@@ -208,6 +233,25 @@ impl ProfileStore {
     #[must_use]
     pub fn profiles(&self) -> &[Profile] {
         &self.document.profiles
+    }
+
+    pub fn host_recipes(&self) -> &crate::host_recipes::RecipeBook {
+        &self.document.host_recipes
+    }
+
+    /// Metadata-only command path shared with desktop. Does not read/delete
+    /// credentials, change host grants, or touch a running session.
+    pub fn apply_host_recipe_command(
+        &mut self,
+        command: crate::host_recipes::MetadataCommand,
+    ) -> Result<crate::host_recipes::MetadataOutcome, ProfileError> {
+        let (book, outcome) = self.document.host_recipes.apply(command)?;
+        if !matches!(outcome, crate::host_recipes::MetadataOutcome::Exported(_)) {
+            let mut next = self.document.clone();
+            next.host_recipes = book;
+            self.commit(next)?;
+        }
+        Ok(outcome)
     }
 
     #[must_use]

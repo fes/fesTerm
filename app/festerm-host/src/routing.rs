@@ -2,18 +2,26 @@
 //! `run` stays unavailable until actual owner-channel binding and terminal
 //! routing have independently passed their exposure gates.
 use festerm_host_protocol::ContractError;
-use festerm_host_setup::{enrollment::CurrentOwnerPolicy, lifecycle::Store};
+use festerm_host_setup::{
+    enrollment::{CurrentOwnerPolicy, CurrentOwnerPolicySource, OwnerStorage},
+    lifecycle::Store,
+};
 use festerm_tunnel_bridge::{
     host_control::{PolicyGuard, ProtectedPolicySource},
     owner_auth::OwnerVerifier,
 };
+use std::sync::Arc;
 
-pub struct EnrollmentPolicy(Store);
+pub struct EnrollmentPolicy(CurrentOwnerPolicySource);
 pub struct EnrollmentGuard(CurrentOwnerPolicy);
 
 impl EnrollmentPolicy {
     pub fn from_store(store: Store) -> Self {
-        Self(store)
+        Self::with_storage(Arc::new(store), OwnerStorage::NativeVault)
+    }
+
+    pub fn with_storage(store: Arc<Store>, storage: OwnerStorage) -> Self {
+        Self(CurrentOwnerPolicySource::new(store, storage))
     }
 }
 
@@ -27,16 +35,6 @@ impl ProtectedPolicySource for EnrollmentPolicy {
     type Guard = EnrollmentGuard;
 
     fn current_policy(&self) -> Result<Self::Guard, ContractError> {
-        self.0
-            .owner_enrollment()
-            .and_then(|owner| owner.current_policy())
-            .map(EnrollmentGuard)
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::WouldBlock {
-                    ContractError::Busy
-                } else {
-                    ContractError::Denied
-                }
-            })
+        self.0.current_policy().map(EnrollmentGuard)
     }
 }

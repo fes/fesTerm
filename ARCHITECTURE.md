@@ -405,6 +405,16 @@ insecure legacy algorithms or invoke a system `ssh` binary.
 
 ### `festerm-config`
 
+ADR 0084's public host/session recipe foundation is factored into the additive
+`festerm-client-recipes -> festerm-host-protocol` metadata contract. Both
+`festerm-config` and `festerm-mobile-profiles` depend on it; mobile does not
+depend on desktop configuration/PTY. A separate recipe collection preserves
+legacy profiles and launch paths. Shared typed metadata commands and explicit
+browser request state have no network/vault/process executor or principal
+authority. Desktop composes the command with its existing save gate; mobile
+uses its atomic profile document. Live host inventory/ensure/attach and native
+UI remain gated by the reviewed endpoint and identity contracts (#681).
+
 Owns versioned, human-readable configuration and persistence models:
 
 - TOML parsing and validation.
@@ -713,9 +723,17 @@ It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
 the shared authenticated-artifact verifier. Verified helper entries and their
 exact signed provenance are staged immutably without execution;
 default legacy/mobile installer-review dependencies remain unchanged.
-No new endpoint, native service adapter, Ready result or shell-launch ownership
-is implied. Current CLI configuration/status/staging are local-only; service
-operations explicitly refuse until new endpoint/native integration. See the
+The off-default `native-services` feature adds a
+[same-user native control component](docs/native-host-services.md):
+sealed updater-authenticated executable receipts, protected exact-owned
+registration and epoch-fenced native observations/control.
+macOS admission pins the release Developer ID team and hardened runtime; Windows
+publisher admission remains fail-closed pending authoritative policy.
+Windows registration/start require authenticated
+graceful-stop support rather than destructive task termination. It has no endpoint,
+Ready result or shell-launch ownership. CLI configuration/status/staging remain
+local-only; service commands explicitly refuse until endpoint/native integration
+and qualification. Default legacy/mobile dependencies remain unchanged. See the
 [headless boundary and adapter contract](docs/headless-host.md).
 
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
@@ -730,7 +748,11 @@ the original negotiated namespace across reconnects; lifecycle RPCs never
 inherit a creation scope. Correlation includes the exact echoed namespace.
 `host_control::native::NativeControl` uses actual sessiond reservations and owned
 policy guards; the off-by-default headless `owner-routing` composition adapts
-protected enrollment, not portable configuration. Owned native fixtures cover
+protected enrollment, not portable configuration. Setup's opt-in `host-runtime`
+feature implements the runtime policy traits directly: each admission reacquires
+the explicitly selected credential store and returns an owned enrollment lease,
+not cached authority. The app wrapper delegates; its default remains native vault
+with no file-store fallback. Owned native fixtures cover
 control routing/retry without frontend leases. No listener uses these modules.
 The unexposed `host_terminal` module pairs bounded binary terminal framing with
 an immutable client handle and a fixture-only actual native attachment actor. Recovery

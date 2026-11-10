@@ -1,8 +1,12 @@
 import hashlib
 import importlib.util
 import json
+import os
+import re
 import shutil
+import subprocess
 import sys
+import textwrap
 import unittest
 import uuid
 from pathlib import Path
@@ -29,13 +33,13 @@ class HostManifestTests(unittest.TestCase):
         self.binary_dir = self.root / "bin"
         self.binary_dir.mkdir()
         for platform in bundle.PLATFORMS:
-            for name in bundle.binary_names(platform):
+            for name in bundle.binary_names(platform, host=True):
                 (self.binary_dir / name).write_bytes(f"synthetic {name}".encode())
 
-    def archive(self, platform="linux", arch="x86_64"):
+    def archive(self, platform="linux", arch="x86_64", *, host=True):
         return bundle.build_bundle(
             self.root, self.binary_dir, self.root / "dist", "1.2.3",
-            platform, arch, notices=b"synthetic third party notice\n",
+            platform, arch, notices=b"synthetic third party notice\n", host=host,
         )
 
     def test_six_manifests_bind_exact_identity_length_hash_and_preserve_legacy_assets(self):
@@ -45,12 +49,12 @@ class HostManifestTests(unittest.TestCase):
                     archive = self.archive(platform, arch)
                     original = archive.read_bytes()
                     checksum = archive.with_name(archive.name + ".sha256").read_bytes()
-                    output = manifest.build_manifest(archive, "1.2.3", platform, arch)
+                    output = manifest.build_manifest(archive, "1.2.3", platform, arch, host=True)
                     encoded = output.read_bytes()
                     self.assertLessEqual(len(encoded), manifest.MAX_MANIFEST_BYTES)
                     self.assertEqual(json.loads(encoded), {
-                        "schema": 1,
-                        "package": "festerm-helpers",
+                        "schema": 2,
+                        "package": "festerm-host",
                         "version": "1.2.3",
                         "platform": platform,
                         "architecture": arch,
@@ -64,7 +68,7 @@ class HostManifestTests(unittest.TestCase):
                     )
                     self.assertEqual(output.name, archive.name + ".manifest.json")
                     with self.assertRaises(FileExistsError):
-                        manifest.build_manifest(archive, "1.2.3", platform, arch)
+                        manifest.build_manifest(archive, "1.2.3", platform, arch, host=True)
                     self.assertEqual(output.read_bytes(), encoded)
 
     def test_mismatched_target_version_and_invalid_archive_fail_without_manifest(self):
@@ -80,10 +84,10 @@ class HostManifestTests(unittest.TestCase):
         ]:
             with self.subTest(version=version, platform=platform, arch=arch):
                 with self.assertRaises(ValueError):
-                    manifest.build_manifest(archive, version, platform, arch)
+                    manifest.build_manifest(archive, version, platform, arch, host=True)
         archive.write_bytes(b"")
         with self.assertRaisesRegex(ValueError, "length"):
-            manifest.build_manifest(archive, "1.2.3", "linux", "x86_64")
+            manifest.build_manifest(archive, "1.2.3", "linux", "x86_64", host=True)
         self.assertFalse(archive.with_name(archive.name + ".manifest.json").exists())
 
     def test_signed_metadata_workflow_uses_existing_key_and_verifies_before_publication(self):
@@ -100,6 +104,53 @@ class HostManifestTests(unittest.TestCase):
                         workflow.index("gh release upload"))
         self.assertIn("cargo install cargo-packager --version \"$CARGO_PACKAGER_VERSION\" --locked",
                       workflow)
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("sha256sum"), "Unix release payload admission")
+    def test_production_release_payload_consumer_accepts_both_families_and_refuses_substitution(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        step = workflow.split("      - name: Verify release payload\n", 1)[1].split("      - uses:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        output = self.root / "dist"
+        for platform in bundle.PLATFORMS:
+            for arch in bundle.ARCHITECTURES:
+                for host in (False, True):
+                    bundle.build_bundle(
+                        self.root, self.binary_dir, output, "1.2.3", platform, arch,
+                        notices=b"synthetic notices\n", host=host,
+                    )
+        for name in re.findall(r'^\s+"([^"]+)"$', script, re.MULTILINE):
+            (output / name.replace("${VERSION}", "1.2.3")).write_bytes(b"synthetic desktop/installer payload")
+        (self.root / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
+        environment = {"PATH": os.environ["PATH"], "TMPDIR": str(self.root),
+                       "VERSION": "1.2.3", "HEADLESS_HELPERS": "true"}
+
+        def verify():
+            return subprocess.run(["bash", "-c", script], cwd=self.root, env=environment,
+                                  capture_output=True, text=True, timeout=30)
+
+        result = verify()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        host = output / "fesTerm-host-1.2.3-linux-x86_64.tar.gz"
+        host.write_bytes((output / "fesTerm-tunnel-1.2.3-linux-x86_64.tar.gz").read_bytes())
+        result = verify()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly", result.stderr)
+
+    def test_host_is_required_by_manifest_producer_and_native_signer_paths(self):
+        legacy = bundle.build_bundle(
+            self.root, self.binary_dir, self.root / "legacy", "1.2.3",
+            "linux", "x86_64", notices=b"synthetic notice\n",
+        )
+        with self.assertRaisesRegex(ValueError, "exact-target"):
+            manifest.build_manifest(legacy, "1.2.3", "linux", "x86_64", host=True)
+        self.assertFalse(legacy.with_name(legacy.name + ".manifest.json").exists())
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        helpers = workflow.split("  helper-bundles:\n", 1)[1]
+        self.assertIn("packages+=(-p festerm-host)", helpers)
+        self.assertIn("binaries+=(festerm-host)", helpers)
+        self.assertIn("'festerm-host.exe'", helpers)
+        self.assertIn(r"format('{0}\helper-input\festerm-host.exe', github.workspace)", helpers)
+        self.assertIn("$names += 'festerm-host'", helpers)
 
     def test_signing_secrets_are_absent_from_build_generation_and_verification_steps(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
@@ -137,7 +188,9 @@ class HostManifestTests(unittest.TestCase):
             "      - name: Validate authenticated helper artifacts without desktop dependencies\n", 1
         )[1].split("      - name:", 1)[0]
         self.assertIn("\n        shell: bash\n", "\n" + step)
-        self.assertIn("cargo test --locked -p festerm-host-setup --features artifacts", workflow)
+        self.assertIn("cargo test --locked -p festerm-host-setup --features acquisition,native-services -p festerm-host", step)
+        self.assertIn("cargo clippy --locked -p festerm-host-setup --features acquisition,native-services -p festerm-host", step)
+        self.assertIn("python scripts/check_host_notices.py", step)
         portable = workflow.split(
             "      - name: Check portable enrolled-owner client without host dependencies\n", 1
         )[1].split("      - name:", 1)[0]

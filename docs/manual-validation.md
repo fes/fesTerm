@@ -50,6 +50,51 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)
+
+Issue [#681](https://github.com/fes/fesTerm/issues/681) has automated public
+recipe serialization/validation, duplicate identity policy, metadata-only
+desktop save/failure and mobile persistence/quarantine coverage. A vault
+adapter that panics on access verifies that mobile recipe commands do not
+touch credentials. Explicit browser request tests cover cancellation, account
+switches, supersession and obsolete browser instances. These are logic/state
+tests, not native UI or real-service evidence.
+
+Recovery regressions load mixed valid/invalid/duplicate/overflow recipes,
+check skipped-entry reporting/quarantine and retain valid entries after an
+unrelated save. Adapter and desktop-command tests preserve typed failures and
+distinguish export from saving. The desktop regression includes `dev_tunnel`
+in its name so the existing experimental CI selector runs its no-tunnel/browser
+assertions with the feature enabled; this does not replace native network evidence.
+
+Before future stage 6 execution is exposed, qualify explicit first-execution
+review/reconfirmation of imported shell/argv/cwd, lifetime and resume/create
+behavior against verified host/account/principal identity. Import, save or a
+portable approval field must not authorize execution; cancelling review must
+not execute. These UI/executor checks remain deferred under #681.
+
+Additional config/mobile regressions preserve legacy account, hosting/consent
+references and exact-generation destination metadata across recipe commands.
+They do not access protected grant storage or operate a live legacy shell.
+The future migration qualification must separately verify preserved protected
+state/account binding, a default-No stop confirmation for the exact generation,
+Cancel/stale-generation refusal and manual deferral. Setup/sharing approval
+must not authorize restart. This remains deferred under #681/ADR 0084 section
+11; no dialog or live migration acceptance is claimed here.
+
+The new host card/launcher, verified-principal/trust binding, authorized
+inventory, resume-or-create/always-new execution and temporary leases remain
+**deferred behind the reviewed host endpoint and UI wiring**, not passed.
+Extend DT-05/DT-07/DT-08, CP-11 and MOB-03/MOB-06 once those prerequisites
+land: capture network-free opening/render/save on signed Windows/macOS/Linux
+and native iOS/Android, explicit find/single-host refresh, sign-in/trust errors,
+authoritative absence versus denial/offline, reboot/recreation notices,
+shell-preserving profile deletion and physical-device disconnect/lease cases.
+Existing signed installation, lifecycle, keyboard/accessibility, usability
+and real-service checks remain required and unchanged. No cloud resources,
+native credentials, installed service or UI snapshots were changed by this
+foundation.
+
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-08)
 
 DT-08 also requires signed native qualification of ADR 0085: start with legacy
@@ -76,13 +121,17 @@ remain accessible or endable with their compatible fesTerm version.
 
 HOST-06's [authenticated helper foundation](host-release-artifacts.md) has
 synthetic-key rejection/allowlist tests and Python manifest/recovery fixtures.
-Cross-language tests verify all six actual Python-produced bundles/manifests;
+Cross-language tests verify both archive families on all six targets through
+actual Python producers; legacy installer fixtures consume the unchanged
+producer allowlist and exercise the real archive admission code. Real Cargo
+metadata validates the host notice closure, including the app-owned package;
 the Linux normal-CI signer check uses pinned cargo-packager 0.11.8 and a
 generated throwaway key, not the protected release identity.
 DT-05/DT-08 still require protected real-release signatures, independently
 trusted first-verifier delivery and clean-machine verification/rejection on all
-six native targets. These offline tests are not installed service
-switching/rollback, headless CLI inclusion or legacy-migration evidence.
+six native targets. Schema-2 host CLI inclusion and acquisition-only bounded
+HTTP behavior have synthetic fixtures; these are not installed service
+switching/rollback, native publisher qualification or legacy-migration evidence.
 Legacy Linux installers still lack this new independent publisher verification;
 integration remains tracked in [#681](https://github.com/fes/fesTerm/issues/681).
 
@@ -3495,6 +3544,12 @@ select file credentials. A future headless CLI must verify protected origin and
 explicit local opt-in. The host Store enforces journal origin; the lower-level
 bridge/client marker is only a namespace, not a headless-origin capability.
 No current GUI/default path selects file storage or falls back after vault failure.
+The automated
+`protected_owner_runtime_trait_retains_lease_and_reloads_revocation` fixture
+now covers the production runtime trait adapter's actual enrollment lease,
+Busy refusal and fresh revocation policy through explicitly selected headless
+file storage. This is not native-vault, endpoint, signed-service or first-connect
+qualification; those HOSTAUTH-01/HOSTSETUP-01 prerequisites remain open.
 
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;
@@ -3504,7 +3559,39 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
-| HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/pin staging boundary; native/service/package and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, exact-owned native adapters and authenticated release artifacts. Windows/macOS/Linux startup and service acceptance require real platform evidence; fixture success is not that evidence. |
+| HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/schema-2 host packaging, bounded pin acquisition/staging and native-control/executable-publication fixtures; actual signed native service/executable acceptance and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, integration/qualification of the [same-user native component](native-host-services.md), trusted first-verifier delivery and native publisher/executable acceptance. Windows/macOS/Linux startup, interrupted registration/cleanup, unavailable-manager/vault behavior and daemon independence require real platform evidence; fixture success is not that evidence. |
+
+The shared native service component requires signed-release qualification of
+its pinned macOS Developer ID/team/runtime gate. Windows promotion remains
+blocked pending authoritative publisher identity and revocation policy.
+Windows registration/start and running-task stop additionally require
+authenticated graceful stop and daemon-independence qualification; generic
+signature validity or Task Scheduler termination is not acceptance evidence.
+
+Cloud recovery fixtures also cover offline/cancel followed by explicit
+ticket/account/current-epoch acknowledgement retaining the uncertain reservation,
+later enable observing exact late creation, and rejection of stale/bound recovery.
+Successful PUT receipts are pinned only after authoritative GET, including late
+cancelled results. Live-service incarnation stability across repeated GETs still
+requires qualification; these fixtures perform no real cloud or vault mutations.
+
+**HOSTSETUP-01 cleanup recovery:** `recover-cleanup` can now bind an
+acknowledged uncertain exact resource through read-only observation, without
+enable/creation consent. Unknown/absent observations retain uncertainty;
+epoch-raced authoritative receipts remain pinned for retry. Native stop and
+generation-atomic cloud deletion remain independently gated. Retain protected
+records/credentials; do not delete the installation directory or grant creation
+consent just to uninstall. Live GET stability, `If-None-Match: *` atomicity,
+authenticated exact-cluster 404/ownership, cluster routing/no-redirect and native
+vault behavior still require live/native qualification.
+
+The ignored Unix guest test
+`native_service_live_exact_owned_lifecycle_preserves_independent_child`
+is an opt-in real-manager check with synthetic test-only executable authority.
+Its exact commands and evidence boundaries are in
+[native services](native-host-services.md#disposable-native-manager-fixture).
+No native execution of that test, positive signed release admission or actual
+sessiond lifetime result is claimed by this source change.
 
 ## ADR 0084 owner enrollment qualification
 

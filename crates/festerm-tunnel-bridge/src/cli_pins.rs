@@ -10,6 +10,7 @@ use std::{
 };
 
 pub const DOWNLOAD_LIMIT: u64 = 128 * 1024 * 1024;
+pub const DOWNLOAD_VERSION: &str = "1.0.2115+e16833f284";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,21 +31,68 @@ struct Manifest {
 }
 
 pub fn current() -> io::Result<CliPin> {
+    legacy_for_target(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn legacy_for_target(platform: &str, architecture: &str) -> io::Result<CliPin> {
+    let architecture = if platform == "windows" && architecture == "aarch64" {
+        "x86_64"
+    } else {
+        architecture
+    };
+    for_target(platform, architecture)
+}
+
+/// Exact native-target pin selection without legacy Windows ARM x64 emulation.
+pub fn for_target(platform: &str, architecture: &str) -> io::Result<CliPin> {
     let manifest: Manifest = serde_json::from_str(include_str!("../devtunnel-cli-pins.json"))
         .map_err(|_| io::Error::other("profile_host.cli_manifest"))?;
     if manifest.reviewed.is_empty() {
         return Err(io::Error::other("profile_host.cli_manifest"));
     }
-    let architecture = if cfg!(windows) {
-        "x86_64"
-    } else {
-        std::env::consts::ARCH
-    };
     manifest
         .pins
         .into_iter()
-        .find(|pin| pin.platform == std::env::consts::OS && pin.architecture == architecture)
+        .find(|pin| pin.platform == platform && pin.architecture == architecture)
         .ok_or_else(|| io::Error::other("profile_host.cli_platform"))
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::*;
+
+    #[test]
+    fn reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback() {
+        for (platform, architecture) in [
+            ("windows", "x86_64"),
+            ("linux", "x86_64"),
+            ("linux", "aarch64"),
+            ("macos", "x86_64"),
+            ("macos", "aarch64"),
+        ] {
+            let pin = for_target(platform, architecture).unwrap();
+            assert!(pin.download.starts_with(&format!(
+                "https://tunnelsassetsprod.blob.core.windows.net/cli/{DOWNLOAD_VERSION}/"
+            )));
+            assert_eq!(pin.format, "executable");
+            assert_eq!(pin.archive_sha256, pin.executable_sha256);
+        }
+        assert!(for_target("windows", "aarch64").is_err());
+        assert!(for_target("linux", "riscv64").is_err());
+    }
+
+    #[test]
+    fn legacy_cli_selector_preserves_windows_arm_x64_emulation() {
+        let legacy = legacy_for_target("windows", "aarch64").unwrap();
+        let x64 = for_target("windows", "x86_64").unwrap();
+        assert_eq!(legacy.architecture, "x86_64");
+        assert_eq!(legacy.executable_sha256, x64.executable_sha256);
+        assert_eq!(legacy.download, x64.download);
+        let current = current().unwrap();
+        let expected = legacy_for_target(std::env::consts::OS, std::env::consts::ARCH).unwrap();
+        assert_eq!(current.architecture, expected.architecture);
+        assert_eq!(current.executable_sha256, expected.executable_sha256);
+    }
 }
 
 /// Keep the trusted directory and no-follow executable handles alive while

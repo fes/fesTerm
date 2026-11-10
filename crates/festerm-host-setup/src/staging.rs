@@ -31,6 +31,15 @@ pub fn stage_release_files(
     archive: &Path,
     root: &Path,
 ) -> io::Result<StagedArtifact> {
+    let artifact = verify_release_files(manifest, signature, archive)?;
+    stage_artifact(&artifact, root)
+}
+
+pub(crate) fn verify_release_files(
+    manifest: &Path,
+    signature: &Path,
+    archive: &Path,
+) -> io::Result<VerifiedArtifact> {
     let platform = match std::env::consts::OS {
         "linux" => Platform::Linux,
         "macos" => Platform::Macos,
@@ -45,7 +54,7 @@ pub fn stage_release_files(
     let manifest = read_input(manifest, artifacts::MAX_MANIFEST_BYTES)?;
     let signature = read_input(signature, artifacts::MAX_SIGNATURE_BYTES)?;
     let archive = read_input(archive, artifacts::MAX_ARCHIVE_BYTES)?;
-    let artifact = artifacts::verify(
+    artifacts::verify(
         &manifest,
         &signature,
         &archive,
@@ -53,11 +62,10 @@ pub fn stage_release_files(
             version: crate::VERSION,
             platform,
             architecture,
-            package: Package::Helpers,
+            package: Package::Host,
         },
     )
-    .map_err(|_| io::Error::other("host.artifact_authentication_failed"))?;
-    stage_artifact(&artifact, root)
+    .map_err(|_| io::Error::other("host.artifact_authentication_failed"))
 }
 
 fn read_input(path: &Path, max: usize) -> io::Result<Vec<u8>> {
@@ -82,7 +90,12 @@ fn read_input(path: &Path, max: usize) -> io::Result<Vec<u8>> {
 pub fn stage_artifact(artifact: &VerifiedArtifact, root: &Path) -> io::Result<StagedArtifact> {
     let manifest = artifact.manifest();
     let key = format!(
-        "helpers-{}-{}-{}-{}",
+        "{}-{}-{}-{}-{}",
+        if manifest.package == Package::Host {
+            "host"
+        } else {
+            "helpers"
+        },
         manifest.version,
         manifest.platform.name(),
         manifest.architecture.name(),
@@ -145,13 +158,23 @@ fn stage_with_pin(
     let name = Path::new(&name);
     let input = storage::private_directory(source, false)?;
     let bytes = storage::read_private(&input, name, cli_pins::DOWNLOAD_LIMIT as usize)?;
-    if !cli_pins::matches_digest(bytes.as_slice(), &pin.executable_sha256)? {
+    stage_cli_bytes(&bytes, destination, pin)
+}
+
+pub(crate) fn stage_cli_bytes(
+    bytes: &[u8],
+    destination: &Path,
+    pin: &cli_pins::CliPin,
+) -> io::Result<PathBuf> {
+    let name = format!("devtunnel{}", std::env::consts::EXE_SUFFIX);
+    let name = Path::new(&name);
+    if !cli_pins::matches_digest(bytes, &pin.executable_sha256)? {
         return Err(io::Error::other(
             "host.cli_pin_mismatch_dependency_update_required",
         ));
     }
     let output = storage::private_directory(destination, true)?;
-    protected_state::publish_immutable(&output, name, &bytes, "host.cached_cli_mismatch")?;
+    protected_state::publish_immutable(&output, name, bytes, "host.cached_cli_mismatch")?;
     // New files remain non-executable. Execution adapters must reopen and verify
     // via cli_pins::verify before setting executable permissions/using the CLI.
     Ok(destination.join(name))
@@ -161,6 +184,19 @@ fn stage_with_pin(
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn host_staging_keeps_package_identity_separate_from_legacy_helpers() {
+        let root = storage::private_test_directory();
+        let host = crate::artifacts::host_staging_fixture();
+        let helpers = crate::artifacts::staging_fixture();
+        let cache = root.path().join("cache");
+        let staged_host = stage_artifact(&host, &cache).unwrap();
+        let staged_helpers = stage_artifact(&helpers, &cache).unwrap();
+        assert_ne!(staged_host.path(), staged_helpers.path());
+        assert_eq!(host.manifest().package, Package::Host);
+        assert_eq!(helpers.manifest().package, Package::Helpers);
+    }
 
     #[test]
     fn authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache() {
@@ -178,6 +214,7 @@ mod tests {
                 entry.bytes()
             );
         }
+
         for (name, bytes) in [
             (".manifest.json", verified.manifest_bytes()),
             (".manifest.json.sig", verified.signature_bytes()),
@@ -249,7 +286,14 @@ mod tests {
         let name = Path::new(&name);
         let bytes = b"fixture only, never executed";
         storage::write_new_private(&directory, name, bytes).unwrap();
-        let mut pin = cli_pins::current().unwrap();
+        let mut pin = cli_pins::CliPin {
+            platform: std::env::consts::OS.into(),
+            architecture: std::env::consts::ARCH.into(),
+            download: String::new(),
+            format: "executable".into(),
+            archive_sha256: "0".repeat(64),
+            executable_sha256: "0".repeat(64),
+        };
         assert!(stage_with_pin(&source, &destination, &pin).is_err());
         assert!(!destination.exists());
         pin.executable_sha256 = Sha256::digest(bytes)

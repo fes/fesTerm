@@ -1,5 +1,7 @@
 use festerm_host_setup::{
-    lifecycle::{Origin, Settings, Startup, Store},
+    acquisition,
+    lifecycle::{Origin, Phase, Settings, Startup, Store},
+    services::{Services, TrustedStage},
     staging,
 };
 use std::{collections::BTreeMap, ffi::OsString, io, path::PathBuf, process::ExitCode};
@@ -11,10 +13,22 @@ configure --state-dir PATH --name NAME [--creation allow|deny] [--startup manual
     Save disabled host-local settings only; no sign-in, service or shell is started.
 status --state-dir PATH
     Read the protected headless lifecycle journal as JSON. This is not a liveness probe.
+service-status --state-dir PATH
+    Observe only the exact receipt-owned native process; Running is not Ready.
+disable --state-dir PATH
+    Durably revoke access before exact native stop; retain uncertain/cloud cleanup.
+cleanup-local --state-dir PATH
+    Remove exact stopped native resources only after lifecycle cleanup was requested.
+recover-cleanup --state-dir PATH
+    Read-only adoption of acknowledged uncertain cloud creation; never enables or creates.
 stage-cli --source-dir PATH --cache-dir PATH
     Stage an already obtained official CLI against this release's reviewed pin.
+acquire-cli --cache-dir PATH
+    Download this release's pinned official CLI into private non-executable staging only.
 stage-package --manifest PATH --signature PATH --archive PATH --cache-root PATH
-    Verify signed helpers for this exact version/target and stage immutable bytes.
+    Verify the separate signed host package for this exact version/target and stage immutable bytes.
+qualify-package --manifest PATH --signature PATH --archive PATH --cache-root PATH
+    Verify native release publisher and publish private executable bytes; never starts a service.
 setup | run | update | uninstall
     Unavailable until the new host endpoint/authenticated package adapter is integrated.
 
@@ -39,9 +53,14 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     let command = command.to_str().ok_or_else(invalid)?;
     let allowed: &[&str] = match command {
         "configure" => &["--state-dir", "--name", "--creation", "--startup"],
-        "status" => &["--state-dir"],
+        "status" | "service-status" | "disable" | "cleanup-local" | "recover-cleanup" => {
+            &["--state-dir"]
+        }
         "stage-cli" => &["--source-dir", "--cache-dir"],
-        "stage-package" => &["--manifest", "--signature", "--archive", "--cache-root"],
+        "acquire-cli" => &["--cache-dir"],
+        "stage-package" | "qualify-package" => {
+            &["--manifest", "--signature", "--archive", "--cache-root"]
+        }
         "setup" | "run" | "update" | "uninstall" => {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -113,9 +132,60 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 .map(|s| format!("{s}\n"))
                 .map_err(|_| io::Error::other("host.status_serialization"))
         }
+        "service-status" | "disable" | "cleanup-local" => {
+            let state = path("--state-dir")?;
+            let store = Store::open(&state, Origin::Headless)?;
+            if command == "disable" {
+                match store.snapshot()?.phase {
+                    Phase::Removed => return Err(io::Error::other("host.installation_removed")),
+                    Phase::CleanupPending => {
+                        return Err(io::Error::other("host.cleanup_already_pending"))
+                    }
+                    Phase::StopRequested => {}
+                    _ => store.revoke()?,
+                }
+                let snapshot = store.snapshot()?;
+                if snapshot.phase == Phase::Reconciling {
+                    return Err(io::Error::other("host.cloud_reconciliation_required"));
+                }
+                if snapshot.binding.is_none() {
+                    return Ok("Access disabled. No bound endpoint; retained cloud uncertainty still requires reconciliation.\n".into());
+                }
+            }
+            let services = Services::current_user(&store, &state)?;
+            let observed = match command {
+                "service-status" => services.status()?,
+                "disable" => services.stop(store.snapshot()?.epoch)?,
+                "cleanup-local" => services.cleanup(store.snapshot()?.epoch)?,
+                _ => unreachable!(),
+            };
+            serde_json::to_string_pretty(&serde_json::json!({
+                "lifecycle": store.snapshot()?,
+                "native_process": observed,
+                "endpoint_readiness": "unavailable",
+                "cloud_cleanup": "not-confirmed",
+            }))
+            .map(|report| format!("{report}\n"))
+            .map_err(|_| io::Error::other("host.status_serialization"))
+        }
+        "recover-cleanup" => {
+            let store = Store::open(&path("--state-dir")?, Origin::Headless)?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(
+                festerm_host_setup::cloud::CloudHostAdapter::new(&store)
+                    .adopt_uncertain_for_cleanup(&tokio_util::sync::CancellationToken::new()),
+            )?;
+            Ok("Exact cloud resource adopted for cleanup only. Access remains revoked; exact native stop and conditional cloud cleanup are still required.\n".into())
+        }
         "stage-cli" => {
             staging::stage_cli(&path("--source-dir")?, &path("--cache-dir")?)?;
             Ok("Official CLI pin verified and staged; nothing executed. No host configuration or service state changed.\n".into())
+        }
+        "acquire-cli" => {
+            acquisition::acquire_cli(&path("--cache-dir")?)?;
+            Ok("Pinned official CLI acquired into private staging only. Nothing executed, installed or registered; native publisher qualification is still required.\n".into())
         }
         "stage-package" => {
             let _staged = staging::stage_release_files(
@@ -125,6 +195,15 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 &path("--cache-root")?,
             )?;
             Ok("Authenticated helper artifact staged. Nothing executed or registered; no shell created.\n".into())
+        }
+        "qualify-package" => {
+            let _stage = TrustedStage::publish_release_files(
+                &path("--manifest")?,
+                &path("--signature")?,
+                &path("--archive")?,
+                &path("--cache-root")?,
+            )?;
+            Ok("Native release publisher and exact bytes qualified. Private executable published; no service, endpoint or shell started.\n".into())
         }
         _ => unreachable!(),
     }
@@ -153,6 +232,80 @@ fn diagnostic(error: &io::Error) -> &'static str {
         _ => {}
     }
     match error.to_string().as_str() {
+        "host.sign_in_required"
+        | "host.secure_store_unavailable"
+        | "owner.vault_locked_or_unavailable_unlock_native_store_and_retry"
+        | "owner.vault_anchor_missing_local_reconciliation_required" => {
+            "host.sign_in_required; native credentials unavailable, unlock or reconcile the original secure store; no fallback"
+        }
+        "host.cloud_cleanup_adoption_unavailable"
+        | "host.cleanup_adoption_scope_changed" => {
+            "host.cleanup_adoption_scope_changed; preserve the receipt and reconcile current lifecycle intent"
+        }
+        "host.cloud_creation_outcome_uncertain"
+        | "host.cloud_reconciliation_required" => {
+            "host.cloud_reconciliation_required; access revoked, uncertain creation retained; no new create or cleanup proof"
+        }
+        "host.cloud_offline_or_unknown" => {
+            "host.cloud_offline_or_unknown; preserve the exact receipt and retry read-only reconciliation"
+        }
+        "host.cloud_denied" => {
+            "host.cloud_denied; authenticated authority refused, retain protected cleanup evidence"
+        }
+        "host.cloud_account_changed" | "host.cloud_identity_changed" => {
+            "host.cloud_account_or_identity_changed; original account and installation authority required"
+        }
+        "host.cloud_generation_changed" | "host.cloud_binding_changed" => {
+            "host.cloud_generation_changed; observed resource does not match the retained exact cleanup receipt"
+        }
+        "host.cloud_rate_limited" => {
+            "host.cloud_rate_limited; preserve receipt and retry later, outcome not confirmed"
+        }
+        "host.cloud_cancelled" => "host.cloud_cancelled; retained evidence was not discarded",
+        "host.service_not_installed"
+        | "host.service_not_installed_no_native_observation" => {
+            "host.service_not_installed_no_native_observation; no receipt is not proof of process absence"
+        }
+        "host.service_native_timeout" => {
+            "host.service_native_timeout; outcome unknown, preserve receipt and retry exact-owned observation"
+        }
+        "host.service_native_spawn_failed"
+        | "host.service_native_operation_failed"
+        | "host.service_observation_unavailable"
+        | "host.service_launchd_observation_unavailable"
+        | "host.service_task_unavailable" => {
+            "host.service_manager_unavailable; access remains revoked, native outcome not confirmed"
+        }
+        "host.service_stop_not_observed"
+        | "host.service_stop_before_cleanup"
+        | "host.service_cleanup_not_observed_absent" => {
+            "host.service_stop_or_cleanup_unconfirmed; retain exact receipt, never terminate persistent children"
+        }
+        "host.service_foreign_native_definition"
+        | "host.service_foreign_receipt"
+        | "host.service_foreign_state_directory"
+        | "host.service_invalid_receipt"
+        | "host.service_removed_resource_reappeared" => {
+            "host.service_ownership_refused; foreign or changed evidence, no destructive recovery attempted"
+        }
+        "host.service_windows_release_publisher_policy_unconfigured" => {
+            "host.service_windows_release_publisher_policy_unconfigured; approved publisher, rotation and revocation policy required"
+        }
+        "host.service_windows_authenticated_graceful_stop_unavailable" => {
+            "host.service_windows_authenticated_graceful_stop_unavailable; no destructive task or child-process termination attempted"
+        }
+        "host.service_macos_release_publisher_required"
+        | "host.service_macos_release_publisher_and_runtime_required" => {
+            "host.service_macos_release_publisher_required; require the approved Developer ID team and non-ad-hoc hardened runtime"
+        }
+        "host.service_stale_or_unapproved_operation"
+        | "host.service_operation_superseded_reconcile_owned_resource" => {
+            "host.service_operation_superseded; current epoch refused the operation, reconcile retained exact-owned receipt"
+        }
+        "host.cleanup_already_pending" => {
+            "host.cleanup_already_pending; access remains revoked, continue exact-owned cleanup"
+        }
+        "host.installation_removed" => "host.installation_removed; tombstone retained",
         "host.invalid_arguments (use --help)" => "host.invalid_arguments (use --help)",
         "host.foreign_origin_or_version" => {
             "host.foreign_origin_or_version; explicit verified migration required, not adoption"
@@ -178,6 +331,14 @@ fn diagnostic(error: &io::Error) -> &'static str {
         "host.cached_cli_mismatch" => {
             "host.cached_cli_mismatch; existing cache was not overwritten"
         }
+        "profile_host.cli_platform" | "host.cli_target_unavailable" => {
+            "host.cli_target_unavailable; no qualified pin for this native target, no fallback"
+        }
+        "host.cli_download_policy" => "host.cli_download_policy; a reviewed dependency pin update is required",
+        "host.cli_download_failed" => "host.cli_download_failed; bounded acquisition failed, nothing published",
+        "host.cli_download_status" => "host.cli_download_status; require HTTP 200 without redirects, nothing published",
+        "host.cli_download_limit" => "host.cli_download_limit; response is empty or oversized, nothing published",
+        "host.cli_download_encoding" => "host.cli_download_encoding; require raw pinned bytes, nothing published",
         "host.artifact_authentication_failed" => "host.artifact_authentication_failed; require signed exact-version/target release helpers, no staging performed",
         "host.staged_artifact_mismatch" => "host.staged_artifact_mismatch; existing cache was not overwritten",
         _ => "host.operation_refused; check arguments, private storage, origin and journal state",
@@ -224,6 +385,21 @@ mod tests {
             );
         }
         for args in [
+            vec![
+                "acquire-cli",
+                "--cache-dir",
+                "/unused",
+                "--url",
+                "fixture-do-not-echo",
+            ],
+            vec![
+                "acquire-cli",
+                "--cache-dir",
+                "/unused",
+                "--sha256",
+                "fixture-do-not-echo",
+            ],
+            vec!["acquire-cli", "--cache-dir", "relative"],
             vec!["configure", "--state-dir", "relative", "--name", "Fixture"],
             vec!["status", "--state-dir", "/unused", "--state-dir", "/other"],
             vec!["status", "--token", "do-not-read-secrets"],
@@ -239,5 +415,60 @@ mod tests {
         ] {
             assert!(execute(arguments(&args)).is_err());
         }
+    }
+
+    #[test]
+    fn headless_disable_fences_unbound_intent_without_touching_native_services() {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        let path = root.path().join("host");
+        let path = path.to_str().unwrap();
+        execute(arguments(&[
+            "configure",
+            "--state-dir",
+            path,
+            "--name",
+            "Fixture",
+        ]))
+        .unwrap();
+        execute(arguments(&["disable", "--state-dir", path])).unwrap();
+        let store = Store::open(std::path::Path::new(path), Origin::Headless).unwrap();
+        let initial = store.snapshot().unwrap();
+        assert_eq!(initial.phase, Phase::Disabled);
+        assert_eq!(std::fs::read_dir(path).unwrap().count(), 2);
+        store.request_enable(&initial.settings).unwrap();
+        let error = execute(arguments(&["disable", "--state-dir", path])).unwrap_err();
+        assert!(diagnostic(&error).contains("cloud_reconciliation_required"));
+        let cancelled = store.snapshot().unwrap();
+        assert_eq!(cancelled.phase, Phase::Reconciling);
+        assert!(cancelled.epoch > initial.epoch);
+        assert!(cancelled.pending_ticket().is_some());
+        assert_eq!(std::fs::read_dir(path).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn headless_native_and_vault_diagnostics_are_specific_and_sanitized() {
+        for (error, expected) in [
+            (
+                "host.service_windows_release_publisher_policy_unconfigured",
+                "publisher",
+            ),
+            ("host.service_native_timeout", "outcome unknown"),
+            (
+                "owner.vault_anchor_missing_local_reconciliation_required",
+                "sign_in_required",
+            ),
+            (
+                "host.service_not_installed_no_native_observation",
+                "not proof",
+            ),
+            (
+                "host.service_windows_authenticated_graceful_stop_unavailable",
+                "no destructive",
+            ),
+        ] {
+            assert!(diagnostic(&io::Error::other(error)).contains(expected));
+        }
+        assert!(!diagnostic(&io::Error::other("PRIVATE_FIXTURE_SECRET"))
+            .contains("PRIVATE_FIXTURE_SECRET"));
     }
 }

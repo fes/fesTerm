@@ -340,14 +340,20 @@ The first downloaded verifier/package needs a documented authenticity path too;
 an unauthenticated bootstrap cannot establish its own trust.
 
 The implemented independent [existing-helper authenticity slice](../host-release-artifacts.md)
-uses strict per-archive schema-1 metadata signed by pinned cargo-packager with
-the embedded existing updater key. The GUI-free shared verifier binds all
+uses strict per-archive schema-1 legacy/schema-2 host metadata signed by pinned
+cargo-packager with the embedded existing updater key. The GUI-free shared verifier binds all
 identity fields and returns bounded immutable regular-file entries, not an
 archive path to reopen. No auto key discovery, unsigned fallback or downgrade
 is permitted; source-reviewed updater-key rotation and installation-owner
-version/rollback policy remain explicit. Headless host CLI inclusion, consuming
-native installer/executable publication and service switching are not
-claimed by this foundation. Legacy scripts and old-tag recovery retain their
+version/rollback policy remain explicit. Schema 2 requires the GUI-free host CLI
+alongside the helpers in separate `fesTerm-host-*` assets; legacy `fesTerm-tunnel-*`
+archives keep their exact published allowlists. Both are built and native-signed
+in the existing six-target release matrix. Acquisition-only `acquire-cli` uses the existing reviewed raw
+executable hashes with versioned official HTTPS URLs, no redirects/proxy or
+provenance overrides, bounded length/time and protected non-executable staging.
+Microsoft native-publisher qualification/redistribution rights, consuming
+native installer/executable publication and service switching are not claimed.
+Legacy scripts and old-tag recovery retain their
 old contracts, without a new Linux authentication claim (#681).
 
 Desktop updates stage compatible helpers in immutable versioned private paths and
@@ -540,7 +546,7 @@ generation pins; they do not replace them.
 The existing external service eligibility and experimental/native qualification
 limits remain. Existing successful fixtures do not establish new multi-session,
 boot-start, temporary-lease or upgrade behavior. No live credentials or service
-changes are part of the stage-1 contract slice.
+changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
@@ -554,6 +560,33 @@ then passed all ten, without changing production contention behavior. This is
 local automated runtime evidence, not installed/native or whole-ADR acceptance.
 Temporary heartbeat/transport-loss and live policy revocation still require
 their own actual runtime evidence.
+
+The native/headless management follow-up adds actual functions
+`headless_disable_fences_unbound_intent_without_touching_native_services`,
+`headless_native_and_vault_diagnostics_are_specific_and_sanitized`,
+`headless_native_management_refuses_missing_receipts_without_ready_or_cleanup_claims`,
+`headless_native_publication_rejects_untrusted_inputs_without_service_effects`,
+`host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create`
+and `host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts`.
+`host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource`
+adds cancellation, missing credentials and wrong account/resource refusal cases.
+`protected_owner_policy_source_reacquires_selected_storage_and_fresh_revocation_lease`
+covers the lease-backed selected-store runtime authority seam (fresh consent,
+Busy, revocation and corrupt-state refusal).
+`protected_owner_runtime_trait_retains_lease_and_reloads_revocation` exercises
+the production `ProtectedPolicySource`/`PolicyGuard` implementations through
+generic runtime trait calls, retaining the actual enrollment lease until guard
+drop and observing the next revocation epoch. The opt-in setup `host-runtime`
+feature owns these implementations; the app adapter only delegates and keeps
+native-vault storage as its default. Listener/startup qualification remains
+dependent on the separately gated runtime source.
+These cover HOST-04/HOST-05 revocation, actionable unavailable credentials,
+native management/publication refusals and read-only cleanup adoption, not
+successful endpoint startup or cloud deletion.
+`native_service_live_exact_owned_lifecycle_preserves_independent_child` is
+ignored by default and requires an explicitly authorized disposable Unix guest.
+Its synthetic executable/native-manager evidence is not release publisher,
+native vault, real sessiond or whole-ADR qualification.
 
 **Authenticated runtime source checkpoint (#681):** the non-default bridge
 `host_runtime` consumes only actual `HostStream`s, reserves aggregate admission
@@ -588,9 +621,43 @@ provenance and comparing immutable cache entries without execution.
 Epoch fencing retains late provisioned identity for exact stop/cleanup, preserves
 identity on re-enable and refuses desktop/headless origin adoption. These are
 local boundary operations, not a working endpoint installer. Setup/run/update/
-uninstall explicitly fail until real endpoint, sign-in/native adapters and
+uninstall explicitly fail until real endpoint, sign-in/qualified native adapters and
 authenticated-package integration exist. No Ready or native acceptance is claimed.
 See [API/dependencies](../headless-host.md); the ADR remains Proposed.
+
+**Native service component progress (#681):** Off-default `native-services`
+now supplies actual same-user task/LaunchAgent/user-unit control behind the
+shared lifecycle. Sealed current-native updater-authenticated executable
+receipts, private atomic definitions, exact installation/origin/creation-epoch
+ownership and current-epoch fences precede observed manager status/control.
+Late task creation preserves observed normalized identity after revocation.
+No CLI setup/run command invokes this component, and process Running is not
+Ready. Signed native install/start/cleanup, endpoint integration and persistent
+daemon/startup qualification remain gates; see
+[native component boundaries](../native-host-services.md).
+
+**Bounded stage 7 progress (#681):** Separate host package schema 2 requires `festerm-host` on
+all six existing targets. Optional shared HTTP acquisition and headless
+`acquire-cli` stage only the pinned official Microsoft executable, never execute
+it or modify account/service state. New Windows ARM dependency acquisition is
+explicitly unavailable, without x64 fallback; legacy hosting/verification keeps
+its existing x64-emulation selector. Native publisher qualification,
+trusted first delivery and executable/service qualification remain blocked;
+signed/staged bytes alone are not Ready or a trusted launch receipt.
+
+The next opt-in stage-4 library slice adds shared foreground GitHub account
+authentication, native credential references and in-process zero-shell HOST
+cloud reservation/create/reconciliation/status. It uses exact lifecycle
+tickets/settings, OS user/origin and verified numeric account binding, not
+profile identity or an independent grant. HTTP fixtures cover actual private
+ACL/port requests and response ownership parsing; lifecycle fixtures cover
+late cancellation, lost replies, credential recovery and identity-preserving
+re-enable. Cloud presence is explicitly endpoint-unqualified, never Ready.
+Found-resource deletion remains fail-closed: official ID-only delete has no
+documented incarnation-atomic precondition, so cleanup retains its receipt and
+reports `GenerationConditionalDeleteUnavailable`; only authenticated exact
+absence can commit removal. This is a genuine qualification prerequisite,
+not successful uninstall. See the [cloud adapter contract](../headless-host.md#in-process-cloud-adapter-library-only).
 
 - **Invariants introduced or changed:** One host endpoint can expose multiple
   authorized sessions; explicit remote creation and client-local resume-or-create
@@ -598,7 +665,10 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   lifetime. Legacy exact-generation behavior, single-writer ownership, bounded
   work, protected consent and secret boundaries remain.
 - **GUI/action edges affected:** `HOST-01` through `HOST-03` have partial
-  contract evidence; their endpoint/UI/native transitions remain deferred.
+  contract/owner-auth evidence, with additional client-local metadata/command
+  and explicit-browse state evidence for `HOST-01`/`HOST-02` under
+  [#681](https://github.com/fes/fesTerm/issues/681).
+  Their endpoint/UI/native transitions remain deferred.
   `HOST-04`/`HOST-05` have partial shared boundary coverage and `HOST-06`
   has partial authenticity-foundation coverage.
   Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
@@ -723,12 +793,62 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
   `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
   `headless_package_staging_refuses_unauthenticated_input_before_writing`.
+  Acquisition-only coverage adds
+  `bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache`,
+  `bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation`,
+  `bounded_http_acquisition_deadline_and_production_origin_fail_closed`,
+  `headless_acquisition_rejects_provenance_overrides_without_network_or_state`
+  and `reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback`.
+  `legacy_cli_selector_preserves_windows_arm_x64_emulation` and
+  `new_acquisition_refuses_windows_arm_before_network_or_staging` distinguish
+  retained legacy behavior from native-only acquisition. Portable macOS
+  package-smoke fixtures check raw-pin hashes and native codesign wiring without
+  downloads. The native CI smoke downloads both pinned architectures and verifies
+  their hashes and signatures without executing either binary.
+  Additional cloud/account adapter evidence:
+  `host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port`,
+  `host_cloud_response_refuses_foreign_resources_and_non_authoritative_absence`,
+  `host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced`,
+  `host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable`,
+  `host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker`,
+  `host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty`,
+  `host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity`,
+  `host_cloud_create_distinguishes_preflight_not_sent_rejection_conflict_and_uncertainty`,
+  `host_cloud_local_no_send_and_rejection_resolve_without_widening_consent`,
+  `host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation`,
+  `host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create`,
+  `host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup`,
+  `host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource`,
+  `host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states`,
+  `host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt`.
   Windows configuration/journal/staging fixtures share the existing
   policy-validated private-storage fixture-root selection, not an assumption
   that checkout ancestors are safe. The native
   `staging_parent_rejects_a_dacl_that_allows_child_substitution` regression
   retains strict ancestor refusal; fixture selection does not qualify startup
   or service behavior.
+  Native-component fixtures add
+  `native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs`,
+  `native_service_locked_vault_failed_start_and_foreign_definitions_fail_closed`,
+  `native_service_late_start_after_revocation_retains_exact_cleanup_receipt_without_success`,
+  `native_service_late_task_creation_retains_normalized_identity_for_exact_cleanup`,
+  `native_service_outstanding_effect_retains_cross_instance_exclusion_after_timeout`,
+  `native_service_status_rejects_manager_overrides_ambiguous_properties_and_cross_origin`,
+  `authenticated_executable_publication_keeps_data_private_and_refuses_changed_cache`
+  and `failed_native_qualification_never_adds_execute_permission`.
+  These cover manual/sign-in definitions, no install-time launch, failed
+  observations, native-vault refusal and late exact-owned reconciliation using
+  fake managers/private filesystem fixtures, not actual installed services.
+  Additional regressions cover current systemd `MainPID`/`Result` rather than
+  historical exit PID, journaled interrupted definition retirement and
+  exact-unit failed-state reset, bounded asynchronous start reconciliation,
+  immutable pre-submission task reservation recovery and rejection of foreign
+  task ACL/configuration. Windows running-task stop/registration/start remain
+  unavailable pending authenticated graceful stop; macOS enforces the pinned
+  release Developer ID team/runtime and Windows promotion refuses pending
+  authoritative native publisher policy. Generic
+  native signature validity is not publisher acceptance. These refusal gates
+  and native-independent fixtures do not qualify real native services.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic
@@ -746,17 +866,46 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   signer job runs the otherwise-ignored
   `pinned_cargo_packager_signatures_authenticate_python_produced_manifest`
   using cargo-packager 0.11.8, a generated throwaway key and the private test
-  verifier seam; it proves the real signing mode without release secrets.
+  verifier seam for all six host-containing bundles; it proves the real signing
+  mode without release secrets.
   Python `test_host_manifest.py`, `test_tunnel_bundle.py` and
   `test_recover_desktop_release.py` cover producer compatibility and release
   wiring/recovery. The remaining matrix is planned, not implemented evidence.
+- **Automated tests implemented for the client-local foundation:**
+  `public_recipe_serialization_preserves_launch_and_four_behaviors`,
+  `invalid_recipe_ids_launch_and_protected_fields_are_refused`,
+  `duplicate_allocates_logical_identity_unless_explicit_generation_shortcut`,
+  `host_recipe_toml_round_trip_keeps_legacy_profiles_separate`,
+  `dev_tunnel_host_recipe_app_commands_persist_metadata_only_and_publish_after_save`,
+  `mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation`,
+  and `local_browser_requires_explicit_scoped_requests_and_fences_stale_results`.
+  The trace registry includes transactional failure/quarantine and compatibility
+  tests as well, including
+  `host_recipe_commands_preserve_legacy_account_and_hosting_references` and
+  `mobile_recipe_commands_preserve_legacy_generation_and_account_binding`.
+  Reliability regressions
+  `host_recipe_config_adapter_preserves_typed_command_failures`,
+  `mobile_host_recipe_adapter_preserves_typed_command_failures` and
+  `mobile_host_recipe_recovery_retains_valid_entries_across_unrelated_save`
+  cover typed failures and per-entry recovery/reporting across later saves.
+  The desktop command regression also checks export-specific outcomes and
+  runs under the experimental CI `dev_tunnel` selector.
+  These do not prove protected-state migration, a live-shell stop confirmation,
+  network execution, actual shell creation
+  or stage 6 end-to-end acceptance; the remaining matrix is still required.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and
   MOB-03/MOB-06 during implementation with host setup, principal isolation,
   reboot, update and physical-device disconnect evidence. The new trace entries
-  remain deferred behind endpoint/adapters/authenticated artifacts.
+  retain deferred end-to-end gates behind reviewed endpoint/identity integration
+  and actual native
+  desktop/iOS/Android UI wiring. Existing native/manual evidence remains required.
   `HOSTSETUP-01` registers stage-4 native prerequisites explicitly; deterministic
-  boundary fixtures are not service/startup qualification.
-- **Coverage superseded:** None in this documentation change. Retire legacy
+  boundary/native-adapter fixtures are not service/startup qualification.
+  Migration must preserve protected state/account binding and separately qualify
+  default-No exact-generation stop confirmation and manual deferral; setup or
+  sharing consent is never restart consent.
+- **Coverage superseded:** None by these foundations.
+  Retire legacy
   coverage only when its replacement is implemented and traced.
 
 ### Acceptance matrix
@@ -821,9 +970,9 @@ publication; these interfaces do not enable a product endpoint.
 | Temporary lifetime | `temporary_lease_survives_bridge_crash`; explicit detach, grace expiry, quick reconnect, stale disconnect, takeover and mobile suspension |
 | Isolation/bounds | `multi_session_routing_is_generation_scoped`; concurrent output, saturation, fair control/revocation, bounded inventory |
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
-| Profiles | `save_recipe_is_local_only`; first create, later resume, post-reboot replacement toast, duplicate identity policy, second-client shortcut |
+| Profiles | Metadata-only save, serialization, duplicate/shortcut identity and compatibility tests above; first create, later resume, post-reboot replacement toast and actual second-client attachment remain deferred |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
-| Integrity | Implemented: authenticated `stage-package`, pinned official-CLI offline staging, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, actual Python producer interop and pinned signer's throwaway-key mode check in normal CI. Deferred: network acquisition, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
+| Integrity | Implemented: schema-2 authenticated `stage-package` including the GUI-free host CLI, pinned official-CLI offline staging and bounded HTTPS acquisition, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, six-target Python producer/actual signer/Rust verifier interop; separate authenticated executable-publication component. Deferred: Microsoft native-publisher qualification/redistribution review, endpoint installer integration, trusted first-verifier delivery and signed native executable/install/update evidence |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 

@@ -20,14 +20,16 @@ SPEC.loader.exec_module(recovery)
 
 class DesktopReleaseRecoveryTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        scratch = ROOT / ".test-work"
+        scratch.mkdir(exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.git("init", "--quiet")
         (self.root / "scripts").mkdir()
         (self.root / "Cargo.toml").write_text('[workspace.package]\nversion = "1.2.3"\n')
         (self.root / "scripts/build_tunnel_bundle.py").write_text("tagged packager\n")
-        (self.root / "scripts/build_host_manifest.py").write_text("tagged manifest tooling\n")
+        (self.root / "scripts/build_host_manifest.py").write_text("SCHEMA = 2\n")
         self.commit("tagged source")
         self.source = self.git("rev-parse", "HEAD")
         self.git("tag", "v1.2.3")
@@ -110,7 +112,25 @@ class DesktopReleaseRecoveryTests(unittest.TestCase):
             self.workflow_outputs("push", "refs/tags/v1.2.3", self.source, "")
         outputs = self.workflow_outputs("workflow_dispatch", "refs/heads/main", self.head, "true")
         self.assertEqual(outputs["authenticated_helpers"], "false")
+        self.assertEqual(outputs["headless_helpers"], "false")
         self.assertEqual(outputs["source_commit"], self.source)
+
+    @unittest.skipUnless(shutil.which("bash") and shutil.which("sha256sum"), "requires Bash and sha256sum")
+    def test_schema_one_recovery_preserves_payload_without_claiming_host_cli(self):
+        self.git("reset", "--hard", "--quiet", self.source)
+        (self.root / "scripts/build_host_manifest.py").write_text("SCHEMA = 1\n")
+        self.commit("legacy authenticated helpers")
+        self.source = self.git("rev-parse", "HEAD")
+        self.git("tag", "--force", "v1.2.3")
+        (self.root / "scripts/build_tunnel_bundle.py").write_text("legacy tooling repair\n")
+        self.commit("repair legacy packaging")
+        self.head = self.git("rev-parse", "HEAD")
+        (self.root / "scripts/recover-desktop-release.py").write_text(f"print('{self.source}')\n")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.workflow_outputs("push", "refs/tags/v1.2.3", self.source, "")
+        outputs = self.workflow_outputs("workflow_dispatch", "refs/heads/main", self.head, "true")
+        self.assertEqual(outputs["authenticated_helpers"], "true")
+        self.assertEqual(outputs["headless_helpers"], "false")
 
     def test_rejects_source_changes(self):
         (self.root / "application.rs").write_text("different runtime\n")

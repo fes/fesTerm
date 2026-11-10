@@ -323,6 +323,7 @@
         "fresh_shell_approval_preserves_cloud_identity_and_pins_the_initial_name",
         "cancelled_preparation_and_completed_revocation_need_fresh_explicit_consent",
         "cached_cli_verification_opens_a_mapped_executable_read_only",
+        "legacy_cli_selector_preserves_windows_arm_x64_emulation",
         "pinned_archive_accepts_only_the_expected_flat_executable_and_both_hashes",
         "staged_helpers_publish_executable_bytes_and_recover_interrupted_mode",
         "verified_cli_repairs_interrupted_mode_only_after_pin_verification",
@@ -1223,6 +1224,7 @@
         "private_storage_ancestor_trust_adds_only_the_exact_servicing_sid",
         "private_storage_ancestors_refuse_foreign_directory_delete_access",
         "staging_parent_rejects_a_dacl_that_allows_child_substitution",
+        "private_fixture_short_unix_parent_supports_native_socket_and_owned_cleanup",
         "managed_session_pin_requires_complete_nonzero_exact_identity",
         "existing_host_identity_refuses_missing_key_without_regeneration",
         "managed_state_refuses_foreign_tunnel_account_and_generation",
@@ -5508,18 +5510,17 @@
     },
     {
       "id": "host-protocol-owner-contracts",
-      "edges": [
-        "HOST-01",
-        "HOST-02",
-        "HOST-03"
-      ],
+      "edges": ["HOST-01", "HOST-02", "HOST-03"],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#decision",
-        "docs/host-protocol.md"
+        "docs/host-protocol.md",
+        "docs/configuration.md#public-host-recipes-adr-0084-foundation",
+        "docs/gui-design.md#profile-editing",
+        "docs/application-command-model.md#required-properties",
+        "docs/adr/0084-host-based-dev-tunnels.md#5-local-profiles-and-resume-or-create",
+        "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery"
       ],
-      "decisions": [
-        "ADR-0084"
-      ],
+      "decisions": ["ADR-0084", "ADR-0054"],
       "automated_tests": [
         "host_wire_fixture_is_canonical_and_not_legacy_protocol",
         "host_wire_rejects_malformed_oversized_and_version_mismatched_input",
@@ -5628,6 +5629,23 @@
         "native_owner_vault_failure_never_creates_a_fallback_key",
         "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",
         "encrypted_transport_refuses_changed_host_key_before_authentication",
+        "public_recipe_serialization_preserves_launch_and_four_behaviors",
+        "invalid_recipe_ids_launch_and_protected_fields_are_refused",
+        "metadata_commands_edit_future_recipe_without_mutating_previous_snapshot",
+        "duplicate_allocates_logical_identity_unless_explicit_generation_shortcut",
+        "book_deserialization_rejects_duplicate_and_invalid_candidates",
+        "local_browser_requires_explicit_scoped_requests_and_fences_stale_results",
+        "host_recipe_toml_round_trip_keeps_legacy_profiles_separate",
+        "host_recipe_commands_preserve_legacy_account_and_hosting_references",
+        "host_recipe_invalid_commands_and_documents_do_not_replace_configuration",
+        "dev_tunnel_host_recipe_app_commands_persist_metadata_only_and_publish_after_save",
+        "host_recipe_config_adapter_preserves_typed_command_failures",
+        "mobile_host_recipe_adapter_preserves_typed_command_failures",
+        "mobile_host_recipe_recovery_retains_valid_entries_across_unrelated_save",
+        "mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation",
+        "mobile_recipe_commands_preserve_legacy_generation_and_account_binding",
+        "mobile_host_recipe_failed_write_keeps_previous_metadata_and_invalid_load_is_quarantined",
+        "dev_tunnel_import_defaults_take_over_and_never_replaces",
         "frontend_adoption_waits_for_confirmed_attachment_then_full_duplex_never_replays_input",
         "attachment_confirmation_refuses_foreign_generation_and_typed_uncertainty",
         "terminal_rejects_legacy_file_frames_and_oversized_lengths_before_body_allocation",
@@ -5644,14 +5662,7 @@
         "authenticated_runtime_bounds_proof_frames_and_client_admission",
         "native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input"
       ],
-      "manual_scenarios": [
-        "DT-07",
-        "DT-08",
-        "CP-11",
-        "MOB-03",
-        "MOB-06",
-        "HOSTAUTH-01"
-      ],
+      "manual_scenarios": ["DT-05", "DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
       "status": "partial",
       "prerequisites": [
         "Issue #681: qualified session 8ebbaf29 normally integrated at ae1ef27a; fresh macOS checks pass 108 bridge library tests, ten explicitly selected native routes including actual two-daemon signed SSH input isolation and persistent detach, thirteen protocol contracts, portable client check and strict all-target bridge clippy. Consuming protected enrollment, actual temporary heartbeat/grace and live policy revocation evidence plus independent exact-head review remain mandatory; no installed HOST endpoint or GUI control is exposed",
@@ -5659,6 +5670,14 @@
         "Issue #681 stages 1/3: protected enrollment and actual signed inner-SSH connection/channel exporter + role-bound proof helpers implemented. Server success transfers the exact stream with owner/lifetime guard; native defaults unchanged. Independent review, bounded endpoint composition and native/first-connect qualification remain mandatory before exposure; no listener or GUI controls",
         "Native vault/private-path/restart qualification and first-connect foreground public-key consent UX remain deferred under HOSTAUTH-01. Explicit validated forward policy reconciliation is implemented; headless-only protected-file storage requires deliberate origin-bound selection and has weaker whole-store/home rollback protection; no portable config adoption, bearer auto-enrollment or automatic seed fallback",
         "Unexposed paired terminal framing, bounded actor/client queues and FIFO output turns implemented. Authenticated runtime consumes actual signed SSH streams and shares native control/terminal state via Arc; its integrated native routes and strict clippy pass. Protected enrollment adapter, actual lifecycle/current-policy consumer checks and different-source-family antagonist remain required. No installed/native readiness is claimed",
+
+        "Issue #681: reviewed pinned/encrypted host endpoint and enrolled-key verified principal/account binding; public account/host IDs are metadata hints, never authorization",
+        "Issue #681: qualify bounded inventory, authoritative absence/ensure, exact-generation attach and idempotent reconciliation/cancellation against the final combined source; real desktop/iOS/Android Connect wiring remains deferred without legacy fallback",
+        "Issue #681: before first execution of an imported recipe, require explicit UI review/reconfirmation of shell/argv/cwd, lifetime and connection behavior bound to verified host/account/principal identity. Import/save/portable approval fields are never execution consent; qualify cancellation and no-execution-before-approval with later Connect wiring",
+        "Issue #681: native network-free opening/render/save, explicit find/single-host refresh, sign-in/trust/denial/offline behavior, reboot/recreation notice, shell-preserving deletion and physical mobile lease/lifecycle qualification remain deferred; existing DT/CP/MOB native, manual and usability evidence remains required",
+        "Issue #681: no installed HOST endpoint or GUI control is exposed. Independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
+        "Qualify durable ensure/reservations, recipe conflicts, temporary lease supervision and authenticated multi-session scheduling independently of bridge lifetime; reconcile uncertain outcomes without grant expansion and never infer absence from denial/offline/partial inventory",
+        "Unexposed paired terminal framing, bounded actor/client queues and FIFO output turns implemented; all nine owned native routes passed at prior milestone 1a66a935 with unchanged old-writer/control-progress assertions. Authenticated runtime now consumes only actual signed SSH streams and shares native control/terminal state via Arc; this source checkpoint requires its own native routes/clippy, protected enrollment adapter and different-source-family antagonist. No installed/native readiness is claimed",
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth and Unix owned daemon fixtures do not qualify it",
         "PendingAttachment is not Attached; remote recovery adoption and observed daemon lease/writer commit must precede success. StopRequested is not Ended; reconcile process absence before success. The endpoint must retire already established revoked relays",
         "Native reboot, Windows ConPTY/job/breakaway, Linux service startup, update/uninstall independence and physical-device 60-second grace remain DT-07/DT-08, CP-11 and MOB-03/MOB-06 gates; Unix owned fixtures do not qualify them",
@@ -5671,7 +5690,8 @@
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing",
         "docs/adr/0084-host-based-dev-tunnels.md#8-headless-installation-and-common-management",
-        "docs/headless-host.md#shared-desktopendpoint-integration-api"
+        "docs/headless-host.md#shared-desktopendpoint-integration-api",
+        "docs/native-host-services.md#shared-lifecycle-api"
       ],
       "decisions": ["ADR-0084"],
       "automated_tests": [
@@ -5684,23 +5704,72 @@
         "interrupted_enable_recovers_exact_ticket_to_confirm_no_resources",
         "recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence",
         "interrupted_private_publication_never_exposes_torn_final_bytes",
+        "protected_publication_preserves_shared_no_replace_boundary",
+        "protected_owner_policy_source_reacquires_selected_storage_and_fresh_revocation_lease",
+        "protected_owner_runtime_trait_retains_lease_and_reloads_revocation",
         "offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache",
+        "bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache",
+        "bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation",
+        "bounded_http_acquisition_deadline_and_production_origin_fail_closed",
+        "slow_body_cannot_extend_the_absolute_acquisition_deadline",
+        "headless_acquisition_rejects_provenance_overrides_without_network_or_state",
+        "reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback",
+        "new_acquisition_refuses_windows_arm_before_network_or_staging",
         "headless_commands_configure_and_report_only_disabled_state",
         "unavailable_host_operations_and_unsafe_options_fail_closed",
         "headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments",
         "headless_binary_status_is_a_journal_not_a_ready_claim",
+        "headless_disable_fences_unbound_intent_without_touching_native_services",
+        "headless_native_and_vault_diagnostics_are_specific_and_sanitized",
+        "headless_native_management_refuses_missing_receipts_without_ready_or_cleanup_claims",
+        "headless_native_publication_rejects_untrusted_inputs_without_service_effects",
         "authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries",
         "authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache",
         "headless_package_staging_refuses_unauthenticated_input_before_writing",
-        "staging_parent_rejects_a_dacl_that_allows_child_substitution"
+        "staging_parent_rejects_a_dacl_that_allows_child_substitution",
+        "native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs",
+        "native_service_locked_vault_failed_start_and_foreign_definitions_fail_closed",
+        "native_service_late_start_after_revocation_retains_exact_cleanup_receipt_without_success",
+        "native_service_late_task_creation_retains_normalized_identity_for_exact_cleanup",
+        "native_service_outstanding_effect_retains_cross_instance_exclusion_after_timeout",
+        "native_service_status_rejects_manager_overrides_ambiguous_properties_and_cross_origin",
+        "native_service_linux_liveness_uses_main_pid_result_and_retains_historical_exit",
+        "native_service_linux_failed_cleanup_retries_removed_definition_and_resets_only_owned_unit",
+        "native_service_start_reconciles_bounded_transitions_without_duplicate_start",
+        "native_service_windows_recovery_is_reserved_exact_and_stop_has_no_destructive_fallback",
+        "native_service_exhausted_operation_budget_refuses_effect_before_spawn",
+        "task_recovery_security_requires_exact_owner_system_protected_dacl",
+        "host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port",
+        "host_cloud_response_refuses_foreign_resources_and_non_authoritative_absence",
+        "host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced",
+        "host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable",
+        "host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker",
+        "host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty",
+        "host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity",
+        "host_cloud_create_distinguishes_preflight_not_sent_rejection_conflict_and_uncertainty",
+        "host_cloud_local_no_send_and_rejection_resolve_without_widening_consent",
+        "host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation",
+        "host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create",
+        "host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup",
+        "host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource",
+        "host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states",
+        "host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt",
+        "host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create",
+        "host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts",
+        "host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource"
       ],
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681 stages 3–5/7: new zero-shell host endpoint, verified principal channel, real observed health and foreground secure sign-in/consent integration; setup/run/update/uninstall refuse until functional",
-        "Exact-owned same-user native service/status/cleanup adapters and persistent-daemon independence; signed authenticated artifacts and compatible update/rollback",
+        "Issue #681 stages 3–5/7: new zero-shell host endpoint, verified principal channel, real observed service health and foreground secure sign-in/consent composition; shared cloud/account adapter has fixture coverage, setup/run/update/uninstall refuse until functional",
+        "Integrate and natively qualify the exact-owned same-user service component and persistent-daemon independence; signed native releases and compatible update/rollback",
+        "Windows registration/start and running-task stop remain unavailable pending authenticated graceful stop and native reservation-recovery/daemon independence qualification",
         "Exact-generation separate default-No migration confirmation is deferred until the migration API; setup command refusals do not establish that behavior",
-        "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance"
+        "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance",
+        "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable and retains CleanupPending without DELETE",
+        "Live-service creation-incarnation stability across repeated authoritative GETs, If-None-Match atomicity, authenticated exact-cluster 404/ownership semantics, cluster routing/no-redirect behavior and native-vault behavior remain unqualified; fixtures do not establish live/native acceptance",
+        "HOSTSETUP-01: read-only exact-resource cleanup adoption exists without enable/creation consent, retaining uncertainty on missing/failed observations and pinning raced receipts for retry. Real signed service/vault/cloud qualification remains required; no lifecycle tombstone until exact native stop and conditional cloud cleanup",
+        "Opt-in disposable Unix guest test native_service_live_exact_owned_lifecycle_preserves_independent_child exercises the real manager with a synthetic test executable only, not production publisher/vault/cloud or full sessiond lifetime acceptance"
       ]
     },
     {
@@ -5714,20 +5783,29 @@
       "automated_tests": [
         "python_produced_six_bundles_and_manifests_authenticate_in_rust",
         "pinned_cargo_packager_signatures_authenticate_python_produced_manifest",
+        "host_and_legacy_package_identity_schema_and_filenames_cannot_substitute",
+        "host_staging_keeps_package_identity_separate_from_legacy_helpers",
         "authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes",
         "rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing",
         "rejects_wrong_version_arch_platform_filename_length_and_hash",
         "rejects_unknown_duplicate_and_out_of_bounds_manifest_fields",
         "rejects_signed_unsafe_tar_entries_duplicates_missing_files_and_wrong_version",
         "rejects_signed_zip_paths_symlinks_modes_and_duplicates",
-        "rejects_oversized_headers_without_allocating_entry_and_trailing_gzip"
+        "rejects_oversized_headers_without_allocating_entry_and_trailing_gzip",
+        "authenticated_executable_publication_keeps_data_private_and_refuses_changed_cache",
+        "failed_native_qualification_never_adds_execute_permission",
+        "native_publisher_admission_never_substitutes_generic_signature_trust",
+        "macos_publisher_policy_requires_exact_team_nonadhoc_and_hardened_runtime",
+        "macos_native_gate_rejects_apple_signed_foreign_publisher"
       ],
       "manual_scenarios": ["DT-05", "DT-08"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681: headless CLI release package inclusion and consuming new endpoint installer integration; private authenticated staging exists but does not switch services",
+        "Issue #681: integrate and natively qualify the new endpoint installer/executable-publication component; ordinary private data staging does not authorize launch or service switching",
         "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
-        "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence"
+        "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence",
+        "Natively qualify the pinned macOS Developer ID/team/runtime gate against actual protected fesTerm releases; Windows promotion refuses pending authoritative publisher/certificate, rotation and revocation policy; generic signatures and candidate-derived identities are not accepted",
+        "Issue #681 / ADR 0084 section 11: migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow, including stale-generation refusal, before migration exposure"
       ]
     }
   ]

@@ -591,7 +591,6 @@ A new advertised issuer applies to newly captured operations only. Never
 refresh an uncertain client's original `IssuedOperation` or mutate its request;
 older issuances remain the durable ledger's decision.
 
-### Concrete transport blocker — no owner signing adapter yet
 
 Protected enrollment stores permission templates, not a runtime issuance
 namespace. `Capabilities::validate_permissions()` checks their logical flag
