@@ -3416,6 +3416,14 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 
 ## ADR 0084 owner enrollment qualification
 
+`HOSTAUTH-01` additionally requires real endpoint composition to capture the
+current runtime issuer inside its protected reservation, including after any
+namespace rotation. Permission-only or `None` hotpath policies must advertise
+no creation; issuer projection must not replace permission epochs or revive a
+lower observed issuer. Portable consent/projection fixtures automate that
+separation, not the native backend or endpoint integration. Original uncertain
+client operations must retain their captured issuer.
+
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
 | HOSTAUTH-01 | On macOS/Windows/Linux and physical mobile clients, explicitly confirm exact provisioned host/account/owner public-key fingerprint; generate/reopen/delete per-host owner keys in the native vault; lock/unlock/unavailable store; revoke/rotate while proof and operations are pending; deny creation without blocking removal; interrupt reference reservation/native update/disk publication and reconcile only exact anchored forward state. On a headless installation explicitly select protected-file credentials, verify origin/path/no-follow/permission checks and the documented weaker whole-store/home rollback guarantee; never fall back automatically. Verify no key in exports/logs/argv/env. | Automated synthetic constrained-vault, 64-key-history, forward recovery, effective-permission and private-file fixtures plus real SSH refusal fixtures; native and first-connect usability deferred | #681 stages 1/3: reviewed shared SSH connection/channel exporter and role-bound signing adapter; integrated foreground enrollment or advanced host-local public-key consent; exact-owned endpoint admission/routing. A provisioned journal is not Ready; fixture success is not native vault/private-path/platform acceptance. |

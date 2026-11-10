@@ -736,6 +736,13 @@ protected-file credential/anchor backend binds origin/storage/installation;
 whole protected-store/home rollback is not resisted by that weaker mode.
 Enrollment does not enable access or creation; settings deny masks creation
 without blocking key revocation or permission removal.
+Persistent consent contains no runtime issuer. Its distinct protected-permission
+verifier masks creation until an immutable projection receives the current issuer
+inside protected backend admission; public runtime policy validation remains
+strict. A projection retains its receiver's in-memory issuer watermark without
+changing permission epochs or enrolled keys. Fresh enrollment reloads have no
+such watermark; rollback protection across reservations belongs to the protected
+durable backend, not cached owner policy.
 The real pinned SSH stream lacks a shared connection/channel transcript
 exporter, so both client/server owner-channel gates explicitly refuse.
 Pinned-channel integration and independent security review are mandatory before

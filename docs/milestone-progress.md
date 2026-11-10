@@ -1,5 +1,20 @@
 # Milestone Progress Narrative
 
+## Separating owner consent from the current host issuer
+
+The ADR 0084 contract correctly refuses Ensure/Create advertisements without
+the current protected issuance epoch, but enrollment persists permission rather
+than that runtime namespace. Applying wire validation to stored consent made
+an explicitly creation-enabled local owner invalid before runtime composition.
+Permission-shape validation is now separate from strict wire validation;
+enrollment never persists the runtime issuer, and an unscoped verifier masks
+creation advertisements. The server projects only the actual protected
+reservation epoch without changing owner keys or permission epochs. Its issuer
+watermark survives within one projection chain, not fresh enrollment reloads;
+the protected durable backend guards rollback across reservations.
+New scopes do not refresh uncertain client requests.
+This closes a source composition prerequisite, not endpoint/native acceptance.
+
 ## Keeping Windows host fixtures inside the real storage policy
 
 The [#681](https://github.com/fes/fesTerm/issues/681) Windows configure,
