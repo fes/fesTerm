@@ -316,6 +316,17 @@ pub fn lock_native_start_in(root: &Path, name: &str) -> Result<File, PersistentS
     Ok(file)
 }
 
+/// Serializes a hosted migration with ordinary starts without repairing
+/// existing legacy directory or lock permissions.
+pub fn lock_legacy_start_in(root: &Path, name: &str) -> Result<File, PersistentSessionError> {
+    PersistentSessionName::new(name).map_err(|_| refused("invalid session name"))?;
+    let directory = storage::trusted_directory(root, true).map_err(storage_error)?;
+    let file = storage::open_trusted_lock(&directory, Path::new(&format!("{name}.start.lock")))
+        .map_err(storage_error)?;
+    lock(&file, true)?;
+    Ok(file)
+}
+
 fn registry(directory: &File) -> Result<SessionRegistry, PersistentSessionError> {
     let file = open_lock(directory, Path::new("registry.lock"))?;
     lock(&file, false)?;
@@ -450,9 +461,33 @@ pub fn ensure_detached_in(
     })
 }
 
+/// Starts a new generation or resumes only one owned by this request's journal.
+pub fn ensure_owned_detached_in(
+    root: &Path,
+    request: DetachedSessionRequest<'_>,
+) -> Result<NativeSessionIdentity, PersistentSessionError> {
+    ensure_with_policy(root, request, true, |root, request, profile, generation| {
+        launch(root, request, profile, generation)
+    })
+}
+
 fn ensure_with_launcher(
     root: &Path,
     request: DetachedSessionRequest<'_>,
+    launch: impl FnOnce(
+        &Path,
+        &DetachedSessionRequest<'_>,
+        &LocalProfile,
+        u128,
+    ) -> Result<(), PersistentSessionError>,
+) -> Result<NativeSessionIdentity, PersistentSessionError> {
+    ensure_with_policy(root, request, false, launch)
+}
+
+fn ensure_with_policy(
+    root: &Path,
+    request: DetachedSessionRequest<'_>,
+    require_owned_journal: bool,
     launch: impl FnOnce(
         &Path,
         &DetachedSessionRequest<'_>,
@@ -515,6 +550,11 @@ fn ensure_with_launcher(
         return Ok(identity);
     }
     if live {
+        if require_owned_journal {
+            return Err(refused(
+                "existing native generation has no matching launch journal; preserve it and review hosting consent",
+            ));
+        }
         let record = record.unwrap();
         check_evidence(record, &fingerprint)?;
         let identity = NativeSessionIdentity::from_record(record);
@@ -635,6 +675,7 @@ fn launch_with_helper(
     if let EnvironmentPolicy::InheritWith(environment) = profile.environment() {
         command.envs(environment);
     }
+    command.env(crate::CALLER_RUNTIME_ROOT_ENV, crate::runtime_root()?);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -833,6 +874,102 @@ mod tests {
         verify_spawn_fingerprint_in(&fixture.root, &replacement, &fingerprint).unwrap();
         let records = registry(&fixture.directory).unwrap();
         assert!(records.sessions["owned"].attached);
+    }
+
+    #[test]
+    fn hosted_detached_launch_requires_its_own_journal() {
+        let fixture = Fixture::new();
+        let profile = fixture.profile();
+        let fingerprint = spawn_fingerprint(&profile).unwrap();
+        let owner = Uuid::new_v4().to_string();
+        let other = Uuid::new_v4().to_string();
+        let identity = fixture.publish(101, Some(&fingerprint), true, Some(&owner));
+        assert!(ensure_with_policy(
+            &fixture.root,
+            fixture.request(&profile, &other),
+            true,
+            no_launch,
+        )
+        .is_err());
+        assert!(!fixture.root.join(format!("launch-{other}.json")).exists());
+
+        fixture.reserve(&owner, &profile, 101);
+        assert_eq!(
+            ensure_with_policy(
+                &fixture.root,
+                fixture.request(&profile, &owner),
+                true,
+                no_launch,
+            )
+            .unwrap(),
+            identity
+        );
+        assert!(ensure_with_policy(
+            &fixture.root,
+            fixture.request(&profile, &other),
+            true,
+            no_launch,
+        )
+        .is_err());
+        assert!(registry(&fixture.directory).unwrap().sessions["owned"].attached);
+    }
+
+    #[test]
+    fn legacy_start_lock_shares_access_with_ordinary_starts() {
+        let fixture = Fixture::new();
+        let root = fixture.root.join("legacy");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("owned.start.lock");
+        let guard = lock_legacy_start_in(&root, "owned").unwrap();
+        let ordinary = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        assert!(FileExt::try_lock_exclusive(&ordinary).is_err());
+        drop(guard);
+        FileExt::try_lock_exclusive(&ordinary).unwrap();
+        FileExt::unlock(&ordinary).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_start_lock_preserves_permissions_and_rejects_untrusted_paths() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let fixture = Fixture::new();
+        let root = fixture.root.join("legacy");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = root.join("owned.start.lock");
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let guard = lock_legacy_start_in(&root, "owned").unwrap();
+        assert!(lock_legacy_start_in(&root, "owned").is_err());
+        drop(guard);
+        drop(lock_legacy_start_in(&root, "owned").unwrap());
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+
+        let target = fixture.root.join("other-file");
+        std::fs::write(&target, b"unchanged").unwrap();
+        symlink(&target, root.join("linked.start.lock")).unwrap();
+        assert!(lock_legacy_start_in(&root, "linked").is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(lock_legacy_start_in(&root, "new-name").is_err());
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o777
+        );
     }
 
     #[test]
