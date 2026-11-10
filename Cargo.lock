@@ -2617,6 +2617,7 @@ dependencies = [
  "ed25519-dalek",
  "festerm-host-protocol",
  "festerm-secret-store",
+ "festerm-session",
  "festerm-sessiond",
  "festerm-tunnel-bridge",
  "festerm-tunnel-client",

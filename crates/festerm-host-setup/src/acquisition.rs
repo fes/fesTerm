@@ -1,4 +1,4 @@
-//! Acquisition only: pinned official bytes into protected, non-executable staging.
+//! Acquisition only: pinned official CLI staging and authenticated host bytes.
 //! This is neither native publisher qualification nor installation permission.
 
 use crate::staging;
@@ -9,6 +9,8 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+
+pub mod host_bundle;
 
 const ORIGIN: &str = "tunnelsassetsprod.blob.core.windows.net";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -71,11 +73,17 @@ struct Downloader {
 }
 
 fn client(https_only: bool, timeout: Duration) -> io::Result<Downloader> {
-    let client = Client::builder()
-        .https_only(https_only)
-        // The exact versioned blob URL needs no redirect. Refuse all 3xx,
-        // including same-origin, aka.ms, HTTPS downgrade and credential URLs.
+    let client = client_builder(https_only, timeout)
+        // The exact versioned blob URL needs no redirect, including same-origin.
         .redirect(Policy::none())
+        .build()
+        .map_err(|_| refused("host.cli_download_failed"))?;
+    Ok(Downloader { client, timeout })
+}
+
+fn client_builder(https_only: bool, timeout: Duration) -> reqwest::ClientBuilder {
+    Client::builder()
+        .https_only(https_only)
         .no_proxy()
         .no_gzip()
         .no_brotli()
@@ -86,9 +94,6 @@ fn client(https_only: bool, timeout: Duration) -> io::Result<Downloader> {
         .hickory_dns(true)
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(timeout)
-        .build()
-        .map_err(|_| refused("host.cli_download_failed"))?;
-    Ok(Downloader { client, timeout })
 }
 
 fn acquire(
@@ -117,34 +122,72 @@ fn acquire(
 }
 
 async fn receive(client: &Client, url: Url, limit: u64) -> io::Result<Vec<u8>> {
-    let mut response = client
+    receive_bounded(client, url, limit).await.map_err(|error| {
+        refused(match error {
+            ReceiveError::Status(_) => "host.cli_download_status",
+            ReceiveError::Encoding => "host.cli_download_encoding",
+            ReceiveError::Limit => "host.cli_download_limit",
+            _ => "host.cli_download_failed",
+        })
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReceiveError {
+    Status(u16),
+    Redirect,
+    Timeout,
+    Encoding,
+    Limit,
+    Transport,
+}
+
+fn receive_error(error: reqwest::Error) -> ReceiveError {
+    if error.is_redirect() {
+        ReceiveError::Redirect
+    } else if error.is_timeout() {
+        ReceiveError::Timeout
+    } else {
+        ReceiveError::Transport
+    }
+}
+
+async fn receive_bounded(client: &Client, url: Url, limit: u64) -> Result<Vec<u8>, ReceiveError> {
+    receive_response(send_request(client, url).await?, limit).await
+}
+
+async fn send_request(client: &Client, url: Url) -> Result<reqwest::Response, ReceiveError> {
+    client
         .get(url)
         .header(header::ACCEPT_ENCODING, "identity")
         .send()
         .await
-        .map_err(|_| refused("host.cli_download_failed"))?;
+        .map_err(receive_error)
+}
+
+async fn receive_response(
+    mut response: reqwest::Response,
+    limit: u64,
+) -> Result<Vec<u8>, ReceiveError> {
     if response.status() != reqwest::StatusCode::OK {
-        return Err(refused("host.cli_download_status"));
+        return Err(ReceiveError::Status(response.status().as_u16()));
     }
     if response
         .headers()
-        .get(header::CONTENT_ENCODING)
-        .is_some_and(|value| value != "identity")
+        .get_all(header::CONTENT_ENCODING)
+        .iter()
+        .any(|value| value != "identity")
     {
-        return Err(refused("host.cli_download_encoding"));
+        return Err(ReceiveError::Encoding);
     }
     let length = response.content_length();
     if length.is_some_and(|length| length == 0 || length > limit) {
-        return Err(refused("host.cli_download_limit"));
+        return Err(ReceiveError::Limit);
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| refused("host.cli_download_failed"))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(receive_error)? {
         if chunk.len() as u64 > limit.saturating_sub(bytes.len() as u64) {
-            return Err(refused("host.cli_download_limit"));
+            return Err(ReceiveError::Limit);
         }
         let required = bytes.len() + chunk.len();
         if required > bytes.capacity() {
@@ -153,15 +196,15 @@ async fn receive(client: &Client, url: Url, limit: u64) -> io::Result<Vec<u8>> {
                 .min(limit as usize);
             bytes
                 .try_reserve_exact(capacity - bytes.len())
-                .map_err(|_| refused("host.cli_download_limit"))?;
+                .map_err(|_| ReceiveError::Limit)?;
         }
         bytes.extend_from_slice(&chunk);
     }
     if bytes.is_empty() || bytes.len() as u64 > limit {
-        return Err(refused("host.cli_download_limit"));
+        return Err(ReceiveError::Limit);
     }
     if length.is_some_and(|length| length != bytes.len() as u64) {
-        return Err(refused("host.cli_download_failed"));
+        return Err(ReceiveError::Transport);
     }
     Ok(bytes)
 }

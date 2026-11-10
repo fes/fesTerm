@@ -64,15 +64,29 @@ and included in default builds; actual service acceptance remains pending
 build override reports sign-in unavailable. This is not a
 production, mobile or multi-account service-qualification claim.
 
-[HOST v1 stage-1 primitives](docs/host-protocol.md)
-([#681](https://github.com/fes/fesTerm/issues/681), ADR 0084 Proposed) have
-portable codec/identity/owner-proof/privacy/budget tests only. No listener
-advertises HOST or provides inventory/create/end, no legacy profile is converted,
-and no native/service/migration qualification is added. Enrollment and encrypted
-channel integration require independent security review before exposure.
-Desktop Profiles includes experimental offline recipe metadata management,
-with deterministic interaction/transaction tests. This is not live host
-inventory/Connect, protected trust approval or stage 6/native acceptance.
+[HOST v1](docs/host-protocol.md)
+([#681](https://github.com/fes/fesTerm/issues/681), ADR 0084 Proposed) has portable
+contracts and owned actual signed-SSH lifecycle/terminal fixtures. The default
+headless build now composes explicit signed setup, foreground owner approval,
+run, revoke-first disable/removal and authenticated stopped-version update.
+Compilation/configuration/import does not enable a listener or grant; no legacy
+profile is converted. Independent combined-source review and real release/cloud/
+vault/service/migration/client-first-connect/device qualification remain open.
+The coupled update regression launches the authenticated old cached helper in
+the installation's daemon namespace and preserves PID/generation/endpoint,
+frontend/control identity and exact helper path/bytes; deletion/replacement and
+daemon-end controls fail the same oracle. Its current-source binary in a
+synthetic old-version package/test signatures and fake native manager are not
+genuine older-release, publisher, native switching or cross-version acceptance.
+The optional GUI-free official schema-2 host-bundle acquisition seam uses only
+the trusted current build/native target and unchanged updater root, returning
+authenticated owned bytes without host effects. Six-target signed synthetic
+fixtures are not real release/native evidence; missing assets/404 block, never
+latest/older/legacy fallback. Desktop wiring and genuine release/first-verifier/
+native qualification remain open.
+Desktop Profiles and the separately reviewed existing-session connection path
+remain distinct from local Settings authority; metadata/import alone never
+grants protected trust or stage-6/native acceptance.
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 

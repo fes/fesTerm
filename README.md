@@ -99,7 +99,10 @@ Explicit headless setup/owner approval/run composition is implemented in source,
 not yet qualified as an installed native host ([#681](https://github.com/fes/fesTerm/issues/681)).
 It requires real authenticated release inputs and existing native credentials;
 uninstall removes only exact stopped native resources and retains unqualified
-cloud deletion as unsuccessful CleanupPending; update remains unavailable.
+cloud deletion as unsuccessful CleanupPending. Explicit authenticated stopped-
+version update now journals/reconciles exact old/new native registrations without
+reenabling access, regenerating identity/grants or touching persistent daemons.
+Signed native switching/compatibility acceptance remains unqualified.
 The legacy installer is unchanged.
 An opt-in shared library adds foreground native-vault GitHub authentication and
 zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;

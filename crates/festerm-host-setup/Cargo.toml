@@ -15,7 +15,7 @@ native-service-fixtures = ["native-services"]
 cloud = ["lifecycle", "dep:festerm-tunnel-client", "dep:festerm-secret-store", "dep:tokio-util"]
 owner-enrollment = ["lifecycle", "festerm-tunnel-bridge/owner-auth", "dep:festerm-host-protocol", "dep:festerm-secret-store"]
 host-runtime = ["owner-enrollment", "festerm-tunnel-bridge/host-routing", "festerm-tunnel-bridge/relay", "dep:zeroize"]
-acquisition = ["lifecycle", "dep:reqwest", "dep:tokio"]
+acquisition = ["lifecycle", "dep:reqwest", "dep:tokio", "dep:tokio-util"]
 lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 artifacts = [
     "dep:base64",
@@ -65,6 +65,7 @@ festerm-unix-security = { path = "../festerm-unix-security", optional = true }
 festerm-windows-security = { path = "../festerm-windows-security", optional = true }
 
 [dev-dependencies]
+festerm-session = { path = "../festerm-session" }
 festerm-sessiond = { path = "../festerm-sessiond", features = ["test-support"] }
 blake2 = "0.10"
 ed25519-dalek = "3"

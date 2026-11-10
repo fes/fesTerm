@@ -754,7 +754,10 @@ Windows registration/start require authenticated
 graceful-stop support rather than destructive task termination. The native
 component itself owns neither endpoint readiness nor shell launch. The headless
 controller now composes explicit setup, separate owner-key/permission approval,
-run, disable and exact-owned removal with those APIs. Configure defaults disabled;
+run, disable, authenticated stopped-version update and exact-owned removal with
+those APIs. Update retains signed old/new helper provenance and a protected
+reservation/unknown-outcome journal, never automatic rollback or access reenabling.
+Configure defaults disabled;
 compilation, native Running and last-run history confer no consent or Ready claim.
 Default legacy/mobile dependencies remain unchanged. See the
 [headless boundary and adapter contract](docs/headless-host.md).

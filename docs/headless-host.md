@@ -2,8 +2,8 @@
 
 ADR [0084](adr/0084-host-based-dev-tunnels.md), stage 4, is **partial** under
 [#681](https://github.com/fes/fesTerm/issues/681). `festerm-host` is a separate
-workspace binary with no desktop GUI/graphics dependencies. It is not yet a
-released host installer or an operational multi-session host service.
+workspace binary with no desktop GUI/graphics dependencies. Runnable source
+exists; released installer/native multi-session service acceptance is unqualified.
 
 ## Functional commands
 
@@ -200,7 +200,70 @@ provider ownership or deletion authority.
 Persistent daemon/session state is never a removal target. Repeating an already
 Removed tombstone reports recorded history, not fresh resource observation.
 
-## Management and unavailable operations
+## Authenticated stopped-version update
+
+Use the **independently trusted newer release's** `festerm-host` updater, not the
+old service executable, after explicit `disable` confirms the exact host and
+foreground runtime stopped:
+
+```text
+festerm-host update --state-dir /absolute/private/host --from-version 0.15.0 --manifest /absolute/private/new-release/host.manifest.json --signature /absolute/private/new-release/host.manifest.json.sig --archive /absolute/private/new-release/host.tar.gz --cache-root /absolute/private/releases --consent replace
+festerm-host update-status --state-dir /absolute/private/host
+```
+
+The new bundle must match the updater's compiled current version/target and
+existing updater/publisher policy. `--from-version` is explicit operator intent,
+not inferred from candidate metadata: retained old signed provenance must verify
+that exact version and registered executable, including every cached executable
+helper. Stable versions must strictly increase; no downgrade, current-version
+substitution, missing-key regeneration, sign-in or native-store fallback.
+The current existing HostIdentity must match the protected account/host binding.
+
+A protected `native-service-update.json` reserves the exact old and new native
+receipts before manager effects. Prepared/Applying are unknown outcomes, not
+activated success. The bounded separate native-operation lease and released
+foreground-runtime lease fence replacement; short installation guards do not
+span native waits. Only the exact stopped old definition is retired. New bytes/
+helpers are revalidated, a separately reserved definition is published and
+observed stopped/unloaded, and the active receipt is atomically committed before
+the durable Committed marker. Access remains Disabled; account/resource/grants,
+host identity, both cached releases and existing daemon binaries/PIDs/generations
+are not recreated, deleted or rebound.
+
+Failed staging leaves the original registration untouched. Failures after effects
+retain both receipts and explicit unknown state, including failure after the new
+active receipt commits. Inspect `update-status` (history, not current liveness/
+Ready), preserve its exact cached provenance and retry the **same** explicit
+update. Conflicting candidate/version intent refuses. Normal start/run/install/
+service-status refuse while a replacement is pending. Revoke-first disable and
+owned cleanup reconcile **both** reserved resources; cloud cleanup remains
+separate and cannot infer generation-atomic DELETE support. There is no silent
+rollback, autorepair, automatic restart or destructive daemon/child stop.
+Real signed native manager switching, old-daemon compatibility and installed
+cross-platform recovery remain HOSTSETUP-01 gates. The owned-daemon regression
+uses the authenticated old stage's actual sessiond path and installation-owned
+`state/daemon` record, preserving PID/generation/endpoint, adopted frontend/control
+authority and exact old cached bytes across replacement, then executing that
+cached helper's capabilities command. Its oracle rejects helper deletion/
+replacement and daemon end. This is a current-source binary packaged with
+synthetic 0.15.0 metadata/test signatures, a test qualifier and fake Linux
+manager—not genuine older-release, native publisher or native switching evidence.
+
+## Official host-bundle acquisition library boundary
+
+The shared optional
+[`acquisition::host_bundle::acquire_current_host_bundle`](host-release-artifacts.md#official-host-bundle-acquisition)
+API acquires only current-build/native-target schema-2 authenticated owned
+bytes, with fixed release URLs, bounded public-asset redirects, streaming limits,
+timeouts and cancellation. It is not a new CLI command and does not replace the
+manual signed paths above or wire Desktop setup yet. Missing assets/404 block
+without latest/older/legacy fallback. Synthetic six-target tests do not establish
+genuine release availability, native publisher admission, trusted verifier
+bootstrap or cross-version acceptance. No staging, execution, registration or
+authority changes occur; stopped-update and old-cache/journal semantics remain
+unchanged.
+
+## Management and remaining qualification
 
 Supported management is deliberately narrower than installation:
 `service-status` observes exact receipt-owned native state, `disable` fences
@@ -240,13 +303,14 @@ First-connect foreground handoff versus advanced explicit public-key import
 remains a bounded UX prerequisite. Neither bearer presence nor a provisioning
 account string enrolls an owner.
 
-`update` returns unsuccessful exit status and
-`host.endpoint_adapter_unavailable`. It is not a successful stub command and
-never dispatches to the legacy one-shell scripts/helpers. Requirements still open:
+Default builds implement the explicit stopped update above; compatibility builds
+with `--no-default-features` still refuse it. No lifecycle command dispatches to
+the legacy one-shell scripts/helpers. Qualification still open:
 
-- New zero-shell host endpoint and observed health/principal-authentication gate.
-- Composition of foreground secure account sign-in and protected host consent
-  into setup (the shared library adapter below is available).
+- Real zero-shell endpoint/native observed health and principal-authentication
+  qualification of the implemented runtime.
+- Native qualification of the implemented foreground secure account sign-in and
+  protected host consent/setup composition.
   Background/startup/update must return SignInRequired if credentials are
   unavailable; plaintext fallback and secrets in arguments/environment are forbidden.
 - Integration and native qualification of the same-user

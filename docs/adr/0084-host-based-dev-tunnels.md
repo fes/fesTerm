@@ -394,6 +394,18 @@ executable hashes with versioned official HTTPS URLs, no redirects/proxy or
 provenance overrides, bounded length/time and protected non-executable staging.
 Microsoft native-publisher qualification/redistribution rights, consuming
 native installer/executable publication and service switching are not claimed.
+The additive GUI-free official host acquisition seam fixes expected identity to
+the trusted current build's exact version/native compilation target and
+`Package::Host` schema 2. It constructs fixed `fes/fesTerm` GitHub release URLs,
+allows only bounded HTTPS public release-asset redirects, disables proxy/auth
+headers, and reuses bounded streaming plus the embedded updater-root verifier.
+It returns only owned `VerifiedArtifact` bytes: no staging or execution/host
+effects. Missing schema-2 assets/404 explicitly block; there is no latest/older/
+legacy fallback or downloaded trust key. Cancellation/deadline fence receives
+and acceptance after bounded synchronous verification. Desktop wiring, genuine
+published asset availability and native release acceptance remain separate
+gates; [the acquisition contract](../host-release-artifacts.md#official-host-bundle-acquisition)
+documents the non-preempted verifier and unchanged trusted-first-verifier path.
 Legacy scripts and old-tag recovery retain their
 old contracts, without a new Linux authentication claim (#681).
 
@@ -410,6 +422,34 @@ unsupported, defer the switch or give explicit guidance, never kill sessions
 silently. Keep referenced binaries and rollback information. Rollback must not
 restore revoked grants or incompatible state. A failed update leaves the working
 version usable where safe and reports repair-required accurately.
+
+The shared stopped-version transaction is now implemented through explicit
+headless `update --consent replace --from-version ...` and `update-status`.
+The independently trusted new release updater admits only its compiled current
+bundle and strictly newer stable version, reauthenticates all retained old/new
+executables against signed provenance, and preserves protected HostIdentity/
+account/resource/grants plus independent persistent daemon state. A protected
+old/new native reservation journals Prepared/Applying/Committed/Aborted; native
+unknowns and interrupted receipt commit are reconciled only against that same
+intent. No background sign-in, automatic reenable/rollback, grant reconstruction
+or daemon/child kill is added. Revoke-first stop/cleanup covers both pending native
+resources, leaving cloud CleanupPending separate. Deterministic failure-injection
+and the owned-daemon regression are source/fixture evidence: the daemon launches
+the authenticated old cached sessiond entry in the installation's daemon
+namespace. Replacement preserves its PID/generation/endpoint, adopted frontend/
+control authority and exact old helper path/bytes; helper deletion/replacement
+and daemon end are negative controls. The helper is a current-source binary in
+a test-key-signed synthetic old-version package, with a test qualifier and fake
+Linux manager, not a genuine older release. Real publisher qualification,
+signed manager switching, cross-version compatibility and native acceptance
+remain open.
+
+Replacement reconciliation precedes the core's never-published-receipt absence
+path. Missing active receipts with pending old/new journals require both targets
+to reconcile and cannot finalize Aborted cleanup from `None`. Stale epochs and
+corrupt/foreign crash journals refuse. Even settled update history proves prior
+registration, so a lost receipt refuses rather than manufacturing absence.
+These coupled negative fixtures retain the native/cloud/vault qualifications.
 
 ### 10. Protocol, resource and failure contract
 
@@ -932,6 +972,20 @@ blocked and a pending result is not successful uninstall. See the
   vault/cloud, endpoint readiness, actual sharing and usability remain
   `HOSTSETUP-01`/`HOSTAUTH-01` acceptance prerequisites; mock/owned-filesystem
   tests do not clear them.
+- **Official schema-2 acquisition evidence (`HOST-05`/`HOST-06`):**
+  `official_host_bundle_identity_is_exact_current_native_host_only`,
+  `official_host_bundle_six_signed_targets_return_owned_authenticated_bytes`,
+  `official_host_bundle_rejects_signed_identity_mismatch_tamper_and_untrusted_key`,
+  `official_host_bundle_absent_assets_are_blocking_without_legacy_retry`,
+  `official_host_bundle_refuses_unsafe_redirects_before_following`,
+  `official_host_bundle_rejects_zero_oversize_encoded_truncated_and_stream_overflow`,
+  `official_host_bundle_cancellation_and_deadline_cover_headers_body_and_total_budget`,
+  `official_host_bundle_late_verification_never_returns_capability` and
+  `official_host_bundle_requires_owned_blocking_worker` cover only the bounded
+  library boundary, using controlled HTTP and synthetic signed target fixtures.
+  Production refuses the fixture key. These do not qualify real published
+  availability, native signing, first-verifier delivery or Desktop integration.
+  Existing `9dcc7c4c` update journal/no-receipt/old-helper semantics are unchanged.
 - **Automated evidence (stage 1):**
   `host_wire_fixture_is_canonical_and_not_legacy_protocol`,
   `host_wire_rejects_malformed_oversized_and_version_mismatched_input`,
