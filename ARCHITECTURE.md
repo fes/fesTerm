@@ -202,6 +202,7 @@ change, but the responsibilities should remain distinct.
     festerm-pty/           # implemented M5 local PTY/ConPTY backend
     festerm-pty-test-child/ # implemented M6 deterministic PTY test child
     festerm-sessiond/      # ADR-0025 local persistence daemon and Session client
+    festerm-host-setup/    # GUI-free embedded setup and authenticated helper artifacts
     festerm-ssh/
     festerm-config/
     festerm-ui-egui/       # implemented M4 presentation layer
@@ -321,6 +322,21 @@ relative `conpty.dll` name. Missing or invalid sidecars use inbox Kernel32
 ConPTY; an unverified module loaded before selection is an error. This preserves
 the `Session` byte/event contract while making the Windows runtime decision
 explicit and safe.
+
+### `festerm-host-setup`
+
+Owns embedded legacy installer bytes and the GUI-free authenticated helper
+release boundary (`artifacts`, ADR 0084 §9). Its strict signed manifest binds
+package/version/platform/architecture/filename/length/hash to the existing
+embedded updater key. Only its verifier constructs an immutable
+`VerifiedArtifact` containing exact bounded allowlisted regular file bytes;
+setup consumers must stage those bytes privately/atomically rather than
+reopening an archive path. No desktop/updater/GUI dependency, downloaded trust
+key, service mutation or unsigned fallback is introduced. The offline
+`festerm-verify-artifact` command verifies without extraction/execution.
+See [the wire/staging/bootstrap contract](docs/host-release-artifacts.md).
+New headless CLI inclusion, service switching and migration remain separate
+implementation gates; this is not full stage-7 acceptance.
 
 ### `festerm-sessiond`
 

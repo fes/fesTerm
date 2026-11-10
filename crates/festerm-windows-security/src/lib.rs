@@ -654,6 +654,18 @@ mod imp {
             .ok_or_else(|| io::Error::from(io::ErrorKind::PermissionDenied))
     }
 
+    /// Validates that an inherited legacy lock cannot be deleted or have its
+    /// access policy changed by an untrusted account.
+    pub fn trusted_legacy_lock_file(file: &File) -> io::Result<()> {
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        let servicing = trusted_installer_sid()?;
+        staging_parent_security(file, Some(&servicing))?
+            .map(|_| ())
+            .ok_or_else(|| io::Error::from(io::ErrorKind::PermissionDenied))
+    }
+
     pub fn staging_parent_matches(
         directory: &File,
         expected: &StagingParentSecurity,
@@ -1595,6 +1607,19 @@ mod imp {
             directory,
             name,
             GENERIC_READ | windows_sys::Win32::Foundation::GENERIC_WRITE,
+        )
+    }
+
+    /// Opens a lock for ordinary read/write sharing while pinning its name.
+    pub fn open_lock_no_reparse_without_delete_sharing(
+        directory: &File,
+        name: &Path,
+    ) -> io::Result<File> {
+        open_file_no_reparse_with_access_and_sharing(
+            directory,
+            name,
+            GENERIC_READ | windows_sys::Win32::Foundation::GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
         )
     }
 
@@ -3185,6 +3210,43 @@ mod imp {
                     .kind(),
                 io::ErrorKind::PermissionDenied
             );
+
+            let file = create_current_user_only_file(&handle, Path::new("legacy.lock")).unwrap();
+            assert!(trusted_legacy_lock_file(&file).is_ok());
+            assert_ne!(
+                unsafe {
+                    SetKernelObjectSecurity(
+                        file.as_raw_handle() as HANDLE,
+                        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                        (&raw mut descriptor).cast(),
+                    )
+                },
+                0
+            );
+            assert_eq!(
+                trusted_legacy_lock_file(&file).unwrap_err().kind(),
+                io::ErrorKind::PermissionDenied
+            );
+        }
+
+        #[test]
+        fn pinned_legacy_lock_allows_ordinary_open_but_not_deletion() {
+            let directory = TemporaryDirectory::new();
+            let parent = directory.handle();
+            drop(create_current_user_only_file(&parent, Path::new("legacy.lock")).unwrap());
+            let lock =
+                open_lock_no_reparse_without_delete_sharing(&parent, Path::new("legacy.lock"))
+                    .unwrap();
+            assert!(trusted_legacy_lock_file(&lock).is_ok());
+            let ordinary = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(directory.0.join("legacy.lock"))
+                .unwrap();
+            assert!(fs::remove_file(directory.0.join("legacy.lock")).is_err());
+            drop(ordinary);
+            drop(lock);
+            fs::remove_file(directory.0.join("legacy.lock")).unwrap();
         }
 
         #[test]
@@ -3844,10 +3906,11 @@ pub use imp::{
     open_file_no_reparse, open_file_no_reparse_for_capture, open_file_no_reparse_for_move,
     open_file_no_reparse_for_security_capture, open_file_no_reparse_for_security_verification,
     open_file_no_reparse_for_verification, open_file_read_write_no_reparse,
-    open_private_directory_for_move, opened_file_path, remove_private_staging_file,
-    rename_file_noreplace, rename_private_directory_noreplace, replace_private_file,
-    require_local_disk_root, restrict_default_dacl_to_current_user, restrict_to_current_user,
-    same_file_identity, secure_staging_parent, security_metadata, security_metadata_matches,
-    staging_parent_matches, system_directory, trusted_private_storage_ancestor, DefaultDaclGuard,
-    SecurityMetadata, SecurityPrivilegeGuard, StagingParentSecurity, UnsupportedSecurityMetadata,
+    open_lock_no_reparse_without_delete_sharing, open_private_directory_for_move, opened_file_path,
+    remove_private_staging_file, rename_file_noreplace, rename_private_directory_noreplace,
+    replace_private_file, require_local_disk_root, restrict_default_dacl_to_current_user,
+    restrict_to_current_user, same_file_identity, secure_staging_parent, security_metadata,
+    security_metadata_matches, staging_parent_matches, system_directory, trusted_legacy_lock_file,
+    trusted_private_storage_ancestor, DefaultDaclGuard, SecurityMetadata, SecurityPrivilegeGuard,
+    StagingParentSecurity, UnsupportedSecurityMetadata,
 };

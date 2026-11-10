@@ -1,5 +1,46 @@
 # Milestone Progress Narrative
 
+## Enabling desktop hosting without disturbing legacy sessions
+
+Older Windows installations could not enable profile hosting because shared
+product/native-runtime directories had inherited permissions. The fix creates a
+dedicated protected hosted runtime without repairing those directories or their
+registries. A live legacy session is retained; hosting is deferred until the
+user ends it and explicitly reopens the profile. The exact-generation gate
+survives interrupted authorization and clears only after a replacement is
+bound. Local tabs retain root-aware routing, while the user shell still
+addresses its original frontend IPC.
+
+The exposure checkbox now opens GitHub account selection immediately rather
+than discovering sign-in only after Save. A bounded editor receipt and protected
+numeric identity bind the initial creation; the browser path refuses account
+switching while known desktop/default-script bindings depend on the shared CLI
+sign-in. Custom-state legacy script hosts cannot be inventoried, are disclosed
+as potentially affected, and have a documented manual removal procedure.
+Isolated regressions cover inherited Windows ACLs, interrupted restart and stale
+account selection. Native signed servicing and real-service qualification remain
+DT-08 work; no live installation is migrated by these tests. See ADR 0085.
+
+## Establishing helper publisher authenticity without a second trust root
+
+ADR 0084 stage 7 needs independent Linux publisher authentication, not a hash
+downloaded beside the archive. The existing helper release now has strict
+signed metadata binding package identity, exact version/target, byte length and
+SHA-256 using the same protected cargo-packager key as desktop updates. A
+GUI-free shared verifier returns only immutable, bounded, allowlisted regular
+file bytes; the offline command does no extraction or execution.
+Synthetic-key Rust and Python fixtures cover metadata rejection, unsafe archives
+and old-tag recovery without touching secrets or installed services.
+Cross-language tests now feed all six actual Python-produced bundles/manifests
+through genuine synthetic signatures into the Rust verifier. A separate Linux
+normal-CI job uses pinned cargo-packager 0.11.8 with a generated throwaway key,
+so signer-format/mode incompatibilities are caught before protected publication.
+The [bootstrap and staging contract](host-release-artifacts.md) deliberately
+does not claim that downloading both verifier and key establishes trust.
+Existing artifact names/consumers remain compatible; host CLI inclusion,
+installer integration, private atomic staging, service switching/rollback,
+migration and native signing evidence remain #681 gates. ADR 0084 stays Proposed.
+
 ## Stabilizing SSH-agent test startup
 
 The vendored SSH tests could connect between the agent creating its Unix

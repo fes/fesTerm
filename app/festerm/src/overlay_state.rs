@@ -103,7 +103,23 @@ pub(crate) struct PendingSettingsResetConfirmation {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PendingNativeTerminationConfirmation {
-    pub(crate) session: festerm_sessiond::UnattachedSession,
+    pub(crate) session: crate::discovery::NativeSession,
+    pub(crate) cancel_focus_requested: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum NativeTakeoverSelection {
+    Discovered(crate::discovery::NativeSession),
+    #[cfg(feature = "experimental-dev-tunnels")]
+    HostedProfile {
+        profile: festerm_config::Profile,
+        target: festerm_tunnel_bridge::profile_hosting::Target,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PendingNativeTakeoverConfirmation {
+    pub(crate) selection: NativeTakeoverSelection,
     pub(crate) cancel_focus_requested: bool,
 }
 
@@ -366,6 +382,7 @@ pub(crate) struct OverlayState {
     pub(crate) pending_file_drop: Option<PendingFileDropConfirmation>,
     pub(crate) pending_settings_reset: Option<PendingSettingsResetConfirmation>,
     pub(crate) pending_native_termination: Option<PendingNativeTerminationConfirmation>,
+    pub(crate) pending_native_takeover: Option<PendingNativeTakeoverConfirmation>,
     /// A file the reader asked for that could not be opened, and the reason.
     /// Kept so the refusal is said out loud rather than swallowed.
     pub(crate) open_refusal: Option<OpenRefusalNotice>,
@@ -452,6 +469,7 @@ impl OverlayState {
             || self.pending_file_drop.is_some()
             || self.pending_settings_reset.is_some()
             || self.pending_native_termination.is_some()
+            || self.pending_native_takeover.is_some()
             || self.port_forward_manager.is_some()
             || self.pending_quit.is_some()
             || self.markdown_file_picker.is_some()

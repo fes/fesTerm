@@ -199,6 +199,14 @@ or bridge starts until the user explicitly requests one.
 
 ### Clean-machine host installer (release prerequisite)
 
+The additive [authenticated helper release protocol](host-release-artifacts.md)
+provides a GUI-free verifier and signed manifest for each existing helper
+archive, using the embedded updater key. This does **not** retrofit the legacy
+scripts below with independent Linux publisher authentication or install the
+new host endpoint. New setup integration must consume verified immutable bytes
+without checksum-only fallback; first-verifier trust and native install evidence
+remain explicit prerequisites under [#681](https://github.com/fes/fesTerm/issues/681).
+
 In the app, choose **Dev Tunnel: Set up a host…** from the command palette (or
 **Set up a host…** in the Dev Tunnel profile editor) to pick the host platform,
 decide whether a remote device may take over a session, copy the version-pinned
@@ -547,6 +555,53 @@ Read-only noninteractive account/exact-show checks confirmed the missing creatio
 fields, emitting only field-presence booleans. This does not attest the live
 service/key or qualify other platforms; no login, host-management helper,
 private-key inspection or service mutation occurred.
+
+#### Remove an older host installed in a custom state directory
+
+The management commands above inspect only the default script state directory;
+they do **not** find hosts started with an arbitrary `--state-dir`. A browser
+sign-in changes the CLI's shared account and can interrupt such a host. Before
+switching accounts, remove each unwanted custom host individually:
+
+1. As the installing user, find the old command or service definition and its
+   exact private `--state-dir`. Inspect that directory's `installation.json`
+   for its `id`, numeric `account`, and full `tunnel` ID; keep the directory and
+   its keys private. Verify that the service command actually references that
+   state directory. Do not infer ownership from a name prefix. If the record or
+   service identity is uncertain, stop and investigate rather than deleting it.
+2. Stop and unregister only that verified installation's service. For managed
+   fesTerm script hosts, substitute its exact UUID in the applicable commands:
+
+   - **Linux:** inspect `systemctl --user --no-pager cat "festerm-tunnel-UUID.service"`,
+     then run `systemctl --user disable --now "festerm-tunnel-UUID.service"`.
+     Inspect its `FragmentPath`, remove only the verified unit file, and run
+     `systemctl --user daemon-reload`.
+   - **macOS:** inspect the matching
+     `~/Library/LaunchAgents/dev.fes.festerm.tunnel.UUID.plist` and
+     `launchctl print "gui/$(id -u)/dev.fes.festerm.tunnel.UUID"`, then run
+     `launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.fes.festerm.tunnel.UUID.plist"`.
+     Remove only that verified plist so it cannot load at the next login.
+   - **Windows:** inspect
+     `schtasks /Query /TN "fesTerm-DevTunnel-UUID" /XML`, then run
+     `schtasks /End /TN "fesTerm-DevTunnel-UUID"` and
+     `schtasks /Delete /TN "fesTerm-DevTunnel-UUID" /F`.
+
+   Verify that the service and its exact worker/relay processes have stopped;
+   investigate any surviving process before proceeding. The independently
+   running persistent shell is not the service to remove.
+3. Sign in to the **recorded owner account**, if necessary, understanding that
+   this may affect other hosts using the shared CLI. Verify the account with
+   `devtunnel user show --json`, inspect the exact resource with
+   `devtunnel show FULL-TUNNEL-ID`, and only after confirming ownership run
+   `devtunnel delete FULL-TUNNEL-ID`. This permanently removes that cloud
+   tunnel and disconnects its clients. See the
+   [Microsoft CLI reference](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands).
+   Never use `delete-all` to remove one old host.
+4. Once local exposure is stopped and cloud deletion is confirmed, retain or
+   securely dispose of only that identified private state directory after
+   checking that no other service uses it. Do not remove the shared helper
+   cache, another host's state, or the native session registry. Restore the
+   account required by any remaining hosts.
 
 #### Keep completed evidence and deliberately start fresh
 

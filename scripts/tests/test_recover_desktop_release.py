@@ -27,6 +27,7 @@ class DesktopReleaseRecoveryTests(unittest.TestCase):
         (self.root / "scripts").mkdir()
         (self.root / "Cargo.toml").write_text('[workspace.package]\nversion = "1.2.3"\n')
         (self.root / "scripts/build_tunnel_bundle.py").write_text("tagged packager\n")
+        (self.root / "scripts/build_host_manifest.py").write_text("tagged manifest tooling\n")
         self.commit("tagged source")
         self.source = self.git("rev-parse", "HEAD")
         self.git("tag", "v1.2.3")
@@ -93,6 +94,23 @@ class DesktopReleaseRecoveryTests(unittest.TestCase):
                          ("true", "true", self.source))
         expected = hashlib.sha256((self.root / "scripts/build_tunnel_bundle.py").read_bytes()).hexdigest()
         self.assertEqual(outputs["helper_sha256"], expected)
+        self.assertEqual(outputs["authenticated_helpers"], "true")
+
+    @unittest.skipUnless(shutil.which("bash") and shutil.which("sha256sum"), "requires Bash and sha256sum")
+    def test_workflow_only_exempts_explicit_recovery_of_pre_authentication_source(self):
+        self.git("rm", "scripts/build_host_manifest.py")
+        self.commit("legacy source fixture")
+        self.source = self.git("rev-parse", "HEAD")
+        self.git("tag", "--force", "v1.2.3")
+        (self.root / "scripts/build_tunnel_bundle.py").write_text("legacy tooling repair\n")
+        self.commit("repair legacy packaging")
+        self.head = self.git("rev-parse", "HEAD")
+        (self.root / "scripts/recover-desktop-release.py").write_text(f"print('{self.source}')\n")
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.workflow_outputs("push", "refs/tags/v1.2.3", self.source, "")
+        outputs = self.workflow_outputs("workflow_dispatch", "refs/heads/main", self.head, "true")
+        self.assertEqual(outputs["authenticated_helpers"], "false")
+        self.assertEqual(outputs["source_commit"], self.source)
 
     def test_rejects_source_changes(self):
         (self.root / "application.rs").write_text("different runtime\n")

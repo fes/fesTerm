@@ -116,16 +116,7 @@ fn valid_id(id: &str) -> bool {
 }
 
 fn namespace() -> io::Result<PathBuf> {
-    #[cfg(windows)]
-    let root = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .map(|path| path.join("fesTerm-tunnels"));
-    #[cfg(unix)]
-    let root = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|path| path.join(".local").join("share").join("festerm-tunnels"));
-    root.filter(|path| path.is_absolute())
-        .ok_or_else(|| refused("management.private_namespace_unavailable"))
+    setup_storage::script_namespace()
 }
 
 fn namespace_lock(root: &Path) -> io::Result<File> {
