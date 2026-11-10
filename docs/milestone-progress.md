@@ -1,5 +1,85 @@
 # Milestone Progress Narrative
 
+## Qualifying Linux sign-in on the exact corrected core
+
+Normal merge `c635a194c02f10db229631861f841bbb569f500c` preserves first parent
+`cab0d9121928829010be50ee5d0d8abf013da00e` and second parent exactly
+`b5e3bead12732cda335764e79e4b234bee1509d0`. Only milestone prose and HOST-05
+graph wording conflicted; their union retains approved Linux current-login
+semantics and the core's lease/phase/epoch/instance-fenced unpublished-registration
+absence. Status still reports no observation, not speculative absence.
+No stopped-update/client source or Windows policy work is included. Windows,
+sessiond, bridge and lockfile bytes are identical to the exact corrected core.
+Manual and the explicit Linux eligibility/lifetime decisions are unchanged.
+
+The genuinely pinned supported toolchain caught a new Clippy
+`chunks_exact_to_as_chunks` warning in the login parser. Commit
+`8e59f99a51971192fa2076383cccab159d755562` makes the one-line fixed-size slice
+API correction after the existing exact tuple-count check; no policy, ordering,
+minimum compiler or warning exception changes. That strict RED is retained as
+`combined-b5-clippy.log`. Fresh final qualification below ran on **8e59f99a**;
+this evidence-only child changes no tested implementation. Earlier cab0/Homebrew
+results and the core's full suites/native aggregates remain separately attributed.
+
+All final checks explicitly use existing user-private
+`/Users/fes/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc`,
+`cargo`, `rustdoc` and `cargo-clippy`: **rustc/Cargo 1.99.1, Clippy 0.1.99**.
+`RUSTC`/`RUSTDOC` are absolute and that bin directory prefixes PATH; no bare
+`+stable` dispatch is assumed. RUSTUP_HOME is initially unset with effective
+`/Users/fes/.rustup`; the target-install/retry sets that same home explicitly.
+Full `rustc -vV`, `cargo -vV`, executable paths and installed-target inventory are
+in `target/adr84-login-evidence/combined-b5-toolchain.log`.
+The checks use jobs1, the native lane's private warm `target/adr84-native`,
+dev/test debug0, incremental0 and this checkout's owned evidence TMPDIR.
+
+```sh
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib linux_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_runtime_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_controller_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs -- --test-threads=1
+cargo test --locked -p festerm-host --bin festerm-host headless_native_and_vault_diagnostics_are_specific_and_sanitized
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base b5e3bead12732cda335764e79e4b234bee1509d0
+git diff --check
+```
+
+Final passes are **12 Linux / 10 runtime / 7 controller / 1 registration /
+1 diagnostic**, zero failures/ignores. The controller selector now includes the
+six previous cases **plus**
+`host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup`
+from the corrected core. Linux/runtime overlap once: **31 successful invocations,
+30 distinct tests**, not a full package aggregate. Strict affected two-package
+all-target Clippy, fmt, base-b5 traceability311/zero broken references and diff
+pass. Raw final logs are `target/adr84-login-evidence/combined-b5-final-*.log`.
+Existing vendored warnings and the installed toolchain's rust-objcopy
+libLLVM.dylib warning remain visible; no toolchain repair or warning waiver.
+
+The additional actual target command was:
+
+```sh
+cargo check --locked --target x86_64-unknown-linux-gnu -p festerm-host-setup --features host-runtime,native-services,cloud --lib
+```
+
+It first failed **101/E0463** for missing Rust `core`. Only the official
+`x86_64-unknown-linux-gnu` standard-library target was then installed into the
+existing named user-owned stable toolchain. No compiler installation, global
+default change, dependency/configuration change or C-toolchain installation
+was performed. The unchanged
+target command then failed **Cargo 101**, `aws-lc-sys 0.47.0` build script **1**:
+cc-rs cannot find **`x86_64-linux-gnu-gcc` (os error 2)**. Logs:
+`combined-b5-linux-target-initial.log`, `combined-b5-linux-target-install.log`
+and `combined-b5-linux-target.log`, with exact `.exit` records for both failed
+checks. There was no ignored/forged target cfg, C-compiler substitution or claim
+that the Linux library reached successful target typechecking. A real Linux
+builder or separately provided cross-C compiler/sysroot remains the prerequisite.
+
+The host Cargo slot is released: owned compiler/query/daemon CWD matches are
+zero. No push, PR creation, VM, actual manager/logind, credential, cloud, signing
+or OS-setting operation occurred. Real manager/login/logout/cgroup and persistent
+daemon PID/generation/child-I/O survival remain HOSTSETUP-01 gates; neither this
+portable fixture qualification nor the blocked target check establishes them.
+
 ## Implementing the approved Linux current-login lifetime fence
 
 A separate lane starts at exact Windows COM correction

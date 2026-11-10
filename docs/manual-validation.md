@@ -3683,6 +3683,13 @@ Observe actual relay retirement and continued persistent child I/O with identica
 daemon PID/generation, helpers, grants and cgroup membership. A user-manager or
 session cgroup terminated by OS logout policy may kill those daemons; no synthetic
 manager/parser/watcher test proves otherwise or authorizes policy repair.
+The exact-core Linux follow-up attempted the real
+`x86_64-unknown-linux-gnu` library check after installing only its missing
+official standard-library target in the existing user-owned stable toolchain.
+It remains blocked in `aws-lc-sys 0.47.0`: `x86_64-linux-gnu-gcc` is absent
+(os error 2; Cargo 101/build-script 1). Portable checks are not successful
+Linux-target compilation; no cfg/C-toolchain workaround or native proof is
+inferred. See the opening milestone entry for pinned compiler paths/raw logs.
 The review-correction union passes 114 host/setup tests with one existing native
 ignore: 101 setup-library, 5 headless unit and 8 CLI integration cases. The new
 production-supervision regression holds the actual Store installation lease
