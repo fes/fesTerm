@@ -1588,11 +1588,20 @@ retain their current coverage until explicit migration. The single
 
 The portable selected-host `host_client` executor adds actual native-vault/
 relay/role-proof composition, bounded inventory and frontend-confirmed
-existing-generation adoption. Its new `selected_host_*` test sources and the
-updated owned SSH/two-daemon fixture require client-head execution; they are
-not desktop/mobile GUI coverage. The protected remote-client approval receipt
+existing-generation adoption. Its executed `selected_host_*` tests are not
+desktop/mobile GUI coverage; the updated ignored owned SSH/two-daemon fixture
+still requires client-head execution. The protected remote-client approval receipt
 loader is missing, so public recipes cannot start this path. HOST-01/02 remain
 partial; creation and explicit discovery are not implemented by this executor.
+The subsequent shared Session adapter consumes bounded frames with event-loop
+wakes, preserves recovery ordering and uses correlated detach. Typed desktop
+installation checks the originating editor and account credential before work;
+configuration adoption cancels removed/rotated accounts. Its privileged command
+has no public metadata-UI producer until protected foreground receipt loading
+and an authorized inventory chooser exist. Twelve selected-host, six terminal
+and two memory-vault tests pass; portable check/strict bridge clippy pass.
+Diagnostic desktop check, strict bin/test clippy and two rejection tests pass
+using `--ignore-rust-version`, not supported-toolchain or native acceptance.
 HOST-01–03 additionally have an opt-in source implementation of actual
 SSH-stream owner challenge/proof framing and control/terminal dispatch
 (`host_runtime`). Four passing native TCP SSH tests cover control inventory,

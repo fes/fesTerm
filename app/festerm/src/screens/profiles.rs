@@ -14,7 +14,9 @@ mod host_recipes;
 #[cfg(all(test, feature = "experimental-dev-tunnels"))]
 pub(crate) use host_recipes::install_host_recipe_request_for_test;
 #[cfg(feature = "experimental-dev-tunnels")]
-pub(crate) use host_recipes::{host_recipe_request_is_current, report_host_recipe_outcome};
+pub(crate) use host_recipes::{
+    host_recipe_request_is_current, report_host_connection_started, report_host_recipe_outcome,
+};
 
 /// Which staged view the Profiles surface is currently showing. Multi-field
 /// edits are staged behind Save; Cancel discards them

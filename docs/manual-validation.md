@@ -3568,6 +3568,22 @@ need qualification. During active temporary attachment verify daemon heartbeat;
 unexpected closure must enter daemon-owned transport-loss grace. Physical-device
 60-second/suspension and native DT/CP/MOB checks remain deferred.
 
+The shared `HostSession` adapter now has passing actual framed
+recovery/adoption/activation/input/output/correlated-detach and active app-lock
+transport-close tests, plus starting-state cancellation. Together with the
+original eight executor tests and successful multi-page inventory regression,
+the selected-host suite passes twelve tests. Six existing terminal transport and
+two memory-vault tests pass; four explicit-native terminal tests remain ignored
+in that targeted run. The typed desktop route installs its presentation before
+adoption, rejects stale origin/request and unavailable account before work,
+converts authoritative recovery sync and cancels account credential replacement.
+There is still no protected receipt/index producer or authorized inventory
+chooser in the user-facing recipe screen, and mobile installation remains open.
+Rust 1.97.1 fails the desktop's pre-existing Rust 1.98 PowerShell dependency
+requirement; check, strict bin/test clippy and both new desktop rejection tests
+pass with `--ignore-rust-version` diagnostically only. Native-vault,
+development-wrapper GUI, VM and physical-mobile evidence remain unrun here.
+
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;
 that needs separate default-No confirmation for its exact generation. That

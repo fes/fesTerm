@@ -10,8 +10,8 @@ use crate::{
 };
 use festerm_core::Terminal;
 use festerm_host_protocol::{
-    AttachmentId, Budgets, Capabilities, ContractError, InventoryPage, OperationId, Request,
-    Response, SessionSummary, Target, Validate, MAX_SESSIONS, PAGE_SIZE,
+    AttachmentId, Capabilities, ContractError, InventoryPage, OperationId, Request, Response,
+    SessionSummary, Validate, MAX_SESSIONS, PAGE_SIZE,
 };
 use festerm_secret_store::SecretReference;
 use festerm_tunnel_client::host_control::{Binding, ConnectionPermit, ControlClient, Error};
@@ -20,6 +20,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 use tunnels::contracts::TunnelEndpoint;
 use zeroize::Zeroizing;
+
+mod session;
+pub use festerm_host_protocol::{Budgets, Target};
+pub use session::HostSession;
 
 pub const ENROLLMENT_PREREQUISITE: &str =
     "This host needs foreground host-key approval and an owner key explicitly enrolled on that host. Reopen its protected native-vault credential for this installation, account and principal; importing or saving a recipe cannot authorize a connection.";
@@ -59,6 +63,12 @@ impl Failure {
             Self::OwnerKey(_) => "The approved owner key could not be reopened for this exact installation, host, account and principal. Review its protected approval; no replacement key was created.",
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Revoked)) =>
                 "Host access was revoked. Fresh explicit host-local authorization is required.",
+            Self::Control(Error::Refused(festerm_host_protocol::Refusal::Denied)
+                | Error::Contract(ContractError::Denied)) =>
+                "The host denied this operation. Verify explicit owner enrollment and the required host permission; no enrollment, takeover or replacement shell was attempted.",
+            Self::Control(Error::Refused(festerm_host_protocol::Refusal::Unknown
+                | festerm_host_protocol::Refusal::OutcomeUncertain)) =>
+                "The host could not establish the operation's current outcome. Retain the original request; do not infer absence or create a replacement shell.",
             Self::Control(Error::Refused(festerm_host_protocol::Refusal::Busy)
                 | Error::Contract(ContractError::Busy)) =>
                 "The host or attachment is busy. No takeover or replacement shell was requested.",
@@ -143,8 +153,10 @@ impl ApprovedContext {
         let key = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(Error::Cancelled.into()),
-            value = key => value.map_err(|_| Failure::WorkerUnavailable)?
-                .map_err(Failure::OwnerKey)?,
+            value = tokio::time::timeout(Duration::from_secs(15), key) =>
+                value.map_err(|_| Failure::Control(Error::Deadline))?
+                    .map_err(|_| Failure::WorkerUnavailable)?
+                    .map_err(Failure::OwnerKey)?,
         };
         let permit = Arc::try_unwrap(permit).map_err(|_| Failure::WorkerUnavailable)?;
         let stream = tokio::select! {
@@ -183,9 +195,54 @@ pub enum Operation {
     Attach { target: Target },
 }
 
+/// An existing target selected after foreground approval. This command carries
+/// protected context, never a portable recipe or a service-token grant.
+pub struct ApprovedAttachment {
+    context: ApprovedContext,
+    scope: Scope,
+    target: Target,
+}
+
+impl std::fmt::Debug for ApprovedAttachment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ApprovedAttachment")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ApprovedAttachment {
+    pub fn new(context: ApprovedContext, scope: Scope, target: Target) -> Result<Self, Failure> {
+        if context.binding() != &scope.binding {
+            return Err(Failure::BindingMismatch);
+        }
+        Ok(Self {
+            context,
+            scope,
+            target,
+        })
+    }
+
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
+    pub fn port(&self) -> u16 {
+        self.context.port
+    }
+
+    pub fn start(
+        self,
+        budgets: &Budgets,
+        notifier: Arc<dyn festerm_session::SessionEventNotifier>,
+    ) -> Result<HostSession, Failure> {
+        HostSession::start(self.context, self.scope, self.target, budgets, notifier)
+    }
+}
+
 pub enum Outcome {
     Inventory(Inventory),
-    Snapshot(Adoption),
+    Snapshot(Box<Adoption>),
     Attached(TerminalHandle),
     Failed(Failure),
 }
@@ -208,10 +265,12 @@ impl Adoption {
         if &self.scope != current || self.acknowledge.is_closed() {
             return Err(ContractError::Stale.into());
         }
-        *terminal = self.terminal;
-        self.acknowledge
-            .send(())
-            .map_err(|_| Failure::Control(Error::Cancelled))
+        let previous = std::mem::replace(terminal, self.terminal);
+        if self.acknowledge.send(()).is_err() {
+            *terminal = previous;
+            return Err(Error::Cancelled.into());
+        }
+        Ok(())
     }
 }
 
@@ -376,11 +435,11 @@ where
     let (acknowledge, adopted) = tokio::sync::oneshot::channel();
     let completion = Completion {
         scope: scope.clone(),
-        outcome: Outcome::Snapshot(Adoption {
+        outcome: Outcome::Snapshot(Box::new(Adoption {
             scope: scope.clone(),
             terminal,
             acknowledge,
-        }),
+        })),
     };
     tokio::select! {
         biased;

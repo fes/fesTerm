@@ -18,7 +18,17 @@ struct ClientState {
     detach_started: tokio::sync::Notify,
     closed: AtomicBool,
     failure: Mutex<Option<Error>>,
+    notifier: Mutex<Option<Arc<dyn festerm_session::SessionEventNotifier>>>,
     cancel: CancellationToken,
+}
+
+impl ClientState {
+    fn notify(&self) {
+        let notifier = self.notifier.lock().ok().and_then(|slot| slot.clone());
+        if let Some(notifier) = notifier {
+            notifier.notify();
+        }
+    }
 }
 
 /// Full-duplex portable transport. Queued frames retain their aggregate byte
@@ -48,6 +58,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> LiveTerminal<S> {
             detach_started: tokio::sync::Notify::new(),
             closed: AtomicBool::new(false),
             failure: Mutex::new(None),
+            notifier: Mutex::new(None),
             cancel: CancellationToken::new(),
         });
         let (commands, mut command_rx) = tokio::sync::mpsc::channel::<Outgoing>(8);
@@ -71,6 +82,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> LiveTerminal<S> {
                         matches!(frame.kind, EXITED | DISPLACED)
                     };
                     event_tx.send(frame).await.map_err(|_| Error::Closed)?;
+                    task_state.notify();
                     if finished {
                         return Ok::<(), Error>(());
                     }
@@ -101,12 +113,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> LiveTerminal<S> {
                 result = reader => result,
                 result = writer => result,
             };
-            task_state.closed.store(true, Ordering::Release);
             if let Err(error) = result {
                 if let Ok(mut failure) = task_state.failure.lock() {
                     *failure = Some(error);
                 }
             }
+            task_state.closed.store(true, Ordering::Release);
+            task_state.notify();
         });
         Ok(TerminalHandle {
             commands,
@@ -117,6 +130,38 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> LiveTerminal<S> {
 }
 
 impl TerminalHandle {
+    pub fn set_event_notifier(&self, notifier: Arc<dyn festerm_session::SessionEventNotifier>) {
+        if let Ok(mut slot) = self.state.notifier.lock() {
+            *slot = Some(notifier);
+        }
+        if !self.events.is_empty() || self.state.closed.load(Ordering::Acquire) {
+            self.state.notify();
+        }
+    }
+
+    pub fn try_next_event(&mut self) -> Result<Option<Frame>, Error> {
+        match self.events.try_recv() {
+            Ok(frame) => Ok(Some(frame)),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                if !self.state.closed.load(Ordering::Acquire) =>
+            {
+                Ok(None)
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Err(self
+                .state
+                .failure
+                .lock()
+                .ok()
+                .and_then(|slot| *slot)
+                .unwrap_or(Error::Closed)),
+        }
+    }
+
+    pub fn event_queue_depth(&self) -> usize {
+        self.events.len()
+    }
+
     pub fn binding(&self) -> &LiveBinding {
         &self.state.binding
     }

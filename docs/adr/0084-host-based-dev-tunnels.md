@@ -544,6 +544,25 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The client qualification follow-up adds the shared `HostSession` presentation
+adapter and typed desktop installation for an already-approved selected target.
+Its notifier-driven frame consumption preserves output/recovery ordering,
+requires actual frontend adoption and confirmed activation before input, and
+reports intentional detach only after the correlated receipt. App-lock cancels
+transport; account removal/credential replacement cancels from configuration
+adoption. Closed/dropped transport cannot claim Detached or replay input.
+The selected-host suite (twelve tests), existing terminal suite (six passed,
+four explicit-native ignored) and two memory-vault binding/failure tests pass on
+the owned macOS host; strict affected bridge clippy and no-default-feature
+`host-routing` compilation pass.
+Supported-toolchain desktop compilation is blocked by pre-existing PowerShell
+dependencies requiring Rust 1.98 while the installed toolchain is 1.97.1;
+`--ignore-rust-version` desktop checks are explicitly diagnostic, not release
+qualification. Diagnostic desktop check, strict bin/test clippy and both new
+desktop rejection tests pass; the tests cover stale origin/request and missing
+account before vault/network/tab allocation. No foreground receipt producer,
+inventory chooser, mobile installation or native acceptance is claimed.
+
 The selected-host portable executor now composes actual relay connection,
 native-vault reopening of an existing exact `OwnerBinding`, role-specific
 authentication, bounded complete/partial inventory and exact-generation attach.
@@ -553,11 +572,12 @@ revision drift and frontend snapshot installation before acknowledgement.
 `selected_host_signed_ssh_inventory_uses_the_authenticated_control_stream`
 uses the real signed SSH dispatcher. The existing ignored owned-native two-shell
 runtime fixture now routes inventory and frontend adoption through this executor.
-These newly added/changed tests require their own execution; previous fixed-head
-backend results are not qualification of this source. Foreground remote-client
-approval receipt lookup, desktop/mobile installation, explicit discovery/create
-and native/physical-mobile evidence remain incomplete. No new UI or host access
-is enabled by this checkpoint.
+The portable selected-host tests are now executed as recorded above; the changed
+ignored owned-native fixture still needs its client-head execution. Previous
+fixed-head backend results do not qualify that changed fixture. Foreground
+remote-client receipt lookup, inventory chooser/mobile installation, explicit
+discovery/create and native/physical-mobile evidence remain incomplete. No public
+recipe UI or host access is enabled by this checkpoint.
 
 **Authenticated runtime source checkpoint (#681):** the non-default bridge
 `host_runtime` consumes only actual `HostStream`s, reserves aggregate admission

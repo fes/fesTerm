@@ -54,7 +54,9 @@ pub(crate) use profiles::show_profiles;
 #[cfg(test)]
 pub(crate) use profiles::{has_profile_screen_state_for_test, install_profile_secret_for_test};
 #[cfg(feature = "experimental-dev-tunnels")]
-pub(crate) use profiles::{host_recipe_request_is_current, report_host_recipe_outcome};
+pub(crate) use profiles::{
+    host_recipe_request_is_current, report_host_connection_started, report_host_recipe_outcome,
+};
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use profiles::{
     local_host_account_request, profiles_has_open_editor, report_local_host_account,

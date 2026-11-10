@@ -84,10 +84,19 @@ generation. The composition root must cancel on account change, supersession,
 editor closure or mobile app-lock. Snapshot delivery is not Attached: the exact
 frontend must install recovery with `Adoption::adopt_into`, then wait for the
 host's activation receipt. Keep the worker alive with its live terminal, drive
-`next_event` through the existing presentation owner, and retain correlated detach
-receipts. No creation, implicit discovery, background sign-in or input replay is
-implemented by this executor. Foreground approval receipt lookup and actual GUI
-installation remain prerequisites, not acceptance claimed by its wire tests.
+the shared `HostSession` through the existing presentation owner, and retain
+correlated detach receipts. The typed `OpenApprovedHostFromProfiles` route accepts
+only an `ApprovedAttachment`, checks the originating editor request and current
+account before starting, installs its real `SessionTab` before acknowledging
+recovery, and cancels on account removal/credential replacement. Its
+`ApplicationSession::Host` branch translates recovery sync to the existing desktop
+controller format; it grants no files, port forwarding or automation.
+
+No public recipe UI currently emits that privileged command: foreground protected
+approval receipt/index loading and the authorized inventory chooser remain
+prerequisites. No creation, implicit discovery, background sign-in or input replay
+is implemented by this executor. Shared framing/Session tests and diagnostic
+desktop compilation are not native-vault, GUI or physical-mobile acceptance.
 
 Destructive confirmation remains composition-owned even when the final effect
 is an `AppCommand`. Every close invocation first passes through the same

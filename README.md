@@ -47,8 +47,11 @@ live HOST connection or execution approval.
 The portable `host_client` executor now composes selected-host inventory and
 existing-session attachment using protected native-vault context, actual
 role-specific SSH owner proof and frontend-confirmed snapshot adoption.
-Desktop/mobile foreground approval receipt loading and GUI installation remain
-unwired; this source checkpoint is not stage-6 completion or native acceptance.
+The shared Session adapter and typed desktop installation preserve frontend
+ownership, activation and account-credential fencing. Foreground protected receipt
+loading, an inventory chooser and mobile installation remain unwired: no public
+recipe UI emits this privileged command. This is not stage-6 completion or native
+acceptance.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
 coverage (file mode has weaker whole-store rollback protection and is never a

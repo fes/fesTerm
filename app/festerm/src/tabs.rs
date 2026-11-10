@@ -13,6 +13,9 @@
 //! `SessionController` pair defined in `session_controller.rs`.
 
 use std::collections::VecDeque;
+#[cfg(all(test, feature = "experimental-dev-tunnels"))]
+#[path = "tabs_host_tests.rs"]
+mod host_tests;
 #[cfg(test)]
 #[path = "tabs_remote_tests.rs"]
 mod remote_tests;
@@ -165,6 +168,8 @@ pub enum ApplicationSession {
     Persistent(PersistentSession),
     #[cfg_attr(not(feature = "experimental-dev-tunnels"), allow(dead_code))]
     DevTunnel(PersistentSession),
+    #[cfg(feature = "experimental-dev-tunnels")]
+    Host(Box<festerm_tunnel_bridge::host_client::HostSession>),
     Ssh(SshSession),
     Sftp(SftpTerminalSession),
     Serial(SerialSession),
@@ -294,6 +299,8 @@ impl std::error::Error for ConfiguredSshProfileLaunchError {}
 impl ApplicationSession {
     fn take_recovered_terminal_deferred(&self) -> Option<Terminal> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => None,
             Self::Persistent(session) | Self::DevTunnel(session) => {
                 session.take_recovered_terminal_deferred()
             }
@@ -313,6 +320,8 @@ impl ApplicationSession {
 
     pub fn recovery_protocol_is_authoritative(&self) -> bool {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => true,
             Self::Persistent(session) | Self::DevTunnel(session) => {
                 session.recovery_protocol_is_authoritative()
             }
@@ -332,6 +341,8 @@ impl ApplicationSession {
         decision: HostKeyTrustDecision,
     ) -> Result<(), HostKeyTrustResolutionError> {
         let resolver = match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => return Err(HostKeyTrustResolutionError::NotRemoteSession),
             Self::Ssh(session) => session.host_key_decision_resolver(),
             Self::Sftp(session) => session.host_key_decision_resolver(),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => {
@@ -356,6 +367,8 @@ impl ApplicationSession {
         password: String,
     ) -> Result<(), PasswordResolutionError> {
         let resolver = match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => return Err(PasswordResolutionError::NotRemoteSession),
             Self::Ssh(session) => session.password_decision_resolver(),
             Self::Sftp(session) => session.password_decision_resolver(),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => {
@@ -407,6 +420,8 @@ impl ApplicationSession {
     /// have to distinguish tab kinds first.
     fn try_check_liveness(&self) -> Result<(), SshLivenessCheckError> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => Ok(()),
             Self::Ssh(session) => session.try_check_liveness(),
             Self::Local(_)
             | Self::Persistent(_)
@@ -421,6 +436,8 @@ impl ApplicationSession {
     /// Whether this session currently supports live SSH port-forward operations.
     pub fn live_port_forwarding_available(&self) -> bool {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => false,
             Self::Ssh(session) => session.lifecycle() == SessionLifecycle::Running,
             #[cfg(test)]
             Self::TestSsh(session) => session.lifecycle() == SessionLifecycle::Running,
@@ -440,6 +457,8 @@ impl ApplicationSession {
         forward: impl SshPortForwardSpec,
     ) -> Result<(), SshPortForwardRequestError> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Ssh(session) => session.try_add_port_forward(forward),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_add_port_forward(forward),
@@ -462,6 +481,8 @@ impl ApplicationSession {
     ) -> Result<(), SshPortForwardRequestError> {
         let bind_host = bind_host.into();
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Ssh(session) => session.try_remove_port_forward(direction, bind_host, bind_port),
             #[cfg(test)]
             Self::TestSsh(session) => {
@@ -480,6 +501,8 @@ impl ApplicationSession {
     /// Requests a fresh snapshot of the connected SSH session's active port forwards.
     pub fn try_query_port_forwards(&self) -> Result<(), SshPortForwardRequestError> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => Err(SshPortForwardRequestError::NotRunning),
             Self::Ssh(session) => session.try_query_port_forwards(),
             #[cfg(test)]
             Self::TestSsh(session) => session.try_query_port_forwards(),
@@ -495,6 +518,8 @@ impl ApplicationSession {
 
     pub fn sftp_working_directories(&self) -> Option<(String, PathBuf)> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => None,
             Self::Sftp(session) => session.working_directories().map(|directories| {
                 (
                     directories.remote().to_owned(),
@@ -515,6 +540,8 @@ impl ApplicationSession {
 
     pub fn verified_host_key_fingerprint(&self) -> Option<String> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => None,
             Self::Ssh(session) => session.verified_host_key_fingerprint(),
             Self::Sftp(session) => session.verified_host_key_fingerprint(),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
@@ -527,6 +554,8 @@ impl ApplicationSession {
 
     pub fn live_remote_file_requestor(&self) -> Option<LiveRemoteFileRequestor> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => None,
             Self::Ssh(session) => Some(session.remote_file_requestor()),
             Self::Sftp(session) => Some(session.remote_file_requestor()),
             Self::Local(_) | Self::Persistent(_) | Self::DevTunnel(_) | Self::Serial(_) => None,
@@ -543,6 +572,8 @@ impl Session for ApplicationSession {
 
     fn id(&self) -> SessionId {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(session) => session.id(),
             Self::Local(session) => session.id(),
             Self::Persistent(session) | Self::DevTunnel(session) => session.id(),
             Self::Ssh(session) => session.id(),
@@ -555,6 +586,8 @@ impl Session for ApplicationSession {
 
     fn lifecycle(&self) -> SessionLifecycle {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(session) => session.lifecycle(),
             Self::Local(session) => session.lifecycle(),
             Self::Persistent(session) | Self::DevTunnel(session) => session.lifecycle(),
             Self::Ssh(session) => session.lifecycle(),
@@ -567,6 +600,8 @@ impl Session for ApplicationSession {
 
     fn automation_epoch(&self) -> Option<Arc<AutomationEpoch>> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(_) => None,
             Self::Local(session) => session.automation_epoch(),
             Self::Persistent(session) | Self::DevTunnel(session) => session.automation_epoch(),
             Self::Ssh(session) => session.automation_epoch(),
@@ -579,6 +614,8 @@ impl Session for ApplicationSession {
 
     fn metrics(&self) -> SessionMetrics {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(session) => session.metrics(),
             Self::Local(session) => session.metrics(),
             Self::Persistent(session) | Self::DevTunnel(session) => session.metrics(),
             Self::Ssh(session) => session.metrics(),
@@ -591,6 +628,8 @@ impl Session for ApplicationSession {
 
     fn try_send_input(&self, bytes: &[u8]) -> Result<(), SessionSendError> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(session) => session.try_send_input(bytes),
             Self::Local(session) => session.try_send_input(bytes),
             Self::Persistent(session) | Self::DevTunnel(session) => session.try_send_input(bytes),
             Self::Ssh(session) => session.try_send_input(bytes),
@@ -618,6 +657,8 @@ impl Session for ApplicationSession {
 
     fn try_resize(&self, size: TerminalSize) -> Result<(), SessionSendError> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(session) => session.try_resize(size),
             Self::Local(session) => session.try_resize(size),
             Self::Persistent(session) | Self::DevTunnel(session) => session.try_resize(size),
             Self::Ssh(session) => session.try_resize(size),
@@ -630,6 +671,8 @@ impl Session for ApplicationSession {
 
     fn try_shutdown(&self) -> Result<(), SessionSendError> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(session) => session.try_shutdown(),
             Self::Local(session) => session.try_shutdown(),
             Self::Persistent(session) | Self::DevTunnel(session) => session.try_shutdown(),
             Self::Ssh(session) => session.try_shutdown(),
@@ -642,6 +685,29 @@ impl Session for ApplicationSession {
 
     fn try_recv_event(&self) -> Result<SessionEvent, SessionTryReceiveError> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(session) => {
+                let event = session.try_recv_event()?;
+                let SessionEvent::RecoverySync(payload) = event else {
+                    return Ok(event);
+                };
+                let converted =
+                    serde_json::from_slice::<festerm_tunnel_bridge::protocol::Sync>(&payload)
+                        .map_err(|_| ())
+                        .and_then(|sync| {
+                            festerm_sessiond::RecoverySyncCommand::try_from(sync).map_err(|_| ())
+                        })
+                        .and_then(|sync| {
+                            festerm_sessiond::encode_recovery_sync_command(&sync).map_err(|_| ())
+                        });
+                match converted {
+                    Ok(payload) => Ok(SessionEvent::RecoverySync(payload)),
+                    Err(()) => {
+                        session.cancel();
+                        Ok(SessionEvent::Lifecycle(session.lifecycle()))
+                    }
+                }
+            }
             Self::Local(session) => session.try_recv_event(),
             Self::Persistent(session) | Self::DevTunnel(session) => session.try_recv_event(),
             Self::Ssh(session) => session.try_recv_event(),
@@ -654,6 +720,8 @@ impl Session for ApplicationSession {
 
     fn shutdown(&self, timeout: std::time::Duration) -> Result<ShutdownResult, ShutdownError> {
         match self {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Self::Host(session) => session.shutdown(timeout),
             Self::Local(session) => session.shutdown(timeout),
             Self::Persistent(session) | Self::DevTunnel(session) => session.shutdown(timeout),
             Self::Ssh(session) => session.shutdown(timeout),
@@ -1030,18 +1098,30 @@ impl SessionTab {
         self.controller.record_configuration(&self.terminal);
     }
 
-    pub fn sync_recovery_clear(&self) -> Result<(), PersistentSessionError> {
+    pub fn sync_recovery_clear(&self) -> Result<(), String> {
         match self.controller.session() {
-            Some(ApplicationSession::Persistent(session)) => {
-                session.sync_recovery_bytes(b"\x1b[2J\x1b[3J\x1b[H")
-            }
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Some(ApplicationSession::Host(session)) => session
+                .sync(&festerm_tunnel_bridge::protocol::Sync::Bytes(
+                    b"\x1b[2J\x1b[3J\x1b[H".to_vec(),
+                ))
+                .map_err(|error| error.to_string()),
+            Some(ApplicationSession::Persistent(session)) => session
+                .sync_recovery_bytes(b"\x1b[2J\x1b[3J\x1b[H")
+                .map_err(|error| error.to_string()),
             _ => Ok(()),
         }
     }
 
-    pub fn sync_recovery_reset(&self) -> Result<(), PersistentSessionError> {
+    pub fn sync_recovery_reset(&self) -> Result<(), String> {
         match self.controller.session() {
-            Some(ApplicationSession::Persistent(session)) => session.sync_recovery_reset(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Some(ApplicationSession::Host(session)) => session
+                .sync(&festerm_tunnel_bridge::protocol::Sync::Reset)
+                .map_err(|error| error.to_string()),
+            Some(ApplicationSession::Persistent(session)) => session
+                .sync_recovery_reset()
+                .map_err(|error| error.to_string()),
             _ => Ok(()),
         }
     }
@@ -1051,6 +1131,21 @@ impl SessionTab {
     }
 
     fn adopt_recovered_terminal_with(&mut self, before_install: impl FnOnce(&Self)) -> bool {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if matches!(self.controller.session(), Some(ApplicationSession::Host(session)) if session.has_pending_snapshot())
+        {
+            before_install(self);
+            let Some(ApplicationSession::Host(session)) = self.controller.session() else {
+                return false;
+            };
+            if !matches!(session.adopt_into(&mut self.terminal), Ok(true)) {
+                return false;
+            }
+            self.search.terminal_replaced(&self.terminal);
+            self.view.reset_recovery_layout();
+            self.controller.end_recording_on_replacement();
+            return true;
+        }
         let Some(recovered) = self
             .controller
             .session()
@@ -2295,6 +2390,8 @@ impl SessionTab {
     /// Whether this tab owns an SSH session transport, regardless of its current lifecycle state.
     pub fn is_ssh_session(&self) -> bool {
         match self.controller.session() {
+            #[cfg(feature = "experimental-dev-tunnels")]
+            Some(ApplicationSession::Host(_)) => false,
             Some(ApplicationSession::Ssh(_)) => true,
             #[cfg(test)]
             Some(ApplicationSession::TestSsh(_)) => true,
@@ -2529,6 +2626,16 @@ pub enum AppCommand {
         tab_id: TabId,
         request: egui::Id,
         command: festerm_config::host_recipes::MetadataCommand,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[allow(
+        dead_code,
+        reason = "protected foreground receipt loading must supply authority; portable recipe UI cannot manufacture it"
+    )]
+    OpenApprovedHostFromProfiles {
+        tab_id: TabId,
+        request: egui::Id,
+        attachment: Box<festerm_tunnel_bridge::host_client::ApprovedAttachment>,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
     ImportPublicDevTunnelProfile {
@@ -3394,6 +3501,11 @@ pub struct AppState {
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
     #[cfg(feature = "experimental-dev-tunnels")]
+    host_client_budgets: festerm_tunnel_bridge::host_client::Budgets,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    host_account_bindings:
+        std::collections::HashMap<SessionId, festerm_secret_store::SecretReference>,
+    #[cfg(feature = "experimental-dev-tunnels")]
     completed_hosted_profile: Option<festerm_config::Profile>,
     #[cfg(feature = "experimental-dev-tunnels")]
     hosted_open_error: Option<(Option<TabId>, String)>,
@@ -3553,6 +3665,10 @@ impl AppState {
             discovery: Default::default(),
             resume_error: None,
             pending_resume: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_client_budgets: Default::default(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_account_bindings: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
             completed_hosted_profile: None,
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -3961,6 +4077,8 @@ impl AppState {
             }
         }
         self.configuration = configuration;
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.invalidate_removed_host_accounts();
     }
 
     /// Adopts a configuration another window committed (ADR 0032), refreshing
@@ -4742,6 +4860,14 @@ impl AppState {
             }
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::HostRecipeFromProfiles { .. } => {}
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::OpenApprovedHostFromProfiles {
+                tab_id,
+                request,
+                attachment,
+            } => {
+                self.open_approved_host(tab_id, request, *attachment, context);
+            }
             AppCommand::RetryTerminalFontDownload
             | AppCommand::HostRecipe(_)
             | AppCommand::StartStoredPasswordSshProfile { .. }
@@ -6328,6 +6454,102 @@ impl AppState {
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
+    fn open_approved_host(
+        &mut self,
+        tab_id: TabId,
+        request: egui::Id,
+        attachment: festerm_tunnel_bridge::host_client::ApprovedAttachment,
+        context: &egui::Context,
+    ) {
+        if !self
+            .tabs
+            .iter()
+            .any(|tab| tab.id == tab_id && matches!(tab.content, TabContent::Profiles))
+            || !crate::screens::host_recipe_request_is_current(context, tab_id, request)
+        {
+            return;
+        }
+        let binding = &attachment.scope().binding;
+        let Some(account) = self
+            .configuration
+            .accounts()
+            .iter()
+            .find(|account| format!("github:{}", account.account_id()) == binding.account())
+        else {
+            crate::screens::report_host_recipe_outcome(
+                context, tab_id, request,
+                Err("The approved host's account is no longer available. Review it in the foreground."),
+            );
+            return;
+        };
+        let account_reference = account.credential_reference().duplicate_for_transport();
+        let label = format!("Host {}", binding.host());
+        let host = binding.host().to_string();
+        let port = attachment.port();
+        let session = match attachment.start(&self.host_client_budgets, make_notifier(context)) {
+            Ok(session) => session,
+            Err(error) => {
+                crate::screens::report_host_recipe_outcome(
+                    context,
+                    tab_id,
+                    request,
+                    Err(error.message()),
+                );
+                return;
+            }
+        };
+        self.host_account_bindings
+            .insert(session.id(), account_reference);
+        let session = SessionTab::from_session_result(
+            Ok::<_, std::convert::Infallible>(ApplicationSession::Host(Box::new(session))),
+            Dimensions::new(80, 24).expect("default dimensions"),
+            SessionResultMeta {
+                label: &label,
+                launch_secondary: Some("Approved HOST · attaching existing generation".into()),
+                profile_identifier: None,
+                session_name: "Approved host session",
+                inspector_transport: InspectorTransport::DevTunnel {
+                    host,
+                    port,
+                    account: None,
+                },
+                ssh_password_retry: None,
+            },
+        );
+        crate::screens::report_host_connection_started(context, tab_id, request);
+        // Install the real frontend before any snapshot can be acknowledged.
+        // Recording enrollment is not started on an uninstalled temporary view.
+        self.place_session_with_recording_on_surface(session, None, false);
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn invalidate_removed_host_accounts(&mut self) {
+        let mut live = std::collections::HashSet::new();
+        for tab in &self.tabs {
+            let TabContent::Session(tab) = &tab.content else {
+                continue;
+            };
+            let Some(ApplicationSession::Host(session)) = tab.controller.session() else {
+                continue;
+            };
+            live.insert(session.id());
+            let current = self
+                .host_account_bindings
+                .get(&session.id())
+                .is_some_and(|reference| {
+                    self.configuration.accounts().iter().any(|account| {
+                        format!("github:{}", account.account_id()) == session.account()
+                            && account.credential_reference() == reference
+                    })
+                });
+            if !current {
+                session.cancel();
+            }
+        }
+        self.host_account_bindings.retain(|id, _| live.contains(id));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
     pub(crate) fn start_tunnel_launch(
         &mut self,
         profile_id: Option<String>,
@@ -6398,6 +6620,8 @@ impl AppState {
     }
 
     pub fn update_running_sessions(&mut self, context: &egui::Context) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        self.invalidate_removed_host_accounts();
         // Only the Launcher shows Running Sessions, and discovery costs a
         // `tmux`/`screen`/daemon probe every couple of seconds. Now that the
         // preference is on by default, polling while the user is looking at a

@@ -460,6 +460,25 @@ pub(crate) fn report_host_recipe_outcome(
     context.request_repaint();
 }
 
+pub(crate) fn report_host_connection_started(
+    context: &egui::Context,
+    tab: TabId,
+    request: egui::Id,
+) {
+    context.data_mut(|data| {
+        let id = profiles_state_id(tab);
+        let Some(mut state) = data.get_temp::<ProfilesScreenState>(id) else { return };
+        let ProfilesScreenMode::HostRecipes(recipes) = &mut state.mode else { return };
+        if recipes.pending != Some(request) { return }
+        recipes.pending = None;
+        recipes.feedback = Some(
+            "Connecting the approved existing session. Attached is reported only after frontend recovery and host activation.",
+        );
+        data.insert_temp(id, state);
+    });
+    context.request_repaint();
+}
+
 #[cfg(test)]
 pub(crate) fn install_host_recipe_request_for_test(
     context: &egui::Context,

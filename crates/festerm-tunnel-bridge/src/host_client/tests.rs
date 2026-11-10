@@ -193,6 +193,68 @@ async fn selected_host_inventory_preserves_unknowns_and_original_request_without
 }
 
 #[tokio::test]
+async fn selected_host_inventory_collects_current_pages_with_the_original_request_and_unknowns() {
+    let (stream, mut peer) = tokio::io::duplex(32768);
+    let operation = OperationId::new();
+    let expected_operation = operation.clone();
+    let mut sessions: Vec<_> = (0..=PAGE_SIZE).map(|_| summary()).collect();
+    sessions.sort_by(|a, b| a.target.logical.cmp(&b.target.logical));
+    let expected_sessions = sessions.clone();
+    let unknown = summary().target;
+    let expected_unknown = unknown.clone();
+    let server = tokio::spawn(async move {
+        let budgets = Budgets::default();
+        hello(&mut peer, &budgets, true).await;
+        let snapshot = OperationId::new();
+        let last = sessions.split_off(PAGE_SIZE);
+        for (page, expected_cursor) in [
+            (
+                InventoryPage {
+                    snapshot: snapshot.clone(),
+                    authorization_epoch: Epoch::new(1).unwrap(),
+                    sessions,
+                    unknown: vec![unknown.clone()],
+                    next: Some(Cursor {
+                        snapshot: snapshot.clone(),
+                        offset: 16,
+                    }),
+                },
+                None,
+            ),
+            (
+                InventoryPage {
+                    snapshot: snapshot.clone(),
+                    authorization_epoch: Epoch::new(1).unwrap(),
+                    sessions: last,
+                    unknown: vec![unknown],
+                    next: None,
+                },
+                Some(Cursor {
+                    snapshot,
+                    offset: 16,
+                }),
+            ),
+        ] {
+            let request = reply(&mut peer, &budgets, Response::Inventory { page }).await;
+            assert_eq!(request.operation, expected_operation);
+            assert_eq!(
+                request.body,
+                Request::List {
+                    cursor: expected_cursor
+                }
+            );
+        }
+    });
+    let inventory =
+        inventory_authenticated(&mut client(stream), operation, &CancellationToken::new())
+            .await
+            .unwrap();
+    assert_eq!(inventory.sessions, expected_sessions);
+    assert_eq!(inventory.unknown, vec![expected_unknown]);
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn selected_host_inventory_refusals_never_become_authoritative_absence() {
     for reason in [
         Refusal::Denied,

@@ -2,6 +2,46 @@
 
 ## Executing a selected host without inventing enrollment
 
+The next checkpoint qualifies twelve selected-host tests: the original eight
+executor tests, successful multi-page inventory and three shared Session tests.
+The real framed presentation round trip installs
+the frontend's recovery, waits for host activation, sends input once, presents
+ordered output and confirms intentional detach only by its correlated receipt.
+Event-loop notifications cover new frames and unexpected closure. The typed
+desktop route now installs that same adapter into a real `SessionTab`, fences the
+originating editor/account credential and converts recovery sync to the existing
+controller format; configuration adoption invalidates removed/rotated accounts.
+This privileged route deliberately has no public recipe producer while the
+protected foreground receipt/index loader and authorized inventory chooser are
+missing. Unsupported first-connect is not made to appear functional. Desktop
+diagnostic checks explicitly bypass an existing dependency MSRV mismatch
+(installed Rust 1.97.1 versus required 1.98); they are not release/native evidence.
+Six existing terminal tests pass with four explicit-native ignores; two
+memory-vault binding/failure regressions also pass. Diagnostic desktop check,
+strict bin/test clippy and both origin/account rejection tests pass. No installed
+app, GUI, native vault, cloud, VM or physical device was exercised.
+
+The owned target used `CARGO_TARGET_DIR=target/adr84-clients-qualified`,
+`CARGO_BUILD_JOBS=1`, `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_INCREMENTAL=0`:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib selected_host_
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib host_terminal::tests
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_owner_
+cargo clippy --locked -p festerm-tunnel-bridge --features host-routing --all-targets -- -D warnings
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing --lib
+# Diagnostic only: ordinary app check rejects the pre-existing Rust 1.98 MSRV.
+cargo check --locked --ignore-rust-version -p festerm --features experimental-dev-tunnels
+cargo clippy --locked --ignore-rust-version -p festerm --features experimental-dev-tunnels --bin festerm --tests -- -D warnings
+cargo test --locked --ignore-rust-version -p festerm --features experimental-dev-tunnels --bin festerm selected_host_desktop_
+```
+
+Final formatting, traceability (311 edges, no broken/unclassified references) and
+diff checks pass. The named source-dependency baseline remains fixed runtime
+`95a88ed7` plus session `8ebbaf29`; later fixed native/runtime milestones were
+reported by their owners but were not silently consumed by these client results.
+
 The recovered November 10 client lane normally integrates fixed runtime
 `95a88ed7` and session `8ebbaf29`, preserving public metadata and ADR 0085.
 The portable selected-host executor now opens an already approved native-vault

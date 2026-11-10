@@ -37,7 +37,7 @@ festerm-recording = { path = "../../crates/festerm-recording" }
 festerm-recording-export = { path = "../../crates/festerm-recording-export" }
 festerm-session = { path = "../../crates/festerm-session" }
 festerm-sessiond = { path = "../../crates/festerm-sessiond" }
-festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional = true, features = ["relay"] }
+festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional = true, features = ["relay", "host-routing"] }
 festerm-tunnel-client = { path = "../../crates/festerm-tunnel-client", optional = true }
 tokio-util = { version = "0.7", features = ["rt"], optional = true }
 festerm-secret-store = { path = "../../crates/festerm-secret-store" }
