@@ -736,9 +736,11 @@ protected-file credential/anchor backend binds origin/storage/installation;
 whole protected-store/home rollback is not resisted by that weaker mode.
 Enrollment does not enable access or creation; settings deny masks creation
 without blocking key revocation or permission removal.
-The real pinned SSH stream lacks a shared connection/channel transcript
-exporter, so both client/server owner-channel gates explicitly refuse.
-Pinned-channel integration and independent security review are mandatory before
+Vendored russh now derives immutable bindings from its signed original session
+identifier and role-ordered actual channel IDs, excluding no-KEX outer relays.
+Client signing requires its privately captured actual pin and matching current
+stream; server authentication transfers that stream and owner/guard together.
+Endpoint integration and independent security review are mandatory before
 new remote capabilities; all new capabilities default denied. No session routing,
 creation, migration or lifetime-supervisor implementation is claimed by this slice.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal

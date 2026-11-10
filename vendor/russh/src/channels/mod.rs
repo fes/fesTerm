@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -14,6 +14,8 @@ pub use channel_ref::ChannelRef;
 
 mod channel_stream;
 pub use channel_stream::ChannelStream;
+mod binding;
+pub use binding::ChannelBinding;
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -117,6 +119,7 @@ pub enum ChannelMsg {
 pub(crate) struct WindowSizeRef {
     value: Arc<Mutex<u32>>,
     notifier: Arc<Notify>,
+    binding: Arc<OnceLock<ChannelBinding>>,
 }
 
 impl WindowSizeRef {
@@ -125,6 +128,13 @@ impl WindowSizeRef {
         Self {
             value: Arc::new(Mutex::new(initial)),
             notifier,
+            binding: Arc::new(OnceLock::new()),
+        }
+    }
+
+    pub(crate) fn set_channel_binding(&self, binding: Option<ChannelBinding>) {
+        if let Some(binding) = binding {
+            let _ = self.binding.set(binding);
         }
     }
 
@@ -656,9 +666,16 @@ impl<S: From<(ChannelId, ChannelMsg)> + Send + Sync + 'static> Channel<S> {
         self.read_half.wait().await
     }
 
+    /// Binding minted by the authenticated SSH connection/channel path.
+    /// This does not substitute for host-key approval or principal admission.
+    pub fn channel_binding(&self) -> Option<&ChannelBinding> {
+        self.write_half.window_size.binding.get()
+    }
+
     /// Consume the [`Channel`] to produce a bidirectionnal stream,
     /// sending and receiving [`ChannelMsg::Data`] as `AsyncRead` + `AsyncWrite`.
     pub fn into_stream(self) -> ChannelStream<S> {
+        let binding = self.channel_binding().cloned();
         ChannelStream::new(
             io::ChannelTx::new(
                 self.write_half.sender.clone(),
@@ -669,6 +686,7 @@ impl<S: From<(ChannelId, ChannelMsg)> + Send + Sync + 'static> Channel<S> {
                 None,
             ),
             io::ChannelRx::new(io::ChannelCloseOnDrop(self), None),
+            binding,
         )
     }
 

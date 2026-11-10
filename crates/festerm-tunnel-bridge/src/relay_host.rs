@@ -37,13 +37,23 @@ pub struct HostStream {
     stream: ChannelStream<server::Msg>,
     _slot: OwnedSemaphorePermit,
     _client: Arc<OwnedSemaphorePermit>,
+    #[cfg(feature = "owner-auth")]
+    owner_host: crate::owner_auth::PinnedHost,
 }
 #[cfg(feature = "owner-auth")]
 impl HostStream {
-    /// A tunnel bearer / auth_none is not an owner or channel-bound proof.
-    /// Do not issue an owner challenge or admit HOST on this stream.
     pub fn require_owner_channel_binding(&self) -> Result<(), crate::owner_auth::OwnerKeyError> {
-        Err(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable)
+        self.owner_channel_binding().map(|_| ())
+    }
+    pub(crate) fn owner_channel_binding(
+        &self,
+    ) -> Result<&russh::ChannelBinding, crate::owner_auth::OwnerKeyError> {
+        self.stream
+            .channel_binding()
+            .ok_or(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable)
+    }
+    pub(crate) fn owner_host(&self) -> &crate::owner_auth::PinnedHost {
+        &self.owner_host
     }
 }
 impl tokio::io::AsyncRead for HostStream {
@@ -115,6 +125,11 @@ pub async fn host_with_identity(
         return Err(stage_error("host.arguments"));
     }
     let host_id = identity.host_id();
+    #[cfg(feature = "owner-auth")]
+    let owner_host = crate::owner_auth::PinnedHost {
+        host: host_id.clone().try_into()?,
+        host_key_fingerprint: identity.fingerprint()?,
+    };
     let key = identity.into_key();
     let public = key
         .public_key()
@@ -216,6 +231,8 @@ pub async fn host_with_identity(
                     slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
                     client: permit.clone(),
                     authed: Some(authed),
+                    #[cfg(feature = "owner-auth")]
+                    owner_host: owner_host.clone(),
                 };
                 let server_config = server_config.clone();
                 let stopped = stopped.clone();
@@ -379,6 +396,8 @@ struct Port {
     slots: Arc<Semaphore>,
     client: Arc<OwnedSemaphorePermit>,
     authed: Option<oneshot::Sender<()>>,
+    #[cfg(feature = "owner-auth")]
+    owner_host: crate::owner_auth::PinnedHost,
 }
 impl server::Handler for Port {
     type Error = russh::Error;
@@ -417,6 +436,8 @@ impl server::Handler for Port {
             stream: channel.into_stream(),
             _slot: slot,
             _client: self.client.clone(),
+            #[cfg(feature = "owner-auth")]
+            owner_host: self.owner_host.clone(),
         });
         Ok(())
     }
@@ -701,6 +722,14 @@ mod tests {
     async fn encrypted_transport_pins_host_and_exports_only_one_preconfigured_port() {
         let key = key();
         let expected = pin(&key);
+        #[cfg(feature = "owner-auth")]
+        let owner_host = crate::owner_auth::PinnedHost {
+            host: Default::default(),
+            host_key_fingerprint: key
+                .public_key()
+                .fingerprint(russh::keys::HashAlg::Sha256)
+                .to_string(),
+        };
         let config = Arc::new(server::Config {
             keys: vec![key],
             channel_buffer_size: 8,
@@ -720,16 +749,21 @@ mod tests {
                     slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
                     client: client_lease,
                     authed: None,
+                    #[cfg(feature = "owner-auth")]
+                    owner_host,
                 },
             )
             .await
             .unwrap()
             .await
         });
-        let mut client =
-            client::connect_stream(Arc::new(client_config()), client_io, VerifiedHost(expected))
-                .await
-                .unwrap();
+        let mut client = client::connect_stream(
+            Arc::new(client_config()),
+            client_io,
+            VerifiedHost(expected.clone()),
+        )
+        .await
+        .unwrap();
         assert!(client.authenticate_none("tunnel").await.unwrap().success());
         assert!(client
             .channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 0)
@@ -748,6 +782,9 @@ mod tests {
         // Observation control and watch streams open on the same authenticated
         // client through the observation binding, bounded per client.
         let connection = ClientConnection {
+            #[cfg(feature = "owner-auth")]
+            owner_transport: VerifiedPinnedChannel::from_fixture_stream(&channel, &expected)
+                .unwrap(),
             stream: channel,
             _session: Arc::new(client),
             port: 47461,
@@ -755,25 +792,65 @@ mod tests {
         };
         #[cfg(feature = "owner-auth")]
         {
-            use crate::owner_auth::OwnerKeyError;
+            assert_eq!(connection.require_owner_channel_binding(), Ok(()));
+            assert_eq!(accepted.require_owner_channel_binding(), Ok(()));
             assert_eq!(
-                connection.require_owner_channel_binding(),
-                Err(OwnerKeyError::ChannelBindingUnavailable)
-            );
-            assert_eq!(
-                accepted.require_owner_channel_binding(),
-                Err(OwnerKeyError::ChannelBindingUnavailable)
+                connection.owner_channel_binding().unwrap(),
+                accepted.owner_channel_binding().unwrap()
             );
         }
         let binding = connection.observation_binding();
         let mut extra = Vec::new();
         for _ in 1..CHANNELS_PER_CLIENT {
             let mut stream = binding.open().await.unwrap();
-            let mut accepted = rx.recv().await.unwrap();
+            let mut sibling = rx.recv().await.unwrap();
+            #[cfg(feature = "owner-auth")]
+            {
+                assert_ne!(
+                    connection.owner_channel_binding().unwrap(),
+                    stream.channel_binding().unwrap()
+                );
+                assert_eq!(
+                    stream.channel_binding().unwrap(),
+                    sibling.owner_channel_binding().unwrap()
+                );
+                if extra.is_empty() {
+                    use crate::owner_auth::*;
+                    let vault = festerm_secret_store::MemorySecretStore::new();
+                    let approved = OwnerBinding {
+                        installation: festerm_host_protocol::HostId::new().to_string(),
+                        host: accepted.owner_host().clone(),
+                        account: "github:channel-fixture".into(),
+                        principal: Default::default(),
+                    };
+                    let key = fixture_key(&vault, &approved);
+                    let verifier = OwnerVerifier::new(
+                        OwnerPolicy {
+                            host: approved.host.clone(),
+                            principal: approved.principal.clone(),
+                            host_epoch: festerm_host_protocol::Epoch::new(1).unwrap(),
+                            grant_epoch: festerm_host_protocol::Epoch::new(1).unwrap(),
+                            remote_access: true,
+                            capabilities: Default::default(),
+                        },
+                        &[key.public_key()],
+                    )
+                    .unwrap();
+                    let pending = accepted.challenge_owner(&verifier).unwrap();
+                    let proof = connection
+                        .prove_owner_fixture(&vault, &key, &approved, pending.challenge())
+                        .unwrap();
+                    assert!(sibling.verify_owner(pending, &proof, &verifier).is_err());
+                    let pending = sibling.challenge_owner(&verifier).unwrap();
+                    assert!(connection
+                        .prove_owner_fixture(&vault, &key, &approved, pending.challenge())
+                        .is_err());
+                }
+            }
             stream.write_all(b"o").await.unwrap();
             let mut byte = [0; 1];
-            accepted.read_exact(&mut byte).await.unwrap();
-            extra.push((stream, accepted));
+            sibling.read_exact(&mut byte).await.unwrap();
+            extra.push((stream, sibling));
         }
         assert!(binding.open().await.is_err());
         for _ in 0..=CHANNELS_PER_CLIENT {
@@ -799,8 +876,17 @@ mod tests {
 
     #[tokio::test]
     async fn encrypted_transport_refuses_changed_host_key_before_authentication() {
+        let host_key = key();
+        #[cfg(feature = "owner-auth")]
+        let owner_host = crate::owner_auth::PinnedHost {
+            host: Default::default(),
+            host_key_fingerprint: host_key
+                .public_key()
+                .fingerprint(russh::keys::HashAlg::Sha256)
+                .to_string(),
+        };
         let config = Arc::new(server::Config {
-            keys: vec![key()],
+            keys: vec![host_key],
             ..Default::default()
         });
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
@@ -815,6 +901,8 @@ mod tests {
                     slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
                     client: Arc::new(Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap()),
                     authed: None,
+                    #[cfg(feature = "owner-auth")]
+                    owner_host,
                 },
             )
             .await;
@@ -827,5 +915,169 @@ mod tests {
         .await
         .is_err());
         server.abort();
+    }
+
+    #[cfg(feature = "owner-auth")]
+    async fn owner_pair(
+        key: russh::keys::PrivateKey,
+        host: crate::owner_auth::PinnedHost,
+    ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
+        let expected = pin(&key);
+        let config = Arc::new(server::Config {
+            keys: vec![key],
+            ..Default::default()
+        });
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (tx, mut rx) = mpsc::channel(CHANNELS_PER_CLIENT);
+        let server = tokio::spawn(async move {
+            let running = server::run_stream(
+                config,
+                server_io,
+                Port {
+                    port: 47461,
+                    tx,
+                    slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
+                    client: Arc::new(Arc::new(Semaphore::new(1)).try_acquire_owned().unwrap()),
+                    authed: None,
+                    owner_host: host,
+                },
+            )
+            .await
+            .unwrap();
+            let _ = running.await;
+        });
+        let mut session = client::connect_stream(
+            Arc::new(client_config()),
+            client_io,
+            VerifiedHost(expected.clone()),
+        )
+        .await
+        .unwrap();
+        assert!(session.authenticate_none("tunnel").await.unwrap().success());
+        let stream = session
+            .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
+            .await
+            .unwrap()
+            .into_stream();
+        let connection = ClientConnection {
+            owner_transport: VerifiedPinnedChannel::from_fixture_stream(&stream, &expected)
+                .unwrap(),
+            stream,
+            _session: Arc::new(session),
+            port: 47461,
+            observation_expiry: None,
+        };
+        (connection, rx.recv().await.unwrap(), server)
+    }
+
+    #[cfg(feature = "owner-auth")]
+    #[tokio::test]
+    async fn host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority() {
+        use crate::owner_auth::*;
+        use festerm_host_protocol::Epoch;
+        use festerm_secret_store::MemorySecretStore;
+
+        let ssh_key = key();
+        let host = PinnedHost {
+            host: Default::default(),
+            host_key_fingerprint: ssh_key
+                .public_key()
+                .fingerprint(russh::keys::HashAlg::Sha256)
+                .to_string(),
+        };
+        let (mut client, accepted, server) = owner_pair(ssh_key.clone(), host.clone()).await;
+        let (mut other, other_host, other_server) = owner_pair(ssh_key, host.clone()).await;
+        assert_ne!(
+            client.owner_channel_binding().unwrap(),
+            other.owner_channel_binding().unwrap()
+        );
+        assert_eq!(
+            client.owner_channel_binding().unwrap(),
+            accepted.owner_channel_binding().unwrap()
+        );
+        let vault = MemorySecretStore::new();
+        let approved = OwnerBinding {
+            installation: festerm_host_protocol::HostId::new().to_string(),
+            host,
+            account: "github:fixture-owner".into(),
+            principal: Default::default(),
+        };
+        let owner_key = fixture_key(&vault, &approved);
+        let policy = OwnerPolicy {
+            host: approved.host.clone(),
+            principal: approved.principal.clone(),
+            host_epoch: Epoch::new(1).unwrap(),
+            grant_epoch: Epoch::new(1).unwrap(),
+            remote_access: true,
+            capabilities: Default::default(),
+        };
+        let verifier = OwnerVerifier::new(policy.clone(), &[owner_key.public_key()]).unwrap();
+        let proof_for = |pending: &PendingChannelOwnerChallenge| {
+            client
+                .prove_owner_fixture(&vault, &owner_key, &approved, pending.challenge())
+                .unwrap()
+        };
+        let pending = accepted.challenge_owner(&verifier).unwrap();
+        let proof = proof_for(&pending);
+        assert!(other
+            .prove_owner_fixture(&vault, &owner_key, &approved, pending.challenge())
+            .is_err());
+        assert!(other_host.verify_owner(pending, &proof, &verifier).is_err());
+        let pending = accepted.challenge_owner(&verifier).unwrap();
+        assert!(accepted.verify_owner(pending, &proof, &verifier).is_err());
+        let pending = accepted.challenge_owner(&verifier).unwrap();
+        let unbound =
+            client.prove_unbound_fixture(&vault, &owner_key, &approved, pending.challenge());
+        assert!(accepted.verify_owner(pending, &unbound, &verifier).is_err());
+
+        for field in 0..5 {
+            let pending = accepted.challenge_owner(&verifier).unwrap();
+            let mut foreign = approved.clone();
+            match field {
+                0 => foreign.account = "github:foreign".into(),
+                1 => foreign.installation = festerm_host_protocol::HostId::new().to_string(),
+                2 => foreign.host.host = Default::default(),
+                3 => foreign.host.host_key_fingerprint = format!("SHA256:{}", "a".repeat(43)),
+                _ => foreign.principal = Default::default(),
+            }
+            assert!(client
+                .prove_owner_fixture(&vault, &owner_key, &foreign, pending.challenge())
+                .is_err());
+        }
+        let foreign_key = fixture_key(&vault, &approved);
+        let pending = accepted.challenge_owner(&verifier).unwrap();
+        let proof = client
+            .prove_owner_fixture(&vault, &foreign_key, &approved, pending.challenge())
+            .unwrap();
+        assert!(accepted.verify_owner(pending, &proof, &verifier).is_err());
+        let mut pending = accepted.challenge_owner(&verifier).unwrap();
+        let proof = proof_for(&pending);
+        pending.expire_fixture();
+        assert!(accepted.verify_owner(pending, &proof, &verifier).is_err());
+        let pending = accepted.challenge_owner(&verifier).unwrap();
+        let proof = proof_for(&pending);
+        let mut revoked_policy = policy;
+        revoked_policy.grant_epoch = Epoch::new(2).unwrap();
+        let revoked = OwnerVerifier::new(revoked_policy, &[foreign_key.public_key()]).unwrap();
+        assert!(accepted.verify_owner(pending, &proof, &revoked).is_err());
+
+        let pending = accepted.challenge_owner(&verifier).unwrap();
+        let proof = proof_for(&pending);
+        let (mut accepted, _owner, _guard) = accepted
+            .authenticate_owner(pending, &proof, &verifier)
+            .unwrap()
+            .into_parts();
+        client.stream.write_all(b"owner").await.unwrap();
+        let mut bytes = [0; 5];
+        accepted.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(&bytes, b"owner");
+        std::mem::swap(&mut client.stream, &mut other.stream);
+        assert!(client.require_owner_channel_binding().is_err());
+        assert!(other.require_owner_channel_binding().is_err());
+        std::mem::swap(&mut client.stream, &mut other.stream);
+        client.close().await.unwrap();
+        other.close().await.unwrap();
+        server.await.unwrap();
+        other_server.await.unwrap();
     }
 }

@@ -22,6 +22,17 @@ assuming that the socket's existence means the agent is listening.
 Keep these changes when updating the vendored crate and rerun the fesTerm SSH,
 credential-lifecycle, security, vendored-russh, and workspace Clippy gates.
 
+ADR 0084 adds immutable `ChannelBinding` exports to `Channel` and
+`ChannelStream`. Authenticated channel-open/confirmation paths hash the signed
+original connection `session_id` plus role-labelled client/server channel IDs
+with SHA-256 under `russh SSH connection/channel binding v1\0`. Rekey retains
+the original session identifier; no-KEX/short-identifier paths export nothing.
+The type has no public constructor/deserializer and is not peer authorization.
+fesTerm's owner adapter separately enforces the actual verified host pin and a
+client-to-host role/domain-bound transcript; it never uses the outer bearer as
+owner proof. Preserve propagation on both incoming and outgoing client/server
+paths and test actual paired streams when updating russh.
+
 Global-request bookkeeping now records a FIFO owner only after an encrypted
 packet requesting a reply is assembled. Both peers honor `want_reply` for
 incoming requests, including unknown and forwarding requests; server reply

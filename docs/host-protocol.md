@@ -246,25 +246,51 @@ discarding either anchor or prepared evidence. Untyped old receipts require
 local review, never automatic adoption. Reserved native creation is serialized
 by the installation lease and random reference, not a native cross-process CAS.
 
-### Concrete transport blocker — no owner signing adapter yet
+### Real pinned SSH channel owner proof
 
-The existing inner SSH `VerifiedHost` really verifies the exact approved host
-key; its encrypted transport fixtures reject changed keys before authentication.
-However `ClientConnection` retains a `ChannelStream` plus client handle, and
-server `HostStream` retains only stream/admission permits. The shared SSH
-session-ID/KEX transcript is private inside vendored russh and neither stream
-exports a shared connection **and channel** binding. A server-generated
-connection UUID or asserted verified boolean is not a substitute: proofs could
-otherwise be relayed/reflected between authenticated streams.
+The original blocker was concrete: vendored russh 0.62.5 kept its signed KEX
+session identifier private and neither stream exported a shared connection
+**and channel** binding. The narrow vendor patch now mints nonconstructible
+`russh::ChannelBinding` values from that original session identifier and
+role-labelled actual client/server channel numbers at authenticated open/
+confirmation paths. The original identifier survives rekey; anonymous/no-KEX
+outer relay streams never receive a binding. Exporter bytes are not a credential.
 
-Both real stream types therefore expose `require_owner_channel_binding`, which
-returns the actionable `ChannelBindingUnavailable` error, even after genuine
-host-key verification. No seed is retrieved and no challenge is signed/admitted
-by this gate. A reviewed role/domain-separated transport exporter carried
-immutably with both stream endpoints, plus anti-relay/reflection/cross-channel
-integration tests, is prerequisite to a production signing/verification adapter.
-The lower-level `OwnerSigningKey::prove` remains a contract primitive, not that
-adapter; fixture proofs do not qualify the missing seam.
+`VerifiedHost` still approves the exact SSH host key before the inner connection
+can open channels. `ClientConnection` privately captures that actual pin and
+channel binding; replacing its public stream invalidates owner signing. Server
+`HostStream` retains its actual loaded stable `HostIdentity` binding, not a
+client-supplied identity. Neither side accepts public trust booleans or caller-
+constructed exporter bytes.
+
+With the optional `owner-auth` feature, the API is:
+
+1. `HostStream::challenge_owner(&OwnerVerifier)` returns noncloneable
+   `PendingChannelOwnerChallenge`; transmit its `challenge()` as bounded JSON.
+2. `ClientConnection::prove_owner(&ClientOwnerKey, &OwnerBinding, &ChannelOwnerChallenge)`
+   opens only native credentials with the exact current locally approved
+   installation/host/key/account/owner. Explicit headless file credentials use
+   `prove_owner_headless(&ExplicitHeadlessFileStore, ...)`, never native failure
+   fallback. The challenge must match this actual pinned channel.
+3. `HostStream::authenticate_owner(self, pending, &proof, &current_verifier)`
+   consumes the exact stream/pending value and verifies current enrollment,
+   epochs, nonce and monotonic expiry. Every result consumes the challenge.
+   Success returns sealed `OwnerAuthenticatedStream`; `into_parts()` transfers
+   the **same actual stream**, `VerifiedOwner` and `OwnerConnectionGuard`
+   together. Keep the guard through shutdown; freshly authorize every operation
+   under the protected policy lease. Do not combine authority with another stream.
+
+The signed message starts with
+`fesTerm HOST owner client-to-host SSH channel proof v1\0`, the actual exporter,
+then the existing canonical challenge (host/key, owner, connection, epochs,
+nonce and TTL). This rejects relay/reflection, different channels/connections,
+old unbound signatures and replay. `require_owner_channel_binding()` remains
+fail-closed for absent/mismatched bindings. Lower-level `OwnerSigningKey::prove`
+is still only the legacy contract primitive, not a production stream adapter.
+The helpers implement no listener or automatic challenge/framing loop; pending
+slots, frame bounds, timeout/cancellation and real endpoint composition remain
+the routing owner's responsibility. Independent review and native qualification
+are required before exposing HOST.
 
 First-connect UX is also deferred: use explicit advanced host-local public-key
 import/fingerprint confirmation or an integrated foreground setup handoff, never

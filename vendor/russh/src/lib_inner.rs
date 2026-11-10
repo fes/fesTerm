@@ -58,7 +58,7 @@ macro_rules! push_packet {
 }
 
 mod channels;
-pub use channels::{Channel, ChannelMsg, ChannelReadHalf, ChannelStream, ChannelWriteHalf};
+pub use channels::{Channel, ChannelBinding, ChannelMsg, ChannelReadHalf, ChannelStream, ChannelWriteHalf};
 
 mod parsing;
 mod session;

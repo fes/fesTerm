@@ -27,6 +27,14 @@ pub use vault::{ClientOwnerKey, OwnerBinding, OwnerKeyError};
 mod headless_store;
 #[cfg(feature = "relay")]
 pub use headless_store::ExplicitHeadlessFileStore;
+#[cfg(feature = "client")]
+mod channel;
+#[cfg(all(test, feature = "relay"))]
+pub(crate) use channel::fixture_key;
+#[cfg(feature = "relay")]
+pub use channel::OwnerAuthenticatedStream;
+#[cfg(feature = "client")]
+pub use channel::{ChannelOwnerChallenge, ChannelOwnerProof, PendingChannelOwnerChallenge};
 
 const DOMAIN: &[u8] = b"fesTerm HOST owner authentication v1\0";
 pub const MAX_OWNER_KEYS: usize = 4;
@@ -213,6 +221,17 @@ impl PendingOwnerChallenge {
         current: &OwnerVerifier,
         now: Instant,
     ) -> Result<(VerifiedOwner, OwnerConnectionGuard), ContractError> {
+        let message = self.challenge.message()?;
+        self.verify_message(proof, current, now, &message)
+    }
+
+    fn verify_message(
+        self,
+        proof: &OwnerProof,
+        current: &OwnerVerifier,
+        now: Instant,
+        message: &[u8],
+    ) -> Result<(VerifiedOwner, OwnerConnectionGuard), ContractError> {
         if now >= self.expires {
             return Err(ContractError::Stale);
         }
@@ -221,11 +240,10 @@ impl PendingOwnerChallenge {
         }
         proof.validate()?;
         let signature = Signature::from_bytes(&unhex::<64>(&proof.signature)?);
-        let message = self.challenge.message()?;
         if !current
             .keys
             .iter()
-            .any(|key| key.verify_strict(&message, &signature).is_ok())
+            .any(|key| key.verify_strict(message, &signature).is_ok())
         {
             return Err(ContractError::Denied);
         }

@@ -537,10 +537,15 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `native_owner_vault_failure_never_creates_a_fallback_key` exercise actual
   local persistence/native-reference APIs with synthetic vaults and keys.
   `encrypted_transport_pins_host_and_exports_only_one_preconfigured_port` now
-  additionally proves both real pinned SSH stream endpoints refuse owner
-  authentication without a shared connection/channel exporter; the changed-key
-  fixture still refuses before authentication. This is a concrete remaining
-  transport prerequisite, not successful channel-bound proof qualification.
+  additionally proves matching real inner-SSH channel exporters and distinct
+  sibling channels; the changed-key fixture still refuses before authentication.
+  `host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority`
+  exercises actual pinned transport proof, exact stream transfer, foreign
+  credentials, cross-connection relay/replay, old unbound signatures,
+  expiry/revocation and public stream replacement. The vendor exporter uses the
+  signed original KEX identifier and role-ordered actual channel IDs, never
+  caller-generated identity bytes. This closes the missing exporter/helper seam,
+  not endpoint/native/first-connect qualification.
   `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
   no UI, listener, broad pairing service or full ADR acceptance is claimed.
   Reliability remediation adds

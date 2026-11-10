@@ -8732,13 +8732,17 @@ trusted composition-root obligation, with no GUI/default caller added and a
 named future desktop/mobile/headless-CLI acceptance gate under `HOSTAUTH-01`.
 
 The transport investigation also found a real stop condition: pinned inner SSH
-verifies its host key, but the handed-off streams do not expose a shared
-connection-and-channel transcript. Both real endpoints now explicitly refuse
-owner authentication at that gate. Contract crypto fixtures and local protected
-storage tests are useful evidence, not permission to invent a verified boolean
-or expose HOST. A reviewed exporter/adapter, native vault qualification,
-foreground first-connect consent and routing integration remain prerequisites;
-no services, cloud resources, normal setup controls or legacy capabilities change.
+verified its host key, but handed-off streams did not expose a shared
+connection-and-channel transcript. A separate narrow vendor patch now derives
+that immutable binding from the actual signed original SSH session identifier
+and role-ordered channel IDs, excluding the anonymous outer relay. Client proof
+compares its private verified pin/exporter capture against the current stream;
+server success transfers the actual stream with its owner and lifetime guard.
+Real encrypted fixtures exercise relay/replay, unbound signatures, foreign
+credentials, expiry/revocation and swapped streams. This is not permission to
+expose HOST: independent review, native qualification, foreground first-connect
+consent and endpoint routing integration remain prerequisites. No services,
+cloud resources, normal setup controls or legacy capabilities change.
 
 ## A headless host boundary without pretending the endpoint exists
 
