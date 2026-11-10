@@ -1726,8 +1726,31 @@ impl SessionControl {
     /// LOCAL maintenance. Known absence may be reclaimed; uncertain creation
     /// first seals future helpers and requires positive native absence proof.
     /// Live revoked daemons remain counted and remotely inaccessible.
+    /// Contention cannot mask foreign-owner denial when the protected checkpoint
+    /// is readable. This read-only check never authorizes retirement.
     pub fn retire_local(&self, owner: &PrincipalId, target: &Target) -> Result<(), ControlError> {
-        let mut tx = self.transaction()?;
+        let mut tx = match self.transaction() {
+            Err(ControlError::Busy) => {
+                let directory =
+                    storage::private_directory(&self.root, false).map_err(storage_error)?;
+                let bytes = storage::read_private(&directory, Path::new(STATE_FILE), STATE_LIMIT)
+                    .map_err(storage_error)?;
+                let state: State =
+                    serde_json::from_slice(&bytes).map_err(|_| ControlError::Storage)?;
+                return Err(
+                    if state
+                        .sessions
+                        .get(&target.logical)
+                        .is_none_or(|record| &record.owner != owner)
+                    {
+                        ControlError::Denied
+                    } else {
+                        ControlError::Busy
+                    },
+                );
+            }
+            result => result?,
+        };
         let record = tx
             .state
             .sessions

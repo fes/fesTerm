@@ -1627,3 +1627,8 @@ ADOPTED; a deferred-adoption control distinguishes pre-payload bridge refusal
 from malformed recovery decoding. All invalid-reason/no-adoption and live-writer
 assertions remain. The `9d521174` x64 bridge CI passed both native cases, but
 new primary failures and native/installed-service acceptance remain separate.
+HOST-02/03 local-retirement contention coverage distinguishes deny-only protected
+ownership observation from effect authority: foreign/missing owners stay Denied,
+matching-owner journal/start Busy and unavailable-native-registry Unknown cannot
+establish absence. Controlled refusals preserve exact PID/generation/issued state;
+successful retirement still fences every captured old scope.

@@ -1,5 +1,51 @@
 # Milestone Progress Narrative
 
+## Keeping local retirement denial ahead of journal contention
+
+Linux primary job `129964171286` at `dbe998d0` retained 25 host-control passes
+and a failed foreign-principal Denied assertion in
+`local_pending_retirement_requires_positive_native_absence_and_fences_old_scopes`.
+The original assertion did **not** print the returned error; its actual variant
+remains unrecorded, not retrospectively labeled Busy. The journal still showed
+an unbound Launching reservation, null identity/native PID and Unknown grant.
+The raw `adr84-sessiondbe-linux-primary-failed.log` remains unchanged. One
+unchanged local macOS selector passed; it does not erase this CI failure.
+
+A deterministic held-journal/start/registry control against unchanged product
+code then failed with **actual `Err(Busy)` versus required `Err(Denied)`**.
+`retire_local` attempted the nonblocking global journal transaction before
+checking ownership. The correction handles only journal Busy: a bounded atomic
+private checkpoint may deny a foreign/missing owner, but can never authorize
+an action; a matching owner still receives Busy. Any retirement still needs the
+original fully validated locked transaction and positive native absence proof.
+A malformed checkpoint returns Storage, not a guessed ownership decision.
+
+The controlled test independently proves journal/native-start Busy and native
+registry Unknown. Denied/Busy leave the lease, launch journal, PID, generation
+and issued ledger unchanged. Native-Unknown may seal the lease stopped, but
+preserves its PID/generation/grant plus the complete logical/issued journal and
+launch evidence. The original corrupt-registry/positive-absence/old-scope test
+now also checks unchanged journals and prints exact unexpected errors. No
+retry, sleep, deadline, skip, fresh operation or assertion relaxation was added.
+
+With one warm-target job, zero dev/test debug info and incremental compilation
+off, the corrected macOS source passed:
+
+```sh
+cargo test --locked -p festerm-sessiond --test host_control retirement -- --nocapture --test-threads=2
+cargo test --locked -p festerm-sessiond --test host_control concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon -- --exact --test-threads=1
+cargo test --locked -p festerm-sessiond --test host_control logical_capacity_retires_absent_records_but_never_erases_revocation_or_generation_fences -- --exact --test-threads=1
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+Counts are **4 + 1 + 1 passed, zero failed/ignored**, not a full-suite claim.
+Strict affected Clippy, format, traceability (311 edges) and diff checks pass.
+Baseline, controlled RED and corrected logs remain under
+`target/adr84-windows-correction/retirement-*.log`.
+The reported `dbe998d0` macOS primary success and Linux VM `181eb572` 26-pass
+result remain attributed to those exact heads. Fresh corrected Linux CI is
+required; no VM execution or new native/platform acceptance is claimed.
+
 ## Selecting policy-compliant roots for Windows registry fixtures
 
 Fresh Windows primary job `129938153330` at exact `181eb572` failed two daemon
