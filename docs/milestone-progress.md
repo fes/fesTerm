@@ -1,5 +1,25 @@
 # Milestone Progress Narrative
 
+## Establishing helper publisher authenticity without a second trust root
+
+ADR 0084 stage 7 needs independent Linux publisher authentication, not a hash
+downloaded beside the archive. The existing helper release now has strict
+signed metadata binding package identity, exact version/target, byte length and
+SHA-256 using the same protected cargo-packager key as desktop updates. A
+GUI-free shared verifier returns only immutable, bounded, allowlisted regular
+file bytes; the offline command does no extraction or execution.
+Synthetic-key Rust and Python fixtures cover metadata rejection, unsafe archives
+and old-tag recovery without touching secrets or installed services.
+Cross-language tests now feed all six actual Python-produced bundles/manifests
+through genuine synthetic signatures into the Rust verifier. A separate Linux
+normal-CI job uses pinned cargo-packager 0.11.8 with a generated throwaway key,
+so signer-format/mode incompatibilities are caught before protected publication.
+The [bootstrap and staging contract](host-release-artifacts.md) deliberately
+does not claim that downloading both verifier and key establishes trust.
+Existing artifact names/consumers remain compatible; host CLI inclusion,
+native installer/executable publication, service switching/rollback,
+migration and native signing evidence remain #681 gates. ADR 0084 stays Proposed.
+
 ## Stabilizing SSH-agent test startup
 
 The vendored SSH tests could connect between the agent creating its Unix
@@ -8672,3 +8692,36 @@ current reauthorization rather than copied fences. The same review tightened
 version-first refusal, zero-field schemas and cursor progress. Optional owner
 proofs are explicitly enabled in every platform's CI test/lint combinations;
 this closes a coverage gap, not the remaining native/exposure gates.
+
+## A headless host boundary without pretending the endpoint exists
+
+ADR 0084 separates installing a host from creating a shell. The legacy installer
+cannot implement that by being called under a different name: it provisions one
+shell and has different ownership. Stage 4 therefore starts with shared,
+protected host-local configuration and an epoch-fenced lifecycle journal, plus a
+GUI-free `festerm-host` binary for real disabled configuration, recorded status
+and offline official-CLI pin staging. Desktop and headless origins cannot
+silently adopt each other; late setup results retain exact stop/cleanup evidence
+instead of restoring cancelled consent. Persistent shells are never targets.
+
+This is deliberately not a completed host installer. Setup, run, update and
+uninstall return failure until the new endpoint, secure foreground sign-in,
+native adapters and authenticated artifacts are wired. Portable tests prove the
+boundary, not cross-platform service or pre-login readiness. The remaining work
+stays explicit under [#681](https://github.com/fes/fesTerm/issues/681).
+
+The next boundary connects the shared artifact verifier rather than inventing a
+second signing scheme. Headless `stage-package` authenticates exact-version,
+native-target helper artifacts with the existing updater trust and stages their
+immutable entries plus exact signed provenance for restart verification. Cached
+bytes must still match; a completion marker is not authority. Nothing is
+executed or registered, and legacy helpers are not rebranded as the new endpoint.
+
+Review tightened the consent boundary: enabling now commits only the exact
+foreground-approved settings and persists them with the operation ticket;
+configuration changes require reconfirmation. The exact ticket can be recovered
+after a crash rather than rebuilt from portable config. Initial journals and
+pinned CLI copies now share atomic no-replace publication with helper staging,
+and recordless directories require explicit manual ownership review. Generic
+setup refusal is not claimed as generation-specific migration confirmation;
+that workflow remains deferred until its real API exists.

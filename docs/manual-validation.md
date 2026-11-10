@@ -52,6 +52,18 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-08)
 
+HOST-06's [authenticated helper foundation](host-release-artifacts.md) has
+synthetic-key rejection/allowlist tests and Python manifest/recovery fixtures.
+Cross-language tests verify all six actual Python-produced bundles/manifests;
+the Linux normal-CI signer check uses pinned cargo-packager 0.11.8 and a
+generated throwaway key, not the protected release identity.
+DT-05/DT-08 still require protected real-release signatures, independently
+trusted first-verifier delivery and clean-machine verification/rejection on all
+six native targets. These offline tests are not installed service
+switching/rollback, headless CLI inclusion or legacy-migration evidence.
+Legacy Linux installers still lack this new independent publisher verification;
+integration remains tracked in [#681](https://github.com/fes/fesTerm/issues/681).
+
 Installer command integrity is automated: shell subprocess regressions exercise
 matching, modified and empty responses, download failures, argument quoting and
 Unix temporary-file cleanup. PowerShell additionally rejects newline-rewritten
@@ -3347,7 +3359,7 @@ reconciliation, simultaneous sessions and leases, fair output/control scheduling
 and physical mobile disconnect/reconnect. Later slices must extend DT-07/DT-08,
 CP-11 and MOB-03/MOB-06 with actual platform evidence before claiming acceptance.
 Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
-HOST-04–06 setup/update/migration remain deferred behind their implementations;
+HOST-04–06 setup/update/migration retain partial foundations described below;
 there is no new completed manual or usability scenario.
 Migration qualification must preserve protected state/account binding, retain
 manual deferral and prove that setup/sharing consent cannot stop/restart a live
@@ -3355,6 +3367,18 @@ legacy session. Such a stop requires separate default-No confirmation of the
 exact live generation, revalidated before the effect; stale confirmation must
 not stop a replacement. No such local confirmation UI or native evidence is
 claimed by the stage-1 protocol refusal fixture.
+
+## ADR 0084 host setup qualification
+
+Migration must preserve protected state/account binding and permit manual
+deferral. Setup/sharing consent cannot stop or restart a live legacy session;
+that needs separate default-No confirmation for its exact generation. That
+workflow and its generation-confirmation tests remain deferred until a migration
+API exists; generic command-refusal tests are not migration-consent evidence.
+
+| ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
+| --- | --- | --- | --- |
+| HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/pin staging boundary; native/service/package and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, exact-owned native adapters and authenticated release artifacts. Windows/macOS/Linux startup and service acceptance require real platform evidence; fixture success is not that evidence. |
 
 ## Intake rule for new work
 

@@ -5,13 +5,50 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Embedded Dev Tunnel host installer scripts and the exact commands that run them, for in-app review."
+description = "Legacy installer review, protected host lifecycle and authenticated helper artifacts."
 publish = false
 
+[features]
+default = []
+lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
+artifacts = [
+    "dep:base64",
+    "dep:flate2",
+    "dep:minisign-verify",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tar",
+    "dep:zip",
+]
+
+[[bin]]
+name = "festerm-verify-artifact"
+path = "src/bin/festerm-verify-artifact.rs"
+required-features = ["artifacts"]
+
 [dependencies]
+base64 = { version = "0.22", optional = true }
+flate2 = { version = "1", optional = true }
+minisign-verify = { version = "0.2.5", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 sha2 = "0.11"
+festerm-sessiond = { path = "../festerm-sessiond", optional = true }
+festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge", optional = true }
+fs2 = { version = "0.4", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+tar = { version = "0.4", optional = true }
+zip = { version = "4.6", default-features = false, features = ["deflate"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+festerm-unix-security = { path = "../festerm-unix-security", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+festerm-windows-security = { path = "../festerm-windows-security", optional = true }
 
 [dev-dependencies]
+blake2 = "0.10"
+ed25519-dalek = "3"
 tempfile = "3"
 
 [lints]

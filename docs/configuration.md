@@ -1,5 +1,11 @@
 # Configuration Foundation
 
+ADR 0084's headless host settings are **host-local**, not portable profile TOML.
+See [headless lifecycle configuration](headless-host.md): `festerm-host configure`
+saves disabled intent with creation denied and manual startup by default. It
+does not enable access, register startup or create a shell. Existing desktop and
+headless origin journals cannot adopt each other. Foundation
+
 `festerm-config` owns versioned, strict TOML parsing, explicit file I/O, and
 in-memory transactional load state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
