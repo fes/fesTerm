@@ -546,6 +546,10 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   and `reserved_secret_creation_never_replaces_existing_authority`.
   Prepared records and pre-reserved references permit explicit validated forward
   recovery without a large native credential blob, rollback or account adoption.
+  `protected_owner_interrupted_initialization_cannot_switch_credential_storage`
+  preserves receipt/prepared evidence across refused native/file mode changes;
+  the real private-store key fixture now verifies deletion and subsequent Missing
+  (including Windows DELETE-capable no-reparse handles in platform CI).
 - **Automated tests required:** Planned tests and acceptance matrix below.
   Implemented stage-4 boundary coverage:
   `headless_configuration_is_inert_and_origin_is_not_adopted`,

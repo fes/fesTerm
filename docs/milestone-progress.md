@@ -8717,6 +8717,13 @@ headless-only protected-file credential/anchor storage, explicitly bound to its
 origin/installation and never selected after native failure. It has weaker
 whole-store/home rollback protection; GUI/native defaults do not change.
 
+The follow-up review tightened the crash receipt itself: it persists and checks
+the selected backend/origin/installation before any resumed creation or recovery,
+so an interrupted native setup cannot silently become a separate file authority.
+Windows credential deletion now opens the exact no-reparse file with DELETE
+access and validates its privacy; the real private-store fixture verifies
+create/reopen/delete/Missing rather than treating an API call as deletion proof.
+
 The transport investigation also found a real stop condition: pinned inner SSH
 verifies its host key, but the handed-off streams do not expose a shared
 connection-and-channel transcript. Both real endpoints now explicitly refuse

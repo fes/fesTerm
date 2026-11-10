@@ -5511,6 +5511,7 @@
         "protected_owner_headless_file_selection_is_explicit_bound_and_not_desktop_fallback",
         "protected_owner_observed_epoch_commit_recovers_only_forward_after_disk_failure",
         "reserved_secret_creation_never_replaces_existing_authority",
+        "protected_owner_interrupted_initialization_cannot_switch_credential_storage",
         "native_owner_reference_reopens_only_exact_approved_binding",
         "native_owner_vault_failure_never_creates_a_fallback_key",
         "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",

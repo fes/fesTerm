@@ -230,6 +230,13 @@ metadata. Reopening refuses changed installation, host/key, account or owner;
 no OAuth credential borrowing is involved. Secret buffers are zeroized. Client
 key deletion is retryable and distinct from host-side revocation.
 
+The durable initialization receipt also fixes the selected backend, origin and
+installation before credential creation. Every resume/reconciliation checks it;
+switching native/file modes after an interrupted initialization refuses without
+discarding either anchor or prepared evidence. Untyped old receipts require
+local review, never automatic adoption. Reserved native creation is serialized
+by the installation lease and random reference, not a native cross-process CAS.
+
 ### Concrete transport blocker — no owner signing adapter yet
 
 The existing inner SSH `VerifiedHost` really verifies the exact approved host

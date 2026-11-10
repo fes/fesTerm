@@ -32,6 +32,34 @@ pub enum OwnerStorage {
     HeadlessProtectedFile,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InitializationReceipt {
+    version: u16,
+    storage: OwnerStorage,
+    origin: Origin,
+    installation: String,
+    reference: String,
+}
+
+fn initializing_reference(
+    directory: &File,
+    installation: &Snapshot,
+    selected: OwnerStorage,
+) -> io::Result<SecretReference> {
+    let bytes = storage::read_private(directory, Path::new(INITIALIZING), 512)?;
+    let receipt: InitializationReceipt = serde_json::from_slice(&bytes)
+        .map_err(|_| refused("owner.invalid_initialization_receipt"))?;
+    if receipt.version != 1
+        || receipt.storage != selected
+        || receipt.origin != installation.origin
+        || receipt.installation != installation.installation
+    {
+        return Err(refused("owner.storage_selection_changed_requires_review"));
+    }
+    SecretReference::parse(&receipt.reference).map_err(vault_error)
+}
+
 fn refused(message: &'static str) -> io::Error {
     io::Error::other(message)
 }
@@ -261,6 +289,11 @@ impl Store {
             {
                 return Err(refused("owner.file_storage_is_headless_only"));
             }
+            match initializing_reference(directory, installation, selected) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
             match storage::read_private(directory, Path::new(RECORD), LIMIT) {
                 Ok(bytes) => {
                     let record: EnrollmentSnapshot = serde_json::from_slice(&bytes)
@@ -365,7 +398,7 @@ impl OwnerEnrollment<'_> {
                 capabilities: Capabilities::default(),
             };
             record.validate(installation)?;
-            let reference = match self.reference(directory, INITIALIZING) {
+            let reference = match initializing_reference(directory, installation, self.storage) {
                 Ok(reference) => {
                     match self.vault.get(&reference) {
                         Err(festerm_secret_store::SecretStoreError::Missing) => {}
@@ -381,7 +414,14 @@ impl OwnerEnrollment<'_> {
                     protected_state::publish_new(
                         directory,
                         Path::new(INITIALIZING),
-                        reference.to_persisted_string().as_bytes(),
+                        &serde_json::to_vec(&InitializationReceipt {
+                            version: 1,
+                            storage: self.storage,
+                            origin: installation.origin,
+                            installation: installation.installation.clone(),
+                            reference: reference.to_persisted_string(),
+                        })
+                        .map_err(|_| refused("owner.invalid_initialization_receipt"))?,
                     )?;
                     reference
                 }
@@ -507,11 +547,11 @@ impl OwnerEnrollment<'_> {
     /// stable identity and account. A merely newer disk record is not consent.
     pub fn reconcile(&self) -> io::Result<EnrollmentSnapshot> {
         self.installation.with_locked(|directory, installation| {
+            let reserved = initializing_reference(directory, installation, self.storage)?;
             let (reference, missing_pointer) = match self.reference(directory, ANCHOR) {
-                Ok(reference) => (reference, false),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    (self.reference(directory, INITIALIZING)?, true)
-                }
+                Ok(reference) if reference == reserved => (reference, false),
+                Ok(_) => return Err(refused("owner.initialization_reference_mismatch")),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => (reserved, true),
                 Err(error) => return Err(error),
             };
             let protected = self
@@ -1276,6 +1316,60 @@ mod tests {
     }
 
     #[test]
+    fn protected_owner_interrupted_initialization_cannot_switch_credential_storage() {
+        for selected in [
+            OwnerStorage::NativeVault,
+            OwnerStorage::HeadlessProtectedFile,
+        ] {
+            let (_root, store, vault) = setup();
+            let enrollment = match selected {
+                OwnerStorage::NativeVault => OwnerEnrollment {
+                    installation: &store,
+                    vault: Box::new(SharedVault(vault.clone())),
+                    storage: selected,
+                },
+                OwnerStorage::HeadlessProtectedFile => {
+                    store.owner_enrollment_with_storage(selected).unwrap()
+                }
+            };
+            assert!(enrollment
+                .initialize_with(
+                    Path::new("host-identity"),
+                    "github:1234".into(),
+                    |_, _| Err(refused("fixture.interrupted_reference_publication")),
+                )
+                .is_err());
+            let evidence = || {
+                store
+                    .with_locked(|directory, _| {
+                        Ok((
+                            storage::read_private(directory, Path::new(INITIALIZING), 512)?,
+                            storage::read_private(directory, Path::new(PREPARED), LIMIT + 512)?,
+                        ))
+                    })
+                    .unwrap()
+            };
+            let before = evidence();
+            let other = match selected {
+                OwnerStorage::NativeVault => OwnerStorage::HeadlessProtectedFile,
+                OwnerStorage::HeadlessProtectedFile => OwnerStorage::NativeVault,
+            };
+            assert!(store.owner_enrollment_with_storage(other).is_err());
+            let wrong = OwnerEnrollment {
+                installation: &store,
+                vault: Box::new(SharedVault(vault)),
+                storage: other,
+            };
+            assert!(wrong
+                .initialize(Path::new("host-identity"), "github:1234".into())
+                .is_err());
+            assert!(wrong.reconcile().is_err());
+            assert_eq!(evidence(), before);
+            assert_eq!(enrollment.reconcile().unwrap().storage, selected);
+        }
+    }
+
+    #[test]
     fn protected_owner_creation_settings_mask_preserves_revocation_and_permission_removal() {
         let (_root, store, vault) = setup();
         fn configure(store: &Store, allow_creation: bool) {
@@ -1417,6 +1511,13 @@ mod tests {
                 .unwrap();
                 assert_eq!(key.public_key(), reopened.public_key());
                 assert!(key.remove_native().is_err());
+                let reference = key.reference();
+                key.remove_headless(&selected).unwrap();
+                assert!(matches!(
+                    selected.get(&reference),
+                    Err(festerm_secret_store::SecretStoreError::Missing)
+                ));
+                key.remove_headless(&selected).unwrap();
                 let foreign = festerm_host_protocol::HostId::new().to_string();
                 assert!(
                     festerm_tunnel_bridge::owner_auth::ExplicitHeadlessFileStore::select(
