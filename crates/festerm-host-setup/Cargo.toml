@@ -47,6 +47,7 @@ festerm-unix-security = { path = "../festerm-unix-security", optional = true }
 festerm-windows-security = { path = "../festerm-windows-security", optional = true }
 
 [dev-dependencies]
+festerm-sessiond = { path = "../festerm-sessiond", features = ["test-support"] }
 blake2 = "0.10"
 ed25519-dalek = "3"
 tempfile = "3"

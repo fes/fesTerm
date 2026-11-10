@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn interrupted_private_publication_never_exposes_torn_final_bytes() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = storage::private_test_directory();
         for name in ["host-lifecycle.json", "devtunnel"] {
             let path = root.path().join(format!("{name}-stage"));
             let directory = storage::private_directory(&path, true).unwrap();

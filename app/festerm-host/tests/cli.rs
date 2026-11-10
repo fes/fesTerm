@@ -17,7 +17,7 @@ fn headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments() 
 
 #[test]
 fn headless_binary_status_is_a_journal_not_a_ready_claim() {
-    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let root = festerm_sessiond::private_storage::private_test_directory();
     let state = root.path().join("headless");
     let configured = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
         .args(["configure", "--name", "Fixture", "--state-dir"])
@@ -40,7 +40,7 @@ fn headless_binary_status_is_a_journal_not_a_ready_claim() {
 
 #[test]
 fn headless_package_staging_refuses_unauthenticated_input_before_writing() {
-    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let root = festerm_sessiond::private_storage::private_test_directory();
     let source = root.path().join("source");
     let directory = festerm_sessiond::private_storage::private_directory(&source, true).unwrap();
     let input = source.join("untrusted");
