@@ -1,5 +1,56 @@
 # Milestone Progress Narrative
 
+## Repairing the Windows binding-lane fixture boundaries
+
+Required Windows run `42907905048` / job `130150627385` at exact
+`e44a004c80553c0318a73699db7f37f88c95aa06` passes strict Clippy, then reports
+72 host-setup passes / 41 failures / one ignore. The retained 227240-byte raw
+log has SHA-256
+`d32cfbd803b83e30176960a15a112e8759adb9a75dec1bcaebfd078c85bf9c6b`.
+All 41 original failures remain recorded: 24 fake-cloud cases, two controller
+cases and 15 migration fixtures. Migration setup explicitly reports ancestor
+policy refusal beneath the checkout. The bare native-boundary
+`PermissionDenied` results do not prove a specific inner denial/principal subtype.
+
+The migration fixture now uses the existing policy-validated candidate-parent
+`private_test_directory` helper on Windows, retaining its owner until cleanup
+or deliberate failed-native-fixture preservation. Unix keeps its original short
+paths and native artifact-retention behavior. No ancestor/ACL policy is relaxed,
+no existing directory is repaired, and all migration test bodies remain unchanged.
+
+Fake-network orchestration reuses the established core fixture pattern:
+per-instance, cfg(test)-only cloud accounts; a cfg(test) override on the existing
+private setup boundary; and a private cfg(test) service factory whose runner
+panics on any native-manager command. These instances still execute the actual
+protected service stop/cleanup, lifecycle, epoch and run-lease logic. Production
+constructors retain real native admission, including inside cfg(test) builds.
+The user comparison remains lazy at the same validation predicate position.
+Private uninstall extraction reinlines to the parent implementation exactly;
+all legacy Services code is byte-identical after excluding the test-only factory.
+No public fake-authority constructor, production fallback or trait framework
+is introduced. Private adapter, protocol/sessiond and moving provenance work
+remain untouched, with four-file nonoverlap confirmed by their owner.
+
+All original cloud assertions survive exact factory-call inversion. The
+WouldBlock/run-lease oracle remains required and now also checks its exact
+stop-pending code; the missing-lock case requires its exact reconciliation
+refusal. Added guards verify native/foreign adapters cannot authenticate fixture
+records, and native cleanup denial never polls cloud cleanup. They are unit
+orchestration evidence, not native Task/service/provider acceptance.
+
+Bounded actual macOS Rust/Cargo1.99.1 qualification passes **53 selected tests /
+zero failures / four existing ignored native migration opt-ins**, 34.50s;
+72 unrelated tests are filtered. Every one of the original 41 Windows-failing
+names actually passes its macOS counterpart in that selection. Full-feature and
+standalone-cloud all-target strict Clippy, fmt and traceability pass. The first
+formatter attempt exited1 before compilation because a proposed let-chain
+requires edition2024; its raw SHA-256
+`f166daaafe75cf0ce55694036abfa76f6950b0579f64a34008b5a9756d1c0b47`
+is retained, and the fixture uses an edition2021-compatible tuple pattern.
+This child does not qualify the Windows aggregate, ordinary-user admission,
+native migration/manager/provider behavior or the separate native macOS13/1
+failure. Fresh required Windows CI remains necessary; no native14 retry occurs.
+
 ## Locating uncertain second-attachment failures without exposing authority
 
 The required macOS native bridge run retained an unresolved 13-pass/1-fail

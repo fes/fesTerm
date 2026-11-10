@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 struct Fixture {
     root: PathBuf,
+    #[cfg(windows)]
+    private_root: Option<storage::PrivateTestDirectory>,
     inventory: Inventory,
     destination: Store,
     selection: Selection,
@@ -14,12 +16,19 @@ struct Fixture {
 
 impl Fixture {
     fn new(desktop: bool) -> Self {
-        let project = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let root = project.join(format!("mi-{}", &Uuid::new_v4().simple().to_string()[..8]));
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
+        let root = {
+            let project = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap();
+            project.join(format!("mi-{}", &Uuid::new_v4().simple().to_string()[..8]))
+        };
         storage::private_directory(&root, true).unwrap();
         let inventory = Inventory {
             desktop: root.join("profile-hosts"),
@@ -136,6 +145,8 @@ impl Fixture {
         .unwrap();
         Self {
             root,
+            #[cfg(windows)]
+            private_root: Some(private_root),
             inventory,
             destination,
             source,
@@ -187,6 +198,11 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        if let (true, Some(root)) = (self.retain, self.private_root.take()) {
+            std::mem::forget(root);
+        }
+        #[cfg(unix)]
         if !self.retain {
             std::fs::remove_dir_all(&self.root).unwrap();
         }
