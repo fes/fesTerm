@@ -253,6 +253,22 @@ disappears while the tunnel, host fingerprint and exact daemon generation stay
 unchanged; no existing live installation was upgraded by these local tests.
 This does not qualify daemon survival after the originating job closes.
 
+Required Windows x64 CI at `9d521174` (run `42793362331`, job `129752154452`)
+failed the setup console probe and the read-only native argv/CIM creation-time
+fixtures. The console probe now self-executes a repository-owned child and calls
+the same native `GetConsoleWindow`, without starting PowerShell/C# merely to
+query console absence. The other fixtures retain native argv decoding, exact
+ownership and microsecond-precision assertions; bounded test-only capture now
+distinguishes timeout, exit failure and output overflow and preserves escaped
+stdout/stderr. Their original opaque errors do not establish which phase failed.
+The combined session/Windows-fixture source passed the portable bounded-evidence
+case once on macOS, with zero failures or ignored tests, plus affected strict
+Clippy; that verifies capture behavior, not Windows console/ownership outcomes.
+Fresh execution of all three exact selectors in
+[the progress record](milestone-progress.md#retaining-evidence-for-legacy-windows-setup-ci-failures)
+remains required; source checks, macOS runs or a Windows ARM64 diagnostic do not
+establish corrected required-Windows-x64 CI or live-service acceptance.
+
 Opt-in daemon replacement (ADR 0066) adds deterministic journal, persistent
 crash-budget, exact-generation reconciliation, watchdog-lease and honest iOS
 refusal coverage. DT-05 still requires signed-host tests for abrupt daemon
@@ -3533,8 +3549,13 @@ The stale-generation/missing-takeover test passed. Windows checkpoint publicatio
 and abort cleanup remain exact-handle based; only Unix retains the staging name.
 The bridge fixture now batches 96 pending lines, checks every old-writer echo
 before adoption and every delta after it, without increasing the 15-second
-production adoption deadline. Windows baseline/corrected trace and exact-head
-strict Clippy/native results remain required; macOS success is not Windows proof.
+production adoption deadline. Exact `9d521174` Windows x64 native run
+`42793362245`, job `129752153482`, subsequently passed both bridge tests:
+2 passed/0 failed/0 ignored in 4.88 s, with 784 ms pending backlog. The old
+checkpoint dead-field error no longer blocked strict Clippy. This is bridge
+evidence, not a green primary suite or installed-service/native acceptance.
+The original `8ebbaf29` failures remain retained; no ARM diagnostic substitutes
+for this x64 result.
 The native assertions now validate strictly increasing positions and one
 occurrence of each of the 96 child-output markers followed by the final marker,
 separately in the pre-adoption old-writer buffer and post-snapshot delta.
@@ -3544,6 +3565,20 @@ This only checks duplicates within each observed buffer, not later unread output
 The new persistent-host ordinary local unticketed attach fixture is Unix-only;
 Unix lease tests separately prove persistent admission and temporary refusal.
 These are automated corrections, not new completed manual or usability gates.
+The `9d521174` primaries exposed separate fixture races: Linux host-control
+initial attachment unwrapped legitimate nonblocking Busy (25 passed/1 failed);
+macOS SSH corruption could start before original adoption was committed and
+receive status 1 before delivering invalid bytes (4 passed/1 failed).
+A controlled held-generation lease test proves Busy preserves exact lease bytes
+and issued operations before retrying the same attachment; a deferred-adoption
+SSH control reproduces pre-payload refusal with zero corrupt deliveries.
+The corrected corruption fixture first proves original writer activation by
+child-output round trip, retaining every invalid-snapshot/no-adoption and live
+writer assertion. Full local macOS sessiond all-target qualification subsequently
+passed 245 tests with 7 existing ignored, including all 26 host-control and
+6 real SSH cases. Original CI failures are preserved; fresh exact-head primary
+CI remains required. Separately assigned Windows legacy fixture failures are
+not corrected or qualified by this session-only change.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot

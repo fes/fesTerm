@@ -533,6 +533,17 @@ marker; ordinary terminal input echo is not mistaken for child output.
 Persistent host shells additionally have a real ordinary local unticketed attach/
 adoption/detach regression; Unix lease coverage preserves temporary unticketed
 refusal and advances the persistent writer epoch only at commit.
+Primary-CI fixture correction additionally holds the exact temporary-generation
+lease lock to prove nonblocking Busy leaves lease bytes and issued operations
+unchanged, then admits the same attachment without relaunch or generation change.
+Legacy SSH corruption starts only after original writer activation is proven
+by a real input/output round trip. A deferred-original-adoption control proves
+a competing bridge can refuse before delivering any corrupt payload; that
+refusal is not malformed-snapshot evidence. Invalid/unsupported snapshot reasons,
+no-adoption and old-writer preservation assertions remain unchanged.
+Exact `9d521174` x64 Windows native CI subsequently passed both bridge cases;
+the original failures and newly exposed primary failures remain recorded in
+the manual qualification entry. This does not qualify installed-service behavior.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,

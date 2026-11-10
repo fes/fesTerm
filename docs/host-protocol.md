@@ -385,6 +385,11 @@ at physical delivery and retire revoked connections/attachments.
   beside writer replacement, after adoption. An obsolete disconnect cannot end
   the new owner. Legacy admission cannot bypass a temporary lease. Existing
   persistent/legacy daemon attachment and takeover remain unchanged.
+  Registry/per-generation lock contention is nonblocking Busy, including the
+  first attachment after Ensure. A caller retains its original issued creation
+  operation, exact target and attachment intent; Busy is not absence or authority
+  to issue another creation. Fixture coverage holds the exact lease lock and
+  proves unchanged lease bytes/operation ledger before admitting that attachment.
   Recovery waiting is nonblocking for the daemon loop: the current writer keeps
   handling input/output while the one candidate adopts. Post-snapshot terminal
   and control output is staged by bytes (at most 512 KiB, including allocation
