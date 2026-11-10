@@ -5524,7 +5524,8 @@
         "headless_binary_status_is_a_journal_not_a_ready_claim",
         "authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries",
         "authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache",
-        "headless_package_staging_refuses_unauthenticated_input_before_writing"
+        "headless_package_staging_refuses_unauthenticated_input_before_writing",
+        "staging_parent_rejects_a_dacl_that_allows_child_substitution"
       ],
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",

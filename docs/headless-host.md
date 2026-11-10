@@ -201,3 +201,9 @@ Tests use synthetic data and private directories under the checkout.
 They do not access accounts, secrets, cloud resources, installed applications or
 native services. Native/service/package qualification remains in `HOSTSETUP-01`
 in [manual validation](manual-validation.md).
+
+Windows fixtures use the same policy-validated native parent selection as
+private-storage tests: a checkout/profile with unsafe ancestor ACLs is not
+silently blessed. This test-only facility is off in production builds; normal
+commands still refuse unsafe paths with `private storage ancestor policy refused`
+internally and the existing sanitized CLI error externally.

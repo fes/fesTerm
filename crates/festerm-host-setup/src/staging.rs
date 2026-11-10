@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = storage::private_test_directory();
         let verified = crate::artifacts::staging_fixture();
         let cache = root.path().join("cache");
         let staged = stage_artifact(&verified, &cache).unwrap();
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = storage::private_test_directory();
         let directory = storage::private_directory(&root.path().join("stage"), true).unwrap();
         let name = Path::new("festerm-sessiond");
         let bytes = b"fixture verified upstream, never executed";
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = storage::private_test_directory();
         let source = root.path().join("source");
         let destination = root.path().join("cache");
         let directory = storage::private_directory(&source, true).unwrap();

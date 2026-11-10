@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn headless_commands_configure_and_report_only_disabled_state() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = festerm_sessiond::private_storage::private_test_directory();
         let path = root.path().join("host");
         let path = path.to_str().unwrap();
         assert!(execute(arguments(&["status", "--state-dir", path])).is_err());
