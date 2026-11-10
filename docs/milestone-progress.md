@@ -15,6 +15,17 @@ The new native-only acquisition selector refuses Windows ARM without removing
 legacy x64-emulation hosting/verification. These remain acquisition/data-staging
 boundaries, not native endpoint readiness or first-bootstrap qualification.
 
+## Keeping Windows host fixtures inside the real storage policy
+
+The [#681](https://github.com/fes/fesTerm/issues/681) Windows configure,
+journal and staging tests assumed the checkout's ancestor ACLs were trusted.
+Native CI correctly refused those fixtures before publication. They now reuse
+sessiond's policy-validated fixture-root selection through an off-default,
+dev-dependency-only test-support feature, with owned cleanup. No production
+ACL, reparse-point, ownership or atomic-publication check is relaxed.
+Ancestor refusal now has a content-free diagnostic rather than an unexplained
+PermissionDenied. Native startup/service acceptance remains separately gated.
+
 ## Establishing helper publisher authenticity without a second trust root
 
 ADR 0084 stage 7 needs independent Linux publisher authentication, not a hash
