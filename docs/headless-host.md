@@ -106,7 +106,8 @@ account string enrolls an owner.
 never dispatch to the legacy one-shell scripts/helpers. Requirements still open:
 
 - New zero-shell host endpoint and observed health/principal-authentication gate.
-- Foreground, explicit secure account sign-in and protected host consent.
+- Composition of foreground secure account sign-in and protected host consent
+  into setup (the shared library adapter below is available).
   Background/startup/update must return SignInRequired if credentials are
   unavailable; plaintext fallback and secrets in arguments/environment are forbidden.
 - Same-user native registration/start/stop/status adapters proving exact
@@ -175,6 +176,77 @@ verified-principal protocol and supply real health/stop/cleanup evidence.
 Neither configuration nor a `provisioned` phase authorizes remote access.
 Desktop cancellation must preserve its own draft and reconcile this journal;
 there is no new desktop control in this slice.
+
+## In-process cloud adapter (library only)
+
+The opt-in `festerm-host-setup/cloud` feature supplies
+`cloud::CloudHostAdapter::new(&Store)` for desktop/headless composition. It reuses
+`festerm-tunnel-client::identity`'s official GitHub public-client device flow,
+refresh and authenticated `/user` checks, plus Microsoft's vendored Dev Tunnels
+contracts and authorization scheme. No CLI is launched, no downloaded path is
+executable authority, and no shell/session/profile identity is created.
+
+1. Call `foreground(&ticket, expected_github_subject)` only after explicit local
+   approval of that exact `Store::request_enable` ticket/settings and selected
+   account. The subject is the verified numeric GitHub ID, **not** login/display
+   name. The resulting `Foreground` cannot be deserialized. The protected scope
+   also binds installation, desktop/headless origin and the OS-resolved ordinary
+   user (never `$USER`, `$HOME` or other environment identity assertions).
+2. `sign_in(&foreground, cancel, prompt)` displays the shared short-lived
+   `DevicePrompt` only in that foreground surface. Never log/persist the prompt.
+   The native credential store is mandatory for this account adapter, including
+   headless; there is no native-failure file fallback. The enrollment API's
+   separate explicit headless credential policy is unchanged. The journal
+   pre-reserves an opaque credential reference, not token/code material.
+   Interrupted credential publication can reopen the exact reference after
+   account verification. Expiry/denial requires explicit foreground reauthentication;
+   maintenance can refresh but never starts an interactive sign-in.
+3. `provision(&foreground, cancel)` reserves an official recommended cluster,
+   random exact tunnel ID and independent ownership label before one conditional
+   create request. The only port is TCP 2222 marked `festerm-host-v1`; its private
+   ACL selects the same GitHub subject. No anonymous/organization ACL, bearer
+   owner principal, PTY, endpoint listener or default shell is involved.
+   The existing protected `HostIdentity` format is stored at
+   `cloud::HOST_IDENTITY_FILE` (`host-identity`), distinct from profile identity.
+   `Binding.account` is canonical `github:<numeric subject>`; it is provisioning
+   metadata, never enrollment or owner-proof authority.
+4. `reconcile(cancel)` observes a previously submitted request without another
+   create. Lost/error/cancelled replies retain the exact reservation. A later
+   matching response pins the service creation timestamp before publication.
+   Revocation retains late results in StopRequested, never re-enables access.
+   Observed cancellation fences only the matching lifecycle ticket/epoch.
+   A UI abandoning/dropping a pending future must still call `Store::revoke`
+   before dismissing it; dropping a future is not a cancellation notification.
+   A missing uncertain submission never triggers another create.
+5. `health(cancel)` really queries the exact cloud resource and reconfirms the
+   account. Its only present state is `PresentEndpointUnqualified`, **not Ready**.
+   An authenticated exact-ID/cluster 404 is `Absent`; denial, refresh failure,
+   offline, malformed, foreign ownership/port/ACL and changed incarnation are
+   errors, never absence. Service/channel/principal health is not implemented.
+
+`cleanup(cancel)` requires the lifecycle's exact binding, current cleanup epoch
+and confirmed native stop. It rechecks current account, exact ID/cluster,
+ownership labels, private ACL, port and creation incarnation. Exact authenticated
+absence can commit the removed tombstone. A matching existing resource returns
+`Cleanup::GenerationConditionalDeleteUnavailable`, retains CleanupPending and
+**sends no DELETE**. The official SDK exposes ID-only deletion, not a documented
+generation-atomic delete precondition. A check-then-delete would race replacement;
+we do not invent an ETag/creation-time header or claim cleanup succeeded.
+Qualifying a service-side incarnation-conditional destructive contract remains
+a genuine prerequisite to automatic cloud removal. Credentials and protected
+tombstones are retained; this API does not claim complete uninstall.
+
+The request contract follows the vendored Microsoft Rust management client and
+the [official TypeScript SDK at reviewed source
+37956c6](https://github.com/microsoft/dev-tunnels/blob/37956c63675e3339b42c7f852a5af5da1566c5b9/ts/src/management/tunnelManagementHttpClient.ts)
+(`createTunnel` uses `If-None-Match: *`; `deleteTunnel` has no incarnation
+argument). Production network authority is fixed HTTPS, without configurable
+test origins. Private fake HTTP transports exercise actual request construction
+and bounded response/ownership parsing; setup fixtures exercise consent,
+credential references and lifecycle receipts. No real sign-in, cloud operation,
+vault write, downloaded binary or installed service is exercised by these tests.
+There is no new setup command/UI, trust bypass, grant model or pairing service.
+Normal first-connect UX and runtime/service composition remain separate gates.
 
 ## Evidence
 

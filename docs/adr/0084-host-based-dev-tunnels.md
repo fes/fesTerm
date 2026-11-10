@@ -488,6 +488,20 @@ uninstall explicitly fail until real endpoint, sign-in/native adapters and
 authenticated-package integration exist. No Ready or native acceptance is claimed.
 See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 
+The next opt-in stage-4 library slice adds shared foreground GitHub account
+authentication, native credential references and in-process zero-shell HOST
+cloud reservation/create/reconciliation/status. It uses exact lifecycle
+tickets/settings, OS user/origin and verified numeric account binding, not
+profile identity or an independent grant. HTTP fixtures cover actual private
+ACL/port requests and response ownership parsing; lifecycle fixtures cover
+late cancellation, lost replies, credential recovery and identity-preserving
+re-enable. Cloud presence is explicitly endpoint-unqualified, never Ready.
+Found-resource deletion remains fail-closed: official ID-only delete has no
+documented incarnation-atomic precondition, so cleanup retains its receipt and
+reports `GenerationConditionalDeleteUnavailable`; only authenticated exact
+absence can commit removal. This is a genuine qualification prerequisite,
+not successful uninstall. See the [cloud adapter contract](../headless-host.md#in-process-cloud-adapter-library-only).
+
 - **Invariants introduced or changed:** One host endpoint can expose multiple
   authorized sessions; explicit remote creation and client-local resume-or-create
   recipes; no implicit launcher network; shared setup and independent daemon
@@ -565,6 +579,14 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
   `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
   `headless_package_staging_refuses_unauthenticated_input_before_writing`.
+  Additional cloud/account adapter evidence:
+  `host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port`,
+  `host_cloud_response_refuses_foreign_resources_and_non_authoritative_absence`,
+  `host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced`,
+  `host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable`,
+  `host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker`,
+  `host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty`,
+  `host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity`.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic

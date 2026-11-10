@@ -50,6 +50,9 @@ authenticated helper-artifact staging without execution.
 New host setup/run/update/uninstall remain unavailable pending endpoint and
 authenticated-package integration ([#681](https://github.com/fes/fesTerm/issues/681));
 the legacy installer is unchanged.
+An opt-in shared library adds foreground native-vault GitHub authentication and
+zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;
+generation-atomic cloud deletion remains an explicit qualification blocker.
 
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),

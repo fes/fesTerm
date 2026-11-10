@@ -10,6 +10,7 @@ publish = false
 
 [features]
 default = []
+cloud = ["lifecycle", "dep:festerm-tunnel-client", "dep:festerm-secret-store", "dep:tokio-util"]
 owner-enrollment = ["lifecycle", "festerm-tunnel-bridge/owner-auth", "dep:festerm-host-protocol", "dep:festerm-secret-store"]
 lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 artifacts = [
@@ -37,6 +38,8 @@ sha2 = "0.11"
 festerm-sessiond = { path = "../festerm-sessiond", optional = true }
 festerm-host-protocol = { path = "../festerm-host-protocol", optional = true }
 festerm-secret-store = { path = "../festerm-secret-store", optional = true }
+festerm-tunnel-client = { path = "../festerm-tunnel-client", optional = true }
+tokio-util = { version = "0.7", features = ["rt"], optional = true }
 festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge", optional = true }
 fs2 = { version = "0.4", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
@@ -53,6 +56,7 @@ festerm-windows-security = { path = "../festerm-windows-security", optional = tr
 blake2 = "0.10"
 ed25519-dalek = "3"
 tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros", "test-util"] }
 
 [lints]
 workspace = true

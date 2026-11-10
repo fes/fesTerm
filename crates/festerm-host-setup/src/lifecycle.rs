@@ -201,7 +201,7 @@ impl Store {
         operation(&self.directory, &self.read()?, lease)
     }
 
-    #[cfg(feature = "owner-enrollment")]
+    #[cfg(any(feature = "owner-enrollment", feature = "cloud"))]
     pub(crate) fn with_locked<T>(
         &self,
         operation: impl FnOnce(&File, &Snapshot) -> io::Result<T>,
@@ -389,6 +389,25 @@ impl Store {
                 Phase::StopRequested
             } else {
                 Phase::Disabled
+            };
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "cloud")]
+    pub(crate) fn cancel_enable(&self, ticket: &Ticket) -> io::Result<()> {
+        self.change(|record| {
+            if record.installation != ticket.installation || record.epoch != ticket.epoch {
+                return Ok(());
+            }
+            if record.pending.as_ref() != Some(ticket) && record.phase != Phase::Provisioned {
+                return Ok(());
+            }
+            advance(record)?;
+            record.phase = if record.pending.is_some() {
+                Phase::Reconciling
+            } else {
+                Phase::StopRequested
             };
             Ok(())
         })

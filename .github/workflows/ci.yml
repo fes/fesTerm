@@ -208,8 +208,8 @@ jobs:
         run: |
           cargo test --locked -p festerm-host-setup --features artifacts
           cargo clippy --locked -p festerm-host-setup --features artifacts --all-targets -- -D warnings
-          cargo test --locked -p festerm-host-setup --features owner-enrollment --lib
-          cargo clippy --locked -p festerm-host-setup --features owner-enrollment --all-targets -- -D warnings
+          cargo test --locked -p festerm-host-setup -p festerm-tunnel-client --features festerm-host-setup/owner-enrollment,festerm-host-setup/cloud --lib
+          cargo clippy --locked -p festerm-host-setup -p festerm-tunnel-client --features festerm-host-setup/owner-enrollment,festerm-host-setup/cloud --all-targets -- -D warnings
       - name: Check the experimental Dev Tunnels feature
         run: cargo clippy -p festerm -p festerm-tunnel-bridge --all-targets --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/relay,festerm-tunnel-bridge/owner-auth -- -D warnings
       - name: Test the experimental bridge protocol, relay and owner authentication

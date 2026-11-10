@@ -8763,3 +8763,24 @@ The incremental reliability pass also distinguishes an initializer holding its
 lease from an abandoned recordless directory. Protected cache comparisons now
 classify oversized entries as the same specific mismatch as other changed
 bytes, keeping bounded reads and refusing overwrite for CLI and helper staging.
+
+## Zero-shell cloud setup without borrowing a profile or trusting a CLI path
+
+The next ADR 0084 setup slice reuses the native GitHub account/device-flow
+primitives and official Dev Tunnels contracts in process. Foreground approval
+binds the exact lifecycle ticket/settings, origin, OS user and verified numeric
+account. Native credentials stay behind pre-reserved opaque references; the
+protected receipt pins the one submitted tunnel ID, cluster, ownership label,
+port and incarnation. Lost replies are reconciled, not retried as another
+resource, and late cancellation retains cleanup truth without restoring access.
+This provisions no shell and starts no endpoint or service; observed cloud
+presence is explicitly not Ready.
+
+Research also found a destructive-operation boundary that cannot honestly be
+papered over: the official API offers ID-only deletion without a documented
+incarnation-atomic precondition. The adapter verifies exact ownership, but refuses
+to delete a found resource rather than race a replacement. It can commit exact
+authenticated absence; otherwise CleanupPending retains its receipt and names
+the qualification blocker. Private HTTP/lifecycle fixtures prove these policies,
+not real cloud/native acceptance. Desktop/headless command composition, normal
+first-connect UX and runtime/service health remain separate work.
