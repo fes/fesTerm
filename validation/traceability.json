@@ -36,9 +36,15 @@
   "coverage": [
     {
       "id": "recording-settings",
-      "edges": ["REC-01"],
-      "requirements": ["docs/terminal-recording-design.md#recording-settings-naming-and-directory-layout"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-01"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#recording-settings-naming-and-directory-layout"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "recording_settings_ui_saves_a_valid_device_local_draft",
         "legacy_deletion_preference_is_not_enabled_on_mobile",
@@ -53,7 +59,9 @@
         "refuses_replaced_directory_without_writing_to_it",
         "refuses_a_busy_store_and_a_hard_linked_settings_file"
       ],
-      "manual_scenarios": ["TR-01"],
+      "manual_scenarios": [
+        "TR-01"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify desktop export-folder selection and device-local settings on macOS, Windows and Linux",
@@ -63,9 +71,16 @@
     },
     {
       "id": "recording-consent-and-selection",
-      "edges": ["REC-02"],
-      "requirements": ["docs/terminal-recording-design.md#user-workflow", "docs/terminal-recording-design.md#capture-model"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-02"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#user-workflow",
+        "docs/terminal-recording-design.md#capture-model"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "consent_identity_rejects_reconnected_or_replaced_sessions",
         "recording_auto_enrollment_only_follows_new_user_sessions_and_the_same_generation",
@@ -81,7 +96,9 @@
         "recording_refuses_a_palette_that_does_not_match_the_visible_view",
         "color_emoji_and_block_cursor_can_reveal_equal_color_text"
       ],
-      "manual_scenarios": ["TR-02"],
+      "manual_scenarios": [
+        "TR-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify consent, cancellation, selection and indicators in native desktop and mobile applications"
@@ -89,9 +106,16 @@
     },
     {
       "id": "recording-shared-capture",
-      "edges": ["REC-03"],
-      "requirements": ["docs/terminal-recording-design.md#capture-model", "docs/terminal-recording-design.md#shared-timeline-and-separate-exports"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-03"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#capture-model",
+        "docs/terminal-recording-design.md#shared-timeline-and-separate-exports"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "synchronized_capture_spans_windows_and_excludes_local_input",
         "selected_streams_share_a_timeline_and_replay_applied_mutations",
@@ -107,7 +131,9 @@
         "event_channel_closing_after_clean_exit_does_not_fail_other_streams",
         "recording_captures_active_and_parked_output_then_stops_on_native_suspension"
       ],
-      "manual_scenarios": ["TR-02"],
+      "manual_scenarios": [
+        "TR-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify cross-window movement, inclusion and synchronized stop in native desktop and mobile applications"
@@ -115,9 +141,16 @@
     },
     {
       "id": "recording-privacy-and-integrity-stop",
-      "edges": ["REC-04"],
-      "requirements": ["docs/terminal-recording-design.md#recording-artifact-and-privacy", "docs/terminal-recording-design.md#resource-bounds-and-failure-behavior"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-04"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#recording-artifact-and-privacy",
+        "docs/terminal-recording-design.md#resource-bounds-and-failure-behavior"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "recording_start_refuses_a_privacy_cut_before_the_recorder_exists",
         "mobile_inactivity_and_locks_stop_recording_without_a_ui_frame",
@@ -144,7 +177,9 @@
         "recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss",
         "a_new_ambiguous_graphical_session_revokes_existing_consent"
       ],
-      "manual_scenarios": ["TR-02"],
+      "manual_scenarios": [
+        "TR-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify the shared Windows privacy monitor and its synchronous revocation on native Windows",
@@ -153,9 +188,16 @@
     },
     {
       "id": "recording-export-and-recovery",
-      "edges": ["REC-05"],
-      "requirements": ["docs/terminal-recording-design.md#mp4-encoding-and-platform-qualification", "docs/terminal-recording-design.md#recording-artifact-and-privacy"],
-      "decisions": ["ADR-0077"],
+      "edges": [
+        "REC-05"
+      ],
+      "requirements": [
+        "docs/terminal-recording-design.md#mp4-encoding-and-platform-qualification",
+        "docs/terminal-recording-design.md#recording-artifact-and-privacy"
+      ],
+      "decisions": [
+        "ADR-0077"
+      ],
       "automated_tests": [
         "streams_use_one_idle_transform_and_frame_schedule",
         "worker_publishes_all_streams_before_applying_retention",
@@ -183,7 +225,9 @@
         "recovered_prefix_is_labeled_and_never_deletes_the_original",
         "recovery_refuses_a_changed_tail_even_when_the_prefix_is_unchanged"
       ],
-      "manual_scenarios": ["TR-03"],
+      "manual_scenarios": [
+        "TR-03"
+      ],
       "status": "partial",
       "prerequisites": [
         "Qualify appearance selection, verified metadata and prefix recovery in native UIs",
@@ -193,9 +237,25 @@
     },
     {
       "id": "desktop-split-pane-presentation",
-      "edges": ["PANE-01", "PANE-02", "PANE-03", "PANE-04", "PANE-05", "PANE-06", "PANE-07", "PANE-08", "PANE-09", "PANE-10"],
-      "requirements": ["docs/adr/0078-desktop-split-pane-presentation.md#decision", "docs/gui-design.md"],
-      "decisions": ["ADR-0078"],
+      "edges": [
+        "PANE-01",
+        "PANE-02",
+        "PANE-03",
+        "PANE-04",
+        "PANE-05",
+        "PANE-06",
+        "PANE-07",
+        "PANE-08",
+        "PANE-09",
+        "PANE-10"
+      ],
+      "requirements": [
+        "docs/adr/0078-desktop-split-pane-presentation.md#decision",
+        "docs/gui-design.md"
+      ],
+      "decisions": [
+        "ADR-0078"
+      ],
       "automated_tests": [
         "pane_tree_preserves_identity_and_collapses_without_orphans",
         "pane_tree_rejects_duplicate_capacity_depth_and_ratio",
@@ -252,7 +312,10 @@
         "pane_workspace_capture_keeps_legacy_and_new_view_ids_unique_across_windows",
         "pane_dividers_are_one_physical_pixel_at_every_scale"
       ],
-      "manual_scenarios": ["PN-01", "PN-02"],
+      "manual_scenarios": [
+        "PN-01",
+        "PN-02"
+      ],
       "status": "partial",
       "prerequisites": [
         "Native visual/accessibility and live transport evidence remains PN-01/PN-02",
@@ -262,13 +325,18 @@
     },
     {
       "id": "installed-profile-dev-tunnel-hosting",
-      "edges": ["TUNNEL-15", "TUNNEL-16"],
+      "edges": [
+        "TUNNEL-15",
+        "TUNNEL-16"
+      ],
       "requirements": [
         "docs/adr/0072-installed-profile-tunnel-hosting.md#decision",
         "docs/gui-design.md#profile-editing",
         "docs/application-command-model.md"
       ],
-      "decisions": ["ADR-0072"],
+      "decisions": [
+        "ADR-0072"
+      ],
       "automated_tests": [
         "detached_matching_attached_reuse_is_non_admitting_and_request_bound",
         "detached_absent_start_reserves_before_launch_and_starts_once",
@@ -311,7 +379,9 @@
         "management_delete_all_snapshot_revalidates_ownership_and_keeps_uncertain_creation",
         "private_directory_archive_refuses_open_children_and_existing_target"
       ],
-      "manual_scenarios": ["DT-08"],
+      "manual_scenarios": [
+        "DT-08"
+      ],
       "status": "partial",
       "prerequisites": [
         "Signed desktop provisioning, browser sign-in/account binding and native service/helper updates on Windows, macOS and Linux remain DT-08",
@@ -406,12 +476,16 @@
     },
     {
       "id": "automation-frozen-workflow-bindings",
-      "edges": ["AUT-01"],
+      "edges": [
+        "AUT-01"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/automation-design.md#immutable-workflow-bundles"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "automation_selected_workflow_preview_requires_opt_in_and_grants_no_access",
         "workflow_selection_is_available_only_when_javascript_is_enabled",
@@ -448,7 +522,9 @@
         "start_refuses_stale_snapshots_missing_targets_and_closed_privacy",
         "concurrent_workflow_approvals_require_a_safety_stop"
       ],
-      "manual_scenarios": ["AUTO-01"],
+      "manual_scenarios": [
+        "AUTO-01"
+      ],
       "status": "partial",
       "prerequisites": [
         "The desktop beta Run review is the native approval of the exact snapshot, parameters, local terminal and scopes; iOS selection, persistent/remote targets, native usability and platform qualification remain open"
@@ -456,12 +532,16 @@
     },
     {
       "id": "automation-isolated-javascript-worker",
-      "edges": ["AUT-02"],
+      "edges": [
+        "AUT-02"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/automation-design.md#javascript-execution-contract"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "identity_covers_manifest_schema_sources_and_dependencies",
         "native_adversarial_probes_and_cumulative_cpu_ceiling",
@@ -528,7 +608,10 @@
         "wait_settlement_admission_does_not_block_on_contention",
         "scrollback_text_keeps_the_newest_lines_and_bytes"
       ],
-      "manual_scenarios": ["AUTO-02", "AUTO-03"],
+      "manual_scenarios": [
+        "AUTO-02",
+        "AUTO-03"
+      ],
       "status": "partial",
       "prerequisites": [
         "Installed helper provenance and native sandbox qualification remain required per supported platform",
@@ -538,12 +621,16 @@
     },
     {
       "id": "automation-default-off-preferences",
-      "edges": ["AUT-05"],
+      "edges": [
+        "AUT-05"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/configuration.md#interface-settings"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "automation_settings_are_independent_explicit_opt_ins",
         "automation_preferences_do_not_start_unqualified_or_javascript_adapters",
@@ -579,7 +666,9 @@
         "settings_automation_conflicts_stop_before_approval_or_unrelated_actions",
         "uncertain_automation_preferences_show_warning_and_safe_retry"
       ],
-      "manual_scenarios": ["AUTO-01"],
+      "manual_scenarios": [
+        "AUTO-01"
+      ],
       "status": "partial",
       "prerequisites": [
         "Native multi-window Settings, warning and retry usability remain open under AUTO-01; configuration opt-in is not runtime or platform qualification",
@@ -588,12 +677,16 @@
     },
     {
       "id": "automation-pure-authority-kernel",
-      "edges": ["AUT-06"],
+      "edges": [
+        "AUT-06"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
         "docs/automation-design.md#authority-model"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "connection_and_wire_ids_never_grant_authority",
         "session_and_kernel_share_admission_and_poison",
@@ -656,7 +749,11 @@
         "removed_and_recreated_profiles_require_a_new_generation",
         "unsupported_profiles_and_durable_sessions_are_rejected"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-03",
+        "AUTO-04"
+      ],
       "status": "partial",
       "prerequisites": [
         "Control and worker integration require input ownership validation and platform confinement",
@@ -669,12 +766,16 @@
     },
     {
       "id": "automation-controller-enrollment-foundation",
-      "edges": ["AUT-08"],
+      "edges": [
+        "AUT-08"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
         "docs/automation-design.md#controller-enrollment-prerequisite"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "enrollment_registry_mutations_share_the_admission_boundary",
         "ordinary_legacy_metadata_and_principal_revocations_share_admission",
@@ -794,7 +895,12 @@
         "connection_enqueue_serializes_validation_with_revocation",
         "queued_controller_reply_closes_when_registration_is_invalidated"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04", "AUTO-05"],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-03",
+        "AUTO-04",
+        "AUTO-05"
+      ],
       "status": "partial",
       "prerequisites": [
         "The native current-window chooser and opt-in protocol adapter have synthetic tests only; private bootstrap, native authentication, privacy and controller qualification remain closed in production",
@@ -806,12 +912,16 @@
     },
     {
       "id": "automation-confirmed-presentation-seam",
-      "edges": ["AUT-09"],
+      "edges": [
+        "AUT-09"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-004-separate-design-for-extensions",
         "docs/automation-design.md#bounded-confirmed-presentation-seam"
       ],
-      "decisions": ["ADR-0065"],
+      "decisions": [
+        "ADR-0065"
+      ],
       "automated_tests": [
         "presentation_needs_a_separate_native_grant_for_the_exact_principal_and_target",
         "presentation_revocation_is_scoped_and_invalidates_pending_reviews",
@@ -900,7 +1010,12 @@
         "controller_catalog_requires_qualified_native_opt_in_and_resets_on_stop",
         "combined_catalog_does_not_expose_a_native_metadata_grant"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04", "AUTO-05"],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-03",
+        "AUTO-04",
+        "AUTO-05"
+      ],
       "status": "partial",
       "prerequisites": [
         "A native event source and admission ordering/freshness barrier must prove no missed activation transitions for each supported platform and viewport",
@@ -912,12 +1027,17 @@
     },
     {
       "id": "automation-local-mcp-observation",
-      "edges": ["AUT-07"],
+      "edges": [
+        "AUT-07"
+      ],
       "requirements": [
         "REQUIREMENTS.md#req-ext-002-future-scripting-compatibility",
         "docs/automation-design.md#mcp-surface-and-connection-contract"
       ],
-      "decisions": ["ADR-0065", "ADR-0074"],
+      "decisions": [
+        "ADR-0065",
+        "ADR-0074"
+      ],
       "automated_tests": [
         "identity_proof_is_bound_to_a_fresh_versioned_challenge",
         "identity_proof_refuses_tampering_and_noncanonical_seeds",
@@ -1114,7 +1234,11 @@
         "history_pagination_has_no_repeated_or_lost_text_and_reports_change_gaps",
         "flexible_direct_reads_require_native_approval_and_never_grant_effects"
       ],
-      "manual_scenarios": ["AUTO-01", "AUTO-03", "AUTO-04"],
+      "manual_scenarios": [
+        "AUTO-01",
+        "AUTO-03",
+        "AUTO-04"
+      ],
       "status": "partial",
       "prerequisites": [
         "Private peer authentication, trusted human comparison and relay/disconnect liveness must be qualified before activation",
@@ -1285,9 +1409,21 @@
     },
     {
       "id": "native-dev-tunnels-identity-discovery",
-      "edges": ["TUNNEL-0[789]", "TUNNEL-1[01234]"],
-      "requirements": ["docs/adr/0053-separate-dev-tunnels-session-bridge.md#native-github-identity-and-name-discovery", "docs/adr/0062-desktop-dev-tunnel-host-setup.md#decision", "docs/adr/0064-dev-tunnel-new-session-connect-once-form.md#decision", "docs/gui-design.md#profile-editing"],
-      "decisions": ["ADR-0053", "ADR-0062", "ADR-0064"],
+      "edges": [
+        "TUNNEL-0[789]",
+        "TUNNEL-1[01234]"
+      ],
+      "requirements": [
+        "docs/adr/0053-separate-dev-tunnels-session-bridge.md#native-github-identity-and-name-discovery",
+        "docs/adr/0062-desktop-dev-tunnel-host-setup.md#decision",
+        "docs/adr/0064-dev-tunnel-new-session-connect-once-form.md#decision",
+        "docs/gui-design.md#profile-editing"
+      ],
+      "decisions": [
+        "ADR-0053",
+        "ADR-0062",
+        "ADR-0064"
+      ],
       "automated_tests": [
         "native_device_flow_respects_interval_slowdown_and_private_identity_binding",
         "native_device_flow_and_refresh_accept_enterprise_managed_logins",
@@ -1351,7 +1487,9 @@
         "bridge_discovery_refuses_incompatible_or_nonbridge_responses_without_admission",
         "encrypted_transport_refuses_changed_host_key_before_authentication"
       ],
-      "manual_scenarios": ["DT-07"],
+      "manual_scenarios": [
+        "DT-07"
+      ],
       "status": "partial",
       "prerequisites": [
         "Clarify current service usage rights for standalone fesTerm before publication or broader qualification; owner-authorized bounded tests do not establish hosted-service permission",
@@ -1362,19 +1500,35 @@
     },
     {
       "id": "deferred-dev-tunnels-session-management",
-      "edges": ["TUNNEL-04"],
-      "requirements": ["docs/adr/0053-separate-dev-tunnels-session-bridge.md#session-protocol-and-lifecycle"],
-      "decisions": ["ADR-0053"],
+      "edges": [
+        "TUNNEL-04"
+      ],
+      "requirements": [
+        "docs/adr/0053-separate-dev-tunnels-session-bridge.md#session-protocol-and-lifecycle"
+      ],
+      "decisions": [
+        "ADR-0053"
+      ],
       "automated_tests": [],
-      "manual_scenarios": ["DT-04"],
+      "manual_scenarios": [
+        "DT-04"
+      ],
       "status": "deferred",
-      "prerequisites": ["An explicitly reviewed inventory/create/terminate operation slice; these operations are unavailable in the current bridge"]
+      "prerequisites": [
+        "An explicitly reviewed inventory/create/terminate operation slice; these operations are unavailable in the current bridge"
+      ]
     },
     {
       "id": "native-powershell-ssh-subsystem",
-      "edges": ["PSRP-06"],
-      "requirements": ["docs/powershell-enterprise.md"],
-      "decisions": ["ADR-0082"],
+      "edges": [
+        "PSRP-06"
+      ],
+      "requirements": [
+        "docs/powershell-enterprise.md"
+      ],
+      "decisions": [
+        "ADR-0082"
+      ],
       "automated_tests": [
         "raw_subsystem_uses_native_request_without_exec_or_pty",
         "raw_subsystem_rejects_invalid_names_and_server_refusal",
@@ -1395,7 +1549,10 @@
         "worker_stop_during_successful_ssh_start_handoff_invalidates_session",
         "worker_stop_after_startup_does_not_shutdown_ssh_session"
       ],
-      "manual_scenarios": ["CP-25", "CP-23"],
+      "manual_scenarios": [
+        "CP-25",
+        "CP-23"
+      ],
       "status": "partial",
       "prerequisites": [
         "authorized deployed OpenSSH PowerShell subsystem and approved authentication for each claimed remote platform",
@@ -1405,12 +1562,19 @@
     },
     {
       "id": "desktop-remote-and-enterprise-discovery",
-      "edges": ["RSD-03", "ENTRA-03"],
+      "edges": [
+        "RSD-03",
+        "ENTRA-03"
+      ],
       "requirements": [
         "docs/powershell-enterprise.md",
         "docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md"
       ],
-      "decisions": ["ADR-0014", "ADR-0038", "ADR-0082"],
+      "decisions": [
+        "ADR-0014",
+        "ADR-0038",
+        "ADR-0082"
+      ],
       "automated_tests": [
         "discovery_surfaces_open_without_workers_and_never_enter_workspace_metadata",
         "remote_and_enterprise_cards_route_to_typed_discovery_actions",
@@ -1420,7 +1584,10 @@
         "remote_picker_click_flow_requires_review_before_emitting_exact_target",
         "finished_worker_without_terminal_message_reports_failure"
       ],
-      "manual_scenarios": ["CP-24", "CP-21"],
+      "manual_scenarios": [
+        "CP-24",
+        "CP-21"
+      ],
       "status": "partial",
       "prerequisites": [
         "native desktop focus/accessibility and real remote Windows OpenSSH/named-pipe qualification",
@@ -1430,12 +1597,18 @@
     },
     {
       "id": "remote-sessiond-ssh-backend",
-      "edges": ["RSD-01", "RSD-02"],
+      "edges": [
+        "RSD-01",
+        "RSD-02"
+      ],
       "requirements": [
         "docs/powershell-enterprise.md#remote-sessiond-over-ssh",
         "docs/adr/0082-native-powershell-enterprise-and-sessiond-boundaries.md"
       ],
-      "decisions": ["ADR-0038", "ADR-0082"],
+      "decisions": [
+        "ADR-0038",
+        "ADR-0082"
+      ],
       "automated_tests": [
         "remote_target_pins_generation_and_requires_explicit_takeover_command",
         "remote_inventory_refuses_unavailable_incompatible_or_invalid_generations",
@@ -1459,7 +1632,9 @@
         "host_key_rotation_after_discovery_never_authenticates_or_displaces_the_live_session",
         "invalid_remote_snapshots_never_adopt_or_displace_the_live_session"
       ],
-      "manual_scenarios": ["CP-24"],
+      "manual_scenarios": [
+        "CP-24"
+      ],
       "status": "partial",
       "prerequisites": [
         "cross-host macOS/Linux and Windows OpenSSH/named-pipe native qualification",
@@ -5065,13 +5240,19 @@
     },
     {
       "id": "ios-app-lock-recovery",
-      "edges": ["MOB-09"],
+      "edges": [
+        "MOB-09"
+      ],
       "requirements": [
         "docs/mobile-layout-design.md#recoverable-app-unlocking",
         "docs/adr/0058-ios-app-lock-and-mobile-document-viewer.md#app-lock-festerm-ios-lock",
         "docs/adr/0061-ios-dev-tunnel-profiles-and-app-lock-wiring.md#amendment-recoverable-foreground-authentication"
       ],
-      "decisions": ["ADR-0058", "ADR-0061", "ADR-0073"],
+      "decisions": [
+        "ADR-0058",
+        "ADR-0061",
+        "ADR-0073"
+      ],
       "automated_tests": [
         "authentication_replies_and_cancellations_affect_only_their_request",
         "unknown_authentication_codes_fail_closed",
@@ -5092,7 +5273,10 @@
         "app_lock_dialog_preserves_active_and_parked_ssh_but_real_background_still_stops",
         "lifecycle_resume_checks_transport_while_lock_keeps_content_hidden"
       ],
-      "manual_scenarios": ["MOB-09", "MOB-06"],
+      "manual_scenarios": [
+        "MOB-09",
+        "MOB-06"
+      ],
       "status": "partial",
       "prerequisites": [
         "Provisioned physical iPhone: automatic Face ID success/failure/cancellation, explicit system passcode, unavailable biometrics, repeated rapid app switches, phone lock/unlock and return from system prompts without stuck controls or stale authorization",
@@ -5102,11 +5286,17 @@
     },
     {
       "id": "mobile-accessibility-tree",
-      "edges": ["MOB-10"],
+      "edges": [
+        "MOB-10"
+      ],
       "requirements": [
         "docs/adr/0075-mobile-accessibility-tree.md#decision"
       ],
-      "decisions": ["ADR-0075", "ADR-0073", "ADR-0058"],
+      "decisions": [
+        "ADR-0075",
+        "ADR-0073",
+        "ADR-0058"
+      ],
       "automated_tests": [
         "tree_generation_waits_for_a_platform_client_and_stops_on_deactivation",
         "platform_actions_reach_widgets_only_while_active_and_stay_bounded",
@@ -5115,7 +5305,9 @@
         "password_field_is_named_for_assistive_technology_without_exposing_the_secret",
         "terminal_rows_reach_accessibility_only_when_the_application_opts_in"
       ],
-      "manual_scenarios": ["MOB-10"],
+      "manual_scenarios": [
+        "MOB-10"
+      ],
       "status": "partial",
       "prerequisites": [
         "Shared Maestro flows (scripts/run-mobile-ui-flows.py; scripts/tests/test_mobile_ui_flows.py) pass on an iOS Simulator and an Android emulator; they are optional validation, not a merge gate",
@@ -5350,9 +5542,19 @@
     },
     {
       "id": "ios-shared-documents",
-      "edges": ["MOB-08"],
-      "requirements": ["docs/mobile-layout-design.md#shared-ios-document-editor", "docs/text-editor-design.md"],
-      "decisions": ["ADR-0069", "ADR-0034", "ADR-0058", "ADR-0073"],
+      "edges": [
+        "MOB-08"
+      ],
+      "requirements": [
+        "docs/mobile-layout-design.md#shared-ios-document-editor",
+        "docs/text-editor-design.md"
+      ],
+      "decisions": [
+        "ADR-0069",
+        "ADR-0034",
+        "ADR-0058",
+        "ADR-0073"
+      ],
       "automated_tests": [
         "android_import_save_preserves_unicode_and_rejects_stale_content",
         "android_import_rejects_outside_authority_and_oversized_sources",
@@ -5420,7 +5622,9 @@
         "markdown_wide_preview_uses_contents_rail_and_dismisses_old_sheet",
         "preview_tables_honor_left_center_and_right_column_alignment"
       ],
-      "manual_scenarios": ["MOB-08"],
+      "manual_scenarios": [
+        "MOB-08"
+      ],
       "status": "partial",
       "prerequisites": [
         "Issue #570: shared/native I/O and registry-backed source surfaces provide shared undo/redo, guarded conflict decisions and dirty-close handling. Markdown adds current-revision Edit/Preview, shared cancellable projections and view/revision-bound Contents with no resource loading. The P1–P4 follow-up moves Browse to Sessions, shares source/draft keyboard-region dictation, adds exact save-close receipts, compact icon controls and touch Preview Copy/Select All. Actual-widget tests/captures do not qualify picker grants or multiline UIKit/IME behavior. Source syntax/line numbers, Find/Replace and local copy/Save As remain subsequent slices.",
@@ -5431,9 +5635,16 @@
     },
     {
       "id": "ios-on-device-dictation",
-      "edges": ["MOB-07"],
-      "requirements": ["docs/mobile-layout-design.md#on-device-dictation"],
-      "decisions": ["ADR-0068", "ADR-0073"],
+      "edges": [
+        "MOB-07"
+      ],
+      "requirements": [
+        "docs/mobile-layout-design.md#on-device-dictation"
+      ],
+      "decisions": [
+        "ADR-0068",
+        "ADR-0073"
+      ],
       "automated_tests": [
         "dictation_requires_review_and_single_line_bounded_text",
         "dictation_revisions_replace_and_stale_callbacks_cannot_restore_cancelled_text",
@@ -5460,10 +5671,38 @@
         "tapping_live_transcript_stops_capture_and_opens_editing",
         "waveform_history_buckets_peaks_and_keeps_a_bounded_oldest_first_window"
       ],
-      "manual_scenarios": ["MOB-07"],
+      "manual_scenarios": [
+        "MOB-07"
+      ],
       "status": "partial",
       "prerequisites": [
         "Issue #564: physical-device local speech model/language availability, denied/granted permissions, offline recognition, native microphone/deadline/interruption/background/lock cancellation without another UI frame, session replacement and actual terminal/TUI/touch/accessibility qualification remain required, including the microphone icon after Left/Up/Down/Right. Simulator unsupported/manual-preview flow and portable tests are not native speech recognition or privacy acceptance."
+      ]
+    },
+    {
+      "id": "host-based-dev-tunnels-design",
+      "edges": [
+        "HOST-01",
+        "HOST-02",
+        "HOST-03",
+        "HOST-04",
+        "HOST-05",
+        "HOST-06"
+      ],
+      "requirements": [
+        "docs/adr/0084-host-based-dev-tunnels.md#decision",
+        "docs/adr/0084-host-based-dev-tunnels.md#acceptance-matrix"
+      ],
+      "decisions": [
+        "ADR-0084"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [],
+      "status": "deferred",
+      "prerequisites": [
+        "Implement ADR 0084's seven staged slices, including verified principal binding and atomic generation reservation",
+        "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
+        "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect"
       ]
     }
   ]
