@@ -299,6 +299,42 @@ impl Configuration {
         Ok(replacement)
     }
 
+    /// Checks the native session-name boundary before saving a profile.
+    /// `expose` covers a new hosting request before its metadata is prepared.
+    pub fn validate_hosted_session_name(
+        &self,
+        original: Option<&str>,
+        candidate: &Profile,
+        expose: bool,
+    ) -> Result<(), ConfigError> {
+        fn native_name(profile: &Profile) -> Option<&str> {
+            profile
+                .as_local()?
+                .persistence()
+                .filter(|persistence| {
+                    persistence.provider() == PersistenceProviderKind::FestermSessiond
+                })
+                .map(|persistence| persistence.session_name())
+        }
+        fn is_hosted(profile: &Profile) -> bool {
+            profile
+                .as_local()
+                .and_then(|local| local.tunnel_hosting())
+                .is_some_and(LocalTunnelHosting::enabled)
+        }
+        let Some(name) = native_name(candidate) else {
+            return Ok(());
+        };
+        if self.profiles.iter().any(|other| {
+            Some(other.identifier()) != original
+                && native_name(other) == Some(name)
+                && (expose || is_hosted(candidate) || is_hosted(other))
+        }) {
+            return Err(ConfigError::new(ConfigErrorKind::HostedSessionNameConflict));
+        }
+        Ok(())
+    }
+
     /// Returns a complete replacement with `profile` inserted, or replacing
     /// any existing profile sharing its identifier.
     ///
@@ -308,6 +344,7 @@ impl Configuration {
     /// [`Self::with_known_host_trust`]'s replace-outright convention. The
     /// original document is left untouched (immutable-replacement pattern).
     pub fn with_profile(&self, profile: Profile) -> Result<Self, ConfigError> {
+        self.validate_hosted_session_name(Some(profile.identifier()), &profile, false)?;
         let mut replacement = self.clone();
         replacement
             .profiles
@@ -331,6 +368,7 @@ impl Configuration {
                 ConfigErrorKind::DuplicateProfileIdentifier,
             ));
         }
+        self.validate_hosted_session_name(Some(original), &profile, false)?;
         let mut replacement = self.clone();
         let existing = replacement
             .profiles
@@ -1905,6 +1943,56 @@ sha256_fingerprint = "{fingerprint}"
         ))
         .unwrap_err();
         assert_eq!(duplicate.kind(), ConfigErrorKind::DuplicateKnownHost);
+    }
+
+    #[test]
+    fn profile_updates_refuse_hosted_native_session_name_collisions() {
+        fn native(id: &str, name: &str) -> Profile {
+            Profile::local(id, "shell", Vec::new(), None)
+                .unwrap()
+                .with_persistence(PersistenceProviderKind::FestermSessiond, name)
+                .unwrap()
+        }
+        let hosted = native("hosted", "shared")
+            .with_local_tunnel_hosting(Some(
+                LocalTunnelHosting::new(
+                    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    true,
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let ordinary = native("ordinary", "shared");
+        let existing =
+            Configuration::new(vec![hosted.clone(), native("other", "different")]).unwrap();
+
+        assert_eq!(
+            existing.with_profile(ordinary.clone()).unwrap_err().kind(),
+            ConfigErrorKind::HostedSessionNameConflict
+        );
+        assert_eq!(
+            existing
+                .with_edited_profile(Some("other"), native("renamed", "shared"))
+                .unwrap_err()
+                .kind(),
+            ConfigErrorKind::HostedSessionNameConflict
+        );
+        assert!(existing.with_profile(hosted.clone()).is_ok());
+
+        let unhosted = Configuration::new(vec![ordinary]).unwrap();
+        assert_eq!(
+            unhosted.with_profile(hosted).unwrap_err().kind(),
+            ConfigErrorKind::HostedSessionNameConflict
+        );
+        assert_eq!(
+            unhosted
+                .validate_hosted_session_name(None, &native("new", "shared"), true)
+                .unwrap_err()
+                .kind(),
+            ConfigErrorKind::HostedSessionNameConflict
+        );
+        assert!(unhosted.with_profile(native("new", "shared")).is_ok());
     }
 
     #[test]
