@@ -1,8 +1,8 @@
 //! Explicit host-local enrollment, separate from portable setup and bearer access.
-//! Native vault state is the rollback fence; disk publication follows it. A crash
-//! between the two refuses admission and requires local reconciliation.
+//! A compact selected-store anchor fences policy revisions. Prepared private
+//! records allow validated forward recovery, never startup/config adoption.
 use crate::{
-    lifecycle::{Phase, Snapshot, Store},
+    lifecycle::{Origin, Phase, Snapshot, Store},
     protected_state,
 };
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
@@ -19,8 +19,46 @@ use std::{fs::File, io, path::Path};
 
 const RECORD: &str = "owner-enrollment.json";
 const ANCHOR: &str = "owner-enrollment-vault-ref";
+const PREPARED: &str = "owner-enrollment-prepared.json";
+const INITIALIZING: &str = "owner-enrollment-initializing-ref";
+const ANCHOR_MAGIC: &[u8] = b"fesTerm owner policy anchor v2\0";
 const LIMIT: usize = 16 * 1024;
 const MAX_HISTORICAL_KEYS: usize = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OwnerStorage {
+    NativeVault,
+    HeadlessProtectedFile,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InitializationReceipt {
+    version: u16,
+    storage: OwnerStorage,
+    origin: Origin,
+    installation: String,
+    reference: String,
+}
+
+fn initializing_reference(
+    directory: &File,
+    installation: &Snapshot,
+    selected: OwnerStorage,
+) -> io::Result<SecretReference> {
+    let bytes = storage::read_private(directory, Path::new(INITIALIZING), 512)?;
+    let receipt: InitializationReceipt = serde_json::from_slice(&bytes)
+        .map_err(|_| refused("owner.invalid_initialization_receipt"))?;
+    if receipt.version != 1
+        || receipt.storage != selected
+        || receipt.origin != installation.origin
+        || receipt.installation != installation.installation
+    {
+        return Err(refused("owner.storage_selection_changed_requires_review"));
+    }
+    SecretReference::parse(&receipt.reference).map_err(vault_error)
+}
 
 fn refused(message: &'static str) -> io::Error {
     io::Error::other(message)
@@ -52,6 +90,8 @@ pub struct EnrolledKey {
 #[serde(deny_unknown_fields)]
 pub struct EnrollmentSnapshot {
     version: u16,
+    pub storage: OwnerStorage,
+    pub origin: Origin,
     pub binding: OwnerBinding,
     identity_file: std::path::PathBuf,
     pub revision: Epoch,
@@ -70,10 +110,12 @@ impl EnrollmentSnapshot {
         }
         if self.version != 1
             || self.binding.installation != installation.installation
+            || self.origin != installation.origin
+            || self.storage == OwnerStorage::HeadlessProtectedFile
+                && self.origin != Origin::Headless
             || self.installation_epoch > installation.epoch
             || self.keys.len() > MAX_HISTORICAL_KEYS
             || self.keys.iter().filter(|key| !key.revoked).count() > MAX_OWNER_KEYS
-            || self.capabilities.creation_allowed && !installation.settings.allow_creation
         {
             return Err(refused("owner.foreign_installation_or_policy"));
         }
@@ -106,6 +148,8 @@ impl EnrollmentSnapshot {
             .filter(|key| !key.revoked)
             .map(|key| key.public_key)
             .collect();
+        let mut capabilities = self.capabilities;
+        capabilities.creation_allowed &= installation.settings.allow_creation;
         let policy = OwnerPolicy {
             host: self.binding.host.clone(),
             principal: self.binding.principal.clone(),
@@ -117,10 +161,85 @@ impl EnrollmentSnapshot {
             )?,
             grant_epoch: self.revision,
             remote_access: self.remote_access && installation.phase == Phase::Provisioned,
-            capabilities: self.capabilities,
+            capabilities,
         };
         OwnerVerifier::from_protected_permissions(policy, &keys).map_err(Into::into)
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PolicyAnchor {
+    revision: Epoch,
+    digest: [u8; 32],
+    previous: [u8; 32],
+}
+
+impl PolicyAnchor {
+    fn for_record(record: &EnrollmentSnapshot, previous: [u8; 32]) -> io::Result<Self> {
+        Ok(Self {
+            revision: record.revision,
+            digest: record_digest(record)?,
+            previous,
+        })
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut bytes = ANCHOR_MAGIC.to_vec();
+        bytes.extend_from_slice(&self.revision.get().to_be_bytes());
+        bytes.extend_from_slice(&self.digest);
+        bytes.extend_from_slice(&self.previous);
+        bytes
+    }
+
+    fn decode(bytes: &[u8]) -> io::Result<Self> {
+        if bytes.len() != ANCHOR_MAGIC.len() + 72 || !bytes.starts_with(ANCHOR_MAGIC) {
+            return Err(refused(
+                "owner.policy_anchor_version_or_encoding_requires_review",
+            ));
+        }
+        let bytes = &bytes[ANCHOR_MAGIC.len()..];
+        Ok(Self {
+            revision: Epoch::new(u64::from_be_bytes(bytes[..8].try_into().unwrap()))?,
+            digest: bytes[8..40].try_into().unwrap(),
+            previous: bytes[40..72].try_into().unwrap(),
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedPolicy {
+    previous: [u8; 32],
+    next: EnrollmentSnapshot,
+}
+
+fn record_bytes(record: &EnrollmentSnapshot) -> io::Result<Vec<u8>> {
+    let bytes = serde_json::to_vec(record).map_err(|_| refused("owner.invalid_policy"))?;
+    if bytes.len() > LIMIT {
+        return Err(refused("owner.policy_limit"));
+    }
+    Ok(bytes)
+}
+
+fn record_digest(record: &EnrollmentSnapshot) -> io::Result<[u8; 32]> {
+    Ok(Sha256::digest(record_bytes(record)?).into())
+}
+
+fn validate_identity(
+    directory: &File,
+    record: &EnrollmentSnapshot,
+    installation: &Snapshot,
+) -> io::Result<()> {
+    record.validate(installation)?;
+    let identity = HostIdentity::load_from_private_directory(directory, &record.identity_file)?;
+    if identity.host_id() != record.binding.host.host.as_str()
+        || identity.fingerprint()? != record.binding.host.host_key_fingerprint
+    {
+        return Err(refused(
+            "owner.host_identity_changed_reconfirmation_required",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_key(key: &[u8; 32]) -> io::Result<()> {
@@ -141,6 +260,7 @@ pub fn owner_key_fingerprint(key: &[u8; 32]) -> io::Result<String> {
 pub struct OwnerEnrollment<'a> {
     installation: &'a Store,
     vault: Box<dyn SecretStore>,
+    storage: OwnerStorage,
 }
 
 /// Scoped protected policy guard for the backend's atomic admission callback.
@@ -158,14 +278,67 @@ impl CurrentOwnerPolicy {
 
 impl Store {
     pub fn owner_enrollment(&self) -> io::Result<OwnerEnrollment<'_>> {
-        Ok(OwnerEnrollment {
-            installation: self,
-            vault: native_store().map_err(vault_error)?,
+        self.owner_enrollment_with_storage(OwnerStorage::NativeVault)
+    }
+
+    /// Explicit local selection; never retry a native-vault error using files.
+    pub fn owner_enrollment_with_storage(
+        &self,
+        selected: OwnerStorage,
+    ) -> io::Result<OwnerEnrollment<'_>> {
+        self.with_locked(|directory, installation| {
+            if selected == OwnerStorage::HeadlessProtectedFile
+                && installation.origin != Origin::Headless
+            {
+                return Err(refused("owner.file_storage_is_headless_only"));
+            }
+            match initializing_reference(directory, installation, selected) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            match storage::read_private(directory, Path::new(RECORD), LIMIT) {
+                Ok(bytes) => {
+                    let record: EnrollmentSnapshot = serde_json::from_slice(&bytes)
+                        .map_err(|_| refused("owner.invalid_policy"))?;
+                    if record.storage != selected {
+                        return Err(refused("owner.storage_selection_changed_requires_review"));
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            let vault: Box<dyn SecretStore> = match selected {
+                OwnerStorage::NativeVault => native_store().map_err(vault_error)?,
+                OwnerStorage::HeadlessProtectedFile => Box::new(
+                    festerm_tunnel_bridge::owner_auth::ExplicitHeadlessFileStore::select(
+                        directory,
+                        &installation.installation,
+                    )?,
+                ),
+            };
+            Ok(OwnerEnrollment {
+                installation: self,
+                vault,
+                storage: selected,
+            })
         })
     }
 }
 
 impl OwnerEnrollment<'_> {
+    fn storage_error(&self, error: festerm_secret_store::SecretStoreError) -> io::Error {
+        match self.storage {
+            OwnerStorage::NativeVault => vault_error(error),
+            OwnerStorage::HeadlessProtectedFile => refused(match error {
+                festerm_secret_store::SecretStoreError::Missing => {
+                    "owner.selected_headless_private_anchor_missing_reconciliation_required"
+                }
+                _ => "owner.selected_headless_private_store_unavailable_check_permissions_and_path",
+            }),
+        }
+    }
+
     /// Explicit local approval of an exact installation, pinned host and account.
     /// This generates an owner principal locally; account strings confer no role.
     /// No remote access, creation permission or key is granted by initialization.
@@ -174,7 +347,25 @@ impl OwnerEnrollment<'_> {
         identity_file: &Path,
         account: String,
     ) -> io::Result<EnrollmentSnapshot> {
+        self.initialize_with(identity_file, account, |directory, reference| {
+            protected_state::publish_new(directory, Path::new(ANCHOR), reference)
+        })
+    }
+
+    fn initialize_with(
+        &self,
+        identity_file: &Path,
+        account: String,
+        publish_reference: impl FnOnce(&File, &[u8]) -> io::Result<()>,
+    ) -> io::Result<EnrollmentSnapshot> {
         self.installation.with_locked(|directory, installation| {
+            let provisioned = installation
+                .binding
+                .as_ref()
+                .filter(|binding| {
+                    installation.phase == Phase::Provisioned && binding.account == account
+                })
+                .ok_or_else(|| refused("owner.exact_provisioned_account_consent_required"))?;
             for name in [ANCHOR, RECORD] {
                 match storage::open_private_file(directory, Path::new(name), false) {
                     Ok(_) => return Err(refused("owner.already_initialized_or_incomplete")),
@@ -187,8 +378,15 @@ impl OwnerEnrollment<'_> {
                 host: identity.host_id().try_into()?,
                 host_key_fingerprint: identity.fingerprint()?,
             };
+            if provisioned.host_id != host.host.as_str()
+                || provisioned.host_key_fingerprint != host.host_key_fingerprint
+            {
+                return Err(refused("owner.provisioned_host_identity_mismatch"));
+            }
             let record = EnrollmentSnapshot {
                 version: 1,
+                origin: installation.origin,
+                storage: self.storage,
                 binding: OwnerBinding {
                     installation: installation.installation.clone(),
                     host,
@@ -203,20 +401,101 @@ impl OwnerEnrollment<'_> {
                 capabilities: Capabilities::default(),
             };
             record.validate(installation)?;
-            let bytes = serde_json::to_vec(&record).map_err(|_| refused("owner.invalid_policy"))?;
-            let reference = self
-                .vault
-                .put(&SecretBytes::copy_from_slice(&bytes))
-                .map_err(vault_error)?;
-            // A partial initialization stays visible and fails closed.
-            protected_state::publish_new(
-                directory,
-                Path::new(ANCHOR),
-                reference.to_persisted_string().as_bytes(),
-            )?;
-            protected_state::publish_new(directory, Path::new(RECORD), &bytes)?;
+            let reference = match initializing_reference(directory, installation, self.storage) {
+                Ok(reference) => {
+                    match self.vault.get(&reference) {
+                        Err(festerm_secret_store::SecretStoreError::Missing) => {}
+                        Ok(_) => {
+                            return Err(refused("owner.initialization_requires_reconciliation"))
+                        }
+                        Err(error) => return Err(self.storage_error(error)),
+                    }
+                    reference
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    let reference = SecretReference::generate();
+                    protected_state::publish_new(
+                        directory,
+                        Path::new(INITIALIZING),
+                        &serde_json::to_vec(&InitializationReceipt {
+                            version: 1,
+                            storage: self.storage,
+                            origin: installation.origin,
+                            installation: installation.installation.clone(),
+                            reference: reference.to_persisted_string(),
+                        })
+                        .map_err(|_| refused("owner.invalid_initialization_receipt"))?,
+                    )?;
+                    reference
+                }
+                Err(error) => return Err(error),
+            };
+            self.prepare(directory, &record, [0; 32])?;
+            let anchor = PolicyAnchor::for_record(&record, [0; 32])?;
+            self.vault
+                .create_reserved(&reference, &SecretBytes::copy_from_slice(&anchor.encode()))
+                .map_err(|error| self.storage_error(error))?;
+            // The exact reference and prepared zero-grant record are durable
+            // before native creation. No failure can orphan an unknown reference.
+            publish_reference(directory, reference.to_persisted_string().as_bytes())?;
+            protected_state::publish_new(directory, Path::new(RECORD), &record_bytes(&record)?)?;
             Ok(record)
         })
+    }
+
+    fn prepare(
+        &self,
+        directory: &File,
+        record: &EnrollmentSnapshot,
+        previous: [u8; 32],
+    ) -> io::Result<()> {
+        record_bytes(record)?;
+        let bytes = serde_json::to_vec(&PreparedPolicy {
+            previous,
+            next: record.clone(),
+        })
+        .map_err(|_| refused("owner.invalid_prepared_policy"))?;
+        storage::replace_private(directory, Path::new(PREPARED), &bytes)
+    }
+
+    fn commit(
+        &self,
+        directory: &File,
+        reference: &SecretReference,
+        record: &EnrollmentSnapshot,
+        previous: [u8; 32],
+    ) -> io::Result<()> {
+        self.commit_with(
+            directory,
+            reference,
+            record,
+            previous,
+            |directory, bytes| storage::replace_private(directory, Path::new(RECORD), bytes),
+        )
+    }
+
+    fn commit_with(
+        &self,
+        directory: &File,
+        reference: &SecretReference,
+        record: &EnrollmentSnapshot,
+        previous: [u8; 32],
+        publish: impl FnOnce(&File, &[u8]) -> io::Result<()>,
+    ) -> io::Result<()> {
+        self.prepare(directory, record, previous)?;
+        let anchor = PolicyAnchor::for_record(record, previous)?;
+        self.vault
+            .update(reference, &SecretBytes::copy_from_slice(&anchor.encode()))
+            .map_err(|error| self.storage_error(error))?;
+        publish(directory, &record_bytes(record)?)
+    }
+
+    fn reference(&self, directory: &File, name: &str) -> io::Result<SecretReference> {
+        let bytes = storage::read_private(directory, Path::new(name), 36)?;
+        SecretReference::parse(
+            std::str::from_utf8(&bytes).map_err(|_| refused("owner.invalid_anchor"))?,
+        )
+        .map_err(vault_error)
     }
 
     fn read(
@@ -224,28 +503,26 @@ impl OwnerEnrollment<'_> {
         directory: &File,
         installation: &Snapshot,
     ) -> io::Result<(SecretReference, EnrollmentSnapshot)> {
-        let anchor = storage::read_private(directory, Path::new(ANCHOR), 36)?;
-        let reference = SecretReference::parse(
-            std::str::from_utf8(&anchor).map_err(|_| refused("owner.invalid_anchor"))?,
-        )
-        .map_err(vault_error)?;
+        let reference = self.reference(directory, ANCHOR)?;
         let bytes = storage::read_private(directory, Path::new(RECORD), LIMIT)?;
-        let protected = self.vault.get(&reference).map_err(vault_error)?;
-        if !protected.with_bytes(|expected| expected == bytes.as_slice()) {
+        let protected = self
+            .vault
+            .get(&reference)
+            .map_err(|error| self.storage_error(error))?;
+        let anchor = protected.with_bytes(PolicyAnchor::decode)?;
+        if anchor.digest != <[u8; 32]>::from(Sha256::digest(bytes.as_slice())) {
             return Err(refused(
                 "owner.policy_rollback_or_interrupted_commit_local_reconciliation_required",
             ));
         }
         let mut record: EnrollmentSnapshot =
             serde_json::from_slice(&bytes).map_err(|_| refused("owner.invalid_policy"))?;
-        record.validate(installation)?;
-        let identity = HostIdentity::load_from_private_directory(directory, &record.identity_file)?;
-        if identity.host_id() != record.binding.host.host.as_str()
-            || identity.fingerprint()? != record.binding.host.host_key_fingerprint
-        {
-            return Err(refused(
-                "owner.host_identity_changed_reconfirmation_required",
-            ));
+        validate_identity(directory, &record, installation)?;
+        if record.storage != self.storage {
+            return Err(refused("owner.storage_selection_changed_requires_review"));
+        }
+        if record.revision != anchor.revision {
+            return Err(refused("owner.anchor_revision_mismatch"));
         }
         if record.installation_epoch < installation.epoch {
             // Persist each observed lifecycle high-water before issuing authority.
@@ -257,11 +534,7 @@ impl OwnerEnrollment<'_> {
                     .checked_add(1)
                     .ok_or_else(|| refused("owner.epoch_exhausted"))?,
             )?;
-            let bytes = serde_json::to_vec(&record).map_err(|_| refused("owner.invalid_policy"))?;
-            self.vault
-                .update(&reference, &SecretBytes::copy_from_slice(&bytes))
-                .map_err(vault_error)?;
-            storage::replace_private(directory, Path::new(RECORD), &bytes)?;
+            self.commit(directory, &reference, &record, anchor.digest)?;
         }
         Ok((reference, record))
     }
@@ -272,19 +545,124 @@ impl OwnerEnrollment<'_> {
         })
     }
 
+    /// Explicit local forward recovery only. The prepared state must exactly
+    /// match the native revision/digest/predecessor and current installation,
+    /// stable identity and account. A merely newer disk record is not consent.
+    pub fn reconcile(&self) -> io::Result<EnrollmentSnapshot> {
+        self.installation.with_locked(|directory, installation| {
+            let reserved = initializing_reference(directory, installation, self.storage)?;
+            let (reference, missing_pointer) = match self.reference(directory, ANCHOR) {
+                Ok(reference) if reference == reserved => (reference, false),
+                Ok(_) => return Err(refused("owner.initialization_reference_mismatch")),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => (reserved, true),
+                Err(error) => return Err(error),
+            };
+            let protected = self
+                .vault
+                .get(&reference)
+                .map_err(|error| self.storage_error(error))?;
+            let anchor = protected.with_bytes(PolicyAnchor::decode)?;
+            let current = match storage::read_private(directory, Path::new(RECORD), LIMIT) {
+                Ok(bytes) => {
+                    let current: EnrollmentSnapshot = serde_json::from_slice(&bytes)
+                        .map_err(|_| refused("owner.invalid_policy_preserve_for_local_review"))?;
+                    validate_identity(directory, &current, installation)?;
+                    Some(current)
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            let already_current = current.as_ref().is_some_and(|record| {
+                record.revision == anchor.revision
+                    && record_digest(record).is_ok_and(|digest| digest == anchor.digest)
+            });
+            if already_current {
+                if missing_pointer {
+                    protected_state::publish_new(
+                        directory,
+                        Path::new(ANCHOR),
+                        reference.to_persisted_string().as_bytes(),
+                    )?;
+                }
+                return self.read(directory, installation).map(|(_, record)| record);
+            }
+            let prepared: PreparedPolicy = serde_json::from_slice(&storage::read_private(
+                directory,
+                Path::new(PREPARED),
+                LIMIT + 512,
+            )?)
+            .map_err(|_| refused("owner.invalid_prepared_policy"))?;
+            if anchor != PolicyAnchor::for_record(&prepared.next, prepared.previous)? {
+                return Err(refused("owner.prepared_policy_not_native_committed"));
+            }
+            validate_identity(directory, &prepared.next, installation)?;
+            if prepared.next.storage != self.storage {
+                return Err(refused("owner.storage_selection_changed_requires_review"));
+            }
+            if !already_current {
+                match &current {
+                    Some(old) => {
+                        if record_digest(old)? != anchor.previous
+                            || old.revision.get().checked_add(1)
+                                != Some(prepared.next.revision.get())
+                            || old.binding != prepared.next.binding
+                            || old.storage != prepared.next.storage
+                            || old.identity_file != prepared.next.identity_file
+                            || old.installation_epoch > prepared.next.installation_epoch
+                            || old.keys.len() > prepared.next.keys.len()
+                            || old.keys.iter().zip(&prepared.next.keys).any(|(old, next)| {
+                                old.public_key != next.public_key || old.revoked && !next.revoked
+                            })
+                        {
+                            return Err(refused(
+                                "owner.recovery_would_rollback_or_replace_consent",
+                            ));
+                        }
+                    }
+                    None if anchor.previous == [0; 32]
+                        && anchor.revision.get() == 1
+                        && prepared.next.keys.is_empty()
+                        && !prepared.next.remote_access
+                        && prepared.next.capabilities == Capabilities::default() => {}
+                    None => {
+                        return Err(refused(
+                            "owner.missing_committed_policy_requires_local_review",
+                        ))
+                    }
+                }
+            }
+            if missing_pointer {
+                protected_state::publish_new(
+                    directory,
+                    Path::new(ANCHOR),
+                    reference.to_persisted_string().as_bytes(),
+                )?;
+            }
+            if !already_current {
+                storage::replace_private(
+                    directory,
+                    Path::new(RECORD),
+                    &record_bytes(&prepared.next)?,
+                )?;
+            }
+            self.read(directory, installation).map(|(_, record)| record)
+        })
+    }
+
     /// Compare-and-swap every consent operation; stale foreground results cannot
     /// re-add an old key or overwrite later revocation. Vault first, then disk.
     fn change(
         &self,
         revision: Epoch,
-        update: impl FnOnce(&mut EnrollmentSnapshot) -> io::Result<()>,
+        update: impl FnOnce(&mut EnrollmentSnapshot, &Snapshot) -> io::Result<()>,
     ) -> io::Result<EnrollmentSnapshot> {
         self.installation.with_locked(|directory, installation| {
             let (reference, mut record) = self.read(directory, installation)?;
+            let previous = record_digest(&record)?;
             if record.revision != revision {
                 return Err(refused("owner.stale_operation"));
             }
-            update(&mut record)?;
+            update(&mut record, installation)?;
             record.revision = Epoch::new(
                 record
                     .revision
@@ -293,14 +671,7 @@ impl OwnerEnrollment<'_> {
                     .ok_or_else(|| refused("owner.epoch_exhausted"))?,
             )?;
             record.validate(installation)?;
-            let bytes = serde_json::to_vec(&record).map_err(|_| refused("owner.invalid_policy"))?;
-            if bytes.len() > LIMIT {
-                return Err(refused("owner.policy_limit"));
-            }
-            self.vault
-                .update(&reference, &SecretBytes::copy_from_slice(&bytes))
-                .map_err(vault_error)?;
-            storage::replace_private(directory, Path::new(RECORD), &bytes)?;
+            self.commit(directory, &reference, &record, previous)?;
             Ok(record)
         })
     }
@@ -311,13 +682,13 @@ impl OwnerEnrollment<'_> {
         public_key: [u8; 32],
         confirmed_fingerprint: &str,
     ) -> io::Result<EnrollmentSnapshot> {
-        self.change(revision, |record| {
+        self.change(revision, |record, _| {
             add_key(record, public_key, confirmed_fingerprint)
         })
     }
 
     pub fn revoke(&self, revision: Epoch, public_key: [u8; 32]) -> io::Result<EnrollmentSnapshot> {
-        self.change(revision, |record| revoke_key(record, public_key))
+        self.change(revision, |record, _| revoke_key(record, public_key))
     }
 
     pub fn rotate(
@@ -327,7 +698,7 @@ impl OwnerEnrollment<'_> {
         new: [u8; 32],
         confirmed_fingerprint: &str,
     ) -> io::Result<EnrollmentSnapshot> {
-        self.change(revision, |record| {
+        self.change(revision, |record, _| {
             revoke_key(record, old)?;
             add_key(record, new, confirmed_fingerprint)
         })
@@ -342,7 +713,10 @@ impl OwnerEnrollment<'_> {
         remote_access: bool,
         capabilities: Capabilities,
     ) -> io::Result<EnrollmentSnapshot> {
-        self.change(revision, |record| {
+        self.change(revision, |record, installation| {
+            if capabilities.creation_allowed && !installation.settings.allow_creation {
+                return Err(refused("owner.creation_settings_consent_required"));
+            }
             record.remote_access = remote_access;
             record.capabilities = capabilities;
             Ok(())
@@ -423,7 +797,24 @@ mod tests {
     }
     struct SharedVault(Arc<Vault>);
     impl SecretStore for SharedVault {
+        fn create_reserved(
+            &self,
+            reference: &SecretReference,
+            value: &SecretBytes,
+        ) -> Result<(), SecretStoreError> {
+            if value.len() > 2560 {
+                return Err(SecretStoreError::TooLarge);
+            }
+            if self.0.locked.load(Ordering::Acquire) {
+                return Err(SecretStoreError::LockedOrUnavailable);
+            }
+            self.0.memory.create_reserved(reference, value)
+        }
+
         fn put(&self, value: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
+            if value.len() > 2560 {
+                return Err(SecretStoreError::TooLarge);
+            }
             if self.0.locked.load(Ordering::Acquire) {
                 return Err(SecretStoreError::LockedOrUnavailable);
             }
@@ -440,6 +831,9 @@ mod tests {
             reference: &SecretReference,
             value: &SecretBytes,
         ) -> Result<(), SecretStoreError> {
+            if value.len() > 2560 {
+                return Err(SecretStoreError::TooLarge);
+            }
             if self.0.locked.load(Ordering::Acquire) {
                 return Err(SecretStoreError::LockedOrUnavailable);
             }
@@ -449,8 +843,8 @@ mod tests {
             self.0.memory.delete(reference)
         }
     }
-    fn setup() -> (tempfile::TempDir, Store, Arc<Vault>) {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    fn setup() -> (storage::PrivateTestDirectory, Store, Arc<Vault>) {
+        let root = storage::private_test_directory();
         let store = Store::create(
             &root.path().join("installation"),
             Origin::Headless,
@@ -461,7 +855,23 @@ mod tests {
             },
         )
         .unwrap();
-        HostIdentity::load_or_create(&root.path().join("installation/host-identity")).unwrap();
+        let identity =
+            HostIdentity::load_or_create(&root.path().join("installation/host-identity")).unwrap();
+        let ticket = store
+            .request_enable(&store.snapshot().unwrap().settings)
+            .unwrap();
+        store
+            .record_provisioned(
+                &ticket,
+                crate::lifecycle::Binding {
+                    host_id: identity.host_id(),
+                    account: "github:1234".into(),
+                    qualified_tunnel: "fixture.invalid/exact".into(),
+                    cloud_incarnation: "synthetic-incarnation".into(),
+                    host_key_fingerprint: identity.fingerprint().unwrap(),
+                },
+            )
+            .unwrap();
         let vault = Arc::new(Vault {
             memory: MemorySecretStore::new(),
             locked: AtomicBool::new(false),
@@ -493,6 +903,7 @@ mod tests {
         let enrollment = OwnerEnrollment {
             installation: &store,
             vault: Box::new(SharedVault(vault.clone())),
+            storage: OwnerStorage::NativeVault,
         };
         let initial = initialize(&enrollment);
         assert!(initial.keys.is_empty());
@@ -530,6 +941,7 @@ mod tests {
         let reopened = OwnerEnrollment {
             installation: &reopened,
             vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
         };
         assert_eq!(reopened.snapshot().unwrap(), enrolled);
         assert!(reopened
@@ -543,24 +955,9 @@ mod tests {
         let enrollment = OwnerEnrollment {
             installation: &store,
             vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
         };
         let initial = initialize(&enrollment);
-        let ticket = store
-            .request_enable(&store.snapshot().unwrap().settings)
-            .unwrap();
-        store
-            .record_provisioned(
-                &ticket,
-                crate::lifecycle::Binding {
-                    host_id: initial.binding.host.host.to_string(),
-                    account: initial.binding.account.clone(),
-                    qualified_tunnel: "fixture.invalid/exact".into(),
-                    cloud_incarnation: "synthetic-incarnation".into(),
-                    host_key_fingerprint: initial.binding.host.host_key_fingerprint.clone(),
-                },
-            )
-            .unwrap();
-        let initial = enrollment.snapshot().unwrap();
         let key = OwnerSigningKey::from_seed(&[31; 32]);
         let state = enroll(&enrollment, &initial, &key);
         let state = enrollment
@@ -666,6 +1063,7 @@ mod tests {
         let enrollment = OwnerEnrollment {
             installation: &store,
             vault: Box::new(SharedVault(vault.clone())),
+            storage: OwnerStorage::NativeVault,
         };
         let initial = initialize(&enrollment);
         let key = OwnerSigningKey::from_seed(&[41; 32]);
@@ -705,6 +1103,7 @@ mod tests {
         let foreign = OwnerEnrollment {
             installation: &foreign,
             vault: Box::new(SharedVault(vault.clone())),
+            storage: OwnerStorage::NativeVault,
         };
         assert!(foreign.snapshot().is_err());
         store
@@ -721,6 +1120,7 @@ mod tests {
         let reopened = OwnerEnrollment {
             installation: &reopened,
             vault: Box::new(SharedVault(vault.clone())),
+            storage: OwnerStorage::NativeVault,
         };
         assert!(reopened.snapshot().is_err());
         let reference = SecretReference::parse(std::str::from_utf8(&anchor).unwrap()).unwrap();
@@ -738,6 +1138,7 @@ mod tests {
         let enrollment = OwnerEnrollment {
             installation: &store,
             vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
         };
         let initial = initialize(&enrollment);
         let old = store
@@ -745,9 +1146,7 @@ mod tests {
                 storage::read_private(directory, Path::new("host-lifecycle.json"), 32 * 1024)
             })
             .unwrap();
-        store
-            .request_enable(&store.snapshot().unwrap().settings)
-            .unwrap();
+        store.revoke().unwrap();
         let advanced = enrollment.snapshot().unwrap();
         assert!(advanced.revision.get() > initial.revision.get());
         store
@@ -765,23 +1164,20 @@ mod tests {
             let enrollment = OwnerEnrollment {
                 installation: &store,
                 vault: Box::new(SharedVault(vault)),
+                storage: OwnerStorage::NativeVault,
             };
-            let initial = initialize(&enrollment);
+            initialize(&enrollment);
             if change_account {
-                let ticket = store
-                    .request_enable(&store.snapshot().unwrap().settings)
-                    .unwrap();
                 store
-                    .record_provisioned(
-                        &ticket,
-                        crate::lifecycle::Binding {
-                            host_id: initial.binding.host.host.to_string(),
-                            account: "github:foreign".into(),
-                            qualified_tunnel: "fixture.invalid/exact".into(),
-                            cloud_incarnation: "synthetic-incarnation".into(),
-                            host_key_fingerprint: initial.binding.host.host_key_fingerprint,
-                        },
-                    )
+                    .with_locked(|directory, installation| {
+                        let mut changed = installation.clone();
+                        changed.binding.as_mut().unwrap().account = "github:foreign".into();
+                        storage::replace_private(
+                            directory,
+                            Path::new("host-lifecycle.json"),
+                            &serde_json::to_vec(&changed).unwrap(),
+                        )
+                    })
                     .unwrap();
             } else {
                 HostIdentity::load_or_create(&root.path().join("installation/replacement"))
@@ -804,6 +1200,7 @@ mod tests {
         let enrollment = OwnerEnrollment {
             installation: &store,
             vault: Box::new(SharedVault(vault.clone())),
+            storage: OwnerStorage::NativeVault,
         };
         let initial = initialize(&enrollment);
         let key = OwnerSigningKey::from_seed(&[51; 32]);
@@ -815,13 +1212,17 @@ mod tests {
                 let anchor = storage::read_private(directory, Path::new(ANCHOR), 36)?;
                 let reference =
                     SecretReference::parse(std::str::from_utf8(&anchor).unwrap()).unwrap();
+                let previous = record_digest(&state)?;
                 state.keys[0].revoked = true;
                 state.revision = Epoch::new(state.revision.get() + 1)?;
+                enrollment.prepare(directory, &state, previous)?;
                 vault
                     .memory
                     .update(
                         &reference,
-                        &SecretBytes::copy_from_slice(&serde_json::to_vec(&state).unwrap()),
+                        &SecretBytes::copy_from_slice(
+                            &PolicyAnchor::for_record(&state, previous)?.encode(),
+                        ),
                     )
                     .map_err(vault_error)
             })
@@ -838,5 +1239,416 @@ mod tests {
                 &owner_key_fingerprint(&key.public_key()).unwrap()
             )
             .is_err());
+        store
+            .with_locked(|directory, _| {
+                let prepared = storage::read_private(directory, Path::new(PREPARED), LIMIT + 512)?;
+                let mut tampered: PreparedPolicy = serde_json::from_slice(&prepared).unwrap();
+                tampered.next.keys[0].revoked = false;
+                storage::replace_private(
+                    directory,
+                    Path::new(PREPARED),
+                    &serde_json::to_vec(&tampered).unwrap(),
+                )?;
+                Ok(prepared)
+            })
+            .map(|prepared| {
+                assert!(enrollment.reconcile().is_err());
+                store
+                    .with_locked(|directory, _| {
+                        storage::replace_private(directory, Path::new(PREPARED), &prepared)
+                    })
+                    .unwrap();
+            })
+            .unwrap();
+        let recovered = enrollment.reconcile().unwrap();
+        assert_eq!(recovered, state);
+        assert!(enrollment
+            .enroll(
+                recovered.revision,
+                key.public_key(),
+                &owner_key_fingerprint(&key.public_key()).unwrap()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn protected_owner_initialization_requires_exact_provisioned_account_and_recovers_receipt() {
+        let (_root, store, vault) = setup();
+        let enrollment = OwnerEnrollment {
+            installation: &store,
+            vault: Box::new(SharedVault(vault.clone())),
+            storage: OwnerStorage::NativeVault,
+        };
+        assert!(enrollment
+            .initialize(Path::new("host-identity"), "github:foreign".into())
+            .is_err());
+        vault.locked.store(true, Ordering::Release);
+        assert!(enrollment
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .is_err());
+        vault.locked.store(false, Ordering::Release);
+        assert!(enrollment
+            .initialize_with(
+                Path::new("host-identity"),
+                "github:1234".into(),
+                |_, _| Err(refused("fixture.interrupted_reference_publication"))
+            )
+            .is_err());
+        assert!(enrollment.snapshot().is_err());
+        let recovered = enrollment.reconcile().unwrap();
+        assert!(recovered.keys.is_empty());
+        assert!(!recovered.remote_access);
+        assert_eq!(enrollment.snapshot().unwrap(), recovered);
+        assert!(enrollment
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .is_err());
+
+        let (_other_root, other, other_vault) = setup();
+        other.revoke().unwrap();
+        let stopped = other.snapshot().unwrap();
+        other
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        let unprovisioned = OwnerEnrollment {
+            installation: &other,
+            vault: Box::new(SharedVault(other_vault)),
+            storage: OwnerStorage::NativeVault,
+        };
+        assert!(unprovisioned
+            .initialize(Path::new("host-identity"), "github:1234".into())
+            .is_err());
+    }
+
+    #[test]
+    fn protected_owner_interrupted_initialization_cannot_switch_credential_storage() {
+        for selected in [
+            OwnerStorage::NativeVault,
+            OwnerStorage::HeadlessProtectedFile,
+        ] {
+            let (_root, store, vault) = setup();
+            let enrollment = match selected {
+                OwnerStorage::NativeVault => OwnerEnrollment {
+                    installation: &store,
+                    vault: Box::new(SharedVault(vault.clone())),
+                    storage: selected,
+                },
+                OwnerStorage::HeadlessProtectedFile => {
+                    store.owner_enrollment_with_storage(selected).unwrap()
+                }
+            };
+            assert!(enrollment
+                .initialize_with(
+                    Path::new("host-identity"),
+                    "github:1234".into(),
+                    |_, _| Err(refused("fixture.interrupted_reference_publication")),
+                )
+                .is_err());
+            let evidence = || {
+                store
+                    .with_locked(|directory, _| {
+                        Ok((
+                            storage::read_private(directory, Path::new(INITIALIZING), 512)?,
+                            storage::read_private(directory, Path::new(PREPARED), LIMIT + 512)?,
+                        ))
+                    })
+                    .unwrap()
+            };
+            let before = evidence();
+            let other = match selected {
+                OwnerStorage::NativeVault => OwnerStorage::HeadlessProtectedFile,
+                OwnerStorage::HeadlessProtectedFile => OwnerStorage::NativeVault,
+            };
+            assert!(store.owner_enrollment_with_storage(other).is_err());
+            let wrong = OwnerEnrollment {
+                installation: &store,
+                vault: Box::new(SharedVault(vault)),
+                storage: other,
+            };
+            assert!(wrong
+                .initialize(Path::new("host-identity"), "github:1234".into())
+                .is_err());
+            assert!(wrong.reconcile().is_err());
+            assert_eq!(evidence(), before);
+            assert_eq!(enrollment.reconcile().unwrap().storage, selected);
+        }
+    }
+
+    #[test]
+    fn protected_owner_creation_settings_mask_preserves_revocation_and_permission_removal() {
+        let (_root, store, vault) = setup();
+        fn configure(store: &Store, allow_creation: bool) {
+            store.revoke().unwrap();
+            let stopped = store.snapshot().unwrap();
+            store
+                .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+                .unwrap();
+            let mut settings = stopped.settings;
+            settings.allow_creation = allow_creation;
+            store.configure(settings.clone()).unwrap();
+            let ticket = store.request_enable(&settings).unwrap();
+            store
+                .record_provisioned(&ticket, stopped.binding.unwrap())
+                .unwrap();
+        }
+        configure(&store, true);
+        let enrollment = OwnerEnrollment {
+            installation: &store,
+            vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
+        };
+        let initial = initialize(&enrollment);
+        let key = OwnerSigningKey::from_seed(&[61; 32]);
+        let state = enroll(&enrollment, &initial, &key);
+        let state = enrollment
+            .approve_permissions(
+                state.revision,
+                true,
+                Capabilities {
+                    attach: true,
+                    create: true,
+                    creation_allowed: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(
+            enrollment
+                .current_policy()
+                .unwrap()
+                .verifier()
+                .policy()
+                .capabilities
+                .creation_allowed
+        );
+        configure(&store, false);
+        let masked = enrollment.snapshot().unwrap();
+        assert!(masked.capabilities.creation_allowed);
+        assert!(
+            !enrollment
+                .current_policy()
+                .unwrap()
+                .verifier()
+                .policy()
+                .capabilities
+                .creation_allowed
+        );
+        assert!(enrollment
+            .approve_permissions(masked.revision, true, state.capabilities)
+            .is_err());
+        let revoked = enrollment
+            .revoke(masked.revision, key.public_key())
+            .unwrap();
+        let removed = enrollment
+            .approve_permissions(revoked.revision, false, Capabilities::default())
+            .unwrap();
+        assert!(!removed.remote_access && !removed.capabilities.creation_allowed);
+        assert!(removed.keys[0].revoked);
+    }
+
+    #[test]
+    fn protected_owner_compact_anchor_supports_all_64_history_entries_in_2560_byte_vault() {
+        let (_root, store, vault) = setup();
+        let enrollment = OwnerEnrollment {
+            installation: &store,
+            vault: Box::new(SharedVault(vault.clone())),
+            storage: OwnerStorage::NativeVault,
+        };
+        let initial = initialize(&enrollment);
+        let first = OwnerSigningKey::from_seed(&[1; 32]);
+        let mut active = first.public_key();
+        let mut state = enroll(&enrollment, &initial, &first);
+        for seed in 2..=64 {
+            let next = OwnerSigningKey::from_seed(&[seed; 32]).public_key();
+            state = enrollment
+                .rotate(
+                    state.revision,
+                    active,
+                    next,
+                    &owner_key_fingerprint(&next).unwrap(),
+                )
+                .unwrap();
+            active = next;
+        }
+        assert_eq!(state.keys.len(), 64);
+        assert_eq!(state.keys.iter().filter(|key| !key.revoked).count(), 1);
+        assert!(record_bytes(&state).unwrap().len() > 2560);
+        let state = enrollment.revoke(state.revision, active).unwrap();
+        assert!(state.keys.iter().all(|key| key.revoked));
+        assert!(enrollment
+            .enroll(
+                state.revision,
+                first.public_key(),
+                &owner_key_fingerprint(&first.public_key()).unwrap()
+            )
+            .is_err());
+        assert_eq!(enrollment.reconcile().unwrap(), state);
+    }
+
+    #[test]
+    fn protected_owner_headless_file_selection_is_explicit_bound_and_not_desktop_fallback() {
+        let (root, store, _vault) = setup();
+        let enrollment = store
+            .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        let initial = initialize(&enrollment);
+        assert_eq!(initial.storage, OwnerStorage::HeadlessProtectedFile);
+        assert!(store
+            .owner_enrollment_with_storage(OwnerStorage::NativeVault)
+            .is_err());
+        let key = store
+            .with_locked(|directory, installation| {
+                let selected =
+                    festerm_tunnel_bridge::owner_auth::ExplicitHeadlessFileStore::select(
+                        directory,
+                        &installation.installation,
+                    )?;
+                let key = festerm_tunnel_bridge::owner_auth::ClientOwnerKey::generate_headless(
+                    &selected,
+                    &initial.binding,
+                )
+                .unwrap();
+                let reopened = festerm_tunnel_bridge::owner_auth::ClientOwnerKey::open_headless(
+                    &selected,
+                    key.reference(),
+                    &initial.binding,
+                )
+                .unwrap();
+                assert_eq!(key.public_key(), reopened.public_key());
+                assert!(key.remove_native().is_err());
+                let reference = key.reference();
+                key.remove_headless(&selected).unwrap();
+                assert!(matches!(
+                    selected.get(&reference),
+                    Err(festerm_secret_store::SecretStoreError::Missing)
+                ));
+                key.remove_headless(&selected).unwrap();
+                let foreign = festerm_host_protocol::HostId::new().to_string();
+                assert!(
+                    festerm_tunnel_bridge::owner_auth::ExplicitHeadlessFileStore::select(
+                        directory, &foreign
+                    )
+                    .is_err()
+                );
+                Ok(key)
+            })
+            .unwrap();
+        let enrolled = enrollment
+            .enroll(
+                initial.revision,
+                key.public_key(),
+                &owner_key_fingerprint(&key.public_key()).unwrap(),
+            )
+            .unwrap();
+        let revoked = enrollment
+            .revoke(enrolled.revision, key.public_key())
+            .unwrap();
+        assert!(revoked.keys[0].revoked);
+        let reopened = Store::open(&root.path().join("installation"), Origin::Headless).unwrap();
+        assert_eq!(
+            reopened
+                .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+                .unwrap()
+                .snapshot()
+                .unwrap(),
+            revoked
+        );
+        let desktop = Store::create(
+            &root.path().join("desktop"),
+            Origin::Desktop,
+            Settings {
+                friendly_name: "desktop".into(),
+                allow_creation: false,
+                startup: Startup::Manual,
+            },
+        )
+        .unwrap();
+        assert!(desktop
+            .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+            .is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            let anchor = store
+                .with_locked(|directory, _| storage::read_private(directory, Path::new(ANCHOR), 36))
+                .unwrap();
+            let secret_path = root.path().join("installation").join(format!(
+                "headless-owner-secret-{}",
+                std::str::from_utf8(&anchor).unwrap()
+            ));
+            assert_eq!(
+                std::fs::metadata(&secret_path)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o077,
+                0
+            );
+            std::fs::remove_file(&secret_path).unwrap();
+            symlink(
+                root.path().join("installation/owner-enrollment.json"),
+                &secret_path,
+            )
+            .unwrap();
+            assert!(enrollment.snapshot().is_err());
+            assert!(secret_path
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        }
+    }
+
+    #[test]
+    fn protected_owner_observed_epoch_commit_recovers_only_forward_after_disk_failure() {
+        let (_root, store, vault) = setup();
+        let enrollment = OwnerEnrollment {
+            installation: &store,
+            vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
+        };
+        let initial = initialize(&enrollment);
+        let key = OwnerSigningKey::from_seed(&[71; 32]);
+        let state = enroll(&enrollment, &initial, &key);
+        // A prepared-but-not-native-committed proposal must not become consent.
+        store
+            .with_locked(|directory, _| {
+                let mut proposal = state.clone();
+                proposal.keys[0].revoked = true;
+                proposal.revision = Epoch::new(proposal.revision.get() + 1)?;
+                enrollment.prepare(directory, &proposal, record_digest(&state)?)
+            })
+            .unwrap();
+        assert_eq!(enrollment.reconcile().unwrap(), state);
+        store.revoke().unwrap();
+        store
+            .with_locked(|directory, installation| {
+                let reference = enrollment.reference(directory, ANCHOR)?;
+                let mut advanced = state.clone();
+                advanced.installation_epoch = installation.epoch;
+                advanced.revision = Epoch::new(advanced.revision.get() + 1)?;
+                let result = enrollment.commit_with(
+                    directory,
+                    &reference,
+                    &advanced,
+                    record_digest(&state)?,
+                    |_, _| Err(refused("fixture.interrupted_disk_publication")),
+                );
+                assert!(result.is_err());
+                Ok(())
+            })
+            .unwrap();
+        assert!(enrollment.snapshot().is_err());
+        let recovered = enrollment.reconcile().unwrap();
+        assert!(recovered.revision.get() > state.revision.get());
+        assert!(enrollment
+            .current_policy()
+            .unwrap()
+            .verifier()
+            .challenge()
+            .is_err());
+        let revoked = enrollment
+            .revoke(recovered.revision, key.public_key())
+            .unwrap();
+        assert!(revoked.keys[0].revoked);
     }
 }

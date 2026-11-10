@@ -785,9 +785,14 @@ routing, protected enrollment/channel integration, migration and native
 reboot/device qualification remain gated; this is not remote exposure.
 The non-default
 `festerm-host-setup/owner-enrollment` feature persists exact-installation
-owner/key/account policy under the lifecycle lease, with native-vault rollback
-fencing and monotonic revocation revisions. Bridge `ClientOwnerKey` uses native
-opaque references only; enrollment does not enable access or creation.
+owner/key/account policy under the lifecycle lease, with compact native-vault
+revision/digest fencing, durable prepared-record forward recovery and monotonic
+revocation revisions. Bridge `ClientOwnerKey` uses opaque credential references;
+native storage remains default and GUI policy unchanged. An explicit headless-only
+protected-file credential/anchor backend binds origin/storage/installation;
+whole protected-store/home rollback is not resisted by that weaker mode.
+Enrollment does not enable access or creation; settings deny masks creation
+without blocking key revocation or permission removal.
 The real pinned SSH stream lacks a shared connection/channel transcript
 exporter, so both client/server owner-channel gates explicitly refuse.
 Pinned-channel integration and independent security review are mandatory before

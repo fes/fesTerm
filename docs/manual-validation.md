@@ -3457,6 +3457,12 @@ claimed by the stage-1 protocol refusal fixture.
 
 ## ADR 0084 host setup qualification
 
+`HOSTAUTH-01` also gates composition: future desktop/mobile callers must never
+select file credentials. A future headless CLI must verify protected origin and
+explicit local opt-in. The host Store enforces journal origin; the lower-level
+bridge/client marker is only a namespace, not a headless-origin capability.
+No current GUI/default path selects file storage or falls back after vault failure.
+
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;
 that needs separate default-No confirmation for its exact generation. That
@@ -3479,7 +3485,7 @@ client operations must retain their captured issuer.
 
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
-| HOSTAUTH-01 | On macOS/Windows/Linux and physical mobile clients, explicitly confirm exact host/account/owner public-key fingerprint; generate/reopen/delete per-host owner keys in the native vault; lock/unlock/unavailable store; revoke/rotate while proof and operations are pending; restart/update with stale disk state; verify no key in exports/logs/argv/env and no fallback. | Automated synthetic protected storage/crypto/real SSH refusal fixtures; native and first-connect usability deferred | #681 stages 1/3: reviewed shared SSH connection/channel exporter and role-bound signing adapter; integrated foreground enrollment or advanced host-local public-key consent; exact-owned endpoint admission/routing. A provisioned journal is not Ready; fixture success is not native vault/platform acceptance. |
+| HOSTAUTH-01 | On macOS/Windows/Linux and physical mobile clients, explicitly confirm exact provisioned host/account/owner public-key fingerprint; generate/reopen/delete per-host owner keys in the native vault; lock/unlock/unavailable store; revoke/rotate while proof and operations are pending; deny creation without blocking removal; interrupt reference reservation/native update/disk publication and reconcile only exact anchored forward state. On a headless installation explicitly select protected-file credentials, verify origin/path/no-follow/permission checks and the documented weaker whole-store/home rollback guarantee; never fall back automatically. Verify no key in exports/logs/argv/env. | Automated synthetic constrained-vault, 64-key-history, forward recovery, effective-permission and private-file fixtures plus real SSH refusal fixtures; native and first-connect usability deferred | #681 stages 1/3: reviewed shared SSH connection/channel exporter and role-bound signing adapter; integrated foreground enrollment or advanced host-local public-key consent; exact-owned endpoint admission/routing. A provisioned journal is not Ready; fixture success is not native vault/private-path/platform acceptance. |
 
 ## Intake rule for new work
 

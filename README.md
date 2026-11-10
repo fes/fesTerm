@@ -41,8 +41,10 @@ durable session-control backend with real detached daemons and daemon-enforced
 temporary leases. No HOST endpoint or remote creation is exposed; independent
 review, enrollment/channel integration and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
-Protected local owner enrollment and native-vault references now have fixture
-coverage; real pinned SSH streams still refuse owner authentication until a
+Protected local owner enrollment, compact native-vault anchors, validated forward
+recovery and explicit headless-only private-file credentials have fixture
+coverage (file mode has weaker whole-store rollback protection and is never a
+native failure fallback); real pinned SSH streams still refuse owner authentication until a
 shared connection/channel binding exporter is implemented and reviewed.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides

@@ -23,6 +23,10 @@ use zeroize::Zeroizing;
 
 mod vault;
 pub use vault::{ClientOwnerKey, OwnerBinding, OwnerKeyError};
+#[cfg(feature = "relay")]
+mod headless_store;
+#[cfg(feature = "relay")]
+pub use headless_store::ExplicitHeadlessFileStore;
 
 const DOMAIN: &[u8] = b"fesTerm HOST owner authentication v1\0";
 pub const MAX_OWNER_KEYS: usize = 4;
@@ -80,7 +84,8 @@ impl Validate for OwnerPolicy {
 }
 
 /// No Debug/Serialize/Clone; private seed bytes belong only in the native vault
-/// (SecretBytes/opaque reference), never a plaintext/private-file fallback.
+/// (SecretBytes/opaque reference), or an explicitly selected headless protected
+/// credential file. Never portable metadata or automatic vault-failure fallback.
 pub struct OwnerSigningKey(SigningKey);
 
 impl OwnerSigningKey {

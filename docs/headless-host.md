@@ -88,8 +88,15 @@ The opt-in library `owner-enrollment` API supports protected local public-key
 enrollment/revocation/status and separate permission consent under the same
 installation lease. It does not expose a CLI enrollment command, enable a
 listener or turn `status` into an authentication/readiness claim. Client signing
-keys and host policy rollback anchors require the native vault; no file seed
-fallback exists. See the [API and concrete channel blocker](host-protocol.md#concrete-transport-blocker--no-owner-signing-adapter-yet).
+keys and policy anchors use the native vault by default. The library's explicit
+`OwnerStorage::HeadlessProtectedFile` selection offers owner-only credential/
+anchor files bound to that headless installation/origin, never fallback from a
+failed vault or portable configuration adoption. Full protected-store/home
+rollback is not resisted in this weaker mode. `reconcile()` only forward-publishes
+the exact digest/revision committed by the selected store; it cannot invent
+consent. Initialization requires the existing exact Provisioned account/host
+binding. No CLI storage/enrollment controls are exposed yet.
+See the [API and concrete channel blocker](host-protocol.md#concrete-transport-blocker--no-owner-signing-adapter-yet).
 First-connect foreground handoff versus advanced explicit public-key import
 remains a bounded UX prerequisite. Neither bearer presence nor a provisioning
 account string enrolls an owner.
@@ -186,7 +193,10 @@ origin isolation, stale completions, exact stop/removal receipts, immutable
 identity, pre-login refusal, private/corrupt/busy state, pin mismatch and refusal
 exit codes. They also cover foreground settings changing before consent commit,
 publish-time drift, recovered in-flight tickets and interrupted atomic writes.
-Tests use synthetic data and private directories under the checkout.
+Tests use synthetic data. Private fixture directories live under the checkout on
+Unix; on Windows they use a user or system Temp parent that passes the
+private-storage policy. The fixture guard attempts cleanup of only its own
+directory when dropped.
 They do not access accounts, secrets, cloud resources, installed applications or
 native services. Native/service/package qualification remains in `HOSTSETUP-01`
 in [manual validation](manual-validation.md).
