@@ -3644,8 +3644,17 @@ passed 106 tests with one existing native ignore, compatibility CLI passed 10 an
 strict affected-package Clippy passed. The real initializer is invoked from an
 absent key through production `CloudHostAdapter::foreground`, not preseeded by a
 fixture. Identity loss under an existing cloud record refuses regeneration.
-Linux UserSignIn remains blocked on current-logon activation (an already lingering
-user manager is not sign-in proof); Manual setup/run remains available in source.
+Linux UserSignIn has source-level bounded current-logon admission and per-run
+supervision under the owner's explicit graphical/interactive TTY/SSH and
+retain-until-last-eligible-logout approval. An already lingering user manager is
+not proof; Manual setup/run remains unchanged. HOSTSETUP-01 still requires a
+separately granted ordinary-user real-manager/logind window: actual eligible
+graphical/PAM TTY/SSH sessions, lock/idle, multiple logins, last logout, missing/
+restarted bus and logind, and existing linger without configuration changes.
+Observe actual relay retirement and continued persistent child I/O with identical
+daemon PID/generation, helpers, grants and cgroup membership. A user-manager or
+session cgroup terminated by OS logout policy may kill those daemons; no synthetic
+manager/parser/watcher test proves otherwise or authorizes policy repair.
 The review-correction union passes 114 host/setup tests with one existing native
 ignore: 101 setup-library, 5 headless unit and 8 CLI integration cases. The new
 production-supervision regression holds the actual Store installation lease

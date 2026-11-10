@@ -1,5 +1,86 @@
 # Milestone Progress Narrative
 
+## Implementing the approved Linux current-login lifetime fence
+
+A separate lane starts at exact Windows COM correction
+`154b26f21fd417df24bf2366647c951ebb243770`, not the stopped-update branch.
+No moving core, c75/update transaction or Windows publisher policy is consumed.
+The later corrected-core exact head is still a separate parent-owned integration
+input, not silently substituted for this base.
+
+The owner's explicit two approvals are implemented: actual-UID logind
+`Class=user` graphical/interactive TTY/SSH (`x11/wayland/tty`) eligibility, and
+retention through lock/idle/inactivity until the last eligible logout. Root
+login1 unique-owner verification on the fixed native system bus precedes
+per-session UID/object/ID/class/type/state checks; inventory and issuer are
+rechecked. Background/manager/linger presence is not login authority. Unknown,
+malformed, changed, missing or over-limit evidence fails closed. Snapshots have
+one two-second budget, 64 sessions and 64-KiB aggregate output. The production
+protocol adapter also compiles in Unix fixture tests without executing it.
+
+Setup fences its original protected snapshot after the read-only admission
+query. Each run refreshes proof before relay work and before Listening, with
+an independent one-second polling watcher spanning acquisition and serving.
+Logout/uncertainty cancels and drains only hosting, keeping the per-run lease
+until that future finishes. Short installation/policy guards do not span OS
+queries; query children are exact, read-only and cancellation-owned, with no
+detached login-query task that can publish later. Existing native activation
+workers still retain the service-operation lease until the helper actually
+exits, including after caller timeout. Existing epoch/revocation and transient
+policy-Busy supervision remain independent. Failure history adds
+LoginProofUnavailable; no native/cloud absence or new owner grant is inferred.
+
+Only UserSignIn changes activation: receipt-owned `enable --now` covers an
+already running manager, and a per-unit two-second on-failure retry/start-limit
+exemption re-enters fresh login/owner/bundle admission for later logins. Manual
+retains its exact inert registration and `Restart=no`. There is no linger,
+pre-login, root/global policy or permission change. A racing revoke during
+activation refuses success and retains the exact earlier reservation even when
+the fake native process was started; it never restores consent.
+
+Bounded qualification used Homebrew rustc/Cargo **1.97.1**, jobs1, the native
+lane's exclusively granted private warm `target/adr84-native`, dev/test debug0,
+incremental0 and this checkout's `target/adr84-login-evidence` TMPDIR:
+
+```sh
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib linux_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_runtime_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_controller_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs -- --test-threads=1
+cargo test --locked -p festerm-host --bin festerm-host headless_native_and_vault_diagnostics_are_specific_and_sanitized
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 154b26f21fd417df24bf2366647c951ebb243770
+git diff --check
+```
+
+Final selectors pass **12 Linux**, **10 runtime**, **six controller-core**,
+**one registration** and **one CLI diagnostic**, zero failures/ignores.
+The Linux/runtime selectors overlap on the startup-fence test: these are
+**30 successful invocations of 29 distinct tests**, not a full package suite.
+The seven login tests cover eligibility, hostile metadata/limits, root issuer/
+UID/inventory races, last-logout/uncertainty cancellation, query deadline and
+watcher termination. Two new native-adapter cases cover Manual versus guarded
+sign-in activation and late revocation, with typed fake effects only. The real
+Store-lease Busy/revocation regression now also composes the login guard.
+Strict affected two-package all-target Clippy, fmt, traceability311 and diff
+pass. The initial strict run caught a test-only RefCell borrow spanning a later
+await; a lexical scope fixed it without a lint waiver. That RED remains in
+`target/adr84-login-evidence/clippy-first.log`; final logs use `final-*.log`.
+
+No actual bus/logind/manager, native credential, VM, cloud or signing operation
+was run, and no new target/toolchain/dependency was installed. Linux-target
+compilation and real current-logon/restart/last-logout acceptance remain pending.
+HOSTSETUP-01 must observe actual transport closure plus unchanged daemon PID/
+generation, child I/O, helpers, grants and cgroup membership across host exit and
+last logout. An OS-owned user-manager/session cgroup teardown can independently
+terminate a daemon; fake-manager or parser proof cannot establish survival or
+authorize changing OS settings. This slice is source/fixture evidence, not
+Linux native service, persistent-logout survival, Ready or ADR acceptance.
+The host Cargo slot is released at this fixed checkpoint. The owned-worktree
+compiler/query/sessiond/PTY-helper CWD process check found zero matches.
+No push, PR creation or integration of a moving dependency was performed.
+
 ## Correcting the pinned Windows Task Scheduler XML output binding
 
 A sibling branch starts at exact core

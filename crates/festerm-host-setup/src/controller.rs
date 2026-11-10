@@ -1,5 +1,7 @@
 //! Shared explicit foreground setup and restartable host composition.
 
+mod linux_login;
+
 use crate::{
     cloud::{Cleanup, CloudHostAdapter, Foreground, Health, HOST_IDENTITY_FILE},
     enrollment::{
@@ -159,7 +161,10 @@ pub(crate) async fn setup_with(
         cancel,
     } = request;
     let before = store.snapshot()?;
-    startup_admission(std::env::consts::OS, before.settings.startup)?;
+    startup_admission(before.settings.startup, cancel).await?;
+    if store.snapshot()? != before {
+        return Err(refused("host.runtime_consent_changed"));
+    }
     stage.sessiond_path()?;
     if account == 0 || cancel.is_cancelled() {
         return Err(refused("host.foreground_account_consent_required"));
@@ -392,6 +397,7 @@ pub enum RunState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunFailure {
+    LoginProofUnavailable,
     AuthenticatedBundleRequired,
     CurrentOwnerConsentRequired,
     DaemonBoundaryUnavailable,
@@ -439,9 +445,9 @@ fn refused(reason: &'static str) -> io::Error {
     io::Error::other(reason)
 }
 
-fn startup_admission(platform: &str, startup: Startup) -> io::Result<()> {
-    if platform == "linux" && startup == Startup::UserSignIn {
-        return Err(refused("host.linux_sign_in_session_fence_required"));
+async fn startup_admission(startup: Startup, cancel: &CancellationToken) -> io::Result<()> {
+    if linux_login::required(std::env::consts::OS, startup) {
+        linux_login::admit(&linux_login::Logind, cancel).await?;
     }
     Ok(())
 }
@@ -540,7 +546,39 @@ async fn run_reserved(
     if cancel.is_cancelled() {
         return Ok(());
     }
-    startup_admission(std::env::consts::OS, expected.settings.startup)?;
+    record.failure = Some(RunFailure::LoginProofUnavailable);
+    startup_admission(expected.settings.startup, &cancel).await?;
+    let hosting_cancel = cancel.child_token();
+    let result = if linux_login::required(std::env::consts::OS, expected.settings.startup) {
+        linux_login::guard(
+            &linux_login::Logind,
+            cancel,
+            hosting_cancel.clone(),
+            run_admitted(store, state, expected, record, hosting_cancel),
+        )
+        .await
+    } else {
+        run_admitted(store, state, expected, record, hosting_cancel).await
+    };
+    if result
+        .as_ref()
+        .is_err_and(|error| error.to_string() == "host.linux_current_login_proof_required")
+    {
+        record.failure = Some(RunFailure::LoginProofUnavailable);
+    }
+    result
+}
+
+async fn run_admitted(
+    store: Arc<Store>,
+    state: &Path,
+    expected: &Snapshot,
+    record: &mut RunRecord,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
     let stage = Services::current_user(&store, state)?.reopen_stage(expected.epoch)?;
     let helper = stage.sessiond_path()?;
@@ -568,6 +606,7 @@ async fn run_reserved(
     let runtime = Arc::new(HostRuntime::new(sessions, policy));
     record.failure = Some(RunFailure::RelayUnavailable);
     let mut relay = CloudHostAdapter::new(&store).open_relay(&cancel).await?;
+    startup_admission(expected.settings.startup, &cancel).await?;
     stage.sessiond_path()?;
     if store.snapshot()? != *expected {
         return Err(refused("host.runtime_consent_changed"));
@@ -672,9 +711,9 @@ mod tests {
 
     #[test]
     fn host_runtime_linux_sign_in_requires_logon_fence_not_lingering_user_manager() {
-        assert!(startup_admission("linux", Startup::Manual).is_ok());
-        assert!(startup_admission("linux", Startup::UserSignIn).is_err());
-        assert!(startup_admission("macos", Startup::UserSignIn).is_ok());
+        assert!(!linux_login::required("linux", Startup::Manual));
+        assert!(linux_login::required("linux", Startup::UserSignIn));
+        assert!(!linux_login::required("macos", Startup::UserSignIn));
     }
 
     #[tokio::test(start_paused = true)]
@@ -690,13 +729,22 @@ mod tests {
             let shutdown = shutdown.clone();
             async move { shutdown.cancelled().await }
         };
-        let watched = supervise(
+        struct Eligible;
+        impl linux_login::Query for Eligible {
+            async fn eligible(&self, _: &CancellationToken) -> io::Result<bool> {
+                Ok(true)
+            }
+        }
+        let cancel = CancellationToken::new();
+        let hosting_cancel = cancel.child_token();
+        let hosted = supervise(
             &store,
             &expected,
-            CancellationToken::new(),
+            hosting_cancel.clone(),
             shutdown.clone(),
             serving,
         );
+        let watched = linux_login::guard(&Eligible, cancel, hosting_cancel, hosted);
         tokio::pin!(watched);
         assert!(tokio::time::timeout(Duration::from_secs(4), &mut watched)
             .await

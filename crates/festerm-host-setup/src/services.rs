@@ -482,7 +482,8 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         Ok(stage)
     }
 
-    /// Registers only; never starts the incomplete host endpoint.
+    /// Registers the exact definition. Linux UserSignIn also activates the
+    /// guarded launcher; Manual registration never starts a process.
     pub fn install(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
         if self.context.platform == Platform::Windows {
             return Err(refused(
@@ -573,7 +574,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 self.run(&["--user", "daemon-reload"])?;
                 if snapshot.settings.startup == Startup::UserSignIn {
                     self.fence(epoch, Phase::Provisioned)?;
-                    self.run(&["--user", "enable", &record.resource])?;
+                    self.run(&["--user", "enable", "--now", &record.resource])?;
                 }
             }
             Platform::Macos => {

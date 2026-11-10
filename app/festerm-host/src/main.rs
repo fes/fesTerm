@@ -480,8 +480,8 @@ fn diagnostic(error: &io::Error) -> &'static str {
             "host.cloud_rate_limited; preserve receipt and retry later, outcome not confirmed"
         }
         "host.cloud_cancelled" => "host.cloud_cancelled; retained evidence was not discarded",
-        "host.linux_sign_in_session_fence_required" =>
-            "host.linux_sign_in_session_fence_required; choose manual startup until current-logon activation is qualified; no linger or permission changes performed",
+        "host.linux_current_login_proof_required" =>
+            "host.linux_current_login_proof_required; require a verified current-user graphical or interactive TTY/SSH logind session; no linger or permission changes performed",
         "host.runtime_current_provisioned_consent_required" =>
             "host.runtime_current_provisioned_consent_required; complete explicit current setup before run",
         "host.runtime_current_owner_consent_required" =>
@@ -707,6 +707,7 @@ mod tests {
                 "publisher",
             ),
             ("host.service_native_timeout", "outcome unknown"),
+            ("host.linux_current_login_proof_required", "TTY/SSH logind"),
             (
                 "owner.vault_anchor_missing_local_reconciliation_required",
                 "sign_in_required",

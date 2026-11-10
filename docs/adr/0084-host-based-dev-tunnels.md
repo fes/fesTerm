@@ -283,6 +283,18 @@ authorizes exposure; startup/update cannot reconstruct revoked grants.
 
 Offer accurately labeled startup choices: manual, at user sign-in, and after
 reboot before interactive login only on qualified platforms/configurations.
+The owner explicitly approved Linux graphical and interactive TTY/SSH eligibility
+for the actual UID and logind `Class=user`, retaining hosting through lock/idle
+until the last eligible logout. Source now admits `tty/x11/wayland` sessions in
+`active/online` state using bounded root-issuer-verified login1 reads and a
+per-run cancellation watcher, not a lingering manager or environment assertion.
+Unknown/missing proof closes/refuses host transport without revoking owner grants,
+ending persistent daemons or inferring native absence. Manual is unchanged.
+Receipt-owned UserSignIn activation starts/retries the guarded host under an
+already running user manager; it never enables linger or changes global settings.
+Real manager/logind/cgroup/last-logout and persistent-daemon survival remain
+explicit [native qualification gates](../native-host-services.md#linux-current-login-fence);
+portable/fake-manager evidence does not establish them.
 Do not claim that sign-in registration provides pre-login availability.
 
 ### 8. Headless installation and common management
@@ -581,6 +593,14 @@ boot-start, temporary-lease or upgrade behavior. No live credentials or service
 changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
+
+The owner-approved Linux current-login slice adds portable eligibility/hostile
+metadata tests, `linux_login_proof_pins_root_owner_uid_and_refuses_inventory_or_issuer_race`,
+`linux_login_last_logout_or_uncertainty_cancels_and_drains_only_host`, query-budget/
+cancellation tests and exact-owned activation/revocation fixtures. HOST-04/05
+and HOSTSETUP-01 remain partial: the real logind/manager/last-logout and retained
+daemon PID/generation/child-I/O/cgroup evidence is still required. Manual remains
+inert; no synthetic fixture establishes OS logout survival.
 
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation
