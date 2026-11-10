@@ -8,7 +8,7 @@ use super::{
 use festerm_host_protocol::{
     AuthorizedInventory, Capabilities, ContractError, EnsureDisposition, Envelope, Epoch,
     InventoryEntry, LogicalState, LookupResult, Refusal, Request, Response, SessionGrant,
-    CONTROL_DEADLINE_SECONDS,
+    UnknownInventoryEntry, CONTROL_DEADLINE_SECONDS,
 };
 use festerm_sessiond::host_control::{
     AdmissionState, ControlError, Effect, Lookup, SessionControl,
@@ -73,7 +73,35 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
         state: &AdmissionState,
         request: &Envelope<Request>,
     ) -> Result<A::Guard, ControlError> {
+        self.authorize_state(admission, state, request)
+            .map(|(guard, _)| guard)
+    }
+
+    fn authorize_state(
+        &self,
+        admission: &OperationAdmission,
+        state: &AdmissionState,
+        request: &Envelope<Request>,
+    ) -> Result<(A::Guard, Capabilities), ControlError> {
         let guard = self.policy.current_policy().map_err(control_error)?;
+        let projected = state
+            .issuance_epoch
+            .map(|epoch| guard.verifier().with_issuance_epoch(epoch))
+            .transpose()
+            .map_err(control_error)?;
+        let verifier = projected.as_ref().unwrap_or(guard.verifier());
+        if matches!(
+            request.body,
+            Request::Ensure { .. } | Request::Create { .. }
+        ) {
+            let issued = request.issued_operation().map_err(control_error)?;
+            if state
+                .issuance_epoch
+                .is_none_or(|current| issued.epoch.get() > current.get())
+            {
+                return Err(ControlError::Stale);
+            }
+        }
         let mut effective_request = request.clone();
         if matches!(request.body, Request::Create { .. }) && state.effect == Effect::Resume {
             if let Some(SessionGrant {
@@ -100,6 +128,7 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
                     attachment: creation.attachment.clone(),
                     takeover: false,
                 };
+                effective_request.issuance_epoch = None;
             }
         }
         let mut provisional = None;
@@ -123,13 +152,16 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
         }
         admission
             .authorize_current(
-                guard.verifier(),
+                verifier,
                 &effective_request,
                 state.grant.as_ref().or(provisional.as_ref()),
-                Epoch::new(1).map_err(control_error)?,
+                state
+                    .grant_epoch
+                    .unwrap_or(Epoch::new(1).map_err(control_error)?),
             )
             .map_err(control_error)?;
-        Ok(guard)
+        let capabilities = verifier.capabilities();
+        Ok((guard, capabilities))
     }
 
     fn inventory(
@@ -156,37 +188,59 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
                 Epoch::new(1).map_err(|_| Refusal::Unknown)?,
             )
             .map_err(|error| refusal(control_error(error)))?;
-        let grants: Vec<_> = current
+        let mut grants: Vec<_> = current
+            .sessions
             .iter()
             .map(|session| session.grant.clone())
+            .chain(current.unknown.iter().map(|session| session.grant.clone()))
+            .collect();
+        grants.sort_by(|a, b| a.logical.cmp(&b.logical));
+        let unknown: Vec<_> = current
+            .unknown
+            .iter()
+            .map(|session| session.target.clone())
             .collect();
         let mut retained = admission.inventory.lock().map_err(|_| Refusal::Denied)?;
         if admission.cancelled() {
             return Err(Refusal::Stale);
         }
         if cursor.is_none() {
-            let entries = current.into_iter().map(|session| InventoryEntry {
+            let entries = current.sessions.into_iter().map(|session| InventoryEntry {
                 owner: session.grant.owner,
                 shared: session.grant.remote_access,
                 revoked: matches!(session.grant.state, LogicalState::Revoked),
                 session: session.summary,
             });
-            let snapshot = AuthorizedInventory::capture(
+            let uncertain = current
+                .unknown
+                .into_iter()
+                .map(|session| UnknownInventoryEntry {
+                    owner: session.grant.owner,
+                    shared: session.grant.remote_access,
+                    revoked: matches!(session.grant.state, LogicalState::Revoked),
+                    target: session.target,
+                });
+            let snapshot = AuthorizedInventory::capture_with_unknowns(
                 request.host.clone(),
                 admission.principal().clone(),
                 fence.grant_epoch,
                 request.operation.clone(),
                 entries,
+                uncertain,
             )
             .map_err(|error| refusal(control_error(error)))?;
             *retained = Some(InventoryCapture {
                 snapshot,
                 grants: grants.clone(),
+                unknown: unknown.clone(),
                 expires: Instant::now() + Duration::from_secs(u64::from(CONTROL_DEADLINE_SECONDS)),
             });
         }
         let capture = retained.as_ref().ok_or(Refusal::Stale)?;
-        if Instant::now() >= capture.expires || !same_grants(&capture.grants, &grants) {
+        if Instant::now() >= capture.expires
+            || !same_grants(&capture.grants, &grants)
+            || capture.unknown != unknown
+        {
             *retained = None;
             return Err(Refusal::Stale);
         }
@@ -216,20 +270,25 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
         }
         match &request.body {
             Request::Capabilities {} => {
-                let guard = self
-                    .policy
-                    .current_policy()
-                    .map_err(|error| refusal(control_error(error)))?;
-                admission
-                    .authorize_current(
-                        guard.verifier(),
-                        request,
-                        None,
-                        Epoch::new(1).map_err(|_| Refusal::Unknown)?,
-                    )
-                    .map_err(|error| refusal(control_error(error)))?;
+                let mut captured = None;
+                let epoch = self
+                    .sessions
+                    .issuance_epoch(admission.principal(), |state| {
+                        let (guard, capabilities) =
+                            self.authorize_state(admission, state, request)?;
+                        captured = Some((
+                            state.issuance_epoch.ok_or(ControlError::Unknown)?,
+                            capabilities,
+                        ));
+                        Ok(guard)
+                    })
+                    .map_err(refusal)?;
+                let (captured_epoch, capabilities) = captured.ok_or(Refusal::Unknown)?;
+                if captured_epoch != epoch {
+                    return Err(Refusal::Busy);
+                }
                 Ok(Response::Capabilities {
-                    capabilities: self.advertised(guard.verifier().policy().capabilities),
+                    capabilities: self.advertised(capabilities),
                 })
             }
             Request::List { cursor } => self.inventory(request, admission, cursor.as_ref()),
@@ -261,7 +320,10 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
                     .sessions
                     .ensure(
                         admission.principal(),
-                        &request.operation,
+                        &request
+                            .issued_operation()
+                            .map_err(control_error)
+                            .map_err(refusal)?,
                         creation,
                         matches!(request.body, Request::Create { .. }),
                         &admission.cancelled,

@@ -319,12 +319,12 @@ mod native_routes {
         control: &mut ControlClient<tokio::io::DuplexStream>,
         creation: Creation,
     ) -> HostTarget {
-        let operation = OperationId::new();
+        let operation = control.issue_operation().unwrap();
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
             let response = control
-                .request(
-                    operation.clone(),
+                .request_issued(
+                    &operation,
                     Request::Ensure {
                         creation: creation.clone(),
                     },

@@ -725,6 +725,9 @@ The opt-in bridge `host-routing` module and paired
 for bounded framed control RPC. The bridge consumes non-serializable verified
 owner proof and delegates reservation/grant checks to the session backend;
 the client owns immutable account/endpoint/host correlation, not authority.
+Creation RPCs retain an opaque issued operation bound to that destination and
+the original negotiated namespace across reconnects; lifecycle RPCs never
+inherit a creation scope. Correlation includes the exact echoed namespace.
 `host_control::native::NativeControl` uses actual sessiond reservations and owned
 policy guards; the off-by-default headless `owner-routing` composition adapts
 protected enrollment, not portable configuration. Owned native fixtures cover
@@ -734,6 +737,9 @@ an immutable client handle and a fixture-only actual native attachment actor. Re
 adoption and observed native writer admission precede Attached; exact temporary
 leases distinguish intentional detach from transport loss. FIFO output turns
 are released before network I/O; current authorization can cancel slow output.
+The native actor retains original opaque generation/attachment authority, and
+freshly checks an intentional-detach receipt before publishing stopped success;
+no client lease fields can mint replacement authority.
 Actual consuming same-channel authentication integration, backend hotpath/history
 qualification and fair control-under-load remain gates; legacy exact-generation relay
 and independent grants are unchanged.

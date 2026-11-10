@@ -1570,9 +1570,9 @@ in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
 HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
-Actual verified SSH client/server streams explicitly refuse owner authentication
-until a shared connection-and-channel exporter exists; this is a tested blocker,
-not authenticated endpoint coverage. First-connect controls/native vault
+The dispatcher/native consumers still require the reviewed actual
+connection-and-channel exporter and enrolled-owner stream, not just a host-key
+pin; primitive channel fixtures are not endpoint coverage. First-connect controls/native vault
 qualification remain deferred.
 
 The unexposed dispatcher/client now enforce negotiated operation flags,
@@ -1588,6 +1588,11 @@ old-writer progress while a takeover candidate waits and independent control
 under slow output. The bounded nonblocking candidate fixes the former native
 stall. Endpoint qualification still requires the backend hotpath/history work.
 Actual consuming owner-channel integration and all H/N gates remain deferred.
+
+Additional paired control fixtures bind issued creation operations across
+reconnects, refuse account/endpoint/host changes before writing, reject
+missing/forbidden or wrongly echoed scopes, and preserve privacy-filtered
+Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |

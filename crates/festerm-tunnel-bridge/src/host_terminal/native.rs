@@ -13,7 +13,8 @@ use festerm_session::{
 };
 use festerm_sessiond::{
     host_control::{
-        AdmissionState, AttachmentCancellation, ControlError, PendingAttachment, SessionControl,
+        AdmissionState, AttachmentCancellation, ControlError, DetachmentReceipt, PendingAttachment,
+        SessionControl,
     },
     RecoverySyncCommand,
 };
@@ -53,6 +54,7 @@ struct Worker<A: ProtectedPolicySource> {
     fence: Mutex<Option<AdmissionFence>>,
     adopted: bool,
     intentional: bool,
+    detachment: Option<(DetachmentReceipt, Envelope<Request>)>,
 }
 
 fn control(error: ContractError) -> ControlError {
@@ -96,7 +98,7 @@ impl<A: ProtectedPolicySource> Worker<A> {
                 guard.verifier(),
                 &self.request,
                 state.grant.as_ref(),
-                Epoch::new(1).map_err(control)?,
+                state.grant_epoch.ok_or(ControlError::Unknown)?,
             )
             .map_err(control)?;
         let mut fence = self.fence.lock().map_err(|_| ControlError::Storage)?;
@@ -111,7 +113,7 @@ impl<A: ProtectedPolicySource> Worker<A> {
                     guard.verifier(),
                     request,
                     state.grant.as_ref(),
-                    Epoch::new(1).map_err(control)?,
+                    state.grant_epoch.ok_or(ControlError::Unknown)?,
                 )
                 .map_err(control)?;
         }
@@ -134,24 +136,15 @@ impl<A: ProtectedPolicySource> Worker<A> {
                 attempted = true;
                 action.take().ok_or(ControlError::Storage)?()
             };
-            let result = if let (Some(ticket), Some(expected), false) = (
-                &self.pending.ticket,
-                &self.pending.reserved_lease,
-                self.adopted,
-            ) {
+            let result = if !self.adopted {
                 sessions.with_pending_attachment_authorized(
-                    self.owner.principal(),
-                    &self.target,
-                    ticket,
-                    expected,
+                    &self.pending.authority,
                     |state| self.admit(state, None, false),
                     apply,
                 )
             } else {
                 sessions.with_attachment_authorized(
-                    self.owner.principal(),
-                    &self.target,
-                    self.pending.reserved_lease.as_ref(),
+                    &self.pending.authority,
                     |state| self.admit(state, None, false),
                     apply,
                 )
@@ -178,6 +171,14 @@ impl<A: ProtectedPolicySource> Worker<A> {
         })
     }
 
+    fn output_active(&self) -> Result<bool, ControlError> {
+        if self.intentional {
+            Ok(false)
+        } else {
+            self.action(|| Ok(true))
+        }
+    }
+
     fn adopt(&self, size: TerminalSize) -> Result<(), ControlError> {
         self.action(|| {
             if !self.pending.session.recovery_protocol_is_authoritative() {
@@ -194,19 +195,15 @@ impl<A: ProtectedPolicySource> Worker<A> {
     }
 
     fn committed(&mut self) -> Result<Option<TemporaryLease>, ControlError> {
-        if let (Some(ticket), Some(expected)) = (&self.pending.ticket, &self.pending.reserved_lease)
-        {
-            self.backend.sessions.attachment_outcome(
-                self.owner.principal(),
-                &self.target,
-                ticket,
-                expected,
-                |state| self.admit(state, None, false),
-            )?;
-        }
-        self.action(|| Ok(()))?;
+        let lease = self
+            .backend
+            .sessions
+            .attachment_outcome(&self.pending.authority, |state| {
+                self.admit(state, None, false)
+            })?;
         self.adopted = true;
-        Ok(self.pending.reserved_lease.clone())
+        self.action(|| Ok(()))?;
+        Ok(lease)
     }
 
     fn input(&self, frame: Frame) -> Result<(), ControlError> {
@@ -286,41 +283,44 @@ impl<A: ProtectedPolicySource> Worker<A> {
         {
             return Err(ControlError::Stale);
         }
-        if let Some(binding) = &self.pending.reserved_lease {
-            self.backend.sessions.maintain_lease(
-                self.owner.principal(),
-                &self.target,
-                binding,
+        let receipt = self
+            .backend
+            .sessions
+            .maintain_lease(
+                &self.pending.authority,
                 Some(DetachKind::Intentional),
                 |state| self.admit(state, Some(request), false),
-            )?;
-        } else {
-            self.backend.sessions.with_attachment_authorized(
-                self.owner.principal(),
-                &self.target,
-                None,
-                |state| self.admit(state, Some(request), false),
-                || Ok(()),
-            )?;
-        }
+            )?
+            .ok_or(ControlError::Unknown)?;
+        self.detachment = Some((receipt, request.clone()));
         self.intentional = true;
         Ok(Response::Detached {
             target: self.target.clone(),
         })
     }
 
+    fn authorize_reply(&self, response: &Envelope<Response>) -> Result<(), ControlError> {
+        if matches!(response.body, Response::Detached { .. }) {
+            let (receipt, request) = self.detachment.as_ref().ok_or(ControlError::Stale)?;
+            response.validate_for(request).map_err(control)?;
+            self.backend.sessions.with_detachment_receipt_authorized(
+                receipt,
+                |state| self.admit(state, Some(request), false),
+                || Ok(()),
+            )
+        } else {
+            self.action(|| Ok(()))
+        }
+    }
+
     fn check(&self, heartbeat: bool) -> Result<(), ControlError> {
         self.action(|| Ok(()))?;
         if heartbeat && self.adopted {
-            if let Some(binding) = &self.pending.reserved_lease {
-                self.backend.sessions.maintain_lease(
-                    self.owner.principal(),
-                    &self.target,
-                    binding,
-                    None,
-                    |state| self.admit(state, None, false),
-                )?;
-            }
+            self.backend
+                .sessions
+                .maintain_lease(&self.pending.authority, None, |state| {
+                    self.admit(state, None, false)
+                })?;
         }
         Ok(())
     }
@@ -329,25 +329,15 @@ impl<A: ProtectedPolicySource> Worker<A> {
         if self.intentional {
             return Ok(());
         }
-        let binding = if let Some(ticket) = &self.pending.ticket {
-            match self.backend.sessions.cancel_attachment(
-                self.owner.principal(),
-                &self.target,
-                ticket,
-                |state| self.admit(state, None, true),
-            ) {
-                Ok(AttachmentCancellation::Committed(binding)) => Some(binding),
-                Ok(AttachmentCancellation::CancelledBeforeCommit) => None,
-                Err(error) => return Err(error),
-            }
-        } else {
-            self.pending.reserved_lease.clone()
-        };
-        if let Some(binding) = binding {
+        let committed = self
+            .backend
+            .sessions
+            .cancel_attachment(&self.pending.authority, |state| {
+                self.admit(state, None, true)
+            })?;
+        if matches!(committed, AttachmentCancellation::Committed(_)) {
             self.backend.sessions.maintain_lease(
-                self.owner.principal(),
-                &self.target,
-                &binding,
+                &self.pending.authority,
                 Some(DetachKind::TransportLost),
                 |state| self.admit(state, None, true),
             )?;
@@ -389,17 +379,19 @@ async fn refused(
     request: &Envelope<Request>,
     reason: Refusal,
 ) -> Result<(), Error> {
-    let response = Envelope::new(
-        request.host.clone(),
-        request.operation.clone(),
-        Response::Refused { reason },
-    );
+    let response = response_for(request, Response::Refused { reason });
     write(
         stream,
         HOST_REPLY,
         &festerm_host_protocol::encode(&response)?,
     )
     .await
+}
+
+fn response_for(request: &Envelope<Request>, body: Response) -> Envelope<Response> {
+    let mut response = Envelope::new(request.host.clone(), request.operation.clone(), body);
+    response.issuance_epoch = request.issuance_epoch;
+    response
 }
 
 /// Low-level composition only. `owner` and `guard` must have been produced on
@@ -453,7 +445,7 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
             let _owned = auth_permit;
             let current = auth_backend.policy.current_policy()?;
             auth_owner.authorize(current.verifier(), &auth_hello, Epoch::new(1)?, None)?;
-            let supported = current.verifier().policy().capabilities;
+            let supported = current.verifier().capabilities();
             Ok::<_, ContractError>(Capabilities {
                 attach: supported.attach,
                 detach: supported.detach,
@@ -502,6 +494,7 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
     let current_permit = permit.clone();
     let mut gate = request.clone();
     gate.body = Request::Capabilities {};
+    gate.issuance_epoch = None;
     let current = tokio::time::timeout(
         DEADLINE,
         tokio::task::spawn_blocking(move || {
@@ -589,7 +582,7 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
                         guard.verifier(),
                         &worker_request,
                         state.grant.as_ref(),
-                        Epoch::new(1).map_err(control)?,
+                        state.grant_epoch.ok_or(ControlError::Unknown)?,
                     )
                     .map_err(control)?;
                 let mut fence = fence.lock().map_err(|_| ControlError::Storage)?;
@@ -618,6 +611,7 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
             fence,
             adopted: false,
             intentional: false,
+            detachment: None,
         };
         let _ = started_tx.send(Ok(()));
         let mut checked = Instant::now();
@@ -766,9 +760,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
                     drop(frame);
                     call(&jobs, |worker| worker.action(|| Ok(()))).await?;
                     let response = if !caps.supports(&request.body) {
-                        Envelope::new(
-                            request.host,
-                            request.operation,
+                        response_for(
+                            &request,
                             Response::Refused {
                                 reason: Refusal::Unsupported,
                             },
@@ -776,7 +769,7 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
                     } else {
                         call(&jobs, move |worker| {
                             let body = worker.detach(&request)?;
-                            Ok(Envelope::new(request.host, request.operation, body))
+                            Ok(response_for(&request, body))
                         })
                         .await?
                     };
@@ -792,6 +785,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
             loop {
                 let notified = wake.notified();
                 if let Ok(response) = control_rx.try_recv() {
+                    let checked = response.clone();
+                    call(&jobs, move |worker| worker.authorize_reply(&checked)).await?;
                     write(
                         &mut output,
                         HOST_REPLY,
@@ -801,14 +796,7 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
                     return Ok(());
                 }
                 let next = if let Some(staged) = staged.pop_front() {
-                    let active = call(&jobs, |worker| {
-                        if worker.intentional {
-                            Ok(false)
-                        } else {
-                            worker.action(|| Ok(true))
-                        }
-                    })
-                    .await?;
+                    let active = call(&jobs, |worker| worker.output_active()).await?;
                     active.then_some(staged)
                 } else {
                     let charge = permit.reserve_terminal_bytes(CHUNK_LIMIT)?;
@@ -846,6 +834,9 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
                     if let Some((kind, bytes)) = frame {
                         validate(kind, bytes.len(), false)?;
                         scheduler.turn(&connection, &closed).await?;
+                        if !call(&jobs, |worker| worker.output_active()).await? {
+                            continue;
+                        }
                         write(&mut output, kind, &bytes).await?;
                         if matches!(kind, EXITED | DISPLACED) {
                             return Ok(());
@@ -856,6 +847,8 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
                         biased;
                         response = control_rx.recv() => {
                             let response = response.ok_or(Error::Closed)?;
+                            let checked = response.clone();
+                            call(&jobs, move |worker| worker.authorize_reply(&checked)).await?;
                             write(&mut output, HOST_REPLY, &festerm_host_protocol::encode(&response)?).await?;
                             return Ok(());
                         }

@@ -666,8 +666,8 @@ Stage-3 core evidence adds real-proof owned-duplex dispatcher tests
 `protected_revocation_during_work_never_publishes_inventory_or_absence`, and
 paired transport deadline/cancellation/correlation/legacy-refusal tests in
 `festerm-tunnel-client::host_control`. These qualify only the unexposed bounded
-core, not native endpoint or whole-ADR acceptance. Actual inner SSH
-session/channel binding export and fair adopted terminal routing remain
+core, not native endpoint or whole-ADR acceptance. Consuming the reviewed inner
+SSH session/channel owner proof and fair adopted terminal routing remain
 prerequisites. Real native-control/scoped-policy adapters add
 `native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`,
 `native_creation_denial_does_not_register_virgin_identity_or_claim_absence`, and
@@ -697,6 +697,15 @@ and deadlines are unchanged. This is not endpoint acceptance: the backend
 hotpath/issuance-history replacement and consuming owner-channel integration
 remain pending. Cross-platform/native service and physical-device gates remain
 separate; the terminal server/scheduler are still fixture-only.
+
+The paired control API binds each issued creation operation to its original
+account/endpoint/host and negotiated namespace, including reconnect and local
+refusal correlation. Bare IDs cannot create, lifecycle requests cannot carry a
+creation scope, and a wrong reply scope retires the stream. Partial inventory
+preserves authorized Unknown targets without exposing private/foreign targets.
+The native consumer uses original opaque attachment authority for both
+persistent and temporary paths and freshly checks detach receipts before
+publication; these interfaces do not enable a product endpoint.
 
 | Area | Required evidence (planned test names are illustrative) |
 | --- | --- |

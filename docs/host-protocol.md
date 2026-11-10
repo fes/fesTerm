@@ -565,6 +565,15 @@ correlation, incompatible versions and transport failures permanently retire
 the stream. Replies preserve refusal/uncertain states; no failure becomes
 absence and no request/input is automatically retried.
 
+`ControlClient::issue_operation()` captures the negotiated creation namespace
+in an opaque `IssuedControlOperation`, together with the immutable account,
+endpoint and host binding. `request_issued()` accepts that original object for
+Ensure/Create; reconnecting to the same binding never substitutes a newer
+epoch. A different binding refuses locally before writing. Bare operation IDs
+cannot create, and creation scopes cannot be attached to lifecycle requests.
+Every reply, including local Unsupported and server refusals, echoes the exact
+original scope; a wrong echo permanently retires the connection.
+
 The bridge's opt-in `host-routing` feature provides `host_control::serve_control`,
 not a listener. Its connection permit must be reserved before socket/task
 allocation. It consumes a real `VerifiedOwner` and connection guard, checks the
@@ -601,13 +610,20 @@ inventory/lookup, durable ensure/create/retry and exact-generation end. Its
 consent. `PolicyGuard::verifier()` is used inside each backend reservation;
 returning that owned guard keeps consent stable through durable effects, while
 the backend drops it before startup waits and reacquires it before publication.
+Creation authorization projects only the actual protected
+`AdmissionState::issuance_epoch` into the current enrolled verifier inside the
+backend reservation; it never reconstructs enrolled keys or advances permission
+epochs. Capabilities are captured in that same reservation, not inferred from a
+request header or a default namespace.
 Virgin logical IDs get a provisional grant only inside the authoritative
 creation reservation, under current authenticated execution permission. Missing
 lookup grants are denied, not returned as public absence.
 
 Each connection retains at most one 15-second inventory snapshot. Continuations
 refresh actual protected metadata and refuse changed logical revisions or
-generations before paging; inventory never acquires frontend leases.
+generations or uncertainty targets before paging. Healthy sessions and
+authorized Unknown targets remain distinct; inventory never acquires frontend
+leases or turns a partial result into authoritative absence.
 `StopRequested` returns `OutcomeUncertain`, not fabricated `Ended`; a caller can
 reconcile the actual later absence through Lookup.
 
@@ -662,6 +678,11 @@ released before network I/O; independent authorization supervision can retire
 a slow output connection. Intentional persistent detach closes only its
 frontend. Temporary detach stops only the exact current lease; unexpected loss
 reconciles pending adoption before applying the existing bounded grace.
+All pending/committed actions, cancellation and maintenance consume the original
+opaque backend `AttachmentAuthority`, including persistent attachments. An
+intentional detach retains its exact opaque `DetachmentReceipt`; the writer
+freshly reauthorizes that receipt immediately before replying, even after a
+temporary stop. That receipt never authorizes terminal input or renewal.
 Stale takeover cleanup cannot renew or stop the replacement.
 
 The native server/scheduler are compiled only in tests, not exported as a
@@ -680,10 +701,10 @@ revocation. Unix CI selects both control and terminal fixture modules. This is
 local bounded fixture evidence, not production endpoint or native-service
 acceptance.
 
-**Exposure remains blocked:** the actual inner SSH channel currently does not
-export its shared session/channel binding to both peers. A host-key pin alone
-cannot supply the required same-channel non-forwardable owner proof. Enrollment
-integration must provide that actual binding; no asserted principal, bearer,
+**Exposure remains blocked:** these dispatcher/native consumers are not yet
+wired to the reviewed inner-SSH channel binding and enrolled-owner stream.
+A host-key pin alone cannot supply the required same-channel non-forwardable
+owner proof. Integration must consume that actual binding; no asserted principal, bearer,
 arbitrary trusted boolean or random substitute is acceptable. Separate terminal attachment routing and
 fair terminal/control scheduling remain integration gates. No default listener,
 HOST advertisement, terminal/file/observation/MCP grant expansion, or legacy

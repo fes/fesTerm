@@ -3382,6 +3382,12 @@ Do not count this local fixture evidence as DT/CP/mobile acceptance. Actual cons
 owner-channel integration and backend hotpath/history qualification remain
 required; no production listener or readiness state is added.
 
+Paired control fixtures also retain original issued namespaces across
+reconnects, reject account/endpoint/host changes and wrongly echoed scopes, and
+preserve privacy-filtered Unknown inventory. Native attachment consumers retain
+the original opaque authority and freshly authorize exact detach receipts.
+These do not replace any end-to-end/native gate below.
+
 Stage 2 adds **automated local Unix** evidence: real detached owned daemons and
 repository fixture children prove concurrent ensure, crash/lost-reply
 reconciliation, recipe/operation conflict, denied/revoked generations,

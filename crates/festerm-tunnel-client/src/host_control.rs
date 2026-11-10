@@ -6,8 +6,8 @@
 
 use festerm_host_protocol::{
     decode, encode, BudgetPermit, Budgets, Capabilities, ClientBudget, ContractError, Envelope,
-    HostId, OperationId, Request, Resource, Response, Validate, CONTROL_DEADLINE_SECONDS,
-    CONTROL_FRAME_BYTES,
+    HostId, IssuedOperation, OperationId, Request, Resource, Response, Validate,
+    CONTROL_DEADLINE_SECONDS, CONTROL_FRAME_BYTES,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::{fmt, io, time::Duration};
@@ -151,6 +151,20 @@ pub struct ControlClient<S> {
     usable: bool,
 }
 
+/// Original creation scope plus immutable destination. Reconnection to the same
+/// binding can reconcile it; account/endpoint changes cannot silently reuse it.
+#[derive(Clone, Debug)]
+pub struct IssuedControlOperation {
+    binding: Binding,
+    operation: IssuedOperation,
+}
+
+impl IssuedControlOperation {
+    pub fn operation(&self) -> &IssuedOperation {
+        &self.operation
+    }
+}
+
 /// Reserve before opening an endpoint/socket or allocating its worker.
 /// A separate terminal connection consumes a separate aggregate client slot.
 pub struct ConnectionPermit {
@@ -197,6 +211,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         &self.binding
     }
 
+    pub fn issue_operation(&self) -> Result<IssuedControlOperation, Error> {
+        if !self.usable {
+            return Err(Error::Closed);
+        }
+        let epoch = self
+            .capabilities
+            .filter(|caps| caps.ensure || caps.create)
+            .and_then(|caps| caps.issuance_epoch)
+            .ok_or(Error::Refused(festerm_host_protocol::Refusal::Unsupported))?;
+        Ok(IssuedControlOperation {
+            binding: self.binding.clone(),
+            operation: IssuedOperation::new(epoch),
+        })
+    }
+
     pub async fn handshake(&mut self, cancel: &CancellationToken) -> Result<Capabilities, Error> {
         let response = self
             .request(OperationId::new(), Request::Capabilities {}, cancel)
@@ -223,25 +252,54 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         body: Request,
         cancel: &CancellationToken,
     ) -> Result<Envelope<Response>, Error> {
+        self.exchange(
+            Envelope::new(self.binding.host.clone(), operation, body),
+            cancel,
+        )
+        .await
+    }
+
+    pub async fn request_issued(
+        &mut self,
+        operation: &IssuedControlOperation,
+        body: Request,
+        cancel: &CancellationToken,
+    ) -> Result<Envelope<Response>, Error> {
+        if operation.binding != self.binding {
+            return Err(ContractError::Stale.into());
+        }
+        self.exchange(
+            Envelope::issued(self.binding.host.clone(), &operation.operation, body),
+            cancel,
+        )
+        .await
+    }
+
+    async fn exchange(
+        &mut self,
+        request: Envelope<Request>,
+        cancel: &CancellationToken,
+    ) -> Result<Envelope<Response>, Error> {
         if !self.usable {
             return Err(Error::Closed);
         }
-        if self.capabilities.is_none() && !matches!(body, Request::Capabilities {}) {
+        if self.capabilities.is_none() && !matches!(request.body, Request::Capabilities {}) {
             return Err(ContractError::Denied.into());
         }
-        let request = Envelope::new(self.binding.host.clone(), operation, body);
         request.validate()?;
         if self
             .capabilities
             .is_some_and(|caps| !caps.supports(&request.body))
         {
-            return Ok(Envelope::new(
+            let mut response = Envelope::new(
                 request.host,
                 request.operation,
                 Response::Refused {
                     reason: festerm_host_protocol::Refusal::Unsupported,
                 },
-            ));
+            );
+            response.issuance_epoch = request.issuance_epoch;
+            return Ok(response);
         }
         let _operation = self.permit.budgets.reserve(Resource::Control, 1)?;
         // Poison before the first await: dropping/cancelling this future can
@@ -271,7 +329,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use festerm_host_protocol::{LogicalSessionId, LookupResult, Refusal};
+    use festerm_host_protocol::{
+        AttachmentId, Creation, Epoch, Lifetime, LogicalSessionId, LookupResult, Recipe, Refusal,
+    };
     use tokio::io::duplex;
 
     fn permit() -> ConnectionPermit {
@@ -294,13 +354,257 @@ mod tests {
             .unwrap()
             .decode()
             .unwrap();
-        write_frame(
-            stream,
-            &budgets,
-            &Envelope::new(request.host, request.operation, body),
-        )
-        .await
-        .unwrap();
+        let mut response = Envelope::new(request.host, request.operation, body);
+        response.issuance_epoch = request.issuance_epoch;
+        write_frame(stream, &budgets, &response).await.unwrap();
+    }
+
+    fn creation() -> Request {
+        Request::Ensure {
+            creation: Creation {
+                logical: LogicalSessionId::new(),
+                attachment: AttachmentId::new(),
+                name: None,
+                recipe: Recipe::default(),
+                lifetime: Lifetime::Persistent {},
+            },
+        }
+    }
+
+    fn scoped_capabilities(epoch: u64) -> Capabilities {
+        Capabilities {
+            ensure: true,
+            attach: true,
+            creation_allowed: true,
+            issuance_epoch: Some(Epoch::new(epoch).unwrap()),
+            ..Capabilities::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn issued_retry_retains_scope_across_reconnect_and_local_refusal() {
+        let destination = binding();
+        let cancel = CancellationToken::new();
+        let (stream, mut peer) = duplex(1024);
+        let task = tokio::spawn(async move {
+            reply(
+                &mut peer,
+                Response::Capabilities {
+                    capabilities: scoped_capabilities(1),
+                },
+            )
+            .await;
+        });
+        let mut first =
+            ControlClient::on_authenticated_stream(stream, destination.clone(), permit());
+        first.handshake(&cancel).await.unwrap();
+        let original = first.issue_operation().unwrap();
+        drop(first);
+        task.await.unwrap();
+
+        let body = creation();
+        let expected = original.operation().clone();
+        let (stream, mut peer) = duplex(1024);
+        let task = tokio::spawn(async move {
+            reply(
+                &mut peer,
+                Response::Capabilities {
+                    capabilities: scoped_capabilities(2),
+                },
+            )
+            .await;
+            let budgets = Budgets::default();
+            let request: Envelope<Request> = read_frame(&mut peer, &budgets)
+                .await
+                .unwrap()
+                .decode()
+                .unwrap();
+            assert_eq!(request.issued_operation().unwrap(), expected);
+            let response = Envelope::issued(
+                request.host,
+                &expected,
+                Response::Refused {
+                    reason: Refusal::OutcomeUncertain,
+                },
+            );
+            write_frame(&mut peer, &budgets, &response).await.unwrap();
+        });
+        let mut second =
+            ControlClient::on_authenticated_stream(stream, destination.clone(), permit());
+        second.handshake(&cancel).await.unwrap();
+        assert_eq!(
+            second.issue_operation().unwrap().operation().epoch,
+            Epoch::new(2).unwrap()
+        );
+        let response = second
+            .request_issued(&original, body.clone(), &cancel)
+            .await
+            .unwrap();
+        assert_eq!(response.issuance_epoch, Some(original.operation().epoch));
+        assert_eq!(
+            response.body,
+            Response::Refused {
+                reason: Refusal::OutcomeUncertain
+            }
+        );
+        drop(second);
+        task.await.unwrap();
+
+        let (stream, mut peer) = duplex(1024);
+        let task = tokio::spawn(async move {
+            reply(
+                &mut peer,
+                Response::Capabilities {
+                    capabilities: Capabilities::default(),
+                },
+            )
+            .await;
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), peer.read_u8())
+                    .await
+                    .is_err()
+            );
+        });
+        let mut third = ControlClient::on_authenticated_stream(stream, destination, permit());
+        third.handshake(&cancel).await.unwrap();
+        assert!(matches!(
+            third.issue_operation(),
+            Err(Error::Refused(Refusal::Unsupported))
+        ));
+        let response = third
+            .request_issued(&original, body, &cancel)
+            .await
+            .unwrap();
+        assert_eq!(response.issuance_epoch, Some(original.operation().epoch));
+        assert_eq!(
+            response.body,
+            Response::Refused {
+                reason: Refusal::Unsupported
+            }
+        );
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn issued_operation_cannot_cross_account_endpoint_or_host() {
+        let destination = binding();
+        let cancel = CancellationToken::new();
+        let (stream, mut peer) = duplex(1024);
+        let task = tokio::spawn(async move {
+            reply(
+                &mut peer,
+                Response::Capabilities {
+                    capabilities: scoped_capabilities(1),
+                },
+            )
+            .await;
+        });
+        let mut original_client =
+            ControlClient::on_authenticated_stream(stream, destination.clone(), permit());
+        original_client.handshake(&cancel).await.unwrap();
+        let original = original_client.issue_operation().unwrap();
+        task.await.unwrap();
+        for changed in [
+            Binding::new(
+                destination.host.clone(),
+                "other-account".into(),
+                destination.endpoint.clone(),
+            )
+            .unwrap(),
+            Binding::new(
+                destination.host.clone(),
+                destination.account.clone(),
+                "other-endpoint".into(),
+            )
+            .unwrap(),
+            Binding::new(
+                HostId::new(),
+                destination.account.clone(),
+                destination.endpoint.clone(),
+            )
+            .unwrap(),
+        ] {
+            let (stream, mut peer) = duplex(1024);
+            let task = tokio::spawn(async move {
+                reply(
+                    &mut peer,
+                    Response::Capabilities {
+                        capabilities: scoped_capabilities(2),
+                    },
+                )
+                .await;
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(20), peer.read_u8())
+                        .await
+                        .is_err()
+                );
+            });
+            let mut client = ControlClient::on_authenticated_stream(stream, changed, permit());
+            client.handshake(&cancel).await.unwrap();
+            assert_eq!(
+                client.request_issued(&original, creation(), &cancel).await,
+                Err(Error::Contract(ContractError::Stale))
+            );
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_or_forbidden_scope_is_local_and_wrong_echo_retires_stream() {
+        let (stream, mut peer) = duplex(1024);
+        let task = tokio::spawn(async move {
+            reply(
+                &mut peer,
+                Response::Capabilities {
+                    capabilities: scoped_capabilities(1),
+                },
+            )
+            .await;
+            let budgets = Budgets::default();
+            let request: Envelope<Request> = read_frame(&mut peer, &budgets)
+                .await
+                .unwrap()
+                .decode()
+                .unwrap();
+            assert_eq!(request.issuance_epoch, Some(Epoch::new(1).unwrap()));
+            let mut response = Envelope::new(
+                request.host,
+                request.operation,
+                Response::Refused {
+                    reason: Refusal::Unknown,
+                },
+            );
+            response.issuance_epoch = Some(Epoch::new(2).unwrap());
+            write_frame(&mut peer, &budgets, &response).await.unwrap();
+        });
+        let mut client = ControlClient::on_authenticated_stream(stream, binding(), permit());
+        let cancel = CancellationToken::new();
+        client.handshake(&cancel).await.unwrap();
+        let operation = client.issue_operation().unwrap();
+        assert_eq!(
+            client
+                .request(OperationId::new(), creation(), &cancel)
+                .await,
+            Err(Error::Contract(ContractError::Malformed))
+        );
+        assert_eq!(
+            client
+                .request_issued(
+                    &operation,
+                    Request::Lookup {
+                        logical: LogicalSessionId::new()
+                    },
+                    &cancel
+                )
+                .await,
+            Err(Error::Contract(ContractError::Malformed))
+        );
+        assert_eq!(
+            client.request_issued(&operation, creation(), &cancel).await,
+            Err(Error::Contract(ContractError::Stale))
+        );
+        assert_eq!(client.handshake(&cancel).await, Err(Error::Closed));
+        task.await.unwrap();
     }
 
     #[tokio::test]

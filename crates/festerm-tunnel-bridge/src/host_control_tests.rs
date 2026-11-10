@@ -85,6 +85,7 @@ fn summary(grant: &SessionGrant) -> SessionSummary {
 /// Protected fixture table, not a production registry or spawn backend.
 struct Fixture {
     grants: Mutex<Vec<SessionGrant>>,
+    unknown: Mutex<Vec<(SessionGrant, Target)>>,
     captured: tokio::sync::Notify,
     pause: Mutex<bool>,
     release: Condvar,
@@ -94,6 +95,7 @@ impl Fixture {
     fn new(grants: Vec<SessionGrant>, pause: bool) -> Arc<Self> {
         Arc::new(Self {
             grants: Mutex::new(grants),
+            unknown: Mutex::new(Vec::new()),
             captured: tokio::sync::Notify::new(),
             pause: Mutex::new(pause),
             release: Condvar::new(),
@@ -142,12 +144,22 @@ impl SessionBackend for Fixture {
                         revoked: false,
                         session: summary(grant),
                     });
-                let snapshot = AuthorizedInventory::capture(
+                let unknown = self.unknown.lock().unwrap();
+                let uncertain = unknown.iter().map(|(grant, target)| {
+                    festerm_host_protocol::UnknownInventoryEntry {
+                        owner: grant.owner.clone(),
+                        shared: grant.remote_access,
+                        revoked: matches!(grant.state, LogicalState::Revoked),
+                        target: target.clone(),
+                    }
+                });
+                let snapshot = AuthorizedInventory::capture_with_unknowns(
                     request.host.clone(),
                     admission.principal().clone(),
                     fence.grant_epoch,
                     request.operation.clone(),
                     entries,
+                    uncertain,
                 )
                 .map_err(refuse)?;
                 let page = snapshot
@@ -267,6 +279,43 @@ async fn real_proof_framed_inventory_filters_private_foreign_and_unknown_lookup(
 }
 
 #[tokio::test]
+async fn framed_partial_inventory_preserves_unknowns_without_private_or_foreign_targets() {
+    let policy = policy();
+    let healthy = grant(&policy.principal, true);
+    let unknown = grant(&policy.principal, true);
+    let expected = summary(&unknown).target;
+    let fixture = Fixture::new(vec![healthy.clone()], false);
+    for mut entry in [
+        unknown,
+        grant(&policy.principal, false),
+        grant(&PrincipalId::new(), true),
+        grant(&policy.principal, true),
+    ] {
+        let target = summary(&entry).target;
+        if fixture.unknown.lock().unwrap().len() == 3 {
+            entry.state = LogicalState::Revoked;
+        }
+        fixture.unknown.lock().unwrap().push((entry, target));
+    }
+    let (mut client, server, _) = client(&policy, fixture, None).await;
+    let response = client
+        .request(
+            OperationId::new(),
+            Request::List { cursor: None },
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let Response::Inventory { page } = response.body else {
+        panic!("inventory")
+    };
+    assert_eq!(page.sessions, vec![summary(&healthy)]);
+    assert_eq!(page.unknown, vec![expected]);
+    drop(client);
+    assert!(server.await.unwrap().is_err());
+}
+
+#[tokio::test]
 async fn revision_or_generation_change_while_pending_fences_publication() {
     for replacement in [false, true] {
         let policy = policy();
@@ -380,7 +429,17 @@ async fn raw_request(
     body: Request,
 ) -> Envelope<Response> {
     use festerm_tunnel_client::host_control::{read_frame, write_frame};
-    let request = Envelope::new(policy.host.host.clone(), OperationId::new(), body);
+    let request = if matches!(body, Request::Ensure { .. } | Request::Create { .. }) {
+        Envelope::issued(
+            policy.host.host.clone(),
+            &festerm_host_protocol::IssuedOperation::new(
+                policy.capabilities.issuance_epoch.unwrap(),
+            ),
+            body,
+        )
+    } else {
+        Envelope::new(policy.host.host.clone(), OperationId::new(), body)
+    };
     let budgets = Budgets::default();
     write_frame(stream, &budgets, &request).await.unwrap();
     let response: Envelope<Response> = read_frame(stream, &budgets)
@@ -425,6 +484,7 @@ fn all_capabilities() -> Capabilities {
         explicit_end: true,
         temporary: true,
         creation_allowed: true,
+        issuance_epoch: Some(Epoch::new(1).unwrap()),
     }
 }
 
@@ -785,6 +845,12 @@ pub(crate) mod native_routes {
                 creation_allowed,
                 ..Capabilities::default()
             };
+            policy.capabilities.issuance_epoch = Some(
+                SessionControl::with_helper(&root, &helper)
+                    .unwrap()
+                    .issuance_epoch(&policy.principal, |_| Ok::<_, ControlError>(()))
+                    .unwrap(),
+            );
             Self {
                 root,
                 helper,
@@ -917,7 +983,7 @@ pub(crate) mod native_routes {
                     .control()
                     .inventory(&self.policy.principal, |_| Ok::<_, ControlError>(()))
                 {
-                    for session in sessions {
+                    for session in sessions.sessions {
                         let _ = self.control().end(
                             &self.policy.principal,
                             &session.summary.target,
@@ -971,11 +1037,11 @@ pub(crate) mod native_routes {
                     creation: creation.clone(),
                 }
             };
-            let operation = OperationId::new();
+            let operation = client.issue_operation().unwrap();
             // Explicit cfg(test)-only backend advertisement exercises native
             // effects without weakening production capability enforcement.
             let first = client
-                .request(operation.clone(), body.clone(), &cancel)
+                .request_issued(&operation, body.clone(), &cancel)
                 .await
                 .unwrap();
             let Response::Ensured {
@@ -989,7 +1055,10 @@ pub(crate) mod native_routes {
             assert_eq!(*disposition, EnsureDisposition::Created);
             assert!(!session.attached);
             targets.push(session.target.clone());
-            let retried = client.request(operation, body, &cancel).await.unwrap();
+            let retried = client
+                .request_issued(&operation, body, &cancel)
+                .await
+                .unwrap();
             assert_eq!(retried, first);
             let found = client
                 .request(
@@ -1094,10 +1163,11 @@ pub(crate) mod native_routes {
         let (mut client, server) = fixture.connect(backend, source, &Budgets::default()).await;
         let creation = fixture.creation();
         let cancel = CancellationToken::new();
+        let operation = client.issue_operation().unwrap();
         assert_eq!(
             client
-                .request(
-                    OperationId::new(),
+                .request_issued(
+                    &operation,
                     Request::Ensure {
                         creation: creation.clone()
                     },
@@ -1214,12 +1284,12 @@ pub(crate) mod native_routes {
             .connect(backend.clone(), source.clone(), &budgets)
             .await;
         let creation = fixture.creation();
-        let operation = OperationId::new();
+        let operation = first.issue_operation().unwrap();
         let cancel = CancellationToken::new();
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
-            let request = first.request(
-                operation.clone(),
+            let request = first.request_issued(
+                &operation,
                 Request::Ensure {
                     creation: creation.clone(),
                 },
@@ -1247,7 +1317,7 @@ pub(crate) mod native_routes {
         }
         assert!(matches!(
             first
-                .request(operation, Request::Ensure { creation }, &cancel)
+                .request_issued(&operation, Request::Ensure { creation }, &cancel)
                 .await
                 .unwrap()
                 .body,
@@ -1281,12 +1351,12 @@ pub(crate) mod native_routes {
             .connect(backend.clone(), source.clone(), &budgets)
             .await;
         let creation = fixture.creation();
-        let operation = OperationId::new();
+        let operation = first.issue_operation().unwrap();
         let cancel = CancellationToken::new();
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
-            let request = first.request(
-                operation.clone(),
+            let request = first.request_issued(
+                &operation,
                 Request::Ensure {
                     creation: creation.clone(),
                 },
@@ -1312,8 +1382,8 @@ pub(crate) mod native_routes {
         drop(remaining_create);
         let (mut second, second_server) = fixture.connect(backend.clone(), source, &budgets).await;
         let result = second
-            .request(
-                operation,
+            .request_issued(
+                &operation,
                 Request::Ensure {
                     creation: creation.clone(),
                 },

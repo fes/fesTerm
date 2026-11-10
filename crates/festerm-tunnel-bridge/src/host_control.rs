@@ -81,6 +81,7 @@ pub struct OperationAdmission {
 struct InventoryCapture {
     snapshot: festerm_host_protocol::AuthorizedInventory,
     grants: Vec<SessionGrant>,
+    unknown: Vec<festerm_host_protocol::Target>,
     expires: std::time::Instant,
 }
 
@@ -124,6 +125,7 @@ impl OperationAdmission {
     fn check_host(&self) -> Result<(), ContractError> {
         let mut request = self.request.clone();
         request.body = Request::Capabilities {};
+        request.issuance_epoch = None;
         self.source.with_current(&mut |current| {
             if self.cancelled() {
                 return Err(ContractError::Stale);
@@ -360,11 +362,12 @@ pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
             result = tokio::time::timeout_at(deadline, worker) =>
                 result.map_err(|_| Error::Deadline)?.map_err(|_| Error::Closed)??,
         };
-        let response = Envelope::new(
+        let mut response = Envelope::new(
             request.host.clone(),
             request.operation.clone(),
             result.body.clone(),
         );
+        response.issuance_epoch = request.issuance_epoch;
         response.validate_for(&request)?;
         let encoded = festerm_host_protocol::encode(&response)?;
         if result.bytes.is_none() && encoded.len() > REFUSAL_BYTES {

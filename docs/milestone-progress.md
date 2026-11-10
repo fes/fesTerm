@@ -8916,3 +8916,12 @@ available beside authorized per-target Unknown. Owned-daemon tests cover churn,
 concurrent generations, cancellation, revocation and interrupted cleanup; no
 installed services, accounts or user sessions were touched. Endpoint integration,
 independent gates and native/device qualification remain open.
+
+The paired control consumer retains an immutable destination-bound issued
+operation across reconnects, never freshens uncertain creation, and correlates
+the original namespace on every reply/refusal. New framed fixtures cover
+account/endpoint/host changes, missing/forbidden/wrongly echoed scopes and
+healthy-plus-private-filtered-Unknown inventory. Native attachment consumers
+use original opaque authorities for persistent and temporary routing and
+freshly authorize exact detach receipts before publication. This remains an
+unexposed integration milestone, not complete ADR0084 or native acceptance.
