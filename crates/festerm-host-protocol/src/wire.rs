@@ -15,6 +15,24 @@ pub const CONTROL_DEADLINE_SECONDS: u16 = 15;
 pub const AUTH_DEADLINE_SECONDS: u16 = 15;
 pub const RECONNECT_GRACE_SECONDS: u16 = 60;
 
+/// Captured from authenticated host capabilities for a NEW action. An uncertain
+/// retry retains both fields; it must never substitute a newer epoch.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssuedOperation {
+    pub id: OperationId,
+    pub epoch: Epoch,
+}
+
+impl IssuedOperation {
+    pub fn new(epoch: Epoch) -> Self {
+        Self {
+            id: OperationId::new(),
+            epoch,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope<T> {
@@ -22,6 +40,8 @@ pub struct Envelope<T> {
     pub version: u16,
     pub host: HostId,
     pub operation: OperationId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuance_epoch: Option<Epoch>,
     pub body: T,
 }
 
@@ -32,7 +52,15 @@ impl<T: Validate> Envelope<T> {
             version: HOST_VERSION,
             host,
             operation,
+            issuance_epoch: None,
             body,
+        }
+    }
+
+    pub fn issued(host: HostId, operation: &IssuedOperation, body: T) -> Self {
+        Self {
+            issuance_epoch: Some(operation.epoch),
+            ..Self::new(host, operation.id.clone(), body)
         }
     }
 }
@@ -41,6 +69,9 @@ impl<T: Validate> Validate for Envelope<T> {
     fn validate(&self) -> Result<(), ContractError> {
         if self.protocol != HOST_MARKER || self.version != HOST_VERSION {
             return Err(ContractError::UnsupportedVersion);
+        }
+        if self.body.issuance_epoch_required() && self.issuance_epoch.is_none() {
+            return Err(ContractError::Malformed);
         }
         self.body.validate()
     }
@@ -257,6 +288,10 @@ pub enum Request {
 }
 
 impl Validate for Request {
+    fn issuance_epoch_required(&self) -> bool {
+        matches!(self, Self::Ensure { .. } | Self::Create { .. })
+    }
+
     fn validate(&self) -> Result<(), ContractError> {
         match self {
             Self::List {
@@ -276,6 +311,9 @@ impl Validate for Request {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
+    /// Current protected host request-issuance namespace, not a consent grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuance_epoch: Option<Epoch>,
     pub inventory: bool,
     pub ensure: bool,
     pub create: bool,
@@ -413,7 +451,15 @@ pub enum Response {
 impl Validate for Response {
     fn validate(&self) -> Result<(), ContractError> {
         match self {
-            Self::Capabilities { capabilities } => capabilities.validate(),
+            Self::Capabilities { capabilities } => {
+                capabilities.validate()?;
+                if (capabilities.ensure || capabilities.create)
+                    && capabilities.issuance_epoch.is_none()
+                {
+                    return Err(ContractError::Malformed);
+                }
+                Ok(())
+            }
             Self::Inventory { page } => page.validate(),
             Self::Lookup { result } => result.validate(),
             Self::Ensured { session, lease, .. } => {
@@ -433,15 +479,32 @@ impl Validate for Response {
     }
 }
 
+impl Envelope<Request> {
+    pub fn issued_operation(&self) -> Result<IssuedOperation, ContractError> {
+        self.validate()?;
+        if !self.body.issuance_epoch_required() {
+            return Err(ContractError::Malformed);
+        }
+        Ok(IssuedOperation {
+            id: self.operation.clone(),
+            epoch: self.issuance_epoch.ok_or(ContractError::Malformed)?,
+        })
+    }
+}
+
 impl Envelope<Response> {
     /// Correlates a decoded response to the captured request before adopting
     /// a target/lease. This is not host authentication or authorization.
     pub fn validate_for(&self, request: &Envelope<Request>) -> Result<(), ContractError> {
         self.validate()?;
         request.validate()?;
-        if self.host != request.host || self.operation != request.operation {
+        if self.host != request.host
+            || self.operation != request.operation
+            || self.issuance_epoch != request.issuance_epoch
+        {
             return Err(ContractError::Stale);
         }
+
         let matches = match (&request.body, &self.body) {
             (_, Response::Refused { .. }) => true,
             (Request::Capabilities {}, Response::Capabilities { .. }) => true,
