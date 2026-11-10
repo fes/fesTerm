@@ -3656,6 +3656,15 @@ absence still cannot bypass an active runtime lease or missing runtime lock with
 existing run history. Present cloud generations retain CleanupPending; only
 authenticated absence may complete Removed. No real manager, native vault or
 cloud operation was performed, so HOSTSETUP-01 remains open.
+The coupled CI build correction has fresh pinned Rust/Cargo 1.99.1 and Clippy
+0.1.99 host/no-host checks, portable snapshot tests and strict
+`aarch64-apple-ios` bridge compilation. The host JSON helper is absent without
+host-routing; shared snapshot codecs remain compiled/tested. This is iOS
+device-target compilation, not a simulator run, GUI launch or mobile acceptance.
+The normally integrated Task Scheduler API regressions are Windows x64
+cross-compiled only, with zero Windows test executions; the registry fixture
+correction has fresh macOS tests, not fresh Windows execution. Required primary
+and iOS CI results remain independent gates.
 Before the subsequent review corrections, the compiled checkpoint passed 9 runtime
 controller cases plus the production
 foreground identity-initialization regression; affected host/setup packages

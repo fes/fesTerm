@@ -592,6 +592,13 @@ during proof, one original authentication deadline, framed persistent Busy and
 cancelled-work client-charge recovery. These preserve original SSH/channel/role
 binding and add no cached authority or client proof retry; native-vault,
 installed endpoint and product acceptance remain independently gated.
+The CI build follow-up retains those Busy assertions using the existing
+compare-exchange pattern, without a new compiler minimum or deprecation waiver.
+Bounded generic JSON encoding is compiled only with its actual host-routing
+consumers; portable snapshot codecs and their tests remain available without
+that feature. An exact-byte-budget regression covers the host helper. Fresh
+pinned stable host/portable checks and iOS device-target strict compilation are
+build evidence, not simulator execution, signed endpoint or mobile acceptance.
 
 The actual-runtime/session union normally integrates qualified session head
 `8ebbaf29` at `ae1ef27a`, preserving ADR 0085. Fresh macOS owned-helper evidence

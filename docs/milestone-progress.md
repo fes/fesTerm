@@ -1,5 +1,87 @@
 # Milestone Progress Narrative
 
+## Qualifying the narrow core CI build-correction union
+
+The no-registration removal correction `9293c2f7` is preserved, then local
+build-only correction `c3d898e8` normally merges exact standalone Windows
+`154b26f21fd417df24bf2366647c951ebb243770` at `5379d5e6` and exact session
+`dbe998d0e94f014a24d3ff65f95f0f6480841283` at
+`a12073f2350db36ed046611da6d49add3ac3e58f`. Only additive milestone prose
+conflicted; both source/evidence histories remain. Host-setup bytes match
+`9293c2f7`, the Windows API source matches `154b26f2`, and corrected daemon
+binary/manifest bytes match `dbe998d0`. No native update or client producer is
+included. The dev-only session self-dependency/lock edge is retained.
+
+Fresh `1de` Linux CI exposed a supported-compiler deprecation in the test
+Busy-policy counter; it now uses the existing checked compare-exchange loop
+with unchanged sequentially consistent ordering, exact decrement and zero
+behavior, rather than a newer `try_update` API or warning suppression.
+The no-host iOS build exposed an unconditional bounded generic JSON helper
+whose only consumers are host-routing terminal actors. Its gate now matches
+those consumers. Shared `LimitedJson` and snapshot codecs stay unconditional;
+an exact encoded-byte-budget test covers the host helper. No authentication
+deadline, proof, authority, lifetime or terminal oracle changes.
+
+The installed rustup named stable toolchain is **Rust/Cargo 1.99.1 and Clippy
+0.1.99**; PATH also contains Homebrew 1.97.1. The first `rustup run stable cargo
+clippy` attempt still selected Homebrew's external Clippy, so those logs are
+not credited as genuine newer-toolchain strict proof. Final qualification
+explicitly pins Cargo's subprocess compiler, rustdoc and toolchain bin PATH:
+
+```sh
+export RUSTC="$(rustup which --toolchain stable rustc)"
+export RUSTDOC="$(rustup which --toolchain stable rustdoc)"
+export PATH="$(dirname "$RUSTC"):$PATH"
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/.runtime-target"
+rustc --version
+cargo --version
+cargo clippy --version
+cargo test --locked -p festerm-host -p festerm-host-setup
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib authenticated_runtime_policy_
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib protocol::tests
+cargo test --locked -p festerm-sessiond --bin festerm-sessiond registry_ -- --test-threads=2
+cargo test --locked -p festerm-sessiond --lib private_storage::tests -- --test-threads=2
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-tunnel-client -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+cargo clippy --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
+cargo test --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib protocol::tests
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets -- -D warnings
+cargo clippy --locked --target aarch64-apple-ios -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 1debea976d62c32344c0d79cbfa74026a152264d
+git diff --check
+```
+
+Final combined-source actual passes: **118 host/setup tests**, with **one existing
+dedicated cargo-packager signer ignore** (105 setup, five host units/eight CLI);
+**four authentication Busy**, **six host protocol/codec**, **six registry**,
+**four private storage** and **five no-host portable protocol/codec** tests,
+all selected cases zero ignored. Five-package strict all-target Clippy and
+standalone no-host/client+owner-auth strict Clippy pass on the genuinely pinned
+toolchain. The existing iOS device standard-library target supplies actual
+`aarch64-apple-ios` no-host bridge strict compilation; it is not simulator
+execution or a full app build. Windows x64 all-target check/strict pass, including
+the three Task Scheduler regressions, with **zero Windows test executions**.
+No new target/toolchain, default override, dependency version or OS permission
+was installed/changed by this lane.
+
+Exact logs are `.runtime-validation/core-supported-*.log`; executable versions
+are recorded in `build-compat-pinned-toolchain.log`. Separate premerge Homebrew
+1.97.1 runs passed the four auth and six codec tests, without a new compiler
+minimum. The installed newer toolchain's `rust-objcopy` cannot locate its
+`libLLVM.dylib` during stripping and emits retained warnings; the test/build
+commands still succeed. Existing vendor and portable test-only unused-helper
+warnings are likewise retained, not suppressed or repaired. These warnings do
+not replace the actual strict source checks above.
+
+Format, base-`1de` traceability and diff checks accompany the handoff. This
+selected qualification does not relabel the `e49bb89a` fourteen-route aggregate
+as fresh or clear required all-three primary/iOS CI, Windows fixture/COM
+execution, signed/native/cloud/vault/VM/device or product acceptance. Independent
+follow-up reviews and publication remain parent-owned; no force/push or update
+feature integration is performed.
+
 ## Unblocking removal before native registration publication
 
 The complete frozen-core reliability review found a HIGH functional dead end:

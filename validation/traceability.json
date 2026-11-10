@@ -5532,6 +5532,7 @@
       "decisions": ["ADR-0084", "ADR-0054"],
       "automated_tests": [
         "host_wire_fixture_is_canonical_and_not_legacy_protocol",
+        "host_json_encoding_enforces_the_exact_encoded_byte_budget",
         "host_wire_rejects_malformed_oversized_and_version_mismatched_input",
         "host_version_header_precedes_future_or_real_legacy_body_decoding",
         "host_zero_field_variants_reject_embedded_authority_and_lifetime_fields",
