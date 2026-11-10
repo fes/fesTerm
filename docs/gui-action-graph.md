@@ -1565,15 +1565,15 @@ branch silently.
 
 The stage-1 [HOST contracts](host-protocol.md) provide codec, identity,
 authorization and budget evidence for HOST-01–03; their end-to-end UI/remote
-transitions remain deferred behind endpoint/session-control and security review
+transitions remain deferred behind endpoint integration and independent review
 in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy and framed duplex dispatcher tests; real pinned-channel exporter/native endpoint H,N deferred |
-| `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P; partial codec/absence/admission tests; H,N deferred |
-| `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; partial lifetime/generation schemas; supervisor/H,N deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P; contracts + local durable real-daemon ensure/crash/conflict/cancellation tests; endpoint/H,N deferred |
+| `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; real daemon-owned expiry, adopted takeover/stale lease and end tests; sharing/endpoint/H,N deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared typed setup, no default shell, protected consent, no outgoing-client install | Preserve draft; report partial setup; revoke before cleanup | P,H,N; deferred |
 | `HOST-05` | Headless package → configured service | Setup/status/configure/update/uninstall | Same setup policy; correct OS user; boot versus sign-in explicit; no JSON transfer required | Journal/reconcile exact owned resources | P,H,N; deferred |
 | `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected state/account preserved; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P,H,N; deferred |

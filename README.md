@@ -36,8 +36,10 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 [Host protocol contracts](docs/host-protocol.md) provide the first ADR 0084
 foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
 messages, opt-in owner-key authentication primitives and an unexposed bounded
-dispatcher/paired framed-client core. No HOST endpoint or
-remote creation is exposed; security review and later implementation/native
+dispatcher/paired framed-client core. Stage 2 adds a local
+durable session-control backend with real detached daemons and daemon-enforced
+temporary leases. No HOST endpoint or remote creation is exposed; independent
+review, enrollment/channel integration and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
 
 Desktop split-pane composition is available as a staged feature

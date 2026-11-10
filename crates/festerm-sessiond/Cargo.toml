@@ -11,6 +11,7 @@ description = "Minimal local persistence daemon for fesTerm sessions."
 festerm-core = { path = "../festerm-core" }
 festerm-pty = { path = "../festerm-pty" }
 festerm-session = { path = "../festerm-session" }
+festerm-host-protocol = { path = "../festerm-host-protocol" }
 festerm-ssh = { path = "../festerm-ssh" }
 # Not Windows-gated: the crate's `layout` module describes where the ConPTY
 # sidecar belongs, and the helper's staging tests run on every platform.

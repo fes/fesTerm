@@ -429,6 +429,31 @@ durable lease supervisor, GUI/installer or cloud modification is implemented by
 this slice; no legacy migration or native acceptance is claimed. Stage 1 is not
 whole-ADR acceptance; the ADR stays Proposed pending all gates and review.
 
+### Stage-2 local session-control progress (#681)
+
+`festerm-sessiond::host_control` now implements durable atomic local ensure/create,
+immutable intent/idempotency checks, fresh generations, authoritative bound-dead
+absence and fail-closed unknown/revoked records using actual detached native
+launch. Scoped fresh admission guards protect reservation/publication without
+holding owner policy across startup IPC. Cancellation reconciles committed
+outcomes. Existing native start locks coordinate ordinary launch/managed repair;
+no running generation is silently replaced or terminal input replayed.
+
+The actual daemon loop enforces private generation/lease-fenced temporary
+deadlines independently of bridge/client/UI lifetime. Recovery adoption gates
+both writer replacement and lease ownership transfer; the local attach API
+truthfully returns PendingAttachment until commit. End truthfully returns a
+durable StopRequested outcome until observed absence. Persistent shells never
+inherit temporary cleanup merely through attachment. Ambiguous unbound spawn
+reservations remain Unknown, requiring local investigation rather than an
+unsafe fresh launch. See [the concrete integration API](../host-protocol.md#local-durable-session-control-stage-2).
+
+Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
+qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
+enrollment/channel proof or endpoint routing. No listener or installed service
+changes are included. Independent security/reliability/scope review and the
+remaining acceptance matrix still gate exposure and completion.
+
 ## Alternatives considered
 
 - One tunnel per session: retains the setup and discoverability restriction.
@@ -488,6 +513,17 @@ changes are part of the stage-1 contract slice.
   `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
   `host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes`
   additionally proves current-authorize state/generation/ABA revision fencing.
+  Stage-2 local daemon evidence includes
+  `concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon`,
+  `crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generation`,
+  `absence_denial_revocation_cancellation_and_generations_remain_distinct`,
+  `temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease`,
+  `daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor`,
+  `current_absence_requires_fresh_create_permission_but_live_resume_does_not`,
+  `failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create`,
+  `cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner`,
+  `lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace` and
+  `lease_supervisor_refuses_revision_rollback_or_foreign_generation`.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and

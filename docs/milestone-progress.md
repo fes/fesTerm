@@ -8687,3 +8687,25 @@ current reauthorization rather than copied fences. The same review tightened
 version-first refusal, zero-field schemas and cursor progress. Optional owner
 proofs are explicitly enabled in every platform's CI test/lint combinations;
 this closes a coverage gap, not the remaining native/exposure gates.
+
+### A shell's lifetime cannot belong to its bridge (#681)
+
+ADR 0084's second slice connects the contracts to the real native daemon rather
+than a successful-looking in-memory manager. A private durable reservation binds
+owner, logical identity, operation intent and generation before spawn. Concurrent
+Connect and lost replies reuse that generation; uncertainty never authorizes
+another shell. Existing native launch/start locks preserve ordinary managed
+repair and attached sessions.
+
+Temporary cleanup moved into the actual daemon's loop, with protected deadlines
+and generation/lease epochs. The existing recovery-adoption barrier exposed a
+subtle boundary: returning a stream is not yet a completed takeover. The new
+local ticket commits lease ownership beside the sole-writer replacement only
+after adoption; callers receive PendingAttachment until then. Scoped admission
+guards are released during native startup waits, then reacquired against the
+actual committed state. Real owned child-daemon tests exercise failure,
+cancellation, stale disconnect, revocation and bridge-independent expiry.
+
+No HOST listener, enrollment shortcut, GUI, service registration or cloud action
+is introduced. Native reboot/ConPTY/service/mobile evidence and independent
+review remain prerequisites; the ADR stays Proposed.

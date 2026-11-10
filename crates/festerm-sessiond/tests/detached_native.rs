@@ -33,7 +33,12 @@ fn private_fixture_directory() -> (PathBuf, fs::File) {
         PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("Temp"),
     ];
     #[cfg(unix)]
-    let parents = [std::env::current_dir().unwrap()];
+    let parents = [Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()];
     let mut failures = Vec::new();
     for parent in parents {
         let root = parent.join(format!(

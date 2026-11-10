@@ -78,6 +78,14 @@ fn sessiond_trace(message: impl std::fmt::Display) {
 
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 static DAEMON_GENERATION: OnceLock<u128> = OnceLock::new();
+static DAEMON_HOST_WATCH: OnceLock<std::sync::Mutex<festerm_sessiond::host_lease::DaemonWatch>> =
+    OnceLock::new();
+
+fn host_daemon_should_stop() -> bool {
+    DAEMON_HOST_WATCH
+        .get()
+        .is_some_and(|watch| watch.lock().map_or(true, |mut watch| watch.should_stop()))
+}
 static DAEMON_LOG: OnceLock<(PathBuf, festerm_sessiond::NativeSessionIdentity)> = OnceLock::new();
 
 fn lifecycle_event(event: LifecycleEvent) {
@@ -85,6 +93,32 @@ fn lifecycle_event(event: LifecycleEvent) {
         if lifecycle::record(root, identity, event).is_err() {
             eprintln!("festerm-sessiond: lifecycle.record_failed");
         }
+    }
+}
+
+fn host_allows_attachment(
+    ticket: Option<&festerm_host_protocol::OperationId>,
+    kind: AttachKind,
+) -> bool {
+    match DAEMON_HOST_WATCH.get() {
+        Some(watch) => watch
+            .lock()
+            .is_ok_and(|watch| watch.allows_attachment(ticket, kind == AttachKind::Remote)),
+        None => ticket.is_none(),
+    }
+}
+
+fn host_commit_attachment(
+    ticket: Option<&festerm_host_protocol::OperationId>,
+    kind: AttachKind,
+) -> io::Result<()> {
+    match DAEMON_HOST_WATCH.get() {
+        Some(watch) => watch
+            .lock()
+            .map_err(|_| io::Error::other("host lease unavailable"))?
+            .commit_attachment(ticket, kind == AttachKind::Remote),
+        None if ticket.is_none() => Ok(()),
+        None => Err(io::Error::other("host lease unavailable")),
     }
 }
 
@@ -1167,6 +1201,17 @@ fn run_daemon(
         Err(error) => return Err(error.into()),
     };
     let _ = DAEMON_GENERATION.set(generation);
+    if let Some(expected) = env::var_os("FESTERM_SESSIOND_HOST_CONTROL") {
+        if expected.to_str() != Some(&generation.to_string()) {
+            return Err("invalid host daemon generation".into());
+        }
+        let mut watch =
+            festerm_sessiond::host_lease::DaemonWatch::open(&runtime_root, &name, generation)?;
+        if watch.should_stop() {
+            return Err("host lease already ended before shell launch".into());
+        }
+        let _ = DAEMON_HOST_WATCH.set(std::sync::Mutex::new(watch));
+    }
     let mut record = generation_record(
         &runtime_root,
         GenerationRecordSpec {
@@ -1450,6 +1495,10 @@ fn session_client_loop<R: Read + Send + 'static>(
     let mut attached_reported = None;
     let mut pending = PendingOutput::default();
     let result = loop {
+        if host_daemon_should_stop() {
+            shutdown();
+            break Ok(());
+        }
         if let Err(error) = reap_client_threads(&mut retired_clients) {
             shutdown();
             break Err(error);
@@ -1586,13 +1635,17 @@ fn accept_unix_clients(
     next_generation: &mut u64,
 ) -> io::Result<()> {
     loop {
+        if host_daemon_should_stop() {
+            return Ok(());
+        }
         match listener.accept() {
             Ok((mut stream, _)) => {
                 configure_accepted_client_stream(&stream)?;
-                let Some((recovery_limit, kind)) = admit_client(&mut stream, active)? else {
+                let Some((recovery_limit, kind, ticket)) = admit_client(&mut stream, active)?
+                else {
                     continue;
                 };
-                if let Err(error) = replace_active_limited(
+                if let Err(error) = replace_active_authorized(
                     active,
                     retired_clients,
                     stream,
@@ -1601,6 +1654,7 @@ fn accept_unix_clients(
                     next_generation,
                     recovery_limit,
                     kind,
+                    ticket.as_ref(),
                 ) {
                     eprintln!("fesTerm rejected a replacement session client: {error}");
                     return Ok(());
@@ -1685,6 +1739,10 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let mut shell_exited_at: Option<Instant> = None;
     let mut pending = PendingOutput::default();
     let result = loop {
+        if host_daemon_should_stop() {
+            spawned.terminate();
+            break Ok(());
+        }
         // Windows keeps the pseudoconsole open for as long as this process
         // holds the master handle, so the pseudoterminal reader never reports
         // end of file when the shell exits. Poll the child directly instead;
@@ -1937,11 +1995,11 @@ fn accept_windows_clients(
         sessiond_trace("accept_windows_clients: new client");
         stream.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
-        let (recovery_limit, kind) = match admit_client(&mut stream, active) {
+        let (recovery_limit, kind, ticket) = match admit_client(&mut stream, active) {
             Ok(Some(admitted)) => admitted,
             _ => return,
         };
-        if let Err(error) = replace_active_limited(
+        if let Err(error) = replace_active_authorized(
             active,
             retired_clients,
             stream,
@@ -1950,6 +2008,7 @@ fn accept_windows_clients(
             next_generation,
             recovery_limit,
             kind,
+            ticket.as_ref(),
         ) {
             eprintln!("fesTerm rejected a replacement session client: {error}");
         }
@@ -2048,11 +2107,17 @@ fn replace_active<S: Read + Write + Send + 'static>(
 fn admit_client(
     stream: &mut (impl Read + Write),
     active: &Option<ActiveClient>,
-) -> io::Result<Option<(usize, AttachKind)>> {
+) -> io::Result<
+    Option<(
+        usize,
+        AttachKind,
+        Option<festerm_host_protocol::OperationId>,
+    )>,
+> {
     let mut request = [0; festerm_sessiond::ADMISSION_BYTES];
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut offset = 0;
-    while offset < request.len() && Instant::now() < deadline {
+    while offset < request.len() && Instant::now() < deadline && !host_daemon_should_stop() {
         match stream.read(&mut request[offset..]) {
             Ok(0) => return Ok(None),
             Ok(count) => offset += count,
@@ -2069,6 +2134,38 @@ fn admit_client(
             Err(error) => return Err(error),
         }
     }
+    let ticket = if offset == request.len() && &request[..4] == b"FSA5" {
+        let mut bytes = [0; 36];
+        let mut offset = 0;
+        while offset < bytes.len() && Instant::now() < deadline && !host_daemon_should_stop() {
+            match stream.read(&mut bytes[offset..]) {
+                Ok(0) => break,
+                Ok(count) => offset += count,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::TimedOut
+                            | io::ErrorKind::WouldBlock
+                            | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    continue
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let ticket = std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|value| value.parse::<festerm_host_protocol::OperationId>().ok());
+        if offset != bytes.len() || ticket.is_none() {
+            stream.write_all(&[0])?;
+            return Ok(None);
+        }
+        request[3] = b'4';
+        ticket
+    } else {
+        None
+    };
     let limit = u32::from_be_bytes(request[25..29].try_into().expect("fixed admission"));
     let header = (offset == request.len())
         .then(|| festerm_sessiond::decode_admission_header(&request))
@@ -2085,7 +2182,9 @@ fn admit_client(
     let occupied = active
         .as_ref()
         .is_some_and(|client| !client.thread.is_finished());
-    let Some((_, kind)) = admitted.filter(|&(takeover, _)| takeover || !occupied) else {
+    let Some((_, kind)) = admitted.filter(|&(takeover, kind)| {
+        (takeover || !occupied) && host_allows_attachment(ticket.as_ref(), kind)
+    }) else {
         stream.write_all(&[0])?;
         return Ok(None);
     };
@@ -2095,9 +2194,10 @@ fn admit_client(
         return Ok(None);
     }
     stream.write_all(&[1])?;
-    Ok(Some((limit.min(768 * 1024 * 1024), kind)))
+    Ok(Some((limit.min(768 * 1024 * 1024), kind, ticket)))
 }
 
+#[cfg(all(test, windows))]
 #[allow(clippy::too_many_arguments)]
 fn replace_active_limited<S: Read + Write + Send + 'static>(
     active: &mut Option<ActiveClient>,
@@ -2108,6 +2208,31 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
     next_generation: &mut u64,
     recovery_limit: usize,
     kind: AttachKind,
+) -> io::Result<()> {
+    replace_active_authorized(
+        active,
+        retired_clients,
+        replacement,
+        terminal,
+        input,
+        next_generation,
+        recovery_limit,
+        kind,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replace_active_authorized<S: Read + Write + Send + 'static>(
+    active: &mut Option<ActiveClient>,
+    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    replacement: S,
+    terminal: &Terminal,
+    input: mpsc::SyncSender<ClientInput>,
+    next_generation: &mut u64,
+    recovery_limit: usize,
+    kind: AttachKind,
+    ticket: Option<&festerm_host_protocol::OperationId>,
 ) -> io::Result<()> {
     let recovery = festerm_sessiond::encode_recovery_snapshot_with_limit(terminal, recovery_limit)
         .map_err(|error| io::Error::other(error.to_string()))?;
@@ -2136,7 +2261,20 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
             }
             result
         })?;
-    if let Err(error) = adopted_rx.recv_timeout(ATTACH_RECOVERY_DEADLINE) {
+    let deadline = Instant::now() + ATTACH_RECOVERY_DEADLINE;
+    let adopted = loop {
+        match adopted_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
+            Ok(()) => break Ok(()),
+            Err(mpsc::RecvTimeoutError::Timeout)
+                if Instant::now() < deadline && !host_daemon_should_stop() =>
+            {
+                continue
+            }
+            Err(error) => break Err(io::Error::other(error)),
+        }
+    }
+    .and_then(|()| host_commit_attachment(ticket, kind));
+    if let Err(error) = adopted {
         stolen.store(true, Ordering::Release);
         drop(output);
         retired_clients.push(thread);
@@ -4588,7 +4726,7 @@ mod tests {
         let mut free = io::Cursor::new(request.to_vec());
         assert_eq!(
             admit_client(&mut free, &None).unwrap(),
-            Some((1024, AttachKind::Local))
+            Some((1024, AttachKind::Local, None))
         );
         assert_eq!(free.into_inner()[festerm_sessiond::ADMISSION_BYTES], 1);
     }
