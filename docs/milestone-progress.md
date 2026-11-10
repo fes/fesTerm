@@ -9530,3 +9530,42 @@ bytes without exposing protected record contents. The changed packages passed
 and targeted relay/runtime/epoch/CLI checks also pass. This does not qualify
 signed native install/service operation or client first-connect UX. Update and
 generation-atomic cloud deletion remain separate incomplete transactions.
+
+### ADR 0084 coherent runtime/native-core integration
+
+The runtime lane normally merges exact compiled native checkpoint `62fa2b53`
+into qualified runtime `9b488311` at `9bade364`. Both histories and ADR 0085
+remain intact. The original-issued Busy reconciliation oracle is unchanged;
+native CLI/setup/cloud/helper/token bodies are byte-identical to the fixed
+native checkpoint. No moving disable/cleanup or client source is consumed.
+The only source delta from `62fa2b53` is the previously qualified lost-reply
+test oracle; stories and evidence remain additive.
+
+Combined qualification uses the same private `.runtime-target`, jobs 1,
+dev/test debug 0, incremental 0 and exact owned helper as above. It repeats
+the helper build, bridge library, fourteen explicitly selected native routes
+and portable check, with these default CLI/setup selectors:
+
+```sh
+cargo test --locked -p festerm-host --all-targets
+cargo test --locked -p festerm-host-setup --features host-runtime --lib protected_owner_
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib controller::tests
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-tunnel-client -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+```
+
+Logs are separately retained as `.runtime-validation/combined-62fa-*.log`.
+Fresh results: **110 bridge library passes/14 explicit ignores**, **all 14
+explicitly selected actual native routes pass in 127.56 seconds**, **12 default
+host CLI passes** (four unit/eight integration), **15 protected-owner passes**
+and **three controller passes**. Portable check, the five-package strict
+all-target clippy above, fmt, traceability (311 edges) and diff checks pass.
+The first controller selector enabled only `host-runtime` and selected zero
+tests; it is not evidence. The corrected three-feature selector above runs
+all three, retained in `combined-62fa-controller-enabled.log`.
+Independent reliability review still blocks publication qualification on
+handshake policy Busy handling and the separately owned native controller
+watch-loop contention behavior; these green tests do not dismiss either gap.
+This is bounded combined-head publication evidence, not a transfer of the
+native checkpoint's 132-test result or installed/native-vault/cloud/product
+acceptance. Independent exact-head reviews, required cross-platform CI and
+the previously named native/client prerequisites remain gates.
