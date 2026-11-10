@@ -1560,3 +1560,17 @@ every applicable edge has automated evidence, qualifying native/manual
 evidence, or an explicit capability-blocked result. “Control not found” is a
 valid failure or deferred result; it is never permission to skip the design
 branch silently.
+
+## Proposed host-based Dev Tunnels (ADR 0084)
+
+These edges are deferred design contracts, not implemented behavior or acceptance.
+Existing TUNNEL edges retain their current coverage until implementation migrates them.
+
+| Edge | Transition | Action | Invariants | Recovery | Coverage |
+| --- | --- | --- | --- | --- | --- |
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P,H,N; deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P,H,N; deferred |
+| `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P,H,N; deferred |
+| `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared typed setup, no default shell, protected consent, no outgoing-client install | Preserve draft; report partial setup; revoke before cleanup | P,H,N; deferred |
+| `HOST-05` | Headless package → configured service | Setup/status/configure/update/uninstall | Same setup policy; correct OS user; boot versus sign-in explicit; no JSON transfer required | Journal/reconcile exact owned resources | P,H,N; deferred |
+| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; old daemons preserved; no grant expansion or automatic legacy recreation | Compatible rollback; no revoked-state resurrection | P,H,N; deferred |
