@@ -259,6 +259,17 @@ jobs:
       - name: Select the software Vulkan driver for headless tests
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
+      - name: Compile and list the Linux read-only logind proof without executing it
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          selector=controller::linux_login::tests::linux_login_native_read_only_logind_proof
+          listing=$(cargo test --locked -p festerm-host-setup \
+              --features host-runtime,native-services,cloud --lib "$selector" \
+              -- --exact --ignored --list)
+          printf '%s\n' "$listing"
+          [ "$(printf '%s\n' "$listing" | grep -Fxc "$selector: test")" = 1 ]
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Validate authenticated helper artifacts without desktop dependencies
         shell: bash
