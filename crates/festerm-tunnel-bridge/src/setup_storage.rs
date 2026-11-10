@@ -53,20 +53,9 @@ mod tests {
 
     #[test]
     fn interrupted_private_publication_never_exposes_torn_final_bytes() {
-        struct OwnedDirectory(PathBuf);
-        impl Drop for OwnedDirectory {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
-        let root = OwnedDirectory(
-            std::env::current_dir()
-                .unwrap()
-                .join(format!(".owner-publication-test-{}", uuid::Uuid::new_v4())),
-        );
-        let _directory = private_directory(&root.0, true).unwrap();
+        let root = private_test_directory();
         for name in ["host-lifecycle.json", "devtunnel", "credential"] {
-            let path = root.0.join(format!("{name}-stage"));
+            let path = root.path().join(format!("{name}-stage"));
             let directory = private_directory(&path, true).unwrap();
             let name = Path::new(name);
             assert!(
