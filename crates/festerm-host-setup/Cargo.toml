@@ -11,7 +11,7 @@ publish = false
 [features]
 default = []
 owner-enrollment = ["lifecycle", "festerm-tunnel-bridge/owner-auth", "dep:festerm-host-protocol", "dep:festerm-secret-store"]
-acquisition = ["lifecycle", "dep:reqwest"]
+acquisition = ["lifecycle", "dep:reqwest", "dep:tokio"]
 lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 artifacts = [
     "dep:base64",
@@ -35,7 +35,8 @@ minisign-verify = { version = "0.2.5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 sha2 = "0.11"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"], optional = true }
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "hickory-dns"], optional = true }
+tokio = { version = "1", features = ["rt", "net", "time"], optional = true }
 festerm-sessiond = { path = "../festerm-sessiond", optional = true }
 festerm-host-protocol = { path = "../festerm-host-protocol", optional = true }
 festerm-secret-store = { path = "../festerm-secret-store", optional = true }

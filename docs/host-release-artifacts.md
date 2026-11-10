@@ -2,26 +2,32 @@
 
 This is the independent authenticity foundation of [ADR 0084 §9](adr/0084-host-based-dev-tunnels.md#9-packaging-integrity-and-upgrades),
 tracked in [#681](https://github.com/fes/fesTerm/issues/681), not completion of
-stage 7. The schema-2 helper package contains sessiond, tunnel bridge, setup and
+stage 7. The separate schema-2 host package contains sessiond, tunnel bridge, setup and
 the GUI-free `festerm-host` CLI (plus the Windows worker), VERSION, LICENSE and
 THIRD_PARTY_NOTICES.txt. These six native targets use the existing helper build,
 macOS signing/notarization and Windows Authenticode paths; Linux uses the shared
 updater signature. Native release qualification is not established by fixtures.
+Normal CI runs `python scripts/check_host_notices.py` against actual native
+Cargo metadata, including `app/festerm-host` workspace membership.
 
 ## Wire contract and trust
 
-For each unchanged `fesTerm-tunnel-VERSION-PLATFORM-ARCH.tar.gz` (Windows `.zip`),
-publish its unchanged `.sha256`, an additive `.manifest.json`, and
-`.manifest.json.sig`. Schema 2 is strict JSON with exactly these typed fields:
+Legacy `fesTerm-tunnel-VERSION-PLATFORM-ARCH.tar.gz` (Windows `.zip`) keeps its
+exact published helper entry allowlist and schema-1 `festerm-helpers` identity.
+Old installers fetch those names and reject additional entries. The additive
+`fesTerm-host-VERSION-PLATFORM-ARCH.tar.gz` (Windows `.zip`) includes the host
+CLI and its own dependency notices. Each family has a `.sha256`,
+`.manifest.json`, and `.manifest.json.sig`. Schema 2 is strict JSON:
 
 ```json
-{"schema":2,"package":"festerm-helpers","version":"1.2.3","platform":"linux","architecture":"aarch64","filename":"fesTerm-tunnel-1.2.3-linux-aarch64.tar.gz","length":12345,"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+{"schema":2,"package":"festerm-host","version":"1.2.3","platform":"linux","architecture":"aarch64","filename":"fesTerm-host-1.2.3-linux-aarch64.tar.gz","length":12345,"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 ```
 
 The example's length/hash are illustrative, not download pins. Versions are
 exact stable numeric semver (no prefix, prerelease, build suffix or leading
 zeroes); platforms are `linux`, `macos`, `windows`; architectures are `x86_64`,
-`aarch64`. Package identity is only `festerm-helpers`. Unknown/duplicate fields,
+`aarch64`. Package/schema/filename identities cannot substitute for each other.
+Unknown/duplicate fields,
 unknown schema/package/target values and noncanonical hashes are rejected.
 Schema 1 is not accepted as schema 2: it never guaranteed host CLI inclusion.
 
@@ -69,7 +75,8 @@ Bounds: manifest/signature each 4 KiB, compressed archive 256 MiB, expanded
 archive 512 MiB, executable entry 128 MiB, each metadata/notice entry 16 MiB;
 version at most 32 bytes. Downloaders must enforce the same limits while
 receiving bytes and apply their own time/cancellation limits.
-The verifier enforces the exact seven Unix/eight Windows allowlisted entries,
+The verifier enforces the exact seven Unix/eight Windows host entries or the
+unchanged six Unix/seven Windows legacy helper entries,
 nonempty regular files, exact 0755/0644 modes and exact VERSION contents.
 It refuses duplicates, missing/extra/nested/absolute/traversal names,
 symlinks, hardlinks, special files, tar extension records, encrypted ZIPs,
@@ -81,12 +88,14 @@ No archive path is passed to a filesystem extraction API.
 An offline command uses the same API and reads each input with a size cap:
 
 ```text
-festerm-verify-artifact 1.2.3 linux aarch64 fesTerm-tunnel-1.2.3-linux-aarch64.tar.gz
+festerm-verify-artifact --host 1.2.3 linux aarch64 fesTerm-host-1.2.3-linux-aarch64.tar.gz
 ```
 
 It reads the adjacent manifest/signature, validates, and **only reports**;
 it never extracts, installs or executes anything. Release publication runs it
-against all six signed packages before uploading assets.
+against both families on all six targets before uploading assets. Omit `--host`
+only for the legacy helper identity. Producers likewise default to the legacy
+ABI; `--host` explicitly selects the separate host archive/manifest.
 
 ## Bootstrap, rotation, downgrade and compatibility
 
@@ -111,8 +120,8 @@ owner must compare against installed policy and reject lower versions by default
 Any future explicit rollback needs separate compatibility/state/grant checks;
 this API does not authorize rollback or override revocation.
 
-Legacy filenames, helper entries, checksums and scripts are retained; current
-archives add the host CLI and its dependency notices. Existing
+Legacy filenames, helper entries, checksums and scripts are retained unchanged;
+only the separate host archives add the CLI and expanded notices. Existing
 scripts still use their legacy integrity/native-signer path and do not gain
 independent Linux publisher authentication from these additive assets. New
 typed consumers fail if a manifest/signature is absent, including old releases.
@@ -122,7 +131,7 @@ missing this tooling fail. Recovery still pins tagged runtime source and keeps i
 change allowlist and CI requirements. The protected workflow detects schema 2
 from that exact source, never the download. Schema-1/pre-authentication recovery
 retains the old helper set without claiming host inclusion; the reviewed macOS
-packager override uses explicit `--legacy-helpers` only on this recovery path.
+packager override defaults to that same legacy set.
 That payload cannot receive a schema-2 manifest.
 
 ## Microsoft CLI acquisition
@@ -136,7 +145,12 @@ no mutable `aka.ms` redirect, version-output inspection or adjacent metadata
 is a trust source. Existing reviewed executable SHA-256 values are retained.
 The Windows x64 raw asset is `devtunnel.exe`; Unix assets are
 `osx-{x64,arm64}-devtunnel` and `linux-{x64,arm64}-devtunnel`.
-Windows ARM64 is explicitly unsupported.
+Windows ARM64 is explicitly unsupported by **new acquisition only**. Existing
+legacy hosting/offline verification retains its reviewed Windows x64-emulation
+selector; the native-only acquisition selector never uses that fallback.
+The macOS package smoke downloads both pinned raw assets and verifies their
+exact executable hashes, then applies the unchanged strict native codesign
+Apple-generic anchor requirement to each raw file. It does not execute them.
 
 Textual provenance, verified without downloading/executing dependency binaries:
 [version-specific winget manifest](https://github.com/microsoft/winget-pkgs/tree/master/manifests/m/Microsoft/devtunnel/1.0.2115%2Be16833f284)
@@ -160,13 +174,13 @@ Rust synthetic-key tests cover six valid targets, unsigned/wrong-key/tampered
 metadata, wrong version/platform/architecture/filename/length/hash, strict schema
 and size limits, signed unsafe TAR/ZIP entries, duplicate/missing entries,
 links, invalid modes/VERSION and oversized headers. Python fixtures cover
-six generated manifests, unchanged legacy bytes, overwrite refusal, target
+both manifest families on six targets, unchanged legacy bytes, overwrite refusal, target
 rejection, workflow signing/verification order and signer-secret isolation.
 Recovery fixtures exercise
 the explicit old-tag exception and fail-closed ordinary releases.
 
 `python_produced_six_bundles_and_manifests_authenticate_in_rust` invokes the real
-Python bundle **and** manifest producers for all six targets, signs their exact
+Python bundle **and** manifest producers for both families on all six targets, signs their exact
 manifest bytes with a synthetic test identity, and passes those archives and
 signatures through the Rust verifier. This cross-language test runs with the
 artifact feature on every CI platform; it does not use Rust-built archives.
@@ -175,7 +189,7 @@ These artifact-feature tests require Python 3.11+ on PATH (`python` on Windows,
 The separate Linux normal-CI signer job installs **cargo-packager 0.11.8
 --locked**, then explicitly runs
 `pinned_cargo_packager_signatures_authenticate_python_produced_manifest`.
-That test generates its own throwaway key using the real CLI, signs all six
+That test generates its own throwaway key using the real CLI, signs all twelve
 Python-produced manifests, checks modern prehashed mode and verifies with the
 private test-only key seam. It also confirms the shipping embedded-key API
 rejects the throwaway publisher and that changed signed bytes fail. The

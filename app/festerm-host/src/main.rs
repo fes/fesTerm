@@ -17,7 +17,7 @@ stage-cli --source-dir PATH --cache-dir PATH
 acquire-cli --cache-dir PATH
     Download this release's pinned official CLI into private non-executable staging only.
 stage-package --manifest PATH --signature PATH --archive PATH --cache-root PATH
-    Verify signed helpers for this exact version/target and stage immutable bytes.
+    Verify the separate signed host package for this exact version/target and stage immutable bytes.
 setup | run | update | uninstall
     Unavailable until the new host endpoint/authenticated package adapter is integrated.
 

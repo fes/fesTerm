@@ -23,18 +23,19 @@ def produce(destination, version):
     binaries = destination / "bin"
     binaries.mkdir()
     for platform in build_tunnel_bundle.PLATFORMS:
-        for name in build_tunnel_bundle.binary_names(platform):
+        for name in build_tunnel_bundle.binary_names(platform, host=True):
             (binaries / name).write_bytes(
                 f"Repository-owned synthetic helper: {name}\n".encode("ascii")
             )
     output = destination / "dist"
     for platform in build_tunnel_bundle.PLATFORMS:
         for arch in build_tunnel_bundle.ARCHITECTURES:
-            archive = build_tunnel_bundle.build_bundle(
-                destination, binaries, output, version, platform, arch,
-                notices=b"Repository-owned synthetic dependency notice.\n",
-            )
-            build_host_manifest.build_manifest(archive, version, platform, arch)
+            for host in (False, True):
+                archive = build_tunnel_bundle.build_bundle(
+                    destination, binaries, output, version, platform, arch,
+                    notices=b"Repository-owned synthetic dependency notice.\n", host=host,
+                )
+                build_host_manifest.build_manifest(archive, version, platform, arch, host=host)
 
 
 def main():

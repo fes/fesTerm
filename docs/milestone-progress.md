@@ -1,5 +1,20 @@
 # Milestone Progress Narrative
 
+## Preserving published helper ABI while adding bounded host acquisition
+
+The GUI-free host now has its own schema-2 `festerm-host` identity and
+`fesTerm-host-*` release assets. Existing `fesTerm-tunnel-*` archives keep their
+exact legacy entries, because already-published installers reject extra files.
+Release production signs and verifies both identities independently. Dependency
+notices recognize actual Cargo workspace membership, including `app/festerm-host`,
+and CI validates the real metadata closure rather than only synthetic paths.
+Pinned Microsoft acquisition uses cancellable async HTTP/DNS under one absolute
+request-and-body deadline; slow-body fixtures prevent per-read timeout refresh.
+macOS raw-asset smoke retains exact hashing and native codesign qualification.
+The new native-only acquisition selector refuses Windows ARM without removing
+legacy x64-emulation hosting/verification. These remain acquisition/data-staging
+boundaries, not native endpoint readiness or first-bootstrap qualification.
+
 ## Establishing helper publisher authenticity without a second trust root
 
 ADR 0084 stage 7 needs independent Linux publisher authentication, not a hash
@@ -16,8 +31,9 @@ normal-CI job uses pinned cargo-packager 0.11.8 with a generated throwaway key,
 so signer-format/mode incompatibilities are caught before protected publication.
 The [bootstrap and staging contract](host-release-artifacts.md) deliberately
 does not claim that downloading both verifier and key establishes trust.
-Existing artifact names/consumers remain compatible; host CLI inclusion,
-native installer/executable publication, service switching/rollback,
+Existing artifact names/consumers remain compatible; host CLI inclusion is in
+separate authenticated host assets. Remaining native installer/executable
+publication, service switching/rollback,
 migration and native signing evidence remain #681 gates. ADR 0084 stays Proposed.
 
 ## Saving host recipes without creating shells
@@ -8789,3 +8805,9 @@ and provenance overrides. Local HTTP fixtures exercise failures without fetching
 or executing dependency binaries. This is acquisition only: native Microsoft
 publisher qualification, executable publication, independently authenticated
 first delivery and working endpoint/service management remain explicit gates.
+
+The integration pass preserves the legacy Windows ARM64 x64-emulation selector
+for existing hosting and verification; only new acquisition requires an exact
+native target. It also updates the actual two-architecture macOS prerequisite
+smoke to consume the new raw executable pins, retaining exact hash and strict
+native codesign checks instead of leaving the former ZIP consumer behind.
