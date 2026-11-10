@@ -334,10 +334,34 @@ impl Store {
     /// fresh configuration read. Changed settings require renewed confirmation.
     /// This is not Ready or permission to stop/restart a legacy generation.
     pub fn request_enable(&self, approved_settings: &Settings) -> io::Result<Ticket> {
+        self.request_enable_current(None, approved_settings)
+    }
+
+    /// Atomically bind foreground consent and edited settings to the exact
+    /// protected observation, before any sign-in or native effect.
+    pub fn request_enable_if_current(
+        &self,
+        expected: &Snapshot,
+        approved_settings: &Settings,
+    ) -> io::Result<Ticket> {
+        self.request_enable_current(Some(expected), approved_settings)
+    }
+
+    fn request_enable_current(
+        &self,
+        expected: Option<&Snapshot>,
+        approved_settings: &Settings,
+    ) -> io::Result<Ticket> {
         approved_settings.validate()?;
         self.change(|record| {
+            if expected.is_some_and(|expected| expected != record) {
+                return Err(refused("host.foreground_scope_changed"));
+            }
             if record.phase != Phase::Disabled {
                 return Err(refused("host.reconcile_before_enable"));
+            }
+            if expected.is_some() {
+                record.settings = approved_settings.clone();
             }
             if &record.settings != approved_settings {
                 return Err(refused("host.settings_changed_reconfirm"));
@@ -378,7 +402,19 @@ impl Store {
     /// Fence in-flight work before the caller stops remote exposure. Disabling
     /// alone never authorizes cloud deletion or ending persistent daemons.
     pub fn revoke(&self) -> io::Result<()> {
+        self.revoke_current(None).map(|_| ())
+    }
+
+    /// An old desktop confirmation cannot revoke a replacement epoch.
+    pub fn revoke_if_current(&self, expected: &Snapshot) -> io::Result<Snapshot> {
+        self.revoke_current(Some(expected))
+    }
+
+    fn revoke_current(&self, expected: Option<&Snapshot>) -> io::Result<Snapshot> {
         self.change(|record| {
+            if expected.is_some_and(|expected| expected != record) {
+                return Err(refused("host.foreground_scope_changed"));
+            }
             if record.phase == Phase::Removed {
                 return Err(refused("host.installation_removed"));
             }
@@ -390,7 +426,7 @@ impl Store {
             } else {
                 Phase::Disabled
             };
-            Ok(())
+            Ok(record.clone())
         })
     }
 
@@ -482,13 +518,21 @@ impl Store {
     }
 
     pub fn confirm_stopped(&self, epoch: u64, exact: &Binding) -> io::Result<()> {
+        self.confirm_stopped_snapshot(epoch, exact).map(|_| ())
+    }
+
+    pub(crate) fn confirm_stopped_snapshot(
+        &self,
+        epoch: u64,
+        exact: &Binding,
+    ) -> io::Result<Snapshot> {
         self.change(|record| {
             exact_binding(record, epoch, exact)?;
             if record.phase != Phase::StopRequested {
                 return Err(refused("host.stop_not_requested"));
             }
             record.phase = Phase::Disabled;
-            Ok(())
+            Ok(record.clone())
         })
     }
 
@@ -519,13 +563,29 @@ impl Store {
 
     /// Uninstall is separate from disable and requires confirmed local stop.
     pub fn request_cleanup(&self) -> io::Result<()> {
+        self.request_cleanup_current(None).map(|_| ())
+    }
+
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn request_cleanup_if_current(&self, expected: &Snapshot) -> io::Result<Snapshot> {
+        self.request_cleanup_current(Some(expected))
+    }
+
+    fn request_cleanup_current(&self, expected: Option<&Snapshot>) -> io::Result<Snapshot> {
         self.change(|record| {
+            if expected.is_some_and(|expected| expected != record) {
+                return Err(refused("host.foreground_scope_changed"));
+            }
             if record.phase != Phase::Disabled || record.binding.is_none() {
                 return Err(refused("host.stop_before_cleanup"));
             }
             advance(record)?;
             record.phase = Phase::CleanupPending;
-            Ok(())
+            Ok(record.clone())
         })
     }
 
@@ -572,6 +632,80 @@ mod tests {
         let root = storage::private_test_directory();
         let store = Store::create(&root.path().join("host"), Origin::Headless, settings()).unwrap();
         (root, store)
+    }
+
+    #[test]
+    fn host_desktop_consent_atomically_binds_settings_and_exact_snapshot() {
+        let (_root, store) = fixture();
+        let observed = store.snapshot().unwrap();
+        let approved = Settings {
+            friendly_name: "Explicit desktop consent".into(),
+            allow_creation: true,
+            ..settings()
+        };
+        let ticket = store
+            .request_enable_if_current(&observed, &approved)
+            .unwrap();
+        assert_eq!(ticket.approved_settings(), &approved);
+        assert_eq!(store.snapshot().unwrap().settings, approved);
+        assert_eq!(store.snapshot().unwrap().phase, Phase::EnableRequested);
+        let current = store.snapshot().unwrap();
+        assert!(store
+            .request_enable_if_current(&observed, &settings())
+            .is_err());
+        assert!(store.revoke_if_current(&observed).is_err());
+        assert_eq!(store.snapshot().unwrap(), current);
+    }
+
+    #[test]
+    fn host_desktop_consent_refuses_same_phase_epoch_and_same_epoch_metadata_drift() {
+        for metadata in [false, true] {
+            let (_root, store) = fixture();
+            let observed = store.snapshot().unwrap();
+            if metadata {
+                store
+                    .configure(Settings {
+                        friendly_name: "Another foreground editor".into(),
+                        ..settings()
+                    })
+                    .unwrap();
+            } else {
+                store.revoke().unwrap();
+            }
+            let current = store.snapshot().unwrap();
+            assert_eq!(current.phase, observed.phase);
+            assert!(store
+                .request_enable_if_current(&observed, &settings())
+                .is_err());
+            assert!(store.revoke_if_current(&observed).is_err());
+            assert_eq!(store.snapshot().unwrap(), current);
+        }
+    }
+
+    #[test]
+    fn host_desktop_consent_busy_and_foreign_scope_never_mutate() {
+        let (_root, store) = fixture();
+        let original = store.snapshot().unwrap();
+        let mut foreign = original.clone();
+        foreign.installation = Uuid::new_v4().to_string();
+        assert!(store
+            .request_enable_if_current(&foreign, &settings())
+            .is_err());
+        assert!(store.revoke_if_current(&foreign).is_err());
+        let lease = store.lease().unwrap();
+        assert_eq!(
+            store
+                .request_enable_if_current(&original, &settings())
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert_eq!(
+            store.revoke_if_current(&original).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        drop(lease);
+        assert_eq!(store.snapshot().unwrap(), original);
     }
 
     fn settings() -> Settings {

@@ -3843,6 +3843,38 @@ consent just to uninstall. Live GET stability, `If-None-Match: *` atomicity,
 authenticated exact-cluster 404/ownership, cluster routing/no-redirect and native
 vault behavior still require live/native qualification.
 
+**HOSTSETUP-01 desktop-local Settings increment:** Automated headless rendering
+and application-command fixtures cover inert drafts/default-private shells,
+explicit review, edited-consent invalidation, bounded cross-window Busy,
+cancel/late-result suppression and native-only/foreign/corrupt state refusal.
+Real protected lifecycle/policy/controller fixtures cover atomic
+snapshot/settings/epoch consent, scoped native owner approval and no-shell setup.
+The actual native-helper binary refuses a Desktop-origin installation through
+headless `run`, and `run-desktop` refuses Headless origin, disabled consent and
+any file-storage selector. Definition/argv matching uses typed fake managers,
+not actual native service installation.
+
+Native/manual acceptance remains open: on separately granted ordinary-user
+signed-release hosts, use Settings → Remote access · this device; review signed
+manifest/signature/archive prerequisites, numeric account and device sign-in,
+separate public owner-key/fingerprint/creation consent, manual versus qualified
+user-sign-in startup, exact process observations versus actual endpoint
+readiness, locked/missing vault, cancellation at every native/cloud boundary,
+late epoch changes and cross-window Busy. Disable must fence/drain without
+ending persistent shells. Uninstall must keep present/unknown cloud resources
+CleanupPending, show only fresh typed receipt-bound manual guidance, and commit
+Removed only after an authenticated verified-absence retry. No browser/DELETE
+or headless-file fallback is permitted. Profile Save/import/new session must
+not invoke this HOST workflow.
+
+Existing-shell sharing currently has a truthful exact-session review/refusal,
+not acceptance: confirm that the original profile/tab/native generation is
+preserved, changed selections refuse, and no restart/conversion/global share
+occurs. Positive sharing/unsharing requires the separately owned authenticated
+bind-existing/retained-root and exact-receipt release seam; successful host setup
+alone must not show sharing success. Automatic verified-package delivery and
+the short primary setup flow still need native usability evidence.
+
 **HOSTSETUP-01 explicit manual cleanup fallback (owner-approved):** Automated
 generation-atomic DELETE remains unavailable, not a prerequisite to choosing
 manual provider review/removal. On a disposable, separately authorized real

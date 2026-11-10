@@ -1,8 +1,49 @@
 use std::process::Command;
 
+#[cfg(feature = "owner-routing")]
+#[test]
+fn desktop_native_binary_entry_refuses_headless_origin_and_never_grants_from_metadata() {
+    use festerm_host_setup::lifecycle::{Origin, Settings, Startup, Store};
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    for origin in [Origin::Desktop, Origin::Headless] {
+        let state = root.path().join(format!("{origin:?}"));
+        let store = Store::create(
+            &state,
+            origin,
+            Settings {
+                friendly_name: "Synthetic desktop runner".into(),
+                allow_creation: false,
+                startup: Startup::Manual,
+            },
+        )
+        .unwrap();
+        let before = store.snapshot().unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .args(["run-desktop", "--state-dir"])
+            .arg(&state)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert_eq!(std::fs::read_dir(&state).unwrap().count(), 2);
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .args(["run-desktop", "--state-dir"])
+            .arg(&state)
+            .args(["--owner-storage", "headless-files"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("invalid_arguments"));
+        assert_eq!(store.snapshot().unwrap(), before);
+    }
+}
+
 #[test]
 fn headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments() {
-    for operation in ["setup", "run", "update", "uninstall"] {
+    for operation in ["setup", "run", "run-desktop", "update", "uninstall"] {
         let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
             .args([operation, "--token", "fixture-do-not-echo"])
             .output()
@@ -11,7 +52,7 @@ fn headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments() 
         assert!(output.stdout.is_empty());
         let error = String::from_utf8(output.stderr).unwrap();
         let expected = if cfg!(feature = "owner-routing")
-            && matches!(operation, "setup" | "run" | "uninstall")
+            && matches!(operation, "setup" | "run" | "run-desktop" | "uninstall")
         {
             "invalid_arguments"
         } else {

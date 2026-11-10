@@ -1,5 +1,8 @@
 mod automation;
 mod confirmations;
+#[cfg(feature = "local-host-settings")]
+#[path = "desktop_remote_access.rs"]
+pub(crate) mod desktop_remote_access;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "host_browser.rs"]
 mod host_browser;
@@ -465,6 +468,8 @@ pub struct FesTermApp {
     running_tunnels: running_tunnels::RunningTunnels,
     #[cfg(feature = "experimental-dev-tunnels")]
     local_hosting: profile_hosting::Controller,
+    #[cfg(feature = "local-host-settings")]
+    local_remote_access: desktop_remote_access::Controller,
     /// Widget that owned focus immediately before Inspector opened, when it
     /// remains a meaningful restoration target.
     inspector_restore_focus: Option<egui::Id>,
@@ -971,6 +976,8 @@ impl FesTermApp {
             running_tunnels: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
             local_hosting: profile_hosting::Controller::native(),
+            #[cfg(feature = "local-host-settings")]
+            local_remote_access: desktop_remote_access::Controller::native(),
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,
@@ -7065,6 +7072,8 @@ impl FesTermApp {
     }
 
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
+        #[cfg(feature = "local-host-settings")]
+        self.local_remote_access.poll(context);
         #[cfg(feature = "experimental-dev-tunnels")]
         {
             self.poll_native_tunnel(context);
@@ -7471,6 +7480,10 @@ impl FesTermApp {
                         screen_command = screens::show_settings(
                             ui,
                             screens::SettingsViewModel {
+                                #[cfg(feature = "local-host-settings")]
+                                local_remote_access: self.local_remote_access.view(),
+                                #[cfg(feature = "local-host-settings")]
+                                local_share_targets: self.state.local_share_targets(),
                                 keyboard_bindings: self.state.keyboard_bindings().clone(),
                                 chip_layout,
                                 status_bar_visible: self.state.status_bar_visible(),
@@ -7985,6 +7998,10 @@ impl FesTermApp {
                         );
                     }
                 }
+                #[cfg(feature = "local-host-settings")]
+                AppCommand::LocalRemoteAccess(action) => {
+                    self.dispatch_local_remote_access(action, ui.ctx());
+                }
                 AppCommand::PowerShell { tab_id, action } => {
                     self.dispatch_powershell_action(tab_id, action, ui.ctx());
                 }
@@ -8470,6 +8487,11 @@ impl FesTermApp {
     /// Dispatches one application command as a window would, for
     /// Application-level tests that need a window in a particular state.
     pub(crate) fn dispatch_for_test(&mut self, command: AppCommand, context: &egui::Context) {
+        #[cfg(feature = "local-host-settings")]
+        if let AppCommand::LocalRemoteAccess(action) = command {
+            self.dispatch_local_remote_access(action, context);
+            return;
+        }
         self.state.dispatch(command, context);
     }
 
@@ -8886,6 +8908,8 @@ impl FesTermApp {
             running_tunnels: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
             local_hosting: Default::default(),
+            #[cfg(feature = "local-host-settings")]
+            local_remote_access: desktop_remote_access::Controller::native(),
             inspector_restore_focus: None,
             rename_restore_focus: None,
             rename_restore_tab: None,

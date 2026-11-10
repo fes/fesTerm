@@ -8,8 +8,10 @@ repository.workspace = true
 description = "An AI-friendly local, SSH, and serial terminal."
 
 [features]
-default = ["experimental-dev-tunnels"]
+default = ["experimental-dev-tunnels", "local-host-settings"]
 experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip"]
+# Local Settings alone composes host authority; portable recipes/fingerprints do not.
+local-host-settings = ["experimental-dev-tunnels", "festerm-host-setup/cloud", "festerm-host-setup/native-services", "festerm-host-setup/host-runtime"]
 
 [dependencies]
 cap-fs-ext = "4.0.3"
@@ -87,6 +89,7 @@ festerm-windows-direct2d = { path = "../../crates/festerm-windows-direct2d" }
 winresource = "0.1"
 
 [dev-dependencies]
+festerm-sessiond = { path = "../../crates/festerm-sessiond", features = ["test-support"] }
 festerm-automation-mcp-client = { path = "../../crates/festerm-automation-mcp-client" }
 festerm-test-support = { path = "../../crates/festerm-test-support", features = ["powershell"] }
 festerm-syntax = { path = "../../crates/festerm-syntax", features = ["test-support"] }

@@ -294,15 +294,37 @@ leaves sharing off and records any partial setup accurately. If setup completed
 but later sharing failed, do not falsely report the host as uninstalled.
 An outgoing remote profile never triggers local host installation.
 
-A profile's explicit sharing opt-in may authorize its configured detached
-persistent launch on Save, preserving the reviewed ADR 0072 intent. It now shares
-through the host endpoint rather than provisioning a separate tunnel. Ordinary
-profile saves stay inert. Protected host-local consent, not portable TOML,
-authorizes exposure; startup/update cannot reconstruct revoked grants.
+Profile Save/import and ordinary session creation remain metadata/private
+operations for HOST. Sharing requires a separate explicit runtime action bound
+to the exact profile, native session, generation and protected owner receipt.
+Do not silently convert persistence or restart a shell; any necessary replacement
+would require separate default-No exact-generation consent. Protected host-local
+consent, not portable TOML, authorizes exposure; startup/update cannot reconstruct
+revoked grants. Existing legacy behavior remains separate until explicit migration.
 
 Offer accurately labeled startup choices: manual, at user sign-in, and after
 reboot before interactive login only on qualified platforms/configurations.
 Do not claim that sign-in registration provides pre-login availability.
+
+The desktop-local increment now makes Settings reachable through typed
+application commands and bounded background workers. It delegates signed
+staging/setup, foreground sign-in, native-vault owner approval, explicit start,
+local/native observation, recovery, revoke-and-drain disable and uninstall to
+the shared controller/native factory. Creation and sign-in startup are off by
+default; owner creation approval is a separate default-off choice. Confirmations
+are full-snapshot/settings/epoch fenced, cancellation retains actual worker
+admission, and native Running or journal history never becomes Ready.
+`run-desktop` is a protected Desktop-origin native-helper entrypoint, not
+headless-state adoption or a credential-storage selector.
+
+This is not completed §7 acceptance: the current prerequisite panel requires
+this build's signed manifest/signature/archive paths; automatic verified-package
+delivery and native usability remain open. Ordinary attached private daemons
+lack authenticated bind-existing/retained-root capability and exact-target release.
+The exact-session review therefore preserves the originating draft and refuses
+sharing/unsharing without effects; host setup success is not a sharing success.
+No PID, lookup-then-revoke, fake binding receipt, automatic restart or global
+share-all substitutes for that shared backend seam.
 
 ### 8. Headless installation and common management
 
@@ -902,6 +924,14 @@ blocked and a pending result is not successful uninstall. See the
   coverage. `HOST-06` has partial authenticity-foundation coverage only. Existing
   `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation coverage
   until explicit migration.
+- **Desktop-local increment:** `HOST-04` has reachable Settings/command/worker
+  and real shared-controller CAS/CLI-origin fixture coverage. `HOST-03` exact
+  local-session review remains private and explicitly capability-blocked.
+  `HOST-05` shares origin-specific native definitions and typed manual cleanup,
+  without DELETE or false verified targets. Positive signed native service,
+  vault/cloud, endpoint readiness, actual sharing and usability remain
+  `HOSTSETUP-01`/`HOSTAUTH-01` acceptance prerequisites; mock/owned-filesystem
+  tests do not clear them.
 - **Automated evidence (stage 1):**
   `host_wire_fixture_is_canonical_and_not_legacy_protocol`,
   `host_wire_rejects_malformed_oversized_and_version_mismatched_input`,

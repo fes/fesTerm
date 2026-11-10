@@ -146,10 +146,53 @@ pub async fn setup(
     .await
 }
 
+pub struct SetupConsent {
+    pub expected: Snapshot,
+    pub settings: crate::lifecycle::Settings,
+    pub account: u64,
+}
+
+/// Desktop consent stays tied to the observed installation even while signed
+/// package verification, foreground sign-in or native startup is delayed.
+pub async fn setup_if_current(
+    store: &Store,
+    state: &Path,
+    stage: &TrustedStage,
+    consent: &SetupConsent,
+    cancel: &CancellationToken,
+    prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
+    reserved: impl FnOnce(&crate::lifecycle::Ticket),
+) -> io::Result<SetupResult> {
+    setup_scoped_with(
+        SetupRequest {
+            store,
+            state,
+            stage,
+            account: consent.account,
+            cancel,
+        },
+        prompt,
+        &NativeBoundary,
+        Some(consent),
+        reserved,
+    )
+    .await
+}
+
 pub(crate) async fn setup_with(
     request: SetupRequest<'_>,
     prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
     boundary: &impl SetupBoundary,
+) -> io::Result<SetupResult> {
+    setup_scoped_with(request, prompt, boundary, None, |_| {}).await
+}
+
+pub(crate) async fn setup_scoped_with(
+    request: SetupRequest<'_>,
+    prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
+    boundary: &impl SetupBoundary,
+    consent: Option<&SetupConsent>,
+    reserved: impl FnOnce(&crate::lifecycle::Ticket),
 ) -> io::Result<SetupResult> {
     let SetupRequest {
         store,
@@ -159,7 +202,11 @@ pub(crate) async fn setup_with(
         cancel,
     } = request;
     let before = store.snapshot()?;
-    startup_admission(std::env::consts::OS, before.settings.startup)?;
+    if consent.is_some_and(|consent| consent.expected != before) {
+        return Err(refused("host.foreground_scope_changed"));
+    }
+    let settings = consent.map_or(&before.settings, |consent| &consent.settings);
+    startup_admission(std::env::consts::OS, settings.startup)?;
     stage.sessiond_path()?;
     if account == 0 || cancel.is_cancelled() {
         return Err(refused("host.foreground_account_consent_required"));
@@ -167,7 +214,14 @@ pub(crate) async fn setup_with(
     let cloud = CloudHostAdapter::new(store);
     let expected_epoch = match before.phase {
         Phase::Disabled => {
-            let ticket = store.request_enable(&before.settings)?;
+            let ticket = match consent {
+                Some(consent) => store.request_enable_if_current(&consent.expected, settings)?,
+                None => store.request_enable(settings)?,
+            };
+            reserved(&ticket);
+            if cancel.is_cancelled() {
+                return Err(refused("host.cloud_cancelled"));
+            }
             let foreground = cloud.foreground(&ticket, account)?;
             boundary
                 .sign_in(&cloud, &foreground, cancel, prompt)
@@ -176,6 +230,9 @@ pub(crate) async fn setup_with(
             ticket.epoch()
         }
         Phase::Provisioned => {
+            if settings != &before.settings {
+                return Err(refused("host.disable_before_configuration"));
+            }
             if before
                 .binding
                 .as_ref()
@@ -222,11 +279,23 @@ pub fn approve_owner(store: &Store, consent: OwnerConsent) -> io::Result<Enrollm
     approve_owner_with(store, consent, &NativeBoundary)
 }
 
-pub(crate) fn approve_owner_with(
+pub fn approve_owner_if_current(
     store: &Store,
+    expected: &Snapshot,
+    expected_policy_revision: u64,
     consent: OwnerConsent,
-    boundary: &impl SetupBoundary,
 ) -> io::Result<EnrollmentSnapshot> {
+    validate_owner_consent(&consent)?;
+    store.owner_enrollment()?.approve_key_if_current(
+        expected,
+        expected_policy_revision,
+        consent.owner_public_key,
+        &consent.confirmed_owner_fingerprint,
+        consent.permissions,
+    )
+}
+
+fn validate_owner_consent(consent: &OwnerConsent) -> io::Result<()> {
     consent
         .permissions
         .validate_permissions()
@@ -236,6 +305,15 @@ pub(crate) fn approve_owner_with(
     {
         return Err(refused("host.explicit_owner_confirmation_required"));
     }
+    Ok(())
+}
+
+pub(crate) fn approve_owner_with(
+    store: &Store,
+    consent: OwnerConsent,
+    boundary: &impl SetupBoundary,
+) -> io::Result<EnrollmentSnapshot> {
+    validate_owner_consent(&consent)?;
     let before = store.snapshot()?;
     if before.phase != Phase::Provisioned {
         return Err(refused("host.runtime_current_provisioned_consent_required"));
@@ -275,18 +353,40 @@ pub fn disable(store: &Store, state: &Path) -> io::Result<DisableResult> {
     })
 }
 
+pub fn disable_if_current(
+    store: &Store,
+    state: &Path,
+    expected: &Snapshot,
+) -> io::Result<DisableResult> {
+    disable_scoped_with(store, Some(expected), Duration::from_secs(10), |epoch| {
+        Services::current_user(store, state)?.stop(epoch)
+    })
+}
+
 fn disable_with(
     store: &Store,
     wait: Duration,
     stop: impl FnOnce(u64) -> io::Result<Observation>,
 ) -> io::Result<DisableResult> {
-    match store.snapshot()?.phase {
+    disable_scoped_with(store, None, wait, stop)
+}
+
+fn disable_scoped_with(
+    store: &Store,
+    expected: Option<&Snapshot>,
+    wait: Duration,
+    stop: impl FnOnce(u64) -> io::Result<Observation>,
+) -> io::Result<DisableResult> {
+    let before = store.snapshot()?;
+    if expected.is_some_and(|expected| expected != &before) {
+        return Err(refused("host.foreground_scope_changed"));
+    }
+    let stopped = match before.phase {
         Phase::Removed => return Err(refused("host.installation_removed")),
         Phase::CleanupPending => return Err(refused("host.cleanup_already_pending")),
-        Phase::StopRequested => {}
-        _ => store.revoke()?,
-    }
-    let stopped = store.snapshot()?;
+        Phase::StopRequested => before,
+        _ => store.revoke_if_current(&before)?,
+    };
     if stopped.phase == Phase::Reconciling {
         return Err(refused("host.cloud_reconciliation_required"));
     }
@@ -338,9 +438,9 @@ fn disable_with(
             Err(error) => return Err(error),
         }
     }
-    store.confirm_stopped(stopped.epoch, binding)?;
+    let lifecycle = store.confirm_stopped_snapshot(stopped.epoch, binding)?;
     Ok(DisableResult {
-        lifecycle: store.snapshot()?,
+        lifecycle,
         native_process: Some(observation),
     })
 }
@@ -365,26 +465,58 @@ pub async fn uninstall(
     uninstall_with(store, state, cancel, cloud.cleanup(cancel)).await
 }
 
+pub async fn uninstall_if_current(
+    store: &Store,
+    state: &Path,
+    expected: &Snapshot,
+    cancel: &CancellationToken,
+) -> io::Result<UninstallResult> {
+    let cloud = CloudHostAdapter::new(store);
+    uninstall_scoped_with(store, state, Some(expected), cancel, cloud.cleanup(cancel)).await
+}
+
 pub(crate) async fn uninstall_with(
     store: &Store,
     state: &Path,
     cancel: &CancellationToken,
     cleanup: impl std::future::Future<Output = io::Result<Cleanup>>,
 ) -> io::Result<UninstallResult> {
+    uninstall_scoped_with(store, state, None, cancel, cleanup).await
+}
+
+async fn uninstall_scoped_with(
+    store: &Store,
+    state: &Path,
+    expected: Option<&Snapshot>,
+    cancel: &CancellationToken,
+    cleanup: impl std::future::Future<Output = io::Result<Cleanup>>,
+) -> io::Result<UninstallResult> {
     let before = store.snapshot()?;
+    if expected.is_some_and(|expected| expected != &before) {
+        return Err(refused("host.foreground_scope_changed"));
+    }
     if cancel.is_cancelled() {
         return Err(refused("host.cloud_cancelled"));
     }
     if before.phase == Phase::Removed {
         return Ok(UninstallResult::AlreadyRemovedNotReobserved);
     }
-    if before.phase != Phase::CleanupPending {
-        disable(store, state)?;
-        store.request_cleanup()?;
+    let expected_cleanup = if before.phase != Phase::CleanupPending {
+        let disabled = disable_if_current(store, state, &before)?;
+        store.request_cleanup_if_current(&disabled.lifecycle)?
+    } else {
+        before
+    };
+    Services::current_user(store, state)?.cleanup(expected_cleanup.epoch)?;
+    let outcome = cleanup.await?;
+    let mut expected_after = expected_cleanup;
+    if matches!(outcome, Cleanup::Removed) {
+        expected_after.phase = Phase::Removed;
     }
-    let epoch = store.snapshot()?.epoch;
-    Services::current_user(store, state)?.cleanup(epoch)?;
-    match cleanup.await? {
+    if store.snapshot()? != expected_after {
+        return Err(refused("host.foreground_scope_changed"));
+    }
+    match outcome {
         Cleanup::Removed => Ok(UninstallResult::Removed),
         Cleanup::GenerationConditionalDeleteUnavailable { context } => {
             Ok(UninstallResult::NativeRemovedCloudCleanupPending { context })

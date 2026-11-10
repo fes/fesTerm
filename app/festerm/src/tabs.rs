@@ -2615,6 +2615,8 @@ pub struct SshProfileDraftSeed {
 /// copy of these operations.
 #[derive(Debug)]
 pub enum AppCommand {
+    #[cfg(feature = "local-host-settings")]
+    LocalRemoteAccess(crate::app::desktop_remote_access::Action),
     /// Offline recipe metadata only; never connects or changes a host grant.
     #[allow(
         dead_code,
@@ -3985,6 +3987,27 @@ impl AppState {
         &self.tabs
     }
 
+    #[cfg(feature = "local-host-settings")]
+    pub(crate) fn local_share_targets(
+        &self,
+    ) -> Vec<crate::app::desktop_remote_access::ShareTarget> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| {
+                let session = self.session_tab(tab.id)?;
+                let ApplicationSession::Persistent(native) = session.controller.session()? else {
+                    return None;
+                };
+                Some(crate::app::desktop_remote_access::ShareTarget {
+                    tab: tab.id,
+                    profile: session.profile_identifier.clone(),
+                    lifecycle_generation: session.controller.lifecycle_generation(),
+                    identity: native.native_identity()?,
+                })
+            })
+            .collect()
+    }
+
     /// Exact counts of live local processes, SSH connections, and open
     /// serial devices across every tab, for the aggregate application-quit
     /// confirmation (`docs/gui-action-graph.md` `QUIT-01`). Uses the same
@@ -4864,6 +4887,8 @@ impl AppState {
             AppCommand::HostRecipeFromProfiles { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::ReviewHostFromProfiles { .. } => {}
+            #[cfg(feature = "local-host-settings")]
+            AppCommand::LocalRemoteAccess(_) => {}
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::OpenApprovedHostFromProfiles {
                 tab_id,

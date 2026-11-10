@@ -1,5 +1,95 @@
 # Milestone Progress Narrative
 
+## ADR 0084 desktop-local Settings composition
+
+Scope: current-milestone §7 desktop setup, not client Create, native update,
+Windows publisher admission, Linux logon policy or migration implementation.
+This isolated lane starts at immutable client `602f19f8`, normally merges exact
+core `9b1d2a68` (`9637b80c`) and manual-cleanup `6c2b84aa` (`73a89b5e`), and
+consumes no moving sibling source.
+
+Settings → Remote access · this device now emits typed application commands
+through bounded background workers. Explicit signed-package/account review
+delegates zero-shell setup to the shared controller; owner key/fingerprint and
+creation consent are separate native-vault-only operations. Manual versus
+qualified sign-in startup is explicit; creation/startup defaults remain off.
+Protected full-snapshot/settings/epoch CAS and the independently reviewed
+native-policy revision reject stale confirmation, including same-epoch
+permission revocation. Primary and independent revoke permits span actual
+worker lifetime; cancel/window close suppress late results and fence only the
+original owned/issued scope. Partial failures reobserve local journal state,
+not credentials/network or fabricated success. Native Running and run history
+are never endpoint Ready.
+
+Actual origin wiring is included: protected Desktop native definitions invoke
+`run-desktop`; ordinary headless `run` cannot adopt that origin. The new native
+entrypoint is Desktop/native-vault-only, with no origin or file-storage selector.
+Uninstall consumes typed manual cleanup; present/unknown stays CleanupPending,
+stored context is explicitly unverified, and only authenticated exact absence
+can commit Removed. No script/browser/DELETE runs from Settings.
+
+Existing local persistent-shell review captures/revalidates profile, tab,
+native identity and lifecycle generation, but intentionally refuses effects:
+the shared backend lacks qualified authenticated bind-existing/retained-root
+and exact-receipt release. No PID/metadata/lookup-revoke/restart substitutes.
+The separately assigned migration enabler owns that missing seam; no moving
+source is consumed here. Host setup success is not a sharing success. Profile
+Save/import/ordinary creation do not call the HOST workflow.
+
+Remaining acceptance capsule: automatic verified-package delivery and the short
+primary setup UX (the current advanced panel needs signed manifest/signature/
+archive paths); the immutable authenticated binding/release API; actual signed
+native service/vault/cloud readiness and disable/daemon independence; platform
+startup/publisher qualification and native usability. No real GUI, native
+credential store, manager install, VM, provider operation or signing occurred.
+Known MSVC C-SDK absence is preserved, not retried or relabeled as Windows proof.
+Earlier `e49` native-14 evidence remains attributed to that source.
+
+Fresh source qualification uses actual Rust/Cargo 1.99.1 and Clippy 0.1.99
+from `/Users/fes/.rustup/toolchains/stable-aarch64-apple-darwin/bin/`, not
+Homebrew's bare compiler with a nondispatching `+stable` argument. `RUSTC` and
+`RUSTDOC` are the absolute `rustup which --toolchain stable` results and that
+directory leads `PATH`. Jobs=1, dev/test debug=0, incremental=0; the explicitly
+owned private target is
+`/Users/fes/src/fesTerm-adr84-runtime-nov10/.runtime-target`. The memory guard
+requires at least 30% host-free memory before every command. Evidence and
+compiler scratch remain private/untracked under `.runtime-validation/`.
+
+```sh
+cargo test --locked -p festerm-host-setup -p festerm-host --all-targets
+# 116 setup + 7 CLI-unit + 10 CLI-integration passed; 1 existing signer ignore
+cargo test --locked -p festerm --bin festerm desktop_remote_access
+# 17 passed: 12 model/composition/headless-render + 5 actual native-adapter boundary
+cargo test --locked -p festerm --bin festerm selected_host_
+# 9 existing client tests passed
+cargo test --locked -p festerm --bin festerm dev_tunnel_host_recipe_
+# 6 existing metadata/profile/import/export tests passed
+cargo clippy --locked -p festerm -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo clippy --locked -p festerm --bin festerm --no-default-features --features experimental-dev-tunnels -- -D warnings
+cargo clippy --locked -p festerm-host-setup --no-default-features --features native-services --all-targets -- -D warnings
+cargo test --locked -p festerm-host --no-default-features --all-targets
+# 4 CLI-unit + 6 CLI-integration passed
+cargo clippy --locked -p festerm-host --no-default-features --all-targets -- -D warnings
+cargo tree --locked -p festerm --no-default-features --features experimental-dev-tunnels -e features -i festerm-host-setup
+# host-setup default only; no owner-enrollment/lifecycle/native-services authority
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 602f19f83cd26748d6580f4e041781190b3150ba
+# 311 edges, 0 broken references
+git diff --check
+```
+
+Final logs are `desktop-qualified-*.log`; the absolute paths and raw `-vV`
+receipt are in `desktop-toolchain-provenance.log`. Earlier compiler/fixture
+failures, the first headless render's unapplied texture delta, and the initial
+strict large-scope-enum failure are retained, not counted as passes. The
+headless fixture now explicitly clears its texture delta; immutable shared
+snapshots avoid the oversized worker enum without warning suppression.
+Existing `rust-objcopy`/libLLVM, linker-unwind and vendored-dependency warnings
+remain visible; no toolchain/SDK changes or lint allowances were introduced.
+These are source/mock and headless rendering results, not native-manager,
+signed-bundle, endpoint, GUI-usability or owner-removal acceptance. All three
+actual-platform CI gates and independent exact-source review remain required.
+
 ## #695 client-safe fingerprint dependency repair
 
 This surgical child of immutable `a6d4bf6c` contains no Create/Ensure feature.

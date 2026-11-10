@@ -1690,6 +1690,57 @@ mod tests {
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
+    async fn host_desktop_scoped_setup_reserves_original_ticket_and_refuses_stale_consent() {
+        for stale in [false, true] {
+            let (root, store, secrets) = fixture();
+            let boundary = controller_boundary(&store, secrets);
+            let stage = crate::services::fixture_stage(&root.path().join("stage"));
+            let consent = crate::controller::SetupConsent {
+                expected: store.snapshot().unwrap(),
+                settings: crate::lifecycle::Settings {
+                    friendly_name: "Reviewed desktop setup".into(),
+                    allow_creation: false,
+                    startup: crate::lifecycle::Startup::Manual,
+                },
+                account: 42,
+            };
+            if stale {
+                store.revoke().unwrap();
+            }
+            let mut reserved = None;
+            let result = crate::controller::setup_scoped_with(
+                crate::controller::SetupRequest {
+                    store: &store,
+                    state: &root.path().join("host"),
+                    stage: &stage,
+                    account: 42,
+                    cancel: &CancellationToken::new(),
+                },
+                |_| {},
+                &boundary,
+                Some(&consent),
+                |ticket| reserved = Some(ticket.clone()),
+            )
+            .await;
+            if stale {
+                assert!(result.is_err());
+                assert!(reserved.is_none());
+                assert!(boundary.events.borrow().is_empty());
+                assert_eq!(boundary.network.state.borrow().creates, 0);
+                assert!(!root.path().join("host").join(HOST_IDENTITY_FILE).exists());
+            } else {
+                let result = result.unwrap();
+                assert_eq!(store.snapshot().unwrap().settings, consent.settings);
+                assert_eq!(result.native_registration.epoch, reserved.unwrap().epoch());
+                assert!(result.owner_approval_prerequisite.keys.is_empty());
+                assert!(!result.owner_approval_prerequisite.remote_access);
+                assert!(!root.path().join("host/daemon").exists());
+            }
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
     async fn host_controller_owner_approval_fences_fingerprint_phase_creation_and_runtime_issuer() {
         let (root, store, secrets) = fixture();
         let boundary = controller_boundary(&store, secrets);

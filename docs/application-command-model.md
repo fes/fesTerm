@@ -22,6 +22,31 @@ invocation surface
 
 UI components may translate gestures or controls into commands, but they should not contain independent session-management or workspace policy.
 
+### Desktop-local Remote Access
+
+`LocalRemoteAccess(Action)` is a composition-root command, not an `AppState`
+metadata side effect. Settings renders immutable observations/drafts and emits
+typed review/confirm/cancel actions. Only explicit confirmation admits a bounded
+background operation delegating to the shared setup/controller/native factory.
+The default `local-host-settings` feature enables those legitimate local
+operations separately from client fingerprint/recipe functionality.
+
+Each confirmation retains the complete protected installation snapshot and
+draft and separately observed native policy revision. Shared lifecycle/policy CAS rejects stale epochs, same-epoch permission revocation, changed settings and
+foreign origins; editing cancels review without granting anything. One process-
+wide primary permit and one independent revoke permit remain owned by the
+actual worker, including cancellation or blocked native work. Late completions
+cannot publish access or readiness. Closing the coordinator cancels/drains
+through the same policy. No widget runs an installer, native command, browser
+or credential fallback.
+
+Share/unshare review captures the actual attached native persistent identity,
+tab, profile and lifecycle generation; dispatch rechecks that exact selection.
+Until authenticated bind-existing and exact-receipt release are available,
+these commands return an actionable capability refusal without session effects.
+No portable profile save/import, ordinary launch, PID or display metadata can
+produce a HOST grant.
+
 ## Command Responsibilities
 
 Application commands represent product-level intent, for example:

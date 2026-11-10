@@ -722,7 +722,19 @@ impl OwnerEnrollment<'_> {
         revision: Epoch,
         update: impl FnOnce(&mut EnrollmentSnapshot, &Snapshot) -> io::Result<()>,
     ) -> io::Result<EnrollmentSnapshot> {
+        self.change_if_current(revision, None, update)
+    }
+
+    fn change_if_current(
+        &self,
+        revision: Epoch,
+        expected: Option<&Snapshot>,
+        update: impl FnOnce(&mut EnrollmentSnapshot, &Snapshot) -> io::Result<()>,
+    ) -> io::Result<EnrollmentSnapshot> {
         self.installation.with_locked(|directory, installation| {
+            if expected.is_some_and(|expected| expected != installation) {
+                return Err(refused("owner.foreground_scope_changed"));
+            }
             let (reference, mut record) = self.read(directory, installation)?;
             let previous = record_digest(&record)?;
             if record.revision != revision {
@@ -739,6 +751,43 @@ impl OwnerEnrollment<'_> {
             record.validate(installation)?;
             self.commit(directory, &reference, &record, previous)?;
             Ok(record)
+        })
+    }
+
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    pub(crate) fn approve_key_if_current(
+        &self,
+        expected: &Snapshot,
+        expected_policy_revision: u64,
+        public_key: [u8; 32],
+        confirmed_fingerprint: &str,
+        capabilities: Capabilities,
+    ) -> io::Result<EnrollmentSnapshot> {
+        let current = self.snapshot()?;
+        if current.revision.get() != expected_policy_revision {
+            return Err(refused("owner.stale_operation"));
+        }
+        self.change_if_current(current.revision, Some(expected), |record, installation| {
+            if installation.phase != crate::lifecycle::Phase::Provisioned {
+                return Err(refused("host.runtime_current_provisioned_consent_required"));
+            }
+            if capabilities.creation_allowed && !installation.settings.allow_creation {
+                return Err(refused("owner.creation_settings_consent_required"));
+            }
+            if !record
+                .keys
+                .iter()
+                .any(|key| key.public_key == public_key && !key.revoked)
+            {
+                add_key(record, public_key, confirmed_fingerprint)?;
+            }
+            record.remote_access = true;
+            record.capabilities = capabilities;
+            Ok(())
         })
     }
 
@@ -959,6 +1008,101 @@ mod tests {
         enrollment
             .initialize(Path::new("host-identity"), "github:1234".into())
             .unwrap()
+    }
+
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    #[test]
+    fn protected_owner_desktop_scoped_approval_is_one_current_policy_commit() {
+        let (_root, store, vault) = setup();
+        let enrollment = OwnerEnrollment {
+            installation: &store,
+            vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
+        };
+        let initial = initialize(&enrollment);
+        let expected = store.snapshot().unwrap();
+        let key = OwnerSigningKey::from_seed(&[91; 32]);
+        let permissions = Capabilities {
+            inventory: true,
+            attach: true,
+            detach: true,
+            ..Capabilities::default()
+        };
+        let approved = enrollment
+            .approve_key_if_current(
+                &expected,
+                initial.revision.get(),
+                key.public_key(),
+                &owner_key_fingerprint(&key.public_key()).unwrap(),
+                permissions,
+            )
+            .unwrap();
+        assert_eq!(approved.revision.get(), initial.revision.get() + 1);
+        assert!(approved.remote_access);
+        assert_eq!(approved.capabilities, permissions);
+        assert_eq!(approved.keys.len(), 1);
+        assert!(!approved.capabilities.creation_allowed);
+        assert!(!approved.capabilities.explicit_end);
+        assert!(!approved.capabilities.temporary);
+    }
+
+    #[cfg(all(
+        feature = "cloud",
+        feature = "host-runtime",
+        feature = "native-services"
+    ))]
+    #[test]
+    fn protected_owner_desktop_scoped_approval_refuses_late_epoch_foreign_and_creation() {
+        for refusal in ["late", "foreign", "creation", "busy", "policy-revoked"] {
+            let (_root, store, vault) = setup();
+            let enrollment = OwnerEnrollment {
+                installation: &store,
+                vault: Box::new(SharedVault(vault)),
+                storage: OwnerStorage::NativeVault,
+            };
+            let initial = initialize(&enrollment);
+            let mut expected = store.snapshot().unwrap();
+            let key = OwnerSigningKey::from_seed(&[92; 32]);
+            let mut permissions = Capabilities {
+                inventory: true,
+                attach: true,
+                ..Capabilities::default()
+            };
+            match refusal {
+                "late" => store.revoke().unwrap(),
+                "foreign" => expected.installation = uuid::Uuid::new_v4().to_string(),
+                "creation" => {
+                    permissions.create = true;
+                    permissions.creation_allowed = true;
+                }
+                "policy-revoked" => {
+                    enrollment
+                        .approve_permissions(initial.revision, false, Capabilities::default())
+                        .unwrap();
+                }
+                _ => {}
+            }
+            let lease = (refusal == "busy")
+                .then(|| store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap());
+            assert!(enrollment
+                .approve_key_if_current(
+                    &expected,
+                    initial.revision.get(),
+                    key.public_key(),
+                    &owner_key_fingerprint(&key.public_key()).unwrap(),
+                    permissions,
+                )
+                .is_err());
+            drop(lease);
+            let current = enrollment.snapshot().unwrap();
+            assert!(current.keys.is_empty());
+            assert!(!current.remote_access);
+            assert!(!current.capabilities.creation_allowed);
+        }
     }
     fn enroll(
         enrollment: &OwnerEnrollment<'_>,

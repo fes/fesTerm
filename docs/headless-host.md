@@ -273,6 +273,25 @@ No platform startup acceptance is established by local fixtures.
 
 ## Shared desktop/endpoint integration API
 
+The desktop's separate `local-host-settings` composition now calls this policy
+from bounded workers. `controller::SetupConsent` retains the full observed
+`Snapshot`, approved `Settings` and numeric account; `setup_if_current` reserves
+that exact scope atomically and reports the original ticket to cancellation.
+`approve_owner_if_current` additionally requires the native policy revision
+shown during explicit review, making key/permission approval one existing-policy
+lease commit; same-epoch permission revocation cannot be overwritten by a queued
+confirmation. `disable_if_current`/`uninstall_if_current` preserve exact
+foreground scope through revoke, confirmed stop and cleanup. Existing CLI
+entrypoints retain their public behavior.
+
+Native registrations for Desktop origin use internal
+`run-desktop --state-dir PATH`; it opens only protected `Origin::Desktop` and
+always uses the native vault. `run` stays Headless-only. Neither entrypoint
+adopts the other origin or offers an origin/file-storage selector. Desktop
+setup, status and management use the library directly, not a CLI installer.
+This source seam does not qualify signed/native execution or existing-daemon
+sharing; see ADR 0084 §7 and HOSTSETUP-01.
+
 `festerm_host_setup::lifecycle` is opt-in via the `lifecycle` Cargo feature;
 the legacy embedded-installer API and its default/mobile dependency graph remain
 unchanged. Desktop must call the same policy, never execute a fetched script.

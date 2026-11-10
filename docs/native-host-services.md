@@ -158,6 +158,15 @@ no linger, service-manager or OS permission setting is modified to qualify it.
 
 ## Shared lifecycle API
 
+Definitions choose the runner solely from their protected origin: Desktop uses
+`run-desktop`, Headless uses `run`. The CLI entrypoints open only that exact
+origin with native-vault runtime policy; Settings has no headless-file fallback.
+macOS observation checks the corresponding exact argv, so a headless command
+cannot be relabeled as Desktop ownership. Typed fake-manager/static rendering
+and actual binary refusal tests cover this seam, not real native installation.
+Windows publisher/graceful-stop restrictions and Linux sign-in admission remain
+unchanged.
+
 `services::Services::current_user(&Store, state_dir)` binds the actual protected
 store directory and current OS account, never an arbitrary configured service
 user. Native operations have a separate exclusive lease, allowing the short

@@ -60,31 +60,39 @@ fn systemd(text: &str) -> String {
     )
 }
 
+pub(super) fn runner_verb(origin: Origin) -> &'static str {
+    match origin {
+        Origin::Desktop => "run-desktop",
+        Origin::Headless => "run",
+    }
+}
+
 pub(super) fn render(record: &Registration) -> io::Result<String> {
     if record.settings.startup == Startup::BeforeLogin {
         return Err(refused("host.startup_before_login_unqualified"));
     }
     let executable = path_text(&record.executable)?;
     let state = path_text(&record.state)?;
+    let verb = runner_verb(record.origin);
     match record.platform {
         Platform::Linux => Ok(format!(
-            "[Unit]\nDescription=fesTerm host {}\n[Service]\nType=exec\nExecStart={} run --state-dir {}\nRestart=no\nTimeoutStartSec=10s\nTimeoutStopSec=10s\nSendSIGKILL=no\nKillMode=process\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=default.target\n",
-            record.resource, systemd(executable), systemd(state))),
+            "[Unit]\nDescription=fesTerm host {}\n[Service]\nType=exec\nExecStart={} {} --state-dir {}\nRestart=no\nTimeoutStartSec=10s\nTimeoutStopSec=10s\nSendSIGKILL=no\nKillMode=process\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=default.target\n",
+            record.resource, systemd(executable), verb, systemd(state))),
         Platform::Macos => Ok(format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
              <key>Label</key><string>{}</string><key>ProgramArguments</key><array>\
-             <string>{}</string><string>run</string><string>--state-dir</string><string>{}</string></array>\
+             <string>{}</string><string>{}</string><string>--state-dir</string><string>{}</string></array>\
              <key>RunAtLoad</key><{}/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><true/>\
              <key>ExitTimeOut</key><integer>10</integer>\
              <key>StandardOutPath</key><string>/dev/null</string><key>StandardErrorPath</key><string>/dev/null</string>\
-             </dict></plist>\n", xml(&record.resource), xml(executable), xml(state),
+             </dict></plist>\n", xml(&record.resource), xml(executable), verb, xml(state),
             if record.settings.startup == Startup::UserSignIn { "true" } else { "false" })),
         Platform::Windows => {
             if !record.user.starts_with("S-1-") || !record.user.bytes().all(|c| c.is_ascii_digit() || c == b'-' || c == b'S')
                 || executable.contains(['"', '%']) || state.contains(['"', '%'])
             { return Err(refused("host.service_invalid_task_path_or_user")); }
             let trailing = state.chars().rev().take_while(|c| *c == '\\').count();
-            let arguments = format!("run --state-dir \"{}{}\"", state, "\\".repeat(trailing));
+            let arguments = format!("{verb} --state-dir \"{}{}\"", state, "\\".repeat(trailing));
             let trigger = if record.settings.startup == Startup::UserSignIn {
                 format!("<LogonTrigger><Enabled>true</Enabled><UserId>{}</UserId></LogonTrigger>", xml(&record.user))
             } else { String::new() };
@@ -304,7 +312,7 @@ pub(super) fn mac_state(
     let unique = |value: &str| lines.iter().filter(|line| **line == value).count() == 1;
     let argv = [
         path_text(&record.executable)?,
-        "run",
+        runner_verb(record.origin),
         "--state-dir",
         path_text(&record.state)?,
     ];

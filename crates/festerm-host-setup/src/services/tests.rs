@@ -254,8 +254,9 @@ impl CommandRunner for FakeRunner {
                         let record: Registration =
                             serde_json::from_slice(&std::fs::read(record_path).unwrap()).unwrap();
                         output.stdout = format!(
-                            "path = {}\nprogram = {}\narguments = {{\n{}\nrun\n--state-dir\n{}\n}}\nstate = {}\n{}",
+                            "path = {}\nprogram = {}\narguments = {{\n{}\n{}\n--state-dir\n{}\n}}\nstate = {}\n{}",
                             self.definition.display(), record.executable.display(), record.executable.display(),
+                            definitions::runner_verb(record.origin),
                             record.state.display(), if state.running { "running" } else { "waiting" },
                             if state.running { "pid = 123\n" } else { "" }).into_bytes();
                     }
@@ -365,6 +366,58 @@ fn provision(store: &Store) -> Snapshot {
     store.snapshot().unwrap()
 }
 
+#[test]
+fn native_service_desktop_runner_definition_is_origin_exact_without_headless_adoption() {
+    for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {
+        #[cfg(windows)]
+        if platform != Platform::Windows {
+            continue;
+        }
+        let root = storage::private_test_directory();
+        let store = Store::create(&root.path().join("state"), Origin::Desktop, settings()).unwrap();
+        let snapshot = provision(&store);
+        let manager = services(root.path(), &store, platform);
+        let stage = trusted::fixture(root.path());
+        if platform == Platform::Windows {
+            assert_eq!(
+                manager
+                    .install(&stage, snapshot.epoch)
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                "host.service_windows_authenticated_graceful_stop_unavailable"
+            );
+            assert!(manager.registration().unwrap().1.is_none());
+            assert!(manager.runner.state.borrow().calls.is_empty());
+            continue;
+        }
+        manager.install(&stage, snapshot.epoch).unwrap();
+        let (_, record) = manager.registration().unwrap();
+        let mut record = record.unwrap();
+        assert!(record.definition.contains("run-desktop"));
+        assert_eq!(definitions::runner_verb(record.origin), "run-desktop");
+        if platform == Platform::Macos {
+            let path = definitions::definition_path(&manager.context, &record);
+            let old = format!(
+                "path = {}\nprogram = {}\narguments = {{\n{}\nrun\n--state-dir\n{}\n}}\nstate = waiting\n",
+                path.display(), record.executable.display(),
+                record.executable.display(), record.state.display(),
+            );
+            assert!(definitions::mac_state(old.as_bytes(), &path, &record).is_err());
+            let exact = old.replace("\nrun\n", "\nrun-desktop\n");
+            assert_eq!(
+                definitions::mac_state(exact.as_bytes(), &path, &record).unwrap(),
+                ProcessState::Stopped
+            );
+        }
+        record.origin = Origin::Headless;
+        assert!(!definitions::render(&record)
+            .unwrap()
+            .contains("run-desktop"));
+        assert_eq!(definitions::runner_verb(record.origin), "run");
+        assert_eq!(store.snapshot().unwrap(), snapshot);
+    }
+}
 #[test]
 fn native_service_unpublished_receipt_proves_only_owned_absence_without_manager_calls() {
     for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {

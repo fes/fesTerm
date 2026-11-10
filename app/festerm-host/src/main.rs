@@ -106,11 +106,11 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             "--temporary",
         ],
         #[cfg(feature = "owner-routing")]
-        "run" | "run-status" => &["--state-dir"],
+        "run" | "run-desktop" | "run-status" => &["--state-dir"],
         #[cfg(feature = "owner-routing")]
         "uninstall" => &["--state-dir", "--consent"],
         #[cfg(not(feature = "owner-routing"))]
-        "setup" | "run" | "uninstall" => return Err(unavailable()),
+        "setup" | "run" | "run-desktop" | "uninstall" => return Err(unavailable()),
         "update" => return Err(unavailable()),
         _ => return Err(invalid()),
     };
@@ -223,9 +223,14 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 .map_err(|_| io::Error::other("host.status_serialization"))
         }
         #[cfg(feature = "owner-routing")]
-        "run" => {
+        "run" | "run-desktop" => {
             let state = path("--state-dir")?;
-            let store = std::sync::Arc::new(Store::open(&state, Origin::Headless)?);
+            let origin = if command == "run-desktop" {
+                Origin::Desktop
+            } else {
+                Origin::Headless
+            };
+            let store = std::sync::Arc::new(Store::open(&state, origin)?);
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
@@ -849,9 +854,9 @@ mod tests {
 
     #[test]
     fn unavailable_host_operations_and_unsafe_options_fail_closed() {
-        for command in ["setup", "run", "update", "uninstall"] {
+        for command in ["setup", "run", "run-desktop", "update", "uninstall"] {
             let expected = if cfg!(feature = "owner-routing")
-                && matches!(command, "setup" | "run" | "uninstall")
+                && matches!(command, "setup" | "run" | "run-desktop" | "uninstall")
             {
                 io::ErrorKind::Other
             } else {

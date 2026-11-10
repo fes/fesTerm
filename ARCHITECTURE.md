@@ -338,6 +338,26 @@ See [the wire/staging/bootstrap contract](docs/host-release-artifacts.md).
 New headless CLI inclusion, service switching and migration remain separate
 implementation gates; this is not full stage-7 acceptance.
 
+Desktop composition is now explicit behind the default `local-host-settings`
+feature, separate from the client-only experimental feature. Settings emits
+`AppCommand::LocalRemoteAccess`; its application coordinator admits at most one
+ordinary worker and one independent cancellation/revocation worker across
+windows. Rendering/editing never performs storage, native, credential or cloud
+I/O. Cancellation keeps admission until actual work exits, suppresses stale UI
+results and fences only the installation/original issued epoch. Shared setup
+owns exact-snapshot/settings CAS; scoped owner approval commits the key and
+permissions under the existing protected policy lease. No cached verifier is
+introduced. Desktop always selects the native vault, never headless file storage.
+
+Signed native definitions select `run-desktop` only from their protected
+Desktop origin; the native CLI entrypoint opens that exact origin and the
+ordinary headless `run` remains Headless-only. Current Windows publisher/stop
+and Linux sign-in restrictions remain authoritative. Native process/history
+is never endpoint readiness. Exact existing-shell binding and receipt-fenced
+unsharing remain a shared sessiond prerequisite: the application captures tab,
+profile, native identity and lifecycle generation for review but cannot turn
+these display facts into authority or restart a private daemon.
+
 ### `festerm-sessiond`
 
 Implements ADR-0025's opt-in persistent local-session backend. Its packaged
