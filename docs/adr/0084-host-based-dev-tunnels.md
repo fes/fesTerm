@@ -662,6 +662,20 @@ correlated resource/policy Busy, retained reply allocation through publication
 and post-commit policy contention. These are PR688 core reliability/scope
 remediations, not endpoint or dependency qualification.
 
+The unexposed paired terminal slice adds bounded binary framing, explicit
+frontend adoption/observed native writer admission, immutable client bindings,
+bounded full-duplex queues, partial-frame deadlines and non-replaying input.
+Portable fixtures cover correlated confirmation, generation/uncertainty refusal,
+legacy/file refusal, retained byte quotas and abandoned FIFO scheduling turns.
+Owned native terminal fixtures additionally exercise real routed sessions,
+pending cancellation/takeover, temporary detach and revocation under slow output.
+Those native fixtures are not endpoint acceptance: the existing synchronous
+daemon candidate-adoption wait stalls the old writer while a candidate remains
+pending, and the backend hotpath/issuance-history replacement is still pending.
+Keep that regression assertion and require the native fix rather than changing
+timeouts or claiming a passing gate. Actual consuming owner-channel integration,
+cross-platform/native service and physical-device gates remain separate.
+
 | Area | Required evidence (planned test names are illustrative) |
 | --- | --- |
 | Network-free UI | `launcher_and_profile_save_do_not_network`; explicit find/select/refresh only; stale results fenced on account switch |

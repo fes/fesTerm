@@ -3373,6 +3373,15 @@ correlated resource/policy saturation, reply-capacity retention and post-commit
 native policy contention. Real native effects require a cfg(test)-only backend
 advertisement; there is no production bypass or new manual acceptance.
 
+The unexposed paired terminal module adds automated portable adoption,
+correlation, strict-generation/refusal, frame/deadline, byte-budget and FIFO-turn
+fixtures. Native terminal fixtures remain explicitly invoked and unqualified:
+the existing daemon candidate-adoption wait blocks old-writer progress while
+a newer recovery snapshot is pending. Do not remove that assertion, increase its
+timeout or count this slice as DT/CP/mobile acceptance. Actual consuming
+owner-channel integration and backend hotpath/history qualification remain
+required; no production listener or readiness state is added.
+
 Stage 2 adds **automated local Unix** evidence: real detached owned daemons and
 repository fixture children prove concurrent ensure, crash/lost-reply
 reconciliation, recipe/operation conflict, denied/revoked generations,

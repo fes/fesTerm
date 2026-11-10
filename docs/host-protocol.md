@@ -535,6 +535,42 @@ core with real protected authorization, but are not advertised while the
 terminal attachment path remains incomplete. The legacy exact-generation bridge
 continues unchanged; it is not silently selected as a HOST default session.
 
+#### Unexposed paired terminal transport
+
+`festerm-tunnel-bridge::host_terminal` adds a separate bounded terminal stream,
+not an unbounded multiplexer. Binary tags 60/61 carry the same validated HOST
+request/reply envelopes; they do not overlap file or observation tags. A
+Capabilities/Attach exchange names an exact generation and attachment. The
+server sends the existing recovery snapshot, waits for frontend `ADOPTED`, then
+observes a protocol-2-or-newer native resize acknowledgement before publishing
+the correlated `Attached`. Temporary sessions additionally require the actual
+reserved attachment ticket/lease outcome. Pending recovery is never success.
+
+Snapshots are capped at 512 KiB and terminal chunks at 64 KiB. Frames retain
+aggregate/per-client byte permits through queued delivery. Partial frames and
+writes have 15-second deadlines; an idle live terminal is not a partial frame.
+The portable `TerminalHandle` uses eight command/four event slots, immutable
+account/endpoint/host/generation bindings, and no reconnect or input replay.
+Detach returns an operation ID only; its validated reply establishes success.
+
+The fixture-only native adapter admits a bounded blocking actor before allocating its
+one-slot work queue. Every action obtains fresh protected authorization under
+the actual backend guard. Notification-driven output uses bounded FIFO turns
+released before network I/O; independent authorization supervision can retire
+a slow output connection. Intentional persistent detach closes only its
+frontend. Temporary detach stops only the exact current lease; unexpected loss
+reconciles pending adoption before applying the existing bounded grace.
+Stale takeover cleanup cannot renew or stop the replacement.
+
+The native server/scheduler are compiled only in tests, not exported as a
+production stream-plus-proof API. The portable client is framing, not authority.
+This is low-level, unexposed composition, not authenticated endpoint readiness.
+The consuming actual pinned-channel owner-proof adapter, independently reviewed
+backend hotpath/history fixes, cross-platform native qualification and fair
+control-under-load evidence remain integration gates. Control capabilities
+remain inventory-only; no listener, automatic fallback, file/observation/MCP
+grant, setup authority or remote sharing/enrollment operation is added.
+
 **Exposure remains blocked:** the actual inner SSH channel currently does not
 export its shared session/channel binding to both peers. A host-key pin alone
 cannot supply the required same-channel non-forwardable owner proof. Enrollment

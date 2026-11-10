@@ -729,8 +729,13 @@ the client owns immutable account/endpoint/host correlation, not authority.
 policy guards; the off-by-default headless `owner-routing` composition adapts
 protected enrollment, not portable configuration. Owned native fixtures cover
 control routing/retry without frontend leases. No listener uses these modules.
-Actual same-channel authentication export, adopted terminal attachment/detach
-and fair bounded terminal scheduling remain gates; legacy exact-generation relay
+The unexposed `host_terminal` module pairs bounded binary terminal framing with
+an immutable client handle and a fixture-only actual native attachment actor. Recovery
+adoption and observed native writer admission precede Attached; exact temporary
+leases distinguish intentional detach from transport loss. FIFO output turns
+are released before network I/O; current authorization can cancel slow output.
+Actual consuming same-channel authentication integration, backend hotpath/history
+qualification and fair control-under-load remain gates; legacy exact-generation relay
 and independent grants are unchanged.
 
 The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small

@@ -1581,6 +1581,13 @@ and retain reply capacity through publication. HOST-01–03 retain the same
 partial status; native effect fixtures use an explicit cfg(test)-only backend
 advertisement, not production capability widening.
 
+The unexposed paired terminal module adds bounded adoption/correlation, frame
+and byte-budget, no-replay and FIFO-turn fixtures for HOST-02/03. Native
+qualification remains blocked by the daemon's synchronous pending-candidate
+adoption wait and the backend hotpath/history replacement; these regressions
+must pass without weakening old-writer progress or control fairness assertions.
+Actual consuming owner-channel integration and all H/N gates remain deferred.
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy and framed duplex dispatcher tests; real pinned-channel exporter/native endpoint H,N deferred |

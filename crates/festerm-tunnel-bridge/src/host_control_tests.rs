@@ -9,8 +9,8 @@ use festerm_tunnel_client::host_control::{Binding, ControlClient};
 use std::sync::{Condvar, Mutex};
 use tokio::io::duplex;
 
-struct Policy(Arc<tokio::sync::Mutex<OwnerVerifier>>);
-struct FixturePolicyGuard(tokio::sync::OwnedMutexGuard<OwnerVerifier>);
+pub(crate) struct Policy(pub(crate) Arc<tokio::sync::Mutex<OwnerVerifier>>);
+pub(crate) struct FixturePolicyGuard(tokio::sync::OwnedMutexGuard<OwnerVerifier>);
 impl PolicyGuard for FixturePolicyGuard {
     fn verifier(&self) -> &OwnerVerifier {
         &self.0
@@ -44,7 +44,7 @@ fn policy() -> OwnerPolicy {
     }
 }
 
-fn verified(policy: &OwnerPolicy) -> (VerifiedOwner, OwnerConnectionGuard, Arc<Policy>) {
+pub(crate) fn verified(policy: &OwnerPolicy) -> (VerifiedOwner, OwnerConnectionGuard, Arc<Policy>) {
     let key = OwnerSigningKey::from_seed(&[17; 32]);
     let verifier = OwnerVerifier::new(policy.clone(), &[key.public_key()]).unwrap();
     let challenge = verifier.challenge().unwrap();
@@ -740,7 +740,7 @@ async fn reply_charge_survives_worker_completion_and_postauthorization() {
 }
 
 #[cfg(all(feature = "relay", unix))]
-mod native_routes {
+pub(crate) mod native_routes {
     use super::*;
     use festerm_host_protocol::{AttachmentId, Creation, EnsureDisposition, Recipe};
     use festerm_sessiond::{
@@ -752,27 +752,29 @@ mod native_routes {
         time::{Duration, Instant},
     };
 
-    struct NativeFixture {
-        root: PathBuf,
-        helper: PathBuf,
-        policy: OwnerPolicy,
+    pub(crate) struct NativeFixture {
+        pub(crate) root: PathBuf,
+        pub(crate) helper: PathBuf,
+        pub(crate) policy: OwnerPolicy,
+        directory: Option<private_storage::PrivateTestDirectory>,
     }
 
     impl NativeFixture {
-        fn new(creation_allowed: bool) -> Self {
+        pub(crate) fn new(creation_allowed: bool) -> Self {
             let helper = PathBuf::from(
                 std::env::var_os("FESTERM_HOST_TEST_HELPER")
                     .expect("set FESTERM_HOST_TEST_HELPER to the owned built sessiond helper"),
             );
             assert!(helper.is_absolute() && helper.is_file());
             assert!(helper.with_file_name("festerm-pty-test-child").is_file());
-            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let parent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join(format!("hr-{}", &OperationId::new().as_str()[..8]));
-            private_storage::private_directory(&root, true).unwrap();
+                .to_path_buf();
+            let directory = private_storage::private_test_directory_in(&parent);
+            let root = directory.path().to_path_buf();
             let mut policy = policy();
             policy.capabilities = Capabilities {
                 inventory: true,
@@ -787,14 +789,60 @@ mod native_routes {
                 root,
                 helper,
                 policy,
+                directory: Some(directory),
             }
         }
 
-        fn control(&self) -> SessionControl {
+        pub(crate) fn control(&self) -> SessionControl {
             SessionControl::with_helper(&self.root, &self.helper).unwrap()
         }
 
-        fn creation(&self) -> Creation {
+        fn daemons_stopped(&self) -> bool {
+            let path = self.root.join("lifecycle");
+            let directory = match private_storage::private_directory(&path, false) {
+                Ok(directory) => directory,
+                Err(error) => return error.kind() == std::io::ErrorKind::NotFound,
+            };
+            let entries = match std::fs::read_dir(path) {
+                Ok(entries) => entries,
+                Err(_) => return false,
+            };
+            for (index, entry) in entries.enumerate() {
+                if index >= festerm_host_protocol::MAX_SESSIONS * 4 {
+                    return false;
+                }
+                let Ok(entry) = entry else { return false };
+                if entry
+                    .path()
+                    .extension()
+                    .is_none_or(|extension| extension != "json")
+                {
+                    continue;
+                }
+                let Ok(bytes) = private_storage::read_private(
+                    &directory,
+                    std::path::Path::new(&entry.file_name()),
+                    32 * 1024,
+                ) else {
+                    return false;
+                };
+                let Ok(history) =
+                    serde_json::from_slice::<Vec<festerm_sessiond::lifecycle::Entry>>(&bytes)
+                else {
+                    return false;
+                };
+                if history.len() > 64
+                    || history
+                        .iter()
+                        .any(|entry| festerm_sessiond::process_alive(entry.pid))
+                {
+                    return false;
+                }
+            }
+            true
+        }
+
+        pub(crate) fn creation(&self) -> Creation {
             Creation {
                 logical: LogicalSessionId::new(),
                 attachment: AttachmentId::new(),
@@ -812,7 +860,7 @@ mod native_routes {
             }
         }
 
-        fn backend(&self) -> (Arc<native::NativeControl<Policy>>, Arc<Policy>) {
+        pub(crate) fn backend(&self) -> (Arc<native::NativeControl<Policy>>, Arc<Policy>) {
             let (_, _, source) = verified(&self.policy);
             (
                 Arc::new(native::NativeControl::with_test_capabilities(
@@ -823,7 +871,7 @@ mod native_routes {
             )
         }
 
-        async fn connect(
+        pub(crate) async fn connect(
             &self,
             backend: Arc<dyn SessionBackend>,
             source: Arc<Policy>,
@@ -863,30 +911,42 @@ mod native_routes {
 
     impl Drop for NativeFixture {
         fn drop(&mut self) {
-            if let Ok(sessions) = self
-                .control()
-                .inventory(&self.policy.principal, |_| Ok::<_, ControlError>(()))
-            {
-                for session in sessions {
-                    let _ =
-                        self.control()
-                            .end(&self.policy.principal, &session.summary.target, |_| {
-                                Ok::<_, ControlError>(())
-                            });
-                }
-            }
             let deadline = Instant::now() + Duration::from_secs(8);
             loop {
+                if let Ok(sessions) = self
+                    .control()
+                    .inventory(&self.policy.principal, |_| Ok::<_, ControlError>(()))
+                {
+                    for session in sessions {
+                        let _ = self.control().end(
+                            &self.policy.principal,
+                            &session.summary.target,
+                            |_| Ok::<_, ControlError>(()),
+                        );
+                    }
+                }
                 match festerm_sessiond::list_running_sessions_in(&self.root) {
-                    Ok(sessions) if sessions.is_empty() => {
-                        std::fs::remove_dir_all(&self.root).unwrap();
+                    Ok(sessions) if sessions.is_empty() && self.daemons_stopped() => {
+                        drop(self.directory.take());
                         break;
                     }
                     _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
-                    _ => panic!(
-                        "owned fixture did not stop; retained {}",
-                        self.root.display()
-                    ),
+                    _ => {
+                        // Keep protected state if an owned daemon is still
+                        // alive; RAII must not erase its reconciliation root.
+                        std::mem::forget(self.directory.take());
+                        if std::thread::panicking() {
+                            eprintln!(
+                                "owned fixture did not stop; retained {}",
+                                self.root.display()
+                            );
+                            return;
+                        }
+                        panic!(
+                            "owned fixture did not stop; retained {}",
+                            self.root.display()
+                        );
+                    }
                 }
             }
         }

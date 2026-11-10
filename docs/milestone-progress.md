@@ -8847,3 +8847,26 @@ unlock. Read-only/no-op operations no longer checkpoint, and exact-generation
 bridge admission performs native IPC outside the registry lock. Deterministic
 stalled-preparation/disjoint-writer and conflicting-generation regressions cover
 the boundary rather than increasing deadlines.
+
+The paired terminal slice now has separate bounded HOST binary framing rather
+than an unbounded multiplexer. The client exposes immutable connection bindings,
+explicit recovery adoption, bounded full-duplex queues and a correlated detach
+receipt, with no reconnect or terminal-input replay. Native routing uses the
+existing daemon/session machinery, fresh protected action guards and exact
+temporary leases; FIFO output turns release before network I/O.
+
+This remains unexposed and partial under #681. Portable fixtures qualify the
+transport boundary, not the endpoint. Owned native fixtures found that the
+existing synchronous candidate-adoption wait stops old-writer progress until a
+new snapshot is adopted or cancelled. That assertion remains in place for the
+native owner to fix, alongside the independently reviewed hotpath/history work.
+No listener, control-capability widening or native/manual acceptance is claimed.
+
+The focused bridge run passes 88 library cases; six new portable terminal cases
+also run without native helpers (five in client-only mode). Explicit owned
+native routing passes all five existing control cases plus two-session routing,
+temporary cancellation/detach and slow-output revocation with independent control.
+The pending-takeover old-writer-progress case still fails for the identified
+daemon wait and is not counted as passing. Protected short-root fixtures now
+wait for recorded daemon PIDs to exit, not merely disappear from discovery,
+before removing state; final shutdown diagnostics otherwise recreate the root.

@@ -22,7 +22,7 @@ pub mod native;
 
 #[cfg(test)]
 #[path = "host_control_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 /// Implement only using current protected enrollment. Keep its admission guard
 /// through `check`; never reconstruct policy from portable/client metadata.
@@ -97,6 +97,22 @@ impl Drop for InventoryLifetime {
 }
 
 impl OperationAdmission {
+    #[cfg(all(test, feature = "relay"))]
+    pub(crate) fn terminal(
+        owner: Arc<VerifiedOwner>,
+        source: Arc<dyn AuthorizationSource>,
+        request: Envelope<Request>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            owner,
+            source,
+            request,
+            cancelled,
+            inventory: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
     pub fn principal(&self) -> &festerm_host_protocol::PrincipalId {
         self.owner.principal()
     }
@@ -144,7 +160,7 @@ impl OperationAdmission {
     }
 
     #[cfg(feature = "relay")]
-    fn authorize_current(
+    pub(crate) fn authorize_current(
         &self,
         current: &OwnerVerifier,
         request: &Envelope<Request>,
