@@ -188,6 +188,7 @@ pub struct AdmissionFence {
     pub operation_epoch: Epoch,
     pub operation: OperationId,
     pub intent: AdmittedRequest,
+    pub issuance_epoch: Option<Epoch>,
     pub logical: Option<LogicalSessionId>,
     pub logical_state: Option<LogicalState>,
     pub logical_revision: Option<Epoch>,

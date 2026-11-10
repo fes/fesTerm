@@ -426,6 +426,7 @@ impl VerifiedOwner {
             operation_epoch,
             operation: request.operation.clone(),
             intent: (&request.body).into(),
+            issuance_epoch: request.issuance_epoch,
             logical,
             logical_state,
             logical_revision,
@@ -499,7 +500,11 @@ mod tests {
     }
 
     fn request(body: Request) -> Envelope<Request> {
-        Envelope::new(id(1), id::<OperationId>(8), body)
+        let mut envelope = Envelope::new(id(1), id::<OperationId>(8), body);
+        if envelope.body.issuance_epoch_required() {
+            envelope.issuance_epoch = Some(Epoch::new(1).unwrap());
+        }
+        envelope
     }
 
     fn signed(

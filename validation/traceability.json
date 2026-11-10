@@ -5530,6 +5530,8 @@
         "host_operations_roundtrip_without_conflating_detach_end_or_absence",
         "host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values",
         "host_response_correlation_rejects_wrong_target_operation_and_temporary_lease",
+        "host_issued_operation_requires_captured_epoch_and_correlates_responses",
+        "host_inventory_preserves_filtered_bounded_per_target_uncertainty",
         "host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors",
         "host_inventory_response_requires_exact_forward_cursor_progression",
         "host_aggregate_budgets_refuse_saturation_and_release_exact_permits",

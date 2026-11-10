@@ -89,6 +89,27 @@ An operation ID identifies a journaled request/result; retries must compare
 the entire owner/logical/recipe/lifetime intent and return conflict if it
 changed. This stage supplies representations, not the journal/spawn algorithm.
 
+The unreleased HOST envelope additionally carries optional `issuance_epoch`;
+Ensure/Create require it. `IssuedOperation { id, epoch }` captures the current
+protected namespace from authenticated capabilities for a **new explicit
+action**. `Envelope::issued` constructs that request; the server obtains the
+same pair with `issued_operation`. Responses echo the epoch and correlation
+checks it, including refusals. Admission fences bind it independently of the
+per-operation cancellation epoch. Bare OperationId client APIs must refuse
+Ensure/Create. An uncertain retry retains the original pair and immutable
+intent; reconnect, capability refresh, Stale or Unknown must never automatically
+replace its epoch. A retired namespace yields Stale/Unknown, never a new create.
+Only host-local journal serialization can rotate the namespace and safely retire
+its operation ledger. Rotation cannot discard active generations or revocation
+fences. Exact-target lifecycle operations remain generation/lease fenced and do
+not require a creation-issuance epoch. Legacy daemon/bridge wire is unchanged.
+
+Inventory pages contain bounded per-target `unknown` metadata, repeated across
+pages alongside the healthy session page. `capture_with_unknowns` filters both
+sets by protected owner/sharing/revocation before publication. One uncertain
+record cannot hide healthy peers, and a partial/omitted inventory never proves
+absence; exact Lookup/Ensure must still reconcile protected native evidence.
+
 `Recipe { shell, args, cwd }` uses an argument vector, never a shell command
 string. Optional shell means the host's default and requires an empty argument
 vector. Shell/cwd are nonempty when present, at most 4,096 bytes; at most 32
