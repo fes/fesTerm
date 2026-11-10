@@ -383,6 +383,11 @@ verified owned cloud incarnations. Interrupted migration is resumable and cannot
 provision duplicate hosts/shells. A failed migration leaves legacy use available
 where possible without resurrecting revoked exposure.
 
+Preserve protected state and account binding during migration. Do not stop a
+live legacy session without a separate, default-No confirmation for that exact
+generation. Setup or sharing consent does not authorize restart. Manual deferral
+remains available; missing confirmation is never implicit permission to stop.
+
 New recipes default to resume-or-create; legacy imports default to their old
 strict behavior until deliberately converted. Old clients get a clear unsupported
 host-protocol result, not an accidental default session.

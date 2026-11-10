@@ -3343,6 +3343,12 @@ CP-11 and MOB-03/MOB-06 with actual platform evidence before claiming acceptance
 Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
 HOST-04–06 setup/update/migration remain deferred behind their implementations;
 there is no new completed manual or usability scenario.
+Migration qualification must preserve protected state/account binding, retain
+manual deferral and prove that setup/sharing consent cannot stop/restart a live
+legacy session. Such a stop requires separate default-No confirmation of the
+exact live generation, revalidated before the effect; stale confirmation must
+not stop a replacement. No such local confirmation UI or native evidence is
+claimed by the stage-1 protocol refusal fixture.
 
 ## Intake rule for new work
 

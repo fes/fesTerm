@@ -5524,7 +5524,8 @@
       "prerequisites": [
         "Issue #681: implement the remaining ADR 0084 setup, headless, desktop-hosting and release/migration slices after reviewed endpoint/session-control integration",
         "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
-        "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect"
+        "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect",
+        "Migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow before migration exposure"
       ]
     }
   ]

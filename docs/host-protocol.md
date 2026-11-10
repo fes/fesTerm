@@ -247,6 +247,12 @@ creation-disabled resume. Fixture seed `[7; 32]` is synthetic test-only material
 There is no actual legacy migration: existing profiles/protocol/host-key/vault/
 grants remain unchanged. No legacy import acquires an owner enrollment,
 creation permission or HOST marker. Codec refusal is not migration acceptance.
+Migration must preserve protected state/account binding and offer manual
+deferral. Stopping a live legacy session requires a **separate, default-No**
+confirmation for that exact generation; setup/sharing consent never authorizes
+restart. The existing codec fixture also refuses a purported remote migration/
+restart request carrying setup/sharing assertions. It does not implement or
+qualify the future local confirmation flow.
 
 Independent security review must evaluate enrollment/storage/revocation, domain
 separation and replay resistance, pinned-channel non-forwarding, denial privacy,

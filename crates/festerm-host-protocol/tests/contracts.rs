@@ -58,6 +58,18 @@ fn host_wire_fixture_is_canonical_and_not_legacy_protocol() {
         decode::<Envelope<Request>>(&serde_json::to_vec(&legacy).unwrap()),
         Err(ContractError::UnsupportedVersion)
     );
+    let mut migration: Value = serde_json::from_slice(&bytes).unwrap();
+    migration["body"] = json!({
+        "kind": "migrate_legacy",
+        "target": { "name": "legacy", "pid": 42, "generation": "43" },
+        "setup_consent": true,
+        "sharing_consent": true,
+        "restart": true
+    });
+    assert_eq!(
+        decode::<Envelope<Request>>(&serde_json::to_vec(&migration).unwrap()),
+        Err(ContractError::Malformed)
+    );
 }
 
 #[test]
