@@ -544,6 +544,21 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The selected-host portable executor now composes actual relay connection,
+native-vault reopening of an existing exact `OwnerBinding`, role-specific
+authentication, bounded complete/partial inventory and exact-generation attach.
+Its `selected_host_*` regressions cover request/account/generation/cancellation
+fencing, native-context mismatch before work, unknown/refused inventory, page
+revision drift and frontend snapshot installation before acknowledgement.
+`selected_host_signed_ssh_inventory_uses_the_authenticated_control_stream`
+uses the real signed SSH dispatcher. The existing ignored owned-native two-shell
+runtime fixture now routes inventory and frontend adoption through this executor.
+These newly added/changed tests require their own execution; previous fixed-head
+backend results are not qualification of this source. Foreground remote-client
+approval receipt lookup, desktop/mobile installation, explicit discovery/create
+and native/physical-mobile evidence remain incomplete. No new UI or host access
+is enabled by this checkpoint.
+
 **Authenticated runtime source checkpoint (#681):** the non-default bridge
 `host_runtime` consumes only actual `HostStream`s, reserves aggregate admission
 before protected policy/proof work, bounds challenge/proof frames and deadlines,
@@ -591,15 +606,10 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   and explicit-browse state evidence for `HOST-01`/`HOST-02` under
   [#681](https://github.com/fes/fesTerm/issues/681). Their endpoint/UI/native
   transitions remain deferred except experimental desktop Profiles metadata
-  management under `HOST-02`. `HOST-04`/`HOST-05` remain deferred. `HOST-06` has partial
-  authenticity-foundation coverage only. Existing
+  management under `HOST-02`. `HOST-04`/`HOST-05` have partial shared boundary
+  coverage. `HOST-06` has partial authenticity-foundation coverage only. Existing
   `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation coverage
   until explicit migration.
-  contract evidence; their endpoint/UI/native transitions remain deferred.
-  `HOST-04`/`HOST-05` have partial shared boundary coverage and `HOST-06`
-  has partial authenticity-foundation coverage.
-  Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
-  retain their current implementation coverage until each migration slice lands.
 - **Automated evidence (stage 1):**
   `host_wire_fixture_is_canonical_and_not_legacy_protocol`,
   `host_wire_rejects_malformed_oversized_and_version_mismatched_input`,
@@ -786,12 +796,9 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   Migration must preserve protected state/account binding and separately qualify
   default-No exact-generation stop confirmation and manual deferral; setup or
   sharing consent is never restart consent.
-- **Coverage superseded:** None by the contract or client-local foundations.
-  Retire legacy
-  remain deferred behind endpoint/adapters/authenticated artifacts.
   `HOSTSETUP-01` registers stage-4 native prerequisites explicitly; deterministic
   boundary fixtures are not service/startup qualification.
-- **Coverage superseded:** None in this documentation change. Retire legacy
+- **Coverage superseded:** None by the contract or client-local foundations. Retire legacy
   coverage only when its replacement is implemented and traced.
 
 ### Acceptance matrix

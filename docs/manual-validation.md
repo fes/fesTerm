@@ -3552,6 +3552,22 @@ explicit local opt-in. The host Store enforces journal origin; the lower-level
 bridge/client marker is only a namespace, not a headless-origin capability.
 No current GUI/default path selects file storage or falls back after vault failure.
 
+The portable selected-host client executor now has source regressions for
+bounded authorized inventory, refusal/unknown preservation, exact request/
+account/generation/cancellation fencing and actual frontend recovery adoption.
+Its signed-SSH inventory fixture and updated ignored owned-native two-daemon
+fixture are not native-vault or GUI acceptance. Run and record their exact
+client-head results separately from earlier backend qualification.
+Foreground remote-client context receipt lookup remains a prerequisite:
+explicitly approve the host key and enroll the owner's public key on the host,
+then reopen the corresponding native-vault seed bound to the exact installation,
+host, account and principal. Host-local setup consent is not that remote-client
+receipt; imported metadata and bearer connectivity cannot synthesize it.
+Desktop/mobile command/presentation installation and app-lock cancellation still
+need qualification. During active temporary attachment verify daemon heartbeat;
+unexpected closure must enter daemon-owned transport-loss grace. Physical-device
+60-second/suspension and native DT/CP/MOB checks remain deferred.
+
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;
 that needs separate default-No confirmation for its exact generation. That

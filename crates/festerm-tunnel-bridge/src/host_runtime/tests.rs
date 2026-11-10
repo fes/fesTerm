@@ -109,6 +109,37 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
+async fn selected_host_signed_ssh_inventory_uses_the_authenticated_control_stream() {
+    let fixture = Fixture::new();
+    let (client, stream, ssh) = fixture.pair().await;
+    let runtime = fixture.runtime.clone();
+    let server =
+        tokio::spawn(async move { runtime.serve_stream(stream, CancellationToken::new()).await });
+    let (client, permit) = fixture.authenticate(client, StreamRole::Control).await;
+    let binding = Binding::new(
+        fixture.approved.host.host.clone(),
+        fixture.approved.account.clone(),
+        "selected-host-fixture".into(),
+    )
+    .unwrap();
+    let mut client = ControlClient::on_authenticated_stream(client, binding, permit);
+    let inventory = crate::host_client::inventory_authenticated(
+        &mut client,
+        OperationId::new(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(inventory.capabilities.inventory);
+    assert!(!inventory.capabilities.create && !inventory.capabilities.ensure);
+    assert!(inventory.sessions.is_empty() && inventory.unknown.is_empty());
+    drop(client);
+    assert!(server.await.unwrap().is_err());
+    ssh.abort();
+    let _ = ssh.await;
+}
+
+#[tokio::test]
 async fn authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation() {
     let fixture = Fixture::new();
     let (client, stream, ssh) = fixture.pair().await;
@@ -158,7 +189,7 @@ async fn authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input() {
     use crate::host_control::tests::native_routes::NativeFixture;
-    use festerm_host_protocol::{AttachmentId, IssuedOperation};
+    use festerm_host_protocol::IssuedOperation;
     use festerm_sessiond::host_control::ControlError;
     use std::sync::atomic::AtomicBool;
 
@@ -213,14 +244,10 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
     let mut control = ControlClient::on_authenticated_stream(client, binding.clone(), permit);
     let cancel = CancellationToken::new();
     assert!(control.handshake(&cancel).await.unwrap().inventory);
-    let Response::Inventory { page } = control
-        .request(OperationId::new(), Request::List { cursor: None }, &cancel)
-        .await
-        .unwrap()
-        .body
-    else {
-        panic!("inventory")
-    };
+    let page =
+        crate::host_client::inventory_authenticated(&mut control, OperationId::new(), &cancel)
+            .await
+            .unwrap();
     assert_eq!(page.sessions.len(), 2);
     assert!(page.sessions.iter().all(|session| !session.attached));
 
@@ -235,20 +262,38 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
             worker.serve_stream(stream, CancellationToken::new()).await
         }));
         let (client, permit) = fixture.authenticate(client, StreamRole::Terminal).await;
-        let mut pending = crate::host_terminal::establish(
-            client,
-            permit,
-            binding.clone(),
-            OperationId::new(),
-            target,
-            AttachmentId::new(),
-            false,
-            &cancel,
-        )
-        .await
-        .unwrap();
-        let _adopted_snapshot = pending.take_snapshot().unwrap();
-        live.push(pending.adopt(&cancel).await.unwrap().spawn().unwrap());
+        let scope = crate::host_client::Scope {
+            binding: binding.clone(),
+            request: OperationId::new(),
+            generation: 1,
+        };
+        let (events, receiver) = flume::bounded(2);
+        let worker_scope = scope.clone();
+        let worker_cancel = cancel.clone();
+        let worker = tokio::spawn(async move {
+            crate::host_client::attach_authenticated(
+                client,
+                permit,
+                &worker_scope,
+                target,
+                &worker_cancel,
+                &events,
+                &(Arc::new(|| {}) as Arc<dyn Fn() + Send + Sync>),
+            )
+            .await
+        });
+        let completion = receiver.recv_async().await.unwrap();
+        assert_eq!(completion.scope, scope);
+        let crate::host_client::Outcome::Snapshot(adoption) = completion.outcome else {
+            panic!("frontend snapshot must precede Attached")
+        };
+        let mut presented =
+            festerm_core::Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        adoption.adopt_into(&scope, &mut presented).unwrap();
+        let crate::host_client::Outcome::Attached(handle) = worker.await.unwrap().unwrap() else {
+            panic!("actual host activation must confirm attachment")
+        };
+        live.push(handle);
     }
     live[0].input(b"alpha\n").unwrap();
     live[1].input(b"beta\n").unwrap();

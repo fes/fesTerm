@@ -44,6 +44,11 @@ gates remain open. Legacy Dev Tunnels behavior is unchanged.
 Experimental desktop Profiles also manages public host/session recipe metadata
 offline (add/edit/copy/delete and reviewed JSON import/export); it exposes no
 live HOST connection or execution approval.
+The portable `host_client` executor now composes selected-host inventory and
+existing-session attachment using protected native-vault context, actual
+role-specific SSH owner proof and frontend-confirmed snapshot adoption.
+Desktop/mobile foreground approval receipt loading and GUI installation remain
+unwired; this source checkpoint is not stage-6 completion or native acceptance.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
 coverage (file mode has weaker whole-store rollback protection and is never a

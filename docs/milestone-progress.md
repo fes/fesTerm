@@ -1,5 +1,24 @@
 # Milestone Progress Narrative
 
+## Executing a selected host without inventing enrollment
+
+The recovered November 10 client lane normally integrates fixed runtime
+`95a88ed7` and session `8ebbaf29`, preserving public metadata and ADR 0085.
+The portable selected-host executor now opens an already approved native-vault
+owner context, connects the actual pinned relay and authenticates control and
+terminal streams independently. Inventory retains unknown observations and
+refusals; it never creates a shell. A bounded worker sends the originating
+frontend its recovery snapshot and waits for actual installation before host
+activation can report Attached. Drop cancels rather than reconnecting or
+replaying input.
+
+The missing remote-client foreground approval receipt loader is now an explicit
+prerequisite, not a reason to trust imported host/account/key metadata or enroll
+inside authentication. New deterministic wire/fencing tests and the changed
+owned SSH/two-daemon fixture still need client-head execution. Desktop/mobile
+GUI wiring, explicit discovery/create, native vault and physical-device
+qualification remain open; this is executable source, not ADR completion.
+
 ## Managing saved host recipes without a live executor
 
 The ADR 0084 metadata foundation now has a small experimental desktop home in

@@ -71,9 +71,23 @@ of that same handler. The coordinator refuses obsolete editors before any
 effect and reports the transactional result only to the submitting editor.
 Preview uses the shared portable parser; import confirmation only saves metadata.
 Export returns JSON to the view for explicit clipboard copy and never saves.
-The actual host connection path is deferred under
+The desktop/mobile connection command wiring is deferred under
 [#681](https://github.com/fes/fesTerm/issues/681), not delegated to legacy
 `SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
+
+The shared `festerm-tunnel-bridge::host_client` executor performs actual
+selected-host inventory and existing-generation attachment only after its
+composition root supplies protected foreground approval. It cannot manufacture
+that context from a public recipe. Its bounded worker reserves before vault and
+network work; each completion carries the original request, binding and lifecycle
+generation. The composition root must cancel on account change, supersession,
+editor closure or mobile app-lock. Snapshot delivery is not Attached: the exact
+frontend must install recovery with `Adoption::adopt_into`, then wait for the
+host's activation receipt. Keep the worker alive with its live terminal, drive
+`next_event` through the existing presentation owner, and retain correlated detach
+receipts. No creation, implicit discovery, background sign-in or input replay is
+implemented by this executor. Foreground approval receipt lookup and actual GUI
+installation remain prerequisites, not acceptance claimed by its wire tests.
 
 Destructive confirmation remains composition-owned even when the final effect
 is an `AppCommand`. Every close invocation first passes through the same
