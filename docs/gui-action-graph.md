@@ -1597,8 +1597,11 @@ vault acceptance. The protected remote-client approval receipt
 loader now derives only from an explicitly reviewed host-local full binding and
 independently confirmed pin, with a private local pending-reference journal and
 separate native-key preparation. Host-local owner approval is still a distinct
-action. HOST-01/02 remain partial; creation and account-wide explicit discovery
-are not implemented by this executor.
+action. Public-key fingerprint display uses the canonical client-safe
+`owner_auth` formatter; it does not enable host-local owner enrollment or
+lifecycle features. The compatibility reexport retains the host-local API
+without duplicating formatting. HOST-01/02 remain partial; creation and
+account-wide explicit discovery are not implemented by this executor.
 The subsequent shared Session adapter consumes bounded frames with event-loop
 wakes, preserves recovery ordering and uses correlated detach. Typed desktop
 installation checks the originating editor and account credential before work;

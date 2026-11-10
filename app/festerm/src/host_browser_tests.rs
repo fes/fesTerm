@@ -4,6 +4,15 @@ use festerm_config::{
     AccountProvider, Configuration,
 };
 
+#[test]
+fn selected_host_desktop_fingerprint_does_not_enable_host_owner_enrollment() {
+    let (_, features) = include_str!("../Cargo.toml")
+        .split_once("\nexperimental-dev-tunnels = [")
+        .unwrap();
+    let (selected, _) = features.split_once(']').unwrap();
+    assert!(!selected.contains("festerm-host-setup/owner-enrollment"));
+}
+
 fn fixture() -> (FesTermApp, egui::Context) {
     let account = DevTunnelAccount::new(
         "github-user",

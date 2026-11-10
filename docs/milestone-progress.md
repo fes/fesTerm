@@ -1,5 +1,96 @@
 # Milestone Progress Narrative
 
+## #695 client-safe fingerprint dependency repair
+
+This surgical child of immutable `a6d4bf6c` contains no Create/Ensure feature.
+The separate creation worktree retains its uncommitted implementation. The
+canonical validated raw-Ed25519 fingerprint formatter now lives beside the
+existing validator in client-safe `owner_auth`; host-setup's enrollment API
+reexports the exact same function. The desktop calls that canonical path and
+its experimental feature no longer enables `festerm-host-setup/owner-enrollment`.
+Standalone `cargo tree -p festerm -e features -i festerm-host-setup` shows only
+host-setup's default feature. No enrollment, lifecycle, artifact-staging or
+service authority is obtained by displaying a public-key fingerprint.
+
+The RFC 8032 public key
+`d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a`
+still yields
+`ED25519-SHA256:If4x36FUomFia/hUBG/SJxt77UtqvkWqWId+9H+XIbk`.
+Weak keys remain rejected; the old enrollment path has a same-function
+compatibility fixture. There is one formatter, not a copied implementation.
+The lockfile changes only the bridge's edge to already-locked base64 0.22.1;
+all package versions, sources and checksums remain unchanged. Production
+authentication, original-issued control requests and both native
+collector/frontend adoption/isolation oracles are byte-identical to `a6d`.
+The parent handles the declared #693 + #691 → #695 PR stack; this fix neither
+rewrites a6d nor incorporates moving core/native/update work.
+
+Qualification uses the private environment in the following section, with
+`RUSTUP_TOOLCHAIN=1.98.0` additionally explicit. Exact executables are:
+
+```text
+RUSTUP_HOME=/Users/fes/src/fesTerm-adr84-clients-nov10/target/adr84-rustup
+CARGO=$RUSTUP_HOME/toolchains/1.98.0-aarch64-apple-darwin/bin/cargo
+RUSTC=$RUSTUP_HOME/toolchains/1.98.0-aarch64-apple-darwin/bin/rustc
+rustc 1.98.0 (88d9e12ae 2026-08-18), LLVM 22.1.8
+rustc commit 88d9e12ae178fab0fb5cc050a94da85685d449ea
+cargo 1.98.0 (797e8a9bc 2026-08-05)
+cargo commit 797e8a9bca276c1c9f9f738d2a20f484fa4eea9d
+```
+
+`target/scope695-provenance.log` records full `rustc -vV`/`cargo -Vv`;
+`scope695-final-desktop-provenance-tests.log` records the same identity and
+actual desktop invocation in its executing environment.
+`scope695-compiler-cache.log` records Cargo's rustc 1.98.0 fingerprint.
+`scope695-global-unchanged.log` separately records unchanged Homebrew 1.97.1
+and global stable-only rustup state. Bare Homebrew `rustc +1.98.0` is **not**
+toolchain selection. No global default/override or MSRV bypass is used.
+
+Actual final commands/results (jobs1/debug0/incremental0, same private warm
+target; all Cargo invocations below use the absolute selected cargo above):
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --no-default-features --features owner-auth owner_key_fingerprint --lib
+# 1 passed, 0 ignored: pure owner-auth known vector and weak-key refusal
+cargo test --locked -p festerm-host-setup --features owner-enrollment owner_key_fingerprint --lib
+# 1 passed, 0 ignored: old API compatibility/reexport
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib -- owner_auth::tests selected_host_
+# 30 passed, 0 ignored: 12 owner-auth and 18 selected-host regressions
+cargo test --locked -p festerm --features experimental-dev-tunnels --bin festerm -- selected_host_ dev_tunnel_host_recipe_
+# 15 passed, 0 ignored, including new desktop feature guard
+cargo check --locked -p festerm --features experimental-dev-tunnels
+cargo clippy --locked -p festerm --features experimental-dev-tunnels --all-targets -- -D warnings
+cargo clippy --locked -p festerm-tunnel-bridge --features host-routing --all-targets -- -D warnings
+cargo clippy --locked -p festerm-host-setup --features owner-enrollment --all-targets --no-deps -- -D warnings
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing
+cargo tree --locked -p festerm --features experimental-dev-tunnels -e features -i festerm-host-setup
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base a6d4bf6c5971a514ce0cc12305f3b273cb1998c4
+git diff --check
+```
+
+Desktop check, the three listed strict root-package Clippy gates, portable
+check, format, JSON uniqueness and traceability pass (311 edges, zero broken
+references). Desktop gates run independently, so host-setup's explicit
+compatibility-test features cannot mask desktop feature leakage.
+Logs are `target/scope695-*.log`. Retained diagnostics include the nonexistent
+desktop library selector, the corrected dependency-free manifest-guard test,
+and isolated setup Clippy's pre-existing partial-feature bridge
+`encode_json_bounded` dead-code error. The final setup gate excludes dependency
+linting; the affected bridge is independently strict-checked with production
+host-routing. No lint allowance was added. Existing vendor and private
+rust-objcopy debug-stripping warnings remain in raw logs; final commands exit 0.
+
+This is a source/format/dependency-boundary increment, not a rerun of the
+fourteen daemon/native routes or GUI, vault, VM, cloud, mobile, signing,
+installation or service acceptance. Those earlier results retain their exact
+source boundary below. Next execution milestones remain actual explicit
+Create/Ensure, then protected mobile installation/lock cancellation. Local
+**Settings → Remote Access** setup/sharing remains a separate required
+frontdoor through the shared controller with independent default-No permissions,
+fresh protected consent/epoch checks and exact-generation legacy-session
+confirmation; this fingerprint extraction does not implement or authorize it.
+
 ## Client/core union on the named supported toolchain
 
 The first normal two-parent integration consumes fixed client `3620f6de` and

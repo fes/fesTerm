@@ -5,6 +5,7 @@
 //! calls this module. Enrollment, vault adapters and pinned-channel integration
 //! require independent review before any HOST capability is exposed.
 
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use festerm_host_protocol::{
     AdmissionFence, Capabilities, ConnectionId, ContractError, Envelope, Epoch, HostId,
@@ -12,6 +13,7 @@ use festerm_host_protocol::{
     HOST_VERSION,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -47,6 +49,15 @@ pub fn validate_owner_public_key(bytes: &[u8; 32]) -> Result<(), ContractError> 
         return Err(ContractError::Malformed);
     }
     Ok(())
+}
+
+/// Fingerprint of the raw enrolled Ed25519 public key (not an SSH host key).
+pub fn owner_key_fingerprint(key: &[u8; 32]) -> std::io::Result<String> {
+    validate_owner_public_key(key).map_err(std::io::Error::from)?;
+    Ok(format!(
+        "ED25519-SHA256:{}",
+        STANDARD_NO_PAD.encode(Sha256::digest(key))
+    ))
 }
 
 /// Public binding approved by existing fingerprint-first host trust. This
@@ -591,6 +602,20 @@ fn unhex<const N: usize>(value: &str) -> Result<[u8; N], ContractError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn owner_key_fingerprint_matches_raw_ed25519_known_vector_and_rejects_weak_key() {
+        let public = [
+            0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
+            0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
+            0xf7, 0x07, 0x51, 0x1a,
+        ];
+        assert_eq!(
+            owner_key_fingerprint(&public).unwrap(),
+            "ED25519-SHA256:If4x36FUomFia/hUBG/SJxt77UtqvkWqWId+9H+XIbk"
+        );
+        assert!(owner_key_fingerprint(&[0; 32]).is_err());
+    }
+
     use festerm_host_protocol::{
         decode, encode, AttachmentId, Creation, GenerationId, Lifetime, OperationId, Recipe, Target,
     };

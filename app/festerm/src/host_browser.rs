@@ -304,7 +304,7 @@ impl FesTermApp {
                         ui.label(format!("Approved principal: {}", receipt.binding().principal));
                         ui.label(format!("Pinned host key: {}", receipt.binding().host.host_key_fingerprint));
                         let public_key: String = receipt.public_key().iter().map(|byte| format!("{byte:02x}")).collect();
-                        let fingerprint = festerm_host_setup::enrollment::owner_key_fingerprint(&receipt.public_key());
+                        let fingerprint = festerm_tunnel_bridge::owner_auth::owner_key_fingerprint(&receipt.public_key());
                         ui.label("Client owner PUBLIC key (not a private key or service token):");
                         ui.monospace(&public_key);
                         if let Ok(fingerprint) = fingerprint {

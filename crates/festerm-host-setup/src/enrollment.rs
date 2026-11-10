@@ -5,11 +5,11 @@ use crate::{
     lifecycle::{Origin, Phase, Snapshot, Store},
     protected_state,
 };
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 use festerm_host_protocol::{Capabilities, ContractError, Epoch, PrincipalId, Validate};
 use festerm_secret_store::{native_store, SecretBytes, SecretReference, SecretStore};
 use festerm_sessiond::private_storage as storage;
 use festerm_tunnel_bridge::host_identity::HostIdentity;
+pub use festerm_tunnel_bridge::owner_auth::owner_key_fingerprint;
 use festerm_tunnel_bridge::owner_auth::{
     validate_owner_public_key, OwnerBinding, OwnerPolicy, OwnerVerifier, PinnedHost, MAX_OWNER_KEYS,
 };
@@ -244,15 +244,6 @@ fn validate_identity(
 
 fn validate_key(key: &[u8; 32]) -> io::Result<()> {
     validate_owner_public_key(key).map_err(Into::into)
-}
-
-/// Fingerprint of the raw enrolled Ed25519 public key (not an SSH host key).
-pub fn owner_key_fingerprint(key: &[u8; 32]) -> io::Result<String> {
-    validate_key(key)?;
-    Ok(format!(
-        "ED25519-SHA256:{}",
-        STANDARD_NO_PAD.encode(Sha256::digest(key))
-    ))
 }
 
 /// Only local composition roots may call these APIs. No network request or
@@ -857,6 +848,17 @@ fn add_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn owner_key_fingerprint_compatibility_path_is_the_same_client_safe_function() {
+        type Fingerprint = fn(&[u8; 32]) -> io::Result<String>;
+        let compatibility: Fingerprint = owner_key_fingerprint;
+        let canonical: Fingerprint = festerm_tunnel_bridge::owner_auth::owner_key_fingerprint;
+        assert!(std::ptr::fn_addr_eq(compatibility, canonical));
+        let key = OwnerSigningKey::from_seed(&[7; 32]).public_key();
+        assert_eq!(compatibility(&key).unwrap(), canonical(&key).unwrap());
+        assert!(compatibility(&[0; 32]).is_err());
+    }
+
     use crate::lifecycle::{Origin, Settings, Startup};
     use festerm_host_protocol::{Envelope, OperationId, Request};
     use festerm_secret_store::{MemorySecretStore, SecretStoreError};

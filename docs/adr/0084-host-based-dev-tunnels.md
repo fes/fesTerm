@@ -582,6 +582,19 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+### Client-safe owner-key fingerprint boundary
+
+The selected-host desktop review formats the approved public key through the
+existing client-safe `owner_auth` layer, not host-local enrollment. The canonical
+formatter still validates the raw Ed25519 key and returns
+`ED25519-SHA256:<standard unpadded base64 SHA256(raw public key)>`; this is not
+the SSH host pin. The host-setup enrollment API reexports that same function.
+The experimental desktop feature no longer enables `owner-enrollment` merely
+to display a fingerprint. A known RFC 8032 public-key vector, weak-key rejection,
+same-function compatibility fixture and desktop feature guard cover this
+boundary. Neither the formatter nor its display grants trust, enrolls an owner
+or makes local setup/sharing or native-vault acceptance complete.
+
 ### Supported-toolchain client/core execution union
 
 The client normally integrates exact e49 and then fixed #693 base

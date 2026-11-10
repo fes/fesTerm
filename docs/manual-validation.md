@@ -3729,6 +3729,13 @@ commands and final gates are recorded in the current `milestone-progress.md`
 entry. No manual/native-vault/GUI/VM/device gate changes to passed; the following
 owned-window procedure remains unperformed.
 
+The #695 fingerprint boundary has separate automated raw-key known-vector,
+weak-key rejection, host-local compatibility/reexport and desktop feature-guard
+coverage. The standalone desktop dependency graph must expose only host-setup's
+default feature, not `owner-enrollment` or its local lifecycle dependencies,
+for selected-host review. This is dependency/format evidence, not execution of
+host-local approval or the native-vault procedure below.
+
 For native `HOST-01`/`HOST-02`, use only an owned qualified host/lab and the
 development wrapper, not installed or production services:
 

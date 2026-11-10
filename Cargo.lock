@@ -3016,6 +3016,7 @@ dependencies = [
 name = "festerm-tunnel-bridge"
 version = "0.16.0"
 dependencies = [
+ "base64 0.22.1",
  "cap-fs-ext",
  "cap-std",
  "ed25519-dalek",
