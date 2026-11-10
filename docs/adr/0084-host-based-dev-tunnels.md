@@ -749,15 +749,21 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
-### Private-session current-host sharing caller — source-only
+### Private-session current-host sharing caller
 
-The separate desktop child stages `HOST-03` Bind/Switch/status-Resume/exact
+The separate desktop child implements `HOST-03` Bind/Switch/status-Resume/exact
 Release/irreversible rollback against the agreed protected private-source core
-adapter, not legacy installation migration. **UNQUALIFIED/compile-pending:**
-the new immutable core prerequisite has not been consumed or tested. Written
-model/headless-render oracles cover missing provenance, central-command denial
-fences, same-operation reduction, queued-result cancellation and bounded recovery
-input; none constructs a native capability or claims native binding acceptance.
+adapter, not legacy installation migration. The parent-qualified immutable
+`defece877` is normally merged into the frozen source-only `eb76` caller;
+only exact qualified `2566`/`56dff3` inherited CI repairs are additionally
+consumed. Model/headless-render and real caller refusal oracles cover missing
+provenance, reviewed/pending central-command and fresh-context fences,
+same-operation reduction after frontend loss, blocked/queued cancellation,
+bounded original-operation parsing, account/epoch/origin denial and fieldless
+error privacy. None constructs a native capability or substitutes mock phases
+for protected native authority. The native daemon proof uses the shared
+adapter's existing explicit NativeVault fixture, not an actual credential vault
+or GUI/native endpoint acceptance.
 The existing frontend/independent PTY, metadata-only profile boundary and separate
 ADR 0085 default-No legacy-stop consent are unchanged. The retained migration
 macOS 13/1 failure remains unresolved/unknown, not fixed by these caller paths.

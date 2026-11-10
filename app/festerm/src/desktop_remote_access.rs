@@ -392,6 +392,7 @@ pub(crate) struct Controller {
     share_targets: Arc<Mutex<Vec<ShareTarget>>>,
     share_request: Option<ShareTask>,
     share_epoch: Option<Arc<AtomicU64>>,
+    share_review_epoch: Option<u64>,
 }
 
 impl Controller {
@@ -420,6 +421,7 @@ impl Controller {
             share_targets: Arc::new(Mutex::new(Vec::new())),
             share_request: None,
             share_epoch: None,
+            share_review_epoch: None,
         }
     }
 
@@ -451,6 +453,12 @@ impl Controller {
     }
 
     pub fn observe_share_epoch(&mut self, epoch: Arc<AtomicU64>) {
+        if self.view.share_review.is_some()
+            && self.share_review_epoch != Some(epoch.load(Ordering::Acquire))
+        {
+            self.view.share_review = None;
+            self.share_review_epoch = None;
+        }
         self.share_epoch = Some(epoch);
     }
 
@@ -508,6 +516,10 @@ impl Controller {
             Action::ReviewShare(target) => {
                 self.view.review = None;
                 self.view.share_review = Some(target);
+                self.share_review_epoch = self
+                    .share_epoch
+                    .as_ref()
+                    .map(|epoch| epoch.load(Ordering::Acquire));
             }
             Action::Share(target) => self.start_share(ShareStep::Bind, Some(target), context),
             Action::Unshare(target) => self.start_share(ShareStep::Release, Some(target), context),
@@ -524,88 +536,101 @@ impl Controller {
             }
             Action::Cancel => unreachable!(),
         }
+    }
 
-        fn start_share(
-            &mut self,
-            step: ShareStep,
-            selected: Option<ShareTarget>,
-            context: &egui::Context,
-        ) {
-            let target = match selected
-                .or_else(|| {
-                    self.view
-                        .sharing
-                        .as_ref()
-                        .map(|sharing| sharing.target.clone())
-                })
-                .or_else(|| self.view.share_review.clone())
-            {
-                Some(target) => target,
-                None => {
-                    self.view.failure = Some(Failure::SessionChanged);
-                    return;
-                }
-            };
-            if step.grants() {
-                if target.source.is_none() {
-                    self.view.failure = Some(Failure::ShareCapability);
-                    return;
-                }
-                if self.view.share_review.as_ref() != Some(&target) {
-                    self.view.failure = Some(Failure::SessionChanged);
-                    return;
-                }
-                if self.view.owner_revision.is_none()
-                    || !matches!(&self.view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
-                {
-                    self.view.failure = Some(Failure::OwnerApproval);
-                    return;
-                }
-            }
-            let retained = self.view.sharing.as_ref().filter(|sharing| {
-                sharing.target == target
-                    && (step != ShareStep::Bind || sharing.phase != SharePhase::Released)
-            });
-            let operation = if let Some(sharing) = retained {
-                sharing.operation.clone()
-            } else if step == ShareStep::Bind && self.view.share_operation_input.is_empty() {
-                if self
-                    .view
+    fn start_share(
+        &mut self,
+        step: ShareStep,
+        selected: Option<ShareTarget>,
+        context: &egui::Context,
+    ) {
+        let target = match selected
+            .or_else(|| {
+                self.view
                     .sharing
                     .as_ref()
-                    .is_some_and(|sharing| sharing.phase != SharePhase::Released)
-                {
-                    self.view.failure = Some(Failure::Reconciliation);
-                    return;
-                }
-                uuid::Uuid::new_v4().to_string()
-            } else {
-                if self.view.share_operation_input.is_empty() {
-                    self.view.failure = Some(Failure::Reconciliation);
-                    return;
-                }
-                self.view.share_operation_input.clone()
-            };
-            self.view.sharing = Some(ShareStatus {
-                target: target.clone(),
-                operation: operation.clone(),
-                phase: SharePhase::Uncertain,
-            });
-            self.share_request = Some(ShareTask {
-                target,
-                operation,
-                current: self.share_targets.clone(),
-                epoch: self
-                    .share_epoch
-                    .as_ref()
-                    .map(|epoch| (epoch.clone(), epoch.load(Ordering::Acquire))),
-            });
-            self.start(Operation::Share(step), false, context);
+                    .map(|sharing| sharing.target.clone())
+            })
+            .or_else(|| self.view.share_review.clone())
+        {
+            Some(target) => target,
+            None => {
+                self.view.failure = Some(Failure::SessionChanged);
+                return;
+            }
+        };
+        if step.grants() {
+            if target.source.is_none() {
+                self.view.failure = Some(Failure::ShareCapability);
+                return;
+            }
+            if self.view.share_review.as_ref() != Some(&target) {
+                self.view.failure = Some(Failure::SessionChanged);
+                return;
+            }
+            if self
+                .share_epoch
+                .as_ref()
+                .is_none_or(|epoch| self.share_review_epoch != Some(epoch.load(Ordering::Acquire)))
+            {
+                self.view.failure = Some(Failure::SessionChanged);
+                return;
+            }
+            if self.view.owner_revision.is_none()
+                || !matches!(&self.view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
+            {
+                self.view.failure = Some(Failure::OwnerApproval);
+                return;
+            }
         }
+        let retained = self.view.sharing.as_ref().filter(|sharing| {
+            sharing.target == target
+                && (step != ShareStep::Bind || sharing.phase != SharePhase::Released)
+        });
+        let operation = if let Some(sharing) = retained {
+            sharing.operation.clone()
+        } else if step == ShareStep::Bind && self.view.share_operation_input.is_empty() {
+            if self
+                .view
+                .sharing
+                .as_ref()
+                .is_some_and(|sharing| sharing.phase != SharePhase::Released)
+            {
+                self.view.failure = Some(Failure::Reconciliation);
+                return;
+            }
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            if self.view.share_operation_input.is_empty() {
+                self.view.failure = Some(Failure::Reconciliation);
+                return;
+            }
+            self.view.share_operation_input.clone()
+        };
+        self.view.sharing = Some(ShareStatus {
+            target: target.clone(),
+            operation: operation.clone(),
+            phase: SharePhase::Uncertain,
+        });
+        self.share_request = Some(ShareTask {
+            target,
+            operation,
+            current: self.share_targets.clone(),
+            epoch: self
+                .share_epoch
+                .as_ref()
+                .zip(self.share_review_epoch)
+                .map(|(epoch, expected)| (epoch.clone(), expected)),
+        });
+        self.start(Operation::Share(step), false, context);
     }
 
     fn start(&mut self, operation: Operation, fence: bool, context: &egui::Context) {
         self.view.review = None;
+        if !matches!(operation, Operation::Share(_)) {
+            self.view.share_review = None;
+            self.share_review_epoch = None;
+        }
         let Some(root) = self.root.clone() else {
             self.view.failure = Some(Failure::PrivateStorage);
             return;

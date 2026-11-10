@@ -85,11 +85,7 @@ fn consent(
     Ok(Consent {
         expected: expected.as_ref().clone(),
         owner_revision: owner.revision,
-        operation: task
-            .operation
-            .as_str()
-            .try_into()
-            .map_err(|_| Failure::InvalidDraft)?,
+        operation: task.operation.parse().map_err(|_| Failure::InvalidDraft)?,
     })
 }
 
@@ -99,6 +95,7 @@ pub(super) fn execute(
     cancel: &CancellationToken,
 ) -> Result<Report, Failure> {
     let task = request.sharing.as_ref().ok_or(Failure::InvalidDraft)?;
+    let operation = task.operation.parse().map_err(|_| Failure::InvalidDraft)?;
     let store = observed(&request.root)?.ok_or(Failure::RefreshFirst)?;
     let consent = if step.grants() {
         Some(consent(&store, &request, task, cancel)?)
@@ -106,11 +103,6 @@ pub(super) fn execute(
         None
     };
     let sharing = Sharing::current(&store, &request.root).map_err(classify)?;
-    let operation = task
-        .operation
-        .as_str()
-        .try_into()
-        .map_err(|_| Failure::InvalidDraft)?;
     let mut status = ShareStatus {
         target: task.target.clone(),
         operation: task.operation.clone(),
@@ -188,4 +180,28 @@ pub(super) fn execute(
     observed.sharing = Some(status);
     observed.failure = outcome;
     Ok(observed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_remote_access_sharing_native_errors_are_fieldless_and_fail_closed() {
+        for (error, expected) in [
+            (Error::Unsupported, Failure::ShareCapability),
+            (Error::Denied, Failure::OwnerApproval),
+            (Error::Busy, Failure::Busy),
+            (Error::Stale, Failure::ScopeChanged),
+            (Error::Invalid, Failure::InvalidDraft),
+            (Error::Conflict, Failure::ScopeChanged),
+            (Error::Revoked, Failure::OwnerApproval),
+            (Error::Unknown, Failure::Reconciliation),
+            (Error::OutcomeUncertain, Failure::Reconciliation),
+            (Error::Cancelled, Failure::Cancelled),
+        ] {
+            assert_eq!(classify(error), expected);
+            assert!(!classify(error).message().contains("https://"));
+        }
+    }
 }

@@ -92,6 +92,13 @@ Desktop Profiles and the separately reviewed existing-session connection path
 remain distinct from local Settings authority; metadata/import alone never
 grants protected trust or stage-6/native acceptance.
 
+Desktop Settings also composes explicit private-session Bind, separate Switch,
+original-operation status Resume and exact Release/irreversible rollback with
+the current Provisioned NativeVault/Desktop host. Connected-local provenance is
+opaque; remote/old helpers refuse and metadata never grants. Controlled
+model/caller-refusal and shared-adapter NativeVault-fixture daemon evidence is
+not actual native-vault, installed endpoint, GUI or usability acceptance.
+
 The [owned-installation migration](docs/owned-installation-migration.md) implements
 protected inventory/reservation, authenticated current-daemon bind/switch, exact
 retained-root routing and release/rollback. Controlled current-source native

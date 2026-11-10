@@ -18,6 +18,121 @@ fn execute(request: Request) -> Result<Report, Failure> {
     Native.execute(request, &CancellationToken::new(), mpsc::sync_channel(1).0)
 }
 
+fn sharing_request(root: &Path, step: ShareStep, expected: Scope) -> Request {
+    let mut work = request(root, Operation::Share(step), expected);
+    let target = ShareTarget {
+        tab: crate::tabs::TabId::next_for_test(),
+        profile: None,
+        lifecycle_generation: 1,
+        identity: festerm_sessiond::NativeSessionIdentity {
+            name: "untrusted-metadata-only".into(),
+            pid: 1,
+            created_at_unix_ms: 1,
+            endpoint: "never-opened".into(),
+        },
+        source: None,
+    };
+    work.sharing = Some(ShareTask {
+        current: Arc::new(Mutex::new(vec![target.clone()])),
+        target,
+        operation: uuid::Uuid::new_v4().to_string(),
+        epoch: Some((Arc::new(AtomicU64::new(0)), 0)),
+    });
+    work
+}
+
+#[test]
+fn desktop_remote_access_sharing_native_original_parse_and_origin_refuse_without_namespace() {
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let before = store.snapshot().unwrap();
+    for step in [ShareStep::Resume, ShareStep::Release, ShareStep::Rollback] {
+        let mut work = sharing_request(&path, step, Scope::Present(before.clone().into()));
+        work.sharing.as_mut().unwrap().operation = "not-an-original-operation".into();
+        assert!(matches!(execute(work), Err(Failure::InvalidDraft)));
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert!(!path.join("daemon").exists());
+        assert!(!path.join("owner-enrollment.json").exists());
+    }
+    let foreign = root.path().join("headless");
+    let store = Store::create(&foreign, Origin::Headless, Draft::default().settings()).unwrap();
+    let before = store.snapshot().unwrap();
+    for step in [
+        ShareStep::Bind,
+        ShareStep::Switch,
+        ShareStep::Resume,
+        ShareStep::Release,
+        ShareStep::Rollback,
+    ] {
+        assert!(matches!(
+            execute(sharing_request(
+                &foreign,
+                step,
+                Scope::Present(before.clone().into())
+            )),
+            Err(Failure::PrivateStorage)
+        ));
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert!(!foreign.join("daemon").exists());
+    }
+}
+
+#[test]
+fn desktop_remote_access_sharing_native_stale_cancel_and_account_refuse_before_authority() {
+    let root = storage::private_test_directory();
+    let path = root.path().join("desktop");
+    let store = Store::create(&path, Origin::Desktop, Draft::default().settings()).unwrap();
+    let ticket = store.request_enable(&Draft::default().settings()).unwrap();
+    store
+        .record_provisioned(
+            &ticket,
+            festerm_host_setup::lifecycle::Binding {
+                host_id: "11111111-1111-4111-8111-111111111111".into(),
+                account: "github:42".into(),
+                qualified_tunnel: "synthetic-cluster/synthetic-tunnel".into(),
+                cloud_incarnation: "synthetic-incarnation".into(),
+                host_key_fingerprint: "synthetic-public-pin".into(),
+            },
+        )
+        .unwrap();
+    let before = store.snapshot().unwrap();
+    let mut stale = before.clone();
+    stale.epoch += 1;
+    for step in [ShareStep::Bind, ShareStep::Switch] {
+        assert!(matches!(
+            execute(sharing_request(
+                &path,
+                step,
+                Scope::Present(stale.clone().into())
+            )),
+            Err(Failure::ScopeChanged)
+        ));
+        let mut work = sharing_request(&path, step, Scope::Present(before.clone().into()));
+        work.draft.account = "43".into();
+        assert!(matches!(execute(work), Err(Failure::ScopeChanged)));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            Native.execute(
+                sharing_request(&path, step, Scope::Present(before.clone().into())),
+                &cancel,
+                mpsc::sync_channel(1).0,
+            ),
+            Err(Failure::Cancelled)
+        ));
+        assert_eq!(store.snapshot().unwrap(), before);
+        for file in [
+            "daemon",
+            "owner-enrollment.json",
+            "native-service.json",
+            "host-cloud.json",
+        ] {
+            assert!(!path.join(file).exists());
+        }
+    }
+}
+
 #[test]
 fn desktop_remote_access_native_refuses_headless_corrupt_recordless_and_symlink_state() {
     let root = storage::private_test_directory();

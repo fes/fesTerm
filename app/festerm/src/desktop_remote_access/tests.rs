@@ -293,6 +293,27 @@ fn desktop_remote_access_sharing_selection_witness_is_only_a_negative_fence() {
 }
 
 #[test]
+fn desktop_remote_access_sharing_review_cannot_retarget_after_command_or_refresh() {
+    let mut controller = fixture(Arc::new(Fake(|request: Request, _: &CancellationToken| {
+        assert_eq!(request.operation, Operation::Refresh);
+        Ok(Report::default())
+    })));
+    let epoch = Arc::new(AtomicU64::new(0));
+    let context = egui::Context::default();
+    controller.observe_share_epoch(epoch.clone());
+    controller.action(Action::ReviewShare(private_share_target()), &context);
+    assert!(controller.view.share_review.is_some());
+    epoch.fetch_add(1, Ordering::AcqRel);
+    controller.observe_share_epoch(epoch);
+    assert!(controller.view.share_review.is_none());
+    controller.action(Action::ReviewShare(private_share_target()), &context);
+    controller.action(Action::Refresh, &context);
+    drain(&mut controller, &context);
+    assert!(controller.view.share_review.is_none());
+    assert!(controller.share_review_epoch.is_none());
+}
+
+#[test]
 fn desktop_remote_access_sharing_reduction_retains_original_operation_without_frontend() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let recorded = calls.clone();
@@ -346,7 +367,7 @@ fn desktop_remote_access_sharing_cancel_queued_result_uses_exact_release_not_dis
                 .unwrap()
                 .push((request.operation, task.operation.clone()));
             let phase = match request.operation {
-                Operation::Share(ShareStep::Bind) => SharePhase::Active,
+                Operation::Share(ShareStep::Switch) => SharePhase::Active,
                 Operation::Share(ShareStep::Release) => {
                     assert!(request.cancel_fence);
                     SharePhase::Released
@@ -381,7 +402,7 @@ fn desktop_remote_access_sharing_cancel_queued_result_uses_exact_release_not_dis
         epoch: Some((epoch, 0)),
     });
     let context = egui::Context::default();
-    controller.start(Operation::Share(ShareStep::Bind), false, &context);
+    controller.start(Operation::Share(ShareStep::Switch), false, &context);
     let deadline = Instant::now() + Duration::from_secs(5);
     while controller.slots.load(Ordering::Acquire) & 1 != 0 {
         assert!(Instant::now() < deadline);
@@ -392,7 +413,7 @@ fn desktop_remote_access_sharing_cancel_queued_result_uses_exact_release_not_dis
     assert_eq!(
         *calls.lock().unwrap(),
         [
-            (Operation::Share(ShareStep::Bind), original.clone()),
+            (Operation::Share(ShareStep::Switch), original.clone()),
             (Operation::Share(ShareStep::Release), original),
         ]
     );
@@ -401,6 +422,79 @@ fn desktop_remote_access_sharing_cancel_queued_result_uses_exact_release_not_dis
         SharePhase::Released
     );
     assert_eq!(controller.slots.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn desktop_remote_access_sharing_cancel_blocked_switch_retains_admission_and_original() {
+    let (release, blocked) = mpsc::sync_channel(1);
+    let blocked = Mutex::new(blocked);
+    let (entered_sender, entered) = mpsc::sync_channel(1);
+    let original = uuid::Uuid::new_v4().to_string();
+    let expected = original.clone();
+    let backend = Arc::new(Fake(move |request: Request, cancel: &CancellationToken| {
+        let task = request.sharing.unwrap();
+        assert_eq!(task.operation, expected);
+        match request.operation {
+            Operation::Share(ShareStep::Switch) => {
+                entered_sender.send(()).unwrap();
+                blocked.lock().unwrap().recv().unwrap();
+                assert!(cancel.is_cancelled());
+                Ok(Report {
+                    owner_approved: true,
+                    sharing: Some(ShareStatus {
+                        target: task.target,
+                        operation: task.operation,
+                        phase: SharePhase::Active,
+                    }),
+                    ..Report::default()
+                })
+            }
+            Operation::Share(ShareStep::Release) => {
+                assert!(request.cancel_fence);
+                Ok(Report {
+                    sharing: Some(ShareStatus {
+                        target: task.target,
+                        operation: task.operation,
+                        phase: SharePhase::Released,
+                    }),
+                    ..Report::default()
+                })
+            }
+            _ => panic!("no Disable, replacement or frontend acquisition"),
+        }
+    }));
+    let mut controller = fixture(backend.clone());
+    let target = private_share_target();
+    let epoch = Arc::new(AtomicU64::new(0));
+    controller.observe_share_targets(vec![target.clone()]);
+    controller.view.sharing = Some(ShareStatus {
+        target: target.clone(),
+        operation: original.clone(),
+        phase: SharePhase::Prepared,
+    });
+    controller.share_request = Some(ShareTask {
+        target,
+        operation: original,
+        current: controller.share_targets.clone(),
+        epoch: Some((epoch.clone(), 0)),
+    });
+    let context = egui::Context::default();
+    controller.start(Operation::Share(ShareStep::Switch), false, &context);
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    epoch.fetch_add(1, Ordering::AcqRel);
+    controller.poll(&context);
+    assert!(controller.view.cancelling);
+    let mut other = Controller::new(controller.root.clone(), backend, controller.slots.clone());
+    other.action(Action::Refresh, &context);
+    assert_eq!(other.view.failure, Some(Failure::Busy));
+    assert_ne!(controller.slots.load(Ordering::Acquire) & 1, 0);
+    release.send(()).unwrap();
+    drain(&mut controller, &context);
+    assert!(!controller.view.owner_approved);
+    assert_eq!(
+        controller.view.sharing.as_ref().unwrap().phase,
+        SharePhase::Released
+    );
 }
 
 #[test]
@@ -431,11 +525,10 @@ fn desktop_remote_access_sharing_phase_render_is_metadata_only() {
         }),
         ..View::default()
     };
-    let _ = context.run(egui::RawInput::default(), |context| {
-        egui::CentralPanel::default().show(context, |ui| {
-            assert!(show(ui, &view, &[]).is_none());
-        });
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        assert!(show(ui, &view, &[]).is_none());
     });
+    output.textures_delta.clear();
     assert!(!view.owner_approved);
 }
 

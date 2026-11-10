@@ -1687,18 +1687,19 @@ account/full-snapshot/epoch/settings/observed-policy-revision and cancellation
 guards fence acceptance; synchronous verification is not CPU-preempted. 404 is
 NotPublished with no older/latest/schema-1 retry. Mock fixtures do not qualify
 genuine release availability, real native install/vault/cloud, endpoint Ready
-or usability. Sharing remains explicitly blocked pending authenticated binding.
+or usability. Setup alone never shares a shell.
 
-**Private-session sharing child — source-only, UNQUALIFIED/compile-pending:**
-`HOST-03` stages exact connected-local review → explicit private Bind → separate
+**Private-session sharing child — controlled source integration, not native acceptance:**
+`HOST-03` routes exact connected-local review → explicit private Bind → separate
 explicit Switch, original-operation status Resume and exact Release/irreversible
 rollback. The bounded worker delegates the agreed protected native-vault core
-adapter; no widget, profile metadata or PID authorizes effects. Central-command
+adapter at immutable `defece877`; no widget, profile metadata or PID authorizes effects. Central-command
 and live-target fences cancel stale review, while independent exact-operation
 reduction covers queued/late results without touching the original frontend or
-PTY. Older/unknown sources still refuse. These source paths and written mock
-oracles are not qualification: the immutable core pin, focused execution,
-independent gates and native evidence remain required.
+PTY. Refresh/owner review cannot retarget prior sharing consent. Older/unknown
+sources still refuse. Model/render and real caller refusal oracles are distinct
+from the shared adapter's controlled NativeVault-fixture/native-daemon proof;
+neither qualifies actual native-vault, installed endpoint, GUI or usability.
 
 Detailed contract and fixture coverage:
 

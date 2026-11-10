@@ -71,9 +71,11 @@ No installer script runs from the widget.
 The default `local-host-settings` feature alone composes this local authority;
 `--no-default-features --features experimental-dev-tunnels` retains the
 client-safe metadata/fingerprint boundary. Signed-bundle usability and real
-native acceptance remain open. Existing-shell sharing stays private/unmodified
-until the authenticated exact-generation binding/release seam is qualified;
-Settings never substitutes a PID, metadata edit or lookup-then-revoke.
+native acceptance remain open. Settings explicitly binds an existing private
+local daemon session to the current provisioned native-vault host, then
+separately switches it; original-operation recovery and exact release preserve
+the frontend/PTY. Metadata, a PID or a cached phase never grants authority.
+Controlled source/daemon fixtures are not actual-vault or GUI acceptance.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
 coverage (file mode has weaker whole-store rollback protection and is never a

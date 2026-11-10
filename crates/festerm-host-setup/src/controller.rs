@@ -1589,23 +1589,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_runtime_native_cleanup_denial_never_polls_cloud_cleanup() {
-        let (root, store) = fixture();
-        provision(&store);
-        let error = uninstall_with_native(
-            &store,
-            &CancellationToken::new(),
-            || fixture_disable(&store, &root.path().join("host")),
-            |_| Err(io::ErrorKind::PermissionDenied.into()),
-            async { panic!("native cleanup denial must not poll cloud cleanup") },
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
-    }
-
-    #[tokio::test]
     async fn host_runtime_cancelled_start_never_opens_relay_and_persists_stopped_history() {
         let (root, store) = fixture();
         provision(&store);

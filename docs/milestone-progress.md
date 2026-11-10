@@ -1,5 +1,87 @@
 # Milestone Progress Narrative
 
+## Composing desktop private sharing with the qualified current-host adapter
+
+The application-only `eb76b0b2` checkpoint was deliberately compile-pending;
+primary Setup `6614c990` / draft #708 and its earlier evidence remain frozen.
+After the parent's explicit qualification, a new isolated child normally merged
+exact private-source core `defece877` (`0ab11cae`), backend CI fixture repair
+`2566a17b` (`ec8ad9c0`) and acquisition fixture repair `56dff3f6`
+(`3255a89a`). No moving source, mobile child or new authority API was consumed.
+Merge resolution retains primary Setup's full-snapshot approval/uninstall CAS,
+both cloud isolation oracles, original local-retirement denial, both optional
+native selectors and both documentation histories. The core receipt/provenance
+interface is unchanged.
+
+Settings now delegates explicit private Bind, separate Switch, original-operation
+status Resume and exact Release/irreversible rollback to that protected adapter.
+The application never constructs a connected-local capability, verifier or
+native receipt. It cannot initialize/enroll/approve a host from sharing, acquire
+another frontend, restart/End the shell, infer a root from environment or grant
+from profile metadata. Resume does not Switch; an interrupted Bind retains its
+original operation. Reduction remains available after frontend loss and uses
+fresh native authority, not a cached Active phase.
+
+Review captures the central-command epoch, not just its value at dispatch.
+Changing tab/application state or refreshing installation/owner context cannot
+retarget old sharing consent. The in-flight callback is a negative fence only;
+the core owns current protected admission. Cancellation retains actual worker
+admission and independently releases only the original operation, including
+blocked and already-queued Switch results, never generic host Disable.
+
+Actual final-input macOS desktop selection is **37/0/0** (1.08s), including all six originally
+written sharing oracles and five tightly coupled review/drain/native-refusal/
+privacy guards. The unchanged one/six-session frame-settings-read threshold also
+passes **1/0/0** (0.07s); this isolated result does not diagnose the separately
+reported Ubuntu aggregate failure. One explicitly selected shared-adapter
+ordinary-private Local case executes **once**, **1/0/0**, 191 filtered, **6.00s**,
+using a freshly built default helper copied read-only into the owned evidence
+tree. It preserves PID/generation/original frontend/PTY through private Bind,
+Switch, original-operation recovery, revocation, release and rollback. Its
+ordinary-exit key is absent and PID `13756` was independently observed absent.
+It uses the existing NativeVault fixture, **not an actual native credential
+vault, desktop positive-grant caller, installed endpoint, GUI or provider**.
+
+The effective final selection totals **50 configured passes, 49 distinct test
+identities, zero failures/ignores**: desktop 37, frame guard one, native case one,
+private-authority units two, cloud isolation two, cloud native denial one,
+controller cleanup denial one, missing-runtime-lock refusal one, Windows-policy
+mock one under each of two feature profiles, and CLI cleanup two. Repeated
+desktop executions and historical results are not added to that total.
+All-target strict Clippy passes the full Settings and client-safe experimental
+desktop profiles, all-feature host-setup, and default/no-default host CLI.
+Portable no-default client library check, formatting, 311-edge traceability,
+diff and optional-selector shell syntax pass. No optional aggregate was run.
+
+First failures are retained: the initial caller compile exposed the nested
+method, typed OperationId parsing and current egui API mismatches; the first
+desktop execution was 36/1 because a new headless render omitted required
+TexturesDelta disposal. The corrected test keeps its inert-render assertion.
+The first core-lib compile exposed two identical inherited cleanup-denial tests
+under one name; one canonical test retains both original assertions. No
+assertion, refusal, skip or production policy was weakened. Overbroad
+whole-enrollment/host-control equivalence audits are separately classified as
+inspection assumptions: scoped verification preserves the qualified primary
+CAS/fingerprint/retirement differences while proving exact protected core bytes.
+An additional wholly featureless desktop strict invocation reports three
+unused/dead-code lints in files byte-identical to frozen `eb76`; that older
+head was not rebuilt to assert a baseline result. No lint allowance or unrelated
+feature gating was added. The supported client-safe profile explicitly retains
+`experimental-dev-tunnels` without local host authority and passes separately.
+
+Raw command/tool/source/binary hashes, affected strict feature profiles and
+smallest coupled guards are retained in the private source-increment handoff.
+That handoff distinguishes the initial runner's legacy 15-percent pause
+threshold from the corrected 25-percent guard/minimum-sample capture; it does
+not infer an earlier memory floor from starting percentages or absent pauses.
+Rust 1.99.1's installed rust-objcopy reports a missing LLVM dylib during optional
+debug stripping; Cargo builds/tests still exit zero and the exact retained
+helper actually executes. No toolchain or OS repair is attempted.
+The earlier migration macOS 13/1 remains unresolved/unknown, and separately
+reported Windows fixture failures are not fixed or qualified by this increment.
+No actual-vault/GUI/native-manager, VM, provider, signing, release, push or main
+merge is performed. Parent source gates/current CI remain publication gates.
+
 ## Staging the protected private-session sharing caller
 
 The published primary Setup head `6614c990` and all prior receipts remain
