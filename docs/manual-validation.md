@@ -3764,6 +3764,21 @@ Observe actual relay retirement and continued persistent child I/O with identica
 daemon PID/generation, helpers, grants and cgroup membership. A user-manager or
 session cgroup terminated by OS logout policy may kill those daemons; no synthetic
 manager/parser/watcher test proves otherwise or authorizes policy repair.
+The source-only ignored Linux test
+`controller::linux_login::tests::linux_login_native_read_only_logind_proof`
+prepares a bounded, real production logind query under the
+[fixed read-only operator contract](native-host-services.md#read-only-linux-logind-smoke-opt-in-native-execution-pending).
+Explicit opt-in, expected ordinary real/effective UID and a predeclared eligible/
+ineligible expectation are required; missing inputs and query errors fail.
+Only production `Ok(false)` is a negative observation; a disappeared login1
+user object is unknown/failure, never successful absence. Platform/exact-one
+registration guards prevent cfg-excluded zero-test passes. Source preparation,
+portable fixtures and Linux CI compilation do not establish native execution.
+In a separately granted VM window, open/close only owned interactive SSH PTY
+sessions; other eligible baseline/observer sessions block the negative case.
+Never log out unrelated sessions, enable linger or alter OS policy. Real manager,
+transport retirement, repeated-probe load and daemon/cgroup/logout survival
+remain independent pending acceptance even after this read-only smoke passes.
 The exact-core Linux follow-up attempted the real
 `x86_64-unknown-linux-gnu` library check after installing only its missing
 official standard-library target in the existing user-owned stable toolchain.

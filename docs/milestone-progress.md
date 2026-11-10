@@ -686,6 +686,51 @@ guest, signing or release operation was performed. Actual provider removal/
 retry and native/platform/client/migration acceptance remain **UNRUN**, not
 implied by these mock-boundary results. Publication/reviews remain parent-owned.
 
+## Preparing a read-only real-logind acceptance selector
+
+This separate source-only child preserves frozen
+`920715a510b0485eed79761900efaec081b7e978` and changes no production code,
+dependencies, login policy or service behavior. One ignored Linux-only test,
+`controller::linux_login::tests::linux_login_native_read_only_logind_proof`,
+calls unchanged production `Logind.eligible` against the real trusted system bus
+and login1 issuer. It requires explicit opt-in, an expected matching ordinary
+real/effective UID and a predeclared eligible/ineligible result. Missing/invalid
+inputs fail; only successful production `Ok(false)`, never a query error, can
+establish ineligibility. There is no fake native adapter or alternate bus/tool.
+
+The [fixed operator contract](native-host-services.md#read-only-linux-logind-smoke-opt-in-native-execution-pending)
+guards Linux plus exact-one registration before execution. The existing
+optional shell aggregator discovers the same narrowly opted-in selector and
+rejects explicitly requested wrong-platform/zero-test runs. The broad optional
+umbrella was not executed for this increment.
+
+Host-only qualification, exact absolute private Rust/Cargo1.99.1 commands,
+compiler paths, source boundaries and raw-log SHA256s are recorded under
+`target/adr84-logind-smoke-evidence/qualification.json`. Fresh selected portable
+Rust tests pass **9/0 failures/0 ignores**. Seven isolated source shell-guard
+fixtures (mocked Cargo/platform, no native adapter execution) cover no opt-in,
+wrong platform, zero/duplicate listing, failed listing/run and exact-one success;
+their receipt is `optional-registration-guard.json`. Production code before the
+test module is byte-identical to frozen920 (`source-boundary.json`).
+Strict affected setup-package all-target Clippy, workspace fmt, shell syntax,
+trace311/zero broken references and diff checks pass. The granted existing
+private jobs1/debug0/incremental0 warm target/toolchain is unchanged; memory
+was 52–53% free at qualification steps. This is not a new native acceptance
+count or a transfer of earlier full-suite totals.
+The Linux-only test body is cfg-excluded
+on macOS: neither portable passes nor compilation is native proof; this new
+body's Linux compilation and real logind execution remain pending. No VM,
+cross-C retry, logind query, native manager, service, cloud, vault, signing,
+account, login, permission, linger or OS-setting operation ran.
+
+A separately authorized future VM window may open/close only owned interactive
+SSH PTY sessions. Other eligible baseline/observer sessions block a negative
+case; they must never be logged out or hidden. A missing login1 user object is
+unknown/failure, not authoritative absence. The smoke does not qualify transport
+retirement, user-manager activation/repeated-probe load or persistent daemon,
+helper, grant and cgroup survival across last logout. Those native gates remain
+open, independently of prior Linux CI compilation/setup steps.
+
 ## Completing two narrow login-recovery races
 
 The published `aeedeac7ee919b16f831e8806f4a31e28d227e24` remains immutable.
