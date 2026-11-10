@@ -252,7 +252,13 @@ impl Store {
         let lock = storage::open_private_file(&self.directory, Path::new(LOCK), false).map_err(
             |error| {
                 if error.kind() == io::ErrorKind::NotFound {
-                    refused("host.journal_lock_missing_reconciliation_required")
+                    match storage::open_private_file(&self.directory, Path::new(RECORD), false) {
+                        Ok(_) => refused("host.journal_lock_missing_reconciliation_required"),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                            refused("host.recordless_directory_requires_manual_review")
+                        }
+                        Err(error) => error,
+                    }
                 } else {
                     error
                 }
@@ -603,7 +609,22 @@ mod tests {
         let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
         let path = root.path().join("host");
         let directory = storage::private_directory(&path, true).unwrap();
+        assert_eq!(
+            Store::open(&path, Origin::Headless)
+                .err()
+                .unwrap()
+                .to_string(),
+            "host.recordless_directory_requires_manual_review"
+        );
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
         storage::write_new_private(&directory, Path::new(LOCK), b"").unwrap();
+        assert_eq!(
+            Store::open(&path, Origin::Headless)
+                .err()
+                .unwrap()
+                .to_string(),
+            "host.recordless_directory_requires_manual_review"
+        );
         storage::write_new_private(&directory, Path::new(".stage-interrupted"), b"partial")
             .unwrap();
         let lease = Lease::exclusive(
@@ -638,12 +659,29 @@ mod tests {
                 .to_string(),
             "host.invalid_journal"
         );
+        std::fs::remove_file(path.join(LOCK)).unwrap();
+        assert_eq!(
+            Store::open(&path, Origin::Headless)
+                .err()
+                .unwrap()
+                .to_string(),
+            "host.journal_lock_missing_reconciliation_required"
+        );
+        assert!(!path.join(LOCK).exists());
         assert_eq!(
             storage::read_private(&directory, Path::new(RECORD), LIMIT)
                 .unwrap()
                 .as_slice(),
             b"{"
         );
+        let healthy = root.path().join("healthy");
+        let created = Store::create(&healthy, Origin::Headless, settings()).unwrap();
+        let reopened = Store::open(&healthy, Origin::Headless).unwrap();
+        assert_eq!(
+            reopened.snapshot().unwrap().installation,
+            created.snapshot().unwrap().installation
+        );
+        assert_eq!(reopened.snapshot().unwrap().phase, Phase::Disabled);
     }
 
     #[test]
