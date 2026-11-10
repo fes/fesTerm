@@ -366,6 +366,49 @@ fn provision(store: &Store) -> Snapshot {
 }
 
 #[test]
+#[cfg(unix)]
+fn native_service_restart_requires_signed_provenance_without_adopting_cached_receipts() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Linux);
+    services.install(&stage, snapshot.epoch).unwrap();
+    let record = services.registration().unwrap().1.unwrap();
+    assert_eq!(record.provenance.as_deref(), Some(stage.provenance_path()));
+    assert!(services.reopen_stage(snapshot.epoch).is_err());
+    assert!(!services.runner.state.borrow().running);
+    let mut legacy = record;
+    legacy.provenance = None;
+    services
+        .with_record(|directory, _| {
+            storage::replace_private(
+                directory,
+                Path::new(RECORD),
+                &serde_json::to_vec(&legacy).unwrap(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        services
+            .reopen_stage(snapshot.epoch)
+            .err()
+            .unwrap()
+            .to_string(),
+        "host.service_signed_provenance_required"
+    );
+    store.revoke().unwrap();
+    assert!(services.reopen_stage(snapshot.epoch).is_err());
+    assert!(services
+        .registration()
+        .unwrap()
+        .1
+        .unwrap()
+        .provenance
+        .is_none());
+}
+
+#[test]
 fn native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs() {
     for (platform, startup) in [Platform::Linux, Platform::Macos, Platform::Windows]
         .into_iter()

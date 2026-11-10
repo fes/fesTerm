@@ -50,7 +50,7 @@ fn os_user() -> io::Result<String> {
     Err(refused("host.cloud_platform_unavailable"))
 }
 
-fn subject(id: u64) -> String {
+pub(crate) fn subject(id: u64) -> String {
     format!("github:{id}")
 }
 
@@ -109,6 +109,14 @@ pub struct CloudHostAdapter<'a> {
 }
 
 trait Network {
+    #[cfg(feature = "host-runtime")]
+    async fn host_token(
+        &self,
+        identity: &Identity,
+        exact: &Receipt,
+        cancel: &CancellationToken,
+    ) -> Result<zeroize::Zeroizing<String>, AccountError>;
+
     async fn sign_in(
         &self,
         account: u64,
@@ -164,6 +172,16 @@ impl NativeNetwork {
     }
 }
 impl Network for NativeNetwork {
+    #[cfg(feature = "host-runtime")]
+    async fn host_token(
+        &self,
+        identity: &Identity,
+        exact: &Receipt,
+        cancel: &CancellationToken,
+    ) -> Result<zeroize::Zeroizing<String>, AccountError> {
+        self.management.host_token(identity, exact, cancel).await
+    }
+
     async fn sign_in(
         &self,
         account: u64,
@@ -226,6 +244,89 @@ impl Network for NativeNetwork {
 impl<'a> CloudHostAdapter<'a> {
     pub fn new(store: &'a Store) -> Self {
         Self { store }
+    }
+
+    /// Open only the pinned zero-shell endpoint using its stable protected key.
+    /// No account prompt, creation, owner enrollment or readiness claim occurs.
+    #[cfg(feature = "host-runtime")]
+    pub async fn open_relay(
+        &self,
+        cancel: &CancellationToken,
+    ) -> io::Result<festerm_tunnel_bridge::relay::HostConnection> {
+        let network = NativeNetwork::new()?;
+        let secrets = festerm_secret_store::native_store()
+            .map_err(|_| refused("host.secure_store_unavailable"))?;
+        let (snapshot, exact, token, identity) = self
+            .relay_authorization_with(cancel, &network, &*secrets)
+            .await?;
+        let connection = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(refused("host.cloud_cancelled")),
+            result = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                festerm_tunnel_bridge::relay::host_with_identity(
+                    &exact.resource.tunnel_id,
+                    &exact.resource.cluster,
+                    exact.resource.port,
+                    &token,
+                    identity,
+                )
+            ) => result.map_err(|_| refused("host.relay_establishment_timeout"))?
+                .map_err(|_| refused("host.relay_establishment_failed"))?,
+        };
+        if cancel.is_cancelled() || self.store.snapshot()? != snapshot {
+            drop(connection);
+            return Err(refused("host.service_stale_or_unapproved_operation"));
+        }
+        Ok(connection)
+    }
+
+    #[cfg(feature = "host-runtime")]
+    async fn relay_authorization_with(
+        &self,
+        cancel: &CancellationToken,
+        network: &impl Network,
+        secrets: &dyn SecretStore,
+    ) -> io::Result<(Snapshot, Receipt, zeroize::Zeroizing<String>, HostIdentity)> {
+        let _operation = self.operation()?;
+        let snapshot = self.store.snapshot()?;
+        if snapshot.phase != Phase::Provisioned {
+            return Err(refused("host.relay_current_provisioned_consent_required"));
+        }
+        let mut record = self.load()?;
+        let exact = record
+            .receipt
+            .clone()
+            .ok_or_else(|| refused("host.cloud_receipt_missing"))?;
+        if snapshot.binding.as_ref() != Some(&binding(&record, &exact)) {
+            return Err(refused("host.cloud_binding_changed"));
+        }
+        let account = self
+            .load_identity(&mut record, network, secrets, cancel)
+            .await?;
+        let token = network
+            .host_token(&account, &exact, cancel)
+            .await
+            .map_err(account_error)?;
+        network
+            .confirm(&account, cancel)
+            .await
+            .map_err(account_error)?;
+        let identity = self.store.with_locked(|directory, current| {
+            if cancel.is_cancelled() || current != &snapshot {
+                return Err(refused("host.service_stale_or_unapproved_operation"));
+            }
+            let identity = HostIdentity::load_from_private_directory(
+                directory,
+                Path::new(HOST_IDENTITY_FILE),
+            )?;
+            if identity.host_id() != record.host_id || identity.fingerprint()? != record.fingerprint
+            {
+                return Err(refused("host.cloud_identity_changed"));
+            }
+            Ok(identity)
+        })?;
+        Ok((snapshot, exact, token, identity))
     }
 
     fn operation(&self) -> io::Result<Lease> {
@@ -1145,6 +1246,29 @@ mod tests {
         }
     }
     impl Network for FixtureNetwork<'_> {
+        #[cfg(feature = "host-runtime")]
+        async fn host_token(
+            &self,
+            identity: &Identity,
+            exact: &Receipt,
+            cancel: &CancellationToken,
+        ) -> Result<zeroize::Zeroizing<String>, AccountError> {
+            if cancel.is_cancelled() {
+                return Err(AccountError::Cancelled);
+            }
+            if exact.resource.account_id != identity.account.id
+                || self.state.borrow().created.as_ref() != Some(exact)
+            {
+                return Err(AccountError::IdentityChanged);
+            }
+            if self.state.borrow().revoke_observe {
+                self.store.revoke().unwrap();
+            }
+            Ok(zeroize::Zeroizing::new(
+                "PRIVATE_FIXTURE_SCOPED_HOST".into(),
+            ))
+        }
+
         async fn sign_in(
             &self,
             account: u64,
@@ -1294,6 +1418,99 @@ mod tests {
         let settings = adapter.store.snapshot().unwrap().settings;
         let ticket = adapter.store.request_enable(&settings).unwrap();
         adapter.foreground(&ticket, 42).unwrap()
+    }
+
+    #[cfg(feature = "host-runtime")]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_relay_uses_existing_identity_and_scoped_token_without_enrollment() {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::new(&store);
+        let approval = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&approval, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        adapter
+            .provision_with(&approval, &cancel, &network, &secrets)
+            .await
+            .unwrap();
+        let before = store.snapshot().unwrap();
+        let pinned = adapter.load().unwrap();
+        let (snapshot, receipt, token, identity) = adapter
+            .relay_authorization_with(&cancel, &network, &secrets)
+            .await
+            .unwrap();
+        assert_eq!(snapshot, before);
+        assert_eq!(receipt, pinned.receipt.unwrap());
+        assert_eq!(&*token, "PRIVATE_FIXTURE_SCOPED_HOST");
+        assert_eq!(identity.host_id(), pinned.host_id);
+        assert_eq!(identity.fingerprint().unwrap(), pinned.fingerprint);
+        assert_eq!(network.state.borrow().creates, 1);
+        assert_eq!(network.state.borrow().sign_ins, 1);
+        assert_eq!(store.snapshot().unwrap(), before);
+    }
+
+    #[cfg(feature = "host-runtime")]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_relay_refuses_revoke_cancel_replacement_and_absent_identity() {
+        for refusal in ["revoke", "cancel", "replacement", "identity", "credential"] {
+            let (_root, store, secrets) = fixture();
+            let adapter = CloudHostAdapter::new(&store);
+            let approval = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&approval, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            adapter
+                .provision_with(&approval, &cancel, &network, &secrets)
+                .await
+                .unwrap();
+            let before = adapter.load().unwrap();
+            let before_bytes = store
+                .with_locked(|directory, _| {
+                    storage::read_private(directory, Path::new(RECORD), 16384)
+                })
+                .unwrap();
+            match refusal {
+                "revoke" => network.state.borrow_mut().revoke_observe = true,
+                "cancel" => cancel.cancel(),
+                "replacement" => {
+                    network.state.borrow_mut().created.as_mut().unwrap().created =
+                        "another-incarnation".into();
+                }
+                "identity" => {
+                    std::fs::remove_file(_root.path().join("host").join(HOST_IDENTITY_FILE))
+                        .unwrap();
+                }
+                "credential" => {
+                    secrets.delete(&reference(&before).unwrap()).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                adapter
+                    .relay_authorization_with(&cancel, &network, &secrets)
+                    .await
+                    .is_err(),
+                "{refusal}"
+            );
+            assert_eq!(network.state.borrow().creates, 1);
+            assert_eq!(network.state.borrow().sign_ins, 1);
+            assert!(
+                store
+                    .with_locked(|directory, _| storage::read_private(
+                        directory,
+                        Path::new(RECORD),
+                        16384
+                    ))
+                    .unwrap()
+                    == before_bytes
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]

@@ -19,9 +19,27 @@ pub struct TrustedStage {
     file: File,
     _directory: File,
     _staged: StagedArtifact,
+    helpers: Vec<TrustedExecutable>,
+}
+
+struct TrustedExecutable {
+    path: PathBuf,
+    digest: String,
+    file: File,
 }
 
 impl TrustedStage {
+    /// Reauthenticate retained signed bytes after restart; a cached path or
+    /// registration digest alone is never launch authority.
+    pub fn reopen_release_cache(provenance: &Path, root: &Path) -> io::Result<Self> {
+        Self::publish_release_files(
+            &provenance.join(".manifest.json"),
+            &provenance.join(".manifest.json.sig"),
+            &provenance.join(".archive"),
+            root,
+        )
+    }
+
     pub fn publish_release_files(
         manifest: &Path,
         signature: &Path,
@@ -41,7 +59,7 @@ impl TrustedStage {
     fn publish_with(
         artifact: &VerifiedArtifact,
         root: &Path,
-        signature: impl FnOnce(&File, &Path) -> io::Result<()>,
+        mut signature: impl FnMut(&File, &Path) -> io::Result<()>,
     ) -> io::Result<Self> {
         let platform = match std::env::consts::OS {
             "linux" => Platform::Linux,
@@ -86,9 +104,44 @@ impl TrustedStage {
         let expected = digest(entry.bytes());
         check(&file, entry.bytes().len() as u64, &expected)?;
         signature(&file, &path)?;
+        let mut helpers = Vec::new();
+        for entry in artifact
+            .entries()
+            .iter()
+            .filter(|entry| entry.executable() && entry.name() != name)
+        {
+            let helper_path = publication.join(entry.name());
+            match open(&helper_path) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    crate::protected_state::publish_new(
+                        &directory,
+                        Path::new(entry.name()),
+                        entry.bytes(),
+                    )?;
+                }
+                Err(error) => return Err(error),
+            }
+            let helper = open(&helper_path)?;
+            let expected = digest(entry.bytes());
+            check(&helper, entry.bytes().len() as u64, &expected)?;
+            signature(&helper, &helper_path)?;
+            helpers.push(TrustedExecutable {
+                path: helper_path,
+                digest: expected,
+                file: helper,
+            });
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            // Qualify the entire signed executable set before promoting any file.
+            for helper in &helpers {
+                helper
+                    .file
+                    .set_permissions(std::fs::Permissions::from_mode(0o700))?;
+                helper.file.sync_all()?;
+            }
             file.set_permissions(std::fs::Permissions::from_mode(0o700))?;
             file.sync_all()?;
         }
@@ -98,6 +151,7 @@ impl TrustedStage {
             file,
             _directory: directory,
             _staged: staged,
+            helpers,
         };
         receipt.revalidate()?;
         Ok(receipt)
@@ -208,6 +262,7 @@ pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
         file,
         _directory: directory,
         _staged: staged,
+        helpers: Vec::new(),
     }
 }
 
@@ -216,12 +271,41 @@ impl TrustedStage {
         &self.path
     }
 
+    /// Retained signed provenance, not executable authority by itself.
+    pub fn provenance_path(&self) -> &Path {
+        self._staged.path()
+    }
+
+    /// Exact same-version signed helper; never search PATH or accept a request path.
+    pub fn sessiond_path(&self) -> io::Result<&Path> {
+        self.revalidate()?;
+        let name = format!("festerm-sessiond{}", std::env::consts::EXE_SUFFIX);
+        self.helpers
+            .iter()
+            .find(|helper| {
+                helper
+                    .path
+                    .file_name()
+                    .is_some_and(|file| file == name.as_str())
+            })
+            .map(|helper| helper.path.as_path())
+            .ok_or_else(|| refused("host.service_authenticated_sessiond_required"))
+    }
+
     pub(super) fn revalidate(&self) -> io::Result<()> {
         let current = open(&self.path)?;
         if !same(&current, &self.file)? {
             return Err(refused("host.service_executable_replaced"));
         }
-        check(&current, self.file.metadata()?.len(), &self.digest)
+        check(&current, self.file.metadata()?.len(), &self.digest)?;
+        for helper in &self.helpers {
+            let current = open(&helper.path)?;
+            if !same(&current, &helper.file)? {
+                return Err(refused("host.service_executable_replaced"));
+            }
+            check(&current, helper.file.metadata()?.len(), &helper.digest)?;
+        }
+        Ok(())
     }
 }
 
@@ -454,6 +538,87 @@ mod tests {
                 std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
                 0o600
             );
+        }
+    }
+
+    #[test]
+    fn authenticated_runtime_bundle_qualifies_every_helper_and_fences_changed_sessiond() {
+        let root = storage::private_test_directory();
+        let artifact = crate::artifacts::host_staging_fixture();
+        let cache = root.path().join("runtime");
+        let mut qualified = Vec::new();
+        let stage = TrustedStage::publish_with(&artifact, &cache, |_, path| {
+            qualified.push(path.file_name().unwrap().to_owned());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            qualified.len(),
+            artifact
+                .entries()
+                .iter()
+                .filter(|entry| entry.executable())
+                .count()
+        );
+        let helper = stage.sessiond_path().unwrap().to_owned();
+        assert_eq!(helper.parent(), stage.path().parent());
+        assert!(qualified.contains(&helper.file_name().unwrap().to_owned()));
+        assert!(stage.provenance_path().join(".manifest.json.sig").is_file());
+        let expected = artifact
+            .entries()
+            .iter()
+            .find(|entry| entry.name() == helper.file_name().unwrap().to_str().unwrap())
+            .unwrap();
+        assert_eq!(std::fs::read(&helper).unwrap(), expected.bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&helper).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(stage.provenance_path().join(expected.name()))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        std::fs::write(&helper, b"changed helper").unwrap();
+        assert!(stage.sessiond_path().is_err());
+        assert!(stage.revalidate().is_err());
+        assert!(TrustedStage::publish_with(&artifact, &cache, |_, _| Ok(())).is_err());
+        assert_eq!(std::fs::read(&helper).unwrap(), b"changed helper");
+    }
+
+    #[test]
+    fn authenticated_runtime_bundle_helper_rejection_never_promotes_fresh_host() {
+        let root = storage::private_test_directory();
+        let artifact = crate::artifacts::host_staging_fixture();
+        let cache = root.path().join("runtime");
+        let mut calls = 0;
+        assert!(TrustedStage::publish_with(&artifact, &cache, |_, _| {
+            calls += 1;
+            if calls == 1 {
+                Ok(())
+            } else {
+                Err(refused("fixture.helper_publisher_rejected"))
+            }
+        })
+        .is_err());
+        assert_eq!(calls, 2);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let directory = cache.join(format!("executable-{}", artifact.manifest().sha256));
+            for entry in std::fs::read_dir(directory).unwrap() {
+                assert_eq!(
+                    entry.unwrap().metadata().unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
         }
     }
 }

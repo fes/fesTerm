@@ -9496,3 +9496,37 @@ selected-store authority for each admission and keeps Busy distinct from denial.
 The app remains a thin delegator with native vault as its default and explicit
 headless file selection only. A generic trait regression exercises lease retention
 and fresh revocation; native endpoint/service acceptance remains separately gated.
+
+### ADR 0084 same-bundle runnable-host artifact dependency
+
+A registered host could retain its own executable receipt but had no trusted
+same-version executable sessiond or way to recover release authority after
+restart. Native publication now qualifies every executable in the signed host
+bundle before promoting fresh bytes, retains file identities, and exposes only
+the exact revalidated daemon helper. Registration also retains signed provenance;
+restart must reauthenticate that provenance rather than promote a cache marker
+or journal digest into trust. Legacy receipt-only registrations remain removable.
+This closes an artifact-composition prerequisite, not the remaining scoped relay
+credential, foreground enrollment, runnable controller or native acceptance gates.
+
+### ADR 0084 explicit runnable-host composition
+
+The shared controller now composes authenticated release restart provenance,
+the exact same-bundle daemon helper, the existing protected host identity and an
+exact-resource host-only relay token with the actual authenticated runtime.
+Setup is explicitly foreground and registers zero shells; initial owner context
+is public review material with no key/access grant. Separate host-local approval
+checks the reviewed public-key fingerprint and independent permissions.
+Run never prompts, enrolls, generates an identity or falls back to files.
+It reacquires native-vault authority, closes hosting on cancellation or lifecycle
+change and leaves the independent daemon alone. A separate runtime lease and
+typed durable last-run history distinguish failures from liveness/Ready claims.
+
+The first test compile exposed a boolean-versus-unit fixture arm and a forbidden
+Debug assertion on protected cloud records; a subsequent missing-identity case
+correctly refused rereading that record. Tests now compare retained raw private
+bytes without exposing protected record contents. The changed packages passed
+132 tests with one existing ignored native case; strict affected-package Clippy
+and targeted relay/runtime/epoch/CLI checks also pass. This does not qualify
+signed native install/service operation or client first-connect UX. Update and
+generation-atomic cloud deletion remain separate incomplete transactions.

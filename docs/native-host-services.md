@@ -30,9 +30,11 @@ or storage fallback.
 narrow runtime authority source. Every `current_policy()` freshly selects the
 explicit original store and obtains an owned protected lease; contention is
 `ContractError::Busy`, while missing/corrupt/foreign/revoked authority is Denied.
-It never caches a verifier or retries native failure using files. Runtime trait
-wiring still requires normally integrating the separately gated runtime source;
-this source-only checkpoint does not activate a listener.
+It never caches a verifier or retries native failure using files. Setup's
+`host-runtime` feature now implements the runtime traits directly, with the
+actual enrollment lease retained by the guard. The app wrapper delegates and
+defaults to native vault. Compiled trait-adapter evidence does not activate or
+qualify a listener.
 
 `qualify-package` consumes private absolute `--manifest`, `--signature`,
 `--archive`, `--cache-root` inputs, uses the same embedded updater/native
@@ -45,12 +47,27 @@ testable without exposing an unqualified endpoint.
 `services::TrustedStage::publish(&VerifiedArtifact, cache_root)` is the only
 public launch-receipt constructor. It requires the updater-authenticated
 schema-2 `Package::Host`, exact current build version and native target, and its
-immutable executable `festerm-host` entry. Neither an arbitrary executable path,
+immutable executable `festerm-host` entry. Every executable helper in that same
+authenticated bundle is independently native-publisher-qualified before any
+fresh file is promoted; `sessiond_path()` returns only the exact signed,
+same-version daemon after rechecking all retained file identities and bytes.
+Neither an arbitrary executable path,
 `StagedArtifact::path()` nor CLI acquisition's returned path is launch authority.
 There is no production key, hash or native-signature override.
 
 Original signed metadata/archive/entries remain in the private non-executable
 data cache. Separate atomic owner-only executable publication checks the digest.
+Native registration retains that signed provenance location. On restart,
+`Services::reopen_stage(epoch)` reauthenticates its original manifest, signature
+and archive with the compiled updater/native policy and requires the exact
+registered host bytes and path. A registration digest or `.complete` marker is
+not authority. Older registrations without provenance remain manageable for
+removal but cannot recover executable authority through this API.
+`festerm_tunnel_client::host::Management::host_token` is the matching relay
+credential primitive: it requests only `tokenScopes=host` from the official
+authority and revalidates the pinned account/resource/creation receipt before
+returning a short-lived zeroizing token. It is not owner authentication and
+cannot enroll a key or approve a host. No token is persisted or placed in argv.
 Linux publisher authority is the embedded updater key. macOS additionally
 requires strict all-architecture verification against Apple's Developer ID
 Application chain and the pinned TeamIdentifier **F884J4784J**, then verifies
@@ -86,6 +103,30 @@ Microsoft Artifact Signing account/profile
 `fesLabs-CodeSign` / `fesTermPublicTrust`, plus chain/EKU and explicit revocation
 freshness/offline-failure policy. Account/profile names alone are not a signer
 pin; neither a downloaded artifact nor its manifest may supply this authority.
+
+Proposed narrow owner policy, **not approved or implemented**: pin the exact
+maintainer-confirmed publisher subject/organization and approved Microsoft
+Artifact Signing profile chain/EKU, rather than a short-lived leaf certificate.
+Permit automatic leaf rotation only within that exact approved publisher/profile
+policy; publisher/chain changes require a reviewed compiled-policy update.
+Require native chain/code-signing EKU and trusted RFC3161 timestamp verification
+(the release workflow already requests SHA256 and
+`timestamp.acs.microsoft.com`). Revoked, unknown, stale or unavailable revocation
+status must refuse; valid cached CRL/OCSP may be used only within its authenticated
+freshness interval, never by disabling revocation. Missing verified inputs are
+the owner's independently supplied exact publisher/profile certificate policy,
+the approved rotation rules and the decision on strict offline refusal. Existing
+workflow `Get-AuthenticodeSignature.Status == Valid` is not that publisher pin.
+
+For Windows stop, the proposed missing transaction is a current-user-protected
+local control channel bound to installation/origin/current epoch/run ID and the
+exact retained host-process identity. The host drains its own relay/workers,
+acknowledges and exits; the controller separately observes that exact process
+absent. A timeout is unknown/pending, never scheduler-wide/job-tree termination.
+No daemon or shell stop is implied. This requires implementation and ordinary-
+user named-pipe/process-identity qualification; there is no approved destructive
+fallback. These Windows decisions do not block Linux source/fixture progress.
+
 The receipt retains verified file/directory handles; registration/start reopens
 no-follow and rechecks file identity, ownership, permissions and exact bytes.
 Changed or foreign cache entries are refused, never overwritten or repaired.
@@ -248,4 +289,7 @@ interrupted registration/cleanup, real same-user identity, persistent daemon
 survival and login/reboot observations. Fixtures and native CI compilation do
 not qualify those behaviors. Endpoint integration, foreground sign-in/consent,
 update/rollback and migration remain separate gates; the
-[headless CLI](headless-host.md) continues to refuse setup/run/update/uninstall.
+[headless CLI](headless-host.md) now has shared explicit setup/owner-approval/run
+source, while update/uninstall remain unavailable. This source is not signed
+native acceptance; real release input, native-vault/service qualification and
+client protected first-connect approval remain prerequisites.

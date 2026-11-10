@@ -90,6 +90,8 @@ struct Registration {
     resource: String,
     executable: PathBuf,
     digest: String,
+    #[serde(default)]
+    provenance: Option<PathBuf>,
     state: PathBuf,
     definition: String,
     reservation: String,
@@ -443,6 +445,37 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         Ok(observation(&snapshot, process))
     }
 
+    /// Recover exact release authority for run after a service-manager restart.
+    /// Older receipt-only registrations remain removable, not executable trust.
+    pub fn reopen_stage(&self, epoch: u64) -> io::Result<TrustedStage> {
+        let _lease = self.lease()?;
+        let snapshot = self.fence(epoch, Phase::Provisioned)?;
+        let (current, record) = self.reconciled_registration()?;
+        if current != snapshot {
+            return Err(refused("host.service_stale_or_unapproved_operation"));
+        }
+        let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
+        if record.removed {
+            return Err(refused("host.service_not_installed"));
+        }
+        let provenance = record
+            .provenance
+            .as_ref()
+            .ok_or_else(|| refused("host.service_signed_provenance_required"))?;
+        let root = record
+            .executable
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| refused("host.service_executable_path"))?;
+        let stage = TrustedStage::reopen_release_cache(provenance, root)?;
+        if stage.path != record.executable || stage.digest != record.digest {
+            return Err(refused("host.service_authenticated_bundle_changed"));
+        }
+        self.fence(epoch, Phase::Provisioned)?;
+        stage.revalidate()?;
+        Ok(stage)
+    }
+
     /// Registers only; never starts the incomplete host endpoint.
     pub fn install(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
         if self.context.platform == Platform::Windows {
@@ -484,6 +517,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 resource: definitions::resource(&snapshot, epoch),
                 executable: stage.path.clone(),
                 digest: stage.digest.clone(),
+                provenance: Some(stage.provenance_path().to_owned()),
                 state: self.state.clone(),
                 definition: String::new(),
                 reservation: uuid::Uuid::new_v4().to_string(),

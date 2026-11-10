@@ -112,7 +112,46 @@ one-shell setup policy. Release CI requires native signing/notarization of the h
 same paths as the other helpers. Actual protected release/native rejection
 evidence, executable-publication qualification and the new endpoint remain separate gates.
 
-## Explicitly unavailable operations
+## Explicit foreground setup and run
+
+The default headless build now includes the shared `controller` source (the
+`--no-default-features` compatibility build still refuses setup/run). This is
+not positive installed/native acceptance. Real exact-version updater-signed
+release inputs and native publisher admission are mandatory; test keys or cached
+paths cannot substitute for them.
+
+After `configure`, explicit `setup` requires the signed package inputs above,
+`--state-dir`, `--account-id` and `--consent enable`. It authenticates every
+executable before foreground GitHub device sign-in, provisions the zero-shell
+endpoint and registers the same-user host without launch. Initial owner policy
+has no keys and access off. Its public `owner_approval_prerequisite` describes the
+exact installation/host/account/principal for independent foreground pin review;
+it is not a trusted client import or execution grant. A retry in Provisioned
+state reobserves only the original account/resource and never creates another
+tunnel. Interrupted/incomplete protected enrollment refuses, rather than
+discarding anchors.
+
+The client must separately review that context and generate a protected native
+key for it. `approve-owner --state-dir PATH --public-key HEX --fingerprint VALUE
+--consent approve` explicitly approves that public key on the host. Inventory,
+attach/detach and resume are approved; independent `--creation allow` (also
+requiring configured creation consent) and `--end allow` default to deny.
+There is no bearer enrollment, recipe-derived trust or file-store fallback.
+The protected client-local receipt/index and actual first-connect UI remain
+separate prerequisites.
+
+`run --state-dir PATH` reauthenticates retained signed bundle provenance, selects
+only its same-version daemon helper and reopens existing native account/owner
+authority. It requests an exact-resource host-only relay token, not a management
+token or owner credential. Network waits retain no installation/policy lease.
+The actual shared runtime performs current per-action owner checks. Cancellation
+or lifecycle epoch change closes hosting, never the independent persistent
+daemon. `run-status` reports durable last-run history (Starting, Listening,
+Stopped or Failed with bounded typed failure), **not liveness or Ready**.
+An interrupted Listening record remains history, never automatic startup
+authority. Concurrent runs refuse under a separate exact-installation lease.
+
+## Management and unavailable operations
 
 Supported management is deliberately narrower than installation:
 `service-status` observes exact receipt-owned native state, `disable` fences
@@ -126,8 +165,8 @@ See [native management and lab commands](native-host-services.md).
 
 The off-default `native-services` library now provides real same-user
 registration/control and authenticated executable-publication APIs, with
-deterministic native-adapter fixtures. It is not connected to CLI commands or
-desktop controls and does not qualify the incomplete endpoint. macOS admission
+deterministic native-adapter fixtures. The shared CLI controller consumes those
+APIs; desktop controls and native endpoint qualification remain separate. macOS admission
 requires the pinned release Developer ID team and hardened runtime; Windows
 admission refuses until authoritative publisher policy exists;
 Windows registration/start additionally refuse until authenticated graceful stop
@@ -136,8 +175,8 @@ can preserve independent daemons. See the
 
 The opt-in library `owner-enrollment` API supports protected local public-key
 enrollment/revocation/status and separate permission consent under the same
-installation lease. It does not expose a CLI enrollment command, enable a
-listener or turn `status` into an authentication/readiness claim. Client signing
+installation lease. Explicit `approve-owner` uses that boundary; enrollment never
+turns `status` into an authentication/readiness claim. Client signing
 keys and policy anchors use the native vault by default. The library's explicit
 `OwnerStorage::HeadlessProtectedFile` selection offers owner-only credential/
 anchor files bound to that headless installation/origin, never fallback from a
@@ -145,13 +184,13 @@ failed vault or portable configuration adoption. Full protected-store/home
 rollback is not resisted in this weaker mode. `reconcile()` only forward-publishes
 the exact digest/revision committed by the selected store; it cannot invent
 consent. Initialization requires the existing exact Provisioned account/host
-binding. No CLI storage/enrollment controls are exposed yet.
+binding. No CLI selection of protected-file storage is exposed.
 See the [actual pinned-channel proof API](host-protocol.md#real-pinned-ssh-channel-owner-proof).
 First-connect foreground handoff versus advanced explicit public-key import
 remains a bounded UX prerequisite. Neither bearer presence nor a provisioning
 account string enrolls an owner.
 
-`setup`, `run`, `update` and `uninstall` return unsuccessful exit status and
+`update` and `uninstall` return unsuccessful exit status and
 `host.endpoint_adapter_unavailable`. They are not successful stub commands and
 never dispatch to the legacy one-shell scripts/helpers. Requirements still open:
 

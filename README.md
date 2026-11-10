@@ -65,9 +65,10 @@ adds receipt-bound control APIs, not endpoint startup or native qualification.
 Headless `service-status`, `disable`, `cleanup-local`, `recover-cleanup` and
 `qualify-package` now expose their supported management boundaries without
 claiming endpoint readiness, registration/start or successful cloud deletion.
-New host setup/run/update/uninstall remain unavailable pending endpoint and
-native executable/endpoint integration ([#681](https://github.com/fes/fesTerm/issues/681));
-the legacy installer is unchanged.
+Explicit headless setup/owner approval/run composition is implemented in source,
+not yet qualified as an installed native host ([#681](https://github.com/fes/fesTerm/issues/681)).
+It requires real authenticated release inputs and existing native credentials;
+update/uninstall remain unavailable. The legacy installer is unchanged.
 An opt-in shared library adds foreground native-vault GitHub authentication and
 zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;
 generation-atomic cloud deletion remains an explicit qualification blocker.

@@ -180,6 +180,17 @@ impl Management {
     ) -> Result<Observation, Error> {
         observe(&self.0, identity, resource, cancel).await
     }
+
+    /// Obtain only a short-lived host token for the exact pinned cloud receipt.
+    /// This grants relay connectivity, never enrolled-owner or shell authority.
+    pub async fn host_token(
+        &self,
+        identity: &Identity,
+        exact: &Receipt,
+        cancel: &CancellationToken,
+    ) -> Result<Zeroizing<String>, Error> {
+        host_token(&self.0, identity, exact, cancel).await
+    }
 }
 
 fn request(
@@ -390,6 +401,36 @@ async fn observe(
     receipt(&reply.bytes, resource).map(Observation::Present)
 }
 
+async fn host_token(
+    http: &impl Transport,
+    identity: &Identity,
+    exact: &Receipt,
+    cancel: &CancellationToken,
+) -> Result<Zeroizing<String>, Error> {
+    let mut request = resource_request(identity, Method::GET, &exact.resource)?;
+    request
+        .url_mut()
+        .query_pairs_mut()
+        .append_pair("tokenScopes", "host");
+    let reply = send(http, request, cancel).await?;
+    if reply.status == 404 {
+        return Err(Error::TunnelNotFound);
+    }
+    if receipt(&reply.bytes, &exact.resource)? != *exact {
+        return Err(Error::IdentityChanged);
+    }
+    let mut tunnel: Tunnel = crate::decode(&reply.bytes)?;
+    let token = tunnel
+        .access_tokens
+        .as_mut()
+        .and_then(|tokens| tokens.remove("host"))
+        .map(Zeroizing::new);
+    wipe_tokens(&mut tunnel);
+    token
+        .filter(|token| crate::valid_token(token))
+        .ok_or(Error::Response)
+}
+
 fn receipt(bytes: &[u8], resource: &Resource) -> Result<Receipt, Error> {
     let mut tunnel: Tunnel = crate::decode(bytes)?;
     wipe_tokens(&mut tunnel);
@@ -505,6 +546,73 @@ mod tests {
             }]},
             "ports": [{"portNumber": HOST_PORT, "protocol": "tcp", "labels": [HOST_LABEL]}],
         })
+    }
+
+    #[tokio::test]
+    async fn host_cloud_scoped_host_token_requires_exact_receipt_and_never_uses_management_token() {
+        let identity = identity();
+        let exact = receipt(&serde_json::to_vec(&response()).unwrap(), &resource()).unwrap();
+        let mut body = response();
+        body["accessTokens"] =
+            serde_json::json!({"host":"PRIVATE_SCOPED_HOST","manage":"PRIVATE_UNUSED"});
+        let http = Fake::new(vec![(200, body)]);
+        let token = host_token(&http, &identity, &exact, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(token.as_str(), "PRIVATE_SCOPED_HOST");
+        let requests = http.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method(), Method::GET);
+        assert!(requests[0]
+            .url()
+            .query_pairs()
+            .any(|(key, value)| key == "tokenScopes" && value == "host"));
+        assert!(!requests[0].url().as_str().contains("PRIVATE"));
+        assert!(requests[0].headers()[header::AUTHORIZATION].is_sensitive());
+    }
+
+    #[tokio::test]
+    async fn host_cloud_scoped_host_token_refuses_replacement_account_absence_and_cancellation() {
+        let identity = identity();
+        let exact = receipt(&serde_json::to_vec(&response()).unwrap(), &resource()).unwrap();
+        for (field, value) in [
+            ("created", serde_json::json!("2026-11-10T00:00:00Z")),
+            ("tunnelId", serde_json::json!("foreign-tunnel")),
+            (
+                "accessTokens",
+                serde_json::json!({"manage":"PRIVATE_UNUSED"}),
+            ),
+            ("accessTokens", serde_json::json!({"host":"not a token"})),
+        ] {
+            let mut body = response();
+            body["accessTokens"] = serde_json::json!({"host":"PRIVATE_SCOPED_HOST"});
+            body[field] = value;
+            let http = Fake::new(vec![(200, body)]);
+            assert!(
+                host_token(&http, &identity, &exact, &CancellationToken::new())
+                    .await
+                    .is_err()
+            );
+        }
+        let http = Fake::new(vec![(404, serde_json::json!({}))]);
+        assert!(matches!(
+            host_token(&http, &identity, &exact, &CancellationToken::new()).await,
+            Err(Error::TunnelNotFound)
+        ));
+        let mut foreign = exact.clone();
+        foreign.resource.account_id = 43;
+        let http = Fake::new(vec![]);
+        assert!(matches!(
+            host_token(&http, &identity, &foreign, &CancellationToken::new()).await,
+            Err(Error::AccountChanged)
+        ));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            host_token(&http, &identity, &exact, &cancel).await,
+            Err(Error::Cancelled)
+        ));
+        assert!(http.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

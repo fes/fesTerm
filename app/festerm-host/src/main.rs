@@ -29,8 +29,16 @@ stage-package --manifest PATH --signature PATH --archive PATH --cache-root PATH
     Verify the separate signed host package for this exact version/target and stage immutable bytes.
 qualify-package --manifest PATH --signature PATH --archive PATH --cache-root PATH
     Verify native release publisher and publish private executable bytes; never starts a service.
-setup | run | update | uninstall
-    Unavailable until the new host endpoint/authenticated package adapter is integrated.
+setup --state-dir PATH --manifest PATH --signature PATH --archive PATH --cache-root PATH --account-id ID --consent enable
+    Foreground signed-package/account consent; register zero shells and report public owner-approval context.
+approve-owner --state-dir PATH --public-key HEX --fingerprint FINGERPRINT --consent approve [--creation allow|deny] [--end allow|deny]
+    Explicit host-local approval of the reviewed client key. Never imports trust from a recipe.
+run --state-dir PATH
+    Explicit authenticated host listener; existing native credentials and owner approval required.
+run-status --state-dir PATH
+    Durable last-run history, not a liveness or endpoint-ready claim.
+update | uninstall
+    Unavailable until qualified update and exact cloud-removal prerequisites are integrated.
 
 Manual startup requires an explicit run. Sign-in is user sign-in, NOT pre-login.
 No native startup registration is performed by configure. Paths must be absolute,
@@ -61,14 +69,30 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         "stage-package" | "qualify-package" => {
             &["--manifest", "--signature", "--archive", "--cache-root"]
         }
-        "setup" | "run" | "update" | "uninstall" => {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "host.endpoint_adapter_unavailable: no setup/service/update/removal performed; \
-                 new host endpoint, foreground secure sign-in, exact-owned service adapter \
-                 and authenticated fesTerm artifacts required (#681)",
-            ));
-        }
+        #[cfg(feature = "owner-routing")]
+        "setup" => &[
+            "--state-dir",
+            "--manifest",
+            "--signature",
+            "--archive",
+            "--cache-root",
+            "--account-id",
+            "--consent",
+        ],
+        #[cfg(feature = "owner-routing")]
+        "approve-owner" => &[
+            "--state-dir",
+            "--public-key",
+            "--fingerprint",
+            "--consent",
+            "--creation",
+            "--end",
+        ],
+        #[cfg(feature = "owner-routing")]
+        "run" | "run-status" => &["--state-dir"],
+        #[cfg(not(feature = "owner-routing"))]
+        "setup" | "run" => return Err(unavailable()),
+        "update" | "uninstall" => return Err(unavailable()),
         _ => return Err(invalid()),
     };
     let mut options = BTreeMap::new();
@@ -88,6 +112,113 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         Ok(path)
     };
     match command {
+        #[cfg(feature = "owner-routing")]
+        "setup" => {
+            if options.get("--consent").and_then(|value| value.to_str()) != Some("enable") {
+                return Err(invalid());
+            }
+            let account = options
+                .get("--account-id")
+                .and_then(|value| value.to_str())
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value != 0)
+                .ok_or_else(invalid)?;
+            let state = path("--state-dir")?;
+            let store = Store::open(&state, Origin::Headless)?;
+            let stage = TrustedStage::publish_release_files(
+                &path("--manifest")?,
+                &path("--signature")?,
+                &path("--archive")?,
+                &path("--cache-root")?,
+            )?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let report = runtime.block_on(with_shutdown(
+                festerm_host_setup::controller::setup(
+                    &store, &state, &stage, account, &cancel,
+                    |prompt| eprintln!("Approve this foreground sign-in at https://github.com/login/device with code {}", prompt.user_code),
+                ),
+                cancel.clone(),
+            ))?;
+            serde_json::to_string_pretty(&report)
+                .map(|report| format!("{report}\n"))
+                .map_err(|_| io::Error::other("host.status_serialization"))
+        }
+        #[cfg(feature = "owner-routing")]
+        "approve-owner" => {
+            if options.get("--consent").and_then(|value| value.to_str()) != Some("approve") {
+                return Err(invalid());
+            }
+            let public = options
+                .get("--public-key")
+                .and_then(|value| value.to_str())
+                .ok_or_else(invalid)?;
+            if public.len() != 64 || !public.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(invalid());
+            }
+            let mut key = [0; 32];
+            for (index, byte) in key.iter_mut().enumerate() {
+                *byte = u8::from_str_radix(&public[index * 2..index * 2 + 2], 16)
+                    .map_err(|_| invalid())?;
+            }
+            let choice = |name| match options.get(name).and_then(|value| value.to_str()) {
+                Some("allow") => Ok(true),
+                Some("deny") | None => Ok(false),
+                _ => Err(invalid()),
+            };
+            let store = Store::open(&path("--state-dir")?, Origin::Headless)?;
+            let report = festerm_host_setup::controller::approve_owner(
+                &store,
+                festerm_host_setup::controller::OwnerConsent {
+                    owner_public_key: key,
+                    confirmed_owner_fingerprint: options
+                        .get("--fingerprint")
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(invalid)?
+                        .into(),
+                    permissions: festerm_host_protocol::Capabilities {
+                        inventory: true,
+                        attach: true,
+                        detach: true,
+                        ensure: true,
+                        create: true,
+                        creation_allowed: choice("--creation")?,
+                        explicit_end: choice("--end")?,
+                        ..Default::default()
+                    },
+                },
+            )?;
+            serde_json::to_string_pretty(&report)
+                .map(|report| format!("{report}\n"))
+                .map_err(|_| io::Error::other("host.status_serialization"))
+        }
+        #[cfg(feature = "owner-routing")]
+        "run" => {
+            let state = path("--state-dir")?;
+            let store = std::sync::Arc::new(Store::open(&state, Origin::Headless)?);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let cancel = tokio_util::sync::CancellationToken::new();
+            runtime.block_on(with_shutdown(
+                festerm_host_setup::controller::run(store, &state, cancel.clone()),
+                cancel,
+            ))?;
+            Ok("Host listener stopped. Persistent sessions were not terminated.\n".into())
+        }
+        #[cfg(feature = "owner-routing")]
+        "run-status" => {
+            let store = Store::open(&path("--state-dir")?, Origin::Headless)?;
+            serde_json::to_string_pretty(&serde_json::json!({
+                "last_run": festerm_host_setup::controller::last_run(&store)?,
+                "current_lifecycle": store.snapshot()?,
+                "meaning": "history-only-not-liveness-or-ready",
+            }))
+            .map(|report| format!("{report}\n"))
+            .map_err(|_| io::Error::other("host.status_serialization"))
+        }
         "configure" => {
             let name = options
                 .get("--name")
@@ -207,6 +338,43 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         }
         _ => unreachable!(),
     }
+}
+
+fn unavailable() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "host.endpoint_adapter_unavailable: required qualified adapter unavailable (#681)",
+    )
+}
+
+#[cfg(feature = "owner-routing")]
+async fn with_shutdown<T>(
+    work: impl std::future::Future<Output = io::Result<T>>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> io::Result<T> {
+    tokio::pin!(work);
+    tokio::select! {
+        result = &mut work => result,
+        signal = shutdown_signal() => {
+            signal?;
+            cancel.cancel();
+            work.await
+        }
+    }
+}
+
+#[cfg(feature = "owner-routing")]
+async fn shutdown_signal() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result,
+            _ = term.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await
 }
 
 fn main() -> ExitCode {
@@ -379,10 +547,13 @@ mod tests {
     #[test]
     fn unavailable_host_operations_and_unsafe_options_fail_closed() {
         for command in ["setup", "run", "update", "uninstall"] {
-            assert_eq!(
-                execute(arguments(&[command])).unwrap_err().kind(),
+            let expected = if cfg!(feature = "owner-routing") && matches!(command, "setup" | "run")
+            {
+                io::ErrorKind::Other
+            } else {
                 io::ErrorKind::Unsupported
-            );
+            };
+            assert_eq!(execute(arguments(&[command])).unwrap_err().kind(), expected);
         }
         for args in [
             vec![
