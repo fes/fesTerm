@@ -3416,6 +3416,14 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 
 ## ADR 0084 owner enrollment qualification
 
+`HOSTAUTH-01` additionally requires real endpoint composition to capture the
+current runtime issuer inside its protected reservation, including after any
+namespace rotation. Permission-only or `None` hotpath policies must advertise
+no creation; issuer projection must not replace permission epochs or revive a
+lower observed issuer. Portable consent/projection fixtures automate that
+separation, not the native backend or endpoint integration. Original uncertain
+client operations must retain their captured issuer.
+
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
 | HOSTAUTH-01 | On macOS/Windows/Linux and physical mobile clients, explicitly confirm exact provisioned host/account/owner public-key fingerprint; generate/reopen/delete per-host owner keys in the native vault; lock/unlock/unavailable store; revoke/rotate while proof and operations are pending; deny creation without blocking removal; interrupt reference reservation/native update/disk publication and reconcile only exact anchored forward state. On a headless installation explicitly select protected-file credentials, verify origin/path/no-follow/permission checks and the documented weaker whole-store/home rollback guarantee; never fall back automatically. On actual pinned SSH channels reject relay/reflection, cross-channel/connection reuse, swapped streams and stale proofs; retain the exact authenticated stream/guard through shutdown. Verify no key in exports/logs/argv/env. | Automated constrained-vault, 64-key-history, forward recovery, effective-permission, private-file and real encrypted SSH exporter/proof fixtures; native and first-connect usability deferred | #681 stages 1/3: independently review signed SSH exporter and role-bound adapter; integrate bounded endpoint framing/routing and foreground enrollment or advanced host-local public-key consent. A provisioned journal is not Ready; fixture success is not native vault/private-path/platform acceptance. |

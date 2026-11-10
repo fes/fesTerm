@@ -104,7 +104,10 @@ pub struct EnrollmentSnapshot {
 impl EnrollmentSnapshot {
     fn validate(&self, installation: &Snapshot) -> io::Result<()> {
         self.binding.validate()?;
-        self.capabilities.validate()?;
+        self.capabilities.validate_permissions()?;
+        if self.capabilities.issuance_epoch.is_some() {
+            return Err(refused("owner.runtime_issuer_is_not_persistent_consent"));
+        }
         if self.version != 1
             || self.binding.installation != installation.installation
             || self.origin != installation.origin
@@ -160,7 +163,7 @@ impl EnrollmentSnapshot {
             remote_access: self.remote_access && installation.phase == Phase::Provisioned,
             capabilities,
         };
-        OwnerVerifier::new(policy, &keys).map_err(Into::into)
+        OwnerVerifier::from_protected_permissions(policy, &keys).map_err(Into::into)
     }
 }
 
@@ -703,6 +706,7 @@ impl OwnerEnrollment<'_> {
 
     /// Separate protected local permission consent. Importing a key never calls
     /// this. Creation additionally requires the existing host settings grant.
+    /// Runtime issuer epochs are never stored as consent.
     pub fn approve_permissions(
         &self,
         revision: Epoch,
@@ -1416,6 +1420,21 @@ mod tests {
                 .capabilities
                 .creation_allowed
         );
+        assert!(state.capabilities.issuance_epoch.is_none());
+        let advertised = enrollment
+            .current_policy()
+            .unwrap()
+            .verifier()
+            .capabilities();
+        advertised.validate().unwrap();
+        assert!(!advertised.create && !advertised.ensure && !advertised.creation_allowed);
+        assert!(advertised.issuance_epoch.is_none());
+        let mut runtime = state.capabilities;
+        runtime.issuance_epoch = Some(Epoch::new(7).unwrap());
+        assert!(enrollment
+            .approve_permissions(state.revision, true, runtime)
+            .is_err());
+        assert_eq!(enrollment.snapshot().unwrap(), state);
         configure(&store, false);
         let masked = enrollment.snapshot().unwrap();
         assert!(masked.capabilities.creation_allowed);

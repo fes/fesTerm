@@ -524,6 +524,7 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed`,
   `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`,
   `host_owner_mutating_policy_requires_advertised_issuance_epoch`,
+  `host_owner_permission_templates_require_runtime_projection_for_creation`,
   `host_owner_policy_replacement_retains_issuance_high_water_mark`,
   `host_owner_admission_requires_current_shared_exact_generation_and_absence`,
   `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
@@ -560,6 +561,12 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `host_owner_authentication_failure_retains_stream_for_bounded_denial`
   exercises actual Denied/Stale failures retaining their unauthenticated SSH
   stream for bounded replies before closing; no owner authority is returned.
+  `host_owner_permission_templates_require_runtime_projection_for_creation`
+  separates persistent consent from strict runtime advertisements;
+  `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`
+  reuses a live owner proof across actual issuer projection, preserves original
+  issued operations and refuses unadvertised future epochs. Native composition
+  must obtain that issuer under the actual protected backend reservation.
   `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
   no UI, listener, broad pairing service or full ADR acceptance is claimed.
   Reliability remediation adds

@@ -280,8 +280,42 @@ impl OwnerVerifier {
         &self.policy
     }
 
+    /// Runtime advertisement, not the underlying protected permission template.
+    /// Without an actual protected issuer, no ensure or creation is advertised.
+    pub fn capabilities(&self) -> Capabilities {
+        let mut capabilities = self.policy.capabilities;
+        if capabilities.issuance_epoch.is_none() {
+            capabilities.ensure = false;
+            capabilities.create = false;
+            capabilities.creation_allowed = false;
+        }
+        capabilities
+    }
+
     pub fn new(policy: OwnerPolicy, keys: &[[u8; 32]]) -> Result<Self, ContractError> {
         policy.validate()?;
+        Self::from_validated_policy(policy, keys)
+    }
+
+    /// Only protected enrollment may supply this permission template. It has no
+    /// runtime issuer and cannot advertise or admit Ensure/Create until projected
+    /// under the protected backend reservation. Never accept remote configuration.
+    pub fn from_protected_permissions(
+        policy: OwnerPolicy,
+        keys: &[[u8; 32]],
+    ) -> Result<Self, ContractError> {
+        policy.host.validate()?;
+        policy.capabilities.validate_permissions()?;
+        if policy.capabilities.issuance_epoch.is_some() {
+            return Err(ContractError::Malformed);
+        }
+        Self::from_validated_policy(policy, keys)
+    }
+
+    fn from_validated_policy(
+        policy: OwnerPolicy,
+        keys: &[[u8; 32]],
+    ) -> Result<Self, ContractError> {
         if keys.is_empty() || keys.len() > MAX_OWNER_KEYS {
             return Err(ContractError::Limit);
         }
@@ -294,10 +328,33 @@ impl OwnerVerifier {
             }
             verified.push(key);
         }
-        Ok(Self {
+        let verifier = Self {
             highest_issuance_epoch: policy.capabilities.issuance_epoch,
             policy,
             keys: verified,
+        };
+        match verifier.policy.capabilities.issuance_epoch {
+            Some(actual) => verifier.with_issuance_epoch(actual),
+            None => Ok(verifier),
+        }
+    }
+
+    /// Project only the current issuer observed inside the protected backend
+    /// reservation, never a request header or a cached advertised namespace.
+    pub(crate) fn with_issuance_epoch(&self, actual: Epoch) -> Result<Self, ContractError> {
+        if self
+            .highest_issuance_epoch
+            .is_some_and(|highest| actual.get() < highest.get())
+        {
+            return Err(ContractError::Stale);
+        }
+        let mut policy = self.policy.clone();
+        policy.capabilities.issuance_epoch = Some(actual);
+        policy.validate()?;
+        Ok(Self {
+            policy,
+            keys: self.keys.clone(),
+            highest_issuance_epoch: Some(actual),
         })
     }
 
@@ -588,16 +645,25 @@ mod tests {
         let key = OwnerSigningKey::from_seed(&[7; 32]);
         let mut allowed = policy();
         allowed.capabilities = Capabilities {
-            issuance_epoch: Some(Epoch::new(2).unwrap()),
             ensure: true,
             create: true,
             attach: true,
             creation_allowed: true,
             ..Capabilities::default()
         };
-        let mut verifier = OwnerVerifier::new(allowed, &[key.public_key()]).unwrap();
-        let (pending, proof) = signed(&verifier, &key);
-        let (owner, _connection) = pending.verify(&proof, &verifier).unwrap();
+        let template =
+            OwnerVerifier::from_protected_permissions(allowed, &[key.public_key()]).unwrap();
+        let (pending, proof) = signed(&template, &key);
+        let (owner, _connection) = pending.verify(&proof, &template).unwrap();
+        let mut verifier = template
+            .with_issuance_epoch(Epoch::new(2).unwrap())
+            .unwrap();
+        assert_eq!(template.policy.capabilities.issuance_epoch, None);
+        assert_eq!(template.policy.host, verifier.policy.host);
+        assert_eq!(template.policy.principal, verifier.policy.principal);
+        assert_eq!(template.policy.host_epoch, verifier.policy.host_epoch);
+        assert_eq!(template.policy.grant_epoch, verifier.policy.grant_epoch);
+        assert_eq!(template.keys, verifier.keys);
         let grant = SessionGrant {
             logical: id(2),
             owner: id(7),
@@ -622,6 +688,10 @@ mod tests {
         ] {
             let mut request = request(body);
             let original = request.issuance_epoch;
+            assert!(matches!(
+                owner.authorize(&template, &request, Epoch::new(1).unwrap(), Some(&grant)),
+                Err(ContractError::Stale)
+            ));
             let fence = owner
                 .authorize(&verifier, &request, Epoch::new(1).unwrap(), Some(&grant))
                 .unwrap();
@@ -674,6 +744,18 @@ mod tests {
         let mut disabled = allowed.clone();
         disabled.capabilities = Capabilities::default();
         verifier.replace(disabled, &[key.public_key()]).unwrap();
+        assert!(matches!(
+            verifier.with_issuance_epoch(Epoch::new(4).unwrap()),
+            Err(ContractError::Stale)
+        ));
+        let scoped = verifier
+            .with_issuance_epoch(Epoch::new(6).unwrap())
+            .unwrap();
+        assert!(!scoped.capabilities().ensure && !scoped.capabilities().creation_allowed);
+        assert!(matches!(
+            scoped.with_issuance_epoch(Epoch::new(5).unwrap()),
+            Err(ContractError::Stale)
+        ));
         allowed.grant_epoch = allowed.grant_epoch.next().unwrap();
         allowed.capabilities.issuance_epoch = Some(Epoch::new(4).unwrap());
         assert_eq!(
@@ -709,6 +791,60 @@ mod tests {
             invalid.capabilities.issuance_epoch = Some(Epoch::new(1).unwrap());
             invalid.validate().unwrap();
             OwnerVerifier::new(invalid, &[key.public_key()]).unwrap();
+        }
+    }
+
+    #[test]
+    fn host_owner_permission_templates_require_runtime_projection_for_creation() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        for create in [false, true] {
+            let mut permission = policy();
+            permission.capabilities = Capabilities {
+                inventory: true,
+                ensure: !create,
+                create,
+                attach: true,
+                detach: true,
+                explicit_end: true,
+                temporary: true,
+                creation_allowed: true,
+                ..Capabilities::default()
+            };
+            assert_eq!(permission.validate(), Err(ContractError::Malformed));
+            assert_eq!(
+                permission.capabilities.validate(),
+                Err(ContractError::Malformed)
+            );
+            let template =
+                OwnerVerifier::from_protected_permissions(permission.clone(), &[key.public_key()])
+                    .unwrap();
+            let advertised = template.capabilities();
+            advertised.validate().unwrap();
+            assert!(!advertised.ensure && !advertised.create && !advertised.creation_allowed);
+            assert!(advertised.attach && advertised.issuance_epoch.is_none());
+            assert!(
+                advertised.inventory
+                    && advertised.detach
+                    && advertised.explicit_end
+                    && advertised.temporary
+            );
+            let scoped = template
+                .with_issuance_epoch(Epoch::new(2).unwrap())
+                .unwrap();
+            assert_eq!(scoped.capabilities(), scoped.policy.capabilities);
+            scoped.capabilities().validate().unwrap();
+            assert!(matches!(
+                OwnerVerifier::from_protected_permissions(
+                    scoped.policy.clone(),
+                    &[key.public_key()]
+                ),
+                Err(ContractError::Malformed)
+            ));
+            permission.capabilities.attach = false;
+            assert!(matches!(
+                OwnerVerifier::from_protected_permissions(permission, &[key.public_key()]),
+                Err(ContractError::Malformed)
+            ));
         }
     }
 

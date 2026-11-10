@@ -736,6 +736,11 @@ protected-file credential/anchor backend binds origin/storage/installation;
 whole protected-store/home rollback is not resisted by that weaker mode.
 Enrollment does not enable access or creation; settings deny masks creation
 without blocking key revocation or permission removal.
+Persistent consent contains no runtime issuer. Its distinct protected-permission
+verifier masks creation until an immutable projection receives the current issuer
+inside protected backend admission; public runtime policy validation remains
+strict, and projections retain the issuer rollback watermark without changing
+permission epochs or enrolled keys.
 Vendored russh now derives immutable bindings from its signed original session
 identifier and role-ordered actual channel IDs, excluding no-KEX outer relays.
 Client signing requires its privately captured actual pin and matching current
