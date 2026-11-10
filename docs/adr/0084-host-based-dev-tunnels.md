@@ -433,20 +433,42 @@ changes are part of this documentation PR.
 
 ## Validation impact
 
+**Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
+protected lifecycle journal; the separate GUI-free `festerm-host` supports
+disabled configure, recorded status and offline official-CLI pin staging.
+Epoch fencing retains late provisioned identity for exact stop/cleanup, preserves
+identity on re-enable and refuses desktop/headless origin adoption. These are
+local boundary operations, not a working endpoint installer. Setup/run/update/
+uninstall explicitly fail until real endpoint, sign-in/native adapters and
+authenticated-package integration exist. No Ready or native acceptance is claimed.
+See [API/dependencies](../headless-host.md); the ADR remains Proposed.
+
 - **Invariants introduced or changed:** One host endpoint can expose multiple
   authorized sessions; explicit remote creation and client-local resume-or-create
   recipes; no implicit launcher network; shared setup and independent daemon
   lifetime. Legacy exact-generation behavior, single-writer ownership, bounded
   work, protected consent and secret boundaries remain.
-- **GUI/action edges affected:** Proposed `HOST-01` through `HOST-06` below are
-  deferred design contracts. Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
+- **GUI/action edges affected:** `HOST-04`/`HOST-05` have partial shared boundary
+  coverage; the other proposed host edges remain deferred design contracts.
+  Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
   retain their current implementation coverage until each migration slice lands.
-- **Automated tests required:** Planned tests and acceptance matrix below; none
-  are claimed implemented by this ADR.
+- **Automated tests required:** Planned tests and acceptance matrix below.
+  Implemented stage-4 boundary coverage:
+  `headless_configuration_is_inert_and_origin_is_not_adopted`,
+  `cancelled_setup_journals_late_exact_identity_without_restoring_consent`,
+  `disabled_reenable_preserves_identity_and_cleanup_requires_exact_stop`,
+  `host_journal_refuses_busy_corrupt_and_unprotected_state`,
+  `offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache`,
+  `headless_commands_configure_and_report_only_disabled_state`,
+  `unavailable_host_operations_and_unsafe_options_fail_closed`,
+  `headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments`,
+  `headless_binary_status_is_a_journal_not_a_ready_claim`.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and
   MOB-03/MOB-06 during implementation with host setup, principal isolation,
   reboot, update and physical-device disconnect evidence. The new trace entries
-  are deferred behind implementation and native scenario registration.
+  remain deferred behind endpoint/adapters/authenticated artifacts.
+  `HOSTSETUP-01` registers stage-4 native prerequisites explicitly; deterministic
+  boundary fixtures are not service/startup qualification.
 - **Coverage superseded:** None in this documentation change. Retire legacy
   coverage only when its replacement is implemented and traced.
 

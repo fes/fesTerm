@@ -5,11 +5,21 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Embedded Dev Tunnel host installer scripts and the exact commands that run them, for in-app review."
+description = "Legacy installer review and opt-in protected host lifecycle policy."
 publish = false
+
+[features]
+default = []
+lifecycle = ["dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid"]
 
 [dependencies]
 sha2 = "0.11"
+festerm-sessiond = { path = "../festerm-sessiond", optional = true }
+festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge", optional = true }
+fs2 = { version = "0.4", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

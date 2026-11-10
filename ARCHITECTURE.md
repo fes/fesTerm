@@ -686,6 +686,17 @@ Performance benchmarks should initially report trends rather than block every co
 
 ## Experimental remote session bridge
 
+ADR 0084 stage 4 adds the opt-in `festerm-host-setup::lifecycle` policy and
+standalone `app/festerm-host` composition root without GUI/graphics dependencies.
+Both desktop and headless callers can use its protected, origin-scoped
+configuration/consent journal, operation epochs and exact-owned cleanup receipts.
+It reuses sessiond private storage and the bridge's reviewed official-CLI pins;
+default legacy/mobile installer-review dependencies remain unchanged.
+No new endpoint, native service adapter, Ready result or shell-launch ownership
+is implied. Current CLI configuration/status/staging are local-only; service
+operations explicitly refuse until integration. See the
+[headless boundary and adapter contract](docs/headless-host.md).
+
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
 adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal

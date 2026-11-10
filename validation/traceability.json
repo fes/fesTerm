@@ -5472,8 +5472,6 @@
         "HOST-01",
         "HOST-02",
         "HOST-03",
-        "HOST-04",
-        "HOST-05",
         "HOST-06"
       ],
       "requirements": [
@@ -5490,6 +5488,34 @@
         "Implement ADR 0084's seven staged slices, including verified principal binding and atomic generation reservation",
         "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
         "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect"
+      ]
+    },
+    {
+      "id": "host-shared-lifecycle-headless-boundary",
+      "edges": ["HOST-04", "HOST-05"],
+      "requirements": [
+        "docs/adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing",
+        "docs/adr/0084-host-based-dev-tunnels.md#8-headless-installation-and-common-management",
+        "docs/headless-host.md#shared-desktopendpoint-integration-api"
+      ],
+      "decisions": ["ADR-0084"],
+      "automated_tests": [
+        "headless_configuration_is_inert_and_origin_is_not_adopted",
+        "cancelled_setup_journals_late_exact_identity_without_restoring_consent",
+        "disabled_reenable_preserves_identity_and_cleanup_requires_exact_stop",
+        "host_journal_refuses_busy_corrupt_and_unprotected_state",
+        "offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache",
+        "headless_commands_configure_and_report_only_disabled_state",
+        "unavailable_host_operations_and_unsafe_options_fail_closed",
+        "headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments",
+        "headless_binary_status_is_a_journal_not_a_ready_claim"
+      ],
+      "manual_scenarios": ["HOSTSETUP-01"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #681 stages 3–5/7: new zero-shell host endpoint, verified principal channel, real observed health and foreground secure sign-in/consent integration; setup/run/update/uninstall refuse until functional",
+        "Exact-owned same-user native service/status/cleanup adapters and persistent-daemon independence; signed authenticated artifacts and compatible update/rollback",
+        "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance"
       ]
     }
   ]

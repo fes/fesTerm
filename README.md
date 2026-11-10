@@ -33,6 +33,12 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 ## Status
 
+ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
+GUI-free disabled configuration, journal status and offline pinned-CLI staging.
+New host setup/run/update/uninstall remain unavailable pending endpoint and
+authenticated-package integration ([#681](https://github.com/fes/fesTerm/issues/681));
+the legacy installer is unchanged.
+
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),
 [ADR 0078](docs/adr/0078-desktop-split-pane-presentation.md)). The live

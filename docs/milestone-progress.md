@@ -8625,3 +8625,20 @@ instead of requiring a second state message after the server has removed the
 command. Failed signals still fail, and transports that need a later state
 event retain that requirement. The native oracle still requires the same
 runspace's marker to survive cancellation.
+
+## A headless host boundary without pretending the endpoint exists
+
+ADR 0084 separates installing a host from creating a shell. The legacy installer
+cannot implement that by being called under a different name: it provisions one
+shell and has different ownership. Stage 4 therefore starts with shared,
+protected host-local configuration and an epoch-fenced lifecycle journal, plus a
+GUI-free `festerm-host` binary for real disabled configuration, recorded status
+and offline official-CLI pin staging. Desktop and headless origins cannot
+silently adopt each other; late setup results retain exact stop/cleanup evidence
+instead of restoring cancelled consent. Persistent shells are never targets.
+
+This is deliberately not a completed host installer. Setup, run, update and
+uninstall return failure until the new endpoint, secure foreground sign-in,
+native adapters and authenticated artifacts are wired. Portable tests prove the
+boundary, not cross-platform service or pre-login readiness. The remaining work
+stays explicit under [#681](https://github.com/fes/fesTerm/issues/681).

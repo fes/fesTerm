@@ -7,6 +7,7 @@ members = [
     "crates/festerm-automation-mcp-client",
     "crates/festerm-automation-workflow",
     "app/festerm",
+    "app/festerm-host",
     "app/festerm-android",
     "app/festerm-mobile",
     "crates/festerm-android-platform",

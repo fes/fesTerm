@@ -3326,6 +3326,12 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 | --- | --- | --- | --- |
 | CP-22 | On macOS, Windows and Linux with multiple local addresses, exercise Automatic, fixed source and Ask on first connection for SSH/SFTP and the native PSRP fixed-source CLI. Observe the source at an authorized server. Cancel before connection; choose an unavailable address; disconnect its VPN/interface before reconnect; confirm no unbound fallback. Open SFTP from the live SSH session and exercise a separate transfer connection. Confirm profile edits do not alter the live session, new Ask sessions prompt again, and workspace restore does not persist a prompted source. | Deterministic config/UI/socket regressions plus native network and usability evidence; partial | Requires authorized IPv4/IPv6 endpoints and a controlled multi-adapter/VPN environment per platform. Adapter labels aid address selection only. DNS, proxy policy, strict interface binding and VPN-only enforcement are not established by socket source binding. IPv6 link-local scope selection is unsupported. No corporate interfaces, routes or policies are changed automatically. |
 
+## ADR 0084 host setup qualification
+
+| ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
+| --- | --- | --- | --- |
+| HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/pin staging boundary; native/service/package and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, exact-owned native adapters and authenticated release artifacts. Windows/macOS/Linux startup and service acceptance require real platform evidence; fixture success is not that evidence. |
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:
