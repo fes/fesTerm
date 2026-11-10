@@ -726,7 +726,11 @@ default legacy/mobile installer-review dependencies remain unchanged.
 The off-default `native-services` feature adds a
 [same-user native control component](docs/native-host-services.md):
 sealed updater-authenticated executable receipts, protected exact-owned
-registration and epoch-fenced native observations/control. It has no endpoint,
+registration and epoch-fenced native observations/control.
+macOS admission pins the release Developer ID team and hardened runtime; Windows
+publisher admission remains fail-closed pending authoritative policy.
+Windows registration/start require authenticated
+graceful-stop support rather than destructive task termination. It has no endpoint,
 Ready result or shell-launch ownership. CLI configuration/status/staging remain
 local-only; service commands explicitly refuse until endpoint/native integration
 and qualification. Default legacy/mobile dependencies remain unchanged. See the

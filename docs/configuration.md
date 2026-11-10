@@ -11,6 +11,10 @@ exact resource/executable/creation-epoch receipts in protected host-local state,
 not TOML. It accepts approved journal settings and a sealed authenticated
 executable receipt; a configured path is not launch authority. Manual/sign-in
 registration does not qualify pre-login availability or endpoint readiness.
+macOS executable promotion requires the pinned release Developer ID team and
+hardened runtime; Windows promotion refuses pending publisher policy.
+Windows registration/start and running-task stop also refuse
+pending authenticated graceful-stop support that preserves independent daemons.
 
 Owner enrollment is separately protected host-local policy
 ([authentication API and blockers](host-protocol.md#enrollment-and-secret-boundary-transport-integration-still-gated)).

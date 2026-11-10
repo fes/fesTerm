@@ -1,10 +1,5 @@
-//! Same-user Task Scheduler and handle-bound Authenticode checks.
-use std::{
-    fs::File,
-    io,
-    os::windows::{ffi::OsStrExt, io::AsRawHandle},
-    path::Path,
-};
+//! Same-user Task Scheduler control. Publisher admission is separate and closed.
+use std::io;
 use windows::{
     core::BSTR,
     Win32::System::{
@@ -12,13 +7,17 @@ use windows::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
             COINIT_MULTITHREADED,
         },
-        TaskScheduler::{ITaskService, TaskScheduler, TASK_CREATE, TASK_LOGON_INTERACTIVE_TOKEN},
+        TaskScheduler::{
+            ITaskService, TaskScheduler, TASK_CREATE, TASK_DONT_ADD_PRINCIPAL_ACE,
+            TASK_LOGON_INTERACTIVE_TOKEN,
+        },
         Variant::VARIANT,
     },
 };
 
 #[derive(Clone, Debug)]
 pub enum TaskAction {
+    Prepare(String),
     Query,
     Create(String),
     Start,
@@ -42,7 +41,8 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
     {
         return Err(io::ErrorKind::InvalidInput.into());
     }
-    if matches!(&action, TaskAction::Create(xml) if xml.len() > 64 * 1024) {
+    if matches!(&action, TaskAction::Prepare(xml) | TaskAction::Create(xml) if xml.len() > 64 * 1024)
+    {
         return Err(io::ErrorKind::InvalidInput.into());
     }
     let (sid, _) = crate::current_user_service_context()?;
@@ -66,6 +66,18 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
         service
             .Connect(&empty, &empty, &empty, &empty)
             .map_err(map)?;
+        if let TaskAction::Prepare(xml) = &action {
+            let definition = service.NewTask(0).map_err(map)?;
+            definition
+                .SetXmlText(&BSTR::from(xml.as_str()))
+                .map_err(map)?;
+            return Ok(TaskObservation {
+                xml: Some(bounded(definition.XmlText().map_err(map)?)?),
+                security: Some(task_security_policy(&sid)),
+                state: 0,
+                last_exit: 0,
+            });
+        }
         let folder = service.GetFolder(&BSTR::from("\\")).map_err(map)?;
         let name = BSTR::from(name);
         let task = match &action {
@@ -73,7 +85,7 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
                 .RegisterTask(
                     &name,
                     &BSTR::from(xml.as_str()),
-                    TASK_CREATE.0,
+                    TASK_CREATE.0 | TASK_DONT_ADD_PRINCIPAL_ACE.0,
                     &VARIANT::from(sid.as_str()),
                     &empty,
                     TASK_LOGON_INTERACTIVE_TOKEN,
@@ -100,7 +112,11 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
             TaskAction::Start => {
                 task.Run(&empty).map_err(map)?;
             }
-            TaskAction::Stop => task.Stop(0).map_err(map)?,
+            TaskAction::Stop => {
+                return Err(io::Error::other(
+                    "host.service_windows_authenticated_graceful_stop_unavailable",
+                ));
+            }
             TaskAction::Remove => {
                 folder.DeleteTask(&name, 0).map_err(map)?;
                 return Ok(TaskObservation {
@@ -112,8 +128,9 @@ pub fn task(name: &str, action: TaskAction) -> io::Result<TaskObservation> {
             }
             _ => {}
         }
-        let xml = bounded(task.Xml().map_err(map)?)?;
-        let security = bounded(task.GetSecurityDescriptor(5).map_err(map)?)?;
+        let xml = bounded(task.Definition().map_err(map)?.XmlText().map_err(map)?)?;
+        let raw_security = bounded(task.GetSecurityDescriptor(5).map_err(map)?)?;
+        let security = checked_task_security(&raw_security, &sid)?;
         let state = task.State().map_err(map)?.0;
         let instances = task.GetInstances(0).map_err(map)?.Count().map_err(map)?;
         Ok(TaskObservation {
@@ -140,41 +157,127 @@ fn bounded(text: BSTR) -> io::Result<String> {
     Ok(text)
 }
 
-/// The updater-signed artifact authenticates the publisher and exact bytes.
-/// This additionally requires the native Authenticode chain without UI/network.
-pub fn verify_authenticode(file: &File, path: &Path) -> io::Result<()> {
-    use windows_sys::Win32::Security::WinTrust::*;
-    let name: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
-    let mut info: WINTRUST_FILE_INFO = unsafe { std::mem::zeroed() };
-    info.cbStruct = std::mem::size_of_val(&info) as u32;
-    info.pcwszFilePath = name.as_ptr();
-    info.hFile = file.as_raw_handle();
-    let mut data: WINTRUST_DATA = unsafe { std::mem::zeroed() };
-    data.cbStruct = std::mem::size_of_val(&data) as u32;
-    data.dwUIChoice = WTD_UI_NONE;
-    data.fdwRevocationChecks = WTD_REVOKE_NONE;
-    data.dwUnionChoice = WTD_CHOICE_FILE;
-    data.Anonymous.pFile = &mut info;
-    data.dwStateAction = WTD_STATEACTION_VERIFY;
-    data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
-    let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-    let status = unsafe {
-        WinVerifyTrust(
-            std::ptr::null_mut(),
-            &mut action,
-            (&mut data as *mut WINTRUST_DATA).cast(),
-        )
+fn task_security_policy(sid: &str) -> String {
+    format!("task-owner-system-full-control-v1:{sid}")
+}
+
+fn checked_task_security(sddl: &str, user: &str) -> io::Result<String> {
+    use windows_sys::Win32::{
+        Foundation::LocalFree,
+        Security::{
+            Authorization::{
+                ConvertSecurityDescriptorToStringSecurityDescriptorW,
+                ConvertStringSecurityDescriptorToSecurityDescriptorW,
+            },
+            GetAce, GetSecurityDescriptorControl, GetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE,
+            ACL, SE_DACL_PROTECTED,
+        },
     };
-    data.dwStateAction = WTD_STATEACTION_CLOSE;
-    unsafe {
-        WinVerifyTrust(
+    let refused = || io::Error::other("host.service_task_security_unqualified");
+    let text: Vec<u16> = sddl.encode_utf16().chain([0]).collect();
+    let mut descriptor = std::ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            text.as_ptr(),
+            1,
+            &mut descriptor,
             std::ptr::null_mut(),
-            &mut action,
-            (&mut data as *mut WINTRUST_DATA).cast(),
         )
-    };
-    if status != 0 {
-        return Err(io::Error::other("host.service_authenticode_required"));
+    } == 0
+    {
+        return Err(refused());
     }
-    Ok(())
+    let result = (|| {
+        let mut control = 0;
+        let mut revision = 0;
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut present = 0;
+        let mut defaulted = 0;
+        if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
+            || control & SE_DACL_PROTECTED == 0
+            || unsafe {
+                GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted)
+            } == 0
+            || present == 0
+            || dacl.is_null()
+            || unsafe { (*dacl).AceCount } != 2
+        {
+            return Err(refused());
+        }
+        for index in 0..2 {
+            let mut raw = std::ptr::null_mut();
+            if unsafe { GetAce(dacl, index, &mut raw) } == 0 || raw.is_null() {
+                return Err(refused());
+            }
+            let ace = unsafe { &mut *raw.cast::<ACCESS_ALLOWED_ACE>() };
+            if ace.Header.AceType != 0
+                || ace.Header.AceFlags != 0
+                || !matches!(ace.Mask, 0x1000_0000 | 0x001f_01ff)
+            {
+                return Err(refused());
+            }
+            // Compare equivalent generic/file-all rights using native SDDL
+            // normalization, never a permissive text parser.
+            ace.Mask = 0x1000_0000;
+        }
+        let mut canonical = std::ptr::null_mut();
+        if unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor,
+                1,
+                5,
+                &mut canonical,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(refused());
+        }
+        let mut length = 0;
+        while length < 64 * 1024 && unsafe { *canonical.add(length) } != 0 {
+            length += 1;
+        }
+        let canonical_text = if length < 64 * 1024 {
+            String::from_utf16(unsafe { std::slice::from_raw_parts(canonical, length) })
+                .map_err(|_| refused())
+        } else {
+            Err(refused())
+        };
+        unsafe { LocalFree(canonical.cast()) };
+        let canonical_text = canonical_text?;
+        let expected = [
+            format!("O:{user}D:P(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:P(A;;GA;;;{user})(A;;GA;;;SY)"),
+        ];
+        if !expected.contains(&canonical_text) {
+            return Err(refused());
+        }
+        Ok(task_security_policy(user))
+    })();
+    unsafe { LocalFree(descriptor) };
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_recovery_security_requires_exact_owner_system_protected_dacl() {
+        let user = "S-1-5-21-1-2-3-1001";
+        assert_eq!(
+            checked_task_security(&format!("O:{user}D:P(A;;FA;;;SY)(A;;GA;;;{user})"), user)
+                .unwrap(),
+            task_security_policy(user)
+        );
+        for sddl in [
+            format!("O:{user}D:(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:P(A;;GA;;;WD)(A;;GA;;;{user})"),
+            format!("O:SYD:P(A;;GA;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:P(A;;FR;;;SY)(A;;GA;;;{user})"),
+            format!("O:{user}D:P(A;;GA;;;SY)(A;;GA;;;{user})(A;;FR;;;WD)"),
+        ] {
+            assert!(checked_task_security(&sddl, user).is_err());
+        }
+    }
 }

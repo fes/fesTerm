@@ -1594,3 +1594,8 @@ signed exact-target metadata, immutable verified bytes and bounded archive
 allowlists. It does not
 implement service switching, rollback or migration; the legacy Linux script
 path is not promoted to authenticated setup.
+The component's macOS admission pins the release Developer ID team/runtime;
+Windows promotion refuses pending authoritative publisher policy.
+Windows registration/start and running-task stop also
+refuse until authenticated graceful stop can preserve independent daemons.
+Those are native prerequisites, not enabled headless/desktop controls.

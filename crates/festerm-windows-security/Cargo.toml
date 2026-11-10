@@ -9,7 +9,7 @@ description = "Narrow Windows current-user object security support for fesTerm."
 
 [features]
 default = []
-host-service = ["dep:windows", "windows-sys/Win32_Security_WinTrust", "windows-sys/Win32_Security_Cryptography"]
+host-service = ["dep:windows"]
 
 [target.'cfg(windows)'.dependencies]
 tracing = "0.1"

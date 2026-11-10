@@ -92,8 +92,12 @@ struct Registration {
     digest: String,
     state: PathBuf,
     definition: String,
+    reservation: String,
+    native_expected: Option<String>,
+    native_submitted: bool,
     native_snapshot: Option<String>,
     native_security: Option<String>,
+    retiring_definition: bool,
     removed: bool,
 }
 
@@ -183,7 +187,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         directory: &File,
         snapshot: &Snapshot,
     ) -> io::Result<Option<Registration>> {
-        let bytes = match storage::read_private(directory, Path::new(RECORD), 128 * 1024) {
+        let bytes = match storage::read_private(directory, Path::new(RECORD), 256 * 1024) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
@@ -191,7 +195,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         let record: Registration =
             serde_json::from_slice(&bytes).map_err(|_| refused("host.service_invalid_receipt"))?;
         let resource = definitions::resource(snapshot, record.epoch);
-        if record.version != 1
+        if record.version != 2
             || record.installation != snapshot.installation
             || record.origin != snapshot.origin
             || snapshot.binding.as_ref() != Some(&record.binding)
@@ -202,6 +206,20 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             || record.user != self.context.user
             || record.platform != self.context.platform
             || record.definition != definitions::render(&record)?
+            || uuid::Uuid::parse_str(&record.reservation).is_err()
+            || (record.platform == Platform::Windows
+                && (record.native_expected.as_ref().is_none_or(|xml| {
+                    !xml.contains(&format!("fesTerm-host-reservation:{}", record.reservation))
+                }) || record.native_security.as_deref()
+                    != Some(format!("task-owner-system-full-control-v1:{}", record.user).as_str())
+                    || record.native_snapshot.as_ref().is_some_and(|xml| {
+                        Some(xml) != record.native_expected.as_ref() || !record.native_submitted
+                    })))
+            || (record.platform != Platform::Windows
+                && (record.native_expected.is_some()
+                    || record.native_submitted
+                    || record.native_security.is_some()
+                    || record.native_snapshot.is_some()))
         {
             return Err(refused("host.service_foreign_receipt"));
         }
@@ -215,6 +233,32 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 self.read_registration(directory, snapshot)?,
             ))
         })
+    }
+
+    fn reconciled_registration(&self) -> io::Result<(Snapshot, Option<Registration>)> {
+        let (snapshot, registration) = self.registration()?;
+        let Some(mut record) = registration else {
+            return Ok((snapshot, None));
+        };
+        if record.platform == Platform::Windows && record.native_snapshot.is_none() {
+            let observed = self.task(&record, TaskAction::Query)?;
+            match (&observed.xml, &observed.security) {
+                (Some(xml), Some(security))
+                    if record.native_submitted
+                        && Some(xml) == record.native_expected.as_ref()
+                        && Some(security) == record.native_security.as_ref() =>
+                {
+                    record.native_snapshot = observed.xml;
+                    self.remember_created_task(&record)?;
+                }
+                (None, None) if !record.native_submitted => {}
+                (None, None) => {
+                    return Err(refused("host.service_task_registration_outcome_unknown"));
+                }
+                _ => return Err(refused("host.service_foreign_native_definition")),
+            }
+        }
+        Ok((snapshot, Some(record)))
     }
 
     fn fence(&self, epoch: u64, phase: Phase) -> io::Result<Snapshot> {
@@ -250,9 +294,10 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 .read_registration(directory, snapshot)?
                 .ok_or_else(|| refused("host.service_not_installed"))?;
             if prior.native_snapshot.is_some()
-                || prior.native_security.is_some()
                 || record.native_snapshot.is_none()
                 || record.native_security.is_none()
+                || prior.native_expected.as_ref() != record.native_snapshot.as_ref()
+                || prior.native_security != record.native_security
             {
                 return Err(refused("host.service_foreign_native_definition"));
             }
@@ -315,12 +360,18 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         let process = match self.context.platform {
             Platform::Linux => {
                 let output = self.command(&["--user", "--no-pager", "show", &record.resource,
-                    "--property=LoadState,FragmentPath,DropInPaths,ActiveState,SubState,ExecMainPID,ExecMainStatus"])?;
+                    "--property=Id,LoadState,FragmentPath,DropInPaths,ActiveState,SubState,MainPID,Result,ExecMainCode,ExecMainStatus"])?;
                 let process = definitions::linux_state(
                     &output.stdout,
                     &definitions::definition_path(&self.context, record),
                 )?;
-                if !output.success && process != ProcessState::Absent {
+                if !output.success
+                    && process != ProcessState::Absent
+                    && !(record.retiring_definition
+                        && process == ProcessState::Failed
+                        && output.code == 1
+                        && definitions::linux_missing_unit(&output.stdout)?)
+                {
                     return Err(refused("host.service_observation_unavailable"));
                 }
                 Ok(process)
@@ -349,6 +400,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                     &observed.xml,
                     &observed.security,
                 ) {
+                    (None, _, None, None) if record.native_submitted => {
+                        Err(refused("host.service_task_registration_outcome_unknown"))
+                    }
                     (_, _, None, None) => Ok(ProcessState::Absent),
                     (Some(expected), Some(security), Some(actual), Some(actual_security))
                         if expected == actual && security == actual_security =>
@@ -368,7 +422,10 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 }
             }
         }?;
-        if !definition && process != ProcessState::Absent {
+        if !definition
+            && process != ProcessState::Absent
+            && !(self.context.platform == Platform::Linux && record.retiring_definition)
+        {
             return Err(refused("host.service_foreign_native_definition"));
         }
         Ok(process)
@@ -376,7 +433,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
 
     pub fn status(&self) -> io::Result<Observation> {
         let _lease = self.lease()?;
-        let (snapshot, registration) = self.registration()?;
+        let (snapshot, registration) = self.reconciled_registration()?;
         let process = match registration {
             Some(record) => self.observe(&record)?,
             None => return Err(refused("host.service_not_installed_no_native_observation")),
@@ -386,10 +443,19 @@ impl<'a, R: CommandRunner> Services<'a, R> {
 
     /// Registers only; never starts the incomplete host endpoint.
     pub fn install(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
+        if self.context.platform == Platform::Windows {
+            return Err(refused(
+                "host.service_windows_authenticated_graceful_stop_unavailable",
+            ));
+        }
+        self.install_reserved(stage, epoch)
+    }
+
+    fn install_reserved(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::Provisioned)?;
         stage.revalidate()?;
-        let (_, prior) = self.registration()?;
+        let (_, prior) = self.reconciled_registration()?;
         let new = prior.is_none();
         let mut record = if let Some(record) = prior {
             if record.executable != stage.path
@@ -402,7 +468,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             record
         } else {
             let mut record = Registration {
-                version: 1,
+                version: 2,
                 installation: snapshot.installation.clone(),
                 origin: snapshot.origin,
                 binding: snapshot
@@ -418,11 +484,29 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                 digest: stage.digest.clone(),
                 state: self.state.clone(),
                 definition: String::new(),
+                reservation: uuid::Uuid::new_v4().to_string(),
+                native_expected: None,
+                native_submitted: false,
                 native_snapshot: None,
                 native_security: None,
+                retiring_definition: false,
                 removed: false,
             };
             record.definition = definitions::render(&record)?;
+            if self.context.platform == Platform::Windows {
+                let prepared =
+                    self.task(&record, TaskAction::Prepare(record.definition.clone()))?;
+                record.native_expected = Some(
+                    prepared
+                        .xml
+                        .ok_or_else(|| refused("host.service_task_reservation_unconfirmed"))?,
+                );
+                record.native_security = Some(
+                    prepared
+                        .security
+                        .ok_or_else(|| refused("host.service_task_reservation_unconfirmed"))?,
+                );
+            }
             self.with_record(|directory, current| {
                 if current != &snapshot {
                     return Err(refused("host.service_stale_or_unapproved_operation"));
@@ -464,8 +548,19 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                     }
                 } else {
                     self.fence(epoch, Phase::Provisioned)?;
+                    if record.native_submitted {
+                        return Err(refused("host.service_task_registration_outcome_unknown"));
+                    }
+                    record.native_submitted = true;
+                    self.save(&record, epoch, Phase::Provisioned)?;
+                    self.fence(epoch, Phase::Provisioned)?;
                     let created =
-                        self.task(&record, TaskAction::Create(record.definition.clone()))?;
+                        self.task(
+                            &record,
+                            TaskAction::Create(record.native_expected.clone().ok_or_else(
+                                || refused("host.service_task_reservation_unconfirmed"),
+                            )?),
+                        )?;
                     record.native_snapshot = Some(
                         created
                             .xml
@@ -509,11 +604,16 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         epoch: u64,
         credentials: impl Fn() -> io::Result<()>,
     ) -> io::Result<Observation> {
+        if self.context.platform == Platform::Windows {
+            return Err(refused(
+                "host.service_windows_authenticated_graceful_stop_unavailable",
+            ));
+        }
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::Provisioned)?;
         credentials()?;
         stage.revalidate()?;
-        let (_, record) = self.registration()?;
+        let (_, record) = self.reconciled_registration()?;
         let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
         if record.executable != stage.path
             || record.digest != stage.digest
@@ -524,7 +624,8 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         }
         let before = self.observe(&record)?;
         if before == ProcessState::Transitioning {
-            return Err(refused("host.service_start_in_progress"));
+            self.fence(epoch, Phase::Provisioned)?;
+            return Ok(observation(&snapshot, before));
         }
         if before != ProcessState::Running {
             self.fence(epoch, Phase::Provisioned)?;
@@ -546,13 +647,23 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                         &format!("gui/{}/{}", record.user, record.resource),
                     ])?;
                 }
-                Platform::Windows => {
-                    self.task(&record, TaskAction::Start)?;
-                }
+                Platform::Windows => unreachable!(),
             }
         }
         self.fence(epoch, Phase::Provisioned)?;
-        let process = self.observe(&record)?;
+        let mut process = self.observe(&record)?;
+        for _ in 0..2 {
+            if process == ProcessState::Running || process == ProcessState::Failed {
+                break;
+            }
+            self.fence(epoch, Phase::Provisioned)?;
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            process = self.observe(&record)?;
+        }
+        self.fence(epoch, Phase::Provisioned)?;
+        if process == ProcessState::Transitioning {
+            return Ok(observation(&snapshot, process));
+        }
         if process != ProcessState::Running {
             return Err(refused("host.service_start_not_observed_running"));
         }
@@ -562,7 +673,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     pub fn stop(&self, epoch: u64) -> io::Result<Observation> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::StopRequested)?;
-        let (_, record) = self.registration()?;
+        let (_, record) = self.reconciled_registration()?;
         let record = record.ok_or_else(|| refused("host.service_not_installed"))?;
         let state = self.observe(&record)?;
         if matches!(state, ProcessState::Running | ProcessState::Transitioning) {
@@ -574,7 +685,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
                     &format!("gui/{}/{}", record.user, record.resource),
                 ])?,
                 Platform::Windows => {
-                    self.task(&record, TaskAction::Stop)?;
+                    return Err(refused(
+                        "host.service_windows_authenticated_graceful_stop_unavailable",
+                    ));
                 }
             }
         }
@@ -594,7 +707,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     pub fn cleanup(&self, epoch: u64) -> io::Result<Observation> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::CleanupPending)?;
-        let (_, record) = self.registration()?;
+        let (_, record) = self.reconciled_registration()?;
         let mut record = record.ok_or_else(|| refused("host.service_not_installed"))?;
         let before = self.observe(&record)?;
         if record.removed {
@@ -616,11 +729,23 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         self.fence(epoch, Phase::CleanupPending)?;
         match self.context.platform {
             Platform::Linux => {
-                self.run(&["--user", "disable", "--no-reload", &record.resource])?;
+                if definitions::check_file(&self.context, &record)? {
+                    self.run(&["--user", "disable", "--no-reload", &record.resource])?;
+                } else if !record.retiring_definition {
+                    return Err(refused(
+                        "host.service_definition_removed_without_owned_intent",
+                    ));
+                }
                 self.fence(epoch, Phase::CleanupPending)?;
+                record.retiring_definition = true;
+                self.save(&record, epoch, Phase::CleanupPending)?;
                 definitions::remove_file(&self.context, &record)?;
                 self.fence(epoch, Phase::CleanupPending)?;
                 self.run(&["--user", "daemon-reload"])?;
+                if self.observe(&record)? == ProcessState::Failed {
+                    self.fence(epoch, Phase::CleanupPending)?;
+                    self.run(&["--user", "reset-failed", &record.resource])?;
+                }
             }
             Platform::Macos => {
                 if before != ProcessState::Absent {

@@ -23,7 +23,8 @@ pub struct TrustedStage {
 
 impl TrustedStage {
     pub fn publish(artifact: &VerifiedArtifact, root: &Path) -> io::Result<Self> {
-        Self::publish_with(artifact, root, native_signature)
+        native_publisher_admission(std::env::consts::OS)?;
+        Self::publish_with(artifact, root, native_publisher_qualification)
     }
 
     fn publish_with(
@@ -92,26 +93,79 @@ impl TrustedStage {
     }
 }
 
-fn native_signature(file: &File, path: &Path) -> io::Result<()> {
+fn native_publisher_qualification(_: &File, path: &Path) -> io::Result<()> {
+    native_publisher_admission(std::env::consts::OS)?;
     #[cfg(target_os = "macos")]
     {
         use super::native::{CommandRunner, NativeRequest, NativeRunner};
-        let result = NativeRunner.execute(&NativeRequest::Process {
+        let verified = NativeRunner.execute(&NativeRequest::Process {
             tool: "/usr/bin/codesign".into(),
-            args: ["--verify", "--strict", "--all-architectures"]
-                .into_iter()
-                .map(Into::into)
-                .chain([path.as_os_str().to_owned()])
-                .collect(),
+            args: [
+                "--verify".into(),
+                "--strict".into(),
+                "--all-architectures".into(),
+                format!(
+                    "-R=anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"{MACOS_RELEASE_TEAM}\""
+                ).into(),
+                path.as_os_str().to_owned(),
+            ]
+            .into(),
         })?;
-        if !result.success {
-            return Err(refused("host.service_native_signature_required"));
+        if !verified.success {
+            return Err(refused("host.service_macos_release_publisher_required"));
         }
+        let metadata = super::native::signature_metadata(path)?;
+        if !metadata.success {
+            return Err(refused("host.service_macos_release_publisher_required"));
+        }
+        macos_publisher_metadata(&metadata.stdout)?;
     }
-    #[cfg(windows)]
-    festerm_windows_security::host_service::verify_authenticode(file, path)?;
-    let _ = (file, path);
+    let _ = path;
     Ok(())
+}
+
+// Protected release environment APPLE_SIGNING_IDENTITY, not candidate metadata.
+#[cfg(any(target_os = "macos", test))]
+const MACOS_RELEASE_TEAM: &str = "F884J4784J";
+#[cfg(any(target_os = "macos", test))]
+fn macos_publisher_metadata(bytes: &[u8]) -> io::Result<()> {
+    const HARDENED_RUNTIME: u32 = 0x10000;
+    const AD_HOC: u32 = 0x2;
+    let invalid = || refused("host.service_macos_release_publisher_and_runtime_required");
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid())?;
+    let teams: Vec<_> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("TeamIdentifier="))
+        .collect();
+    let flags: Vec<_> = text
+        .lines()
+        .filter(|line| line.starts_with("CodeDirectory "))
+        .flat_map(str::split_whitespace)
+        .filter_map(|field| field.strip_prefix("flags="))
+        .collect();
+    if teams != [MACOS_RELEASE_TEAM] || flags.len() != 1 {
+        return Err(invalid());
+    }
+    let flags = flags[0]
+        .split('(')
+        .next()
+        .and_then(|flags| flags.strip_prefix("0x"))
+        .and_then(|flags| u32::from_str_radix(flags, 16).ok())
+        .ok_or_else(invalid)?;
+    if flags & HARDENED_RUNTIME == 0 || flags & AD_HOC != 0 {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn native_publisher_admission(platform: &str) -> io::Result<()> {
+    match platform {
+        "linux" | "macos" => Ok(()),
+        "windows" => Err(refused(
+            "host.service_windows_release_publisher_policy_unconfigured",
+        )),
+        _ => Err(refused("host.service_unsupported_platform")),
+    }
 }
 
 #[cfg(test)]
@@ -227,6 +281,79 @@ pub(super) fn same(left: &File, right: &File) -> io::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_publisher_admission_never_substitutes_generic_signature_trust() {
+        assert!(native_publisher_admission("windows").is_err());
+        let root = storage::private_test_directory();
+        let artifact = crate::artifacts::host_staging_fixture();
+        #[cfg(target_os = "linux")]
+        TrustedStage::publish(&artifact, &root.path().join("linux-public"))
+            .unwrap()
+            .revalidate()
+            .unwrap();
+        #[cfg(windows)]
+        {
+            assert!(TrustedStage::publish(&artifact, &root.path().join("public")).is_err());
+            assert!(!root.path().join("public").exists());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert!(TrustedStage::publish(&artifact, &root.path().join("public")).is_err());
+            let path = root
+                .path()
+                .join("public")
+                .join(format!("executable-{}", artifact.manifest().sha256))
+                .join("festerm-host");
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        let cache = root.path().join("artifacts");
+        assert!(
+            TrustedStage::publish_with(&artifact, &cache, |_, _| native_publisher_admission(
+                "windows"
+            ))
+            .is_err()
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let executable = cache
+                .join(format!("executable-{}", artifact.manifest().sha256))
+                .join("festerm-host");
+            assert_eq!(
+                std::fs::metadata(executable).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn macos_publisher_policy_requires_exact_team_nonadhoc_and_hardened_runtime() {
+        let approved = "TeamIdentifier=F884J4784J\nCodeDirectory v=20500 size=320 flags=0x10000(runtime) hashes=1+2\n";
+        macos_publisher_metadata(approved.as_bytes()).unwrap();
+        for rejected in [
+            approved.replace("F884J4784J", "OTHERTEAM1"),
+            approved.replace("F884J4784J", "not set"),
+            approved.replace("0x10000(runtime)", "0x0(none)"),
+            approved.replace("0x10000(runtime)", "0x10002(adhoc,runtime)"),
+            format!("{approved}TeamIdentifier=F884J4784J\n"),
+            approved.replace("0x10000(runtime)", "invalid"),
+        ] {
+            assert!(macos_publisher_metadata(rejected.as_bytes()).is_err());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_native_gate_rejects_apple_signed_foreign_publisher() {
+        let path = Path::new("/usr/bin/true");
+        let file = File::open(path).unwrap();
+        assert!(native_publisher_qualification(&file, path).is_err());
+    }
 
     #[test]
     fn authenticated_executable_publication_keeps_data_private_and_refuses_changed_cache() {

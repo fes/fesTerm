@@ -210,3 +210,7 @@ The off-default [native service component](native-host-services.md) has a
 separate sealed executable-receipt factory for exact verified `Package::Host`
 bytes. Ordinary staging/acquisition paths remain data only; the component is
 not wired to incomplete endpoint/CLI setup and does not qualify native releases.
+macOS promotion requires Apple's Developer ID chain, the pinned release team
+and hardened runtime. Windows promotion refuses before cache publication pending
+authoritative publisher/certificate and revocation policy; any trusted signer
+is not substituted.

@@ -117,7 +117,11 @@ evidence, executable-publication qualification and the new endpoint remain separ
 The off-default `native-services` library now provides real same-user
 registration/control and authenticated executable-publication APIs, with
 deterministic native-adapter fixtures. It is not connected to CLI commands or
-desktop controls and does not qualify the incomplete endpoint. See the
+desktop controls and does not qualify the incomplete endpoint. macOS admission
+requires the pinned release Developer ID team and hardened runtime; Windows
+admission refuses until authoritative publisher policy exists;
+Windows registration/start additionally refuse until authenticated graceful stop
+can preserve independent daemons. See the
 [API, startup semantics and native prerequisites](native-host-services.md).
 
 The opt-in library `owner-enrollment` API supports protected local public-key

@@ -3432,6 +3432,13 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 | --- | --- | --- | --- |
 | HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/schema-2 host packaging, bounded pin acquisition/staging and native-control/executable-publication fixtures; actual signed native service/executable acceptance and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, integration/qualification of the [same-user native component](native-host-services.md), trusted first-verifier delivery and native publisher/executable acceptance. Windows/macOS/Linux startup, interrupted registration/cleanup, unavailable-manager/vault behavior and daemon independence require real platform evidence; fixture success is not that evidence. |
 
+The shared native service component requires signed-release qualification of
+its pinned macOS Developer ID/team/runtime gate. Windows promotion remains
+blocked pending authoritative publisher identity and revocation policy.
+Windows registration/start and running-task stop additionally require
+authenticated graceful stop and daemon-independence qualification; generic
+signature validity or Task Scheduler termination is not acceptance evidence.
+
 ## ADR 0084 owner enrollment qualification
 
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |

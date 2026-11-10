@@ -68,13 +68,14 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
     let state = path_text(&record.state)?;
     match record.platform {
         Platform::Linux => Ok(format!(
-            "[Unit]\nDescription=fesTerm host {}\n[Service]\nType=exec\nExecStart={} run --state-dir {}\nRestart=no\nKillMode=process\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=default.target\n",
+            "[Unit]\nDescription=fesTerm host {}\n[Service]\nType=exec\nExecStart={} run --state-dir {}\nRestart=no\nTimeoutStartSec=10s\nTimeoutStopSec=10s\nSendSIGKILL=no\nKillMode=process\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=default.target\n",
             record.resource, systemd(executable), systemd(state))),
         Platform::Macos => Ok(format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
              <key>Label</key><string>{}</string><key>ProgramArguments</key><array>\
              <string>{}</string><string>run</string><string>--state-dir</string><string>{}</string></array>\
              <key>RunAtLoad</key><{}/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><true/>\
+             <key>ExitTimeOut</key><integer>10</integer>\
              <key>StandardOutPath</key><string>/dev/null</string><key>StandardErrorPath</key><string>/dev/null</string>\
              </dict></plist>\n", xml(&record.resource), xml(executable), xml(state),
             if record.settings.startup == Startup::UserSignIn { "true" } else { "false" })),
@@ -90,7 +91,7 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
             Ok(format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\
                  <Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\
-                 <RegistrationInfo><URI>\\{}</URI></RegistrationInfo><Triggers>{}</Triggers>\
+                 <RegistrationInfo><URI>\\{}</URI><Source>fesTerm-host-reservation:{}</Source></RegistrationInfo><Triggers>{}</Triggers>\
                  <Principals><Principal id=\"User\"><UserId>{}</UserId><LogonType>InteractiveToken</LogonType>\
                  <RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\
                  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\
@@ -99,7 +100,7 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
                  <StartWhenAvailable>false</StartWhenAvailable><Enabled>true</Enabled>\
                  <ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings>\
                  <Actions Context=\"User\"><Exec><Command>{}</Command><Arguments>{}</Arguments></Exec></Actions></Task>",
-                xml(&record.resource), trigger, xml(&record.user), xml(executable), xml(&arguments)))
+                xml(&record.resource), xml(&record.reservation), trigger, xml(&record.user), xml(executable), xml(&arguments)))
         }
     }
 }
@@ -238,40 +239,54 @@ fn properties(bytes: &[u8]) -> io::Result<BTreeMap<&str, &str>> {
 pub(super) fn linux_state(bytes: &[u8], path: &Path) -> io::Result<ProcessState> {
     let properties = properties(bytes)?;
     let value = |key| properties.get(key).copied();
-    if value("DropInPaths") != Some("") {
+    if value("DropInPaths") != Some("")
+        || value("Id") != path.file_name().and_then(|name| name.to_str())
+    {
         return Err(refused("host.service_foreign_native_definition"));
     }
     if value("LoadState") == Some("not-found")
         && value("FragmentPath") == Some("")
         && value("ActiveState") == Some("inactive")
-        && value("ExecMainPID") == Some("0")
+        && value("SubState") == Some("dead")
+        && value("MainPID") == Some("0")
     {
         return Ok(ProcessState::Absent);
     }
-    if value("LoadState") != Some("loaded") || value("FragmentPath") != Some(path_text(path)?) {
+    let retired_failure = value("LoadState") == Some("not-found")
+        && value("FragmentPath") == Some("")
+        && value("ActiveState") == Some("failed");
+    if !retired_failure
+        && (value("LoadState") != Some("loaded") || value("FragmentPath") != Some(path_text(path)?))
+    {
         return Err(refused("host.service_foreign_native_definition"));
     }
-    match (
-        value("ActiveState"),
-        value("SubState"),
-        value("ExecMainPID"),
-    ) {
+    match (value("ActiveState"), value("SubState"), value("MainPID")) {
         (Some("active"), Some("running"), Some(pid))
             if pid.parse::<u32>().is_ok_and(|pid| pid != 0) =>
         {
             Ok(ProcessState::Running)
         }
-        (Some("inactive"), Some("dead"), Some("0")) => match value("ExecMainStatus") {
-            Some("0") => Ok(ProcessState::Stopped),
-            Some(status) if status.parse::<i32>().is_ok_and(|status| status != 0) => {
-                Ok(ProcessState::Failed)
+        (Some("inactive"), Some("dead"), Some("0"))
+            if value("ExecMainCode").is_some_and(|code| code.parse::<u32>().is_ok())
+                && value("ExecMainStatus").is_some_and(|status| status.parse::<i32>().is_ok()) =>
+        {
+            match value("Result") {
+                Some("success") => Ok(ProcessState::Stopped),
+                Some(
+                    "exit-code" | "signal" | "core-dump" | "timeout" | "watchdog"
+                    | "start-limit-hit" | "resources" | "protocol" | "oom-kill",
+                ) => Ok(ProcessState::Failed),
+                _ => Err(refused("host.service_observation_unqualified")),
             }
-            _ => Err(refused("host.service_observation_unqualified")),
-        },
-        (Some("failed"), _, Some("0")) => Ok(ProcessState::Failed),
+        }
+        (Some("failed"), Some("failed"), Some("0")) => Ok(ProcessState::Failed),
         (Some("activating" | "deactivating"), _, _) => Ok(ProcessState::Transitioning),
         _ => Err(refused("host.service_observation_unqualified")),
     }
+}
+
+pub(super) fn linux_missing_unit(bytes: &[u8]) -> io::Result<bool> {
+    Ok(properties(bytes)?.get("LoadState") == Some(&"not-found"))
 }
 
 pub(super) fn mac_state(

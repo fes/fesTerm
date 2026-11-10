@@ -52,6 +52,19 @@ does not lose ownership evidence. CLI setup/run remain unavailable; the actual
 endpoint, foreground sign-in, native signing/startup/cleanup and daemon-lifetime
 qualification remain prerequisites. ADR 0084 stays Proposed.
 
+The native component now treats historical systemd exit identity separately
+from current `MainPID`, journals definition retirement for crash-safe scoped
+failed-unit cleanup, and bounds transition reconciliation under one native
+budget. Task registration reserves immutable marker/configuration/ACL evidence
+before submission and can recover matching late observations without restoring
+consent. Windows registration/start and running-task stop explicitly refuse
+until an authenticated graceful-stop path preserves independent daemons.
+macOS admission now pins the actual release environment's Developer ID team
+and requires Apple's chain and hardened runtime, rather than learning trust
+from an artifact or arbitrary app. Windows promotion refuses pending its
+authoritative publisher/certificate and revocation policy; any trusted signer
+is not that policy.
+
 ## Establishing helper publisher authenticity without a second trust root
 
 ADR 0084 stage 7 needs independent Linux publisher authentication, not a hash
