@@ -472,10 +472,13 @@ changes are part of the stage-1 contract slice.
 - **Automated evidence (stage 1):**
   `host_wire_fixture_is_canonical_and_not_legacy_protocol`,
   `host_wire_rejects_malformed_oversized_and_version_mismatched_input`,
+  `host_version_header_precedes_future_or_real_legacy_body_decoding`,
+  `host_zero_field_variants_reject_embedded_authority_and_lifetime_fields`,
   `host_operations_roundtrip_without_conflating_detach_end_or_absence`,
   `host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values`,
   `host_response_correlation_rejects_wrong_target_operation_and_temporary_lease`,
   `host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors`,
+  `host_inventory_response_requires_exact_forward_cursor_progression`,
   `host_aggregate_budgets_refuse_saturation_and_release_exact_permits`,
   `host_admission_fence_rejects_revocation_replacement_and_operation_change`,
   `host_owner_authentication_matches_domain_bound_signature_fixture`,
@@ -483,6 +486,8 @@ changes are part of the stage-1 contract slice.
   `host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed`,
   `host_owner_admission_requires_current_shared_exact_generation_and_absence`,
   `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
+  `host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes`
+  additionally proves current-authorize state/generation/ABA revision fencing.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and

@@ -54,6 +54,12 @@ not the semantic-validation API. Public fields let trusted callers build values;
 Before adopting any reply, `Envelope<Response>::validate_for(&request)` checks
 host/operation, response kind and logical/generation/attachment correlation,
 including temporary creation lease ownership.
+Decoding inspects the bounded envelope header first: a mismatched marker/version
+returns UnsupportedVersion even when its future/legacy body has an unknown
+schema. Current-version bodies still undergo full strict decoding. Zero-field
+tagged variants are Rust struct variants (`Request::Capabilities {}`,
+`Lifetime::Persistent {}`, and the non-running lookup results), preserving the
+same JSON while rejecting extra authority/lifetime fields.
 
 The future transport must read a four-byte big-endian payload length and refuse
 zero or more than 65,536 bytes **before allocating/reading the body**. One body
@@ -92,7 +98,7 @@ not sandbox or filesystem/MCP grants. Native shell/cwd eligibility is still the
 session manager's responsibility. Recipes compare structurally; don't normalize
 them into shell text. Name is a bounded label (128 bytes), never identity.
 
-`Lifetime::Persistent` survives detach/host-bridge exit, not OS reboot.
+`Lifetime::Persistent {}` survives detach/host-bridge exit, not OS reboot.
 `Temporary { reconnect_grace_seconds: 60 }` accepts only the initial 60-second
 policy; qualification is pending. An owning `TemporaryLease` carries a distinct
 lease ID, monotonic epoch and attachment. The future durable supervisor must
@@ -192,7 +198,11 @@ Until installed/reviewed, an owner grant must not be reconstructed from config.
   a denied/uncertain record. Manager integration must compare recipes and
   serialize reservations before effects.
 - Capture connection/host/grant/operation epochs, host/principal/logical/
-  generation/operation IDs in `AdmissionFence`. Revalidate against fresh
+  generation/operation IDs and admitted logical state/record revision in
+  `AdmissionFence`. `SessionGrant.revision` is a protected nonzero `Epoch` that
+  advances on every record transition, including Absent → Running → Absent.
+  Ensure/Lookup captures must change on a running-generation replacement even
+  though their requests do not carry a generation pin. Revalidate against fresh
   authoritative state under the **same admission/journal boundary as the
   disclosure or daemon IPC**. Checking two copies of a captured fence is not
   revalidation. Never hold that lock across network I/O; revoke/cancel first,
@@ -233,6 +243,9 @@ private count is returned. A cursor selects only within its retained
 host/principal/epoch-bound snapshot. Forged offsets cannot add records or make
 an authoritative absence claim. Refresh creates a new bounded snapshot;
 epoch change invalidates all pages.
+Reply correlation additionally requires each continuation to advance by exactly
+`PAGE_SIZE` from the requested offset (or from zero for a first page). Repeated,
+backward or skipped cursors refuse rather than trapping the client in a loop.
 
 ## Evidence and remaining gates
 
@@ -243,6 +256,13 @@ epoch/generation/operation changes. Bridge `owner_auth::tests` covers a pinned
 signature fixture, foreign-key/tampered/cross-connection proof, deadlines,
 revocation/rollback, exact shared-generation grants, default deny and
 creation-disabled resume. Fixture seed `[7; 32]` is synthetic test-only material.
+Review regressions exercise real current reauthorization across logical-state,
+generation and revision changes, version-first refusal of actual legacy/future
+shapes, strict zero-field variants and non-progressing pagination.
+The three-platform CI quality matrix explicitly enables `owner-auth` in its
+bridge relay test and Dev Tunnels clippy combinations, so these optional
+security proofs compile, run and lint on Linux, macOS and Windows. This is
+portable regression coverage, not native enrollment/channel/service acceptance.
 
 There is no actual legacy migration: existing profiles/protocol/host-key/vault/
 grants remain unchanged. No legacy import acquires an owner enrollment,

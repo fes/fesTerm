@@ -80,6 +80,9 @@ pub struct SessionGrant {
     pub owner: PrincipalId,
     pub remote_access: bool,
     pub state: LogicalState,
+    /// Protected monotonic record revision, advanced on every transition,
+    /// including a return to a previous state (Absent -> Running -> Absent).
+    pub revision: Epoch,
 }
 
 impl Budgets {
@@ -168,6 +171,8 @@ pub struct AdmissionFence {
     pub operation_epoch: Epoch,
     pub operation: OperationId,
     pub logical: Option<LogicalSessionId>,
+    pub logical_state: Option<LogicalState>,
+    pub logical_revision: Option<Epoch>,
     pub target: Option<Target>,
 }
 
@@ -178,11 +183,19 @@ impl AdmissionFence {
         if self != current {
             return Err(ContractError::Stale);
         }
-        if self
-            .target
-            .as_ref()
-            .is_some_and(|target| self.logical.as_ref() != Some(&target.logical))
+        if self.logical.is_some() != self.logical_state.is_some()
+            || self.logical.is_some() != self.logical_revision.is_some()
+            || matches!(
+                self.logical_state,
+                Some(LogicalState::Unknown | LogicalState::Revoked)
+            )
         {
+            return Err(ContractError::Malformed);
+        }
+        if self.target.as_ref().is_some_and(|target| {
+            self.logical.as_ref() != Some(&target.logical)
+                || self.logical_state != Some(LogicalState::Running(target.generation))
+        }) {
             return Err(ContractError::Malformed);
         }
         Ok(())
