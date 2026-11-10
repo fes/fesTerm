@@ -106,6 +106,41 @@ struct Record {
     binding: OwnerBinding,
     reference: String,
     ready: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    originals: Option<OriginalsAnchor>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct OriginalsAnchor {
+    reference: String,
+    ready: bool,
+    pending: Option<String>,
+}
+
+pub(super) struct OriginalCommit<'a> {
+    directory: &'a File,
+    name: PathBuf,
+    record: &'a mut Record,
+}
+
+impl OriginalCommit<'_> {
+    pub(super) fn pending(&self) -> Option<&str> {
+        self.record
+            .originals
+            .as_ref()
+            .and_then(|anchor| anchor.pending.as_deref())
+    }
+
+    pub(super) fn mark(&mut self, pending: Option<String>) -> Result<(), Error> {
+        self.record
+            .originals
+            .as_mut()
+            .ok_or(Error::Storage)?
+            .pending = pending;
+        let bytes = serde_json::to_vec(self.record).map_err(|_| Error::Storage)?;
+        storage::replace_private(self.directory, &self.name, &bytes).map_err(storage_error)
+    }
 }
 
 /// A reopened local receipt still requires an explicit connection action and
@@ -144,6 +179,59 @@ impl Drop for Lease {
 }
 
 impl ReceiptIndex {
+    pub(super) fn with_originals<T>(
+        &self,
+        vault: &dyn SecretStore,
+        owner: &OwnerBinding,
+        key: &SecretReference,
+        initialize: bool,
+        action: impl FnOnce(&SecretReference, bool, &mut OriginalCommit<'_>) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let directory = self.directory(false)?;
+        let _lease = Self::lease(&directory, &owner.host.host, &owner.account)?;
+        let mut record = Self::read(&directory, &owner.host.host, &owner.account)?;
+        if !record.ready
+            || record.binding != *owner
+            || record.reference != key.to_persisted_string()
+        {
+            return Err(Error::BindingMismatch);
+        }
+        Self::receipt(vault, &record)?;
+        let name = Self::name(&owner.host.host, &owner.account, "json")?;
+        let newly_reserved = record.originals.is_none();
+        if newly_reserved {
+            if !initialize {
+                return Err(Error::Incomplete);
+            }
+            record.originals = Some(OriginalsAnchor {
+                reference: SecretReference::generate().to_persisted_string(),
+                ready: false,
+                pending: None,
+            });
+            record.version = 2;
+            let bytes = serde_json::to_vec(&record).map_err(|_| Error::Storage)?;
+            storage::replace_private(&directory, &name, &bytes).map_err(storage_error)?;
+        }
+        let anchor = record.originals.as_ref().ok_or(Error::Storage)?;
+        let reference = SecretReference::parse(&anchor.reference).map_err(|_| Error::Storage)?;
+        let ready = anchor.ready;
+        let result = action(
+            &reference,
+            newly_reserved,
+            &mut OriginalCommit {
+                directory: &directory,
+                name: name.clone(),
+                record: &mut record,
+            },
+        )?;
+        if !ready {
+            record.originals.as_mut().ok_or(Error::Storage)?.ready = true;
+            let bytes = serde_json::to_vec(&record).map_err(|_| Error::Storage)?;
+            storage::replace_private(&directory, &name, &bytes).map_err(storage_error)?;
+        }
+        Ok(result)
+    }
+
     /// App-selected private sandbox, never a path from imported metadata.
     pub fn in_app_sandbox(root: &Path) -> Result<Self, Error> {
         // The native composition root, never imported metadata, supplies this
@@ -225,7 +313,8 @@ impl ReceiptIndex {
         .map_err(storage_error)?;
         let record: Record = serde_json::from_slice(&bytes).map_err(|_| Error::Storage)?;
         record.binding.validate().map_err(|_| Error::Storage)?;
-        if record.version != 1
+        if !matches!(record.version, 1 | 2)
+            || (record.version == 2 && record.originals.is_none())
             || &record.binding.host.host != host
             || record.binding.account != account
         {
@@ -248,7 +337,7 @@ impl ReceiptIndex {
         })
     }
 
-    fn prepare_with(
+    pub(super) fn prepare_with(
         &self,
         vault: &dyn SecretStore,
         reviewed: ReviewedOwner,
@@ -266,6 +355,7 @@ impl ReceiptIndex {
                     binding,
                     reference: SecretReference::generate().to_persisted_string(),
                     ready: false,
+                    originals: None,
                 };
                 let bytes = serde_json::to_vec(&record).map_err(|_| Error::Storage)?;
                 Self::publish_new(&directory, &name, &bytes).map_err(storage_error)?;

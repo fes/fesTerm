@@ -592,6 +592,43 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+### Protected mobile original-action checkpoints
+
+Durable reconciliation is a current ADR0084 requirement, with a narrow
+client-bound checkpoint factory as its architectural enabler. A private,
+versioned owner receipt reserves an opaque native-vault payload reference before
+initialization; its initialized marker is durable before mutations are admitted.
+Version2 without its anchor, missing reserved payloads, malformed data, vault
+failure or staging uncertainty never mean an empty action set or replacement
+authority. The native payload binds its domain/reference, installation, pinned
+host, account, owner principal/key reference and endpoint. Individual records
+bind exact Create/Ensure body, lifetime/logical/attachment identity and original
+issued ID/epoch, or the distinct End purpose and exact native-generation target.
+The host journal continues to resolve native namespace/PID/lifetime for End;
+the client invents neither a PID nor a creation issuance epoch for that purpose.
+
+The portable control factory accepts only the protected-store composition hook
+after a fresh handshake and checks the full original destination/body/domain;
+it exposes no raw epoch constructor or serde authority. The owning bridge
+adapter reopens the exact native owner key and protected anchor before supplying
+the payload. Adapter errors retain their typed native/storage origin: a locked
+vault or missing checkpoint is not relabeled as host denial. Capture must durably succeed before an effectful frame can be sent;
+ambiguous writes retain the original and refuse the send. Reopening originals
+is explicit, network-free and not consent to execute. The mobile app separately
+revalidates current full account, protected context, privacy/request epoch,
+capability and fresh destructive/launch consent before original reconciliation.
+No automatic sign-in, retry, input replay, new wire protocol/service or general
+journaling framework is introduced. Ordinary profiles/workspaces contain no
+checkpoint, sealed ticket, secret or authoritative sentinel.
+
+The native set remains bounded to sixteen creation and sixteen End originals
+and 64KiB. Created-generation records survive frontend presentation. Only an
+exactly correlated terminal Ended receipt can retire its End and matching
+confirmed-created generation. StopRequested/OutcomeUncertain, stale, denied,
+unknown, cancellation and lost replies retain originals. Pre-checkpoint-version
+actions lost before capture cannot be reconstructed. Native-vault/physical
+cold-start acceptance and current platform CI remain independent gates.
+
 ### Explicit desktop Create/Ensure execution increment
 
 The client extends protected selected-host execution with actual HOST Create and
@@ -625,7 +662,8 @@ excludes foreign output and checks exact-target correlated persistent detach.
 Both earlier collector/frontend oracles remain unchanged. Exact commands/results
 are recorded in `milestone-progress.md`; this is not GUI/vault/cloud acceptance.
 
-The current action registry is process-local, not a durable restart journal.
+The desktop action registry remains process-local; the opt-in mobile protected
+checkpoint path above does not reconstruct pre-checkpoint-version lost actions.
 Mobile execution installation/lock cancellation, account-wide explicit Find
 hosts, local Settings/Remote Access setup/sharing and native/device qualification
 remain required separate milestones. HOST statuses and ADR acceptance remain
@@ -907,9 +945,10 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   application additionally executes explicit account-scoped HOST discovery,
   protected owner review, inventory, Connect/Create/Ensure and actual
   `HostSession` frontend adoption. Callback-owned cancellation precedes worker
-  admission and does not wait for a UI frame. Original creation actions remain
-  process-local and are retired only after frontend adoption plus activation,
-  not merely worker admission. The non-relay Unix protected receipt publisher
+  admission and does not wait for a UI frame. Desktop original creation actions
+  remain process-local. Protected mobile originals survive restart/presentation
+  until an exact authoritative Ended settles them, never merely worker admission.
+  The non-relay Unix protected receipt publisher
   now stages/syncs complete bytes before anchored atomic no-replace publication
   and directory sync; interrupted writes and final-name races cannot poison or
   overwrite the final receipt. Abandoned staging remains inert; malformed

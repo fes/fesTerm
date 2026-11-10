@@ -31,6 +31,9 @@ cloud/vault/service/device qualification and native foreground client trust/sess
 chooser evidence remain open. Experimental desktop and opt-in shared mobile
 HOST clients now execute inventory/attach/Create/Ensure with focused host fixtures,
 not native GUI/vault acceptance. This source is not a native Ready/acceptance claim.
+Mobile additionally has explicit protected original-action capture/reopen before
+wire effects; synthetic process/framed evidence is not native cold-start or
+authoritative native Ended acceptance.
 
 Issue #65 is owner-authorized desktop split-pane work (ADR 0078).
 The presentation slice adds live composition, bounded layouts, focused input,

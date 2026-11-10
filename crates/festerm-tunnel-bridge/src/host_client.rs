@@ -26,6 +26,7 @@ mod creation;
 #[cfg(test)]
 mod creation_tests;
 mod ending;
+pub mod originals;
 mod session;
 pub(crate) use creation::create_authenticated;
 pub use creation::{Created, CreationIntent, CreationMode};
@@ -36,6 +37,21 @@ pub use session::HostSession;
 #[cfg(feature = "testing")]
 pub mod testing {
     use super::*;
+
+    /// Explicit authenticated control-stream injection for headless tests.
+    pub async fn end_from_stream<S>(
+        stream: S,
+        permit: ConnectionPermit,
+        binding: Binding,
+        intent: Arc<EndIntent>,
+        cancel: &CancellationToken,
+    ) -> Result<Outcome, Failure>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
+        end_authenticated(&mut client, intent, cancel).await
+    }
 
     /// Explicit stream injection for headless composition tests only.
     pub fn session_from_stream<S>(
@@ -73,6 +89,7 @@ pub enum Failure {
     OwnerKey(OwnerKeyError),
     Control(Error),
     WorkerUnavailable,
+    OriginalStorage,
 }
 
 impl From<Error> for Failure {
@@ -90,6 +107,7 @@ impl From<ContractError> for Failure {
 impl Failure {
     pub fn message(self) -> &'static str {
         match self {
+            Self::OriginalStorage => "The protected original-action checkpoint is missing, corrupt, incomplete, full or could not be durably updated. No replacement was issued. Explicitly reopen protected originals; storage uncertainty is not absence.",
             Self::MissingApproval => ENROLLMENT_PREREQUISITE,
             Self::BindingMismatch => "The approved host, key, account or endpoint changed. Review the selected host in the foreground; the saved recipe was not changed.",
             Self::OwnerKey(OwnerKeyError::Vault(festerm_secret_store::SecretStoreError::Missing)) =>

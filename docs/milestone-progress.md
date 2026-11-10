@@ -1,5 +1,77 @@
 # Milestone Progress Narrative
 
+## Reopening protected mobile originals without issuing a replacement
+
+The normal child of published `85b01679` closes one bounded client restart gap:
+previously a lost process also lost the original creation issuance ticket or End
+operation. The opt-in mobile client now explicitly opens a protected original
+set under its independently approved native owner/account context. Its existing
+private receipt reserves an opaque native-vault payload before initialization.
+A durable pending nonce precedes native updates; only the matching scoped native
+payload can settle an ambiguous write. Missing, corrupt, locked, mismatched and
+uncommitted states refuse rather than becoming an empty set or a new operation.
+Nothing authoritative is serialized into ordinary profiles/workspaces.
+
+The Root-approved architectural enabler is a narrow client-bound checkpoint
+factory in the owning portable control module, not a public raw epoch
+constructor, new protocol/service or generic journal. The bridge's private
+adapter reopens the exact current native key/receipt before decoding domain,
+destination and full original body. Create/Ensure capture must durably succeed
+before effectful wire bytes. Explicit restart review keeps the same original
+UUID/old issuance epoch across a newer handshake; End keeps its separate exact
+operation/target with no creation epoch. Restoring is not sign-in, retry or
+consent. Full account, owner/reference, native/request epoch, capability and
+fresh launch/destructive confirmation still fence execution. Stale or ambiguous
+original selection refuses; there is no input replay or silent substitution.
+
+Confirmed-created generations survive presentation until authoritatively
+settled. Exactly correlated terminal Ended alone removes that generation and its
+End. The seventeen-exact-Ended UI regression first failed on the old sixteen-slot
+lifetime cap; confirmed retirement now releases those slots even when completed
+UI events were discarded. Sixteen unresolved actions still block a seventeenth:
+the bound was not raised and uncertain originals were not discarded.
+Native StopRequested remains OutcomeUncertain, a separate host completion gap.
+
+Focused protected-store/framed tests cover genuine fresh-process controller
+reopen using a test-only synthetic memory-vault snapshot over a private pipe,
+identical original wire bytes after a newer handshake, no duplicate send,
+before/after-write failure, lock/cancellation, missing/corrupt/scope-changed data,
+tampered checkpoint purpose/epoch and exact generation settlement. This is
+neither production key export/file fallback nor native-vault acceptance.
+The checkpoint factory preserves typed native/storage errors instead of
+mislabeling a locked vault or missing protected payload as host denial.
+The early compile failures, one misplaced test-module zero-selector result
+(not evidence), and both old-cap diagnostics remain retained. Runtime inputs,
+explicit Rust1.98/1.99 commands, numeric exits and raw hashes belong to the
+owned `target/restart-evidence` receipt, not an immutable executable seal.
+
+No host-runtime worker/adoption code or moving native/backend head was consumed,
+and no native seventeen-case rerun was performed. The parent's85 required-macOS
+worker Offline failure remains separately investigated, not fixed by these
+checkpoints. Physical native-vault/jetsam/cold-start, real app-lock/suspension,
+Android reserved-reference storage, GUI/usability and current required CI/source
+gates remain open. Old helper/Simulator/Android receipts keep their original
+source attribution. Pre-checkpoint-version lost actions cannot be reconstructed;
+desktop durable reconciliation and mobile sharing were not pulled into this slice.
+
+Bounded qualification on the final named runtime bytes uses the existing real
+private Rust1.98.0 and Rust1.99.1, jobs1/debug0/incremental0 and project-local
+scratch, without installs or manifest/MSRV changes. Rust1.98 runs 10 protected
+original cases (including an actual child-process exit0), 95 non-relay bridge
+tests, 35 portable-client tests, 221 mobile host-client tests with 4 existing
+ignored, and 134 default-offline tests with 1 existing ignored. Mobile, standalone
+client and client/host-routing/owner-auth bridge strict profiles pass on both
+toolchains; the relay-enabled bridge also checks without running native cases.
+The final app-only settlement refinement delegates protected owner/key/target
+matching to the shared helper rather than OAuth credential-handle equality;
+mobile tests/strict and fresh Simulator check/link were rerun afterwards.
+Fmt and traceability pass (311 edges, 0 broken references).
+The Simulator executable is linked only, not launched/signed/installed. Native
+helper/objcopy fallback warnings remain visible; strict success is not a
+globally warning-free tooling claim. Full commands, source/tool hashes, retained
+failures, zero-selector non-evidence and historical preservation live in the
+owned `target/restart-evidence` handoff, not in an aggregate/native acceptance seal.
+
 ## Ending a mobile HOST generation without ending its replacement
 
 The shared mobile client could create/adopt an actual HOST terminal, but lacked

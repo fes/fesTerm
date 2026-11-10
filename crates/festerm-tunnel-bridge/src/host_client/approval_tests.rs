@@ -274,6 +274,7 @@ fn selected_host_receipt_pending_or_missing_ready_key_never_regenerates_during_l
         binding: binding.clone(),
         reference: reference.to_persisted_string(),
         ready: false,
+        originals: None,
     };
     let name = ReceiptIndex::name(&binding.host.host, &binding.account, "json").unwrap();
     storage::write_new_private(&directory, &name, &serde_json::to_vec(&record).unwrap()).unwrap();

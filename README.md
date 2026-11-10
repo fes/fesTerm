@@ -56,8 +56,12 @@ advertised, host-authorized Create or atomic resume-or-create; uncertain results
 retain the original issued action for explicit in-process retry. It never
 silently enrolls a key, falls back to a legacy bridge or infers creation
 authority from inventory. Mobile installation, account-wide Find hosts, local
-Settings/Remote Access, durable client-action reconciliation and native
+Settings/Remote Access, desktop durable client-action reconciliation and native
 acceptance remain open; this is not stage-6 completion.
+The opt-in mobile client has a protected native-vault original-action checkpoint:
+explicit cold-start review keeps the same UUID/issuance/body, never auto-retries,
+and only exact Ended retires settled originals. Native-vault/device cold-start
+acceptance (including Android reserved-reference storage) remains open.
 The default headless build now has explicit authenticated
 setup/owner approval/run; no listener or permission is enabled merely by
 compilation/configuration. Independent combined review and native/cloud/vault/

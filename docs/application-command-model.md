@@ -137,8 +137,8 @@ the original action. After the application admits its authoritative target for
 presentation, a later fresh review may create a new action. Confirmed Created,
 Resumed and Recreated descriptions remain distinct; all use the existing
 `OpenApprovedHostFromProfiles` origin/account checks and installed-frontend
-snapshot/adoption path. This registry is process-local, not a durable restart
-reconciliation journal.
+snapshot/adoption path. This desktop registry remains process-local; the opt-in
+mobile protected checkpoint path below does not reconstruct older lost actions.
 
 The mobile composition root owns the same protected receipt/context, bounded
 worker, exact authorized session selection and original-action registry. Its
@@ -153,8 +153,9 @@ and signing material stays in the native vault.
 
 `LiveSsh::from_host` starts non-running, wraps the actual `HostSession`, and
 adopts its pending snapshot into the already installed mobile terminal. Only
-the subsequent correlated host activation admits input and retires a creation
-action. Starting a presentation worker alone does not retire it. Native lock
+the subsequent correlated host activation admits input. Protected mobile
+created-generation records remain until an exact authoritative Ended settles
+them; starting a presentation worker alone never retires an original. Native lock
 and suspension cancel without a UI frame and never forge detach receipts or
 end the daemon-owned shell; no automatic reconnect or replay is added. Default
 offline and legacy live-SSH/bridge behavior remain separate. Physical/native
@@ -180,8 +181,29 @@ attachment; it cannot mutate the replacement frontend. Persistent daemons
 survive; an owning temporary lease follows the host's intentional-detach policy.
 Lock/suspension still directly cancel transport without a UI frame or a false
 detach; unexpected-loss heartbeat/grace remains host-owned. End originals and
-retirements are bounded to sixteen each; original End actions remain process-local
-across review closure, not a durable restart reconciliation journal.
+retirements are bounded to sixteen each. Exactly confirmed End originals retire
+even if their completed UI event was discarded; unresolved ones do not.
+
+Mobile Create/Ensure and End require explicit **Reopen protected originals**
+under the current independently approved owner, full account and app lifetime.
+This bounded native-vault job performs no network retry and grants no launch or
+End consent. Its private receipt reserves the native payload reference before
+initialization; a pending update nonce is published/synced before native writes.
+Only the matching native payload can settle an ambiguous update. Missing,
+corrupt, locked, mismatched or uncommitted pending data cannot become an empty
+registry or new operation. Neither profiles nor workspaces store its authority.
+
+An admitted mutation captures its exact original before effectful wire bytes;
+durability failure refuses that send. Explicit cold-start review restores the
+same creation UUID, old issuance epoch and whole body through the client-bound
+protected checkpoint factory after fresh authenticated capability checks, never
+`issue_operation` on restored work. End restores its distinct operation/target
+without a creation epoch. Fresh launch/destructive consent is still required.
+Multiple originals require exact selection; stale selection never mints another
+action. Each purpose remains bounded to sixteen (64KiB total). Only correlated
+Ended removes an End and its exact confirmed-created generation, not
+StopRequested/OutcomeUncertain or frontend closure. The unprotected desktop path,
+default offline fixture and opt-in legacy live-SSH path are unchanged.
 
 No implicit discovery, background sign-in or input replay is implemented by this
 executor. Shared framing, protected-file/memory-vault, headless application tests

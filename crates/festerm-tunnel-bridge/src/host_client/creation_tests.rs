@@ -7,7 +7,7 @@ use festerm_tunnel_client::host_control::{read_frame, write_frame};
 use russh::keys::{Algorithm, HashAlg, PrivateKey};
 use tokio::io::{AsyncReadExt, DuplexStream};
 
-fn context() -> ApprovedContext {
+pub(super) fn context() -> ApprovedContext {
     let key = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
     let public = key.public_key().to_openssh().unwrap();
     let host = HostId::new();
@@ -62,7 +62,7 @@ fn selected_host_mobile_pre_cancelled_boundary_refuses_before_vault_or_worker() 
     assert!(!intent.is_presented());
 }
 
-fn creation() -> Creation {
+pub(super) fn creation() -> Creation {
     Creation {
         logical: LogicalSessionId::new(),
         attachment: AttachmentId::new(),
@@ -72,7 +72,7 @@ fn creation() -> Creation {
     }
 }
 
-fn caps() -> Capabilities {
+pub(super) fn caps() -> Capabilities {
     Capabilities {
         create: true,
         ensure: true,
@@ -347,7 +347,10 @@ async fn selected_host_end_single_flight_and_post_send_cancel_keep_original() {
     server.await.unwrap();
 }
 
-fn client(stream: DuplexStream, context: &ApprovedContext) -> ControlClient<DuplexStream> {
+pub(super) fn client(
+    stream: DuplexStream,
+    context: &ApprovedContext,
+) -> ControlClient<DuplexStream> {
     ControlClient::on_authenticated_stream(
         stream,
         context.binding.clone(),
@@ -355,7 +358,7 @@ fn client(stream: DuplexStream, context: &ApprovedContext) -> ControlClient<Dupl
     )
 }
 
-async fn respond(peer: &mut DuplexStream, request: &Envelope<Request>, body: Response) {
+pub(super) async fn respond(peer: &mut DuplexStream, request: &Envelope<Request>, body: Response) {
     let mut response = Envelope::new(request.host.clone(), request.operation.clone(), body);
     response.issuance_epoch = request.issuance_epoch;
     write_frame(peer, &Budgets::default(), &response)
@@ -363,7 +366,7 @@ async fn respond(peer: &mut DuplexStream, request: &Envelope<Request>, body: Res
         .unwrap();
 }
 
-async fn handshake(peer: &mut DuplexStream, capabilities: Capabilities) {
+pub(super) async fn handshake(peer: &mut DuplexStream, capabilities: Capabilities) {
     let request = read_frame(peer, &Budgets::default())
         .await
         .unwrap()

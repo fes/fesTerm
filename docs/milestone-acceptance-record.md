@@ -35,7 +35,9 @@ and [fixed-head qualification](milestone-progress.md).
 The later exact-End/correlated-retirement child has focused framed and two
 selected actual SSH/native-PTY lifecycle cases, not a fresh sixteen-route
 aggregate or physical lifecycle acceptance. StopRequested is still uncertain;
-durable cold-restart original-action reconciliation and mobile sharing are open.
+the later protected original-action checkpoint has deterministic fresh-process
+and framed evidence, not native-vault/physical cold-restart acceptance. Mobile
+sharing and authoritative native Ended reconciliation remain open.
 
 - **Implemented:** capability exists in code with focused automated tests.
 - **Validation pending:** implementation exists, but required integration,

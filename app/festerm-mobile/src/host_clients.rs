@@ -28,6 +28,7 @@ use festerm_tunnel_client::{
     identity::{self, Identity},
     service::{self, ResolvedTunnel, TunnelSummary},
 };
+use host_client::originals::{OriginalStore, RecoveredIntent, RecoveredOriginal};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex, Weak,
@@ -137,6 +138,38 @@ enum ResultEvent {
     Hosts(Vec<TunnelSummary>),
     Receipt(Box<Receipt>),
     Resolved(Box<ResolvedTunnel>),
+    Originals(Arc<OriginalStore>, Vec<RecoveredOriginal>),
+}
+
+struct OriginalReview {
+    account: TunnelAccount,
+    recipe: Option<PublicRecipe>,
+}
+
+impl OriginalReview {
+    fn encode(&self) -> Result<String, String> {
+        serde_json::to_string(&serde_json::json!({
+            "account": &self.account, "recipe": &self.recipe,
+        }))
+        .map_err(|_| "Original review could not be protected.".into())
+    }
+
+    fn decode(value: &str) -> Result<Self, String> {
+        let value: serde_json::Value =
+            serde_json::from_str(value).map_err(|_| "Protected original review is malformed.")?;
+        let object = value
+            .as_object()
+            .ok_or("Protected original review is malformed.")?;
+        if object.len() != 2 || !object.contains_key("account") || !object.contains_key("recipe") {
+            return Err("Protected original review is malformed.".into());
+        }
+        Ok(Self {
+            account: serde_json::from_value(object["account"].clone())
+                .map_err(|_| "Protected original account is malformed.")?,
+            recipe: serde_json::from_value(object["recipe"].clone())
+                .map_err(|_| "Protected original recipe is malformed.")?,
+        })
+    }
 }
 
 struct Pending {
@@ -224,6 +257,8 @@ pub(super) struct HostUi {
     worker_account: Option<TunnelAccount>,
     session_accounts: Vec<SessionAccount>,
     originals: Vec<Original>,
+    original_store: Option<Arc<OriginalStore>>,
+    selected_original: Option<String>,
     ends: Vec<OriginalEnd>,
     end_review: Option<EndReview>,
     retirements: Vec<Retirement>,
@@ -234,12 +269,181 @@ pub(super) struct HostUi {
 }
 
 impl HostUi {
+    fn accept_recovered(
+        &mut self,
+        store: Arc<OriginalStore>,
+        recovered: Vec<RecoveredOriginal>,
+        account: &TunnelAccount,
+    ) -> Result<(), String> {
+        self.prune_confirmed_ends();
+        let context = self.context()?;
+        let mut creations = Vec::new();
+        let mut ends = Vec::new();
+        for original in recovered {
+            let review = OriginalReview::decode(&original.review)?;
+            if &review.account != account {
+                return Err(
+                    "The original account credential differs; original retained, no replacement."
+                        .into(),
+                );
+            }
+            match original.intent {
+                RecoveredIntent::Creation(intent) => {
+                    let recipe = review
+                        .recipe
+                        .ok_or("Original creation recipe is missing.")?;
+                    let creation = intent.creation();
+                    if !intent.is_protected_original()
+                        || !intent.matches_context(&context)
+                        || &recipe.host.id != context.binding().host()
+                        || recipe.host.account
+                            != (AccountReference::Github {
+                                account_id: account.account_id,
+                            })
+                        || creation.recipe != recipe.launch
+                        || creation.lifetime != recipe.lifetime
+                        || creation.name.as_deref() != Some(recipe.name.as_str())
+                        || (intent.mode() == CreationMode::Ensure
+                            && (recipe.behavior != ConnectionBehavior::ResumeOrCreate
+                                || creation.logical != recipe.logical_session))
+                        || (intent.mode() == CreationMode::Create
+                            && matches!(
+                                recipe.behavior,
+                                ConnectionBehavior::ResumeOrCreate
+                                    | ConnectionBehavior::AttachOnly { .. }
+                            ))
+                    {
+                        return Err(
+                            "Protected original recipe/context changed; no action was started."
+                                .into(),
+                        );
+                    }
+                    creations.push(Original {
+                        recipe,
+                        account: account.clone(),
+                        intent,
+                    });
+                }
+                RecoveredIntent::End(intent) => {
+                    if review.recipe.is_some() || !intent.matches_context(&context) {
+                        return Err("Protected original End context changed.".into());
+                    }
+                    ends.push(OriginalEnd {
+                        host: context.binding().host().clone(),
+                        account: account.clone(),
+                        intent,
+                    });
+                }
+            }
+        }
+        for restored in &creations {
+            if let Some(old) = self.originals.iter().find(|old| {
+                old.intent.creation().attachment == restored.intent.creation().attachment
+            }) {
+                if old.account != restored.account
+                    || old.recipe != restored.recipe
+                    || old.intent.creation() != restored.intent.creation()
+                    || old.intent.mode() != restored.intent.mode()
+                    || old.intent.issued_operation() != restored.intent.issued_operation()
+                    || !old.intent.matches_context(&context)
+                {
+                    return Err("Original identity collision; no original was replaced.".into());
+                }
+            }
+        }
+        for restored in &ends {
+            if let Some(old) = self
+                .ends
+                .iter()
+                .find(|old| old.intent.operation() == restored.intent.operation())
+            {
+                if old.account != restored.account
+                    || old.intent.target() != restored.intent.target()
+                    || !old.intent.matches_context(&context)
+                {
+                    return Err("Original End identity collision; no original was replaced.".into());
+                }
+            }
+        }
+        let new_creations: Vec<_> = creations
+            .into_iter()
+            .filter(|restored| {
+                !self.originals.iter().any(|old| {
+                    old.intent.creation().attachment == restored.intent.creation().attachment
+                })
+            })
+            .collect();
+        let new_ends: Vec<_> = ends
+            .into_iter()
+            .filter(|restored| {
+                !self
+                    .ends
+                    .iter()
+                    .any(|old| old.intent.operation() == restored.intent.operation())
+            })
+            .collect();
+        if self.originals.len() + new_creations.len() > 16 || self.ends.len() + new_ends.len() > 16
+        {
+            return Err("Original registry full; every unresolved action remains retained.".into());
+        }
+        self.originals.extend(new_creations);
+        self.ends.extend(new_ends);
+        self.original_store = Some(store);
+        self.launch = false;
+        self.end_review = None;
+        Ok(())
+    }
+
+    fn prune_confirmed_ends(&mut self) {
+        self.originals.retain(|original| {
+            !self
+                .ends
+                .iter()
+                .any(|end| end.intent.definitively_settles(&original.intent))
+        });
+        self.ends.retain(|original| !original.intent.is_resolved());
+    }
+
+    fn retain_end(
+        &mut self,
+        context: &ApprovedContext,
+        account: TunnelAccount,
+        intent: Arc<EndIntent>,
+    ) -> Result<(), String> {
+        self.prune_confirmed_ends();
+        if intent.is_resolved() {
+            return Err(
+                "This exact End is already confirmed; refresh authorized inventory.".into(),
+            );
+        }
+        if !intent.matches_context(context) {
+            return Err("The original protected End context changed.".into());
+        }
+        if self
+            .ends
+            .iter()
+            .any(|original| Arc::ptr_eq(&original.intent, &intent))
+        {
+            return Ok(());
+        }
+        if self.ends.len() >= 16 {
+            return Err("Original End registry full; uncertain actions retained.".into());
+        }
+        self.ends.push(OriginalEnd {
+            host: context.binding().host().clone(),
+            account,
+            intent,
+        });
+        Ok(())
+    }
+
     fn end_intent(
-        &self,
+        &mut self,
         context: &ApprovedContext,
         target: host_client::Target,
         account: &TunnelAccount,
     ) -> Result<Arc<EndIntent>, String> {
+        self.prune_confirmed_ends();
         if let Some(original) = self.ends.iter().find(|original| {
             &original.host == context.binding().host() && original.intent.target() == &target
         }) {
@@ -271,6 +475,7 @@ impl HostUi {
         self.enrolled = false;
         self.launch = false;
         self.end_review = None;
+        self.original_store = None;
     }
 
     fn clear_review(&mut self) {
@@ -280,6 +485,7 @@ impl HostUi {
         self.locator.clear();
         self.fingerprint.clear();
         self.prerequisite = Zeroizing::new(String::new());
+        self.selected_original = None;
     }
 
     fn context(&self) -> Result<ApprovedContext, String> {
@@ -332,17 +538,38 @@ impl HostUi {
                 return Err("Attach-only cannot create.".into())
             }
         };
-        self.originals
-            .retain(|original| !original.intent.is_presented());
-        if let Some(original) = self
-            .originals
-            .iter()
-            .find(|original| original.recipe.id == recipe.id)
+        self.originals.retain(|original| {
+            !original.intent.is_presented() || original.intent.is_protected_original()
+        });
+        if self.selected_original.is_none()
+            && self
+                .originals
+                .iter()
+                .filter(|original| {
+                    original.recipe.id == recipe.id && !original.intent.is_presented()
+                })
+                .count()
+                > 1
         {
+            return Err("Multiple originals exist for this recipe; explicitly review the exact original first.".into());
+        }
+        if let Some(original) = self.originals.iter().find(|original| {
+            original.recipe.id == recipe.id
+                && self.selected_original.as_ref().map_or_else(
+                    || !original.intent.is_presented(),
+                    |selected| &original.intent.creation().attachment.to_string() == selected,
+                )
+        }) {
             if original.recipe != recipe || original.account != account {
                 return Err("Original action retained under its original recipe/account; no replacement was issued.".into());
             }
             return Ok(original.intent.clone());
+        }
+        if self.selected_original.is_some() {
+            return Err(
+                "The selected original no longer matches this action; no new action was issued."
+                    .into(),
+            );
         }
         if self.originals.len() >= 16 {
             return Err("Original-action registry full; unresolved actions retained.".into());
@@ -378,6 +605,7 @@ enum Action {
     Find,
     Prepare,
     Load,
+    RecoverOriginals,
     Resolve,
     Create,
     Attach(usize),
@@ -668,6 +896,14 @@ impl MobileApp {
                         self.hosts.error = Some(error);
                     }
                 }
+                Ok(ResultEvent::Originals(store, originals)) => match account.as_ref() {
+                    Some(account) => {
+                        if let Err(error) = self.hosts.accept_recovered(store, originals, account) {
+                            self.hosts.error = Some(error);
+                        }
+                    }
+                    None => self.hosts.error = Some("Original account no longer current.".into()),
+                },
                 Err(error) => self.hosts.error = Some(error),
             }
         }
@@ -677,6 +913,7 @@ impl MobileApp {
             .as_ref()
             .and_then(|worker| worker.try_receive(worker.scope()));
         if let Some(result) = result {
+            self.hosts.prune_confirmed_ends();
             self.hosts.worker = None;
             self.hosts.worker_account = None;
             match result.outcome {
@@ -838,12 +1075,14 @@ impl MobileApp {
                 .get(index)
                 .ok_or("Original action selection expired.")?;
             let (recipe, account) = (original.recipe.clone(), original.account.id.clone());
+            let selected_original = original.intent.creation().attachment.to_string();
             self.hosts.clear_review();
             if self.hosts.account != account {
                 self.hosts.hosts.clear();
             }
             self.hosts.account = account;
             self.hosts.selected = Some(recipe);
+            self.hosts.selected_original = Some(selected_original);
             return Ok(());
         }
         if !self.host_foreground() || !self.host_recipe_current() {
@@ -973,29 +1212,26 @@ impl MobileApp {
                         return Err("The original adopted HOST tab retired; review authorized inventory again.".into());
                     }
                 }
+                let context = self.hosts.context()?;
+                let protected = self.hosts.original_store.clone()
+                    .ok_or("Explicitly reopen protected originals before any Create or End; no operation issued.")?;
                 let intent = review.authorize(
                     &account,
-                    &self.hosts.context()?,
+                    &context,
                     self.hosts.epoch,
                     self.hosts.generation,
                 )?;
-                if !self
-                    .hosts
-                    .ends
-                    .iter()
-                    .any(|original| Arc::ptr_eq(&original.intent, &intent))
-                {
-                    if self.hosts.ends.len() >= 16 {
-                        return Err(
-                            "Original End registry full; uncertain actions retained.".into()
-                        );
-                    }
-                    self.hosts.ends.push(OriginalEnd {
-                        host: self.hosts.context()?.binding().host().clone(),
-                        account,
-                        intent: intent.clone(),
-                    });
-                }
+                intent
+                    .protect_original(
+                        protected,
+                        OriginalReview {
+                            account: account.clone(),
+                            recipe: None,
+                        }
+                        .encode()?,
+                    )
+                    .map_err(|error| error.message().to_owned())?;
+                self.hosts.retain_end(&context, account, intent.clone())?;
                 self.start_host_operation(ctx, host_client::Operation::End(intent))?;
                 self.hosts.end_review = None;
                 return Ok(());
@@ -1010,7 +1246,17 @@ impl MobileApp {
                     .clone()
                     .ok_or("Choose a public recipe first.")?;
                 let context = self.hosts.context()?;
+                let protected = self.hosts.original_store.clone()
+                    .ok_or("Explicitly reopen protected originals before any Create or End; no operation issued.")?;
+                let review = OriginalReview {
+                    account: account.clone(),
+                    recipe: Some(recipe.clone()),
+                }
+                .encode()?;
                 let intent = self.hosts.creation_intent(&context, recipe, account)?;
+                intent
+                    .protect_original(protected, review)
+                    .map_err(|error| error.message().to_owned())?;
                 return self.start_host_operation(ctx, host_client::Operation::Create(intent));
             }
             Action::Attach(index) => {
@@ -1051,6 +1297,12 @@ impl MobileApp {
         let cancel = token.clone();
         let selected = self.hosts.selected.clone();
         let root = profiles.host_approval_directory();
+        let recovery_context = if matches!(action, Action::RecoverOriginals) {
+            self.hosts.original_store = None;
+            Some(self.hosts.context()?)
+        } else {
+            None
+        };
         let locator = self.hosts.locator.clone();
         let fingerprint = self.hosts.fingerprint.clone();
         let reviewed = if matches!(action, Action::Prepare) {
@@ -1093,6 +1345,14 @@ impl MobileApp {
             let index =
                 || ReceiptIndex::in_app_sandbox(&root).map_err(|error| error.message().to_owned());
             let result = match action {
+                Action::RecoverOriginals => OriginalStore::recover(
+                    &root,
+                    recovery_context
+                        .as_ref()
+                        .expect("explicit protected recovery"),
+                )
+                .map(|(store, originals)| ResultEvent::Originals(store, originals))
+                .map_err(|error| error.message().to_owned()),
                 Action::Prepare => index()?
                     .prepare(reviewed.expect("reviewed"))
                     .map(|receipt| ResultEvent::Receipt(Box::new(receipt)))
@@ -1259,12 +1519,20 @@ impl MobileApp {
                 if ui.add_enabled(allowed && self.hosts.launch, egui::Button::new("Explicit Create / resume-or-create (or original-action retry)")).clicked() { action = Some(Action::Create); }
                 if !self.hosts.saved && ui.button("Save public recipe only").clicked() { action = Some(Action::Save); }
             }
+            if self.hosts.resolved.is_some() && self.hosts.enrolled
+                && ui.button("Explicitly reopen protected original actions (no network retry)").clicked()
+            {
+                action = Some(Action::RecoverOriginals);
+            }
+            if self.hosts.original_store.is_none() {
+                ui.label("Create/End requires an explicit protected-original check under the current owner/account. A missing, locked or corrupt checkpoint never grants a replacement action.");
+            }
             for (index, original) in self.hosts.originals.iter().enumerate() {
-                ui.label(format!("Retained original {} · logical {} · issued {:?}; in-process only, never automatic retry", original.recipe.name, original.intent.creation().logical, original.intent.issued_operation()));
+                ui.label(format!("Retained original {} · logical {} · issued {:?}; explicit original-action review only", original.recipe.name, original.intent.creation().logical, original.intent.issued_operation()));
                 if ui.button(format!("Review retained original: {}", original.recipe.name)).clicked() { action = Some(Action::ReviewOriginal(index)); }
             }
             for (index, original) in self.hosts.ends.iter().enumerate() {
-                ui.label(format!("Original End {} · generation {} · operation {} · issued={} confirmed-ended={}; process-local only",
+                ui.label(format!("Original End {} · generation {} · operation {} · issued={} confirmed-ended={}; protected capture required before sending",
                     original.intent.target().logical, original.intent.target().generation.get(),
                     original.intent.operation(), original.intent.is_issued(), original.intent.is_resolved()));
                 if ui.add_enabled(!original.intent.is_resolved(), egui::Button::new("Review original End / retry")).clicked() { action = Some(Action::ReviewOriginalEnd(index)); }
@@ -1282,7 +1550,7 @@ impl MobileApp {
                 if ui.add_enabled(review.confirmed, egui::Button::new("Confirm exact End once")).clicked() { action = Some(Action::ConfirmEnd); }
                 if ui.button("Cancel End (no request)").clicked() { action = Some(Action::CancelEnd); }
             }
-            ui.label("After restart, reconcile uncertain actions on the host before approving another creation or End. Original tickets are process-local; no automatic retry, input replay or background reconnect.");
+            ui.label("Originals are protected in the native vault before a mutation can be sent. After restart explicitly approve this same owner/account, reopen originals, review and confirm the exact original again. No automatic retry, input replay or background reconnect. Pre-checkpoint-version lost actions cannot be reconstructed.");
             if self.hosts.pending.is_some() || self.hosts.worker.is_some() { ui.label("Bounded foreground HOST work in progress…"); }
             if let Some(error) = &self.hosts.error { ui.label(error); }
             if ui.button("Cancel / close host review").clicked() { action = Some(Action::Close); }

@@ -110,11 +110,37 @@ In an explicitly owned iOS/Android native window, still verify:
   detach/End replies while another foreground tab is installed; independently
   observe native process lifetime without mistaking StopRequested for Ended.
 
-Creation and End originals each have sixteen **process-local** entries. Restart
-does not restore their tickets or grant a replacement action: reconcile uncertain
-host actions before another creation or End. Durable restart reconciliation,
-mobile sharing, physical End/detach/lifecycle, live cloud/device/native-vault evidence and usability
-remain open. Desktop local Settings/Remote Access and local sharing are a
+The protected mobile restart slice captures original Create/Ensure/End before
+effectful writes and explicitly reopens the same native-vault set. Deterministic
+tests cover a fresh subprocess with an injected **synthetic memory-vault
+snapshot**, old UUID/epoch/body on a newer handshake, exactly one request,
+before-write failure, ambiguous after-write failure, cancellation, lock,
+missing/corrupt/scope-changed data, bounded unresolved originals and exact Ended
+settlement. This is not a native vault or physical process-lifecycle oracle.
+The seventeen-exact-Ended UI fixture also proves confirmed Ends cannot exhaust
+the sixteen-original lifetime cap after discarded UI completions.
+
+Native acceptance must additionally kill/reopen the owned app before a send,
+after a lost reply and between private-marker/native-payload acknowledgements;
+explicitly reopen with fresh current account, protected key, native privacy
+epoch, capabilities and fresh launch/End consent. Observe the identical original
+on the host, no duplicate generation, no automatic network/sign-in/retry and no
+input replay. Exercise quota/jetsam, locked/revoked vault, missing pending payload,
+corrupt final/index, owner/account/endpoint change and stale selected original.
+An unmatched pending marker remains uncertainty, never empty state or a new ID.
+Check native backup/privacy policy: only opaque references/commit marker belong
+in the private index; no tickets/credentials belong in profiles/workspaces.
+Pre-checkpoint-version lost originals cannot be recovered retroactively.
+
+Creation and End each remain bounded to sixteen protected originals and 64KiB
+total; only exact terminal Ended retires originals, never native StopRequested.
+Android's current `AndroidSecretStore` lacks `create_reserved`, so the trait's
+Unsupported remains an explicit native-vault prerequisite (also for owner-key
+preparation). The minimum adapter work is exact reserved-reference creation via
+the existing non-overwriting native write under the existing receipt lease; no
+file fallback is permitted. Android native-library linkage is not that proof.
+Mobile sharing, physical restart/End/detach/lifecycle, live cloud/device/vault
+evidence and usability remain open. Desktop local Settings/Remote Access and local sharing are a
 separately owned HOST-03–05 slice, not implemented or claimed by this increment.
 
 ## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)

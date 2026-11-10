@@ -93,8 +93,18 @@ owning-temporary detach; native StopRequested remains OutcomeUncertain. This
 is not physical mobile lifecycle/vault acceptance or a rerun of the sixteen cases.
 Offline/live-SSH defaults remain
 unchanged. Native mobile installation, local Settings/Remote Access,
-durable restart reconciliation and signed/native/vault/service/device
+desktop durable restart reconciliation and signed/native/vault/service/device
 qualification remain open; public recipes never confer authority.
+
+The mobile protected restart slice stores exact original mutations before wire
+effects in the native vault, anchored by the existing private owner receipt.
+Explicit current-context review reopens the original UUID/epoch/body (End has no
+creation epoch); there is no startup retry/sign-in/replay. Missing/corrupt,
+locked, pending or mismatched checkpoints fail closed. Only exact Ended prunes
+an End and its confirmed-created generation; unresolved originals retain the
+sixteen-per-purpose/64KiB bounds. Synthetic fresh-process and framed tests are
+not native-vault/physical cold-restart acceptance. Android reserved-reference
+creation is an explicit unsupported-adapter prerequisite, not a file fallback.
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 

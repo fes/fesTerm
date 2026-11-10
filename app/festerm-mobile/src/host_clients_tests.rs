@@ -562,6 +562,166 @@ fn creation_context_for(host: HostId) -> ApprovedContext {
 }
 
 #[test]
+fn mobile_host_original_review_is_strict_typed_and_missing_or_ambiguous_selection_never_mints() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", false);
+    let account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|value| value.id == id)
+        .unwrap()
+        .clone();
+    let context = creation_context();
+    let recipe = PublicRecipe::persistent(
+        "Cold restart",
+        HostReference {
+            id: context.binding().host().clone(),
+            account: AccountReference::Github { account_id: 7 },
+        },
+        Recipe::default(),
+    )
+    .unwrap();
+    let encoded = OriginalReview {
+        account: account.clone(),
+        recipe: Some(recipe.clone()),
+    }
+    .encode()
+    .unwrap();
+    let decoded = OriginalReview::decode(&encoded).unwrap();
+    assert_eq!(decoded.account, account);
+    assert_eq!(decoded.recipe.as_ref(), Some(&recipe));
+    for invalid in [
+        "{}",
+        "{\"account\":null,\"recipe\":null}",
+        "{\"account\":{},\"recipe\":null}",
+        "{",
+    ] {
+        assert!(OriginalReview::decode(invalid).is_err());
+    }
+    let mut extra: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    extra["authority"] = true.into();
+    assert!(OriginalReview::decode(&extra.to_string()).is_err());
+    let mut hosts = HostUi::default();
+    let first = hosts
+        .creation_intent(&context, recipe.clone(), account.clone())
+        .unwrap();
+    let mut another = first.creation().clone();
+    another.attachment = AttachmentId::new();
+    let second = Arc::new(CreationIntent::new(&context, CreationMode::Ensure, another).unwrap());
+    hosts.originals.push(Original {
+        recipe: recipe.clone(),
+        account: account.clone(),
+        intent: second.clone(),
+    });
+    assert!(hosts
+        .creation_intent(&context, recipe.clone(), account.clone())
+        .is_err());
+    hosts.selected_original = Some(second.creation().attachment.to_string());
+    assert!(Arc::ptr_eq(
+        &hosts
+            .creation_intent(&context, recipe.clone(), account.clone())
+            .unwrap(),
+        &second
+    ));
+    hosts.selected_original = Some(AttachmentId::new().to_string());
+    assert!(hosts.creation_intent(&context, recipe, account).is_err());
+    assert_eq!(hosts.originals.len(), 2);
+    assert!(first.issued_operation().is_none() && second.issued_operation().is_none());
+}
+
+#[tokio::test]
+async fn mobile_host_end_registry_does_not_exhaust_after_seventeen_exact_ended_replies() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", false);
+    let account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|account| account.id == id)
+        .unwrap()
+        .clone();
+    let context = creation_context();
+    let mut hosts = HostUi::default();
+    for generation in 1..=17 {
+        let target = host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(generation).unwrap(),
+        };
+        let intent = hosts
+            .end_intent(&context, target.clone(), &account)
+            .unwrap();
+        hosts
+            .retain_end(&context, account.clone(), intent.clone())
+            .unwrap();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let expected = intent.operation().clone();
+        let server = tokio::spawn(async move {
+            use festerm_tunnel_client::host_control::{read_frame, write_frame};
+            let budgets = Budgets::default();
+            let hello: Envelope<Request> = read_frame(&mut peer, &budgets)
+                .await
+                .unwrap()
+                .decode()
+                .unwrap();
+            write_frame(
+                &mut peer,
+                &budgets,
+                &Envelope::new(
+                    hello.host,
+                    hello.operation,
+                    Response::Capabilities {
+                        capabilities: Capabilities {
+                            explicit_end: true,
+                            ..Capabilities::default()
+                        },
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+            let end: Envelope<Request> = read_frame(&mut peer, &budgets)
+                .await
+                .unwrap()
+                .decode()
+                .unwrap();
+            assert_eq!(end.operation, expected);
+            assert!(
+                matches!(&end.body, Request::ExplicitEnd { target: actual } if actual == &target)
+            );
+            assert!(end.issuance_epoch.is_none());
+            write_frame(
+                &mut peer,
+                &budgets,
+                &Envelope::new(end.host, end.operation, Response::Ended { target }),
+            )
+            .await
+            .unwrap();
+        });
+        assert!(matches!(
+            host_client::testing::end_from_stream(
+                stream,
+                ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+                context.binding().clone(),
+                intent.clone(),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap(),
+            Outcome::Ended { .. }
+        ));
+        server.await.unwrap();
+        assert!(intent.is_resolved());
+        // A dropped UI completion must not turn confirmed originals into a
+        // lifetime cap. The next explicit admission reconciles this receipt.
+    }
+}
+
+#[test]
 fn mobile_host_end_registry_never_replaces_original_after_account_or_protected_authority_change() {
     let profiles = crate::profiles::testing::profiles();
     let store = profiles.store_handle();

@@ -14,6 +14,9 @@ use std::{fmt, io, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
+mod checkpoint;
+pub use checkpoint::{OriginalCheckpoint, ProtectedOriginalCheckpoint, ProtectedOriginalReopener};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
     Contract(ContractError),
