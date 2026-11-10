@@ -10,6 +10,8 @@ pub mod artifacts;
 #[cfg(feature = "lifecycle")]
 pub mod lifecycle;
 #[cfg(feature = "lifecycle")]
+mod protected_state;
+#[cfg(feature = "lifecycle")]
 pub mod staging;
 
 /// A host platform the installer supports.

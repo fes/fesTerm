@@ -69,19 +69,3 @@ fn headless_package_staging_refuses_unauthenticated_input_before_writing() {
         .contains("artifact_authentication_failed"));
     assert!(!cache.exists());
 }
-
-#[test]
-fn headless_setup_does_not_treat_enable_consent_as_legacy_restart_confirmation() {
-    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
-    let record = root.path().join("legacy-generation.json");
-    let bytes = br#"{"account":"fixture","generation":"123","running":true}"#;
-    std::fs::write(&record, bytes).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
-        .args(["setup", "--enable", "--share", "--legacy-state"])
-        .arg(&record)
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert_eq!(std::fs::read(record).unwrap(), bytes);
-    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
-}

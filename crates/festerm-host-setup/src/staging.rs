@@ -2,11 +2,11 @@
 //! No downloaded bytes are executed and no service is registered.
 
 use crate::artifacts::{self, Architecture, ExpectedArtifact, Package, Platform, VerifiedArtifact};
+use crate::protected_state::{self, Lease};
 use festerm_tunnel_bridge::{cli_pins, setup_storage as storage};
-use fs2::FileExt;
 use std::{
     fs::File,
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
 };
 
@@ -99,8 +99,7 @@ pub fn stage_artifact(artifact: &VerifiedArtifact, root: &Path) -> io::Result<St
         }
         Err(error) => return Err(error),
     };
-    lock.try_lock_exclusive()?;
-    let _lease = PublicationLease(lock);
+    let _lease = Lease::exclusive(lock)?;
     for entry in artifact.entries() {
         publish(&directory, Path::new(entry.name()), entry.bytes())?;
     }
@@ -126,42 +125,8 @@ pub fn stage_artifact(artifact: &VerifiedArtifact, root: &Path) -> io::Result<St
     })
 }
 
-struct PublicationLease(File);
-
-impl Drop for PublicationLease {
-    fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.0);
-    }
-}
-
 fn publish(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
-    match storage::read_private(directory, name, bytes.len()) {
-        Ok(existing) if existing.as_slice() == bytes => return Ok(()),
-        Ok(_) => return Err(io::Error::other("host.staged_artifact_mismatch")),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    let staging = PathBuf::from(format!(".stage-{}", uuid::Uuid::new_v4()));
-    let mut output = storage::open_private_file(directory, &staging, true)?;
-    let result = (|| {
-        output.write_all(bytes)?;
-        output.sync_all()?;
-        #[cfg(unix)]
-        {
-            festerm_unix_security::rename_noreplace(directory, &staging, directory, name)?;
-            directory.sync_all()?;
-        }
-        #[cfg(windows)]
-        festerm_windows_security::rename_file_noreplace(&output, directory, name)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        #[cfg(unix)]
-        let _ = festerm_unix_security::remove_private_staging_file(directory, &staging);
-        #[cfg(windows)]
-        let _ = festerm_windows_security::remove_private_staging_file(&output);
-    }
-    result
+    protected_state::publish_immutable(directory, name, bytes, "host.staged_artifact_mismatch")
 }
 
 /// Copies only the exactly pinned executable from a private source directory.
@@ -186,16 +151,7 @@ fn stage_with_pin(
         ));
     }
     let output = storage::private_directory(destination, true)?;
-    match storage::write_new_private(&output, name, &bytes) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let existing = storage::read_private(&output, name, cli_pins::DOWNLOAD_LIMIT as usize)?;
-            if !cli_pins::matches_digest(existing.as_slice(), &pin.executable_sha256)? {
-                return Err(io::Error::other("host.cached_cli_mismatch"));
-            }
-        }
-        Err(error) => return Err(error),
-    }
+    protected_state::publish_immutable(&output, name, &bytes, "host.cached_cli_mismatch")?;
     // New files remain non-executable. Execution adapters must reopen and verify
     // via cli_pins::verify before setting executable permissions/using the CLI.
     Ok(destination.join(name))

@@ -3,8 +3,8 @@
 //! Native endpoint adapters must verify observed identities before supplying receipts.
 //! No method launches a shell, registers a service, signs in, or claims readiness.
 
+use crate::protected_state::{self, Lease};
 use festerm_sessiond::private_storage as storage;
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{fs::File, io, path::Path};
 use uuid::Uuid;
@@ -105,6 +105,17 @@ pub struct Ticket {
     installation: String,
     operation: String,
     epoch: u64,
+    approved_settings: Settings,
+}
+
+impl Ticket {
+    pub fn approved_settings(&self) -> &Settings {
+        &self.approved_settings
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -133,6 +144,12 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Recover the exact protected in-flight operation after interruption.
+    /// Absence is not permission to reconstruct consent from configuration.
+    pub fn pending_ticket(&self) -> Option<&Ticket> {
+        self.pending.as_ref()
+    }
+
     fn validate(&self, origin: Origin) -> io::Result<()> {
         if self.version != 1 || self.origin != origin {
             return Err(refused("host.foreign_origin_or_version"));
@@ -144,6 +161,10 @@ impl Snapshot {
         }
         if let Some(ticket) = &self.pending {
             identifier(&ticket.operation)?;
+            ticket.approved_settings.validate()?;
+            if ticket.approved_settings != self.settings {
+                return Err(refused("host.settings_changed_reconfirm"));
+            }
             if ticket.installation != self.installation || ticket.epoch > self.epoch {
                 return Err(refused("host.invalid_journal"));
             }
@@ -170,23 +191,21 @@ pub struct Store {
     origin: Origin,
 }
 
-struct Lease(File);
-
-impl Drop for Lease {
-    fn drop(&mut self) {
-        // A concurrent process spawn can briefly inherit an open descriptor
-        // before exec. Releasing explicitly avoids extending this lease.
-        let _ = FileExt::unlock(&self.0);
-    }
-}
-
 impl Store {
     /// Create a new installation. Existing journals (including other origins)
     /// are never adopted or overwritten.
     pub fn create(path: &Path, origin: Origin, settings: Settings) -> io::Result<Self> {
         settings.validate()?;
         match storage::private_directory(path, false) {
-            Ok(_) => return Err(refused("host.installation_exists_or_incomplete")),
+            Ok(directory) => {
+                return match storage::open_private_file(&directory, Path::new(RECORD), false) {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        Err(refused("host.recordless_directory_requires_manual_review"))
+                    }
+                    Err(error) => Err(error),
+                    Ok(_) => Err(refused("host.installation_exists_or_incomplete")),
+                };
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
@@ -201,8 +220,7 @@ impl Store {
             }
             Err(error) => return Err(error),
         };
-        lock.try_lock_exclusive()?;
-        let _lease = Lease(lock);
+        let _lease = Lease::exclusive(lock)?;
         let record = Snapshot {
             version: 1,
             installation: Uuid::new_v4().to_string(),
@@ -213,7 +231,7 @@ impl Store {
             binding: None,
             pending: None,
         };
-        storage::write_new_private(
+        protected_state::publish_new(
             &store.directory,
             Path::new(RECORD),
             &serde_json::to_vec(&record).map_err(|_| refused("host.invalid_journal"))?,
@@ -226,18 +244,33 @@ impl Store {
             directory: storage::private_directory(path, false)?,
             origin,
         };
+        store.read()?;
         store.snapshot()?;
         Ok(store)
     }
 
     fn lease(&self) -> io::Result<Lease> {
-        let lock = storage::open_private_file(&self.directory, Path::new(LOCK), false)?;
-        lock.try_lock_exclusive()?;
-        Ok(Lease(lock))
+        let lock = storage::open_private_file(&self.directory, Path::new(LOCK), false).map_err(
+            |error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    refused("host.journal_lock_missing_reconciliation_required")
+                } else {
+                    error
+                }
+            },
+        )?;
+        Lease::exclusive(lock)
     }
 
     fn read(&self) -> io::Result<Snapshot> {
-        let bytes = storage::read_private(&self.directory, Path::new(RECORD), LIMIT)?;
+        let bytes =
+            storage::read_private(&self.directory, Path::new(RECORD), LIMIT).map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    refused("host.recordless_directory_requires_manual_review")
+                } else {
+                    error
+                }
+            })?;
         let record: Snapshot =
             serde_json::from_slice(&bytes).map_err(|_| refused("host.invalid_journal"))?;
         record.validate(self.origin)?;
@@ -274,18 +307,24 @@ impl Store {
         })
     }
 
-    /// Call only after explicit foreground consent. This is not a Ready result
-    /// or permission to stop/restart a legacy daemon generation.
-    pub fn request_enable(&self) -> io::Result<Ticket> {
+    /// Supply the exact settings shown and approved in the foreground, not a
+    /// fresh configuration read. Changed settings require renewed confirmation.
+    /// This is not Ready or permission to stop/restart a legacy generation.
+    pub fn request_enable(&self, approved_settings: &Settings) -> io::Result<Ticket> {
+        approved_settings.validate()?;
         self.change(|record| {
             if record.phase != Phase::Disabled {
                 return Err(refused("host.reconcile_before_enable"));
+            }
+            if &record.settings != approved_settings {
+                return Err(refused("host.settings_changed_reconfirm"));
             }
             advance(record)?;
             let ticket = Ticket {
                 installation: record.installation.clone(),
                 operation: Uuid::new_v4().to_string(),
                 epoch: record.epoch,
+                approved_settings: approved_settings.clone(),
             };
             record.pending = Some(ticket.clone());
             record.phase = Phase::EnableRequested;
@@ -447,9 +486,9 @@ mod tests {
         changed.startup = Startup::BeforeLogin;
         assert!(store.configure(changed).is_err());
         assert_eq!(store.snapshot().unwrap().settings, settings());
-        let ticket = store.request_enable().unwrap();
+        let ticket = store.request_enable(&settings()).unwrap();
         assert!(store.configure(settings()).is_err());
-        assert!(store.request_enable().is_err());
+        assert!(store.request_enable(&settings()).is_err());
         store.confirm_no_resources(&ticket).unwrap();
         store.configure(settings()).unwrap();
     }
@@ -457,10 +496,15 @@ mod tests {
     #[test]
     fn cancelled_setup_journals_late_exact_identity_without_restoring_consent() {
         let (root, store) = fixture();
-        let ticket = store.request_enable().unwrap();
+        let original = store.request_enable(&settings()).unwrap();
+        drop(store);
+        let store = Store::open(&root.path().join("host"), Origin::Headless).unwrap();
+        let ticket = store.snapshot().unwrap().pending_ticket().cloned().unwrap();
+        assert_eq!(ticket, original);
         store.revoke().unwrap();
         assert_eq!(store.snapshot().unwrap().phase, Phase::Reconciling);
-        assert!(store.request_enable().is_err());
+        assert_eq!(store.snapshot().unwrap().epoch, ticket.epoch() + 1);
+        assert!(store.request_enable(&settings()).is_err());
         let exact = binding();
         assert_eq!(
             store.record_provisioned(&ticket, exact.clone()).unwrap(),
@@ -477,14 +521,14 @@ mod tests {
         store
             .confirm_removed(store.snapshot().unwrap().epoch, &exact)
             .unwrap();
-        assert!(store.request_enable().is_err());
+        assert!(store.request_enable(&settings()).is_err());
         assert_eq!(store.snapshot().unwrap().binding, Some(exact));
     }
 
     #[test]
     fn disabled_reenable_preserves_identity_and_cleanup_requires_exact_stop() {
         let (_root, store) = fixture();
-        let ticket = store.request_enable().unwrap();
+        let ticket = store.request_enable(&settings()).unwrap();
         let exact = binding();
         store.record_provisioned(&ticket, exact.clone()).unwrap();
         assert!(store.request_cleanup().is_err());
@@ -492,7 +536,7 @@ mod tests {
         let epoch = store.snapshot().unwrap().epoch;
         assert!(store.confirm_stopped(epoch - 1, &exact).is_err());
         store.confirm_stopped(epoch, &exact).unwrap();
-        let retry = store.request_enable().unwrap();
+        let retry = store.request_enable(&settings()).unwrap();
         assert!(store.record_provisioned(&retry, binding()).is_err());
         store.record_provisioned(&retry, exact.clone()).unwrap();
         store.revoke().unwrap();
@@ -508,10 +552,18 @@ mod tests {
 
     #[test]
     fn host_journal_refuses_busy_corrupt_and_unprotected_state() {
+        use fs2::FileExt;
+
         let (root, store) = fixture();
         let lease = store.lease().unwrap();
+        let competing =
+            storage::open_private_file(&store.directory, Path::new(LOCK), false).unwrap();
         assert_eq!(
-            store.request_enable().unwrap_err().kind(),
+            competing.try_lock_exclusive().unwrap_err().raw_os_error(),
+            fs2::lock_contended_error().raw_os_error()
+        );
+        assert_eq!(
+            store.request_enable(&settings()).unwrap_err().kind(),
             io::ErrorKind::WouldBlock
         );
         drop(lease);
@@ -528,5 +580,123 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
             assert!(Store::open(&path, Origin::Headless).is_err());
         }
+    }
+
+    #[test]
+    fn interrupted_enable_recovers_exact_ticket_to_confirm_no_resources() {
+        let (root, store) = fixture();
+        let original = store.request_enable(&settings()).unwrap();
+        drop(store);
+        let store = Store::open(&root.path().join("host"), Origin::Headless).unwrap();
+        let snapshot = store.snapshot().unwrap();
+        let recovered = snapshot.pending_ticket().unwrap();
+        assert_eq!(recovered, &original);
+        assert_eq!(recovered.epoch(), snapshot.epoch);
+        store.confirm_no_resources(recovered).unwrap();
+        let disabled = store.snapshot().unwrap();
+        assert_eq!(disabled.phase, Phase::Disabled);
+        assert!(disabled.pending_ticket().is_none());
+        assert!(disabled.binding.is_none());
+    }
+
+    #[test]
+    fn recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence() {
+        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let path = root.path().join("host");
+        let directory = storage::private_directory(&path, true).unwrap();
+        storage::write_new_private(&directory, Path::new(LOCK), b"").unwrap();
+        storage::write_new_private(&directory, Path::new(".stage-interrupted"), b"partial")
+            .unwrap();
+        assert_eq!(
+            Store::open(&path, Origin::Headless)
+                .err()
+                .unwrap()
+                .to_string(),
+            "host.recordless_directory_requires_manual_review"
+        );
+        assert_eq!(
+            Store::create(&path, Origin::Headless, settings())
+                .err()
+                .unwrap()
+                .to_string(),
+            "host.recordless_directory_requires_manual_review"
+        );
+        assert!(!path.join(RECORD).exists());
+        assert_eq!(std::fs::read_dir(&path).unwrap().count(), 2);
+        storage::write_new_private(&directory, Path::new(RECORD), b"{").unwrap();
+        assert_eq!(
+            Store::open(&path, Origin::Headless)
+                .err()
+                .unwrap()
+                .to_string(),
+            "host.invalid_journal"
+        );
+        assert_eq!(
+            storage::read_private(&directory, Path::new(RECORD), LIMIT)
+                .unwrap()
+                .as_slice(),
+            b"{"
+        );
+    }
+
+    #[test]
+    fn host_enable_requires_exact_foreground_settings_and_binds_the_ticket() {
+        for changed in [
+            Settings {
+                allow_creation: true,
+                ..settings()
+            },
+            Settings {
+                startup: Startup::UserSignIn,
+                ..settings()
+            },
+        ] {
+            let (root, store) = fixture();
+            let prompted = store.snapshot().unwrap().settings;
+            store.configure(changed.clone()).unwrap();
+            let before = store.snapshot().unwrap();
+            assert_eq!(
+                store.request_enable(&prompted).unwrap_err().to_string(),
+                "host.settings_changed_reconfirm"
+            );
+            assert_eq!(store.snapshot().unwrap(), before);
+            let ticket = store.request_enable(&changed).unwrap();
+            assert_eq!(ticket.approved_settings(), &changed);
+            drop(store);
+            let store = Store::open(&root.path().join("host"), Origin::Headless).unwrap();
+            let mut forged = ticket.clone();
+            forged.approved_settings = prompted;
+            assert!(store.record_provisioned(&forged, binding()).is_err());
+            assert!(store.snapshot().unwrap().binding.is_none());
+            assert_eq!(
+                store.record_provisioned(&ticket, binding()).unwrap(),
+                Phase::Provisioned
+            );
+        }
+    }
+
+    #[test]
+    fn host_provisioning_refuses_settings_that_drift_from_the_approved_ticket() {
+        let (_root, store) = fixture();
+        let ticket = store.request_enable(&settings()).unwrap();
+        let mut drifted = store.snapshot().unwrap();
+        drifted.settings.allow_creation = true;
+        storage::replace_private(
+            &store.directory,
+            Path::new(RECORD),
+            &serde_json::to_vec(&drifted).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .record_provisioned(&ticket, binding())
+                .unwrap_err()
+                .to_string(),
+            "host.settings_changed_reconfirm"
+        );
+        let bytes = storage::read_private(&store.directory, Path::new(RECORD), LIMIT).unwrap();
+        let unchanged: Snapshot = serde_json::from_slice(&bytes).unwrap();
+        assert!(unchanged.binding.is_none());
+        assert_eq!(unchanged.phase, Phase::EnableRequested);
     }
 }

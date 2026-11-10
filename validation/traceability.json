@@ -5504,6 +5504,11 @@
         "cancelled_setup_journals_late_exact_identity_without_restoring_consent",
         "disabled_reenable_preserves_identity_and_cleanup_requires_exact_stop",
         "host_journal_refuses_busy_corrupt_and_unprotected_state",
+        "host_enable_requires_exact_foreground_settings_and_binds_the_ticket",
+        "host_provisioning_refuses_settings_that_drift_from_the_approved_ticket",
+        "interrupted_enable_recovers_exact_ticket_to_confirm_no_resources",
+        "recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence",
+        "interrupted_private_publication_never_exposes_torn_final_bytes",
         "offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache",
         "headless_commands_configure_and_report_only_disabled_state",
         "unavailable_host_operations_and_unsafe_options_fail_closed",
@@ -5511,14 +5516,14 @@
         "headless_binary_status_is_a_journal_not_a_ready_claim",
         "authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries",
         "authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache",
-        "headless_package_staging_refuses_unauthenticated_input_before_writing",
-        "headless_setup_does_not_treat_enable_consent_as_legacy_restart_confirmation"
+        "headless_package_staging_refuses_unauthenticated_input_before_writing"
       ],
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",
       "prerequisites": [
         "Issue #681 stages 3–5/7: new zero-shell host endpoint, verified principal channel, real observed health and foreground secure sign-in/consent integration; setup/run/update/uninstall refuse until functional",
         "Exact-owned same-user native service/status/cleanup adapters and persistent-daemon independence; signed authenticated artifacts and compatible update/rollback",
+        "Exact-generation separate default-No migration confirmation is deferred until the migration API; setup command refusals do not establish that behavior",
         "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance"
       ]
     },

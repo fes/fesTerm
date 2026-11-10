@@ -160,6 +160,15 @@ fn diagnostic(error: &io::Error) -> &'static str {
         "host.invalid_journal" | "host.installation_exists_or_incomplete" => {
             "host.journal_reconciliation_required; existing evidence was not overwritten"
         }
+        "host.recordless_directory_requires_manual_review" => {
+            "host.recordless_directory_requires_manual_review; inspect the exact --state-dir before retrying; no directory was adopted"
+        }
+        "host.journal_lock_missing_reconciliation_required" => {
+            "host.journal_lock_missing_reconciliation_required; preserve the existing record and reconcile ownership"
+        }
+        "host.settings_changed_reconfirm" => {
+            "host.settings_changed_reconfirm; review and explicitly approve the current settings"
+        }
         "host.disable_before_configuration" => {
             "host.disable_before_configuration; existing consent and settings were preserved"
         }

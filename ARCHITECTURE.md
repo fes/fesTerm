@@ -706,6 +706,9 @@ ADR 0084 stage 4 adds the opt-in `festerm-host-setup::lifecycle` policy and
 standalone `app/festerm-host` composition root without GUI/graphics dependencies.
 Both desktop and headless callers can use its protected, origin-scoped
 configuration/consent journal, operation epochs and exact-owned cleanup receipts.
+Consent commits the exact foreground-approved settings under the journal lease;
+persisted operation tickets remain recoverable after interruption. Initial
+journals and staged CLI/helper files share atomic no-replace publication.
 It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
 the shared authenticated-artifact verifier. Verified helper entries and their
 exact signed provenance are staged immutably without execution;

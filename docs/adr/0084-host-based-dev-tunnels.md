@@ -325,7 +325,7 @@ identity fields and returns bounded immutable regular-file entries, not an
 archive path to reopen. No auto key discovery, unsigned fallback or downgrade
 is permitted; source-reviewed updater-key rotation and installation-owner
 version/rollback policy remain explicit. Headless host CLI inclusion, consuming
-installer integration, private atomic staging and service switching are not
+native installer/executable publication and service switching are not
 claimed by this foundation. Legacy scripts and old-tag recovery retain their
 old contracts, without a new Linux authentication claim (#681).
 
@@ -477,6 +477,11 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `cancelled_setup_journals_late_exact_identity_without_restoring_consent`,
   `disabled_reenable_preserves_identity_and_cleanup_requires_exact_stop`,
   `host_journal_refuses_busy_corrupt_and_unprotected_state`,
+  `host_enable_requires_exact_foreground_settings_and_binds_the_ticket`,
+  `host_provisioning_refuses_settings_that_drift_from_the_approved_ticket`,
+  `interrupted_enable_recovers_exact_ticket_to_confirm_no_resources`,
+  `recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence`,
+  `interrupted_private_publication_never_exposes_torn_final_bytes`,
   `offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache`,
   `headless_commands_configure_and_report_only_disabled_state`,
   `unavailable_host_operations_and_unsafe_options_fail_closed`,
@@ -484,9 +489,11 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `headless_binary_status_is_a_journal_not_a_ready_claim`,
   `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
   `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
-  `headless_package_staging_refuses_unauthenticated_input_before_writing`;
-  `headless_setup_does_not_treat_enable_consent_as_legacy_restart_confirmation`
-  preserves a synthetic legacy-generation fixture without invoking migration.
+  `headless_package_staging_refuses_unauthenticated_input_before_writing`.
+  The existing cancellation fixture reopens and recovers the exact pending
+  ticket before revocation and late provisioning. Exact-generation default-No
+  migration confirmation remains deferred until the migration API; no generic
+  setup refusal test is counted as implemented migration-consent evidence.
 - **Automated tests implemented (authenticity foundation only):**
   `authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes`,
   `rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing`,
@@ -522,7 +529,7 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
 | Profiles | `save_recipe_is_local_only`; first create, later resume, post-reboot replacement toast, duplicate identity policy, second-client shortcut |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
-| Integrity | Implemented helper foundation: the seven Rust tests above and Python producer/recovery fixtures. Deferred: Microsoft CLI pin/acquisition integration, private atomic publication failures, trusted first-verifier delivery and native signed install/update evidence |
+| Integrity | Implemented: authenticated `stage-package`, existing pinned official-CLI offline staging and shared private atomic no-replace publication with interrupted-write/cache-corruption fixtures. Deferred: network acquisition, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 

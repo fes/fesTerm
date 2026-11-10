@@ -13,7 +13,7 @@ and old-tag recovery without touching secrets or installed services.
 The [bootstrap and staging contract](host-release-artifacts.md) deliberately
 does not claim that downloading both verifier and key establishes trust.
 Existing artifact names/consumers remain compatible; host CLI inclusion,
-installer integration, private atomic staging, service switching/rollback,
+native installer/executable publication, service switching/rollback,
 migration and native signing evidence remain #681 gates. ADR 0084 stays Proposed.
 
 ## Stabilizing SSH-agent test startup
@@ -8684,3 +8684,12 @@ native-target helper artifacts with the existing updater trust and stages their
 immutable entries plus exact signed provenance for restart verification. Cached
 bytes must still match; a completion marker is not authority. Nothing is
 executed or registered, and legacy helpers are not rebranded as the new endpoint.
+
+Review tightened the consent boundary: enabling now commits only the exact
+foreground-approved settings and persists them with the operation ticket;
+configuration changes require reconfirmation. The exact ticket can be recovered
+after a crash rather than rebuilt from portable config. Initial journals and
+pinned CLI copies now share atomic no-replace publication with helper staging,
+and recordless directories require explicit manual ownership review. Generic
+setup refusal is not claimed as generation-specific migration confirmation;
+that workflow remains deferred until its real API exists.

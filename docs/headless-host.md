@@ -32,6 +32,18 @@ is not Ready. Missing/corrupt/busy/foreign-origin state fails rather than lookin
 like an absent installation that can be recreated. No default directories,
 credential stores or installed services are consulted.
 
+The initial journal and both CLI/helper staging paths publish private bytes via
+temporary-file write, sync and atomic no-replace rename, never a torn final file.
+Failed writes remove only their own temporary entry. A crash can still leave an
+initial directory with no journal. This reports
+`host.recordless_directory_requires_manual_review`, not "new installation":
+absence of a record is not proof of ownership or permission to adopt/delete it.
+After independently verifying the **exact** supplied directory never initialized
+and contains no identity, revocation receipt or foreign state, an operator may
+move it aside and choose a fresh path. Existing records, including corrupt or
+tampered ones, must be preserved for exact-owned reconciliation; never reset
+them to manufacture new consent.
+
 `stage-cli` accepts an already obtained `devtunnel` (`devtunnel.exe` on Windows)
 in a private source directory. It verifies the executable against the release's
 existing reviewed `cli_pins` hash before writing private cache bytes. Existing
@@ -88,6 +100,8 @@ state/account binding and allow manual deferral. Setup, enable or sharing
 consent is **not** permission to stop/restart a live legacy shell: require a
 separate default-No confirmation bound to that exact generation. No lifecycle
 operation in this slice accepts a daemon-generation restart target.
+The confirmation workflow and its generation-binding tests are deferred until
+the migration API exists; command-refusal tests do not establish this behavior.
 
 Manual means an explicit foreground run. User sign-in registration is not
 availability before login. Pre-login is rejected until the OS user-service,
@@ -105,9 +119,18 @@ unchanged. Desktop must call the same policy, never execute a fetched script.
   It never silently adopts the other origin, older schema, or existing journal.
   Host-local state is not portable TOML/export authority.
 - `configure(Settings)` changes disabled desired state only.
-  `request_enable()` journals a fresh installation/operation/epoch ticket after
-  the caller obtains foreground consent. This API deliberately has no native
-  adapter capable of enabling exposure yet.
+  `request_enable(&approved_settings)` atomically compares the exact settings
+  displayed and approved in the foreground with current protected state.
+  Changes require `host.settings_changed_reconfirm`, without creating a ticket
+  or changing the epoch. The persisted ticket binds those approved settings;
+  later publication refuses drift or a substituted ticket. Passing a fresh
+  portable configuration read is not foreground consent. This API deliberately
+  has no native adapter capable of enabling exposure yet.
+- After interruption, `Store::open(...).snapshot()?.pending_ticket()` exposes
+  the exact persisted operation read-only, including its original `epoch()` and
+  `approved_settings()`. Recover it rather than reconstructing approval from
+  config. It can reconcile authoritative no-resource evidence or a late exact
+  provisioned identity; revocation still fences the recovered original epoch.
 - `record_provisioned(ticket, Binding)` requires adapter-verified exact stable
   host/account/tunnel incarnation/key references; re-enable cannot change them.
   No secret material or grants are copied into this journal. Existing protected
@@ -136,7 +159,9 @@ there is no new desktop control in this slice.
 Focused journal, staging and executable CLI tests cover inert configuration,
 origin isolation, stale completions, exact stop/removal receipts, immutable
 identity, pre-login refusal, private/corrupt/busy state, pin mismatch and refusal
-exit codes. Tests use synthetic data and private directories under the checkout.
+exit codes. They also cover foreground settings changing before consent commit,
+publish-time drift, recovered in-flight tickets and interrupted atomic writes.
+Tests use synthetic data and private directories under the checkout.
 They do not access accounts, secrets, cloud resources, installed applications or
 native services. Native/service/package qualification remains in `HOSTSETUP-01`
 in [manual validation](manual-validation.md).

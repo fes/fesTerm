@@ -3345,8 +3345,9 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;
-that needs separate default-No confirmation for its exact generation. The
-current headless CLI refuses migration without modifying a legacy fixture.
+that needs separate default-No confirmation for its exact generation. That
+workflow and its generation-confirmation tests remain deferred until a migration
+API exists; generic command-refusal tests are not migration-consent evidence.
 
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
