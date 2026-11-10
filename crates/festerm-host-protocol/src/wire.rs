@@ -70,7 +70,9 @@ impl<T: Validate> Validate for Envelope<T> {
         if self.protocol != HOST_MARKER || self.version != HOST_VERSION {
             return Err(ContractError::UnsupportedVersion);
         }
-        if self.body.issuance_epoch_required() && self.issuance_epoch.is_none() {
+        if self.body.issuance_epoch_required() && self.issuance_epoch.is_none()
+            || !self.body.issuance_epoch_allowed() && self.issuance_epoch.is_some()
+        {
             return Err(ContractError::Malformed);
         }
         self.body.validate()
@@ -292,6 +294,10 @@ impl Validate for Request {
         matches!(self, Self::Ensure { .. } | Self::Create { .. })
     }
 
+    fn issuance_epoch_allowed(&self) -> bool {
+        self.issuance_epoch_required()
+    }
+
     fn validate(&self) -> Result<(), ContractError> {
         match self {
             Self::List {
@@ -352,6 +358,7 @@ impl Validate for Capabilities {
         if (self.ensure || self.create || self.temporary) && !self.attach
             || self.temporary && !self.detach
             || self.creation_allowed && !(self.ensure || self.create)
+            || (self.ensure || self.create) && self.issuance_epoch.is_none()
         {
             return Err(ContractError::Malformed);
         }
@@ -472,15 +479,7 @@ pub enum Response {
 impl Validate for Response {
     fn validate(&self) -> Result<(), ContractError> {
         match self {
-            Self::Capabilities { capabilities } => {
-                capabilities.validate()?;
-                if (capabilities.ensure || capabilities.create)
-                    && capabilities.issuance_epoch.is_none()
-                {
-                    return Err(ContractError::Malformed);
-                }
-                Ok(())
-            }
+            Self::Capabilities { capabilities } => capabilities.validate(),
             Self::Inventory { page } => page.validate(),
             Self::Lookup { result } => result.validate(),
             Self::Ensured { session, lease, .. } => {
