@@ -5513,6 +5513,7 @@
         "reserved_secret_creation_never_replaces_existing_authority",
         "protected_owner_interrupted_initialization_cannot_switch_credential_storage",
         "host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority",
+        "host_owner_authentication_failure_retains_stream_for_bounded_denial",
         "native_owner_reference_reopens_only_exact_approved_binding",
         "native_owner_vault_failure_never_creates_a_fallback_key",
         "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",

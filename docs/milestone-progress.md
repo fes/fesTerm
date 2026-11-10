@@ -8763,6 +8763,13 @@ expose HOST: independent review, native qualification, foreground first-connect
 consent and endpoint routing integration remain prerequisites. No services,
 cloud resources, normal setup controls or legacy capabilities change.
 
+The bounded channel review follow-up retains the exact unauthenticated stream
+and typed error after failed authentication, consuming the challenge without
+returning authority. The caller can send a bounded Denied/Stale reply under its
+deadline and then close; real SSH fixtures cover both reasons. Portable
+client-only owner clippy is now separately required by CI. Challenge expiry is
+host-local monotonic state, not a signed TTL field.
+
 ## A headless host boundary without pretending the endpoint exists
 
 ADR 0084 separates installing a host from creating a shell. The legacy installer

@@ -550,6 +550,9 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `ssh_channel_binding_separates_connection_and_role_ordered_channel_ids`
   additionally checks connection/role/channel separation and refusal of empty
   or short session identifiers.
+  `host_owner_authentication_failure_retains_stream_for_bounded_denial`
+  exercises actual Denied/Stale failures retaining their unauthenticated SSH
+  stream for bounded replies before closing; no owner authority is returned.
   `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
   no UI, listener, broad pairing service or full ADR acceptance is claimed.
   Reliability remediation adds

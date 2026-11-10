@@ -34,7 +34,9 @@ pub(crate) use channel::fixture_key;
 #[cfg(feature = "client")]
 pub use channel::{ChannelOwnerChallenge, ChannelOwnerProof};
 #[cfg(feature = "relay")]
-pub use channel::{OwnerAuthenticatedStream, PendingChannelOwnerChallenge};
+pub use channel::{
+    OwnerAuthenticatedStream, OwnerAuthenticationFailure, PendingChannelOwnerChallenge,
+};
 
 const DOMAIN: &[u8] = b"fesTerm HOST owner authentication v1\0";
 pub const MAX_OWNER_KEYS: usize = 4;

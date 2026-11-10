@@ -972,6 +972,84 @@ mod tests {
 
     #[cfg(feature = "owner-auth")]
     #[tokio::test]
+    async fn host_owner_authentication_failure_retains_stream_for_bounded_denial() {
+        use crate::owner_auth::*;
+        use festerm_host_protocol::{ContractError, Epoch};
+        use festerm_secret_store::MemorySecretStore;
+
+        for expired in [false, true] {
+            let ssh_key = key();
+            let host = PinnedHost {
+                host: Default::default(),
+                host_key_fingerprint: ssh_key
+                    .public_key()
+                    .fingerprint(russh::keys::HashAlg::Sha256)
+                    .to_string(),
+            };
+            let (mut client, accepted, server) = owner_pair(ssh_key, host.clone()).await;
+            let vault = MemorySecretStore::new();
+            let approved = OwnerBinding {
+                installation: festerm_host_protocol::HostId::new().to_string(),
+                host,
+                account: "github:failure-fixture".into(),
+                principal: Default::default(),
+            };
+            let key = fixture_key(&vault, &approved);
+            let verifier = OwnerVerifier::new(
+                OwnerPolicy {
+                    host: approved.host.clone(),
+                    principal: approved.principal.clone(),
+                    host_epoch: Epoch::new(1).unwrap(),
+                    grant_epoch: Epoch::new(1).unwrap(),
+                    remote_access: true,
+                    capabilities: Default::default(),
+                },
+                &[key.public_key()],
+            )
+            .unwrap();
+            let signing_key = if expired {
+                key
+            } else {
+                fixture_key(&vault, &approved)
+            };
+            let mut pending = accepted.challenge_owner(&verifier).unwrap();
+            let proof = client
+                .prove_owner_fixture(&vault, &signing_key, &approved, pending.challenge())
+                .unwrap();
+            if expired {
+                pending.expire_fixture();
+            }
+            let (mut rejected, reason) = accepted
+                .authenticate_owner(pending, &proof, &verifier)
+                .err()
+                .unwrap()
+                .into_parts();
+            assert_eq!(
+                reason,
+                if expired {
+                    ContractError::Stale
+                } else {
+                    ContractError::Denied
+                }
+            );
+            let reply = reason.to_string();
+            tokio::time::timeout(Duration::from_secs(1), async {
+                rejected.write_all(reply.as_bytes()).await.unwrap();
+                rejected.shutdown().await.unwrap();
+                let mut received = vec![0; reply.len()];
+                client.stream.read_exact(&mut received).await.unwrap();
+                assert_eq!(received, reply.as_bytes());
+            })
+            .await
+            .unwrap();
+            drop(rejected);
+            client.close().await.unwrap();
+            server.await.unwrap();
+        }
+    }
+
+    #[cfg(feature = "owner-auth")]
+    #[tokio::test]
     async fn host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority() {
         use crate::owner_auth::*;
         use festerm_host_protocol::Epoch;

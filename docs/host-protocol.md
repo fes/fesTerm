@@ -281,11 +281,17 @@ The API is:
    the **same actual stream**, `VerifiedOwner` and `OwnerConnectionGuard`
    together. Keep the guard through shutdown; freshly authorize every operation
    under the protected policy lease. Do not combine authority with another stream.
+   Failure returns opaque `OwnerAuthenticationFailure`; its `into_parts()`
+   returns the same unauthenticated stream and typed reason, never owner
+   authority. Send a bounded typed Denied/Stale reply under the endpoint's
+   deadline, then close; the pending challenge remains consumed.
 
 The signed message starts with
 `fesTerm HOST owner client-to-host SSH channel proof v1\0`, the actual exporter,
-then the existing canonical challenge (host/key, owner, connection, epochs,
-nonce and TTL). This rejects relay/reflection, different channels/connections,
+then the existing canonical challenge (host/key, owner, connection, epochs
+and nonce). Expiry is enforced by the host's monotonic pending-challenge
+deadline; no TTL or expiry field is signed. This rejects relay/reflection,
+different channels/connections,
 old unbound signatures and replay. `require_owner_channel_binding()` remains
 fail-closed for absent/mismatched bindings. Lower-level `OwnerSigningKey::prove`
 is still only the legacy contract primitive, not a production stream adapter.
@@ -400,7 +406,9 @@ generation and revision changes, version-first refusal of actual legacy/future
 shapes, strict zero-field variants and non-progressing pagination.
 The three-platform CI quality matrix explicitly enables `owner-auth` in its
 bridge relay test and Dev Tunnels clippy combinations, so these optional
-security proofs compile, run and lint on Linux, macOS and Windows. This is
+security proofs compile, run and lint on Linux, macOS and Windows. A separate
+strict `client,owner-auth` lib clippy step disables default features to preserve
+the portable client-only boundary. This is
 portable regression coverage, not native enrollment/channel/service acceptance.
 
 There is no actual legacy migration: existing profiles/protocol/host-key/vault/

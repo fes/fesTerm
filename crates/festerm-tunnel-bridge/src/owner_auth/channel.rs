@@ -70,6 +70,32 @@ pub struct OwnerAuthenticatedStream {
     guard: OwnerConnectionGuard,
 }
 
+/// Failed authentication retains only the unauthenticated stream and reason.
+#[cfg(feature = "relay")]
+pub struct OwnerAuthenticationFailure {
+    stream: Box<crate::relay::HostStream>,
+    reason: ContractError,
+}
+
+#[cfg(feature = "relay")]
+impl std::fmt::Debug for OwnerAuthenticationFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OwnerAuthenticationFailure")
+            .field("reason", &self.reason)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "relay")]
+impl OwnerAuthenticationFailure {
+    /// Send only a bounded typed denial under the endpoint's deadline, then
+    /// close. This stream has no owner authority; the challenge is consumed.
+    pub fn into_parts(self) -> (crate::relay::HostStream, ContractError) {
+        (*self.stream, self.reason)
+    }
+}
+
 #[cfg(feature = "relay")]
 impl OwnerAuthenticatedStream {
     /// Dispatch only this stream with these authority values. Retain the guard
@@ -220,18 +246,25 @@ impl crate::relay::HostStream {
             .verify_message(&proof.0, current, Instant::now(), &message)
     }
 
+    /// Failure returns the same unauthenticated stream for a bounded denial
+    /// followed by close; every outcome consumes the pending challenge.
     pub fn authenticate_owner(
         self,
         pending: PendingChannelOwnerChallenge,
         proof: &ChannelOwnerProof,
         current: &OwnerVerifier,
-    ) -> Result<OwnerAuthenticatedStream, ContractError> {
-        let (owner, guard) = self.verify_owner(pending, proof, current)?;
-        Ok(OwnerAuthenticatedStream {
-            stream: self,
-            owner,
-            guard,
-        })
+    ) -> Result<OwnerAuthenticatedStream, OwnerAuthenticationFailure> {
+        match self.verify_owner(pending, proof, current) {
+            Ok((owner, guard)) => Ok(OwnerAuthenticatedStream {
+                stream: self,
+                owner,
+                guard,
+            }),
+            Err(reason) => Err(OwnerAuthenticationFailure {
+                stream: Box::new(self),
+                reason,
+            }),
+        }
     }
 }
 
