@@ -1,5 +1,29 @@
 # Milestone Progress Narrative
 
+## Keeping the portable receipt crash regressions in mandatory CI
+
+The retained reliability review found that default bridge tests enable relay
+and therefore do not compile the four new portable receipt regressions.
+The existing mandatory quality matrix now separately runs
+`cargo test --locked -p festerm-tunnel-bridge --no-default-features --features
+host-routing --lib portable_receipt` on macOS and Ubuntu, with Windows skipped
+because these tests are cfgUnix. It has no optional/continue-on-error gate.
+A small existing-workflow contract test pins that exact non-relay selector,
+Unix matrix guard and the four actual regression names; native execution is
+proved separately by the selected Cargo invocation, not the static name check.
+
+This is a CI/test-policy-only normal child of `42f9ceeb`: all Rust,
+manifests/lock and mobile/Simulator inputs retain their qualified bytes.
+The source90 receipt/mobile213/offline134 and Simulator e6bba proof remain
+attributed to that source, not rerun or relabeled for this workflow change.
+All thirty prior evidence hashes, the extra owner-auth-only baseline RED and
+the initial zero-test selector non-evidence remain preserved. The fresh local
+private1.98 selection executes **4 pass/0 fail/0 ignored**, and its discovery
+list contains exactly those four names; the workflow contract, fmt and
+base#700 trace pass. GitHub matrix execution, Android and all native acceptance
+gates remain unrun here. No native16, simulator, lifecycle, provider, install,
+OS/device, signing/release or push operation is performed.
+
 ## Publishing portable owner receipts atomically
 
 The retained #705 reliability gate found a real crash/ENOSPC defect in the

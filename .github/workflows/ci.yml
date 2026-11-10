@@ -226,6 +226,9 @@ jobs:
               native_ --lib -- --ignored --test-threads=1
       - name: Check portable enrolled-owner client without host dependencies
         run: cargo clippy --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
+      - name: Test portable owner receipt publication without relay
+        if: matrix.os != 'windows-latest'
+        run: cargo test --locked -p festerm-tunnel-bridge --no-default-features --features host-routing --lib portable_receipt
       - name: Test Dev Tunnel profiles and account isolation
         run: cargo test -p festerm --features experimental-dev-tunnels dev_tunnel
       - name: Test shared remote file routing
