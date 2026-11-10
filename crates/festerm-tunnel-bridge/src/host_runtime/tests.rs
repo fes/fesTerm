@@ -393,6 +393,48 @@ struct NativeRuntimeFixture {
 }
 
 #[cfg(unix)]
+fn native_stream_failure_code(error: Error) -> &'static str {
+    match error {
+        Error::Refused(festerm_host_protocol::Refusal::Busy) => "refused-busy",
+        Error::Refused(festerm_host_protocol::Refusal::OutcomeUncertain) => {
+            "refused-outcome-uncertain"
+        }
+        Error::Refused(_) => "refused",
+        Error::Contract(_) => "contract",
+        Error::Closed => "closed",
+        Error::Deadline => "deadline",
+        Error::Cancelled => "cancelled",
+        Error::Offline => "offline",
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_runtime_stream_failure_labels_are_content_free() {
+    for (error, expected) in [
+        (
+            Error::Refused(festerm_host_protocol::Refusal::Busy),
+            "refused-busy",
+        ),
+        (
+            Error::Refused(festerm_host_protocol::Refusal::OutcomeUncertain),
+            "refused-outcome-uncertain",
+        ),
+        (
+            Error::Refused(festerm_host_protocol::Refusal::Unknown),
+            "refused",
+        ),
+        (Error::Contract(ContractError::Limit), "contract"),
+        (Error::Closed, "closed"),
+        (Error::Deadline, "deadline"),
+        (Error::Cancelled, "cancelled"),
+        (Error::Offline, "offline"),
+    ] {
+        assert_eq!(native_stream_failure_code(error), expected);
+    }
+}
+
+#[cfg(unix)]
 impl NativeRuntimeFixture {
     fn client_context(&self) -> crate::host_client::ApprovedContext {
         let public = self.auth.ssh_key.public_key().to_openssh().unwrap();
@@ -1021,8 +1063,19 @@ impl NativeRuntimeFixture {
     async fn stream(&mut self, role: StreamRole) -> (ClientConnection, ConnectionPermit) {
         let (client, stream, ssh) = self.auth.pair().await;
         let runtime = self.runtime.clone();
+        let role_label = match &role {
+            StreamRole::Control => "control",
+            StreamRole::Terminal => "terminal",
+        };
         self.servers.push(tokio::spawn(async move {
-            runtime.serve_stream(stream, CancellationToken::new()).await
+            let result = runtime.serve_stream(stream, CancellationToken::new()).await;
+            if let Err(error) = result {
+                eprintln!(
+                    "native host stream role={role_label} failure={}",
+                    native_stream_failure_code(error)
+                );
+            }
+            result
         }));
         self.connections.push(ssh);
         self.auth.authenticate(client, role).await

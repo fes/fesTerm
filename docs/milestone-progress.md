@@ -31,6 +31,9 @@ lifetime cap; confirmed retirement now releases those slots even when completed
 UI events were discarded. Sixteen unresolved actions still block a seventeenth:
 the bound was not raised and uncertain originals were not discarded.
 Native StopRequested remains OutcomeUncertain, a separate host completion gap.
+Replaced or reconfirmed-away generations without an exact terminal Ended receipt
+can therefore remain unresolved indefinitely and exhaust admission. Stale,
+generic absence or Unknown is not a pruning workaround.
 
 Focused protected-store/framed tests cover genuine fresh-process controller
 reopen using a test-only synthetic memory-vault snapshot over a private pipe,
@@ -71,6 +74,64 @@ helper/objcopy fallback warnings remain visible; strict success is not a
 globally warning-free tooling claim. Full commands, source/tool hashes, retained
 failures, zero-selector non-evidence and historical preservation live in the
 owned `target/restart-evidence` handoff, not in an aggregate/native acceptance seal.
+
+Publication preparation normally merges only immutable diagnostic
+`b7c81932b589aa09addc339b316c666861f8a9a4` into the qualified checkpoint
+`00eb26ee40f0a56974da5776bbcf75561f6ffe71`, preserving both histories and stories.
+The only Rust delta is the diagnostic test file below; checkpoint/mobile
+production bytes and the original test/Simulator attribution remain unchanged.
+No proposed parent End implementation or moving core is consumed.
+The combined source runs the one relay-gated static-label unit: 1 pass, 0 fail,
+0 ignored on actual Rust1.99.1, with affected client/host-routing strict profiles
+both without and with relay passing. An initial non-relay exact selector selected
+zero tests because this fixture module requires relay; that raw result remains
+non-evidence, not a second actual unit run. Formatting, traceability and diff
+checks pass. No mobile221/offline134, Simulator, Android or native suite is rerun
+for this test/story-only merge; the earlier57 raw records remain unchanged.
+
+The current Android secret-store adapter implements put/get/update/delete but
+does not implement
+`SecretStore::create_reserved(&SecretReference, &SecretBytes) -> Result<(), SecretStoreError>`.
+It inherits Unsupported. First protected-original initialization therefore
+fails at `OriginalStore::access` before any mutation can be sent; an incomplete
+anchored reservation remains a storage refusal, not an empty set. Mobile
+Create/Ensure and End require a successfully reopened protected set, so this is
+an actual Android feature limitation: the current backend has no supported
+initialization path for those checkpoint-gated actions, not merely missing
+Android test evidence. Inventory/existing-session attach do not acquire new
+authority from that refusal and retain their separate native/vault gates.
+The minimum prerequisite is an Android native-store implementation of that
+existing reserved-reference API under its exact-reference lease, honoring
+private protected storage, no replacement and typed failures. No JNI/backend
+framework, file fallback or bypass is added here. Historical Android library
+builds are not Android runtime completion.
+
+## Keeping native HOST fixture failures observable without exposing their inputs
+
+The published mobile lifecycle head `85b01679` passes its required Ubuntu and
+Windows jobs, but macOS still fails the selected-creation worker's terminal
+event read with Offline: native aggregate16/1/0,177.13s. Both creation and
+frontend adoption had already passed. This is separate from the migration
+takeover failure; neither a lock-contention cause nor a flaky-test label is
+established.
+
+The test-only runtime fixture now reports only a fixed control/terminal role
+and a static failure classification when its server stream returns an error.
+It preserves the exact result, with no error Debug text, operation, endpoint,
+receipt, terminal data or credential. A deterministic unit checks the static
+classifications. Production policy, protocol, effects, assertions, timeouts
+and retry behavior are unchanged.
+
+Actual macOS Rust1.99.1 qualification at85 HEAD plus this final test file:
+classification unit1/0/0 and one controlled named native worker1/0/0,6.42s;
+affected strict Clippy, formatting and diff checks pass. Helpers and the bridge
+were freshly rebuilt in a private cloned cache; all eight recorded commands
+exit0. This single passing execution does not reproduce or fix the CI failure.
+Normal control-stream closure also reports Offline in that passing run, so
+that label alone is not causal evidence. Existing vendored warnings and an
+unsuccessful optional rust-objcopy debug-strip warning remain visible; no
+toolchain or OS repair was attempted. Fresh required CI and native product
+acceptance remain open.
 
 ## Ending a mobile HOST generation without ending its replacement
 
