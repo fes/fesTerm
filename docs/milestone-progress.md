@@ -13,6 +13,17 @@ reservation epoch without changing owner keys or permission epochs, retaining
 the issuer rollback fence. New scopes do not refresh uncertain client requests.
 This closes a source composition prerequisite, not endpoint/native acceptance.
 
+Qualification of frozen source `91cf2880`: protocol contracts 13/13, focused
+bridge owner/channel fixtures 15/15 and protected-enrollment fixtures 12/12 pass.
+Strict release-profile clippy passes for protocol all-targets, bridge
+relay/owner-auth all-targets, portable client/owner-auth library and enrollment
+all-targets. Formatting, trace311, workflow5 and headless/portable plus
+iOS/Android default/live-SSH dependency checks pass. Only diagnosed foreign
+russh dev metadata missing the unchanged channel exporter was invalidated
+(26 files, 37.5 MiB); this is not evidence about native startup failures.
+Native actual-current reservation/rotation composition, vault/device and
+first-connect qualification remain required.
+
 ## Keeping Windows host fixtures inside the real storage policy
 
 The [#681](https://github.com/fes/fesTerm/issues/681) Windows configure,
