@@ -554,8 +554,9 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   recovery without a large native credential blob, rollback or account adoption.
   `protected_owner_interrupted_initialization_cannot_switch_credential_storage`
   preserves receipt/prepared evidence across refused native/file mode changes;
-  the real private-store key fixture now verifies deletion and subsequent Missing
-  (including Windows DELETE-capable no-reparse handles in platform CI).
+  the real private-store key fixture exercises deletion and subsequent Missing.
+  Cross-platform CI selects it for Windows DELETE-capable no-reparse handles,
+  but a passing native Windows run remains required.
 - **Automated tests required:** Planned tests and acceptance matrix below.
   Implemented stage-4 boundary coverage:
   `headless_configuration_is_inert_and_origin_is_not_adopted`,
@@ -575,6 +576,12 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
   `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
   `headless_package_staging_refuses_unauthenticated_input_before_writing`.
+  Windows configuration/journal/staging fixtures share the existing
+  policy-validated private-storage fixture-root selection, not an assumption
+  that checkout ancestors are safe. The native
+  `staging_parent_rejects_a_dacl_that_allows_child_substitution` regression
+  retains strict ancestor refusal; fixture selection does not qualify startup
+  or service behavior.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic
