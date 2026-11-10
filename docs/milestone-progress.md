@@ -2,8 +2,10 @@
 
 ## Client/core union on the named supported toolchain
 
-This normal two-parent integration consumes only fixed client `3620f6de` and
-core `e49bb89a`. Native stopped-update `c75d03d7` and moving session/client
+The first normal two-parent integration consumes fixed client `3620f6de` and
+core `e49bb89a`; the subsequent authorized normal merge consumes exact #693
+base `1debea97` (fixed e49 plus session `181` fixture/console-read-only-helper
+corrections). Native stopped-update `c75d03d7` and moving session/client
 branches are not consumed. The two-daemon test now combines the actual bounded
 inventory collector, original scope, snapshot-before-adopt acknowledgment and
 confirmed activation with stored frontend snapshots, actual output ingestion,
@@ -67,8 +69,9 @@ GUI, VM, native-vault, cross-platform or physical-mobile acceptance.
    for that explicit action; ResumeOrCreate uses host-authoritative `Ensure`,
    never an inventory/timeout/denial-to-absence decision. Preserve independent
    temporary grants, actual lifetime, cancellation and original editor/account
-   scope. Attach the returned exact target using the reserved attachment after
-   actual frontend adoption. Add actual native positive creation/resume and
+   scope. Establish the returned exact target using the reserved attachment;
+   present its snapshot before acknowledging adoption or treating it as live.
+   Add actual native positive creation/resume and
    lost-reply same-operation tests, plus unsupported/denied/Busy/revoked/cancelled
    negatives before exposing the creation confirmation UI.
 2. **Mobile installation and approval:** reuse `HostSession`, `Scope` and
@@ -221,7 +224,204 @@ sharing or migration. Live host inventory, protected trust/Connect, mobile UI
 and native qualification remain open; ADR 0084 is still Proposed and stage 6
 is incomplete.
 
-## Saving host recipes without creating shells
+## Freezing the runtime/native core with exact primary-CI corrections
+
+The frozen publication union normally merges exact
+`181eb5722f279e7482002582e0fd3067757a4695` into qualified
+`e49bb89ac6c595b40ecf2b8c2b9db89b11d5e778` at
+`45f6903e14d514e27c53b0712f93793fdb58c3e9`, without conflicts.
+No native update (`c75d03d7`), client producer or moving branch is consumed.
+Daemon and authenticated host runtime/lifecycle implementation bytes remain
+unchanged from `e49bb89a`; the delta carries exact session fixtures, setup
+fixtures/bounded diagnostics, their Windows-only process-console query and docs.
+All 96 ordered markers, original snapshot refusal reasons, real writer I/O
+barrier, same-lease/issued-operation Busy assertions, original 15-second
+authentication budget and two-daemon adoption/isolation oracles are preserved.
+
+Fresh coupled qualification uses private `.runtime-target`, jobs1, dev/test
+debug0 and incremental0:
+
+```sh
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/.runtime-target"
+unset FESTERM_SESSIOND_TEST_RUNTIME_ROOT
+cargo test --locked -p festerm-sessiond --test host_control temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease -- --exact --test-threads=1
+cargo test --locked -p festerm-sessiond --test remote_ssh -- --test-threads=2
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams -- --exact --nocapture
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge --features festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9d5211745c126c2cdc417062d153c324d024b188
+git diff --check
+```
+
+Actual final-source results: **one host-control pass** (3.53 seconds), **all six
+real SSH passes** (3.85 seconds), and **one portable bounded-evidence pass**
+(0.12 seconds), all zero failed/ignored. Affected strict all-target Clippy,
+fmt, base-`9d` traceability (311 edges/zero broken or unclassified) and diff
+checks pass. Logs are retained as `.runtime-validation/frozen-181-*.log`.
+The first SSH invocation explicitly selected the longer lane-local `s` root:
+all six refused the conservative socket-path preflight before daemon creation.
+That failure is retained; the unchanged fixtures passed with their canonical
+short workspace-parent `.f` root and unique owned children. No permission repair,
+symlink workaround or source/deadline change was made. An initial standalone
+sessiond Clippy selection failed on the existing unused bridge
+`encode_json_bounded` under its narrower feature union; the final strict command
+above enables the frozen core's real `host-routing` feature, with no lint waiver
+or source change. Both failures remain separate logs, not erased by the reruns.
+
+The **14 actual native SSH routes in 127.73 seconds** and the broader combined
+runtime/native counts remain attributed to the actual `e49bb89a` source
+qualification below; no full native aggregate was rerun or relabelled for this
+test-only coupled delta. The full sessiond **245 passes/seven existing ignores**
+remain attributed only to `d7d2d94d`. Required primary-platform CI, independent
+combined reviews, actual Windows console/argv/CIM evidence and installed signed
+native/cloud/vault/device acceptance remain open. This frozen source handoff
+does not claim Ready or ADR completion. Parent owns the new stacked Draft
+publication; no push, force update, administrative merge or service operation
+is performed by this lane.
+
+## Combining the narrow primary-CI corrections
+
+The session branch normally merges exact Windows fixture checkpoint
+`794c360bc5038eb498b1dc0beaef4821bb9507fe` into exact session correction
+`d7d2d94d611e06c98734ed8168dc3dc2383d2fe1`. Only the overlapping progress
+sections needed conflict resolution; both histories and all source assertions
+are preserved. No moving branch was substituted for either reviewed input.
+
+With the warm private target, one build job, zero dev/test debug info and
+incremental compilation disabled, the combined source passed:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams -- --exact --nocapture
+cargo clippy --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup --tests -- -D warnings
+cargo test --locked -p festerm-sessiond --test host_control temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease -- --exact --test-threads=1
+cargo test --locked -p festerm-sessiond --test remote_ssh -- --test-threads=2
+```
+
+The portable evidence fixture ran **1 passed/0 failed/0 ignored** (71 macOS
+tests filtered); coupled session selectors ran **1 host-control and all 6 SSH
+tests passed**, zero ignored. Strict affected Clippy passed. Logs are retained
+as `target/adr84-windows-correction/combined-*.log`. The **245 passed/7 existing
+ignored** full sessiond qualification below remains attributed to `d7d2d94d`,
+not relabeled as a new combined-head full-suite run. Final format, base-`9d521174`
+traceability and diff checks accompany the merge handoff.
+
+The native console fixture change and bounded first-failure capture do **not**
+establish that all three Windows failures are fixed. The argv/CIM cause
+distinctions and all three exact native selectors still require fresh actual
+Windows x64 CI. Publication/review remain parent-owned; no service, platform
+acceptance or main merge is claimed.
+
+## Correcting primary-CI fixture admission races
+
+Exact `9d521174` Windows x64 native CI ran both bridge cases successfully:
+run `42793362245`, job `129752153482`, 2 passed/0 failed/0 ignored in 4.88 s
+(784 ms pending backlog). This is actual x64 bridge evidence, not an ARM or
+macOS inference. The old checkpoint dead-field error no longer blocked strict
+Clippy. Required primary jobs nevertheless failed; none is declared green.
+
+Linux run `42793362331`, job `129752154178`, retained 25 host-control passes
+and an initial-attachment `Busy` failure in
+`temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease`.
+Its captured lease still had writer/temporary epochs 1, no pending ticket and
+no committed attachment. The fixture incorrectly unwrapped a nonblocking
+admission result. It now deterministically holds the exact generation's lease
+lock, proves Busy changes neither lease bytes nor the issued-operation ledger,
+then releases it and uses the existing bounded same-target/same-attachment
+helper for the two successful attachments. It checks exactly one native
+generation, the original lease identity and exactly one first-adoption epoch
+advance. No new ensure, issued operation, launch or timeout is introduced.
+The original log does not identify which lock contended; the held-lock control
+proves this legitimate pre-reservation outcome without claiming a syscall trace.
+
+macOS primary job `129752154418` retained 4 SSH passes and a malformed-snapshot
+failure reporting SSH status 1 instead of invalid recovery bytes. Taking a
+snapshot only queues ADOPTED; it does not wait for daemon writer activation.
+The corruption fixture now requires an octal-encoded child-output round trip
+through the original writer before starting its invalid candidate. A new
+controlled case deliberately defers the original adoption and reproduces
+status 1 with **zero corrupt deliveries**, then adopts that original session
+and proves its shell still accepts input. This separates legitimate pending
+admission refusal from malformed-payload decoding; the original malformed,
+truncated, unsupported-semantics, no-adoption and old-writer checks remain.
+
+The two unchanged exact selectors each passed once locally before editing;
+those passes do not erase either original CI failure. With the existing warm
+private target, `CARGO_BUILD_JOBS=1`, dev/test debug info zero and incremental
+compilation disabled, the corrected source passed:
+
+```sh
+cargo test --locked -p festerm-sessiond --test host_control temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease -- --exact --nocapture --test-threads=1
+cargo test --locked -p festerm-sessiond --test remote_ssh -- --nocapture --test-threads=2
+FESTERM_HOST_TEST_DIAGNOSTICS=1 cargo test --locked -p festerm-sessiond --all-targets -- --test-threads=2
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+Focused counts: 1 host-control and all 6 SSH tests passed. The full sessiond
+all-target run passed **245 tests, 7 existing ignored, zero failures**:
+111 library, 70 daemon binary, 1 detached native, all 26 host-control,
+1 mobile-tunnel loopback, 21 native daemon (7 ignored), all 6 real SSH and
+9 example tests. This includes targets omitted from the earlier qualification.
+Evidence is retained under `target/adr84-windows-correction/` in
+`macos-9d-*-baseline.log`, `macos-controlled-*.log` and
+`macos-all-sessiond-targets.log`. Strict affected Clippy, format, traceability
+(311 edges) and diff checks pass. Production code, security/storage policy,
+adoption deadlines and existing failure/preservation assertions are unchanged.
+Fresh corrected-head Linux/
+macOS primary CI and the separately owned Windows legacy corrections remain
+required; local passes do not qualify installed services or native acceptance.
+
+## Retaining evidence for legacy Windows setup CI failures
+
+Required Windows CI run `42793362331`, job `129752154452`, at
+`9d5211745c126c2cdc417062d153c324d024b188` ran 67 setup tests: 60 passed,
+three failed and four were ignored. The failing `setup.rs` and
+`service_install.rs` source was carried unchanged from green main `8ac8070d`;
+this is not evidence that the actual failures were cache or infrastructure
+noise. Both ownership fixture errors erased the distinction between spawn,
+deadline and script failure. Their roughly 15-second completion is consistent
+with the runner deadline but does not prove a C# or CIM root cause. The console
+fixture explicitly exceeded its 15-second deadline while using PowerShell
+`Add-Type` merely to call `GetConsoleWindow`.
+
+The console regression now re-executes its own test binary and queries the
+same native API through `festerm-windows-security`. It still requires exactly
+one zero-console observation, exit status 37 and the existing
+`CREATE_NO_WINDOW` command path within the unchanged deadline. The read-only
+ownership fixtures now capture bounded stdout/stderr concurrently and retain
+escaped first evidence on exit failure, overflow and timeout, with
+`fixture.started`/`fixture.matcher_ready` progress markers. Production command
+redaction, the C# matcher, native argv decoding, the CIM precision bound and
+all ownership cases are unchanged. Child cleanup cannot replace the original
+identity-fixture failure. No serialization, retries, skips or deadline changes
+were added.
+
+The deterministic diagnostic regression is
+`service_install::tests::service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams`
+(one case). It covers nonzero exit, both bounded streams, escaped control bytes,
+partial-read cancellation and timeout. Its standalone `794c360b` checkpoint had
+not run Cargo; the combined-source portable execution recorded above subsequently
+passed one case under the granted single-job resource window. No Windows success
+is claimed.
+
+The three exact native selectors, each expected to execute **one** test with
+zero ignored, are:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_windows_native_argv_ownership_is_exact_and_read_only -- --exact --nocapture
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_windows_creation_identity_matches_only_cim_microsecond_precision -- --exact --nocapture
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup tests::background_commands_do_not_allocate_a_console -- --exact --nocapture
+```
+
+After correction, the complete Windows setup binary is expected to report
+64 passed and the existing four ignored (68 total). These are expected counts,
+not executed results. A reviewed, SHA-pinned lab entry or new required Windows
+x64 CI must retain the first failure if either ownership fixture still refuses.
+The current lab's Windows mapping does not authorize these selectors; no
+arbitrary payload or guest execution was attempted. This checkpoint does not
+qualify new ADR 0084 controller APIs, installed services, GUI, signing or native
+acceptance.
+
 ## Proving native pending-output order rather than presence
 
 Review of `28e0391a` caught that its native assertions still checked only marker
@@ -247,8 +447,8 @@ missing final marker were rejected. All three native bridge cases listed below
 passed with the stronger matcher, zero ignored; the 96-line pending backlog was
 observed in 38 ms. Native runtime and trace remained in this worktree.
 Format, traceability (311 edges) and diff checks pass. The original `8ebbaf29`
-Windows failures remain retained; actual corrected x64 Windows proof is pending,
-and any Windows ARM diagnostic would not substitute for it.
+Windows failures remain retained; corrected x64 bridge evidence was subsequently
+obtained as recorded above. Windows ARM diagnostics do not substitute for x64.
 
 ## Correcting the Windows session-control CI regressions
 

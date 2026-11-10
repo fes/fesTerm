@@ -530,20 +530,29 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn background_commands_do_not_allocate_a_console() {
-        let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-            .join("System32")
-            .join("WindowsPowerShell")
-            .join("v1.0")
-            .join("powershell.exe");
+        const CHILD: &str = "FESTERM_TUNNEL_SETUP_CONSOLE_PROBE";
+        if std::env::var_os(CHILD).as_deref() == Some(std::ffi::OsStr::new("1")) {
+            use std::io::Write;
+            println!(
+                "\nconsole-window:{}",
+                u8::from(festerm_windows_security::has_console_window())
+            );
+            std::io::stdout().flush().unwrap();
+            std::process::exit(37);
+        }
+        // Probe the actual child, without starting PowerShell and a C# compiler
+        // merely to call GetConsoleWindow.
+        let executable = std::env::current_exe().unwrap();
         let output = timeout(
             Duration::from_secs(15),
-            background_command(&powershell)
+            background_command(&executable)
                 .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class ConsoleProbe { [DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow(); }'; [ConsoleProbe]::GetConsoleWindow().ToInt64(); exit 37",
+                    "--exact",
+                    "tests::background_commands_do_not_allocate_a_console",
+                    "--nocapture",
                 ])
+                .env(CHILD, "1")
+                .stdin(Stdio::null())
                 .kill_on_drop(true)
                 .output(),
         )
@@ -551,7 +560,12 @@ mod tests {
         .expect("console probe exceeded its deadline")
         .expect("console probe must launch");
         assert_eq!(output.status.code(), Some(37), "{output:?}");
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let observations: Vec<_> = stdout
+            .lines()
+            .filter(|line| line.starts_with("console-window:"))
+            .collect();
+        assert_eq!(observations, ["console-window:0"], "{output:?}");
     }
 
     #[cfg(unix)]

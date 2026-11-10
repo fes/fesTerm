@@ -1707,3 +1707,11 @@ unit coverage, not native PTY chunking, proves the more-than-64-chunk boundary.
 Both observed native buffers require all 96 child-output markers exactly once in
 increasing byte order, then the final marker exactly once; matcher fixtures reject
 reordering, duplicates/replay and missing chunks or final marker.
+Primary-CI fixture controls prove initial nonblocking Busy preserves exact
+temporary lease/issued-operation state before retrying the same attachment,
+without creating another generation. RSD-01/02 invalid-snapshot evidence waits
+for a real original-writer round trip, not merely snapshot delivery/queued
+ADOPTED; a deferred-adoption control distinguishes pre-payload bridge refusal
+from malformed recovery decoding. All invalid-reason/no-adoption and live-writer
+assertions remain. The `9d521174` x64 bridge CI passed both native cases, but
+new primary failures and native/installed-service acceptance remain separate.

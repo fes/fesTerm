@@ -747,6 +747,14 @@ automatic helper deployment and daemon hot handoff remain out of scope.
   status without registering a service or provisioning a tunnel. Windows
   bundles must require/sign the launcher; signed live-service upgrade remains
   DT-05 evidence rather than a result of these fixtures.
+  The setup console probe now executes its own test binary and queries
+  `GetConsoleWindow` through the existing safe Windows boundary, without a
+  PowerShell/C# compilation prerequisite. The separate read-only native argv
+  and CIM creation-time probes retain their exact ownership assertions.
+  `service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams`
+  checks bounded, control-escaped diagnostics, cancellation evidence, exit
+  failure and timeout; production service-command diagnostics stay redacted.
+  Fresh Windows proof after the `9d521174` failures is still required.
   `private_storage_ancestor_trust_adds_only_the_exact_servicing_sid` distinguishes
   the private-storage exception from unchanged save staging and rejects unrelated
   services/users. `staging_parent_rejects_a_dacl_that_allows_child_substitution`
