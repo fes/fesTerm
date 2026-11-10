@@ -8709,3 +8709,15 @@ and reclaims pending capacity, but never reports absence or permits reuse.
 Exact-key historical files grow on disk; globally bounded expiry still needs an
 authenticated issuance-epoch contract. Contended daemon adoption retries
 boundedly, and transient observations no longer turn Running into Launching.
+
+The full native takeover test then exposed the actual registry contention:
+durable checkpoint staging and directory synchronization held the same lock
+used by discovery/admission readers. Instrumented owned runs held it for
+105–426 ms even when passing, close to the unchanged 500-ms refusal deadline.
+Checkpoints now prepare and synchronize outside that lock, then revalidate and
+atomically publish under a short lock. Disjoint updates rebase without replaying
+effects; same-name replacements refuse. Directory synchronization follows
+unlock. Read-only/no-op operations no longer checkpoint, and exact-generation
+bridge admission performs native IPC outside the registry lock. Deterministic
+stalled-preparation/disjoint-writer and conflicting-generation regressions cover
+the boundary rather than increasing deadlines.

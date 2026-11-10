@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     env,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -3539,27 +3539,28 @@ fn run_bridge(
     }
     let name = validate_name(name)?;
     let root = festerm_sessiond::runtime_root()?;
+    let record = with_registry_lock(|registry| {
+        validate_bridge_record(registry, &root, &name, pid, generation)
+    })?;
 
     #[cfg(unix)]
-    let stream = with_registry_lock(|registry| {
-        let record = validate_bridge_record(registry, &root, &name, pid, generation)?;
+    let stream = {
         let mut stream = UnixStream::connect(&record.socket)?;
         stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
         begin_attach_admission(&mut stream, &record, AttachKind::Remote)?;
-        Ok(stream)
-    })?;
+        stream
+    };
 
     #[cfg(windows)]
-    let stream = with_registry_lock(|registry| {
-        let record = validate_bridge_record(registry, &root, &name, pid, generation)?;
+    let stream = {
         let mut stream =
             Pipe::connect(&record.socket, WORKER_JOIN_TIMEOUT, &AtomicBool::new(false))?;
         stream.set_read_timeout(CLIENT_POLL_INTERVAL);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
         begin_attach_admission(&mut stream, &record, AttachKind::Remote)?;
-        Ok(stream)
-    })?;
+        stream
+    };
 
     run_stdio_bridge(stream).map_err(Into::into)
 }
@@ -4057,10 +4058,6 @@ fn session_pipe_name(name: &str) -> String {
     format!(r"\\.\pipe\festerm-sessiond-{sanitized}")
 }
 
-fn registry_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(festerm_sessiond::runtime_root()?.join("registry.json"))
-}
-
 fn private_runtime_directory(root: &Path) -> io::Result<Option<File>> {
     match festerm_sessiond::private_storage::private_directory(root, false) {
         Ok(directory) => Ok(Some(directory)),
@@ -4130,10 +4127,6 @@ fn bounded_registry_lock(file: &File, exclusive: bool) -> io::Result<()> {
     }
 }
 
-fn registry_lock_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(festerm_sessiond::runtime_root()?.join("registry.lock"))
-}
-
 fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         if let Some(directory) = private_runtime_directory(parent)? {
@@ -4161,8 +4154,12 @@ fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::
 }
 
 fn open_registry_lock_file() -> Result<(PathBuf, File), Box<dyn std::error::Error>> {
-    let path = registry_path()?;
-    let lock_path = registry_lock_path()?;
+    open_registry_lock_file_in(&festerm_sessiond::runtime_root()?)
+}
+
+fn open_registry_lock_file_in(root: &Path) -> Result<(PathBuf, File), Box<dyn std::error::Error>> {
+    let path = root.join("registry.json");
+    let lock_path = root.join("registry.lock");
     let parent = lock_path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     set_dir_mode(parent, 0o700)?;
@@ -4195,17 +4192,116 @@ fn open_registry_lock_file() -> Result<(PathBuf, File), Box<dyn std::error::Erro
 }
 
 fn with_registry_lock<T>(
-    mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
+    operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
 ) -> Result<T, Box<dyn std::error::Error>> {
-    let (path, lock_file) = open_registry_lock_file()?;
+    with_registry_lock_in(&festerm_sessiond::runtime_root()?, operation, || {})
+}
+
+fn with_registry_lock_in<T>(
+    root: &Path,
+    mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
+    mut before_prepare: impl FnMut(),
+) -> Result<T, Box<dyn std::error::Error>> {
+    let (path, lock_file) = open_registry_lock_file_in(root)?;
+    let started = Instant::now();
+    sessiond_trace(format_args!("registry acquire pid={}", process::id()));
     bounded_registry_lock(&lock_file, true)?;
-    let mut registry = read_registry_at(&path)?;
+    sessiond_trace(format_args!(
+        "registry acquired pid={} after={:?}",
+        process::id(),
+        started.elapsed()
+    ));
+    let before = read_registry_at(&path)?;
+    let mut registry = before.clone();
     let result = operation(&mut registry);
-    if result.is_ok() {
-        write_registry_at(&path, &registry)?;
+    if result.is_err() || registry == before {
+        FileExt::unlock(&lock_file)?;
+        return result;
     }
+    let Some(directory) = path
+        .parent()
+        .map(private_runtime_directory)
+        .transpose()?
+        .flatten()
+    else {
+        write_registry_at(&path, &registry)?;
+        FileExt::unlock(&lock_file)?;
+        return result;
+    };
     FileExt::unlock(&lock_file)?;
-    result
+    // Slow durability barriers must not hold the discovery/admission lock.
+    // Rebase disjoint updates and check same-name lineage under that lock
+    // immediately before the atomic rename; legacy writers remain serialized.
+    let desired = registry.clone();
+    let mut base = before.clone();
+    for _ in 0..4 {
+        before_prepare();
+        let bytes = serde_json::to_vec_pretty(&registry)?;
+        if bytes.len() > 4 * 1024 * 1024 {
+            return Err("native registry exceeds metadata bound".into());
+        }
+        let mut prepared = festerm_sessiond::private_storage::PreparedCheckpoint::prepare(
+            &directory,
+            Path::new("registry.json"),
+            &bytes,
+        )?;
+        bounded_registry_lock(&lock_file, true)?;
+        let current = read_registry_at(&path)?;
+        if current == base {
+            prepared.publish()?;
+            FileExt::unlock(&lock_file)?;
+            prepared.sync()?;
+            sessiond_trace(format_args!(
+                "registry published pid={} total={:?}",
+                process::id(),
+                started.elapsed()
+            ));
+            return result;
+        }
+        let rebased = rebase_registry_change(&before, &desired, &current);
+        FileExt::unlock(&lock_file)?;
+        registry = rebased?;
+        if registry == current {
+            return result;
+        }
+        base = current;
+    }
+    Err("native registry publication contention".into())
+}
+
+fn rebase_registry_change(
+    before: &SessionRegistry,
+    desired: &SessionRegistry,
+    current: &SessionRegistry,
+) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
+    let mut result = current.clone();
+    let names: BTreeSet<_> = before
+        .sessions
+        .keys()
+        .chain(before.foreign.keys())
+        .chain(desired.sessions.keys())
+        .chain(desired.foreign.keys())
+        .collect();
+    for name in names {
+        let old = (before.sessions.get(name), before.foreign.get(name));
+        let new = (desired.sessions.get(name), desired.foreign.get(name));
+        if old == new {
+            continue;
+        }
+        let actual = (current.sessions.get(name), current.foreign.get(name));
+        if actual != old && actual != new {
+            return Err("native registry generation changed during publication".into());
+        }
+        result.sessions.remove(name);
+        result.foreign.remove(name);
+        if let Some(record) = new.0 {
+            result.sessions.insert(name.clone(), record.clone());
+        }
+        if let Some(record) = new.1 {
+            result.foreign.insert(name.clone(), record.clone());
+        }
+    }
+    Ok(result)
 }
 
 fn write_registry_at(
@@ -6913,6 +7009,95 @@ mod tests {
         .unwrap();
         assert!(registry.sessions.is_empty());
         fixture.assert_removed(&record);
+    }
+
+    #[test]
+    fn registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers() {
+        let root = env::current_dir()
+            .unwrap()
+            .join(format!("registry-publication-{}", uuid::Uuid::new_v4()));
+        let directory = festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let effects = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        thread::scope(|scope| {
+            let effects = Arc::clone(&effects);
+            let writer_root = &root;
+            let writer = scope.spawn(move || {
+                let mut first = true;
+                with_registry_lock_in(
+                    writer_root,
+                    |registry| {
+                        effects.fetch_add(1, Ordering::SeqCst);
+                        registry
+                            .foreign
+                            .insert("first".into(), serde_json::json!({"future": 1}));
+                        Ok(())
+                    },
+                    || {
+                        if first {
+                            first = false;
+                            ready_tx.send(()).unwrap();
+                            continue_rx.recv().unwrap();
+                        }
+                    },
+                )
+                .map_err(|error| error.to_string())
+            });
+            ready_rx.recv().unwrap();
+            let lock = festerm_sessiond::private_storage::open_private_file(
+                &directory,
+                Path::new("registry.lock"),
+                false,
+            )
+            .unwrap();
+            let readable = FileExt::try_lock_shared(&lock).is_ok();
+            if readable {
+                FileExt::unlock(&lock).unwrap();
+            }
+            let second = with_registry_lock_in(
+                &root,
+                |registry| {
+                    registry
+                        .foreign
+                        .insert("second".into(), serde_json::json!({"future": 2}));
+                    Ok(())
+                },
+                || {},
+            )
+            .map_err(|error| error.to_string());
+            continue_tx.send(()).unwrap();
+            let first = writer.join().unwrap();
+            assert!(readable, "durable preparation pinned the discovery lock");
+            first.unwrap();
+            second.unwrap();
+        });
+        assert_eq!(
+            effects.load(Ordering::SeqCst),
+            1,
+            "effects must not replay during rebase"
+        );
+        let registry = read_registry_at(&root.join("registry.json")).unwrap();
+        assert_eq!(registry.foreign.len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registry_checkpoint_rebase_refuses_same_name_replacement() {
+        let mut before = SessionRegistry::default();
+        before
+            .foreign
+            .insert("same".into(), serde_json::json!({"generation": 1}));
+        let mut desired = before.clone();
+        desired
+            .foreign
+            .insert("same".into(), serde_json::json!({"generation": 2}));
+        let mut current = before.clone();
+        current
+            .foreign
+            .insert("same".into(), serde_json::json!({"generation": 3}));
+        assert!(rebase_registry_change(&before, &desired, &current).is_err());
+        assert_eq!(current.foreign["same"]["generation"], 3);
     }
 
     struct GenerationFixture(PathBuf);

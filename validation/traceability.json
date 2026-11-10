@@ -5517,7 +5517,9 @@
         "logical_capacity_retires_absent_records_but_never_erases_revocation_or_generation_fences",
         "local_quarantine_retirement_releases_pending_budget_without_asserting_absence",
         "attachment_commit_retries_lease_contention_but_not_past_pending_deadline",
-        "guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation"
+        "guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation",
+        "registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers",
+        "registry_checkpoint_rebase_refuses_same_name_replacement"
       ],
       "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
       "status": "partial",
