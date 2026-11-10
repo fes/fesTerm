@@ -5,13 +5,38 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Embedded Dev Tunnel host installer scripts and the exact commands that run them, for in-app review."
+description = "GUI-free Dev Tunnel setup scripts and authenticated helper artifact verification."
 publish = false
 
+[features]
+artifacts = [
+    "dep:base64",
+    "dep:flate2",
+    "dep:minisign-verify",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:tar",
+    "dep:zip",
+]
+
+[[bin]]
+name = "festerm-verify-artifact"
+path = "src/bin/festerm-verify-artifact.rs"
+required-features = ["artifacts"]
+
 [dependencies]
+base64 = { version = "0.22", optional = true }
+flate2 = { version = "1", optional = true }
+minisign-verify = { version = "0.2.5", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 sha2 = "0.11"
+tar = { version = "0.4", optional = true }
+zip = { version = "4.6", default-features = false, features = ["deflate"], optional = true }
 
 [dev-dependencies]
+blake2 = "0.10"
+ed25519-dalek = "3"
 tempfile = "3"
 
 [lints]

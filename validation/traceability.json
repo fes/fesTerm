@@ -5513,8 +5513,7 @@
       "id": "host-based-dev-tunnels-design",
       "edges": [
         "HOST-04",
-        "HOST-05",
-        "HOST-06"
+        "HOST-05"
       ],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#decision",
@@ -5531,6 +5530,33 @@
         "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
         "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect",
         "Migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow before migration exposure"
+      ]
+    },
+    {
+      "id": "authenticated-host-helper-artifacts",
+      "edges": ["HOST-06"],
+      "requirements": [
+        "docs/adr/0084-host-based-dev-tunnels.md#9-packaging-integrity-and-upgrades",
+        "docs/host-release-artifacts.md#verification-and-staging-api"
+      ],
+      "decisions": ["ADR-0084"],
+      "automated_tests": [
+        "python_produced_six_bundles_and_manifests_authenticate_in_rust",
+        "pinned_cargo_packager_signatures_authenticate_python_produced_manifest",
+        "authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes",
+        "rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing",
+        "rejects_wrong_version_arch_platform_filename_length_and_hash",
+        "rejects_unknown_duplicate_and_out_of_bounds_manifest_fields",
+        "rejects_signed_unsafe_tar_entries_duplicates_missing_files_and_wrong_version",
+        "rejects_signed_zip_paths_symlinks_modes_and_duplicates",
+        "rejects_oversized_headers_without_allocating_entry_and_trailing_gzip"
+      ],
+      "manual_scenarios": ["DT-05", "DT-08"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #681: headless CLI package inclusion and consuming installer/private atomic staging integration",
+        "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
+        "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence"
       ]
     }
   ]
