@@ -9717,3 +9717,62 @@ documentation does not change those tested bytes. Runtime's separate
 integration must retain its original authentication deadline and both
 same-issued-operation/lost-reply and actual two-daemon adoption/detach oracles,
 then qualify the new combined head independently.
+
+### ADR 0084 fixed native-review/runtime publication union
+
+The runtime lane normally merges exact native `48fd53037bb576af619eba83db61c84a03fda469`
+into `1b5987ec20142901d9f9bf24d20d3277c722865d` at
+`25d5bc6b7f990ce13e7f4f5475ce7cf33644fd7d`. The native tip is documentation-only
+above tested source `3d18fff1`. Only additive milestone prose and one traceability
+prerequisite conflicted; both evidence histories and the current native wording
+are retained. Native CLI/setup/client bodies match exact `48fd5303`; runtime
+authentication, two-daemon adoption/isolation and original-issued lost-reply
+oracle bodies match exact `1b5987ec`. No moving update/client/session branch,
+production lifecycle rewrite, ancestry shortcut or ADR 0085 removal is included.
+
+Fresh qualification uses the private `.runtime-target`, jobs1, dev/test debug0,
+incremental0 and exact owned helper, with logs under
+`.runtime-validation/combined-48fd-*.log`:
+
+```sh
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/.runtime-target"
+export FESTERM_HOST_TEST_HELPER="$PWD/.runtime-target/debug/festerm-sessiond"
+cargo build --locked -p festerm-sessiond -p festerm-pty-test-child
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored
+cargo test --locked -p festerm-host --all-targets
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib controller::tests
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_controller_
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_cloud_foreground_initializes_real_identity
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing --lib
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-tunnel-client -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9d5211745c126c2cdc417062d153c324d024b188
+git diff --check
+```
+
+Actual combined-source results: **114 bridge library passes/14 explicit ignores**
+(15.18 seconds), then **all 14 actual native SSH routes pass with zero ignored**
+(127.73 seconds), including original-issued lost-reply reconciliation,
+two-daemon isolation/adoption/correlated detach, takeover, live revocation and
+the real heartbeat/transport-loss lifetime. The library run includes all four
+original-15-second authentication Busy regressions. Default host tests pass
+**13** (five units/eight integrations, including independent temporary consent);
+focused setup tests pass **10 controller**, **six shared setup/approval-core**
+and **one real identity initialization**. No selector is empty. Portable check,
+strict five-package all-target Clippy, fmt, range-aware traceability
+(311 edges/zero broken or unclassified) and diff checks pass. The unchanged
+vendored proxy-helper warning is retained without dependency edits.
+
+The native lane's separate 114-pass/one-ignore host/setup aggregate and ten
+compatibility tests remain attributed to `3d18fff1`, not relabelled as fresh
+combined runs. This bounded publication checkpoint does not clear independent
+combined reliability/scope/full-lifecycle reviews or required primary-platform
+CI. The separately owned session correction `d7d2d94d`, Windows legacy fixture
+correction, client producer checkpoint and native authenticated update are not
+consumed here. Original CI failures remain failures; Linux's unsafe staged
+checkout remains a lab prerequisite, not runtime acceptance. No GUI, production
+cloud, native-vault, installed service, signed bundle, guest/device or mobile
+acceptance was performed. Parent owns Draft publication; this is not Ready or
+ADR completion.
