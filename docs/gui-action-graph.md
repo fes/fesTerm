@@ -1583,19 +1583,20 @@ in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
 HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
-Actual verified SSH client/server streams explicitly refuse owner authentication
-until a shared connection-and-channel exporter exists; this is a tested blocker,
-not authenticated endpoint coverage. First-connect controls/native vault
-qualification remain deferred.
+Actual pinned SSH proof helpers bind the signed connection and role-ordered
+channel IDs, transferring authority only with that exact stream. Failure retains
+the unauthenticated stream for bounded denial and close. These are tested
+helpers, not authenticated endpoint coverage; first-connect controls/native
+vault qualification remain deferred.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy tests; H,N deferred |
 | `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P; partial codec/absence/admission tests; H,N deferred |
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; partial lifetime/generation schemas; supervisor/H,N deferred |
-| `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared journal/epoch and approved-settings/account/OS-user scope; in-process foreground auth/zero-shell cloud adapter; actual setup/Ready and controls deferred | Proven no-send recovery or explicit unbound-uncertainty acknowledgement retaining reservation; separate new consent reuses it; authoritative GET pins receipt; pinned absence requires exact native stop | P,H,N; partial boundary/cloud fixtures, native/UI deferred |
-| `HOST-05` | Headless package → configured service | Configure/status/staging; library-only cloud provisioning/status; setup/run/update/uninstall refuse | Shared origin/account/receipt policy; observed cloud presence is not Ready; no shell/service changes or pre-login | Retain exact cleanup receipt; generation-atomic cloud delete unqualified, never check-then-delete | P,H,N; partial boundary/cloud fixtures, endpoint/headless package/native/deletion deferred |
-| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; old daemons preserved; no grant expansion or automatic legacy recreation | Compatible rollback; no revoked-state resurrection | P: manifest/verifier foundation; H,N: switching/migration deferred |
+| `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings/account/OS-user scope; in-process foreground auth/zero-shell cloud adapter; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings and preserve draft; proven no-send recovery or explicit unbound-uncertainty acknowledgement retaining reservation; separate new consent reuses it; authoritative GET pins late receipt without re-enabling; pinned absence requires exact native stop | P,H,N; partial boundary/cloud fixtures, native/UI deferred |
+| `HOST-05` | Headless package → configured service | Configure/status/pinned CLI and authenticated helper staging; library-only cloud provisioning/status; setup/run/update/uninstall refuse | Shared disabled settings/origin/account/exact-owned receipt policy; observed cloud presence is not Ready; no shell/service changes or pre-login | Busy/corrupt/foreign state fails closed; retain exact cleanup receipt and signed artifact evidence; generation-atomic cloud delete unqualified, never check-then-delete | P,H,N; partial boundary/cloud fixtures, endpoint/headless package/native/deletion deferred |
+| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: manifest/verifier foundation; H,N: switching/migration deferred |
 
 HOST-06 currently has only the independently testable
 [helper authenticity boundary](host-release-artifacts.md): signed exact-target

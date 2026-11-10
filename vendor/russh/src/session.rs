@@ -269,6 +269,21 @@ impl<C> CommonSession<C> {
 }
 
 impl Encrypted {
+    pub(crate) fn channel_binding(
+        &self,
+        client_channel: u32,
+        server_channel: u32,
+    ) -> Option<crate::ChannelBinding> {
+        if self.kex.skip_exchange() {
+            return None;
+        }
+        crate::ChannelBinding::new(
+            &self.session_id,
+            client_channel,
+            server_channel,
+        )
+    }
+
     pub fn byte(&mut self, channel: ChannelId, msg: u8) -> Result<(), crate::Error> {
         if let Some(channel) = self.channels.get(&channel) {
             push_packet!(self.write, {

@@ -527,6 +527,8 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `host_operations_roundtrip_without_conflating_detach_end_or_absence`,
   `host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values`,
   `host_response_correlation_rejects_wrong_target_operation_and_temporary_lease`,
+  `host_issued_operation_requires_captured_epoch_and_correlates_responses`,
+  `host_inventory_preserves_filtered_bounded_per_target_uncertainty`,
   `host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors`,
   `host_inventory_response_requires_exact_forward_cursor_progression`,
   `host_aggregate_budgets_refuse_saturation_and_release_exact_permits`,
@@ -534,10 +536,16 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `host_owner_authentication_matches_domain_bound_signature_fixture`,
   `host_owner_proof_rejects_foreign_key_tampering_and_cross_connection_replay`,
   `host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed`,
+  `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`,
+  `host_owner_mutating_policy_requires_advertised_issuance_epoch`,
+  `host_owner_permission_templates_require_runtime_projection_for_creation`,
+  `host_owner_policy_replacement_retains_issuance_high_water_mark`,
   `host_owner_admission_requires_current_shared_exact_generation_and_absence`,
   `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
   `host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes`
   additionally proves current-authorize state/generation/ABA revision fencing.
+  `host_owner_fence_rejects_changed_intent_for_the_same_operation` covers
+  takeover and recipe changes under a reused operation ID.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
 - **Protected enrollment prerequisite evidence (stages 1/3):**
@@ -551,10 +559,28 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `native_owner_vault_failure_never_creates_a_fallback_key` exercise actual
   local persistence/native-reference APIs with synthetic vaults and keys.
   `encrypted_transport_pins_host_and_exports_only_one_preconfigured_port` now
-  additionally proves both real pinned SSH stream endpoints refuse owner
-  authentication without a shared connection/channel exporter; the changed-key
-  fixture still refuses before authentication. This is a concrete remaining
-  transport prerequisite, not successful channel-bound proof qualification.
+  additionally proves matching real inner-SSH channel exporters and distinct
+  sibling channels; the changed-key fixture still refuses before authentication.
+  `host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority`
+  exercises actual pinned transport proof, exact stream transfer, foreign
+  credentials, cross-connection relay/replay, old unbound signatures,
+  expiry/revocation and public stream replacement. The vendor exporter uses the
+  signed original KEX identifier and role-ordered actual channel IDs, never
+  caller-generated identity bytes. This closes the missing exporter/helper seam,
+  not endpoint/native/first-connect qualification.
+  The vendored-library regression
+  `ssh_channel_binding_separates_connection_and_role_ordered_channel_ids`
+  additionally checks connection/role/channel separation and refusal of empty
+  or short session identifiers.
+  `host_owner_authentication_failure_retains_stream_for_bounded_denial`
+  exercises actual Denied/Stale failures retaining their unauthenticated SSH
+  stream for bounded replies before closing; no owner authority is returned.
+  `host_owner_permission_templates_require_runtime_projection_for_creation`
+  separates persistent consent from strict runtime advertisements;
+  `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`
+  reuses a live owner proof across actual issuer projection, preserves original
+  issued operations and refuses unadvertised future epochs. Native composition
+  must obtain that issuer under the actual protected backend reservation.
   `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
   no UI, listener, broad pairing service or full ADR acceptance is claimed.
   Reliability remediation adds
