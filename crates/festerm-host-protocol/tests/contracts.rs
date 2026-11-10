@@ -246,7 +246,15 @@ fn host_operations_roundtrip_without_conflating_detach_end_or_absence() {
         Request::ExplicitEnd { target },
     ];
     for request in requests {
-        let frame = issued(id(1), id(3), request);
+        let frame = if request.issuance_epoch_required() {
+            issued(id(1), id(3), request)
+        } else {
+            let frame = Envelope::new(id(1), id(3), request);
+            let mut invalid = frame.clone();
+            invalid.issuance_epoch = Some(Epoch::new(1).unwrap());
+            assert_eq!(encode(&invalid), Err(ContractError::Malformed));
+            frame
+        };
         assert_eq!(
             decode::<Envelope<Request>>(&encode(&frame).unwrap()).unwrap(),
             frame
