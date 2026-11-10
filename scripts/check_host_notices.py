@@ -16,7 +16,7 @@ def main():
     )
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", host],
-        cwd=ROOT, text=True,
+        cwd=ROOT, text=True, encoding="utf-8",
     ))
     version = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
     notices = third_party_notices(metadata, version, ROOT, host=True)

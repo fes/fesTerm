@@ -32,6 +32,11 @@ fixture and acquisition-only CLI fixture also use this shared validated factory.
 Pure archive producer/verifier fixtures remain project-local; fresh Windows CI
 must still confirm the protected-storage paths.
 
+Cargo emits UTF-8 metadata independently of the Windows console code page.
+The host notice check now decodes that transport explicitly as UTF-8. A portable
+subprocess regression preserves non-ASCII dependency metadata while forcing a
+CP1252 default decoder; no lossy decoding or production locale override is used.
+
 ## Establishing helper publisher authenticity without a second trust root
 
 ADR 0084 stage 7 needs independent Linux publisher authentication, not a hash
