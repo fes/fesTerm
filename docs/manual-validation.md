@@ -3683,6 +3683,14 @@ Windows registration/start and running-task stop additionally require
 authenticated graceful stop and daemon-independence qualification; generic
 signature validity or Task Scheduler termination is not acceptance evidence.
 
+The November 10 Task Scheduler XML binding correction is cross-compilation
+evidence only: `x86_64-pc-windows-msvc` library/test checking and strict Clippy
+include three new output-parameter/error/UTF-16-and-UTF-8-bound regressions.
+Those Windows tests were not executed on macOS. Actual COM XML normalization,
+HRESULT/output ownership and native manager behavior still require Windows
+execution; neither ARM compilation nor signed/native service acceptance is
+inferred from the x64 check.
+
 Cloud recovery fixtures also cover offline/cancel followed by explicit
 ticket/account/current-epoch acknowledgement retaining the uncertain reservation,
 later enable observing exact late creation, and rejection of stale/bound recovery.
