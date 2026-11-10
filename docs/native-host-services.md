@@ -178,6 +178,19 @@ it on macOS, reproduce the old expression in a Windows child, or qualify PKI.
 Both historical run failures remain retained; their grants are consumed.
 Three exact-source reviews and a separate new native-attempt grant are required.
 
+Ordinary Windows `quality` now pins this non-ignored memory unit through
+`scripts/run_windows_timestamp_alignment_test.py`, immediately after Python
+setup and before workspace work. It uses `--locked`, `host-service`, `--lib`
+and the full `--exact` selector, requires exactly one listed test, then executes
+once and requires one pass / zero ignored. List/execution errors are retained,
+never retried or converted to success. This is only the 16 owned-byte vectors;
+the unit invokes no WinTrust, network, signed fixture or publisher policy.
+The CI-only route leaves all `8556` production/app/manifest bytes unchanged and
+has mocked-Cargo contract evidence only locally. Successful ordinary Windows
+alignment evidence at the reviewed source is required before a separately
+authorized future genuine PKI run. It is not itself PKI/runtime acceptance or
+an execution/dispatch grant; required three-platform CI remains separate.
+
 Windows stop reuses the existing protected lifecycle channel, not new IPC or
 name/PID authority. Revoke commits the installation/origin/current snapshot first;
 the reserved host runtime watches that exact snapshot, cancels and awaits only

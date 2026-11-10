@@ -1,5 +1,31 @@
 # Milestone Progress Narrative
 
+## Making the timestamp alignment unit reachable in ordinary Windows CI
+
+The frozen `8556e33a` root fix added a deterministic 16-vector owned-memory
+regression, but ordinary Windows quality selected only the unrelated default-
+feature temporary-file test. The separate opt-in PKI command's exact ignored
+selector also could not reach the new non-ignored alignment unit.
+
+This CI-only child pins that unit in the existing Windows `quality` job after
+Python setup and before heavy workspace work. The narrow repository-owned
+driver lists with `--locked`, `host-service`, `--lib` and the full exact selector;
+it requires exactly one listed test, then executes once without `--ignored`.
+Only one actual passed test, zero ignored and the exact success identity can
+produce success. Empty/duplicate/foreign listings, list errors, skipped/zero
+execution and nonzero execution preserve failure without retry. Standard-library
+unittest contracts mock Cargo; no extra framework, dependency or tool is added.
+
+All crates, app code and manifests remain byte-identical to `8556`.
+The prior four portable publisher-policy passes and x64 metadata/strict checks
+are retained history, **not execution of this alignment unit**. This child runs
+only local syntax/contracts/trace checks: no Rust rebuild, actual Windows,
+dispatch or PKI. Ordinary Windows CI must supply the alignment-unit proof at
+the reviewed source before a separately granted future genuine PKI attempt;
+the test body calls no WinTrust, network, fixture acquisition or publisher
+policy. Both earlier failed PKI grants remain consumed, and PKI qualification
+stays blocked. The new CI route does not change policy, pins or revocation.
+
 ## Copying the RFC3161 time field without assuming SDK pointee alignment
 
 The separately authorized exact-`3030bcd7`
