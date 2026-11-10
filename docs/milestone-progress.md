@@ -55,6 +55,73 @@ opening native vault/cloud credentials. Both earlier collector/frontend
 adoption/isolation oracles and production 15-second auth-Busy/original-issued
 lost-reply sources are unchanged.
 
+### Fixed 9b/602 creation source and fresh qualification
+
+The compiled, tracked-clean source is
+`ebb3038d1dbb67d5ff60b74ad9db1a74393191c6`: a normal two-parent merge of
+creation implementation `8e087c9462121a61ac9a915bde17067e2879df8a` and exact
+core `9b1d2a688e35cad8dead2afa4b228c152c2cadb9`. Immutable `602f19f8` is an
+ancestor, not rewritten. The two conflicts retained both milestone histories
+and combined the core's corrected feature comment with #695's client-safe
+base64/SHA fingerprint dependencies. No locked package version, source or
+checksum changed. `target/create-9b-union-audit-final.log` verifies every
+creation implementation file, #695's formatter/reexport/desktop feature
+boundary, the exact core production runtime/control sources and Busy-policy
+fixture correction, both qualified collector/frontend oracle bodies, and all
+automated trace references from both parents.
+
+Fresh commands below used the same explicit private Rust/Cargo **1.98.0**
+environment described in the following historical section, with the same
+jobs1/debug0/incremental0 target. `target/create-9b-toolchain.log` records
+the exact compiler/Cargo executables, full versions and compiled HEAD. The
+same-toolchain owned helper build passed. Bridge library: **142 passed,
+15 explicitly ignored** (including all eight mutation tests). The actual
+desktop binary's `host_` selector passed **52 tests**, zero ignored; separately
+filtered integration binaries ran zero tests and are not extra evidence.
+An earlier mistaken desktop `--lib` invocation failed because the package has
+no library target (`target/create-9b-desktop-tests.log`); it is not counted.
+
+All **15 actual native cases passed, zero ignored**, each selected exactly
+once in its own test process, with no retry and no assertion changes.
+`target/create-9b-native/summary.log` records the source SHA and every
+per-case log. This includes the new signed-SSH Create/Ensure worker,
+original-issued retries, independent native PTYs, adopted frontend bytes and
+foreign-output exclusion, plus both inherited collector/frontend oracles.
+This is deliberately not a claim that a fresh single-process aggregate
+passed: the three pre-9b aggregate REDs below remain visible, and active
+parent-owned native-route fixture corrections were not duplicated or consumed.
+The portable check, desktop check, strict all-target desktop and bridge/client
+Clippy, formatting and committed range-aware traceability also passed.
+
+```sh
+source target/creation-env.sh
+cargo build --locked -p festerm-sessiond -p festerm-pty-test-child
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib
+cargo test --locked -p festerm --features experimental-dev-tunnels host_
+cargo check --locked -p festerm --features experimental-dev-tunnels
+cargo clippy --locked -p festerm --features experimental-dev-tunnels --all-targets -- -D warnings
+cargo clippy --locked -p festerm-tunnel-bridge -p festerm-tunnel-client --features festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing
+# Discover all fifteen native names, then select each once with --exact:
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored --list
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib EXACT_NAME -- --exact --ignored --test-threads=1
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 602f19f83cd26748d6580f4e041781190b3150ba
+git diff --check
+```
+
+Raw helper/library/desktop/check/strict/portable receipts use
+`target/create-9b-{helper-build,bridge-lib,desktop-tests-final,desktop-check,desktop-clippy,client-clippy,portable}.log`.
+The private native matrix runner and discovery receipt are retained under
+`target/create-native-matrix.py` and `target/create-9b-native/list.log`.
+Later qualification-receipt edits are documentation-only, not another compiled
+source qualification. Full workspace/primary CI, GUI, native vault, platform
+services, cloud, release signing, VM and physical-device acceptance were not run
+or claimed. The final owned-worktree Cargo/rustc/Clippy/sessiond/PTY CWD process
+audit found **zero** matches (`target/create-9b-process-audit.log`); all owned
+commands completed and the private host Cargo slot is released. The concrete
+mobile/local Settings capsule below remains required.
+
 ### Pre-9b creation qualification and retained diagnostics
 
 Qualification uses the existing official private Rust **1.98.0**, not a
