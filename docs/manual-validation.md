@@ -60,6 +60,12 @@ touch credentials. Explicit browser request tests cover cancellation, account
 switches, supersession and obsolete browser instances. These are logic/state
 tests, not native UI or real-service evidence.
 
+Before future stage 6 execution is exposed, qualify explicit first-execution
+review/reconfirmation of imported shell/argv/cwd, lifetime and resume/create
+behavior against verified host/account/principal identity. Import, save or a
+portable approval field must not authorize execution; cancelling review must
+not execute. These UI/executor checks remain deferred under #681.
+
 Additional config/mobile regressions preserve legacy account, hosting/consent
 references and exact-generation destination metadata across recipe commands.
 They do not access protected grant storage or operate a live legacy shell.

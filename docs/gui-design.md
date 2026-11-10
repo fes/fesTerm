@@ -1890,6 +1890,12 @@ display cached hosts as online. Actual controls/workers, account/key binding,
 trust, authorized inventory, Connect and native qualification remain deferred
 behind the reviewed host endpoint contract, not simulated in this foundation.
 
+Import never grants execution consent. Before first executing an imported
+recipe, the future Connect UI must explicitly review/reconfirm its shell,
+argument vector, remote cwd, lifetime and connection behavior with the
+verified host/account/principal. No imported field may stand in for that
+approval; native UI and execution-gate tests remain deferred under #681.
+
 Migrating a legacy host must preserve protected state/account binding. Any
 stop/restart of its live shell requires a separate, default-No confirmation
 for that exact generation; setup or sharing approval cannot substitute for

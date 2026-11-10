@@ -142,6 +142,14 @@ rejects unknown/protected fields. Import preserves the advertised identities;
 an existing recipe ID is a conflict, not a silent edit or new shell. Account
 and host trust must be revalidated independently before any future connection.
 
+**Import is not execution consent.** An imported recipe can choose arbitrary
+shell/argv/cwd and resume/create behavior. Before its first execution, the
+future Connect UI must present that launch definition, lifetime and behavior
+for explicit review/reconfirmation, bound to verified host/account/principal
+identity. A portable document cannot supply that approval. This gate remains
+required for later stage 6 wiring; there is no reachable executor in this
+foundation.
+
 **Legacy is not migrated implicitly.** Existing `kind = "dev_tunnel"` profiles
 and public setup imports retain their exact-generation destination, settings
 and launch path. They do not acquire a host recipe, remote-create permission,
