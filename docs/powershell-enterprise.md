@@ -87,7 +87,9 @@ Native cross-platform usability/accessibility acceptance remains CP-23.
 
 ### Remote-session desktop discovery
 
-Open **Remote Sessions** on the Launcher. Supply the authorized SSH host,
+GUI entry points are deliberately hidden pending explicit owner approval.
+The internal discovery surface and backend are retained for development tests.
+When exercising that internal surface, supply the authorized SSH host,
 account, port, helper executable name, independently verified SHA256 host-key
 fingerprint and optional local source address. Discovery is bounded and
 read-only. Endpoint edits invalidate the displayed inventory. Credentials are
@@ -104,7 +106,9 @@ workspace restoration. This is sessiond-over-SSH, not PSRP runspace attachment.
 
 ### Enterprise desktop discovery
 
-Open **Enterprise** on the Launcher and supply the approved tenant and public
+GUI entry points are deliberately hidden pending explicit owner approval.
+The internal surface and backend are retained for development tests.
+When exercising that internal surface, supply the approved tenant and public
 client application identifiers plus the Dev Center endpoint and optional
 project. Sign-in uses the existing browser/loopback PKCE flow. Projects and
 owned Dev Boxes are read-only metadata, not connection authority; discovered

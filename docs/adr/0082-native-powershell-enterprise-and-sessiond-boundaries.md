@@ -171,8 +171,11 @@ to consume arbitrary snapshot files or downgrade incompatible generations.
 
 ### Desktop discovery surfaces
 
-The next owner-authorized slice exposes remote sessiond and enterprise discovery
-as independent desktop tabs reached from the Launcher. Presentation returns
+The implemented discovery slice retains remote sessiond and enterprise discovery
+as independent internal desktop tabs. On 2026-11-09 the owner withheld their
+public GUI exposure: no Launcher/New Session, menu, shortcut, settings or
+command-palette entry may open them until separately authorized.
+Presentation returns
 typed application actions; network work, transient credentials/tokens and
 callback-listener cleanup remain in bounded workers. Tab/window closure cancels
 these workers and retains shutdown ownership until completion. Account or
@@ -236,14 +239,17 @@ acceptance criteria pass.
   `NET-01` through `NET-03` define source selection and retained binding.
   `RSD-01` and `RSD-02` cover remote SSH discovery and generation-pinned
   attachment at the backend/example layer, not a desktop picker.
-  Enterprise GUI integration is not part of this slice.
+  `RSD-03` and `ENTRA-03` retain internal discovery routing and lifecycle
+  coverage; public GUI invocation is deliberately withheld pending owner approval.
 - **Automated tests required:** bounded capability/discovery serialization,
   protocol/schema mismatch, attached/stale/foreign registry records, metadata
   minimization, read-only behavior and unchanged legacy CLI parsing. Later
   slices require real protocol fixtures and cancellation/identity isolation.
   Source binding requires observed loopback peer addresses and fail-closed
   mismatched/unavailable-source regressions across HTTP connections.
-  Desktop coverage additionally requires injected workers, explicit source
+  Desktop coverage additionally requires absence of the withheld discovery
+  cards at narrow and wide sizes, retained internal discovery routing,
+  injected workers, explicit source
   choice, profile/credential isolation, output and queue bounds, cancellation,
   stale completion, tab/window close, and metadata-only workspace restore.
   Remote SSH coverage requires native SSH-to-helper-to-daemon composition,
