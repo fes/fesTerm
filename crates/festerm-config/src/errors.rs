@@ -34,6 +34,7 @@ pub enum ConfigErrorKind {
     ForbiddenSecretValue,
     InvalidProfileIdentifier,
     DuplicateProfileIdentifier,
+    HostedSessionNameConflict,
     /// A recorded profile launch names a profile the document does not define.
     UnknownProfileReference,
     InvalidLocalProfile,
@@ -122,6 +123,9 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::DuplicateProfileIdentifier => {
                 formatter.write_str("profiles[].id values must be unique")
             }
+            ConfigErrorKind::HostedSessionNameConflict => formatter.write_str(
+                "Dev Tunnel hosting requires a unique native persistent session name; rename the conflicting session before saving",
+            ),
             ConfigErrorKind::UnknownProfileReference => formatter.write_str(
                 "profile_usage[].profile must name a profile defined in profiles[]",
             ),

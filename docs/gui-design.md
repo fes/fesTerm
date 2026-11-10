@@ -439,7 +439,8 @@ even when a start time is shown. Counts describe eligible displayed entries,
 not a universally unattached-only population. Empty provider groups are omitted, and an entirely
 empty panel says that nothing local can be reattached right now.
 
-Native rows also offer the same **Reattach** / **Terminate session...** menu
+Native rows also offer the same **Reattach**, **Take over session...**, and
+**Terminate session...** menu
 through an accessible overflow button or right-clicking the row. Terminate
 always asks for confirmation with Cancel initially focused, explains that
 the shell/processes and terminal state will be lost, and leaves saved profiles
@@ -447,6 +448,11 @@ unchanged. The confirmed action targets the selected generation, not merely
 its name; if it was replaced or attached meanwhile, refuse and offer refresh.
 Termination runs asynchronously with bounded helper execution and refreshes
 inventory on completion. tmux and Screen do not offer this action.
+Takeover separately warns that a local or remote client may be disconnected,
+defaults to Cancel and requires the selected lease-backed generation. Ordinary
+reattachment uses non-takeover admission; older native daemons without
+generation-aware admission require a compatible fesTerm version rather than
+risking a silent displacement.
 
 Reattach is asynchronous and attach-only, unlike saved profiles' intentional
 attach-or-create behavior. External tmux reattachment preserves the existing
@@ -1901,8 +1907,29 @@ exception to metadata-only profile Save: saving can start the exact configured
 command and publish it without opening a local tab. The explanation identifies
 remote takeover, independent service lifetime and the absence of file/observation
 grants. Starting, sign-in, readiness and cleanup are distinct states; only
-verified ready hosts offer connection details. Browser sign-in is foreground
-and cancellable, never an invisible startup prompt.
+verified ready hosts offer connection details. Checking the box immediately opens
+**GitHub account for hosting**: select the verified current account or explicitly
+connect one in the browser before Save. Hosting uses the official CLI's shared
+host sign-in, not the remote-client account vault. Connecting a different account
+is unavailable while protected desktop or default script bindings still need
+the current one, or their inventory cannot be verified. Older script hosts in
+custom state directories cannot be discovered and may be interrupted by a
+different shared sign-in; the chooser warns about them. Selection expires after five minutes
+and belongs only to that editor. Cancel unchecks exposure and creates no shell,
+grant or tunnel; completed browser authentication can remain in official CLI
+storage. Browser sign-in is foreground and cancellable, never a startup prompt.
+
+Existing inherited product/native-runtime permissions are not repaired. New
+hosts use a dedicated protected runtime. If the selected legacy session is
+running, Save retains it and reports that hosting is pending until the user
+manually ends it and opens the profile again. Ending it stops its programs and
+disconnects its clients; hosting does not stop any session automatically.
+Startup and Retry cannot consume the persisted gate, even after an interrupted
+authorized launch.
+Local open and restoration follow the profile's recorded runtime, and disabling
+hosting retains the shell. Missing/foreign host-local consent permits ordinary
+local opening without adopting cloud authority; unknown inventories refuse
+instead of silently starting a duplicate. See ADR 0085.
 
 Disable/Save, provider removal and profile deletion revoke exposure before the
 config write, retain the shell and track pending cloud cleanup even when the
@@ -1910,7 +1937,7 @@ profile no longer exists. Profiles lists that protected local cleanup with
 sign-in/Retry actions. Renaming retains ownership and the durable session name;
 duplication clears the hosting grant. Retry cannot authorize another shell or
 cloud object; separate confirmed actions explain each. See ADR 0072 and
-`TUNNEL-15`/`TUNNEL-16` for the lifecycle and failure contract.
+`TUNNEL-15`/`TUNNEL-16`/`TUNNEL-17` for the lifecycle and failure contract.
 
 Local executable and initial-directory fields share
 bounded filesystem-backed completion. That completion is asynchronous: it
