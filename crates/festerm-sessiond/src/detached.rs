@@ -796,6 +796,120 @@ pub(crate) fn host_generation_attached(
     Ok(record.attached)
 }
 
+/// Generation-scoped relay liveness: no global registry lock or parsing.
+pub(crate) fn host_generation_lease_live(
+    root: &Path,
+    selected: &NativeSessionIdentity,
+) -> Result<bool, PersistentSessionError> {
+    let directory = storage::private_directory(root, false).map_err(storage_error)?;
+    let name = format!("lease-{}-{}", selected.pid, selected.created_at_unix_ms);
+    let file =
+        storage::open_private_file(&directory, Path::new(&name), false).map_err(storage_error)?;
+    match FileExt::try_lock_shared(&file) {
+        Ok(()) => Ok(false),
+        Err(error) if crate::lock_is_contended(&error) => Ok(true),
+        Err(error) => Err(storage_error(error)),
+    }
+}
+
+pub(crate) struct HostRetirement {
+    _daemon: File,
+    pub identity: Option<NativeSessionIdentity>,
+}
+
+/// Caller retains the start lock and has sealed the host lease. Holding the
+/// lifetime daemon lock proves a delayed helper cannot already have opened its
+/// supervision lease or spawned a PTY.
+pub(crate) fn prove_host_reservation_absence(
+    root: &Path,
+    name: &str,
+    generation: u128,
+    selected: Option<&NativeSessionIdentity>,
+    native_pid: Option<u32>,
+    expected: &str,
+) -> io::Result<HostRetirement> {
+    let directory = storage::private_directory(root, false)?;
+    let daemon = open_lock(&directory, Path::new(&format!("{name}.daemon.lock")))
+        .map_err(io::Error::other)?;
+    FileExt::try_lock_exclusive(&daemon)?;
+    let records = registry(&directory).map_err(io::Error::other)?;
+    let identity = match matching_record(&records, name).map_err(io::Error::other)? {
+        Some(record) => {
+            let identity = NativeSessionIdentity::from_record(record);
+            if identity.created_at_unix_ms != generation
+                || selected.is_some_and(|selected| selected != &identity)
+                || native_pid.is_some_and(|pid| pid != identity.pid)
+            {
+                return Err(io::Error::other("retirement generation was replaced"));
+            }
+            check_evidence(record, expected).map_err(io::Error::other)?;
+            if verified_live(root, &directory, record).map_err(io::Error::other)? {
+                return Err(io::Error::other("retirement generation remains live"));
+            }
+            Some(identity)
+        }
+        None => selected.cloned().or_else(|| {
+            native_pid.map(|pid| {
+                let stem = format!("{pid}-{generation}");
+                NativeSessionIdentity {
+                    name: name.to_owned(),
+                    pid,
+                    created_at_unix_ms: generation,
+                    #[cfg(unix)]
+                    endpoint: root
+                        .join(format!("{stem}.sock"))
+                        .to_string_lossy()
+                        .into_owned(),
+                    #[cfg(windows)]
+                    endpoint: format!(r"\\.\pipe\festerm-sessiond-{stem}"),
+                }
+            })
+        }),
+    };
+    if let Some(identity) = &identity {
+        let name = format!("lease-{}-{}", identity.pid, identity.created_at_unix_ms);
+        match storage::open_private_file(&directory, Path::new(&name), false) {
+            Ok(lease) => FileExt::try_lock_shared(&lease)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(HostRetirement {
+        _daemon: daemon,
+        identity,
+    })
+}
+
+pub(crate) fn remove_host_generation_artifacts(
+    root: &Path,
+    generation: u128,
+    launch: &str,
+    retirement: &HostRetirement,
+) -> Result<(), PersistentSessionError> {
+    let id = Uuid::parse_str(launch).map_err(|_| refused("invalid launch identity"))?;
+    if id.get_version_num() != 4 || id.hyphenated().to_string() != launch {
+        return Err(refused("invalid launch identity"));
+    }
+    let directory = storage::private_directory(root, false).map_err(storage_error)?;
+    for name in [
+        format!("launch-{launch}.json"),
+        format!("launch-{launch}.lock"),
+        format!("host-daemon-{generation}.json"),
+        format!("host-daemon-{generation}.lock"),
+    ] {
+        storage::remove_private_file(&directory, Path::new(&name)).map_err(storage_error)?;
+    }
+    if let Some(identity) = &retirement.identity {
+        let stem = format!("{}-{generation}", identity.pid);
+        storage::remove_private_file(&directory, Path::new(&format!("lease-{stem}")))
+            .map_err(storage_error)?;
+        #[cfg(unix)]
+        storage::remove_private_socket(&directory, Path::new(&format!("{stem}.sock")))
+            .map_err(storage_error)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

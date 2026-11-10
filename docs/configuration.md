@@ -662,14 +662,24 @@ adoption and daemon writer replacement commit. Ordinary persistent shared shells
 never inherit this policy, and legacy clients cannot bypass the temporary lease
 handshake. Native mobile grace qualification remains required.
 
-Private `host-sessions.json`, exact-key `host-receipt-*.json` /
-`host-retired-*.json` fences, bounded launch journals and generation-scoped
+Private version-2 `host-sessions.json`, bounded launch journals and generation-scoped
 `host-daemon-*.json` files are host-local runtime authority, not synchronized
 profiles, credentials or import/export metadata. Never copy or delete them to
 retry an uncertain spawn. Ambiguous unbound reservations remain Unknown; local
 ownership investigation or protected exact-generation `retire_local` abandonment
-is required, not an automatic fresh shell. Completed operations and known-Absent
-logical records retire out of the active journal without forgetting their
-fences. Abandonment seals the generation lease and keeps Unknown; retired IDs
-cannot launch again. Active memory/parsing/work are bounded, but historical disk
-grows until a reviewed authenticated request-expiry contract exists.
+is required, not an automatic fresh shell. The entire operation ledger is capped
+at 128 compact entries: durable issuance rotation makes old captured requests
+Stale without historical archive files. Never refresh an uncertain request's
+captured scope automatically. The 64 logical records use fixed private native
+slots; dead generation artifacts are reclaimed only after sealed supervision
+and positive native absence proof. Ambiguous evidence remains Unknown; contention
+is Busy. Reclamation takes only one requesting-owner known-Absent record, never
+another owner's or a revoked fence. A new explicit operation may reuse the same
+logical ID with a fresh generation.
+
+Revoked live shells retain resource accounting and exact local observation/end.
+Their fence requires known absence and explicit new local consent before removal.
+Missing/unsupported journal state fails closed; prerelease version-1 records are
+not automatically migrated or reset. Do not copy/delete authority files or treat
+setup/sharing consent as permission to stop a live generation. The separate
+default-No exact-generation migration stop confirmation remains mandatory.

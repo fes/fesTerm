@@ -8828,13 +8828,15 @@ and revoked records do no native work. Active, non-stopped lease regressions
 cover the original failure rather than relying on prior termination to hide it.
 
 The same review exposed historical bookkeeping masquerading as active capacity.
-Completed operation receipts and retired logical fences now move out of the
-bounded active journal without forgetting exact requests, generations or
-revocation. Explicit protected local abandonment seals an uncertain generation
-and reclaims pending capacity, but never reports absence or permits reuse.
-Exact-key historical files grow on disk; globally bounded expiry still needs an
-authenticated issuance-epoch contract. Contended daemon adoption retries
-boundedly, and transient observations no longer turn Running into Launching.
+An initial archive-based remedy was rejected because disk still grew forever.
+Captured authenticated issuance scopes now retire old operation namespaces
+atomically, keeping a bounded compact ledger without archives. Old requests
+stay Stale; new explicit operations can keep their logical ID and get fresh
+generations. Fixed native slots bound name locks/lifecycle history, while exact
+generation cleanup requires sealed helpers and positive absence proof.
+Reclamation never sweeps other owners or revoked fences. Revoked live shells
+remain accounted and locally manageable until exact end and new local consent.
+Transient observations no longer turn Running into Launching.
 
 The full native takeover test then exposed the actual registry contention:
 durable checkpoint staging and directory synchronization held the same lock
@@ -8879,3 +8881,13 @@ fixtures passes all nine cases. Unix CI now runs the four terminal cases with
 the five existing control cases. This resolves the local takeover regression,
 not the still-pending authority/receipt, issuance/history and consuming
 authenticated-stream integration. The terminal server remains fixture-only.
+A second real takeover regression found adoption waiting on the daemon's sole
+event loop, starving the old writer. One bounded nonblocking candidate now stages
+post-snapshot output and activates input only after actual writer commit.
+Per-generation opaque authorities remove the global session journal from relay
+and heartbeat hotpaths; intentional detach has a separate receipt-only publication
+check, never permission to act on a stopped lease. Healthy inventory remains
+available beside authorized per-target Unknown. Owned-daemon tests cover churn,
+concurrent generations, cancellation, revocation and interrupted cleanup; no
+installed services, accounts or user sessions were touched. Endpoint integration,
+independent gates and native/device qualification remain open.

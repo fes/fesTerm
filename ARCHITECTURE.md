@@ -752,13 +752,19 @@ Its local `host_control::SessionControl` journals owner/logical identity,
 immutable launch intent, reserved generations, operation results and revocation
 revisions through the existing private no-follow/atomic storage boundary. It
 uses the real detached native launcher and single-writer daemon admission.
-Read-only reconciliation cannot create a fresh reservation. Completed operation
-receipts and retired logical fences reclaim active journal slots through
-bounded exact-key records; uncertain local abandonment seals a generation
-without declaring absence. History is never blindly deleted and its total disk
-use is not bounded by the active journal limits. Per-action relay helpers retain
-current policy, journal and exact daemon lease guards only over nonblocking
-local actions, never network waits.
+Read-only reconciliation cannot create a fresh reservation. A durable issuance
+namespace bounds the entire 128-entry operation ledger without receipt archives;
+old captured scopes become Stale, never fresh creation. The 64 logical records
+use a fixed native slot pool, with generation artifacts reclaimed only after
+sealed supervision and positive native absence proof. Capacity reclamation takes
+only one requesting-owner known-Absent record, never another owner's or a revoked
+fence. Revoked live shells remain accounted and locally manageable; exact local
+end and new explicit consent are required before retiring their fence.
+Opaque attachment authorities retain current policy and per-generation
+grant/writer/liveness guards across nonblocking local actions, without parsing or
+locking the global journal. Intentional detach yields a publication-only receipt,
+not renewed terminal access. Missing/unsupported authority journals fail closed;
+there is no automatic namespace reset or prerelease-state migration.
 The daemon's own loop enforces temporary heartbeat/grace deadlines from
 generation/lease-fenced private records, independently of bridge/client lifetime.
 Temporary ownership changes commit beside the writer replacement only after

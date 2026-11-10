@@ -461,12 +461,21 @@ unsafe fresh launch. See [the concrete integration API](../host-protocol.md#loca
 
 Antagonist remediation makes reconciliation structurally unable to create a
 fresh native reservation, including a missing-journal crash with an active
-persistent lease. Transient observations preserve bound Running state. Compact
-exact-key receipts and retired logical fences reclaim active capacity without
-old-request resurrection; protected local abandonment seals an uncertain
-generation without declaring it absent. Historical disk usage is not globally
-bounded: expiry would require a separately reviewed authenticated issuance epoch.
-Pending daemon ownership commit retries contention within its bounded deadline.
+persistent lease. Transient observations preserve bound Running state. Captured
+authenticated issuance scopes now bound the entire operation ledger without
+archive files: retired requests stay Stale, never automatically freshened.
+Minimum requesting-owner known-Absent reclamation preserves other owners and
+revoked fences; fixed native slots and positive-proof generation artifact cleanup
+bound historical native bookkeeping. Uncertain local abandonment must seal
+helpers and positively prove absence, not infer it from I/O failure.
+Revoked live shells remain accounted and support exact local end/observation;
+fence retirement requires known absence and explicit new local consent.
+Per-generation opaque relay authority avoids the global journal on hotpaths,
+and detach receipts authorize publication only, never stopped terminal actions.
+Healthy inventory survives bounded per-target Unknown. Missing/unsupported
+journals fail closed; there is no automatic prerelease-state migration.
+Pending daemon ownership commit retries contention within its bounded deadline;
+candidate adoption no longer stalls the old writer or replays terminal input.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,

@@ -137,7 +137,7 @@ These are local APIs, not evidence of mobile/network lifecycle qualification.
 not the bridge, GUI or setup crate. `open(root)` selects the installed helper;
 `with_helper(root, helper)` is a trusted installation/test seam, never a request
 field. All record parsing is bounded (4 MiB active journal, at most 64 logical
-records and 128 operation intents; lease and history records at most 4 KiB). Existing
+records and 128 operation digests; lease records at most 4 KiB). Existing
 private-directory, ownership, no-follow, exclusive-file, atomic-replace and
 synchronization protections apply. No credentials are serialized.
 
@@ -145,40 +145,51 @@ The private journal try-lock serializes owners/logical IDs without queued
 workers. Native starts additionally use the existing per-name start lock shared
 with ordinary launch/managed repair. Saturation is Busy, never another launch.
 Uncertain pending reservations count against the two-create bound until safely
-adopted or explicitly abandoned locally. Completed operations leave compact
-private `host-receipt-<operation>.json` receipts, containing an immutable intent
-digest, owner, generation and outcome flags, before active intents are removed.
-Receipts are exact-key reads, never an unbounded history scan. A retry can
-return only its recorded generation; altered intent conflicts and an ended
-generation cannot create again.
+adopted or explicitly abandoned locally. `issuance_epoch(owner, admit)` durably
+publishes the current namespace; a caller captures it once in `IssuedOperation`.
+At operation capacity, atomic namespace rotation clears the compact ledger.
+There are no per-request receipts or per-logical tombstone archives. A captured
+retired/future scope is Stale before reconciliation or effects, never refreshed
+into creation. Within the current scope, full immutable intent includes owner,
+creation fields and create-only semantics; retries recover only the recorded
+generation. Explicit new operations can still resume live sessions after rotation.
 
-At active logical capacity, known-Absent records retire into private
-`host-retired-<logical>.json` fences before removal. A durable generation
-high-water survives retirement and clock rollback. Retired IDs cannot be reused:
-new sessions use new logical IDs. Their ownership, revocation and generation
-fences remain available to exact lookups. Crash recovery completes interrupted
-retirement before native work.
+At logical capacity, only the minimum one requesting-owner, nonrevoked,
+known-Absent record may be reclaimed, with atomic namespace rotation. Other
+owners' records and revoked fences are untouched. A fresh explicit request may
+reuse the **same logical ID**, with a fresh generation; after full record
+reclamation its disposition is Created rather than retained-history Recreated.
+The durable generation high-water survives retirement and clock rollback.
+Exactly 64 private physical native names bound permanent name locks and
+per-name bounded lifecycle logs. These are implementation slots, not logical IDs.
+Generation launch/lease/socket artifacts are removed only after positive proof.
 
 `retire_local(owner, exact_target)` is supported protected **local maintenance**,
-not a wire operation. It can retire a known-Absent or revoked identity, or
-explicitly abandon an ambiguous Launching reservation. Abandonment seals its
-generation lease under the native start lock before retirement; a late daemon
-cannot obtain a live lease. It remains Unknown, not authoritative absence, and
-neither the logical ID nor old requests can launch again. Running, nonrevoked
-sessions refuse retirement; revoked persistent processes are not terminated.
-This restores pending-create capacity without pretending an ambiguous spawn
-never happened.
+not a wire operation. It can retire a known-Absent identity or abandon an
+ambiguous Launching reservation. Abandonment seals its generation lease under
+the native start lock, then must acquire the lifetime daemon lock and positively
+verify exact registry/generation absence. Contention is Busy; malformed/missing
+required evidence is Unknown, never absence. A durable artifacts-retired
+checkpoint precedes deletion, so crash recovery completes cleanup idempotently.
+Delayed helpers cannot recreate removed old generation locks or obtain a live
+lease. Only successful proof restores capacity and permits later same-ID creation;
+old captured requests remain Stale.
 
-Exact UUIDv4 replay rejection requires retaining history: receipt/tombstone
-files grow with distinct historical operations/IDs. Their individual parsing,
-active RAM, active journal and work per transaction are bounded, **not total
-historical disk usage**. Do not delete these files to recover capacity. A
-globally disk-bounded expiry scheme requires a separately reviewed authenticated
-request-issuance epoch/expiry contract, which the current wire format lacks.
-Storage exhaustion fails closed without forgetting requests.
+Running sessions refuse retirement. Revoked sessions remain accounted, including
+live persistent shells; revocation does not kill them or forget local management.
+`observe_local` and `end_local` operate on exact protected owned generations.
+Only `reconfirm_local(owner, target, observed_revision)` after known absence and
+new explicit local consent may retire a revoked fence. These are not remote
+administrative APIs. Storage errors fail closed. Version-1 prerelease journals
+are unsupported; missing halves of an existing journal never reset its namespace.
+No automatic migration/deletion/adoption is authorized; local investigation must
+preserve live shells and the default-No exact-generation migration stop rule.
 
 Each method's admission callback receives fresh protected `AdmissionState`
-(`SessionGrant`, record revision and effect) under journal serialization. It
+(`SessionGrant`, record revision, effect and `issuance_epoch: Some(current)`)
+under journal serialization. Project that actual epoch into fresh owner policy
+for Ensure/Create; never recursively call the issuer accessor under this lock,
+use a constant, or freshen the original `IssuedOperation`. It
 returns a scoped policy guard covering durable effect commit or publication.
 The guard is released before waiting for native startup/attachment IPC; a fresh
 guard checks the actual post-commit state before publication. Revocation can
@@ -188,7 +199,7 @@ Do not compare the initial absent fence with the deliberate running result:
 freshly authorize the actual state/revision. The endpoint must revalidate again
 at physical delivery and retire revoked connections/attachments.
 
-- `ensure(owner, operation, creation, create_only, cancelled, admit)` journals
+- `ensure(owner, issued_operation, creation, create_only, cancelled, admit)` journals
   original recipe/lifetime/attachment intent and a fresh reserved generation
   **before** launching. It invokes the real non-attaching helper, never creates
   an in-memory-only success, and records the exact native identity. Resuming a
@@ -199,7 +210,9 @@ at physical delivery and retire revoked connections/attachments.
   collisions refuse without replacing the process.
 - `lookup` / `inspect` and bounded `inventory` reconcile private metadata without
   frontend admission. `inspect` supplies the protected grant plus actual
-  summary; `inventory` filters owner/revocation before labels. Empty inventory
+  summary; `inventory` filters owner/revocation before labels and returns healthy
+  `sessions` alongside bounded authorized `unknown` targets. One bad native
+  record does not hide healthy sessions. Empty inventory
   never substitutes for lookup absence. Denied, revoked, storage errors, replaced
   generations and unbound uncertain launches are not Absent. A bound dead
   incarnation becomes authoritative absence; a later explicit ensure can
@@ -209,7 +222,9 @@ at physical delivery and retire revoked connections/attachments.
   even across repeated requests; investigate locally instead of deleting the
   journal or blindly spawning. Cancellation after committed creation returns
   the actual outcome with its cancellation observation. No terminal input is
-  journaled, resent or replayed.
+  journaled, resent or replayed. A temporary unadopted result also supplies opaque
+  `initial_lease_authority`: `cancel_initial_lease` can stop only that original
+  creation before any pending/adopted transfer, never authorize terminal access.
 - Reconciliation with no exact launch journal cannot write a fresh reservation
   or execute a helper, even when an active persistent daemon lease exists.
   Revoked records do no native reconciliation. Transient native observation
@@ -218,7 +233,9 @@ at physical delivery and retire revoked connections/attachments.
 - `attach` returns **`PendingAttachment`**, not Attached success. Its existing
   `PersistentSession` exposes the deferred recovery snapshot. The endpoint must
   forward it, wait for frontend adoption, acknowledge adoption, then poll
-  `attachment_outcome` for temporary ownership commit. Local admission `FSA5`
+  `attachment_outcome` for persistent or temporary ownership commit. Every
+  host-controlled attachment is ticketed and returns an opaque owned
+  `AttachmentAuthority`. Local admission `FSA5`
   extends `FSA4` with one canonical 36-byte operation ticket; it is not a remote
   HOST frame or protocol downgrade. Only a protected pending lease accepts it.
   The sole daemon writer loop commits lease epoch/attachment transfer immediately
@@ -231,26 +248,36 @@ at physical delivery and retire revoked connections/attachments.
   cancels the candidate without stealing the current writer. After ADOPTED, the
   candidate worker still waits for actual daemon ownership commit before
   accepting terminal commands. No native wire or recovery deadline changes.
-- `with_attachment_authorized(owner, target, binding, admit, action)` holds
-  journal, current policy and daemon lease guards across one nonblocking local
-  relay action; it performs no reconciliation, spawn or native IPC. Temporary
-  actions require the committed binding; persistent actions require None.
-  `with_pending_attachment_authorized(owner, target, ticket, expected, admit,
-  action)` separately permits recovery retrieval/adoption for the exact live
+- `with_attachment_authorized(authority, admit, action)` holds current policy and
+  per-generation lease guards across one nonblocking local action. Exact grant
+  revision, native PID/generation liveness, writer epoch, ticket and optional
+  temporary binding must match. It performs no global journal locking/parsing,
+  maintenance, spawn, registry scan or native IPC. The callback has
+  `issuance_epoch: None`: this path neither reads nor advertises a creation scope.
+  It must still supply fresh protected owner/connection policy, never a copied
+  admission fence. `with_pending_attachment_authorized(authority, admit, action)`
+  separately permits recovery retrieval/adoption for the exact live
   pending transfer (or that same committed transfer), never Attached success.
   Network waits must occur after these guards drop. Daemon transfer commit
   retries transient lease-lock contention for at most one second, also capped
   by its observed pending and lifetime deadlines, then fails without displacing
   the old writer.
-- `cancel_attachment` serializes with daemon transfer and reports cancelled
-  before commit versus the actual committed lease. `maintain_lease` renews only
+- `cancel_attachment(authority, admit)` serializes with daemon transfer and reports
+  cancelled before commit versus the actual committed `Option<TemporaryLease>`.
+  `maintain_lease(authority, disconnect, admit)` renews only
   the adopted current lease; intentional disconnect stops that exact lease;
   first unexpected loss starts 60 seconds of grace without duplicate loss
   notifications extending it. Without a bridge, the last renewal expires in at
   most 60 seconds. Generation-scoped private deadlines survive bridge/supervisor
   restart; the actual daemon loop also applies a monotonic cap, including during
   output backpressure and recovery waits. No bridge process must stay alive to
-  run cleanup. Restart does not renew a lease.
+  run cleanup. Restart does not renew a lease. Intentional detach produces an
+  opaque `DetachmentReceipt`; `with_detachment_receipt_authorized` rechecks fresh
+  policy, exact grant/writer and committed lease revision for **publication only**,
+  even after temporary stop. Ordinary terminal actions still reject stopped
+  leases; state change/revocation fences the receipt. Persistent detach advances
+  writer epoch without stopping the shell. Retain the original authority for
+  outcome/cancellation/heartbeat/cleanup; never mint a fresh fence from a stale one.
 - `end` returns **`EndOutcome::StopRequested`**, a durable exact-generation stop,
   not observed process exit. Reconcile absence before sending an Ended result.
   Local consent revocation fences pending/native remote admission; persistent
