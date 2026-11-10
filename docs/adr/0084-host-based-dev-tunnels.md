@@ -625,6 +625,14 @@ a daemon acknowledgement, including an already-missing HOST lease. Busy and
 corrupt observations remain pending; claim release/rollback unblocks enable
 without rebinding or spawning. These focused fixtures do not close installed
 platform or old-release acceptance.
+The cleanup serialization correction exercises the actual generation-exit
+caller, with an already-acquired typed lifetime-lease guard and a concurrent
+registry pruner. Key cleanup cannot recursively acquire that lease; artifact
+cleanup and exact record removal/retry retention share the registry transaction,
+after releasing the live lease. Failed-start termination/wait stays outside the
+transaction. Foreign/replacement and uncertain artifacts remain protected.
+These deterministic caller-path checks and the selected current-source
+Prepared/Active exit fixture do not claim native Windows `LockFileEx` execution.
 
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation

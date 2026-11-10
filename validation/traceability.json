@@ -5872,6 +5872,8 @@
         "authenticated_binding_capability_cleanup_refuses_replaced_foreign_corrupt_and_redirected_keys",
         "authenticated_binding_capability_dead_cleanup_requires_exact_identity_fingerprint_and_dead_lease",
         "generation_binding_capability_cleanup_normal_failed_start_and_replacement_retains_retry_handle",
+        "generation_binding_dead_cleanup_reuses_callers_exclusive_lifetime_guard",
+        "generation_binding_exit_serializes_cleanup_with_concurrent_registry_pruner",
         "imported_binding_release_after_exact_absence_revokes_present_or_missing_lease_and_is_idempotent",
         "imported_binding_release_unknown_busy_foreign_corrupt_and_failed_revalidation_stay_pending",
         "imported_binding_release_lost_native_reply_uses_only_fresh_authoritative_absence",

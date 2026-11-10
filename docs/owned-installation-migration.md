@@ -186,6 +186,14 @@ lifetime lease and matching protected identity/spawn fingerprint; corrupt,
 foreign, redirected or untrusted keys refuse cleanup without permission repair.
 No directory sweep is performed. Release while the daemon is alive preserves
 its capability and PTY; released receipt tombstones are deliberately retained.
+Dead cleanup acquires the lifetime lease once and passes a retained typed guard
+to key cleanup; it never recursively locks the same handle (not supported by
+Windows `LockFileEx`). Ordinary exit releases its live lease before acquiring the
+registry lock, then performs artifact cleanup and the exact record removal or
+retry-retention decision under that lock. Failed-start process termination/wait
+also precedes this registry transaction. Uncertain artifacts are preserved, and
+neither retry path overwrites a same-name foreign/replacement record. Existing
+checkpoint preparation/rebase still releases the registry lock for durable I/O.
 
 The prepared native lease is private/revoked at initial grant epoch one. Switch
 journals its original intent and activates only that preparation; later revoked

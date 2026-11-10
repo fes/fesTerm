@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Serializing retired-generation key cleanup
+
+Follow-up review found that Unix's permissive same-handle relock concealed a
+Windows cleanup failure, and ordinary exit cleaned artifacts outside registry
+serialization. A retained typed lease guard now proves one exclusive acquisition
+without recursive locking. Ordinary exit drops its live lease first, then
+cleans artifacts and removes/retains the exact record in the registry
+transaction; failed-start termination/wait remains outside that transaction.
+Uncertain artifacts and same-name foreign/replacement records stay protected.
+Focused caller-path fixtures cover the held-lease handoff and a concurrent
+registry pruner without phantom record reinsertion. The selected current-source
+Prepared/Active ordinary-exit fixture remains separate native evidence, not
+Windows lock execution, installed-platform or complete migration acceptance.
+
 ## Proving actual binding with the original Local frontend
 
 The authenticated live migration proof originally exercised an unticketed Remote

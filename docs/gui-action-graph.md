@@ -1646,6 +1646,11 @@ shell exit permits release/claims rollback only with authoritative exact-generat
 absence; Busy/corrupt/unknown outcomes remain pending, not failed-I/O-as-absence.
 The reused actual-binding fixture selects both pre-existing Local and Remote
 frontends; the Local proof is not the earlier reservation-only fixture.
+Dead-key cleanup uses one retained exclusive lifetime-lease acquisition, not a
+recursive Windows lock. Actual ordinary-exit caller regressions fence cleanup
+and exact record removal/retention with the registry lock against a concurrent
+pruner, while releasing the live lease before that lock; failed-start process
+waiting remains outside it. Native Windows lock execution remains a gate.
 Controlled live fixtures are not service switching/rollback,
 installed/old-release or complete migration acceptance; the legacy Linux script
 path is not promoted to authenticated setup.

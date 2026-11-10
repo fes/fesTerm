@@ -311,13 +311,28 @@ impl CapabilityOwner {
     }
 }
 
-/// Caller holds the exact generation's exclusive lifetime lease after exit.
+/// A single, non-recursive acquisition of a retired generation's lifetime lease.
+/// Keeping its handle private prevents cleanup consumers from relocking it.
+pub struct DeadGenerationLease(File);
+
+impl DeadGenerationLease {
+    pub fn acquire(file: File) -> io::Result<Self> {
+        file.try_lock_exclusive()?;
+        Ok(Self(file))
+    }
+
+    pub fn metadata(&self) -> io::Result<std::fs::Metadata> {
+        self.0.metadata()
+    }
+}
+
+/// Caller retains the exact generation's exclusive lifetime lease after exit.
 /// A missing key is idempotent; foreign/corrupt/untrusted entries are not absence.
 pub fn cleanup_dead_capability(
     directory: &File,
     identity: &NativeSessionIdentity,
     fingerprint: Option<&str>,
-    lifetime_lease: Option<&File>,
+    lifetime_lease: Option<&DeadGenerationLease>,
 ) -> io::Result<()> {
     let name = PathBuf::from(capability_name(identity));
     let mut file = match storage::open_private_file(directory, &name, false) {
@@ -325,7 +340,7 @@ pub fn cleanup_dead_capability(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
-    lifetime_lease.ok_or_else(invalid)?.try_lock_exclusive()?;
+    lifetime_lease.ok_or_else(invalid)?;
     if file.metadata()?.len() > 4096 {
         return Err(invalid());
     }
@@ -1116,8 +1131,10 @@ pub(crate) mod tests {
             )
             .unwrap();
             let name = PathBuf::from(capability_name(&binding.identity));
-            let lifetime =
-                storage::open_private_file(&daemon.directory, Path::new("lifetime"), true).unwrap();
+            let lifetime = DeadGenerationLease::acquire(
+                storage::open_private_file(&daemon.directory, Path::new("lifetime"), true).unwrap(),
+            )
+            .unwrap();
             let bytes = storage::read_private(&daemon.directory, &name, 4096).unwrap();
             match replacement {
                 "same-bytes" => storage::replace_private(&daemon.directory, &name, &bytes).unwrap(),
@@ -1193,13 +1210,7 @@ pub(crate) mod tests {
         lease.lock_exclusive().unwrap();
         let observer =
             storage::open_private_file(&daemon.directory, Path::new("lifetime"), false).unwrap();
-        assert!(cleanup_dead_capability(
-            &daemon.directory,
-            &binding.identity,
-            Some(&binding.spawn_fingerprint),
-            Some(&observer)
-        )
-        .is_err());
+        assert!(DeadGenerationLease::acquire(observer).is_err());
         assert!(cleanup_dead_capability(
             &daemon.directory,
             &binding.identity,
@@ -1209,6 +1220,10 @@ pub(crate) mod tests {
         .is_err());
         assert!(root.path().join(&name).exists());
         drop(lease);
+        let observer = DeadGenerationLease::acquire(
+            storage::open_private_file(&daemon.directory, Path::new("lifetime"), false).unwrap(),
+        )
+        .unwrap();
         assert!(cleanup_dead_capability(
             &daemon.directory,
             &binding.identity,

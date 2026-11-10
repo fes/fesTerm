@@ -1461,6 +1461,15 @@ fn with_daemon_generation(
     record: &SessionRecord,
     serve: impl FnOnce(&mut bool, &mut bool) -> Result<(), Box<dyn std::error::Error>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    with_daemon_generation_before_cleanup(root, record, serve, || {})
+}
+
+fn with_daemon_generation_before_cleanup(
+    root: &Path,
+    record: &SessionRecord,
+    serve: impl FnOnce(&mut bool, &mut bool) -> Result<(), Box<dyn std::error::Error>>,
+    before_cleanup: impl FnOnce(),
+) -> Result<(), Box<dyn std::error::Error>> {
     validate_artifact_root(root)?;
     let lease_path = generation_lease_path(root, record);
     let lease = match private_runtime_directory(root)? {
@@ -1485,16 +1494,26 @@ fn with_daemon_generation(
     // Release before taking the registry lock: kill holds that lock while
     // waiting for this generation's lease to become available.
     drop(lease);
-    let cleanup = if preserve_artifacts {
-        Err("native binding capability cleanup incomplete; generation artifacts retained".into())
-    } else {
-        cleanup_dead_generation(root, record, socket_owned)
-    };
+    let mut before_cleanup = Some(before_cleanup);
+    let mut cleanup = Ok(());
     let publication = with_registry_lock_in(
         root,
         |registry| {
+            if let Some(before_cleanup) = before_cleanup.take() {
+                before_cleanup();
+            }
+            cleanup = if preserve_artifacts {
+                Err(
+                    "native binding capability cleanup incomplete; generation artifacts retained"
+                        .into(),
+                )
+            } else {
+                cleanup_dead_generation(root, record, socket_owned)
+            };
             if cleanup.is_err() {
-                if !registry.sessions.contains_key(&record.name) {
+                if !registry.sessions.contains_key(&record.name)
+                    && !registry.foreign.contains_key(&record.name)
+                {
                     registry
                         .sessions
                         .insert(record.name.clone(), record.clone());
@@ -4917,16 +4936,16 @@ fn cleanup_dead_generation(
     }
     validate_artifact_root(root)?;
     let lease_path = generation_lease_path(root, record);
-    let lease = open_generation_lease(&lease_path)?;
-    if let Some(lease) = &lease {
-        lease.try_lock_exclusive().map_err(|error| {
+    let lease = open_generation_lease(&lease_path)?
+        .map(festerm_sessiond::native_binding::DeadGenerationLease::acquire)
+        .transpose()
+        .map_err(|error| {
             format!(
                 "cannot clean session '{}' lease {}: {error}; record retained; retry kill",
                 record.name,
                 lease_path.display()
             )
         })?;
-    }
     if record.spawn_fingerprint.is_some() {
         let directory = festerm_sessiond::private_storage::private_directory(root, false)?;
         festerm_sessiond::native_binding::cleanup_dead_capability(
@@ -4973,20 +4992,32 @@ fn cleanup_failed_start(
             }
             thread::sleep(CLIENT_POLL_INTERVAL);
         }
-        cleanup_dead_generation(root, record, true)
+        Ok(())
     })();
     // Preserve a precise retry handle even when startup never registered.
-    let registry_result = with_registry_lock(|registry| {
-        if stopped.is_ok() {
-            remove_registry_record_if_generation_matches(registry, record);
-        } else if !registry.sessions.contains_key(&record.name) {
-            registry
-                .sessions
-                .insert(record.name.clone(), record.clone());
-        }
-        Ok(())
-    });
-    combine_cleanup_result(stopped, registry_result)
+    let mut cleanup = Ok(());
+    let publication = with_registry_lock_in(
+        root,
+        |registry| {
+            cleanup = if stopped.is_ok() {
+                cleanup_dead_generation(root, record, true)
+            } else {
+                Ok(())
+            };
+            if stopped.is_ok() && cleanup.is_ok() {
+                remove_registry_record_if_generation_matches(registry, record);
+            } else if !registry.sessions.contains_key(&record.name)
+                && !registry.foreign.contains_key(&record.name)
+            {
+                registry
+                    .sessions
+                    .insert(record.name.clone(), record.clone());
+            }
+            Ok(())
+        },
+        || {},
+    );
+    combine_cleanup_result(stopped, combine_cleanup_result(cleanup, publication))
 }
 
 #[cfg(unix)]
@@ -7604,9 +7635,159 @@ mod tests {
     }
 
     #[test]
+    fn generation_binding_dead_cleanup_reuses_callers_exclusive_lifetime_guard() {
+        let fixture = GenerationFixture::new();
+        let mut record = fixture.record("retired", 123);
+        record.spawn_fingerprint = Some(format!("v1:{}", "a".repeat(64)));
+        let _lease = fixture.artifacts(&record, false);
+        let (_binding, owner) = festerm_sessiond::native_binding::DaemonBinding::create(
+            &fixture.0,
+            festerm_sessiond::NativeSessionIdentity {
+                name: record.name.clone(),
+                pid: record.pid,
+                created_at_unix_ms: record.created_at_unix_ms,
+                endpoint: record.socket.clone(),
+            },
+            record.spawn_fingerprint.clone().unwrap(),
+        )
+        .unwrap();
+        // The real caller acquires once, then passes the already-held typed
+        // guard to capability cleanup. Windows locks are not recursive.
+        cleanup_dead_generation(&fixture.0, &record, true).unwrap();
+        fixture.assert_removed(&record);
+        assert!(!fixture
+            .0
+            .join(format!("native-binding-{}-123.key", record.pid))
+            .exists());
+        owner.cleanup().unwrap();
+    }
+
+    #[test]
+    fn generation_binding_exit_serializes_cleanup_with_concurrent_registry_pruner() {
+        let fixture = GenerationFixture::new();
+        let root = &fixture.0;
+        let mut record = fixture.record("exiting", 123);
+        record.spawn_fingerprint = Some(format!("v1:{}", "a".repeat(64)));
+        thread::scope(|scope| {
+            let mut pruner = None;
+            let mut owner = None;
+            let mut registry_was_locked = false;
+            let mut lifetime_was_released = false;
+            let result = with_daemon_generation_before_cleanup(
+                root,
+                &record,
+                |socket_owned, _| {
+                    let (_binding, created) =
+                        festerm_sessiond::native_binding::DaemonBinding::create(
+                            root,
+                            festerm_sessiond::NativeSessionIdentity {
+                                name: record.name.clone(),
+                                pid: record.pid,
+                                created_at_unix_ms: record.created_at_unix_ms,
+                                endpoint: record.socket.clone(),
+                            },
+                            record.spawn_fingerprint.clone().unwrap(),
+                        )?;
+                    owner = Some(created);
+                    #[cfg(unix)]
+                    {
+                        drop(UnixListener::bind(&record.socket)?);
+                        *socket_owned = true;
+                    }
+                    #[cfg(windows)]
+                    let _ = socket_owned;
+                    with_registry_lock_in(
+                        root,
+                        |registry| {
+                            registry
+                                .sessions
+                                .insert(record.name.clone(), record.clone());
+                            registry
+                                .foreign
+                                .insert("unrelated".into(), serde_json::json!({"future": 1}));
+                            Ok(())
+                        },
+                        || {},
+                    )
+                },
+                || {
+                    let directory =
+                        festerm_sessiond::private_storage::private_directory(root, false).unwrap();
+                    let probe = festerm_sessiond::private_storage::open_private_file(
+                        &directory,
+                        Path::new("registry.lock"),
+                        false,
+                    )
+                    .unwrap();
+                    registry_was_locked = match probe.try_lock_exclusive() {
+                        Err(error) if festerm_sessiond::lock_is_contended(&error) => true,
+                        Ok(()) => {
+                            FileExt::unlock(&probe).unwrap();
+                            false
+                        }
+                        Err(error) => panic!("registry probe failed: {error}"),
+                    };
+                    let lifetime = open_generation_lease(&generation_lease_path(root, &record))
+                        .unwrap()
+                        .unwrap();
+                    lifetime_was_released = lifetime.try_lock_exclusive().is_ok();
+                    drop(lifetime);
+                    let (attempting, ready) = mpsc::channel();
+                    pruner = Some(scope.spawn(move || {
+                        let contended = match probe.try_lock_exclusive() {
+                            Err(error) if festerm_sessiond::lock_is_contended(&error) => true,
+                            Ok(()) => {
+                                FileExt::unlock(&probe).unwrap();
+                                false
+                            }
+                            Err(error) => panic!("pruner registry probe failed: {error}"),
+                        };
+                        attempting.send(contended).unwrap();
+                        with_registry_lock_in(
+                            root,
+                            |registry| prune_dead_records_in(root, registry),
+                            || {},
+                        )
+                        .map_err(|error| error.to_string())
+                    }));
+                    assert!(
+                        ready.recv_timeout(Duration::from_secs(2)).unwrap(),
+                        "concurrent pruner did not observe the exit transaction's registry lock"
+                    );
+                },
+            );
+            result.unwrap();
+            pruner.take().unwrap().join().unwrap().unwrap();
+            assert!(
+                registry_was_locked,
+                "exit cleanup ran outside registry serialization"
+            );
+            assert!(
+                lifetime_was_released,
+                "exit held the lifetime lease while acquiring registry"
+            );
+            let registry =
+                with_registry_lock_in(root, |registry| Ok(registry.clone()), || {}).unwrap();
+            assert!(
+                !registry.sessions.contains_key(&record.name),
+                "removed generation was reinserted"
+            );
+            assert_eq!(
+                registry.foreign["unrelated"],
+                serde_json::json!({"future": 1})
+            );
+            fixture.assert_removed(&record);
+            assert!(!root
+                .join(format!("native-binding-{}-123.key", record.pid))
+                .exists());
+            owner.take().unwrap().cleanup().unwrap();
+        });
+    }
+
+    #[test]
     fn generation_binding_capability_cleanup_normal_failed_start_and_replacement_retains_retry_handle(
     ) {
-        for outcome in ["normal", "failed-start", "replacement"] {
+        for outcome in ["normal", "failed-start", "replacement", "foreign-record"] {
             let fixture = GenerationFixture::new();
             let mut record = fixture.record("owned", 123);
             record.spawn_fingerprint = Some(format!("v1:{}", "a".repeat(64)));
@@ -7622,11 +7803,23 @@ mod tests {
                     },
                     record.spawn_fingerprint.clone().unwrap(),
                 )?;
-                if outcome == "replacement" {
+                if matches!(outcome, "replacement" | "foreign-record") {
                     festerm_sessiond::private_storage::replace_private(
                         &festerm_sessiond::private_storage::private_directory(&fixture.0, false)?,
                         Path::new(&key),
                         b"foreign-replacement",
+                    )?;
+                }
+                if outcome == "foreign-record" {
+                    with_registry_lock_in(
+                        &fixture.0,
+                        |registry| {
+                            registry
+                                .foreign
+                                .insert(record.name.clone(), serde_json::json!({"future": 1}));
+                            Ok(())
+                        },
+                        || {},
                     )?;
                 }
                 let result = if outcome == "normal" {
@@ -7638,7 +7831,7 @@ mod tests {
             });
             let registry =
                 with_registry_lock_in(&fixture.0, |registry| Ok(registry.clone()), || {}).unwrap();
-            if outcome == "replacement" {
+            if matches!(outcome, "replacement" | "foreign-record") {
                 assert!(result
                     .unwrap_err()
                     .to_string()
@@ -7648,7 +7841,15 @@ mod tests {
                     b"foreign-replacement"
                 );
                 assert!(generation_lease_path(&fixture.0, &record).exists());
-                assert_eq!(registry.sessions.get(&record.name), Some(&record));
+                if outcome == "replacement" {
+                    assert_eq!(registry.sessions.get(&record.name), Some(&record));
+                } else {
+                    assert!(!registry.sessions.contains_key(&record.name));
+                    assert_eq!(
+                        registry.foreign[&record.name],
+                        serde_json::json!({"future": 1})
+                    );
+                }
             } else {
                 assert_eq!(result.is_ok(), outcome == "normal");
                 assert!(!fixture.0.join(&key).exists());
