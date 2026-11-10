@@ -3376,6 +3376,9 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 signature, default-deny owner/session admission, revocation/replay, privacy/
 pagination and budget evidence. This is not a native host endpoint, installation,
 owner-enrollment ceremony or actual pinned-channel proof.
+Protected local enrollment/revocation/rotation and opaque native-vault key APIs
+now have deterministic fixture evidence; real pinned SSH streams exercise the
+explicit missing-exporter refusal, not successful owner channel authentication.
 No live credentials/services were used or installed by this slice.
 
 Stage 2 adds **automated local Unix** evidence: real detached owned daemons and
@@ -3417,7 +3420,7 @@ Host-controlled Windows startup refuses denied breakaway instead of claiming
 persistence inside the bridge's job; both denial and successful independent
 whole-ConPTY-tree cleanup require native evidence.
 Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
-HOST-04–06 setup/update/migration remain deferred behind their implementations;
+HOST-04–06 setup/update/migration retain partial foundations described below;
 there is no new completed manual or usability scenario.
 Migration qualification must preserve protected state/account binding, retain
 manual deferral and prove that setup/sharing consent cannot stop/restart a live
@@ -3425,6 +3428,38 @@ legacy session. Such a stop requires separate default-No confirmation of the
 exact live generation, revalidated before the effect; stale confirmation must
 not stop a replacement. No such local confirmation UI or native evidence is
 claimed by the stage-1 protocol refusal fixture.
+
+## ADR 0084 host setup qualification
+
+`HOSTAUTH-01` also gates composition: future desktop/mobile callers must never
+select file credentials. A future headless CLI must verify protected origin and
+explicit local opt-in. The host Store enforces journal origin; the lower-level
+bridge/client marker is only a namespace, not a headless-origin capability.
+No current GUI/default path selects file storage or falls back after vault failure.
+
+Migration must preserve protected state/account binding and permit manual
+deferral. Setup/sharing consent cannot stop or restart a live legacy session;
+that needs separate default-No confirmation for its exact generation. That
+workflow and its generation-confirmation tests remain deferred until a migration
+API exists; generic command-refusal tests are not migration-consent evidence.
+
+| ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
+| --- | --- | --- | --- |
+| HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/pin staging boundary; native/service/package and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, exact-owned native adapters and authenticated release artifacts. Windows/macOS/Linux startup and service acceptance require real platform evidence; fixture success is not that evidence. |
+
+## ADR 0084 owner enrollment qualification
+
+`HOSTAUTH-01` additionally requires real endpoint composition to capture the
+current runtime issuer inside its protected reservation, including after any
+namespace rotation. Permission-only or `None` hotpath policies must advertise
+no creation; issuer projection must not replace permission epochs or revive a
+lower observed issuer. Portable consent/projection fixtures automate that
+separation, not the native backend or endpoint integration. Original uncertain
+client operations must retain their captured issuer.
+
+| ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
+| --- | --- | --- | --- |
+| HOSTAUTH-01 | On macOS/Windows/Linux and physical mobile clients, explicitly confirm exact provisioned host/account/owner public-key fingerprint; generate/reopen/delete per-host owner keys in the native vault; lock/unlock/unavailable store; revoke/rotate while proof and operations are pending; deny creation without blocking removal; interrupt reference reservation/native update/disk publication and reconcile only exact anchored forward state. On a headless installation explicitly select protected-file credentials, verify origin/path/no-follow/permission checks and the documented weaker whole-store/home rollback guarantee; never fall back automatically. Verify no key in exports/logs/argv/env. | Automated synthetic constrained-vault, 64-key-history, forward recovery, effective-permission and private-file fixtures plus real SSH refusal fixtures; native and first-connect usability deferred | #681 stages 1/3: reviewed shared SSH connection/channel exporter and role-bound signing adapter; integrated foreground enrollment or advanced host-local public-key consent; exact-owned endpoint admission/routing. A provisioned journal is not Ready; fixture success is not native vault/private-path/platform acceptance. |
 
 ## Intake rule for new work
 

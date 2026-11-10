@@ -112,6 +112,40 @@ sets by protected owner/sharing/revocation before publication. One uncertain
 record cannot hide healthy peers, and a partial/omitted inventory never proves
 absence; exact Lookup/Ensure must still reconcile protected native evidence.
 
+The unreleased HOST envelope additionally carries `issuance_epoch` on
+Ensure/Create requests, which require it. All other requests must omit it;
+otherwise validation returns Malformed. `IssuedOperation { id, epoch }` captures
+the current
+protected namespace from authenticated capabilities for a **new explicit
+action**. `Envelope::issued` constructs that request; the server obtains the
+same pair with `issued_operation`. Responses echo the epoch and correlation
+checks it, including refusals. Admission fences bind it independently of the
+per-operation cancellation epoch. Bare OperationId client APIs must refuse
+Ensure/Create. An uncertain retry retains the original pair and immutable
+intent; reconnect, capability refresh, Stale or Unknown must never automatically
+replace its epoch. A retired namespace yields Stale/Unknown, never a new create.
+Only host-local journal serialization can rotate the namespace and safely retire
+its operation ledger. Rotation cannot discard active generations or revocation
+fences. Exact-target lifecycle requests remain generation/lease fenced and must
+omit the creation-issuance epoch. Legacy daemon/bridge wire is unchanged.
+
+A runtime capability advertisement enabling Ensure or Create must carry its
+current protected issuance epoch. Protected enrollment templates omit it;
+project the actual runtime issuer under reservation before advertising or
+admitting creation.
+For Ensure/Create, owner admission returns Stale if the policy has no advertised
+epoch or the request's epoch is newer; older epochs remain unchanged for the
+durable ledger to decide.
+Verifier replacement retains the highest observed issuance epoch even while
+creation is disabled, and refuses a lower replacement. This in-memory guard
+does not replace durable journal/rollback protection across process restarts.
+
+Inventory pages contain bounded per-target `unknown` metadata, repeated across
+pages alongside the healthy session page. `capture_with_unknowns` filters both
+sets by protected owner/sharing/revocation before publication. One uncertain
+record cannot hide healthy peers, and a partial/omitted inventory never proves
+absence; exact Lookup/Ensure must still reconcile protected native evidence.
+
 `Recipe { shell, args, cwd }` uses an argument vector, never a shell command
 string. Optional shell means the host's default and requires an empty argument
 vector. Shell/cwd are nonempty when present, at most 4,096 bytes; at most 32
@@ -329,7 +363,7 @@ keys** in addition to the existing private service ACL and host-key trust.
 There is no new identity provider, borrowed OAuth token, anonymous ACL or
 management-token authentication.
 
-### Enrollment and secret boundary (integration still gated)
+### Enrollment and secret boundary (transport integration still gated)
 
 1. A foreground local setup operation authenticates the configured OS user
    through existing protected setup/consent boundaries and selects the intended
@@ -341,8 +375,10 @@ management-token authentication.
    separately from portable configuration.
 2. Each authorized device generates a dedicated **per-host** `OwnerSigningKey`.
    Its seed is stored through existing native `SecretBytes`/opaque-reference
-   vault storage; a headless client may use the existing protected private-file
-   boundary. Never store it in TOML, portable recipes, exports, cloud metadata,
+   vault storage by default. A deliberate headless-only protected-file selection
+   may instead hold the credential and anchor, bound to that installation/origin.
+   There is no automatic vault-failure fallback or desktop/GUI file policy.
+   Never store it in TOML, portable recipes, exports, cloud metadata,
    command arguments, environment variables or logs. `OwnerSigningKey` has no
    Debug/Clone/serde; exported seed views are zeroizing.
 3. Via a trusted operator channel, transfer only the public key to the host.
@@ -354,12 +390,166 @@ management-token authentication.
 4. Account IDs remain public provisioning hints. Public keys map to the
    configured owner only, not an asserted GitHub user or creator-specific ACL.
    Permission/key changes advance protected host/grant epochs before publication.
-   Removing a device invalidates its live/pending admission and disconnects it.
+   Removing a device invalidates its live/pending admission. A future endpoint
+   must close the affected streams; no endpoint is implemented here.
 
-This stage provides `OwnerSigningKey`, `OwnerPolicy`, `OwnerVerifier` and proof
-verification. Native enrollment UI/CLI, protected enrollment-store adapters and
-vault integration are later-stage dependencies, not implied working features.
-Until installed/reviewed, an owner grant must not be reconstructed from config.
+The opt-in `festerm-host-setup/owner-enrollment` feature now implements protected
+local persistence through `Store::owner_enrollment() -> OwnerEnrollment`.
+`initialize(identity_filename, account)` loads the existing stable `HostIdentity`
+through the verified private installation handle (never generates a replacement)
+and requires the exact existing Provisioned host/account binding before creating
+a local principal with no keys or permissions. Arbitrary pre-provision account
+selection is refused. Each policy read reloads that exact identity;
+changed/missing host identity or a changed provisioning account refuses admission.
+`enroll(revision, key, confirmed_fingerprint)`, `revoke` and `rotate` compare the
+current revision; fingerprint confirmation is exact `ED25519-SHA256:` of the raw
+Ed25519 public key, distinct from the SSH host-key fingerprint. Four active keys
+and 64 lifetime entries bound the store; revoked-key tombstones cannot be
+reenrolled. Key import does not enable access or shell creation.
+`approve_permissions` is separate host-local consent, never a remote request or
+config import. Creation also requires existing host settings permission; a later settings deny
+masks effective creation without invalidating the stored record or blocking
+revocation/permission removal. New creation approval still requires settings
+consent. Remote
+admission additionally requires the lifecycle's Provisioned phase (not a Ready
+claim). No CLI/UI enrollment controls are exposed by this backend slice.
+
+The private installation journal lease serializes enrollment, lifecycle and
+fresh admission. `current_policy() -> CurrentOwnerPolicy` owns that short lease
+and exposes `verifier()`: authorize against it and return the guard as the
+backend admission callback's `G`, so reservation/publication retains the policy
+guard but drops it before startup/attachment waits. Reacquire for final effects.
+`with_current_verifier` is a short closure convenience, never network I/O;
+cached verifiers are not current policy.
+Every policy mutation advances the grant revision, fencing pending proofs and
+live admission. Observed lifecycle epochs advance a persisted high-water.
+The native vault holds a fixed approximately 100-byte revision/record-digest/
+predecessor anchor, not the full policy JSON (which must fit neither Windows'
+2,560-byte credential limit nor one credential per history entry). The policy
+remains bounded to 16 KiB and 64 historical keys in protected private files.
+A complete prepared record is synchronized before anchor update, followed by
+atomic committed-record publication. Initial creation first durably reserves the
+exact opaque reference, then uses `SecretStore::create_reserved` without replacing
+existing data, so failed creation/publication retains a recoverable receipt.
+
+Interrupted publication or stale disk state refuses ordinary admission.
+Explicit local `reconcile()` under the installation lease only publishes the
+prepared record matching the selected store's exact revision/digest/predecessor.
+It validates installation/origin/storage, existing stable identity, account,
+forward revision and retained compromised-key tombstones. A merely newer,
+tampered, foreign or uncommitted prepared record is not consent. If the current
+record already matches the anchor, uncommitted proposals are ignored. Missing
+anchors, corrupt predecessor evidence and old full-JSON anchor formats require
+local review, not reset/adoption or silent format migration. Native locked/
+unavailable errors request unlock/retry, with no storage fallback.
+
+`Store::owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)` is an
+explicit advanced **headless-only** alternative. It records exact origin,
+installation and storage selection, uses the same no-follow owner-only private
+handle boundary, and refuses switching an existing policy to another backend.
+Its `ExplicitHeadlessFileStore` holds credentials/anchors separately from public
+policy metadata; `ClientOwnerKey::generate_headless/open_headless` preserve the
+same per-host approved binding and opaque-reference semantics. This is not
+unencrypted data in portable config, nor a fallback when SecretService is down.
+Without that explicit selection, headless Linux needs its native SecretService.
+**Weaker guarantee:** rolling back the whole selected protected file store/home
+can also roll back its anchor and restore revoked state. That attack is not
+claimed resisted; likewise native-store rollback itself is outside the native
+anchor guarantee. Native private-path/credential/service qualification remains
+manual; the library option exposes no setup UI or remote enrollment endpoint.
+
+The host `Store` wrapper hard-enforces its protected journal's Headless origin.
+The lower-level bridge/client file-store constructor cannot identify GUI versus
+CLI callers: its `origin=headless` marker binds a namespace, not verified origin.
+Client library selection is explicitly the trusted composition root's
+responsibility. No desktop/mobile composition selects it today; future ones must
+remain native-only. Any future headless CLI must obtain protected deliberate
+opt-in and validate origin before selecting files, never infer consent from
+portable settings, this marker or a vault failure (`HOSTAUTH-01`).
+
+`ClientOwnerKey::generate_native/open_native` store the generated seed and exact
+`OwnerBinding` together through the existing native store. The handle exposes
+only public bytes and an opaque reference for protected local credential
+metadata. Reopening refuses changed installation, host/key, account or owner;
+no OAuth credential borrowing is involved. Secret buffers are zeroized. Client
+key deletion is retryable and distinct from host-side revocation.
+
+The durable initialization receipt also fixes the selected backend, origin and
+installation before credential creation. Every resume/reconciliation checks it;
+switching native/file modes after an interrupted initialization refuses without
+discarding either anchor or prepared evidence. Untyped old receipts require
+local review, never automatic adoption. Reserved native creation is serialized
+by the installation lease and random reference, not a native cross-process CAS.
+
+### Protected permissions and current runtime issuer
+
+Protected enrollment stores permission templates, not a runtime issuance
+namespace. `Capabilities::validate_permissions()` checks their logical flag
+relationships; wire `Capabilities::validate()` remains stricter and requires a
+current epoch for advertised Ensure/Create. Enrollment refuses a persisted
+runtime epoch. Enabling local creation permission without one is valid consent,
+not an advertisement or authority to create.
+
+Enrollment uses the distinct `OwnerVerifier::from_protected_permissions`
+constructor, which refuses a supplied runtime issuer. Public
+`OwnerPolicy::validate()` and `OwnerVerifier::new/replace` retain their strict
+runtime-policy requirements, including the existing missing-issuer regression.
+
+`OwnerVerifier::capabilities()` is the runtime advertisement view: without an
+issuer it removes Ensure/Create and creation permission while preserving
+read/attach/detach capabilities. Do not publish `policy().capabilities` as wire
+capabilities; that is the protected permission template.
+
+Inside the protected backend composition/admission reservation,
+`OwnerVerifier::with_issuance_epoch(actual)` creates an owned projection from
+the current protected runtime issuer, retaining enrolled keys, owner/session
+permission epochs and any issuer high-water mark already held by its receiver.
+It rejects an issuer below that mark, including after a replacement stopped
+publishing an epoch. Projection is immutable: it does not update the original
+template. Each fresh enrollment/current-policy reload starts without an issuer
+watermark, so this check applies only within one retained projection chain.
+Rollback protection across reservations and process restarts belongs to the
+protected durable backend. Never cache old enrollment as current authority just
+to retain the in-memory check.
+Only the issuer field changes; this is not a permission transition or owner
+revocation. Never supply a request header, guessed/default epoch or cached
+advertisement. A `None` hotpath state uses the original verifier and must not
+advertise creation.
+
+If issuing/inspecting the namespace rotates it under the reservation, capture
+the final current scope under the protected callback and verify that it equals
+the returned issuer before publication. Keep the existing protected admission
+guard through the backend decision. This integration requirement does not
+qualify an unimplemented endpoint or an unreviewed backend path.
+
+A new advertised issuer applies to newly captured operations only. Never
+refresh an uncertain client's original `IssuedOperation` or mutate its request;
+older issuances remain the durable ledger's decision.
+
+### Concrete transport blocker — no owner signing adapter yet
+
+The existing inner SSH `VerifiedHost` really verifies the exact approved host
+key; its encrypted transport fixtures reject changed keys before authentication.
+However `ClientConnection` retains a `ChannelStream` plus client handle, and
+server `HostStream` retains only stream/admission permits. The shared SSH
+session-ID/KEX transcript is private inside vendored russh and neither stream
+exports a shared connection **and channel** binding. A server-generated
+connection UUID or asserted verified boolean is not a substitute: proofs could
+otherwise be relayed/reflected between authenticated streams.
+
+Both real stream types therefore expose `require_owner_channel_binding`, which
+returns the actionable `ChannelBindingUnavailable` error, even after genuine
+host-key verification. No seed is retrieved and no challenge is signed/admitted
+by this gate. A reviewed role/domain-separated transport exporter carried
+immutably with both stream endpoints, plus anti-relay/reflection/cross-channel
+integration tests, is prerequisite to a production signing/verification adapter.
+The lower-level `OwnerSigningKey::prove` remains a contract primitive, not that
+adapter; fixture proofs do not qualify the missing seam.
+
+First-connect UX is also deferred: use explicit advanced host-local public-key
+import/fingerprint confirmation or an integrated foreground setup handoff, never
+automatic bearer enrollment. The normal future flow must not require connection
+JSON; this slice chooses neither new controls nor a pairing service.
 
 ### Authentication and admission algorithm
 

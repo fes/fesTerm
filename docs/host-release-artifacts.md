@@ -147,7 +147,10 @@ from normal CI. No production trust override is exposed.
 
 No actual release key, release dispatch or live installation is used by tests.
 Native protected-release signing/download/rejection evidence on all six targets,
-headless CLI package inclusion, installer integration, private atomic staging,
+headless CLI package inclusion, native installer/executable publication,
 service switching/rollback, legacy migration and independently trusted first
 Linux installation remain required under HOST-06/DT-05/DT-08 and #681.
-Reviewed Microsoft CLI pins/acquisition remain separate shared-setup work.
+The [shared setup boundary](headless-host.md) implements private atomic
+no-replace offline staging for authenticated helper entries and reviewed
+Microsoft CLI pins. Network acquisition, native installation and service
+switching remain deferred; cache files are not executable publication.

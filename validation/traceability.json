@@ -5539,6 +5539,10 @@
         "host_owner_authentication_matches_domain_bound_signature_fixture",
         "host_owner_proof_rejects_foreign_key_tampering_and_cross_connection_replay",
         "host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed",
+        "host_owner_creation_epoch_refuses_future_without_refreshing_older_requests",
+        "host_owner_mutating_policy_requires_advertised_issuance_epoch",
+        "host_owner_permission_templates_require_runtime_projection_for_creation",
+        "host_owner_policy_replacement_retains_issuance_high_water_mark",
         "host_owner_admission_requires_current_shared_exact_generation_and_absence",
         "host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys",
         "host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes",
@@ -5580,12 +5584,31 @@
         "native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated",
         "pending_candidate_many_small_chunks_preserves_writer_and_ordered_delta",
         "pending_candidate_delta_overflow_preserves_current_writer"
+        "host_owner_fence_rejects_changed_intent_for_the_same_operation",
+        "protected_owner_enrollment_is_explicit_persistent_and_not_creation_consent",
+        "protected_owner_rotation_revokes_pending_and_live_admission_and_stale_results",
+        "protected_owner_vault_fences_disk_rollback_foreign_installation_and_missing_anchor",
+        "protected_owner_observed_lifecycle_revision_cannot_roll_back",
+        "protected_owner_detects_changed_stable_host_key_or_provisioning_account",
+        "protected_owner_interrupted_policy_publication_requires_reconciliation",
+        "protected_owner_initialization_requires_exact_provisioned_account_and_recovers_receipt",
+        "protected_owner_creation_settings_mask_preserves_revocation_and_permission_removal",
+        "protected_owner_compact_anchor_supports_all_64_history_entries_in_2560_byte_vault",
+        "protected_owner_headless_file_selection_is_explicit_bound_and_not_desktop_fallback",
+        "protected_owner_observed_epoch_commit_recovers_only_forward_after_disk_failure",
+        "reserved_secret_creation_never_replaces_existing_authority",
+        "protected_owner_interrupted_initialization_cannot_switch_credential_storage",
+        "native_owner_reference_reopens_only_exact_approved_binding",
+        "native_owner_vault_failure_never_creates_a_fallback_key",
+        "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",
+        "encrypted_transport_refuses_changed_host_key_before_authentication"
       ],
-      "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
+      "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681: contracts and local durable session control only; no HOST endpoint or GUI control is exposed. Independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
-        "Integrate the stage-2 local durable session-control backend with reviewed protected admission and routing; unbound uncertain reservations remain Unknown, never infer absence from denial/offline/partial inventory",
+        "Issue #681 stages 1/3: protected local enrollment/native-vault APIs implemented, no HOST endpoint or GUI controls. Existing real pinned SSH stream gates refuse owner authentication because shared connection/channel transcript export is missing; implement and independently review role-bound anti-relay/reflection signing adapter before exposure",
+        "Native vault/private-path/restart qualification and first-connect foreground public-key consent UX remain deferred under HOSTAUTH-01. Explicit validated forward policy reconciliation is implemented; headless-only protected-file storage requires deliberate origin-bound selection and has weaker whole-store/home rollback protection; no portable config adoption, bearer auto-enrollment or automatic seed fallback",
+        "Integrate the implemented local durable ensure/reservations and daemon-owned temporary leases with protected admission and routing; unbound uncertain reservations remain Unknown, never infer absence from denial/offline/partial inventory",
         "Implement authenticated multi-session routing, fair output/control scheduling, aggregate permit/deadline integration and legacy adapter without grant expansion",
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth and Unix owned daemon fixtures do not qualify it",
         "PendingAttachment is not Attached; remote recovery adoption and observed daemon lease/writer commit must precede success. StopRequested is not Ended; reconcile process absence before success. The endpoint must retire already established revoked relays",
@@ -5594,26 +5617,41 @@
       ]
     },
     {
-      "id": "host-based-dev-tunnels-design",
-      "edges": [
-        "HOST-04",
-        "HOST-05"
-      ],
+      "id": "host-shared-lifecycle-headless-boundary",
+      "edges": ["HOST-04", "HOST-05"],
       "requirements": [
-        "docs/adr/0084-host-based-dev-tunnels.md#decision",
-        "docs/adr/0084-host-based-dev-tunnels.md#acceptance-matrix"
+        "docs/adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing",
+        "docs/adr/0084-host-based-dev-tunnels.md#8-headless-installation-and-common-management",
+        "docs/headless-host.md#shared-desktopendpoint-integration-api"
       ],
-      "decisions": [
-        "ADR-0084"
+      "decisions": ["ADR-0084"],
+      "automated_tests": [
+        "headless_configuration_is_inert_and_origin_is_not_adopted",
+        "cancelled_setup_journals_late_exact_identity_without_restoring_consent",
+        "disabled_reenable_preserves_identity_and_cleanup_requires_exact_stop",
+        "host_journal_refuses_busy_corrupt_and_unprotected_state",
+        "host_enable_requires_exact_foreground_settings_and_binds_the_ticket",
+        "host_provisioning_refuses_settings_that_drift_from_the_approved_ticket",
+        "interrupted_enable_recovers_exact_ticket_to_confirm_no_resources",
+        "recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence",
+        "interrupted_private_publication_never_exposes_torn_final_bytes",
+        "offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache",
+        "headless_commands_configure_and_report_only_disabled_state",
+        "unavailable_host_operations_and_unsafe_options_fail_closed",
+        "headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments",
+        "headless_binary_status_is_a_journal_not_a_ready_claim",
+        "authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries",
+        "authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache",
+        "headless_package_staging_refuses_unauthenticated_input_before_writing",
+        "staging_parent_rejects_a_dacl_that_allows_child_substitution"
       ],
-      "automated_tests": [],
-      "manual_scenarios": [],
-      "status": "deferred",
+      "manual_scenarios": ["HOSTSETUP-01"],
+      "status": "partial",
       "prerequisites": [
-        "Issue #681: implement the remaining ADR 0084 setup, headless, desktop-hosting and release/migration slices after reviewed endpoint/session-control integration",
-        "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
-        "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect",
-        "Migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow before migration exposure"
+        "Issue #681 stages 3–5/7: new zero-shell host endpoint, verified principal channel, real observed health and foreground secure sign-in/consent integration; setup/run/update/uninstall refuse until functional",
+        "Exact-owned same-user native service/status/cleanup adapters and persistent-daemon independence; signed authenticated artifacts and compatible update/rollback",
+        "Exact-generation separate default-No migration confirmation is deferred until the migration API; setup command refusals do not establish that behavior",
+        "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance"
       ]
     },
     {
@@ -5638,7 +5676,7 @@
       "manual_scenarios": ["DT-05", "DT-08"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681: headless CLI package inclusion and consuming installer/private atomic staging integration",
+        "Issue #681: headless CLI release package inclusion and consuming new endpoint installer integration; private authenticated staging exists but does not switch services",
         "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
         "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence"
       ]

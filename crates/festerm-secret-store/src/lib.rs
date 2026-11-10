@@ -139,6 +139,20 @@ pub enum SecretStoreError {
 
 /// Stores secret values behind opaque references.
 pub trait SecretStore: Send + Sync {
+    /// Creates a secret at a cryptographically random opaque reference already
+    /// reserved in the caller's durable private journal. The caller serializes
+    /// that reference under its resource lease. Never replaces existing data.
+    /// Native get/set is not a cross-process compare-and-create: its guarantee
+    /// requires this exact-reference lease and cryptographically random names.
+    /// Unsupported backends must fail, not fall back to another store.
+    fn create_reserved(
+        &self,
+        _reference: &SecretReference,
+        _secret: &SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        Err(SecretStoreError::Unsupported)
+    }
+
     /// Stores a new secret and returns a new opaque reference.
     fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError>;
 
@@ -189,6 +203,26 @@ impl MemorySecretStore {
 }
 
 impl SecretStore for MemorySecretStore {
+    fn create_reserved(
+        &self,
+        reference: &SecretReference,
+        secret: &SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        check_size(secret)?;
+        let mut secrets = self
+            .secrets
+            .lock()
+            .map_err(|_| SecretStoreError::BackendFailure)?;
+        if secrets.contains_key(reference) {
+            return Err(SecretStoreError::BackendFailure);
+        }
+        secrets.insert(
+            reference.clone_for_store(),
+            SecretBytes::copy_from_slice(secret.as_slice()),
+        );
+        Ok(())
+    }
+
     fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
         check_size(secret)?;
         let mut next_reference = self
@@ -295,6 +329,30 @@ impl NativeSecretStore {
 
 #[cfg(not(target_os = "android"))]
 impl SecretStore for NativeSecretStore {
+    fn create_reserved(
+        &self,
+        reference: &SecretReference,
+        secret: &SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        check_size(secret)?;
+        let _operation = self
+            .operation_lock
+            .lock()
+            .map_err(|_| SecretStoreError::BackendFailure)?;
+        let entry = self.entry(reference)?;
+        match entry.get_secret() {
+            Ok(mut existing) => {
+                existing.zeroize();
+                return Err(SecretStoreError::BackendFailure);
+            }
+            Err(keyring_core::Error::NoEntry) => {}
+            Err(error) => return Err(map_keyring_error(error)),
+        }
+        entry
+            .set_secret(secret.as_slice())
+            .map_err(map_keyring_error)
+    }
+
     fn put(&self, secret: &SecretBytes) -> Result<SecretReference, SecretStoreError> {
         check_size(secret)?;
         let _operation = self
@@ -533,6 +591,18 @@ mod tests {
     #[test]
     fn native_wrapper_round_trips_updates_and_deletes_through_a_keyring_store() {
         let store = mock_backed_store();
+        let reserved = SecretReference::generate();
+        store
+            .create_reserved(&reserved, &SecretBytes::copy_from_slice(b"reserved"))
+            .unwrap();
+        assert!(store
+            .create_reserved(&reserved, &SecretBytes::copy_from_slice(b"replacement"))
+            .is_err());
+        assert!(store
+            .get(&reserved)
+            .unwrap()
+            .with_bytes(|bytes| bytes == b"reserved"));
+        assert_eq!(store.delete(&reserved), Ok(true));
         let reference = store
             .put(&SecretBytes::copy_from_slice(b"first"))
             .expect("put");
@@ -715,6 +785,21 @@ mod tests {
             store.get(&reference),
             Err(SecretStoreError::Missing)
         ));
+    }
+
+    #[test]
+    fn reserved_secret_creation_never_replaces_existing_authority() {
+        let store = MemorySecretStore::new();
+        let reference = SecretReference::generate();
+        let first = SecretBytes::copy_from_slice(b"journal-reserved-first");
+        store.create_reserved(&reference, &first).unwrap();
+        assert!(store
+            .create_reserved(&reference, &SecretBytes::copy_from_slice(b"replacement"))
+            .is_err());
+        assert!(store
+            .get(&reference)
+            .unwrap()
+            .with_bytes(|bytes| bytes == b"journal-reserved-first"));
     }
 
     #[test]

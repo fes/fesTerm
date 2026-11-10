@@ -366,7 +366,7 @@ impl Drop for PreparedCheckpoint {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn test_directory() -> std::path::PathBuf {
     #[cfg(windows)]
     let parents = [
@@ -375,14 +375,45 @@ pub(crate) fn test_directory() -> std::path::PathBuf {
     ];
     #[cfg(unix)]
     let parents = [std::env::current_dir().unwrap()];
-    for parent in parents {
+    for (index, parent) in parents.into_iter().enumerate() {
         let path = parent.join(format!("festerm-private-{}", uuid::Uuid::new_v4()));
-        if let Ok(directory) = private_directory(&path, true) {
-            drop(directory);
-            return path;
+        match private_directory(&path, true) {
+            Ok(directory) => {
+                drop(directory);
+                return path;
+            }
+            Err(error) => {
+                eprintln!("private fixture candidate {index} refused: {error}");
+            }
         }
     }
     panic!("no policy-compliant private fixture directory");
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub struct PrivateTestDirectory(std::path::PathBuf);
+
+#[cfg(any(test, feature = "test-support"))]
+impl PrivateTestDirectory {
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for PrivateTestDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Test-only fixture selection uses the real private-storage policy, never
+/// permission repair. Windows checkout/profile ancestors need not be trusted.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn private_test_directory() -> PrivateTestDirectory {
+    PrivateTestDirectory(test_directory())
 }
 
 #[cfg(test)]

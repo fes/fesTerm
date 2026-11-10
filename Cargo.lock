@@ -2575,6 +2575,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-host"
+version = "0.16.0"
+dependencies = [
+ "festerm-host-setup",
+ "festerm-sessiond",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "festerm-host-protocol"
 version = "0.16.0"
 dependencies = [
@@ -2590,13 +2600,21 @@ dependencies = [
  "base64 0.22.1",
  "blake2 0.10.6",
  "ed25519-dalek",
+ "festerm-host-protocol",
+ "festerm-secret-store",
+ "festerm-sessiond",
+ "festerm-tunnel-bridge",
+ "festerm-unix-security",
+ "festerm-windows-security",
  "flate2",
+ "fs2",
  "minisign-verify",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tar",
  "tempfile",
+ "uuid",
  "zip",
 ]
 
@@ -2982,6 +3000,7 @@ dependencies = [
  "ed25519-dalek",
  "festerm-core",
  "festerm-host-protocol",
+ "festerm-secret-store",
  "festerm-session",
  "festerm-sessiond",
  "festerm-unix-security",

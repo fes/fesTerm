@@ -97,8 +97,19 @@ Creation neither enables rooted file access, observation, MCP nor broader ACLs.
 Those capabilities retain separate grants and generation/source bindings.
 
 Stage 1 chooses the additional authentication path: explicitly enrolled,
-per-host owner Ed25519 keys, protected local consent and native-vault/private-file
-seed boundaries, with a fresh consumed challenge on the same host-key-pinned
+per-host owner Ed25519 keys, protected local consent and native-vault seed storage
+by default. Explicit headless-only protected-file credential/anchor storage is
+also allowed by local selection; it is never a fallback after vault failure and
+never changes desktop/GUI policy. Its owner-only files have weaker rollback
+protection: full protected-store/home rollback can restore old consent and is
+not claimed resisted. Portable configuration/public metadata cannot select or
+reconstruct credentials or grants. The host Store enforces protected Headless
+origin; the lower-level bridge/client constructor's marker is only a namespace.
+Trusted composition roots must enforce headless-only explicit selection; the
+library cannot attest GUI/CLI caller origin. Future desktop/mobile composition
+must remain native-only and future headless CLI selection requires protected
+deliberate opt-in (`HOSTAUTH-01`).
+Both modes use a fresh consumed challenge on the same host-key-pinned
 channel. Host/key/principal/connection/nonces and monotonic epochs are signed;
 current protected session grants are checked separately at admission. This is
 proof of the configured enrolled owner, **not** an asserted GitHub identity or
@@ -335,7 +346,7 @@ identity fields and returns bounded immutable regular-file entries, not an
 archive path to reopen. No auto key discovery, unsigned fallback or downgrade
 is permitted; source-reviewed updater-key rotation and installation-owner
 version/rollback policy remain explicit. Headless host CLI inclusion, consuming
-installer integration, private atomic staging and service switching are not
+native installer/executable publication and service switching are not
 claimed by this foundation. Legacy scripts and old-tag recovery retain their
 old contracts, without a new Linux authentication claim (#681).
 
@@ -525,15 +536,28 @@ changes are part of the stage-1 contract slice.
 
 ## Validation impact
 
+**Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
+protected lifecycle journal; the separate GUI-free `festerm-host` supports
+disabled configure, recorded status, offline official-CLI pin staging and
+authenticated helper staging through the shared verifier, retaining exact signed
+provenance and comparing immutable cache entries without execution.
+Epoch fencing retains late provisioned identity for exact stop/cleanup, preserves
+identity on re-enable and refuses desktop/headless origin adoption. These are
+local boundary operations, not a working endpoint installer. Setup/run/update/
+uninstall explicitly fail until real endpoint, sign-in/native adapters and
+authenticated-package integration exist. No Ready or native acceptance is claimed.
+See [API/dependencies](../headless-host.md); the ADR remains Proposed.
+
 - **Invariants introduced or changed:** One host endpoint can expose multiple
   authorized sessions; explicit remote creation and client-local resume-or-create
   recipes; no implicit launcher network; shared setup and independent daemon
   lifetime. Legacy exact-generation behavior, single-writer ownership, bounded
   work, protected consent and secret boundaries remain.
 - **GUI/action edges affected:** `HOST-01` through `HOST-03` have partial
-  contract evidence; their endpoint/UI/native transitions and `HOST-04` through
-  `HOST-05` remain deferred; `HOST-06` has partial authenticity-foundation
-  coverage only. Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
+  contract evidence; their endpoint/UI/native transitions remain deferred.
+  `HOST-04`/`HOST-05` have partial shared boundary coverage and `HOST-06`
+  has partial authenticity-foundation coverage.
+  Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
   retain their current implementation coverage until each migration slice lands.
 - **Automated evidence (stage 1):**
   `host_wire_fixture_is_canonical_and_not_legacy_protocol`,
@@ -543,6 +567,8 @@ changes are part of the stage-1 contract slice.
   `host_operations_roundtrip_without_conflating_detach_end_or_absence`,
   `host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values`,
   `host_response_correlation_rejects_wrong_target_operation_and_temporary_lease`,
+  `host_issued_operation_requires_captured_epoch_and_correlates_responses`,
+  `host_inventory_preserves_filtered_bounded_per_target_uncertainty`,
   `host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors`,
   `host_inventory_response_requires_exact_forward_cursor_progression`,
   `host_aggregate_budgets_refuse_saturation_and_release_exact_permits`,
@@ -550,6 +576,10 @@ changes are part of the stage-1 contract slice.
   `host_owner_authentication_matches_domain_bound_signature_fixture`,
   `host_owner_proof_rejects_foreign_key_tampering_and_cross_connection_replay`,
   `host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed`,
+  `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`,
+  `host_owner_mutating_policy_requires_advertised_issuance_epoch`,
+  `host_owner_permission_templates_require_runtime_projection_for_creation`,
+  `host_owner_policy_replacement_retains_issuance_high_water_mark`,
   `host_owner_admission_requires_current_shared_exact_generation_and_absence`,
   `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
   `host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes`
@@ -572,6 +602,74 @@ changes are part of the stage-1 contract slice.
   takeover and recipe changes under a reused operation ID.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
+- **Protected enrollment prerequisite evidence (stages 1/3):**
+  `protected_owner_enrollment_is_explicit_persistent_and_not_creation_consent`,
+  `protected_owner_rotation_revokes_pending_and_live_admission_and_stale_results`,
+  `protected_owner_vault_fences_disk_rollback_foreign_installation_and_missing_anchor`,
+  `protected_owner_observed_lifecycle_revision_cannot_roll_back`,
+  `protected_owner_detects_changed_stable_host_key_or_provisioning_account`,
+  `protected_owner_interrupted_policy_publication_requires_reconciliation`,
+  `native_owner_reference_reopens_only_exact_approved_binding` and
+  `native_owner_vault_failure_never_creates_a_fallback_key` exercise actual
+  local persistence/native-reference APIs with synthetic vaults and keys.
+  `encrypted_transport_pins_host_and_exports_only_one_preconfigured_port` now
+  additionally proves both real pinned SSH stream endpoints refuse owner
+  authentication without a shared connection/channel exporter; the changed-key
+  fixture still refuses before authentication. This is a concrete remaining
+  transport prerequisite, not successful channel-bound proof qualification.
+  `host_owner_permission_templates_require_runtime_projection_for_creation`
+  separates persistent consent from strict runtime advertisements;
+  `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`
+  preserves original issued operations across fixture issuer projection and
+  refuses unadvertised future epochs. Native composition
+  must obtain that issuer under the actual protected backend reservation.
+  Fresh enrollment templates have no observed issuer watermark; durable backend
+  fencing, not cached owner policy, protects across reservations.
+  `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
+  no UI, listener, broad pairing service or full ADR acceptance is claimed.
+  Reliability remediation adds
+  `protected_owner_initialization_requires_exact_provisioned_account_and_recovers_receipt`,
+  `protected_owner_creation_settings_mask_preserves_revocation_and_permission_removal`,
+  `protected_owner_compact_anchor_supports_all_64_history_entries_in_2560_byte_vault`,
+  `protected_owner_headless_file_selection_is_explicit_bound_and_not_desktop_fallback`,
+  `protected_owner_observed_epoch_commit_recovers_only_forward_after_disk_failure`
+  and `reserved_secret_creation_never_replaces_existing_authority`.
+  Prepared records and pre-reserved references permit explicit validated forward
+  recovery without a large native credential blob, rollback or account adoption.
+  `protected_owner_interrupted_initialization_cannot_switch_credential_storage`
+  preserves receipt/prepared evidence across refused native/file mode changes;
+  the real private-store key fixture exercises deletion and subsequent Missing.
+  Cross-platform CI selects it for Windows DELETE-capable no-reparse handles,
+  but a passing native Windows run remains required.
+- **Automated tests required:** Planned tests and acceptance matrix below.
+  Implemented stage-4 boundary coverage:
+  `headless_configuration_is_inert_and_origin_is_not_adopted`,
+  `cancelled_setup_journals_late_exact_identity_without_restoring_consent`,
+  `disabled_reenable_preserves_identity_and_cleanup_requires_exact_stop`,
+  `host_journal_refuses_busy_corrupt_and_unprotected_state`,
+  `host_enable_requires_exact_foreground_settings_and_binds_the_ticket`,
+  `host_provisioning_refuses_settings_that_drift_from_the_approved_ticket`,
+  `interrupted_enable_recovers_exact_ticket_to_confirm_no_resources`,
+  `recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence`,
+  `interrupted_private_publication_never_exposes_torn_final_bytes`,
+  `offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache`,
+  `headless_commands_configure_and_report_only_disabled_state`,
+  `unavailable_host_operations_and_unsafe_options_fail_closed`,
+  `headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments`,
+  `headless_binary_status_is_a_journal_not_a_ready_claim`,
+  `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
+  `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
+  `headless_package_staging_refuses_unauthenticated_input_before_writing`.
+  Windows configuration/journal/staging fixtures share the existing
+  policy-validated private-storage fixture-root selection, not an assumption
+  that checkout ancestors are safe. The native
+  `staging_parent_rejects_a_dacl_that_allows_child_substitution` regression
+  retains strict ancestor refusal; fixture selection does not qualify startup
+  or service behavior.
+  The existing cancellation fixture reopens and recovers the exact pending
+  ticket before revocation and late provisioning. Exact-generation default-No
+  migration confirmation remains deferred until the migration API; no generic
+  setup refusal test is counted as implemented migration-consent evidence.
 - **Automated tests implemented (authenticity foundation only):**
   `authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes`,
   `rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing`,
@@ -592,8 +690,10 @@ changes are part of the stage-1 contract slice.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and
   MOB-03/MOB-06 during implementation with host setup, principal isolation,
   reboot, update and physical-device disconnect evidence. The new trace entries
-  are deferred behind implementation and native scenario registration.
-- **Coverage superseded:** None in stage 1. Retire legacy
+  remain deferred behind endpoint/adapters/authenticated artifacts.
+  `HOSTSETUP-01` registers stage-4 native prerequisites explicitly; deterministic
+  boundary fixtures are not service/startup qualification.
+- **Coverage superseded:** None in this documentation change. Retire legacy
   coverage only when its replacement is implemented and traced.
 
 ### Acceptance matrix
@@ -611,7 +711,7 @@ changes are part of the stage-1 contract slice.
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
 | Profiles | `save_recipe_is_local_only`; first create, later resume, post-reboot replacement toast, duplicate identity policy, second-client shortcut |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
-| Integrity | Implemented helper foundation: the Rust tests above and Python producer/recovery fixtures, including cross-language producer output and the real pinned signer's throwaway-key mode check in normal CI. Deferred: Microsoft CLI pin/acquisition integration, private atomic publication failures, trusted first-verifier delivery and native signed install/update evidence |
+| Integrity | Implemented: authenticated `stage-package`, pinned official-CLI offline staging, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, actual Python producer interop and pinned signer's throwaway-key mode check in normal CI. Deferred: network acquisition, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 

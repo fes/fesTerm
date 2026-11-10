@@ -651,7 +651,12 @@ mod imp {
         let servicing = trusted_installer_sid()?;
         staging_parent_security(directory, Some(&servicing))?
             .map(|_| ())
-            .ok_or_else(|| io::Error::from(io::ErrorKind::PermissionDenied))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "private storage ancestor policy refused",
+                )
+            })
     }
 
     /// Validates that an inherited legacy lock cannot be deleted or have its

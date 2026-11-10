@@ -702,6 +702,22 @@ Performance benchmarks should initially report trends rather than block every co
 
 ## Experimental remote session bridge
 
+ADR 0084 stage 4 adds the opt-in `festerm-host-setup::lifecycle` policy and
+standalone `app/festerm-host` composition root without GUI/graphics dependencies.
+Both desktop and headless callers can use its protected, origin-scoped
+configuration/consent journal, operation epochs and exact-owned cleanup receipts.
+Consent commits the exact foreground-approved settings under the journal lease;
+persisted operation tickets remain recoverable after interruption. Initial
+journals and staged CLI/helper files share atomic no-replace publication.
+It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
+the shared authenticated-artifact verifier. Verified helper entries and their
+exact signed provenance are staged immutably without execution;
+default legacy/mobile installer-review dependencies remain unchanged.
+No new endpoint, native service adapter, Ready result or shell-launch ownership
+is implied. Current CLI configuration/status/staging are local-only; service
+operations explicitly refuse until new endpoint/native integration. See the
+[headless boundary and adapter contract](docs/headless-host.md).
+
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
 adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
 The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small
@@ -753,6 +769,28 @@ worker waits for the daemon's actual writer commit before accepting commands.
 The existing writer remains usable until that commit. Endpoint
 routing, protected enrollment/channel integration, migration and native
 reboot/device qualification remain gated; this is not remote exposure.
+Legacy bearer connectivity is not principal proof. The non-default
+`festerm-host-setup/owner-enrollment` feature persists exact-installation
+owner/key/account policy under the lifecycle lease, with compact native-vault
+revision/digest fencing, durable prepared-record forward recovery and monotonic
+revocation revisions. Bridge `ClientOwnerKey` uses opaque credential references;
+native storage remains default and GUI policy unchanged. An explicit headless-only
+protected-file credential/anchor backend binds origin/storage/installation;
+whole protected-store/home rollback is not resisted by that weaker mode.
+Enrollment does not enable access or creation; settings deny masks creation
+without blocking key revocation or permission removal.
+Persistent consent contains no runtime issuer. Its distinct protected-permission
+verifier masks creation until an immutable projection receives the current issuer
+inside protected backend admission; public runtime policy validation remains
+strict. A projection retains its receiver's in-memory issuer watermark without
+changing permission epochs or enrolled keys. Fresh enrollment reloads have no
+such watermark; rollback protection across reservations belongs to the protected
+durable backend, not cached owner policy.
+The real pinned SSH stream lacks a shared connection/channel transcript
+exporter, so both client/server owner-channel gates explicitly refuse.
+Pinned-channel integration and independent security review are mandatory before
+new remote capabilities; all new capabilities default denied. No session routing,
+creation, migration or lifetime-supervisor implementation is claimed by this slice.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;
