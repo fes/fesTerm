@@ -451,6 +451,7 @@ pub struct FesTermApp {
     /// available.
     secret_store: Result<Arc<dyn SecretStore>, SecretStoreError>,
     secure_storage_feedback: Option<&'static str>,
+    host_recipe_outcome: Option<festerm_config::host_recipes::MetadataOutcome>,
     #[cfg(feature = "experimental-dev-tunnels")]
     native_tunnel: Option<tunnel_workflow::Workflow>,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -954,6 +955,7 @@ impl FesTermApp {
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store,
             secure_storage_feedback: None,
+            host_recipe_outcome: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             native_tunnel: None,
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -2167,6 +2169,42 @@ impl FesTermApp {
             self.retire_native_tunnel_credentials(previous.as_ref());
         }
         saved
+    }
+
+    fn apply_host_recipe_command(
+        &mut self,
+        command: festerm_config::host_recipes::MetadataCommand,
+    ) {
+        use festerm_config::host_recipes::MetadataOutcome;
+        self.host_recipe_outcome = None;
+        self.secure_storage_feedback = None;
+        let (candidate, outcome) =
+            match self.state.configuration().with_host_recipe_command(command) {
+                Ok(result) => result,
+                Err(_) => {
+                    self.configuration_status = ConfigurationStartupStatus::ProfileSaveFailure(
+                        crate::configuration_startup::ConfigurationLoadFailure::Invalid,
+                    );
+                    return;
+                }
+            };
+        if matches!(outcome, MetadataOutcome::Exported(_))
+            || self.apply_configuration_save(
+                Ok(candidate),
+                ConfigurationStartupStatus::ProfileSaveFailure,
+                crate::configuration_startup::ConfigurationReloader::save_profile,
+            )
+        {
+            self.host_recipe_outcome = Some(outcome);
+        }
+        if matches!(
+            self.host_recipe_outcome,
+            Some(MetadataOutcome::Saved(_) | MetadataOutcome::Deleted(_))
+        ) {
+            self.secure_storage_feedback = Some(
+                "Public recipe metadata saved locally. No connection or remote session was changed.",
+            );
+        }
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -7784,6 +7822,7 @@ impl FesTermApp {
         }
         if let Some(command) = screen_command {
             match command {
+                AppCommand::HostRecipe(command) => self.apply_host_recipe_command(command),
                 command @ (AppCommand::OpenRecording
                 | AppCommand::OpenRecordingSettings
                 | AppCommand::OpenRecordingLibrary) => self.dispatch_recording_command(command),
@@ -8750,6 +8789,7 @@ impl FesTermApp {
             configuration_reloader: ConfigurationReloader::unavailable(),
             secret_store: Ok(Arc::new(MemorySecretStore::new())),
             secure_storage_feedback: None,
+            host_recipe_outcome: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             native_tunnel: None,
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -8835,6 +8875,65 @@ mod tests {
     use std::{fs, path::PathBuf, thread, time::Duration};
 
     use super::*;
+
+    #[test]
+    fn host_recipe_app_commands_persist_metadata_only_and_publish_after_save() {
+        use festerm_config::host_recipes::{
+            AccountReference, HostId, HostReference, MetadataCommand, MetadataOutcome,
+            PublicRecipe, Recipe,
+        };
+        let legacy = Profile::dev_tunnel("legacy", "legacy-public.json").unwrap();
+        let configuration = Configuration::new(vec![legacy.clone()]).unwrap();
+        let mut app = FesTermApp::for_test_with_configuration(configuration.clone());
+        app.secret_store = Err(SecretStoreError::Unsupported);
+        let fixture = crate::configuration_startup::SessionNameConfigurationFixture::new();
+        app.configuration_reloader =
+            ConfigurationReloader::from_path_for_test(fixture.path.clone());
+        let tab_count = app.state.tabs().len();
+        let recipe = PublicRecipe::persistent(
+            "Saved shell",
+            HostReference {
+                id: HostId::new(),
+                account: AccountReference::Github { account_id: 42 },
+            },
+            Recipe::default(),
+        )
+        .unwrap();
+        app.apply_host_recipe_command(MetadataCommand::Save(recipe.clone()));
+        assert_eq!(
+            app.host_recipe_outcome,
+            Some(MetadataOutcome::Saved(recipe.id.clone()))
+        );
+        let saved = app.state.configuration().clone();
+        assert_eq!(Configuration::load_from_path(&fixture.path).unwrap(), saved);
+        assert_eq!(saved.profiles(), &[legacy]);
+        assert!(saved.accounts().is_empty());
+        assert_eq!(app.state.tabs().len(), tab_count);
+        #[cfg(feature = "experimental-dev-tunnels")]
+        {
+            assert!(app.native_tunnel.is_none());
+            assert!(app.tunnel_browser.is_none());
+        }
+        let mut edit = recipe.clone();
+        edit.launch.cwd = Some("/remote/future-create".into());
+        app.configuration_reloader = ConfigurationReloader::unavailable();
+        app.apply_host_recipe_command(MetadataCommand::Edit(edit));
+        assert!(app.host_recipe_outcome.is_none());
+        assert_eq!(app.state.configuration(), &saved);
+        assert_eq!(Configuration::load_from_path(&fixture.path).unwrap(), saved);
+        // Export works with no persistence service or credential store.
+        app.apply_host_recipe_command(MetadataCommand::Export(recipe.id.clone()));
+        let Some(MetadataOutcome::Exported(text)) = &app.host_recipe_outcome else {
+            panic!("expected portable metadata export");
+        };
+        assert_eq!(PublicRecipe::import(text).unwrap(), recipe);
+        app.configuration_reloader =
+            ConfigurationReloader::from_path_for_test(fixture.path.clone());
+        app.apply_host_recipe_command(MetadataCommand::Delete(recipe.id));
+        assert!(app.state.configuration().host_recipes().is_empty());
+        assert_eq!(app.state.configuration(), &configuration);
+        assert_eq!(app.state.tabs().len(), tab_count);
+    }
 
     struct FailingDeleteStore(MemorySecretStore);
 

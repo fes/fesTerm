@@ -5467,10 +5467,41 @@
       ]
     },
     {
+      "id": "host-client-local-recipes",
+      "edges": ["HOST-01", "HOST-02"],
+      "requirements": [
+        "docs/configuration.md#public-host-recipes-adr-0084-foundation",
+        "docs/gui-design.md#profile-editing",
+        "docs/application-command-model.md#required-properties",
+        "docs/adr/0084-host-based-dev-tunnels.md#5-local-profiles-and-resume-or-create",
+        "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery"
+      ],
+      "decisions": ["ADR-0084", "ADR-0054"],
+      "automated_tests": [
+        "public_recipe_serialization_preserves_launch_and_four_behaviors",
+        "invalid_recipe_ids_launch_and_protected_fields_are_refused",
+        "metadata_commands_edit_future_recipe_without_mutating_previous_snapshot",
+        "duplicate_allocates_logical_identity_unless_explicit_generation_shortcut",
+        "book_deserialization_rejects_duplicate_and_invalid_candidates",
+        "local_browser_requires_explicit_scoped_requests_and_fences_stale_results",
+        "host_recipe_toml_round_trip_keeps_legacy_profiles_separate",
+        "host_recipe_invalid_commands_and_documents_do_not_replace_configuration",
+        "host_recipe_app_commands_persist_metadata_only_and_publish_after_save",
+        "mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation",
+        "mobile_host_recipe_failed_write_keeps_previous_metadata_and_invalid_load_is_quarantined",
+        "dev_tunnel_import_defaults_take_over_and_never_replaces"
+      ],
+      "manual_scenarios": ["DT-05", "DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #681: reviewed pinned/encrypted host endpoint and enrolled-key verified principal/account binding; public account/host IDs are metadata hints, never authorization",
+        "Issue #681: bounded authorized inventory and authoritative absence/atomic ensure, exact-generation attach, idempotent reconciliation/cancellation and real desktop/iOS/Android UI wiring; no Connect executor or legacy fallback exists in this foundation",
+        "Issue #681: native network-free opening/render/save, explicit find/single-host refresh, sign-in/trust/denial/offline behavior, reboot/recreation notice, shell-preserving deletion and physical mobile lease/lifecycle qualification remain deferred; existing DT/CP/MOB native, manual and usability evidence remains required"
+      ]
+    },
+    {
       "id": "host-based-dev-tunnels-design",
       "edges": [
-        "HOST-01",
-        "HOST-02",
         "HOST-03",
         "HOST-04",
         "HOST-05",

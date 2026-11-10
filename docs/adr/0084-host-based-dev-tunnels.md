@@ -429,7 +429,7 @@ generation pins; they do not replace them.
 The existing external service eligibility and experimental/native qualification
 limits remain. Existing successful fixtures do not establish new multi-session,
 boot-start, temporary-lease or upgrade behavior. No live credentials or service
-changes are part of this documentation PR.
+changes are introduced by this design or the client-local metadata foundation.
 
 ## Validation impact
 
@@ -438,16 +438,29 @@ changes are part of this documentation PR.
   recipes; no implicit launcher network; shared setup and independent daemon
   lifetime. Legacy exact-generation behavior, single-writer ownership, bounded
   work, protected consent and secret boundaries remain.
-- **GUI/action edges affected:** Proposed `HOST-01` through `HOST-06` below are
-  deferred design contracts. Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
-  retain their current implementation coverage until each migration slice lands.
-- **Automated tests required:** Planned tests and acceptance matrix below; none
-  are claimed implemented by this ADR.
+- **GUI/action edges affected:** `HOST-01`/`HOST-02` have an implemented
+  client-local metadata/command and explicit-browse state foundation under
+  [#681](https://github.com/fes/fesTerm/issues/681). Their live UI/endpoint
+  transitions and `HOST-03`–`HOST-06` remain deferred contracts. Existing
+  `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation
+  coverage until explicit migration.
+- **Automated tests implemented for the client-local foundation:**
+  `public_recipe_serialization_preserves_launch_and_four_behaviors`,
+  `invalid_recipe_ids_launch_and_protected_fields_are_refused`,
+  `duplicate_allocates_logical_identity_unless_explicit_generation_shortcut`,
+  `host_recipe_toml_round_trip_keeps_legacy_profiles_separate`,
+  `host_recipe_app_commands_persist_metadata_only_and_publish_after_save`,
+  `mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation`,
+  and `local_browser_requires_explicit_scoped_requests_and_fences_stale_results`.
+  The trace registry includes transactional failure/quarantine and compatibility
+  tests as well. These do not prove network execution, actual shell creation
+  or stage 6 end-to-end acceptance; the remaining matrix is still required.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and
   MOB-03/MOB-06 during implementation with host setup, principal isolation,
   reboot, update and physical-device disconnect evidence. The new trace entries
-  are deferred behind implementation and native scenario registration.
-- **Coverage superseded:** None in this documentation change. Retire legacy
+  are deferred behind reviewed endpoint/identity contracts and actual native
+  desktop/iOS/Android UI wiring. Existing native/manual evidence remains required.
+- **Coverage superseded:** None by the client-local foundation. Retire legacy
   coverage only when its replacement is implemented and traced.
 
 ### Acceptance matrix
@@ -463,7 +476,7 @@ changes are part of this documentation PR.
 | Temporary lifetime | `temporary_lease_survives_bridge_crash`; explicit detach, grace expiry, quick reconnect, stale disconnect, takeover and mobile suspension |
 | Isolation/bounds | `multi_session_routing_is_generation_scoped`; concurrent output, saturation, fair control/revocation, bounded inventory |
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
-| Profiles | `save_recipe_is_local_only`; first create, later resume, post-reboot replacement toast, duplicate identity policy, second-client shortcut |
+| Profiles | Metadata-only save, serialization, duplicate/shortcut identity and compatibility tests above; first create, later resume, post-reboot replacement toast and actual second-client attachment remain deferred |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
 | Integrity | `reject_unsigned_manifest_and_wrong_target`; wrong key/version/arch, modified bytes, archive traversal, CLI pin change, interrupted publication |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |

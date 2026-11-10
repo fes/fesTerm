@@ -1563,13 +1563,17 @@ branch silently.
 
 ## Proposed host-based Dev Tunnels (ADR 0084)
 
-These edges are deferred design contracts, not implemented behavior or acceptance.
-Existing TUNNEL edges retain their current coverage until implementation migrates them.
+These live transitions remain deferred design contracts, not acceptance.
+The client-local metadata/command and explicit-browse state foundations for
+`HOST-01`/`HOST-02` have portable tests under
+[#681](https://github.com/fes/fesTerm/issues/681); no host UI/endpoint executor
+is provided. Existing TUNNEL edges retain their current coverage until an
+explicit migration. See `host-client-local-recipes` in the trace registry.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
-| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P,H,N; deferred |
-| `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P,H,N; deferred |
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only browse state; no availability claim or fan-out; verified principal and host still required | Request identity/cancel/account change fence results | P; state seam tested; UI/endpoint/N deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Offline save/edit/duplicate/import/export/delete; separate future Connect | Stable host/account/logical IDs; public metadata only; fresh duplicate ID; edits affect future creates; deletion does not end shell | Failed saves retain state; legacy remains exact-generation; live ensure reconciliation required | P; metadata/command seam tested; live execution/N deferred |
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P,H,N; deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared typed setup, no default shell, protected consent, no outgoing-client install | Preserve draft; report partial setup; revoke before cleanup | P,H,N; deferred |
 | `HOST-05` | Headless package → configured service | Setup/status/configure/update/uninstall | Same setup policy; correct OS user; boot versus sign-in explicit; no JSON transfer required | Journal/reconcile exact owned resources | P,H,N; deferred |

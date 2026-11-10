@@ -56,6 +56,19 @@ These names are illustrative rather than a required Rust API, but the current `A
 8. **Singleton application surfaces.** Commands that open Launcher or Settings
    focus the existing surface when present rather than creating duplicates.
 
+ADR 0084's client-local foundation uses
+`AppCommand::HostRecipe(MetadataCommand)` on desktop and
+`ProfileStore::apply_host_recipe_command` on mobile, backed by the same
+`festerm-client-recipes::RecipeBook::apply` policy. Save/edit/duplicate/import/
+export/delete are metadata-only, distinct from any future Connect command.
+Persistence publishes the replacement/outcome only on success; export does
+not write. No command in this vocabulary can sign in, create/end a remote
+shell, grant host access or install a host. `HostBrowser` independently plans
+explicit find/single-host/refresh requests with stale-result fencing; it is
+not a network executor. The actual host UI/connection path is deferred under
+[#681](https://github.com/fes/fesTerm/issues/681), not delegated to legacy
+`SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
+
 Destructive confirmation remains composition-owned even when the final effect
 is an `AppCommand`. Every close invocation first passes through the same
 application policy: non-live surfaces close immediately; an owned

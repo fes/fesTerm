@@ -90,6 +90,11 @@ autosaved versioned TOML profiles/interface settings; metadata-only workspace
 restoration; and native secret-store references for saved SSH passwords and
 private keys. Persistent host-key trust is explicit and non-secret.
 
+ADR 0084 now has a shared desktop/mobile [public host recipe metadata
+foundation](docs/configuration.md#public-host-recipes-adr-0084-foundation)
+under [#681](https://github.com/fes/fesTerm/issues/681). Live host UI/connection
+wiring and native acceptance remain deferred; legacy launch behavior is unchanged.
+
 Explicit [smart selection](docs/gui-design.md#smart-terminal-selection)
 highlights sentences, paragraphs or indented blocks from terminal cells before
 a separate Copy. The local deterministic baseline conservatively isolates

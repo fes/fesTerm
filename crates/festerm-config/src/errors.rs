@@ -40,6 +40,7 @@ pub enum ConfigErrorKind {
     InvalidLocalTunnelHosting,
     InvalidSshProfile,
     InvalidDevTunnelProfile,
+    InvalidHostRecipe,
     InvalidPowerShellProfile,
     InvalidSshPortForwardConfiguration,
     DuplicateSshPortForward,
@@ -125,6 +126,9 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::UnknownProfileReference => formatter.write_str(
                 "profile_usage[].profile must name a profile defined in profiles[]",
             ),
+            ConfigErrorKind::InvalidHostRecipe => {
+                formatter.write_str("invalid public client-local host recipe metadata")
+            }
             ConfigErrorKind::InvalidLocalProfile => formatter.write_str(
                 "local profile metadata must use non-empty, control-character-free executable, arguments, and working_directory values without secret-bearing options",
             ),

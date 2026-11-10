@@ -50,6 +50,29 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)
+
+Issue [#681](https://github.com/fes/fesTerm/issues/681) has automated public
+recipe serialization/validation, duplicate identity policy, metadata-only
+desktop save/failure and mobile persistence/quarantine coverage. A vault
+adapter that panics on access verifies that mobile recipe commands do not
+touch credentials. Explicit browser request tests cover cancellation, account
+switches, supersession and obsolete browser instances. These are logic/state
+tests, not native UI or real-service evidence.
+
+The new host card/launcher, verified-principal/trust binding, authorized
+inventory, resume-or-create/always-new execution and temporary leases remain
+**deferred behind the reviewed host endpoint and UI wiring**, not passed.
+Extend DT-05/DT-07/DT-08, CP-11 and MOB-03/MOB-06 once those prerequisites
+land: capture network-free opening/render/save on signed Windows/macOS/Linux
+and native iOS/Android, explicit find/single-host refresh, sign-in/trust errors,
+authoritative absence versus denial/offline, reboot/recreation notices,
+shell-preserving profile deletion and physical-device disconnect/lease cases.
+Existing signed installation, lifecycle, keyboard/accessibility, usability
+and real-service checks remain required and unchanged. No cloud resources,
+native credentials, installed service or UI snapshots were changed by this
+foundation.
+
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-08)
 
 Installer command integrity is automated: shell subprocess regressions exercise

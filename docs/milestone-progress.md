@@ -1,5 +1,19 @@
 # Milestone Progress Narrative
 
+## Saving host recipes without creating shells
+
+ADR 0084 separates a reusable client recipe from a running remote shell.
+The [#681](https://github.com/fes/fesTerm/issues/681) foundation now shares
+strict public metadata, duplication identity policy and offline commands
+between desktop, iOS and Android without a desktop dependency in mobile.
+Saving/importing/deleting cannot connect, sign in, install a host or end a
+shell. Existing generation-pinned profiles remain separate.
+
+Portable serialization, actual desktop save outcomes, mobile restart/failure
+handling and explicit browsing intent are tested. Verified endpoint wiring,
+authorized resume/create, native UI and physical-device lifecycle evidence
+remain prerequisites; this is not stage 6 end-to-end acceptance.
+
 ## Investigating Windows inherited stdout
 
 A separate, job-supervised native probe measures inherited stdout pipe mode

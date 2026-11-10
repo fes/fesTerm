@@ -14,6 +14,7 @@ members = [
     "crates/festerm-ios-lock",
     "crates/festerm-ios-window",
     "crates/festerm-config",
+    "crates/festerm-client-recipes",
     "crates/festerm-enterprise",
     "crates/festerm-powershell",
     "crates/festerm-linux-power",

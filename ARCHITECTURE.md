@@ -389,6 +389,16 @@ insecure legacy algorithms or invoke a system `ssh` binary.
 
 ### `festerm-config`
 
+ADR 0084's public host/session recipe foundation is factored into the additive
+`festerm-client-recipes -> festerm-host-protocol` metadata contract. Both
+`festerm-config` and `festerm-mobile-profiles` depend on it; mobile does not
+depend on desktop configuration/PTY. A separate recipe collection preserves
+legacy profiles and launch paths. Shared typed metadata commands and explicit
+browser request state have no network/vault/process executor or principal
+authority. Desktop composes the command with its existing save gate; mobile
+uses its atomic profile document. Live host inventory/ensure/attach and native
+UI remain gated by the reviewed endpoint and identity contracts (#681).
+
 Owns versioned, human-readable configuration and persistence models:
 
 - TOML parsing and validation.

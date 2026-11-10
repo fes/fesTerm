@@ -68,6 +68,102 @@ Profile and workspace tab identifiers are unique within their respective
 collections and use one to 64 lowercase ASCII letters, digits, and internal
 hyphens.
 
+### Public host recipes (ADR 0084 foundation)
+
+Issue [#681](https://github.com/fes/fesTerm/issues/681) adds an **offline
+metadata foundation**, not the stage 6 desktop/mobile connection UI.
+`festerm-client-recipes` owns the same validated public model and commands for
+desktop, iOS and Android without importing desktop PTY/configuration code.
+Desktop stores a separate `host_recipes` collection in schema version 1;
+mobile stores the same collection in its version 1 `profiles.json`.
+Documents without it remain unchanged and omit the empty collection on save.
+
+```toml
+[[host_recipes]]
+id = "550e8400-e29b-41d4-a716-446655440000"
+name = "Project shell"
+logical_session = "550e8400-e29b-41d4-a716-446655440001"
+
+[host_recipes.host]
+id = "550e8400-e29b-41d4-a716-446655440002"
+
+[host_recipes.host.account]
+provider = "github"
+account_id = 42
+
+[host_recipes.launch]
+shell = "/bin/zsh"
+args = ["-l"]
+cwd = "/remote/project"
+
+[host_recipes.lifetime]
+kind = "persistent"
+
+[host_recipes.behavior]
+kind = "resume_or_create"
+```
+
+The recipe ID is client-local. Host and logical-session IDs use the shared
+host protocol's canonical UUIDv4 identities; neither is an authorization
+credential. The numeric service-account reference is a public lookup hint,
+**not a verified principal or account binding**. Login, token, host grants,
+consent and trust decisions are not part of this model. Existing device-local
+account/key stores retain only opaque vault references in configuration;
+public recipes do not copy even those references.
+
+The four behaviors are `choose_session`, `resume_or_create`, `always_create`
+and `attach_only`. New persistent recipes and omitted new-recipe behavior
+default to `resume_or_create`. Attach-only also requires `generation = "123"`
+(a canonical nonzero decimal generation), never a PID or friendly name.
+Temporary lifetime is explicit (`kind = "temporary"`,
+`reconnect_grace_seconds = 60`) and inherits the shared protocol's current
+validation, not a native lifecycle guarantee. Shell/argv/cwd are bounded public
+metadata with no local shell expansion, filesystem lookup or path rewriting.
+Do not put secrets in argv; obvious secret-bearing options/private-key material
+are refused, but arbitrary user text cannot be automatically classified.
+
+`MetadataCommand::{Save, Edit, Duplicate, Import, Export, Delete}` returns a
+validated replacement and typed outcome. Desktop's `AppCommand::HostRecipe`
+persists through the existing save gate before publishing success; mobile's
+`ProfileStore::apply_host_recipe_command` uses its existing atomic writer.
+Export is read-only. Failed saves do not publish candidate state. These
+commands cannot sign in, discover, connect, create/end a shell or install a
+host. Deleting a recipe removes only metadata; editing launch/lifetime/behavior
+affects future actions and never mutates an attached session's snapshot.
+Host/logical identity edits require a new recipe rather than silently
+retargeting an existing one.
+
+Default duplication creates both a fresh recipe ID and logical-session ID.
+Duplicating an attach-only recipe as a separate shell drops its old generation
+pin and selects resume-or-create. Deliberate `ExistingSession { generation }`
+duplication keeps the logical target but makes the copy strict attach-only.
+Portable JSON uses `festerm_host_recipe_version = 1`, has a 64 KiB bound and
+rejects unknown/protected fields. Import preserves the advertised identities;
+an existing recipe ID is a conflict, not a silent edit or new shell. Account
+and host trust must be revalidated independently before any future connection.
+
+**Legacy is not migrated implicitly.** Existing `kind = "dev_tunnel"` profiles
+and public setup imports retain their exact-generation destination, settings
+and launch path. They do not acquire a host recipe, remote-create permission,
+or local hosting exposure. Legacy automatic discovery preferences remain
+legacy-only until an explicit, reviewed migration exists.
+
+`HostBrowser` is a request/state seam, not a worker: opening/rendering local
+rows and selecting an account produces no request or online status. Only
+explicit Find hosts, single-host inspection and Refresh produce scoped intent;
+there is no timer, fan-out or availability cache. Request identity and account/
+host epochs fence cancellation and stale completions.
+
+Wiring requires a reviewed encrypted/pinned endpoint, enrolled-key verified
+principal and account binding, bounded authorized inventory and authoritative
+absence/atomic ensure, exact-generation attach, idempotent reconciliation and
+cancellation. Always-create must allocate a fresh logical target per explicit
+Connect; resume-or-create must never interpret timeout/denial/revocation as
+absence. No Connect control or fallback to legacy is provided by this slice.
+See ADR 0084 and `HOST-01`/`HOST-02`; native/manual evidence remains required.
+
+### Existing profiles and workspace
+
 On `feat/powershell`, experimental native PSRP profiles use `kind =
 "power_shell"` (distinct from a local `pwsh` process). They store metadata
 only; the optional credential reference names a password in native secure

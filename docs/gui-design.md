@@ -1870,6 +1870,23 @@ For private-key and certificate authentication:
 
 ![Profile editor target](images/gui-mockups/profile-editor.png)
 
+For ADR 0084's new host flow, [public host recipes](configuration.md#public-host-recipes-adr-0084-foundation)
+currently have shared offline metadata commands/persistence only
+([#681](https://github.com/fes/fesTerm/issues/681)). They are separate from
+legacy Dev Tunnel forms and the installed Local-profile exposure flow below.
+No new working Connect control, online indicator or sign-in-on-save is implied.
+The eventual desktop/iOS/Android UI must use those shared commands: Save,
+edit, duplicate, import/export and delete do not create or end a shell.
+Default duplication means a fresh logical session; saving another shortcut
+to an existing session is deliberate and generation-pinned.
+
+Opening the new host card/launcher shows local metadata only. Find hosts and
+single-host selection/Refresh are explicit network intents; cancellation and
+account changes fence results. Never inherit legacy automatic discovery or
+display cached hosts as online. Actual controls/workers, account/key binding,
+trust, authorized inventory, Connect and native qualification remain deferred
+behind the reviewed host endpoint contract, not simulated in this foundation.
+
 Profile creation and editing is separate from the immediate launch path. The
 common case requires one selection or a small amount of connection information,
 not completion of a large settings form.
