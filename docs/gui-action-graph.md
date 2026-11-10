@@ -1657,6 +1657,15 @@ executes the fixed legacy binary; source contracts are not Windows evidence,
 and future hosted PKI evidence is not ordinary-user VM, task/runtime/daemon,
 GUI or new-host/whole-bundle acceptance.
 
+Historical exact-`3030` PKI run `42881664804`/attempt 1 passed 25 source/owned
+PowerShell preflight tests without skips and verified the pinned acquisition,
+but its one genuine signed-positive test started / completed 0 / aborted 1 on
+an unaligned timestamp `ftTime` read (exit `3221226505`). Unsigned rejection
+was not reached. The source-only SDK raw-field copy and deterministic alignment
+regression are compiled x64-facade evidence, not an executed fix or PKI pass.
+HOST-06 stays partial/native-blocked; no graph authority or acceptance expands.
+See [native evidence and ABI limits](native-host-services.md).
+
 The component's macOS admission pins the release Developer ID team/runtime;
 Windows promotion implements the owner-approved Artifact Signing subject/profile/
 Microsoft chain, trusted RFC3161 and online-enabled fail-closed revocation.

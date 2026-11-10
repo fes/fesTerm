@@ -954,6 +954,17 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   Source contracts do not establish native evidence, and a later hosted pass
   would not qualify ordinary-user VM, tasks, daemons, GUI or whole-bundle release
   acceptance. Genuine policy mismatches remain failures without waivers.
+  Historical exact-`3030` run `42881664804`/attempt 1 passed 25 preflight
+  tests (including both PowerShell 0/37 fixtures, no skips) and pinned
+  acquisition, but one genuine signed-positive test started / completed 0 /
+  aborted 1 at the unaligned timestamp `ftTime` read, exit `3221226505`;
+  unsigned rejection was unreached. The source-only bounded SDK raw-field
+  copy preserves all timestamp/ownership/revocation checks. Its
+  `windows_timestamp_filetime_copies_exact_bits_from_misaligned_sdk_storage`
+  regression and x64 C-layout assertions are facade-only cross-compiled,
+  not executed Windows or positive PKI evidence. Native qualification remains
+  blocked pending three fresh exact-source gates and a separately granted
+  new attempt; neither failed grant permits a retry.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic

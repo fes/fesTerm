@@ -8,7 +8,7 @@ use std::{
     ptr,
 };
 use windows_sys::Win32::{
-    Foundation::INVALID_HANDLE_VALUE,
+    Foundation::{FILETIME, INVALID_HANDLE_VALUE},
     Security::{Cryptography::*, WinTrust::*},
 };
 
@@ -358,6 +358,15 @@ impl Drop for TimestampProof {
     }
 }
 
+/// # Safety
+/// `timestamp` must address initialized SDK CRYPT_TIMESTAMP_INFO bytes whose
+/// owner stays live through the field copy. Its address need not be aligned.
+unsafe fn timestamp_filetime(timestamp: *const CRYPT_TIMESTAMP_INFO) -> FILETIME {
+    // The SDK result was unaligned in hosted validation. Project only the raw
+    // field address; no aligned parent value or reference is formed.
+    unsafe { ptr::addr_of!((*timestamp).ftTime).read_unaligned() }
+}
+
 fn rfc3161_timestamp(
     provider_signer: &CRYPT_PROVIDER_SGNR,
     timestamp: &CRYPT_PROVIDER_SGNR,
@@ -413,12 +422,62 @@ fn rfc3161_timestamp(
         {
             return Ok(false);
         }
-        let time = (*(*proof.context).pTimeStamp).ftTime;
+        let time = timestamp_filetime((*proof.context).pTimeStamp);
         let trusted_signer = (*timestamp.pasCertChain).pCert;
         Ok(!trusted_signer.is_null()
             && fingerprint(trusted_signer)? == fingerprint(proof.signer)?
             && time.dwLowDateTime == provider_signer.sftVerifyAsOf.dwLowDateTime
             && time.dwHighDateTime == provider_signer.sftVerifyAsOf.dwHighDateTime
             && CertVerifyTimeValidity(&time, (*leaf).pCertInfo) == 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const _: () = assert!(size_of::<FILETIME>() == 8);
+
+    #[cfg(target_pointer_width = "64")]
+    const _: () = {
+        use std::mem::{align_of, offset_of};
+
+        assert!(size_of::<CRYPT_TIMESTAMP_CONTEXT>() == 24);
+        assert!(offset_of!(CRYPT_TIMESTAMP_CONTEXT, pTimeStamp) == 16);
+        assert!(align_of::<CRYPT_TIMESTAMP_INFO>() == 8);
+        assert!(size_of::<CRYPT_TIMESTAMP_INFO>() == 144);
+        assert!(offset_of!(CRYPT_TIMESTAMP_INFO, ftTime) == 72);
+    };
+
+    #[test]
+    fn windows_timestamp_filetime_copies_exact_bits_from_misaligned_sdk_storage() {
+        #[repr(align(8))]
+        struct Storage([u8; size_of::<CRYPT_TIMESTAMP_INFO>() + 8]);
+
+        let mut storage = Storage([0; size_of::<CRYPT_TIMESTAMP_INFO>() + 8]);
+        for offset in 0..8 {
+            let timestamp = unsafe {
+                storage
+                    .0
+                    .as_mut_ptr()
+                    .add(offset)
+                    .cast::<CRYPT_TIMESTAMP_INFO>()
+            };
+            assert_eq!(timestamp as usize % 8, offset);
+            for (low, high) in [(0x89ab_cdef, 0x0123_4567), (0x7654_3210, 0xfedc_ba98)] {
+                unsafe {
+                    timestamp.write_unaligned(CRYPT_TIMESTAMP_INFO {
+                        dwVersion: 1,
+                        ftTime: FILETIME {
+                            dwLowDateTime: low,
+                            dwHighDateTime: high,
+                        },
+                        ..Default::default()
+                    });
+                }
+                let time = unsafe { timestamp_filetime(timestamp) };
+                assert_eq!((time.dwLowDateTime, time.dwHighDateTime), (low, high));
+            }
+        }
     }
 }

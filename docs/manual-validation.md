@@ -3743,8 +3743,16 @@ review/three gates and a separate one-run owner authorization. See
 Public ZIP/member hashes establish integrity, not independent publisher/updater
 authentication; the existing compiled policy/native OS trust must pass.
 The legacy binary is never executed, and no new-host/whole-bundle acceptance is
-implied. This increment has offline source-contract/pure-policy evidence only,
-**zero workflow dispatches or genuine Windows runs**. Preserve any genuine
+implied. Historical exact-`3030` run `42881664804`/attempt 1 passed 25
+preflight tests with no skips (including both real PowerShell 0/37 fixtures)
+and acquired both pinned hashes, then its genuine signed-positive test
+**started 1 / completed 0 / aborted 1** at an unaligned timestamp `ftTime`
+read, native exit `3221226505`. The unsigned negative was not reached.
+The [raw-field source correction and alignment regression](native-host-services.md)
+have x64-facade cross-compilation, not executed Windows-fix or PKI evidence;
+the old-pattern isolated Windows RED was not run locally. Both historical
+attempt grants are consumed. Three fresh exact-source gates and a separate
+new run grant precede further native qualification. Preserve any genuine
 policy mismatch as failure; hosted evidence is not ordinary-user VM proof.
 It invokes native online-enabled verification only, never registration/start,
 signing, Azure credentials or OS settings. It was **not run on macOS**.

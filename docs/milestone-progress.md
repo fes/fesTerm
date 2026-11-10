@@ -1,5 +1,45 @@
 # Milestone Progress Narrative
 
+## Copying the RFC3161 time field without assuming SDK pointee alignment
+
+The separately authorized exact-`3030bcd7`
+[run 42881664804, attempt 1](https://github.com/fes/fesTerm/actions/runs/42881664804)
+passed **25 preflight tests / zero skips**, including both real PowerShell
+first-only exit-0/37 fixtures. Pinned ZIP/member acquisition passed and the
+native facade built with official Rust/Cargo 1.99.1. The genuine signed-positive
+test **started 1 / completed 0 / aborted 1**: the returned timestamp-info
+address was 5-mod-8, and an ordinary Rust `ftTime` field read triggered a
+non-unwinding misalignment panic at `native.rs:416:20`, exit `3221226505`
+(`0xc0000409`). Unsigned rejection was unreached. The report/raw native log
+hashes are retained in the [canonical evidence ledger](host-release-artifacts.md#opt-in-windows-public-pki-fixture);
+neither this abort nor the earlier launcher failure is a PKI pass.
+
+Microsoft's SDK declarations and the existing `windows-sys 0.61.2` C bindings
+agree on the context/info/FILETIME field types and ownership contract. The
+minimal source-only fix projects just the time field's raw address and copies
+its eight bytes unaligned into a local `FILETIME`. It does not invent a packed
+layout, borrow the unaligned parent, catch a panic or relax a trust check.
+`TimestampProof` keeps the allocation live through the copy and unchanged
+imprint/TSA fingerprint/exact time/leaf-validity checks; both current-time
+revocation chains and all publisher pins are unchanged.
+
+A co-located Windows regression initializes actual SDK structs at offsets 0–7,
+including 4-mod-8 and the observed 5-mod-8, and preserves two exact low/high bit
+patterns. The existing official x64 MSVC facade-only check/strict compile it
+and x64 ABI assertions; no Windows test or isolated old-expression RED runs on
+this macOS host. Portable publisher-policy tests remain separate from that
+compiled-only regression, from the prior **26 local source passes / 2 PS
+skips**, and from the actual **25 hosted preflight passes**. This child performs
+no dispatch/fixture download/native guest execution and does not qualify the fix or
+publisher on Windows. The two failed grants are consumed; three root-fix
+source gates and a separate new one-run grant are required.
+
+Current checks execute **4 portable publisher-policy tests**; facade-only
+portable/x64 strict Clippy, x64 checking, formatting and traceability pass.
+The portable test command exits 0 despite a retained, non-fatal private-toolchain
+`rust-objcopy` debug-stripping warning (missing `libLLVM.dylib`); its four tests
+still execute/pass. No toolchain or SDK repair is included.
+
 ## Selecting one Python application before launching public PKI validation
 
 The separately authorized `2ff42e25` hosted Windows run

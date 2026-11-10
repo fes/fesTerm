@@ -146,6 +146,38 @@ It never executes its pinned legacy binary or changes this policy. Source-only
 offline contracts are not native evidence; any later hosted pass is PKI-only,
 not ordinary-user VM, task/runtime/daemon or new-host/bundle qualification.
 
+**Windows native PKI qualification is blocked, not accepted.** Historical
+[run 42881664804, attempt 1](https://github.com/fes/fesTerm/actions/runs/42881664804)
+at exact `3030bcd7008e300a90b67fa6c6bc6c0a37ce88c1` passed 25 preflight
+contracts, including both real PowerShell first-only exit-0/37 fixtures with
+zero skips, and acquired the exact pinned ZIP/member. One genuine signed-positive
+test **started / completed 0 / aborted 1**, with native exit `3221226505`
+(`0xc0000409`): an unaligned timestamp-info pointer caused a non-unwinding
+panic at the `ftTime` read. The unsigned negative was not reached. This is
+neither a completed assertion failure nor a publisher-policy verdict/pass.
+
+The source-only correction uses the existing `windows-sys 0.61.2` C layout:
+[`CRYPT_TIMESTAMP_CONTEXT.pTimeStamp`](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/ns-wincrypt-crypt_timestamp_context)
+points to [`CRYPT_TIMESTAMP_INFO.ftTime`](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/ns-wincrypt-crypt_timestamp_info),
+a `FILETIME`. After the unchanged success/null guards, `addr_of!` projects
+only that field's raw address and `read_unaligned` copies its eight bytes into
+an aligned local value; it never creates an aligned parent value/reference.
+No custom packed struct, whole-structure reinterpretation or panic catching
+is used. The existing `TimestampProof` retains the allocation through the copy
+and timestamp checks, then frees the context/signer/store with the
+[documented API-specific release functions](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptverifytimestampsignature).
+Imprint verification, trusted-TSA fingerprint, exact low/high time equality,
+leaf-time validity and current signer/TSA revocation are unchanged.
+
+The co-located Windows alignment regression initializes actual SDK structs at
+every offset 0–7 in aligned owned storage, including 4-mod-8 and the observed
+5-mod-8 case, and compares two exact low/high bit patterns. The x64 facade-only
+cross-check compiles this test and its C-layout assertions (context size 24,
+pointer offset 16; info size 144/alignment 8, time offset 72). It does not execute
+it on macOS, reproduce the old expression in a Windows child, or qualify PKI.
+Both historical run failures remain retained; their grants are consumed.
+Three exact-source reviews and a separate new native-attempt grant are required.
+
 Windows stop reuses the existing protected lifecycle channel, not new IPC or
 name/PID authority. Revoke commits the installation/origin/current snapshot first;
 the reserved host runtime watches that exact snapshot, cancels and awaits only
