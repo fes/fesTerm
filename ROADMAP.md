@@ -32,11 +32,14 @@ cached helper path/bytes, with helper-loss/replacement and daemon-end controls.
 The helper is current source in a synthetic old-version package, with test
 signatures/qualifier and a fake manager; real older-release compatibility,
 publisher qualification and native signed switching remain unqualified.
-The additive GUI-free official schema-2 acquisition seam now stops at verified
-owned bytes for the trusted current build/native target. Controlled six-target
-synthetic fixtures do not qualify genuine published assets; 404 blocks without
-latest/older/legacy fallback. Desktop integration and native/first-verifier
-delivery remain separate gates; no new install/enable or release pipeline exists.
+The GUI-free official schema-2 acquisition seam returns verified owned bytes
+for the trusted current build/native target. Desktop primary Setup now composes
+it explicitly with existing native publisher/staging/controller admission on a
+bounded cancellation-fenced worker; manual paths are Advanced only. Controlled
+six-target synthetic and desktop mock fixtures do not qualify genuine published
+assets; 404 blocks without latest/older/legacy fallback. Native/first-verifier
+delivery, actual vault/cloud/manager readiness and usability remain gates; no
+new release pipeline exists.
 Configuration defaults disabled; no
 listener starts from compilation/import. Combined-source review, real release/
 cloud/vault/service/device qualification and foreground client trust/session

@@ -290,7 +290,7 @@ jobs:
         run: |
           # Six shared guards must not depend on workspace feature unification.
           cargo test --locked -p festerm-host-setup --features cloud,host-runtime,native-services --lib -- host_desktop_ protected_owner_desktop_scoped_
-          # Seventeen model/adapter/headless-render tests, including Windows.
+          # Existing model/adapter/render guards plus primary automatic Setup, including Windows.
           cargo test --locked -p festerm --features local-host-settings --bin festerm desktop_remote_access
       - name: Check the experimental Dev Tunnels feature
         run: cargo clippy -p festerm -p festerm-tunnel-bridge -p festerm-host --all-targets --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/relay,festerm-tunnel-bridge/host-routing,festerm-host/owner-routing -- -D warnings

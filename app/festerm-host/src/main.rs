@@ -1067,8 +1067,10 @@ mod tests {
     fn unavailable_host_operations_and_unsafe_options_fail_closed() {
         for command in ["setup", "run", "run-desktop", "update", "uninstall"] {
             let expected = if cfg!(feature = "owner-routing")
-                && matches!(command, "setup" | "run" | "run-desktop" | "uninstall" | "update")
-            {
+                && matches!(
+                    command,
+                    "setup" | "run" | "run-desktop" | "uninstall" | "update"
+                ) {
                 io::ErrorKind::Other
             } else {
                 io::ErrorKind::Unsupported

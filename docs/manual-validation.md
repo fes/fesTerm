@@ -3467,10 +3467,12 @@ evidence. The synchronous verifier retains its existing bounded expanded/entry
 limits and is not preempted mid-decoder; late/cancelled results are rejected.
 No real assets are downloaded by fixtures. Genuine schema-2 release availability
 remains unqualified, and 404 is an explicit **BLOCK**, never fallback. Trusted
-first-verifier delivery, signed native release admission and Desktop integration
-removing advanced manual paths remain required under HOSTSETUP-01/DT-05/DT-08.
-No extraction, executable staging/chmod/execution, service registration, sign-in,
-grants, OS policy or prior `9dcc7c4c` replacement/journal behavior changes.
+first-verifier delivery and signed native release admission remain required
+under HOSTSETUP-01/DT-05/DT-08. Desktop primary Setup's separate source/mock
+composition now removes the manual-path prerequisite, as classified below.
+The acquisition-only seam adds no extraction, executable staging/chmod/execution,
+service registration, sign-in, grants, OS policy or prior `9dcc7c4c`
+replacement/journal behavior changes.
 See [the exact acquisition contract](host-release-artifacts.md#official-host-bundle-acquisition).
 
 ## Host-based Dev Tunnels stages 1–2 classification (#681)
@@ -3734,6 +3736,38 @@ and cancelled/history-only uninstall without native/cloud calls. They do not
 qualify real manager termination, signed update or generation-atomic deletion;
 `HOSTSETUP-01` still requires real ordinary-user host stop and independent
 persistent-daemon survival with the combined signed runnable head.
+**Primary desktop Setup source/mock increment (`HOSTSETUP-01`, not acceptance):**
+Settings → Remote access → explicit Enable now acquires only the current build's
+official native-target schema-2 bundle on the bounded background worker. Version,
+target and acquisition status are visible; primary Setup needs no local file
+paths. Advanced signed files require a separate explicit selection and are never
+automatic network/sign-in/vault recovery. Authenticated owned bytes go directly
+to existing native publisher/staging/controller admission, never an installer
+script or reopened downloaded archive. A 404 must display NotPublished and leave
+installation untouched; no older/latest/schema-1 retry. Cancel during synchronous
+verification must discard late bytes and retain worker admission until exit,
+not claim CPU preemption. Edited/stale account/settings/epoch/policy confirmation
+requires explicit new review. Bundle status must not displace a foreground
+sign-in code; no automatic sign-in or browser is introduced.
+
+Automated coverage includes the original 17 desktop model/native-adapter/render
+guards plus nine automatic-Setup cases, all six explicit protected desktop CAS/
+owner guards, controlled six-target signed acquisition and affected controller/
+native-origin fixtures. The positive adapter fixture uses controlled owned
+marker bytes and refuses at fake native publication; only the separate shared
+artifact fixtures authenticate synthetic signatures. Neither is real published
+asset, native signing/installation, credential-store, cloud or GUI evidence.
+Before acceptance, use genuinely published current-version assets with the
+native publisher, ordinary-user vault/manager and foreground account; verify
+real startup/readiness, revoke/drain with independent daemon survival, manual
+cleanup uncertainty/retry and native usability. Missing genuine host assets block
+this exercise rather than authorizing old assets. Actual local sharing stays
+unsupported pending independently qualified authenticated bind/release; profile
+Save/import and ordinary session creation must still do no acquisition or grant.
+No real network/native/vault/provider/GUI, VM, permissions, signing or release
+operation was performed for this source increment. Existing native/platform/
+first-verifier and cross-version gates remain open.
+
 The unpublished-native-receipt correction now passes real Services/controller
 removal after cloud publication (including cancellation) and acknowledged
 uncertainty adoption, without a successful direct lifecycle-stop shortcut.

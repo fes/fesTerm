@@ -61,9 +61,13 @@ service/device gates remain open. Desktop first-connect/choice qualification and
 mobile UI remain separate work, not supplied by host-local key approval.
 Legacy Dev Tunnels behavior is unchanged.
 Desktop Settings now has a separate **Remote access · this device** workflow:
-explicit signed-helper/account consent, native-vault-only owner approval,
+explicit current-version official-bundle/account consent, native-vault-only owner approval,
 start/observation, revoke-and-drain disable, interrupted-setup recovery and
-typed manual cloud-cleanup guidance. No installer script runs from the widget.
+typed manual cloud-cleanup guidance. Enable authenticates owned bundle bytes on
+the bounded worker before protected setup; no manifest/signature/archive paths
+are required. Missing release assets block without an older/latest fallback.
+Manual signed files remain an explicit Advanced choice, never error recovery.
+No installer script runs from the widget.
 The default `local-host-settings` feature alone composes this local authority;
 `--no-default-features --features experimental-dev-tunnels` retains the
 client-safe metadata/fingerprint boundary. Signed-bundle usability and real

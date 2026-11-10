@@ -82,8 +82,12 @@ The optional GUI-free official schema-2 host-bundle acquisition seam uses only
 the trusted current build/native target and unchanged updater root, returning
 authenticated owned bytes without host effects. Six-target signed synthetic
 fixtures are not real release/native evidence; missing assets/404 block, never
-latest/older/legacy fallback. Desktop wiring and genuine release/first-verifier/
-native qualification remain open.
+latest/older/legacy fallback. Desktop Settings explicitly composes this seam
+with in-process native publisher/staging admission; current version/target and
+acquisition status are shown, and primary Enable needs no manual file paths.
+Advanced signed files are an explicit alternative, not a failure fallback.
+Mock acquisition/consent/cancellation fixtures are not genuine published-release,
+first-verifier/native installation, vault/cloud or usability acceptance.
 Desktop Profiles and the separately reviewed existing-session connection path
 remain distinct from local Settings authority; metadata/import alone never
 grants protected trust or stage-6/native acceptance.

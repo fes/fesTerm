@@ -47,6 +47,7 @@ fn desktop_remote_access_metadata_and_unreviewed_commands_are_inert() {
     assert!(!controller.view.draft.allow_creation);
     assert!(!controller.view.draft.approve_creation);
     assert!(!controller.view.draft.startup_at_sign_in);
+    assert!(!controller.view.draft.manual_bundle);
     controller.action(
         Action::Edit(Draft {
             friendly_name: "Edited metadata".into(),
@@ -354,4 +355,108 @@ fn desktop_remote_access_window_drop_cancels_without_another_ui_frame() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[test]
+fn desktop_remote_access_not_published_blocks_without_retry_or_manual_fallback() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            recorded.lock().unwrap().push(request.draft.manual_bundle);
+            Err(Failure::BundleNotPublished)
+        },
+    )));
+    let context = egui::Context::default();
+    controller.view.scope = Scope::Absent;
+    controller.action(Action::Review(Operation::Enable), &context);
+    assert!(calls.lock().unwrap().is_empty());
+    controller.action(Action::Confirm, &context);
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.bundle_status, BundleStatus::Blocked);
+    assert_eq!(controller.view.failure, Some(Failure::BundleNotPublished));
+    assert_eq!(*calls.lock().unwrap(), [false]);
+    assert!(!controller.view.draft.manual_bundle);
+    controller.action(Action::Confirm, &context);
+    controller.poll(&context);
+    assert_eq!(*calls.lock().unwrap(), [false]);
+    controller.action(Action::Review(Operation::Enable), &context);
+    controller.action(
+        Action::Edit(Draft {
+            manual_bundle: true,
+            ..Draft::default()
+        }),
+        &context,
+    );
+    assert!(controller.view.review.is_none());
+    controller.action(Action::Confirm, &context);
+    assert_eq!(*calls.lock().unwrap(), [false]);
+    controller.action(Action::Review(Operation::Enable), &context);
+    controller.action(Action::Confirm, &context);
+    drain(&mut controller, &context);
+    assert_eq!(*calls.lock().unwrap(), [false, true]);
+}
+
+#[test]
+fn desktop_remote_access_bundle_progress_cannot_displace_sign_in_or_publish_after_cancel() {
+    struct ProgressFixture {
+        entered: SyncSender<()>,
+        release: Mutex<Receiver<()>>,
+    }
+    impl Backend for ProgressFixture {
+        fn execute(
+            &self,
+            request: Request,
+            _: &CancellationToken,
+            progress: SyncSender<Progress>,
+        ) -> Result<Report, Failure> {
+            if request.operation == Operation::Disable {
+                return Ok(Report {
+                    scope: Scope::Absent,
+                    ..Report::default()
+                });
+            }
+            assert_eq!(request.operation, Operation::Enable);
+            assert!(progress
+                .try_send(Progress::Bundle(BundleStatus::Authenticated))
+                .is_ok());
+            assert!(progress
+                .try_send(Progress::Bundle(BundleStatus::Qualifying))
+                .is_ok());
+            assert!(progress
+                .try_send(Progress::DeviceCode(DeviceCode(zeroize::Zeroizing::new(
+                    "TEST-123".into()
+                ))))
+                .is_ok());
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(Report {
+                scope: Scope::Absent,
+                ..Report::default()
+            })
+        }
+    }
+    let (release, blocked) = mpsc::sync_channel(1);
+    let (entered_sender, entered) = mpsc::sync_channel(1);
+    let mut controller = fixture(Arc::new(ProgressFixture {
+        entered: entered_sender,
+        release: Mutex::new(blocked),
+    }));
+    let context = egui::Context::default();
+    controller.view.scope = Scope::Absent;
+    controller.action(Action::Review(Operation::Enable), &context);
+    controller.action(Action::Confirm, &context);
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    controller.poll(&context);
+    assert_eq!(controller.view.bundle_status, BundleStatus::Qualifying);
+    assert_eq!(
+        controller.view.device_code.as_ref().unwrap().0.as_str(),
+        "TEST-123"
+    );
+    controller.action(Action::Cancel, &context);
+    release.send(()).unwrap();
+    drain(&mut controller, &context);
+    assert_eq!(controller.view.bundle_status, BundleStatus::Cancelled);
+    assert!(controller.view.device_code.is_none());
+    assert!(!controller.view.owner_approved);
 }

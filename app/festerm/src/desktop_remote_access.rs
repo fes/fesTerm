@@ -29,6 +29,7 @@ pub struct Draft {
     pub allow_creation: bool,
     pub startup_at_sign_in: bool,
     pub account: String,
+    pub manual_bundle: bool,
     pub manifest: String,
     pub signature: String,
     pub archive: String,
@@ -44,6 +45,7 @@ impl Default for Draft {
             allow_creation: false,
             startup_at_sign_in: false,
             account: String::new(),
+            manual_bundle: false,
             manifest: String::new(),
             signature: String::new(),
             archive: String::new(),
@@ -127,6 +129,8 @@ pub enum Failure {
     ScopeChanged,
     PrivateStorage,
     SignedBundle,
+    BundleNotPublished,
+    AcquisitionUnavailable,
     NativeVault,
     SignIn,
     OwnerApproval,
@@ -147,7 +151,9 @@ impl Failure {
             Self::RefreshFirst => "Refresh this installation before reviewing an action.",
             Self::ScopeChanged => "Installation or consent changed. Refresh and review again.",
             Self::PrivateStorage => "Protected desktop state is unavailable or foreign. Do not adopt a headless installation or weaken its permissions.",
-            Self::SignedBundle => "Select this build's signed release manifest, signature and archive. Unsigned, changed or unsupported publisher bundles are refused.",
+            Self::SignedBundle => "This build's authenticated native host bundle was refused. Changed bytes, invalid signatures and unsupported publishers are not installed. No older or unsigned fallback is attempted.",
+            Self::BundleNotPublished => "The exact current-version native host bundle is not published. Genuine schema-2 release assets remain unqualified. Nothing is installed; retry explicitly after publication. No older/latest/schema-1 fallback.",
+            Self::AcquisitionUnavailable => "Authenticated bundle acquisition is unavailable or exceeded its bounded deadline. Nothing is installed; retry explicitly. No automatic manual-path, older-version or unsigned fallback.",
             Self::NativeVault => "Unlock the native credential store and retry. There is no file-credential fallback.",
             Self::SignIn => "Foreground sign-in or account verification is required. Review the numeric account ID and retry explicitly.",
             Self::OwnerApproval => "Review the public owner key and its independently confirmed fingerprint. Access and creation permissions require separate approval.",
@@ -178,6 +184,41 @@ pub struct View {
     pub cleanup_verified_for_manual_review: bool,
     pub device_code: Option<DeviceCode>,
     pub share_review: Option<ShareTarget>,
+    pub bundle_status: BundleStatus,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BundleStatus {
+    #[default]
+    Idle,
+    Acquiring,
+    Authenticated,
+    Qualifying,
+    Complete,
+    Blocked,
+    Cancelled,
+}
+
+impl BundleStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "Not requested. Only explicit Enable confirmation acquires a bundle.",
+            Self::Acquiring => {
+                "Acquiring / verifying exact current host bundle on the bounded worker…"
+            }
+            Self::Authenticated => "Owned bundle bytes authenticated; rechecking current consent.",
+            Self::Qualifying => "Qualifying the native publisher and protected installation.",
+            Self::Complete => {
+                "Authenticated bundle setup returned. This is NOT endpoint readiness."
+            }
+            Self::Blocked => {
+                "Bundle setup blocked. Review the actionable error; nothing selects a fallback."
+            }
+            Self::Cancelled => {
+                "Acceptance cancelled. Synchronous verification may still be draining."
+            }
+        }
+    }
 }
 
 impl View {
@@ -230,6 +271,7 @@ impl std::fmt::Debug for DeviceCode {
 
 enum Progress {
     DeviceCode(DeviceCode),
+    Bundle(BundleStatus),
 }
 
 trait Backend: Send + Sync {
@@ -397,11 +439,16 @@ impl Controller {
             owner_revision: self.view.owner_revision,
         };
         self.view.cleanup_verified_for_manual_review = false;
+        if operation == Operation::Enable {
+            self.view.bundle_status = BundleStatus::Acquiring;
+        }
         if !fence {
             *self.owned.lock().expect("healthy owned scope") = None;
         }
         let (sender, result) = mpsc::sync_channel(1);
-        let (progress_sender, progress) = mpsc::sync_channel(1);
+        // Two bundle transitions plus the single foreground device prompt;
+        // status must never displace the code needed to finish explicit sign-in.
+        let (progress_sender, progress) = mpsc::sync_channel(3);
         let cancel = CancellationToken::new();
         let worker_cancel = cancel.clone();
         let backend = self.backend.clone();
@@ -448,6 +495,9 @@ impl Controller {
         self.view.cancelling = true;
         self.view.device_code = None;
         self.view.failure = Some(Failure::Cancelled);
+        if pending.operation == Operation::Enable {
+            self.view.bundle_status = BundleStatus::Cancelled;
+        }
         if needs_fence && self.fence.is_none() {
             self.start(Operation::Disable, true, context);
         }
@@ -464,8 +514,11 @@ impl Controller {
             };
             let Some(pending) = slot else { continue };
             if pending.generation == self.generation {
-                if let Ok(Progress::DeviceCode(code)) = pending.progress.try_recv() {
-                    self.view.device_code = Some(code);
+                while let Ok(progress) = pending.progress.try_recv() {
+                    match progress {
+                        Progress::DeviceCode(code) => self.view.device_code = Some(code),
+                        Progress::Bundle(status) => self.view.bundle_status = status,
+                    }
                 }
             }
             let result = match pending.result.try_recv() {
@@ -476,6 +529,16 @@ impl Controller {
             if let Some(result) = result {
                 if pending.generation == self.generation {
                     self.view.device_code = None;
+                    if pending.operation == Operation::Enable {
+                        self.view.bundle_status = match &result {
+                            Ok(report) if report.failure.is_none() => BundleStatus::Complete,
+                            Ok(report) if report.failure == Some(Failure::Cancelled) => {
+                                BundleStatus::Cancelled
+                            }
+                            Err(Failure::Cancelled) => BundleStatus::Cancelled,
+                            _ => BundleStatus::Blocked,
+                        };
+                    }
                     match result {
                         Ok(report) => {
                             if pending.operation == Operation::Refresh && !self.draft_edited {

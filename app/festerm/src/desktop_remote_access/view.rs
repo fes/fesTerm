@@ -8,6 +8,13 @@ pub(crate) fn show(
     let mut action = None;
     ui.label(view.observation_label());
     ui.small("Settings affect this computer only. Profiles, imports and new shells never grant HOST access.");
+    ui.label(format!(
+        "Official host bundle · version {} · {} / {}",
+        festerm_host_setup::VERSION,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+    ui.small(view.bundle_status.label());
     if let Scope::Present(snapshot) = &view.scope {
         ui.monospace(format!(
             "Installation {} · epoch {} · {:?}",
@@ -44,11 +51,15 @@ pub(crate) fn show(
             "GitHub numeric account ID (verified during sign-in)",
             &mut draft.account,
         );
-        ui.collapsing("Signed helper prerequisites", |ui| {
-            ui.label("This build's trusted release files are required. No installer script runs from Settings.");
-            field(ui, "Manifest · absolute path", &mut draft.manifest);
-            field(ui, "Signature · absolute path", &mut draft.signature);
-            field(ui, "Archive · absolute path", &mut draft.archive);
+        ui.label("Enable acquires only this exact build's official native host bundle. No installer script runs from Settings.");
+        ui.collapsing("Advanced · explicit signed local bundle", |ui| {
+            ui.checkbox(&mut draft.manual_bundle, "Use manually selected signed files instead of official acquisition");
+            ui.small("An explicit alternative, never a download, sign-in or vault failure fallback.");
+            ui.add_enabled_ui(draft.manual_bundle, |ui| {
+                field(ui, "Manifest · absolute path", &mut draft.manifest);
+                field(ui, "Signature · absolute path", &mut draft.signature);
+                field(ui, "Archive · absolute path", &mut draft.archive);
+            });
         });
         ui.horizontal_wrapped(|ui| {
             if ui.button("Refresh local status").clicked() {
@@ -93,6 +104,11 @@ pub(crate) fn show(
                 match operation {
                     Operation::Enable => {
                         ui.label(format!("Name: {} · creation {} · startup {:?}", draft.friendly_name, draft.allow_creation, draft.settings().startup));
+                        ui.label(if draft.manual_bundle {
+                            "Explicit Advanced choice: verify the selected signed local bundle."
+                        } else {
+                            "Acquire and authenticate this exact current-version native host bundle from the official release. Missing assets block setup; no older/latest retry."
+                        });
                         ui.label("Explicit foreground sign-in may create a cloud resource and register a signed native helper. No shells are created or shared; owner access requires separate approval.");
                     }
                     Operation::ApproveOwner => {

@@ -35,7 +35,10 @@ pub fn stage_release_files(
     stage_artifact(&artifact, root)
 }
 
-pub(crate) fn verify_release_files(
+/// Read only bounded private/no-follow inputs and authenticate owned bytes for
+/// this exact build/native target with the embedded updater root. This does not
+/// stage, execute or register anything; never reopen the input paths afterwards.
+pub fn verify_release_files(
     manifest: &Path,
     signature: &Path,
     archive: &Path,

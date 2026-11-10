@@ -62,6 +62,15 @@ checksum-only fallback.
 original authenticated provenance for restart verification; reserializing JSON
 is not equivalent. On restart, reverify that provenance and compare each staged
 file to the resulting verified entries before execution (or restage privately).
+
+Desktop primary Setup receives that owned capability directly from official
+acquisition and calls existing `TrustedStage::publish`, retaining real native
+publisher qualification and installation/controller authority. Explicit Advanced
+offline input uses `staging::verify_release_files(manifest, signature, archive)`:
+bounded private/no-follow reads, the fixed current native target/version and
+embedded root, returning owned bytes without staging or execution. Neither path
+reopens the input archive after authentication, serializes a capability or accepts
+a caller's URL/version/key. Manual files are never automatic error fallback.
 The archive hash alone does not authenticate a subsequently modified extracted
 file. The descriptor owns the exact validated file bytes. A consuming setup/staging
 owner must write these bytes, not reopen or separately extract the downloaded
@@ -175,8 +184,11 @@ verification; it is not preempted mid-decoder and no capability is returned
 after cancellation/deadline. The result is only `VerifiedArtifact`: no extraction
 to disk, staging, chmod, execution, registration, enable, grants, account/provider
 or OS changes. Existing first-verifier trust and release producer/signing
-workflow are unchanged. This library seam is not yet wired to Desktop setup or
-headless commands; advanced manual signed paths remain as documented.
+workflow are unchanged. Desktop primary Setup now explicitly consumes this
+library seam on its bounded worker and delegates to the existing native
+publisher/staging/controller boundary; headless commands retain their explicit
+signed-file path. Desktop Advanced manual paths are a separate explicit choice,
+never automatic error fallback. Genuine release/native acceptance is not implied.
 
 Controlled loopback fixtures use a private test-only signer and verifier for all
 six targets, exact identity/path/bytes, missing assets, unsafe redirects,

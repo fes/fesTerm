@@ -349,6 +349,19 @@ owns exact-snapshot/settings CAS; scoped owner approval commits the key and
 permissions under the existing protected policy lease. No cached verifier is
 introduced. Desktop always selects the native vault, never headless file storage.
 
+Explicit Enable composes the existing exact-current/native-target official
+schema-2 acquisition with `TrustedStage::publish` in process. Only immutable
+authenticated owned bytes cross that seam; no serialized capability, download
+path reread, CLI installer or caller-controlled URL/version/key is authority.
+Cancellation and fresh full-snapshot/account/observed-policy-revision checks
+fence acceptance after synchronous verification and before local initialization
+or publication. Native publisher qualification, retained signed provenance,
+installation leases and shared-controller CAS still gate effects. A 404 is
+NotPublished, not fallback or absence. The Advanced local-files path uses the
+same bounded private-input verifier and owned-byte publication. Two bundle
+progress events plus one explicit device prompt have three bounded slots, so
+status cannot displace the sign-in code. No network or vault fallback is added.
+
 Signed native definitions select `run-desktop` only from their protected
 Desktop origin; the native CLI entrypoint opens that exact origin and the
 ordinary headless `run` remains Headless-only. Current Windows publisher/stop

@@ -1,5 +1,100 @@
 # Milestone Progress Narrative
 
+## Primary desktop Setup acquires the authenticated current host bundle
+
+Scope: ADR 0084 §7's primary local Settings workflow, not sharing or a new
+installer/distribution system. The isolated desktop-primary worktree starts at
+frozen CI child `80771696` and normally merges only acquisition
+`7fa17f0112b451f02bcd75d34c82728484d50fd7` (`f182140d`) and qualified backend
+`d862fd5d212674cbca9397b14ed0e7aedd273555` (`4d63e049`). Both implementations,
+manual no-DELETE cleanup and all three existing mandatory CI selectors are
+preserved. These immutable prerequisites' source-review gates passed, but the
+parent subsequently reported actual acquisition/macOS deadline-fixture and
+backend/Windows cfg CI failures under separately owned repair. No moving repair,
+binding/mobile source or native/policy changes are consumed here.
+
+Enable no longer requires users to locate manifest/signature/archive paths.
+The default UI names this exact version/native target and shows acquisition
+state. An explicitly confirmed typed application command uses the existing
+bounded worker, fixed official schema-2 acquisition and immutable authenticated
+owned bytes, then calls existing `TrustedStage::publish` in process. There is
+no process-capability serialization, untrusted download-path reread, new trust
+root, install script or caller URL/version/key. Native publisher qualification,
+retained signed provenance, install leases, Desktop `run-desktop` and shared
+controller CAS are unchanged. Advanced signed local files are an explicit
+alternative through the existing fixed-version private-input verifier, now a
+small public read-only library seam; failure never selects them automatically.
+
+The immutable selected account/settings/snapshot/epoch and any independently
+observed native-policy revision are checked again after verification and before
+local initialization/publication. Cancellation fences late acceptance, not CPU
+preemption of bounded synchronous verification. The worker permit remains held
+until actual exit. Two progress transitions and one sign-in prompt have exactly
+three bounded slots, so acquisition status cannot silently displace the code.
+A 404 is actionable NotPublished, never an old/latest/schema-1 retry or verified
+absence. Vault/sign-in/native failures remain explicit; metadata/import stays
+network-free and creation/default startup remain off.
+
+Deterministic source qualification lists then passes **26 desktop tests**:
+all original 17 guard names plus nine new automatic-Setup model/adapter cases.
+The controlled acquisition/publication test stops at a fake publisher refusal;
+it does not fabricate a `VerifiedArtifact`, install a native service or grant
+owner access. The shared selection passes **24 tests**, including all six
+explicitly feature-enabled protected desktop guards, nine controlled signed
+acquisition tests and affected controller/update-admission/native-origin cases.
+The first desktop compilation caught the existing verifier's crate-private
+visibility; its read-only API was exposed instead of duplicating verification.
+The first shared run passed 23 and failed the older desktop-origin fixture's
+unconditional Windows-unsupported assertion. The authorized backend now admits
+its fake Windows registration, so that one owned fixture now exercises the same
+exact Desktop/headless verb assertions on all three mocked platforms. No
+production admission or another owner's cfg fixture is changed. Both REDs and
+corrected command exits remain in private evidence.
+
+Actual Rust/Cargo 1.99.1 comes from the absolute rustup stable toolchain, not
+Homebrew's nondispatching `+stable`. Jobs1/debug0/incremental0 and the existing
+private runtime target are retained; each wrapped Cargo/trace command has a fresh source hash map,
+exact argv/environment, memory admission, raw log/hash and numeric exit receipt.
+Source/mock results are not genuine current-release publisher/signing evidence,
+real download/native install/vault/provider/GUI usability or endpoint readiness.
+Sharing/unsharing remains capability-blocked until the separately qualified
+authenticated binding/release prerequisite; protected migration reservation does
+not enable it. The known Windows SDK blocker is not retried. Parent publication,
+all three exact-head CI checks/reviews and release/native acceptance remain gates.
+
+Final selected qualification is **57 distinct passes / zero failures or ignores**:
+26 desktop, 24 shared host, four staging and three CLI cases (one unit plus
+two actual binary refusals/status cases). The original six host guards are
+inside the 24, and the original 17 desktop guards are inside the 26, not extra
+passes. Final-source strict Clippy passes in three configurations: affected
+desktop/setup/headless all-targets; client-only desktop binary without local
+authority; acquisition-only setup all-targets. The client-only feature tree
+confirms host-setup has only its empty default feature, no lifecycle/native/
+acquisition authority. Formatting, diff and range-aware traceability pass with
+311 edges / zero broken references. Existing vendor and rust-objcopy/libLLVM
+warnings are retained, not suppressed or repaired.
+
+The final commands use the pinned environment above:
+
+```sh
+cargo test --locked -p festerm --features local-host-settings --bin festerm desktop_remote_access -- --list
+cargo test --locked -p festerm --features local-host-settings --bin festerm desktop_remote_access -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features cloud,host-runtime,native-services,acquisition --lib -- official_host_bundle_ host_desktop_ protected_owner_desktop_scoped_ host_controller_ host_update_admission_ native_service_desktop_ --test-threads=1
+cargo test --locked -p festerm-host-setup --features cloud,host-runtime,native-services,acquisition --lib staging::tests -- --test-threads=1
+cargo test --locked -p festerm-host --all-targets -- desktop_native_binary_entry_ headless_update_is_ unavailable_host_operations_ --test-threads=1
+cargo clippy --locked -p festerm -p festerm-host-setup -p festerm-host --features festerm/local-host-settings,festerm-host-setup/acquisition --all-targets -- -D warnings
+cargo clippy --locked -p festerm --no-default-features --features experimental-dev-tunnels --bin festerm -- -D warnings
+cargo clippy --locked -p festerm-host-setup --no-default-features --features acquisition --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 80771696cb15eda3599461606b6f64e2f717520f
+git diff --check
+```
+
+No ignored native fixture, full workspace, real GUI/network/provider/native vault/
+manager, VM, permissions, signing or release operation was run. Publication and
+the prerequisite CI repairs remain parent-owned; the private build slot is
+released after the stable handoff.
+
 ## Normally integrating the six gated backend source pins
 
 The separate `work/adr0084-backend-fanin-nov10` worktree starts at exact

@@ -1,5 +1,7 @@
 use super::*;
 use festerm_host_setup::{
+    acquisition::host_bundle::{acquire_current_host_bundle, HostBundleError},
+    artifacts::VerifiedArtifact,
     cloud::CloudHostAdapter,
     controller::{self, OwnerConsent, UninstallResult},
     enrollment::OwnerStorage,
@@ -9,6 +11,97 @@ use festerm_host_setup::{
 use std::{io, path::Path};
 
 pub(super) struct Native;
+
+fn acquisition_failure(error: HostBundleError) -> Failure {
+    match error {
+        HostBundleError::Cancelled => Failure::Cancelled,
+        HostBundleError::NotPublished(_) => Failure::BundleNotPublished,
+        HostBundleError::UnsupportedTarget => Failure::PlatformPrerequisite,
+        HostBundleError::Verification(_) | HostBundleError::Identity => Failure::SignedBundle,
+        _ => Failure::AcquisitionUnavailable,
+    }
+}
+
+fn acquire(request: &Request, cancel: &CancellationToken) -> Result<VerifiedArtifact, Failure> {
+    if !request.draft.manual_bundle {
+        return acquire_current_host_bundle(cancel).map_err(acquisition_failure);
+    }
+    let paths = [
+        &request.draft.manifest,
+        &request.draft.signature,
+        &request.draft.archive,
+    ];
+    if paths.iter().any(|path| !Path::new(path).is_absolute()) {
+        return Err(Failure::SignedBundle);
+    }
+    festerm_host_setup::staging::verify_release_files(
+        Path::new(paths[0]),
+        Path::new(paths[1]),
+        Path::new(paths[2]),
+    )
+    .map_err(|_| Failure::SignedBundle)
+}
+
+fn enable_scope(request: &Request, cancel: &CancellationToken) -> Result<(), Failure> {
+    if cancel.is_cancelled() {
+        return Err(Failure::Cancelled);
+    }
+    let account = request
+        .draft
+        .account
+        .parse::<u64>()
+        .ok()
+        .filter(|id| *id != 0)
+        .ok_or(Failure::SignIn)?;
+    request
+        .draft
+        .settings()
+        .validate()
+        .map_err(|_| Failure::InvalidDraft)?;
+    let current = observed(&request.root)?;
+    verify(current.as_ref(), &request.expected)?;
+    if let Some(store) = current {
+        let snapshot = store.snapshot().map_err(failure)?;
+        if !matches!(snapshot.phase, Phase::Disabled | Phase::Provisioned) {
+            return Err(Failure::Reconciliation);
+        }
+        if snapshot
+            .binding
+            .as_ref()
+            .is_some_and(|binding| binding.account != format!("github:{account}"))
+        {
+            return Err(Failure::SignIn);
+        }
+        if let Some(revision) = request.owner_revision {
+            let owner = store
+                .owner_enrollment()
+                .and_then(|owners| owners.snapshot())
+                .map_err(failure)?;
+            if owner.storage != OwnerStorage::NativeVault || owner.origin != Origin::Desktop {
+                return Err(Failure::NativeVault);
+            }
+            if owner.revision.get() != revision {
+                return Err(Failure::ScopeChanged);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn prepare_enable<T>(
+    request: &Request,
+    cancel: &CancellationToken,
+    progress: &SyncSender<Progress>,
+    acquire: impl FnOnce(&Request, &CancellationToken) -> Result<T, Failure>,
+) -> Result<T, Failure> {
+    enable_scope(request, cancel)?;
+    let artifact = acquire(request, cancel)?;
+    // Verification is synchronous and bounded, not CPU-preempted. Never accept
+    // its owned bytes against a cancelled or replaced consent scope.
+    enable_scope(request, cancel)?;
+    let _ = progress.try_send(Progress::Bundle(BundleStatus::Authenticated));
+    Ok(artifact)
+}
 
 fn failure(error: io::Error) -> Failure {
     if error.kind() == io::ErrorKind::WouldBlock {
@@ -153,9 +246,24 @@ fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
 impl Backend for Native {
     fn execute(
         &self,
+        request: Request,
+        cancel: &CancellationToken,
+        progress: SyncSender<Progress>,
+    ) -> Result<Report, Failure> {
+        self.execute_with(request, cancel, progress, acquire, |artifact, root| {
+            TrustedStage::publish(&artifact, root).map_err(|_| Failure::SignedBundle)
+        })
+    }
+}
+
+impl Native {
+    fn execute_with<T>(
+        &self,
         mut request: Request,
         cancel: &CancellationToken,
         progress: SyncSender<Progress>,
+        acquire: impl FnOnce(&Request, &CancellationToken) -> Result<T, Failure>,
+        publish: impl FnOnce(T, &Path) -> Result<TrustedStage, Failure>,
     ) -> Result<Report, Failure> {
         if cancel.is_cancelled() {
             return Err(Failure::Cancelled);
@@ -170,6 +278,13 @@ impl Backend for Native {
         } else {
             verify(existing.as_ref(), &request.expected)?;
         }
+        let artifact = if request.operation == Operation::Enable {
+            Some(prepare_enable(&request, cancel, &progress, acquire)?)
+        } else {
+            None
+        };
+        let existing = observed(&request.root)?;
+        verify(existing.as_ref(), &request.expected)?;
         let store = match existing {
             Some(store) => store,
             None if request.operation == Operation::Enable => {
@@ -187,11 +302,29 @@ impl Backend for Native {
             }
             *request.owned.lock().map_err(|_| Failure::ScopeChanged)? = Some(scope);
         }
-        let result = if cancel.is_cancelled() {
-            Err(Failure::Cancelled)
-        } else {
-            self.perform(&store, &request, cancel, progress)
-        };
+        let result = (|| {
+            if cancel.is_cancelled() {
+                return Err(Failure::Cancelled);
+            }
+            let stage = match artifact {
+                Some(artifact) => {
+                    enable_scope(&request, cancel)?;
+                    let _ = progress.try_send(Progress::Bundle(BundleStatus::Qualifying));
+                    Some(publish(
+                        artifact,
+                        &request.root.join("signed-release-cache"),
+                    )?)
+                }
+                None => None,
+            };
+            if cancel.is_cancelled() {
+                return Err(Failure::Cancelled);
+            }
+            if request.operation == Operation::Enable {
+                enable_scope(&request, cancel)?;
+            }
+            self.perform(&store, &request, cancel, progress, stage.as_ref())
+        })();
         if cancel.is_cancelled() && request.operation.needs_cancel_fence() {
             // A blocked native call may outlive cancellation. Fence once it
             // really returns as well as through the independent revocation slot.
@@ -219,15 +352,13 @@ impl Backend for Native {
             }
         }
     }
-}
-
-impl Native {
     fn perform(
         &self,
         store: &Store,
         request: &Request,
         cancel: &CancellationToken,
         progress: SyncSender<Progress>,
+        stage: Option<&TrustedStage>,
     ) -> Result<Report, Failure> {
         match request.operation {
             Operation::ObserveNative => {
@@ -282,21 +413,7 @@ impl Native {
                     .ok()
                     .filter(|id| *id != 0)
                     .ok_or(Failure::SignIn)?;
-                let paths = [
-                    &request.draft.manifest,
-                    &request.draft.signature,
-                    &request.draft.archive,
-                ];
-                if paths.iter().any(|path| !Path::new(path).is_absolute()) {
-                    return Err(Failure::SignedBundle);
-                }
-                let stage = TrustedStage::publish_release_files(
-                    Path::new(paths[0]),
-                    Path::new(paths[1]),
-                    Path::new(paths[2]),
-                    &request.root.join("signed-release-cache"),
-                )
-                .map_err(|_| Failure::SignedBundle)?;
+                let stage = stage.ok_or(Failure::SignedBundle)?;
                 if cancel.is_cancelled() {
                     return Err(Failure::Cancelled);
                 }
@@ -315,7 +432,7 @@ impl Native {
                     controller::setup_if_current(
                         store,
                         &request.root,
-                        &stage,
+                        stage,
                         &consent,
                         cancel,
                         |prompt| {

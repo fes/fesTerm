@@ -94,8 +94,10 @@ fn headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments() 
         assert!(output.stdout.is_empty());
         let error = String::from_utf8(output.stderr).unwrap();
         let expected = if cfg!(feature = "owner-routing")
-            && matches!(operation, "setup" | "run" | "run-desktop" | "uninstall" | "update")
-        {
+            && matches!(
+                operation,
+                "setup" | "run" | "run-desktop" | "uninstall" | "update"
+            ) {
             "invalid_arguments"
         } else {
             "endpoint_adapter_unavailable"

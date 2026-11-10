@@ -329,9 +329,21 @@ admission, and native Running or journal history never becomes Ready.
 `run-desktop` is a protected Desktop-origin native-helper entrypoint, not
 headless-state adoption or a credential-storage selector.
 
-This is not completed §7 acceptance: the current prerequisite panel requires
-this build's signed manifest/signature/archive paths; automatic verified-package
-delivery and native usability remain open. Ordinary attached private daemons
+Primary Enable now explicitly acquires this build's exact official native host
+bundle on the bounded worker; no manual manifest/signature/archive paths are
+required. The default UI shows version, target and acquisition state. Owned
+authenticated bytes pass directly to existing `TrustedStage::publish`, never a
+downloaded path, serialized capability or script. Current account, full snapshot,
+epoch/settings and any independently observed native-policy revision are checked
+again after verification before acceptance; shared CAS/installation leases and
+native publisher admission still gate setup. Cancellation fences acceptance
+after bounded synchronous verification, not CPU preemption. Missing/404 assets
+surface NotPublished without older/latest/schema-1 retry. Advanced local signed
+files are an explicit choice, never network/sign-in/vault failure recovery.
+
+This is not completed §7 acceptance: genuine current-version signed host assets,
+native installation/vault/cloud readiness and usability remain open.
+Ordinary attached private daemons
 lack authenticated bind-existing/retained-root capability and exact-target release.
 The exact-session review therefore preserves the originating draft and refuses
 sharing/unsharing without effects; host setup success is not a sharing success.
@@ -414,8 +426,9 @@ headers, and reuses bounded streaming plus the embedded updater-root verifier.
 It returns only owned `VerifiedArtifact` bytes: no staging or execution/host
 effects. Missing schema-2 assets/404 explicitly block; there is no latest/older/
 legacy fallback or downloaded trust key. Cancellation/deadline fence receives
-and acceptance after bounded synchronous verification. Desktop wiring, genuine
-published asset availability and native release acceptance remain separate
+and acceptance after bounded synchronous verification. Desktop primary Setup
+now explicitly composes this seam with the existing in-process native boundary;
+genuine published asset availability and native release acceptance remain
 gates; [the acquisition contract](../host-release-artifacts.md#official-host-bundle-acquisition)
 documents the non-preempted verifier and unchanged trusted-first-verifier path.
 Legacy scripts and old-tag recovery retain their
@@ -1055,6 +1068,21 @@ blocked and a pending result is not successful uninstall. See the
   vault/cloud, endpoint readiness, actual sharing and usability remain
   `HOSTSETUP-01`/`HOSTAUTH-01` acceptance prerequisites; mock/owned-filesystem
   tests do not clear them.
+- **Primary automatic Setup (`HOST-04`/`HOST-05`):**
+  `desktop_remote_access_automatic_owned_bytes_reach_only_existing_native_boundary`,
+  `desktop_remote_access_acquisition_404_and_failures_have_no_effect_or_fallback`,
+  `desktop_remote_access_cancellation_during_sync_verification_never_accepts_owned_bytes`,
+  `desktop_remote_access_acquisition_rechecks_epoch_and_same_epoch_settings_before_effects`,
+  `desktop_remote_access_acquisition_cannot_adopt_new_foreign_or_replaced_installation`,
+  `desktop_remote_access_manual_route_is_explicit_and_never_opens_paths_by_default`,
+  `desktop_remote_access_enable_requires_setup_phase_before_acquisition_or_publication`,
+  `desktop_remote_access_not_published_blocks_without_retry_or_manual_fallback` and
+  `desktop_remote_access_bundle_progress_cannot_displace_sign_in_or_publish_after_cancel`
+  cover the deterministic adapter/model seam. Controller and six protected
+  desktop guards retain actual private lifecycle/lease/CAS fixtures. Fake
+  acquisition/native refusal and synthetic signatures do not qualify genuine
+  release availability, real native installation, vault/cloud, sharing or GUI
+  usability; all remain explicit `HOSTSETUP-01`/`HOSTAUTH-01` gates.
 - **Official schema-2 acquisition evidence (`HOST-05`/`HOST-06`):**
   `official_host_bundle_identity_is_exact_current_native_host_only`,
   `official_host_bundle_six_signed_targets_return_owned_authenticated_bytes`,
@@ -1067,7 +1095,8 @@ blocked and a pending result is not successful uninstall. See the
   `official_host_bundle_requires_owned_blocking_worker` cover only the bounded
   library boundary, using controlled HTTP and synthetic signed target fixtures.
   Production refuses the fixture key. These do not qualify real published
-  availability, native signing, first-verifier delivery or Desktop integration.
+  availability, native signing or first-verifier delivery. Desktop composition
+  is covered separately by the primary Setup mock/owned-filesystem evidence.
   Existing `9dcc7c4c` update journal/no-receipt/old-helper semantics are unchanged.
 - **Automated evidence (stage 1):**
   `host_wire_fixture_is_canonical_and_not_legacy_protocol`,
