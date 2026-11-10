@@ -65,7 +65,10 @@ GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition
 and authenticated schema-2 headless/helper staging without execution.
 The optional library [same-user native service component](docs/native-host-services.md),
 included by the default headless binary, adds receipt-bound control APIs, not
-native qualification.
+native qualification. Windows admission now implements the owner-approved
+Artifact Signing publisher/profile/Microsoft chain and strict native timestamp/
+revocation policy; full-controller stop reuses protected revocation and runtime
+leases, never destructive task termination. Real Windows acceptance remains open.
 Headless `service-status`, `disable`, `cleanup-local`, `recover-cleanup` and
 `qualify-package` now expose their supported management boundaries without
 claiming endpoint readiness or successful cloud deletion.

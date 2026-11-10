@@ -670,13 +670,21 @@ from current `MainPID`, journals definition retirement for crash-safe scoped
 failed-unit cleanup, and bounds transition reconciliation under one native
 budget. Task registration reserves immutable marker/configuration/ACL evidence
 before submission and can recover matching late observations without restoring
-consent. Windows registration/start and running-task stop explicitly refuse
-until an authenticated graceful-stop path preserves independent daemons.
+consent.
+
+## Windows native admission without destructive stop
+
+Windows registration/start require the compiled runtime controller.
+Protected lifecycle revocation cancels the existing host watcher; stop confirms
+exclusive run-lease release and exact native task quiescence, never Scheduler
+Stop or process-tree termination. Timeout remains pending.
 macOS admission now pins the actual release environment's Developer ID team
 and requires Apple's chain and hardened runtime, rather than learning trust
-from an artifact or arbitrary app. Windows promotion refuses pending its
-authoritative publisher/certificate and revocation policy; any trusted signer
-is not that policy.
+from an artifact or arbitrary app. Windows promotion now implements the independently
+owner-approved Artifact Signing subject/profile and Microsoft chain, trusted
+RFC3161 and online-enabled fail-closed revocation. Pure policy/runtime fixtures
+and official x64 MSVC cross-checks are not real Windows PKI/task/runtime/daemon
+qualification; that ordinary-user signed-release evidence remains open.
 
 Cargo emits UTF-8 metadata independently of the Windows console code page.
 The host notice check now decodes that transport explicitly as UTF-8. A portable

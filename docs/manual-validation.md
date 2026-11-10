@@ -3636,8 +3636,9 @@ with strict affected-package Clippy. None of these fixtures contacts production,
 opens a native credential store or qualifies positive signed service startup.
 Linux ordinary-user real-release setup/run/disable/daemon-survival remains
 `HOSTSETUP-01`; native client pin/key approval and its protected local index remain
-`HOSTAUTH-01`. Windows still requires the explicit publisher/revocation and
-exact-host graceful-stop decisions below.
+`HOSTAUTH-01`. Windows now has the explicit owner-approved publisher/revocation
+policy and protected revocation-driven stop implementation below; real native
+PKI/COM/runtime/daemon qualification remains required.
 The shared disable/removal fixtures cover revoke-before-stop, exact
 foreground runtime-lease exclusion, refusal of foreign observations/uncertainty
 and cancelled/history-only uninstall without native/cloud calls. They do not
@@ -3705,11 +3706,31 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 | HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/schema-2 host packaging, bounded pin acquisition/staging and native-control/executable-publication fixtures; actual signed native service/executable acceptance and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, integration/qualification of the [same-user native component](native-host-services.md), trusted first-verifier delivery and native publisher/executable acceptance. Windows/macOS/Linux startup, interrupted registration/cleanup, unavailable-manager/vault behavior and daemon independence require real platform evidence; fixture success is not that evidence. |
 
 The shared native service component requires signed-release qualification of
-its pinned macOS Developer ID/team/runtime gate. Windows promotion remains
-blocked pending authoritative publisher identity and revocation policy.
-Windows registration/start and running-task stop additionally require
-authenticated graceful stop and daemon-independence qualification; generic
-signature validity or Task Scheduler termination is not acceptance evidence.
+its pinned macOS Developer ID/team/runtime gate. Windows promotion now implements
+the independently owner-approved subject/profile/Microsoft chain and requires
+native digest, genuine trusted RFC3161 and online-enabled fail-closed revocation.
+Windows registration/start require the compiled runtime watcher; stop reconciles
+protected lifecycle revocation, exclusive run-lease release and exact task
+quiescence, never Scheduler Stop. Pure fixtures and x64 cross-checks are not
+native PKI/task/runtime/daemon qualification.
+
+The read-only ignored Windows PKI fixture
+`windows_publisher_native_opt_in_approved_signed_host_and_unsigned_rejection`
+requires an independently authenticated current signed host pathname in
+`FESTERM_ADR84_SIGNED_HOST_FIXTURE` and
+`cargo test -p festerm-windows-security --features host-service windows_publisher_native_opt_in -- --ignored --nocapture`.
+It is included in `scripts/run-optional-validation.ps1` only when
+`FESTERM_RUN_ADR84_PUBLISHER_NATIVE=1` is explicitly selected (in addition to the
+aggregate's normal opt-in); otherwise its result is skipped.
+It invokes native online-enabled verification only, never registration/start,
+signing, Azure credentials or OS settings. It was **not run on macOS**.
+For a separately authorized ordinary-user Windows lab, record positive approved
+release verification after leaf expiry with a valid timestamp, and refusal of
+wrong subject/profile/chain/EKUs, altered bytes, missing/untrusted/non-RFC3161
+timestamps and revoked/unknown/stale revocation. Independently qualify exact
+InteractiveToken XML/owner+SYSTEM ACL recovery, watcher-driven running/transitioning
+stop, active run-lease/foreign/timeout refusal and unchanged persistent daemon/
+shell identity. No VM/OS execution grant or genuine native result is implied.
 
 The November 10 Task Scheduler XML binding correction is cross-compilation
 evidence only: `x86_64-pc-windows-msvc` library/test checking and strict Clippy

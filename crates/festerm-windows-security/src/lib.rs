@@ -2,6 +2,8 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(all(feature = "host-service", any(windows, test)))]
+pub mod host_publisher;
 #[cfg(all(windows, feature = "host-service"))]
 pub mod host_service;
 #[cfg(windows)]

@@ -197,9 +197,12 @@ registration/control and authenticated executable-publication APIs, with
 deterministic native-adapter fixtures. The shared CLI controller consumes those
 APIs; desktop controls and native endpoint qualification remain separate. macOS admission
 requires the pinned release Developer ID team and hardened runtime; Windows
-admission refuses until authoritative publisher policy exists;
-Windows registration/start additionally refuse until authenticated graceful stop
-can preserve independent daemons. See the
+admission checks the approved Artifact Signing publisher/profile/Microsoft chain,
+trusted RFC3161 and online-enabled fail-closed revocation. Windows registration/
+start require the compiled cloud/runtime controller; stop waits for authenticated
+protected lifecycle revocation, run-lease release and exact native task quiescence,
+without Scheduler Stop or daemon termination. These paths are source/fixture
+evidence, not real Windows qualification. See the
 [API, startup semantics and native prerequisites](native-host-services.md).
 
 The opt-in library `owner-enrollment` API supports protected local public-key

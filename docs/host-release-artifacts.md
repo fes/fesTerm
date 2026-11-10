@@ -214,6 +214,40 @@ separate sealed executable-receipt factory for exact verified `Package::Host`
 bytes. Ordinary staging/acquisition paths remain data only; the component is
 not wired to incomplete endpoint/CLI setup and does not qualify native releases.
 macOS promotion requires Apple's Developer ID chain, the pinned release team
-and hardened runtime. Windows promotion refuses before cache publication pending
-authoritative publisher/certificate and revocation policy; any trusted signer
-is not substituted.
+and hardened runtime. Windows promotion requires the approved native policy below;
+any trusted signer is not substituted.
+
+### Windows native publisher policy
+
+The owner independently approved publisher
+`C=US, ST=wa, L=Seattle, O=Frank Swiderski, CN=Frank Swiderski` and
+`fesLabs-CodeSign` / `fesTermPublicTrust`. The profile-specific EKU is
+`1.3.6.1.4.1.311.97.303022872.891206086.435023656.127014475`; it identifies only
+this profile lifetime, not the signing account, and changes on profile
+recreation. Standard CodeSigning and Artifact Signing PublicTrust EKUs are also
+mandatory. Same-subject/profile/approved-chain leaf renewal is allowed; any
+publisher/profile/chain change requires review.
+
+The compiled DER SHA256 pins were independently derived from Microsoft's public
+PKI certificate downloads, never candidate certificates or manifest metadata:
+
+| Chain certificate | Authoritative Microsoft source | DER SHA256 |
+| --- | --- | --- |
+| Microsoft ID Verified CS AOC CA 03 | [public certificate](https://www.microsoft.com/pkiops/certs/Microsoft%20ID%20Verified%20CS%20AOC%20CA%2003.crt) | `acaa07d57d4274b290d86c156aa0d6c5633e3cd92d43751e6a0f797c5b2dff4d` |
+| Microsoft ID Verified Code Signing PCA 2021 | [public certificate](https://www.microsoft.com/pkiops/certs/Microsoft%20ID%20Verified%20Code%20Signing%20PCA%202021.crt) | `3d29798cc5d3f0644a7e0dc9cb1cade523ea5ec83b335109b605bfeaa7d5f5c1` |
+| Microsoft Identity Verification Root Certificate Authority 2020 | [public certificate](https://www.microsoft.com/pkiops/certs/microsoft%20identity%20verification%20root%20certificate%20authority%202020.crt), [Microsoft repository](https://www.microsoft.com/pkiops/docs/repository.htm) | `5367f20c7ade0e2bca790915056d086b720c33c1fa2a2661acf787e3292e1270` |
+
+These are additional restrictions on OS chain trust, not custom trust anchors.
+[Microsoft certificate-management guidance](https://learn.microsoft.com/en-us/azure/artifact-signing/concept-certificate-management)
+documents the 72-hour leaf lifetime, profile-specific EKU scope and timestamp
+longevity. A genuine OS-trusted RFC3161 timestamp within leaf validity preserves
+correctly signed binary validity beyond that leaf's expiry. Native verification
+enables online revocation and fails closed on revoked/unknown/stale/unavailable
+evidence; no custom 24-hour offline grace exists. See the
+[complete policy/runtime contract](native-host-services.md).
+
+Updater authentication, current whole-bundle checks, retained private file
+identity and every executable helper's native publisher check remain independent
+requirements. Synthetic policy tests and MSVC cross-checks are not real Windows
+publisher/runtime acceptance. This policy neither authorizes signing/releases,
+OS changes or VM execution nor grants host-owner/client trust.

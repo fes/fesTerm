@@ -1652,10 +1652,12 @@ grace prove the bridge's 20-second heartbeat and daemon-owned expiry. This does
 not qualify physical mobile suspension, native credentials or installed services.
 
 The component's macOS admission pins the release Developer ID team/runtime;
-Windows promotion refuses pending authoritative publisher policy.
-Windows registration/start and running-task stop also
-refuse until authenticated graceful stop can preserve independent daemons.
-Those are native prerequisites, not enabled headless/desktop controls.
+Windows promotion implements the owner-approved Artifact Signing subject/profile/
+Microsoft chain, trusted RFC3161 and online-enabled fail-closed revocation.
+Windows registration/start require the compiled runtime watcher; stop observes
+protected revocation, run-lease release and exact native task quiescence without
+Scheduler Stop. Pure fixtures and x64 cross-checks do not qualify actual Windows
+PKI/COM/runtime/daemon behavior or enable desktop controls.
 
 The persistent-host local unticketed attach fixture observes recovery adoption
 before Local activation and preserves the exact shell after detach; a Unix

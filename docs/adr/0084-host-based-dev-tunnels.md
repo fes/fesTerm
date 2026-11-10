@@ -938,10 +938,13 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   historical exit PID, journaled interrupted definition retirement and
   exact-unit failed-state reset, bounded asynchronous start reconciliation,
   immutable pre-submission task reservation recovery and rejection of foreign
-  task ACL/configuration. Windows running-task stop/registration/start remain
-  unavailable pending authenticated graceful stop; macOS enforces the pinned
-  release Developer ID team/runtime and Windows promotion refuses pending
-  authoritative native publisher policy. Generic
+  task ACL/configuration. Windows registration/start require the compiled runtime
+  controller; stop reconciles protected lifecycle revocation, exact run-lease
+  release and owned native task quiescence, with timeout pending and no
+  destructive Scheduler stop. macOS enforces the pinned release Developer ID
+  team/runtime; Windows promotion now implements the owner-approved Artifact
+  Signing subject/profile/Microsoft chain, trusted RFC3161 and online-enabled
+  fail-closed revocation (see the canonical native/release policy). Generic
   native signature validity is not publisher acceptance. These refusal gates
   and native-independent fixtures do not qualify real native services.
   The existing cancellation fixture reopens and recovers the exact pending

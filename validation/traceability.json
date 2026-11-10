@@ -5737,6 +5737,9 @@
         "host_runtime_uninstall_cancel_and_removed_history_never_contact_native_or_cloud",
         "host_runtime_failed_start_is_durable_without_shell_or_credentials",
         "host_runtime_missing_lock_never_authorizes_restart_or_confirmed_stop",
+        "host_runtime_revocation_proof_requires_current_snapshot_released_lease_and_valid_history",
+        "host_runtime_revocation_waits_for_serving_shutdown_without_cancelling_independent_daemon",
+        "native_service_windows_revocation_reconciles_exact_task_without_destructive_stop",
         "host_runtime_linux_sign_in_requires_logon_fence_not_lingering_user_manager",
         "host_runtime_watch_retries_real_installation_contention_then_observes_revocation",
         "host_controller_setup_orders_real_identity_account_policy_and_registration_without_shells",
@@ -5819,7 +5822,7 @@
         "Production run supervision retries transient Store lease contention without inferring consent absence, revocation or success; changed current snapshots and nonbusy errors fail closed. Regression holds the real installation lease across multiple serving ticks then revokes. Temporary permission requires independent default-No foreground approval and never grants creation; creation requires configured and owner consent",
         "UserSignIn native registration arms next-login activation; runnable Linux setup/run refuses until current-logon activation is proven rather than trusting a lingering user manager. Manual startup remains implemented. Bounded cloud-operation serialization may span network; installation/policy/journal guards do not",
         "Integrate and natively qualify the exact-owned same-user service component and persistent-daemon independence; signed native releases and compatible update/rollback",
-        "Windows registration/start and running-task stop remain unavailable pending authenticated graceful stop and native reservation-recovery/daemon independence qualification",
+        "Windows full controller registration/start and revocation-driven stop are implemented using the protected watcher, exclusive runtime-lease release and exact task XML/ACL quiescence. Bare native-services retains fail-closed guards. Pure fixtures and official MSVC cross-checks are not ordinary-user Windows PKI/task/runtime/daemon qualification; no Scheduler Stop, name/PID authority or new IPC",
         "Exact-generation separate default-No migration confirmation is deferred until the migration API; setup command refusals do not establish that behavior",
         "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance",
         "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable and retains CleanupPending without DELETE",
@@ -5854,6 +5857,11 @@
         "authenticated_runtime_bundle_helper_rejection_never_promotes_fresh_host",
         "native_service_restart_requires_signed_provenance_without_adopting_cached_receipts",
         "native_publisher_admission_never_substitutes_generic_signature_trust",
+        "windows_publisher_policy_accepts_only_approved_profile_and_fresh_native_proofs",
+        "windows_publisher_policy_rejects_missing_wrong_and_duplicate_ekus",
+        "windows_publisher_policy_pins_full_chain_not_candidate_ca_names",
+        "windows_publisher_subject_requires_exact_rdns_without_extra_or_duplicate_attributes",
+        "windows_publisher_native_opt_in_approved_signed_host_and_unsigned_rejection",
         "macos_publisher_policy_requires_exact_team_nonadhoc_and_hardened_runtime",
         "macos_native_gate_rejects_apple_signed_foreign_publisher"
       ],
@@ -5863,7 +5871,7 @@
         "Issue #681: integrate and natively qualify the new endpoint installer/executable-publication component; ordinary private data staging does not authorize launch or service switching",
         "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
         "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence",
-        "Natively qualify the pinned macOS Developer ID/team/runtime gate against actual protected fesTerm releases; Windows promotion refuses pending authoritative publisher/certificate, rotation and revocation policy; generic signatures and candidate-derived identities are not accepted",
+        "Natively qualify pinned macOS Developer ID/team/runtime and owner-approved Windows Artifact Signing subject/profile/Microsoft public certificate chain, genuine RFC3161 and online-enabled fail-closed revocation. Same-profile/approved-chain leaf renewal is allowed; profile recreation/publisher/chain change requires review. No custom offline grace. Synthetic policy tests and the ignored read-only Windows native fixture are not executed real-release evidence",
         "Issue #681 / ADR 0084 section 11: migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow, including stale-generation refusal, before migration exposure"
       ]
     }

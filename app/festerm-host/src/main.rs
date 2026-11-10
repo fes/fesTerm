@@ -518,8 +518,8 @@ fn diagnostic(error: &io::Error) -> &'static str {
         | "host.service_removed_resource_reappeared" => {
             "host.service_ownership_refused; foreign or changed evidence, no destructive recovery attempted"
         }
-        "host.service_windows_release_publisher_policy_unconfigured" => {
-            "host.service_windows_release_publisher_policy_unconfigured; approved publisher, rotation and revocation policy required"
+        "host.service_windows_release_publisher_required" => {
+            "host.service_windows_release_publisher_required; approved publisher/profile/chain, trusted RFC3161 and fresh native revocation required"
         }
         "host.service_windows_authenticated_graceful_stop_unavailable" => {
             "host.service_windows_authenticated_graceful_stop_unavailable; no destructive task or child-process termination attempted"
@@ -703,7 +703,7 @@ mod tests {
     fn headless_native_and_vault_diagnostics_are_specific_and_sanitized() {
         for (error, expected) in [
             (
-                "host.service_windows_release_publisher_policy_unconfigured",
+                "host.service_windows_release_publisher_required",
                 "publisher",
             ),
             ("host.service_native_timeout", "outcome unknown"),

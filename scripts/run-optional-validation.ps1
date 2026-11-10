@@ -130,6 +130,23 @@ function Write-OptionalResult {
 Write-OptionalResult 'status=running'
 try {
 
+if ($env:FESTERM_RUN_ADR84_PUBLISHER_NATIVE -eq '1') {
+    if ($env:OS -ne 'Windows_NT' -or -not $env:FESTERM_ADR84_SIGNED_HOST_FIXTURE) {
+        throw 'ADR0084 read-only publisher validation requires Windows and FESTERM_ADR84_SIGNED_HOST_FIXTURE.'
+    }
+    Invoke-NativeCommand {
+        cargo test --locked -p festerm-windows-security --features host-service host_publisher::tests::windows_publisher_native_opt_in_approved_signed_host_and_unsigned_rejection -- --ignored --exact --nocapture
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Write-OptionalResult "`nsuite=windows-host-publisher status=pass native_task_runtime_qualification=false"
+    } else {
+        Write-OptionalResult "`nsuite=windows-host-publisher status=fail native_task_runtime_qualification=false"
+        $status = 'fail'
+    }
+} else {
+    Write-OptionalResult "`nsuite=windows-host-publisher status=skipped prerequisite=explicit-signed-fixture-and-opt-in"
+}
+
 if ($env:OS -eq 'Windows_NT') {
     if ($env:FESTERM_RUN_WINDOWS_SECURITY_PRIVILEGED -eq '1') {
         Get-Command cargo -CommandType Application -ErrorAction Stop | Out-Null
