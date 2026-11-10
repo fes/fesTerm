@@ -1,5 +1,32 @@
 # Milestone Progress Narrative
 
+## Keeping native HOST fixture failures observable without exposing their inputs
+
+The published mobile lifecycle head `85b01679` passes its required Ubuntu and
+Windows jobs, but macOS still fails the selected-creation worker's terminal
+event read with Offline: native aggregate16/1/0,177.13s. Both creation and
+frontend adoption had already passed. This is separate from the migration
+takeover failure; neither a lock-contention cause nor a flaky-test label is
+established.
+
+The test-only runtime fixture now reports only a fixed control/terminal role
+and a static failure classification when its server stream returns an error.
+It preserves the exact result, with no error Debug text, operation, endpoint,
+receipt, terminal data or credential. A deterministic unit checks the static
+classifications. Production policy, protocol, effects, assertions, timeouts
+and retry behavior are unchanged.
+
+Actual macOS Rust1.99.1 qualification at85 HEAD plus this final test file:
+classification unit1/0/0 and one controlled named native worker1/0/0,6.42s;
+affected strict Clippy, formatting and diff checks pass. Helpers and the bridge
+were freshly rebuilt in a private cloned cache; all eight recorded commands
+exit0. This single passing execution does not reproduce or fix the CI failure.
+Normal control-stream closure also reports Offline in that passing run, so
+that label alone is not causal evidence. Existing vendored warnings and an
+unsuccessful optional rust-objcopy debug-strip warning remain visible; no
+toolchain or OS repair was attempted. Fresh required CI and native product
+acceptance remain open.
+
 ## Ending a mobile HOST generation without ending its replacement
 
 The shared mobile client could create/adopt an actual HOST terminal, but lacked
