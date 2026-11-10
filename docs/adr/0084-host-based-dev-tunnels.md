@@ -582,6 +582,30 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+### Supported-toolchain client/core execution union
+
+The client normally integrates exact e49 and then fixed #693 base
+`1debea976d62c32344c0d79cbfa74026a152264d`, without native stopped-update c75.
+Fresh helpers and the unchanged source at `a653bcdf` compile with explicit
+official cargo/rustc 1.98.0, without MSRV bypass or global default changes.
+The library passes 132 tests (14 explicit native ignores), then all fourteen
+actual owned native SSH/PTY fixtures pass separately with zero ignores,
+including both inventory/collector/snapshot acknowledgment and actual frontend
+output/isolation oracles. Nine service tests and fourteen headless desktop
+flow/metadata tests pass on the supported compiler. The initial Homebrew
+compiler-dispatch MSRV failure is retained, not counted as qualification.
+Commands, compiler fingerprints and remaining gates are recorded in the current
+client/core entry in `milestone-progress.md`.
+Desktop check, six-package strict all-target Clippy, portable no-default
+host-routing check, fmt and range-aware traceability pass. The host slot is
+released with zero owned build/fixture processes and zero private fixture roots.
+
+These are automated source/owned-fixture results, not native-vault,
+development-wrapper GUI, installed-manager, VM, cloud or physical-mobile
+acceptance. Creation/ensure frontdoors, mobile installation and account-wide
+explicit Find hosts remain separate actual execution milestones. HOST statuses
+remain partial; legacy behavior and ADR 0085 are preserved.
+
 ### Historical constituent checkpoints
 
 The following results retain their original source/toolchain boundaries. The

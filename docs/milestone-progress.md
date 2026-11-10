@@ -22,7 +22,7 @@ required: Homebrew's independent compiler otherwise remains discoverable on
 PATH even when the cargo executable was selected through rustup.
 The global stable/default remains 1.97.1; no override, manifest/lock version or
 dependency downgrade was changed. Toolchain identity and installation logs are
-`target/adr84-clients-198-toolchain-identity.log` and
+`target/adr84-clients-198-verified-toolchain-identity.log` and
 `target/adr84-clients-rust198-install.log`.
 
 All commands below use the following private resource boundary, with no GUI,
@@ -44,6 +44,10 @@ rustup run 1.98.0 cargo test --locked -p festerm-tunnel-bridge --features host-r
 rustup run 1.98.0 cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored --test-threads=1
 rustup run 1.98.0 cargo test --locked -p festerm-tunnel-client --lib service::tests
 rustup run 1.98.0 cargo test --locked -p festerm --features experimental-dev-tunnels --bin festerm -- selected_host_ dev_tunnel_host_recipe_
+rustup run 1.98.0 cargo check --locked -p festerm --features experimental-dev-tunnels
+rustup run 1.98.0 cargo clippy --locked -p festerm -p festerm-tunnel-bridge -p festerm-tunnel-client -p festerm-sessiond -p festerm-host -p festerm-host-setup --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+rustup run 1.98.0 cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing
+rustup run 1.98.0 cargo fmt --all -- --check
 ```
 
 Initial dispatch retained cargo 1.98.0 but PATH-selected rustc 1.97.1, exposed by
@@ -53,9 +57,42 @@ are retained diagnostic evidence, not supported-toolchain qualification.
 The exact native proof includes the combined collector/frontend adoption/
 isolation test and original-issued lost-reply, creation, revocation, takeover
 and real heartbeat/transport-loss-grace cases. The corrected explicit compiler
-selection uses a separate fresh `-verified` target and logs; supported-toolchain
-qualification is pending at this source-only merge boundary.
-Logs use `target/adr84-clients-198-*.log`.
+selection uses a separate fresh `-verified` target and logs.
+
+On the fixed final source candidate `a653bcdf9212c64c2577318cfbd9ab9234a5f05b`,
+actual cargo and rustc **1.98.0** (including Cargo's recorded compiler
+fingerprint) now pass:
+
+- Fresh sessiond and deterministic PTY-child helper compilation.
+- **132 bridge library tests, 14 explicit native ignores**; eighteen selected-host
+  cases include six protected-file/memory-vault receipt regressions.
+- Separately selected actual owned native SSH/PTY routes: **14 passed,
+  zero ignored, 163.92 seconds**. Both collector/frontend adoption/isolation
+  oracles and the original-issued lost-reply, creation, revocation, takeover and
+  real heartbeat/transport-loss-grace cases execute.
+- **Nine** service-selector tests.
+- **Fourteen** supported-toolchain desktop tests: eight selected-host and six
+  offline metadata/command tests. This run uses no `--ignore-rust-version`.
+
+Desktop check **passes** (3m53s); strict all-target Clippy over the desktop,
+bridge, tunnel-client, sessiond, host and host-setup **passes** (1m50s); portable
+no-default `host-routing` check **passes** (1m01s); named-toolchain fmt and
+range-aware traceability **pass** (311 edges, zero broken references).
+JSON duplicate-key rejection and three-head test-reference inclusion are checked
+separately, rather than trusting a parser that silently accepts duplicate keys.
+Logs use `target/adr84-clients-198-verified-*.log`; the union audit records exact
+fixed-core production/authentication and lost-reply-control-test bytes plus zero
+removed assertions. The source/API dependencies remain fixed #693's protected
+native key reopen, independently proved Control/Terminal streams, typed control
+operations and snapshot/adoption/live-terminal APIs; no moving peer source or
+new native approval API is required for this existing-session slice.
+The host slot is **released**: the final CWD/process audit finds zero owned
+Cargo/rustc/Clippy/test/fixture processes and zero short private fixture roots
+(`target/adr84-clients-198-verified-release-audit.log`). The evidence-only final
+documentation update does not change Rust source from the compiled candidate.
+No push, PR or main merge was performed. Full-workspace/multi-OS primary CI,
+independent exact-head reviews and the native/manual acceptance windows below
+remain the parent's separate publication/acceptance gates.
 These are local automated fixtures, not signed/native-manager, development-wrapper
 GUI, VM, native-vault, cross-platform or physical-mobile acceptance.
 

@@ -3698,7 +3698,8 @@ need qualification. During active temporary attachment verify daemon heartbeat;
 unexpected closure must enter daemon-owned transport-loss grace. Physical-device
 60-second/suspension and native DT/CP/MOB checks remain deferred.
 
-The shared `HostSession` adapter now has passing actual framed
+At the earlier fixed client `3620f6de` checkpoint, the shared `HostSession`
+adapter had passing actual framed
 recovery/adoption/activation/input/output/correlated-detach and active app-lock
 transport-close tests, plus starting-state cancellation. Together with the
 original eight executor tests and successful multi-page inventory regression,
@@ -3712,10 +3713,21 @@ adoption, rejects stale origin/request and unavailable account before work,
 converts authoritative recovery sync and cancels account credential replacement.
 The later foreground recipe flow supplies protected receipt/index production and
 an authorized inventory chooser; mobile installation remains open.
-Rust 1.97.1 fails the desktop's pre-existing Rust 1.98 PowerShell dependency
+That checkpoint's Rust 1.97.1 failed the desktop's existing Rust 1.98 PowerShell dependency
 requirement; check, strict bin/test clippy and both new desktop rejection tests
 pass with `--ignore-rust-version` diagnostically only. Native-vault,
 development-wrapper GUI, VM and physical-mobile evidence remain unrun here.
+
+The later exact client/core union (normal e49 then #693 `1debea97`, source
+`a653bcdf`) uses explicit official cargo/rustc 1.98.0 and freshly compiled
+same-toolchain sessiond/PTY helpers. It passes 132 bridge library cases with
+fourteen explicit native ignores, then all fourteen owned native SSH/PTY cases
+separately with zero ignores (163.92 seconds), including the collector/snapshot
+acknowledgment plus actual frontend output/isolation union. Nine service tests
+and fourteen headless desktop tests pass without MSRV bypass. Compiler selection,
+commands and final gates are recorded in the current `milestone-progress.md`
+entry. No manual/native-vault/GUI/VM/device gate changes to passed; the following
+owned-window procedure remains unperformed.
 
 For native `HOST-01`/`HOST-02`, use only an owned qualified host/lab and the
 development wrapper, not installed or production services:

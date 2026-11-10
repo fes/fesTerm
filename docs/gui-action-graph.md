@@ -1589,8 +1589,11 @@ retain their current coverage until explicit migration. The single
 The portable selected-host `host_client` executor adds actual native-vault/
 relay/role-proof composition, bounded inventory and frontend-confirmed
 existing-generation adoption. Its executed `selected_host_*` tests are not
-desktop/mobile GUI coverage; the updated owned SSH/two-daemon fixture requires
-separate qualification of the exact client/core union. The protected remote-client approval receipt
+desktop/mobile GUI coverage. The exact client/core union now passes all fourteen
+owned native SSH/PTY fixtures on actual rustc 1.98.0, including the combined
+collector, scope/snapshot acknowledgment and actual stored-frontend output/
+isolation oracle. This is separate automated qualification, not native GUI or
+vault acceptance. The protected remote-client approval receipt
 loader now derives only from an explicitly reviewed host-local full binding and
 independently confirmed pin, with a private local pending-reference journal and
 separate native-key preparation. Host-local owner approval is still a distinct
