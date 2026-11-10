@@ -298,6 +298,9 @@ pub fn replace_private(directory: &File, name: &Path, bytes: &[u8]) -> io::Resul
 pub struct PreparedCheckpoint {
     directory: File,
     name: std::path::PathBuf,
+    // Unix publishes/unlinks relative to the directory; Windows uses `file`'s
+    // exact retained handle for both operations, never the staging pathname.
+    #[cfg(unix)]
     staging: std::path::PathBuf,
     file: File,
     published: bool,
@@ -318,6 +321,7 @@ impl PreparedCheckpoint {
         let mut prepared = Self {
             directory: owned_directory,
             name: name.into(),
+            #[cfg(unix)]
             staging,
             file,
             published: false,
@@ -419,6 +423,35 @@ pub fn private_test_directory() -> PrivateTestDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepared_checkpoint_abort_and_failed_publication_clean_only_owned_staging() {
+        let fixture = private_test_directory();
+        let directory = private_directory(fixture.path(), false).unwrap();
+        let name = Path::new("state.json");
+        write_new_private(&directory, name, b"original").unwrap();
+        let prepared = PreparedCheckpoint::prepare(&directory, name, b"aborted").unwrap();
+        assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 2);
+        drop(prepared);
+        assert_eq!(&**read_private(&directory, name, 8).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 1);
+
+        let refused = Path::new("refused");
+        let mut prepared =
+            PreparedCheckpoint::prepare(&directory, refused, b"unpublished").unwrap();
+        std::fs::create_dir(fixture.path().join(refused)).unwrap();
+        assert!(prepared.publish().is_err());
+        drop(prepared);
+        assert!(fixture.path().join(refused).is_dir());
+        assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 2);
+
+        let mut prepared = PreparedCheckpoint::prepare(&directory, name, b"published").unwrap();
+        prepared.publish().unwrap();
+        assert!(prepared.publish().is_err());
+        prepared.sync().unwrap();
+        assert_eq!(&**read_private(&directory, name, 9).unwrap(), b"published");
+        assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 2);
+    }
 
     #[test]
     fn private_state_creation_and_replacement_are_bounded_and_exclusive() {

@@ -506,6 +506,19 @@ missing/foreign journals and wrong generations without displacing an attachment.
 `second_client_replaces_first_client_and_first_receives_stolen_notice` now
 observes attachment only after actual recovery adoption/writer activation;
 abandoned candidates emit no successful attachment event.
+Windows CI subsequently exposed an unused retained staging pathname: checkpoint
+publication and abort cleanup there use the exact open handle, whereas Unix
+requires the directory-relative name. The representation now reflects that
+distinction; abort/failed-publication coverage preserves existing private targets
+and refuses directory replacement without leaking owned staging.
+The native bridge fixture's 96 serialized input/echo round trips can exceed the
+unchanged 15-second adoption deadline with Windows' 250-ms client read polling.
+It now batches the same lines and observes every old-writer echo before adoption,
+then verifies every ordered delta afterward. Actual Windows baseline/corrected
+trace remains a qualification gate, not inferred from macOS results.
+Persistent host shells additionally have a real ordinary local unticketed attach/
+adoption/detach regression; Unix lease coverage preserves temporary unticketed
+refusal and advances the persistent writer epoch only at commit.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,

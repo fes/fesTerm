@@ -738,7 +738,15 @@ HOST reservations require their exact native launch journal, preserving
 ADR 0085's refusal to adopt an unrelated live generation from metadata alone.
 Read-only private native checkpoint snapshots do not hold the mutation lock
 during file/ACL I/O; serialized mutation CAS retains its validated directory
-handle across publication. Legacy nonprivate reads remain locked.
+handle across publication. Private global-registry mutations compute their
+change once under the lock, prepare and sync a private checkpoint after releasing
+it, then reacquire it to revalidate before atomic publication. Disjoint concurrent
+changes rebase without replaying effects, with at most four preparation attempts;
+a conflicting same-name lineage refuses rather than replacing another generation.
+The directory stays retained through preparation/publication; final directory sync
+runs outside the lock. Abandoned checkpoints remove only their owned staging file:
+Unix retains its directory-relative name, Windows its exact open file handle.
+Legacy nonprivate reads and mutations remain locked.
 Read-only reconciliation cannot create a fresh reservation. A durable issuance
 namespace bounds the entire 128-entry operation ledger without receipt archives;
 old captured scopes become Stale, never fresh creation. The 64 logical records

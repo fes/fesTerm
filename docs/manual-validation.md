@@ -3419,6 +3419,20 @@ native integration runs select a fresh owned root with
 `FESTERM_SESSIOND_TEST_RUNTIME_ROOT`, never production runtime state.
 The journal regression has a retained RED proof with unowned adoption restored.
 macOS automated evidence does not substitute for Linux/Windows native gates.
+Windows CI at `8ebbaf29` retained two real failures: primary run `42788442336`
+job `129735461598` rejected an unused checkpoint staging pathname under strict
+Clippy; native run `42788442164` job `129735457213` ran two bridge tests, with
+`native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated` failing
+at the adoption write with Win32 232/BrokenPipe after approximately 27 seconds.
+The stale-generation/missing-takeover test passed. Windows checkpoint publication
+and abort cleanup remain exact-handle based; only Unix retains the staging name.
+The bridge fixture now batches 96 pending lines, checks every old-writer echo
+before adoption and every delta after it, without increasing the 15-second
+production adoption deadline. Windows baseline/corrected trace and exact-head
+strict Clippy/native results remain required; macOS success is not Windows proof.
+The new persistent-host ordinary local unticketed attach fixture is Unix-only;
+Unix lease tests separately prove persistent admission and temporary refusal.
+These are automated corrections, not new completed manual or usability gates.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot

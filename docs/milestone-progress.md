@@ -1,5 +1,47 @@
 # Milestone Progress Narrative
 
+## Correcting the Windows session-control CI regressions
+
+The `8ebbaf29` Windows jobs exposed real failures after the macOS qualification:
+strict Clippy rejected `PreparedCheckpoint.staging`, and the binary bridge test
+failed its adoption write with Win32 232 after approximately 27 seconds. The
+checkpoint now retains a staging pathname only on Unix; Windows publication and
+abort cleanup still use its exact retained handle. A regression checks aborted
+and refused publication cleanup without deleting the original or a refused target.
+
+The bridge fixture performed 96 serialized old-writer input/echo round trips
+inside the unchanged 15-second adoption window; Windows client reads can each
+wait 250 ms. It now submits those lines together, observes every old-writer echo
+before adopting, then checks every ordered post-snapshot delta. No product
+deadline, admission, writer-epoch or takeover check changes. Native PTY framing
+is not a deterministic chunk-count test; existing unit tests retain that boundary.
+A real persistent-host local unticketed attachment test complements Unix
+persistent admission/temporary refusal coverage.
+
+The targeted macOS bridge run executes three tests (including both tests selected
+with `--ignored` on Windows), not zero: `native_bridge_drains_exit_and_takeover_final_frames_before_success`,
+`native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated` and
+`native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_session`.
+Original Windows failures remain recorded under the manual qualification entry;
+fresh exact-head Windows native/Clippy proof and independent review remain open.
+With one warm-target build job, zero debug info and incremental compilation off,
+the correction passed these macOS selectors:
+
+```sh
+cargo test -p festerm-sessiond --test native_daemon native_bridge_ -- --nocapture --test-threads=1
+cargo test -p festerm-sessiond --lib private_storage::tests -- --test-threads=1
+cargo test -p festerm-sessiond --lib unticketed_local_attachment_requires_persistent_lifetime -- --test-threads=1
+cargo test -p festerm-sessiond --test host_control persistent_host_shell_accepts_ordinary_local_unticketed_attachment -- --exact --test-threads=1
+cargo test -p festerm-sessiond --test host_control temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease -- --exact --test-threads=1
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+Counts are respectively 3, 3, 1, 1 and 1 passed, zero ignored for these selectors;
+the original 289-test qualification below remains historical evidence, not a
+fresh full-suite claim. Format, traceability (311 edges) and diff checks pass.
+The first attempted unit selector used `--exact` without its module prefix and
+ran zero tests; the corrected selector above executed the named regression.
+
 ## Qualifying the corrected local session-control integration
 
 The November 10 ADR 0084 correction normally integrates main `8ac8070d`,

@@ -1609,3 +1609,10 @@ HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after
 recovery adoption/writer activation; abandoned candidates are not Attached.
 These remain local automated evidence, not endpoint or native-platform acceptance.
+The persistent-host local unticketed attach fixture observes recovery adoption
+before Local activation and preserves the exact shell after detach; a Unix
+lease regression still refuses temporary unticketed admission/commit.
+The native binary bridge fixture batches its 96 pending input lines and verifies
+all echoes before adoption and all ordered deltas afterward, rather than spending
+the unchanged adoption deadline on serialized ConPTY round trips. Deterministic
+unit coverage, not native PTY chunking, proves the more-than-64-chunk boundary.
