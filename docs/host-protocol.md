@@ -302,8 +302,14 @@ capabilities; that is the protected permission template.
 Inside the protected backend composition/admission reservation,
 `OwnerVerifier::with_issuance_epoch(actual)` creates an owned projection from
 the current protected runtime issuer, retaining enrolled keys, owner/session
-permission epochs and the private issuer high-water fence. It must reject a
-lower issuer even after a permission replacement stopped publishing an epoch.
+permission epochs and any issuer high-water mark already held by its receiver.
+It rejects an issuer below that mark, including after a replacement stopped
+publishing an epoch. Projection is immutable: it does not update the original
+template. Each fresh enrollment/current-policy reload starts without an issuer
+watermark, so this check applies only within one retained projection chain.
+Rollback protection across reservations and process restarts belongs to the
+protected durable backend. Never cache old enrollment as current authority just
+to retain the in-memory check.
 Only the issuer field changes; this is not a permission transition or owner
 revocation. Never supply a request header, guessed/default epoch or cached
 advertisement. A `None` hotpath state uses the original verifier and must not

@@ -9,8 +9,10 @@ an explicitly creation-enabled local owner invalid before runtime composition.
 Permission-shape validation is now separate from strict wire validation;
 enrollment never persists the runtime issuer, and an unscoped verifier masks
 creation advertisements. The server projects only the actual protected
-reservation epoch without changing owner keys or permission epochs, retaining
-the issuer rollback fence. New scopes do not refresh uncertain client requests.
+reservation epoch without changing owner keys or permission epochs. Its issuer
+watermark survives within one projection chain, not fresh enrollment reloads;
+the protected durable backend guards rollback across reservations.
+New scopes do not refresh uncertain client requests.
 This closes a source composition prerequisite, not endpoint/native acceptance.
 
 Qualification of frozen source `91cf2880`: protocol contracts 13/13, focused

@@ -739,8 +739,10 @@ without blocking key revocation or permission removal.
 Persistent consent contains no runtime issuer. Its distinct protected-permission
 verifier masks creation until an immutable projection receives the current issuer
 inside protected backend admission; public runtime policy validation remains
-strict, and projections retain the issuer rollback watermark without changing
-permission epochs or enrolled keys.
+strict. A projection retains its receiver's in-memory issuer watermark without
+changing permission epochs or enrolled keys. Fresh enrollment reloads have no
+such watermark; rollback protection across reservations belongs to the protected
+durable backend, not cached owner policy.
 Vendored russh now derives immutable bindings from its signed original session
 identifier and role-ordered actual channel IDs, excluding no-KEX outer relays.
 Client signing requires its privately captured actual pin and matching current
