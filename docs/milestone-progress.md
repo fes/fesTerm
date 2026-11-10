@@ -63,6 +63,94 @@ shell sharing/unsharing and its native approval/setup gates remain the separate
 runtime-owned HOST-03–05 slice. No installed app, device/VM, production account,
 native vault, OS service/settings or signing operation is exercised here.
 
+### Mobile fixed-source qualification and native blocker
+
+Compiled source is `a13a1bcaccec557a186db02ebd002ae85df460da`, a normal child
+of frozen #700 `1f28db0a58c4c73fd44e92a7703eb896fd7f5e85`. The following
+documentation-only receipt does not change those Rust/manifest bytes. No later
+core/native-update source has been merged. Existing mobile CI now also selects
+`host-clients` tests, strict lint and device-target check; CI itself is unrun.
+
+All commands below use the absolute Cargo/Rust compiler in
+`/Users/fes/src/fesTerm-adr84-clients-nov10/target/adr84-rustup/toolchains/1.98.0-aarch64-apple-darwin/bin`,
+with private `RUSTUP_HOME` ending `target/adr84-rustup`,
+`RUSTUP_TOOLCHAIN=1.98.0`, jobs1, dev/test debug0 and incremental0.
+`target/mobile-final-toolchain.log` records `rustc -vV`:
+`1.98.0`, commit `88d9e12ae178fab0fb5cc050a94da85685d449ea`, LLVM22.1.8;
+Cargo `1.98.0`, commit `797e8a9bca276c1c9f9f738d2a20f484fa4eea9d`.
+The global toolchain list remains only stable/default; no bare `+flag` proxy,
+manifest version change, MSRV bypass or dependency downgrade is used.
+The private target is `target/adr84-mobile-rust198`; scratch is `target/work`.
+
+The exact fixed-head runner and commands are retained in
+`target/mobile-fixed-qualify.sh`, with source/tool paths at the top of each
+`target/mobile-fixed-*.log`:
+
+| Actual command (`cargo`, always `--locked --offline`) | Result |
+| --- | --- |
+| `test -p festerm-mobile --features host-clients --lib` | **213 pass, 4 existing ignored**, including all nine new mobile tests |
+| `test -p festerm-mobile --lib` | **134 pass, 1 existing ignored**; offline default preserved |
+| `test -p festerm-tunnel-bridge --features host-routing --lib` | **146 pass, 16 explicitly ignored**; not actual-native acceptance |
+| `test -p festerm-tunnel-bridge --no-default-features --features host-routing --lib host_client::` | **29 pass, 0 ignored** |
+| `test -p festerm-tunnel-client --lib` | **35 pass, 0 ignored**, including original-issued retry and service selectors |
+| `test -p festerm --features experimental-dev-tunnels --bin festerm host_` | **52 pass, 0 ignored** |
+| Four-package `clippy --all-targets -- -D warnings`, mobile `host-clients` and legacy `live-ssh` separately, plus portable bridge strict lint | **All exit0**; exact feature selections in the runner/logs |
+| `build -p festerm-sessiond --bin festerm-sessiond` | **Pass**, same private1.98 native helper |
+| Mobile `check --lib` and `build --bin festerm-mobile`, `--features host-clients --target aarch64-apple-ios-sim` | **Pass**, actual linked arm64 Simulator executable; no launch/bundle/signing/device/vault claim |
+
+The Simulator commands use `SDKROOT` from `xcrun --sdk iphonesimulator
+--show-sdk-path` (Xcode iPhoneSimulator27.2) and
+`IPHONEOS_DEPLOYMENT_TARGET=15.0`. Initial checks precisely found an uncached
+locked `accesskit_consumer0.37.0` and then missing target `core`; only the
+locked missing packages and official private1.98 Simulator std were restored.
+The earlier `RecipeId` formatting compile RED was corrected before this fixed
+source. Existing vendor warnings and the private toolchain's `rust-objcopy`
+missing `@rpath/libLLVM.dylib` debug-stripping warning remain disclosed;
+successful strict commands are not a warning-free toolchain claim.
+
+**Actual-native qualification is BLOCKED, not green.** Every one of the
+sixteen ignored tests was selected exactly once in its own process with
+`cargo test --locked --offline -p festerm-tunnel-bridge --features host-routing
+--lib NAME -- --exact --ignored --test-threads=1 --nocapture`.
+`target/mobile-native-evidence/summary.json` records **2 pass / 14 fail**;
+the first RED was preserved, not automatically retried. The two passing cases
+are creation denial and inventory-only unsupported creation. The fourteen
+fail before PTY/adoption with `Refused(Unknown)` or `Refused(Stale)`, including
+the new mobile adapter, creation frontend, collector and two-daemon frontend
+oracles. No old assertion/body was removed or weakened. Consequently neither
+native mobile SSH/PTY success nor aggregate green is claimed on this head.
+
+An independent direct AF_UNIX diagnostic under this owned checkout proves the
+specific prerequisite: the existing `ft-<16hex>` fixture plus maximum
+PID/generation socket name is **111 bytes and rejected**; the exclusively
+created `ft-<8hex>` form is **103 bytes and binds**. Raw evidence is
+`target/mobile-native-socket-boundary.log`. The session owner independently
+confirmed that immutable correction
+`61f67fc558d381f7479356d9c2a642c93f2f89d1` in
+`3d91702715945383866b9759a30084d8f43a56f7` addresses this exact path boundary.
+That is not proof of every Unknown/Stale cause or of a successful combined
+client route. **Parent authorization of a normal exact fixed-head merge is
+still required**; no moving core or unapproved prerequisite was consumed.
+The next execution milestone is that merge followed by the same preserved
+sixteen actual-native routes and combined private1.98 mobile/shared/iOS checks.
+
+Source validation also passed fmt, base#700 trace (**311 edges, 0 broken**),
+packaging, font/emoji/icons, Python scripts (**392 run, 68 skipped**) and
+whitespace checks. Lock auditing proves all package versions/sources/checksums
+unchanged: only three mobile dependency edges were added. The original15s auth
+Busy and original-issued lost-reply production/oracle files are unchanged;
+all pre-existing actual-native fixture assertions are preserved. Earlier
+compiler/test/lint/trace REDs, the accidental relay-only75-test run and the
+wrong desktop `--lib` selector remain logs, not substituted positive evidence.
+Physical iOS/Android, native vault, lock/suspend hardware, cloud, native GUI,
+Android NDK, device-target build, three-OS CI/full-workspace validation and the
+sharing/end/restart capsule above remain open. No source was pushed.
+
+The final owned CWD/process audit found **zero Cargo/rustc/sessiond/PTY helper
+processes**. The private host Cargo slot is **released pending parent
+authorization/regrant**; the immutable compiled source and all RED evidence
+remain available in this worktree.
+
 ## Explicit desktop Create and atomic resume-or-create
 
 The creation lane normally merges exact corrected #693
