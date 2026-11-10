@@ -318,6 +318,17 @@ updater trust machinery where suitable rather than introducing competing keys.
 The first downloaded verifier/package needs a documented authenticity path too;
 an unauthenticated bootstrap cannot establish its own trust.
 
+The implemented independent [existing-helper authenticity slice](../host-release-artifacts.md)
+uses strict per-archive schema-1 metadata signed by pinned cargo-packager with
+the embedded existing updater key. The GUI-free shared verifier binds all
+identity fields and returns bounded immutable regular-file entries, not an
+archive path to reopen. No auto key discovery, unsigned fallback or downgrade
+is permitted; source-reviewed updater-key rotation and installation-owner
+version/rollback policy remain explicit. Headless host CLI inclusion, consuming
+installer integration, private atomic staging and service switching are not
+claimed by this foundation. Legacy scripts and old-tag recovery retain their
+old contracts, without a new Linux authentication claim (#681).
+
 Desktop updates stage compatible helpers in immutable versioned private paths and
 reconcile enabled desktop-owned host services. Headless update uses the same
 mechanism through its CLI. Do not execute long-lived services from files replaced
@@ -443,11 +454,27 @@ changes are part of this documentation PR.
   recipes; no implicit launcher network; shared setup and independent daemon
   lifetime. Legacy exact-generation behavior, single-writer ownership, bounded
   work, protected consent and secret boundaries remain.
-- **GUI/action edges affected:** Proposed `HOST-01` through `HOST-06` below are
-  deferred design contracts. Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
+- **GUI/action edges affected:** Proposed `HOST-01` through `HOST-05` remain
+  deferred design contracts; `HOST-06` has partial authenticity-foundation
+  coverage only. Existing `TUNNEL-01`–`TUNNEL-16` and profile edges
   retain their current implementation coverage until each migration slice lands.
-- **Automated tests required:** Planned tests and acceptance matrix below; none
-  are claimed implemented by this ADR.
+- **Automated tests implemented (authenticity foundation only):**
+  `authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes`,
+  `rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing`,
+  `rejects_wrong_version_arch_platform_filename_length_and_hash`,
+  `rejects_unknown_duplicate_and_out_of_bounds_manifest_fields`,
+  `rejects_signed_unsafe_tar_entries_duplicates_missing_files_and_wrong_version`,
+  `rejects_signed_zip_paths_symlinks_modes_and_duplicates` and
+  `rejects_oversized_headers_without_allocating_entry_and_trailing_gzip`.
+  `python_produced_six_bundles_and_manifests_authenticate_in_rust` checks the
+  actual Python producer output on all six targets. The dedicated normal-CI
+  signer job runs the otherwise-ignored
+  `pinned_cargo_packager_signatures_authenticate_python_produced_manifest`
+  using cargo-packager 0.11.8, a generated throwaway key and the private test
+  verifier seam; it proves the real signing mode without release secrets.
+  Python `test_host_manifest.py`, `test_tunnel_bundle.py` and
+  `test_recover_desktop_release.py` cover producer compatibility and release
+  wiring/recovery. The remaining matrix is planned, not implemented evidence.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and
   MOB-03/MOB-06 during implementation with host setup, principal isolation,
   reboot, update and physical-device disconnect evidence. The new trace entries
@@ -470,7 +497,7 @@ changes are part of this documentation PR.
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
 | Profiles | `save_recipe_is_local_only`; first create, later resume, post-reboot replacement toast, duplicate identity policy, second-client shortcut |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
-| Integrity | `reject_unsigned_manifest_and_wrong_target`; wrong key/version/arch, modified bytes, archive traversal, CLI pin change, interrupted publication |
+| Integrity | Implemented helper foundation: the Rust tests above and Python producer/recovery fixtures, including cross-language producer output and the real pinned signer's throwaway-key mode check in normal CI. Deferred: Microsoft CLI pin/acquisition integration, private atomic publication failures, trusted first-verifier delivery and native signed install/update evidence |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 
