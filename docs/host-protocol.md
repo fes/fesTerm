@@ -225,6 +225,12 @@ at physical delivery and retire revoked connections/attachments.
   beside writer replacement, after adoption. An obsolete disconnect cannot end
   the new owner. Legacy admission cannot bypass a temporary lease. Existing
   persistent/legacy daemon attachment and takeover remain unchanged.
+  Recovery waiting is nonblocking for the daemon loop: the current writer keeps
+  handling input/output while the one candidate adopts. Post-snapshot terminal
+  and control output is staged in a bounded queue (at most 512 KiB); saturation
+  cancels the candidate without stealing the current writer. After ADOPTED, the
+  candidate worker still waits for actual daemon ownership commit before
+  accepting terminal commands. No native wire or recovery deadline changes.
 - `with_attachment_authorized(owner, target, binding, admit, action)` holds
   journal, current policy and daemon lease guards across one nonblocking local
   relay action; it performs no reconciliation, spawn or native IPC. Temporary

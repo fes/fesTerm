@@ -5522,7 +5522,11 @@
         "guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation",
         "registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers",
         "registry_checkpoint_rebase_refuses_same_name_replacement",
-        "host_owner_fence_rejects_changed_intent_for_the_same_operation"
+        "host_owner_fence_rejects_changed_intent_for_the_same_operation",
+        "host_owner_creation_epoch_refuses_future_without_refreshing_older_requests",
+        "host_owner_mutating_policy_requires_advertised_issuance_epoch",
+        "native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated",
+        "pending_candidate_delta_overflow_preserves_current_writer"
       ],
       "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
       "status": "partial",
