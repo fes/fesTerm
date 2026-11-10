@@ -3653,6 +3653,13 @@ client operations must retain their captured issuer.
 | --- | --- | --- | --- |
 | HOSTAUTH-01 | On macOS/Windows/Linux and physical mobile clients, explicitly confirm exact provisioned host/account/owner public-key fingerprint; generate/reopen/delete per-host owner keys in the native vault; lock/unlock/unavailable store; revoke/rotate while proof and operations are pending; deny creation without blocking removal; interrupt reference reservation/native update/disk publication and reconcile only exact anchored forward state. On a headless installation explicitly select protected-file credentials, verify origin/path/no-follow/permission checks and the documented weaker whole-store/home rollback guarantee; never fall back automatically. On actual pinned SSH channels reject relay/reflection, cross-channel/connection reuse, swapped streams and stale proofs; retain the exact authenticated stream/guard through shutdown. Verify no key in exports/logs/argv/env. | Automated constrained-vault, 64-key-history, forward recovery, effective-permission, private-file and real encrypted SSH exporter/proof fixtures; native and first-connect usability deferred | #681 stages 1/3: independently review signed SSH exporter and role-bound adapter; integrate bounded endpoint framing/routing and foreground enrollment or advanced host-local public-key consent. A provisioned journal is not Ready; fixture success is not native vault/private-path/platform acceptance. |
 
+HOSTAUTH-01 additionally has actual signed-SSH automated contention coverage:
+both handshake policy phases survive first-N Busy and a held protected guard,
+revocation during the wait still denies, persistent Busy has a framed bounded
+refusal under the original 15-second deadline, and cancellation releases all
+client charges. This does not qualify native credential stores or foreground
+approval usability.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

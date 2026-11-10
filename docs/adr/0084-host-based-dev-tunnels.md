@@ -568,6 +568,13 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The authentication contention follow-up adds actual signed-SSH regressions for
+first-N Busy and held protected guards at both policy phases, fresh revocation
+during proof, one original authentication deadline, framed persistent Busy and
+cancelled-work client-charge recovery. These preserve original SSH/channel/role
+binding and add no cached authority or client proof retry; native-vault,
+installed endpoint and product acceptance remain independently gated.
+
 The actual-runtime/session union normally integrates qualified session head
 `8ebbaf29` at `ae1ef27a`, preserving ADR 0085. Fresh macOS owned-helper evidence
 passes ten native bridge routes, including two separately authenticated SSH

@@ -27,6 +27,8 @@ use tokio::{io::AsyncReadExt, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
 const AUTH_DEADLINE: Duration = Duration::from_secs(AUTH_DEADLINE_SECONDS as u64);
+#[cfg(feature = "relay")]
+const AUTH_REFUSAL_RESERVE: Duration = Duration::from_millis(100);
 
 /// Each role proves its own actual signed original SSH session/channel.
 /// A control proof never authorizes a sibling terminal channel.
@@ -40,10 +42,17 @@ pub enum StreamRole {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "message", rename_all = "snake_case", deny_unknown_fields)]
 enum Authentication {
-    Challenge { challenge: ChannelOwnerChallenge },
-    Proof { proof: ChannelOwnerProof },
+    Challenge {
+        challenge: ChannelOwnerChallenge,
+    },
+    Proof {
+        proof: ChannelOwnerProof,
+    },
     Accepted {},
     Denied {},
+    Refused {
+        reason: festerm_host_protocol::Refusal,
+    },
 }
 
 /// Native callers must supply already foreground-approved owner metadata and
@@ -96,8 +105,10 @@ async fn authenticate_client_using(
     let permit = Arc::new(permit);
     let work = async {
         let frame = read_frame(&mut stream, permit.budgets()).await?;
-        let Authentication::Challenge { challenge } = frame.decode()? else {
-            return Err(ContractError::Denied.into());
+        let challenge = match frame.decode()? {
+            Authentication::Challenge { challenge } => challenge,
+            Authentication::Refused { reason } => return Err(Error::Refused(reason)),
+            _ => return Err(ContractError::Denied.into()),
         };
         drop(frame);
         let charge = permit.clone();
@@ -115,8 +126,10 @@ async fn authenticate_client_using(
         )
         .await?;
         let frame = read_frame(&mut stream, permit.budgets()).await?;
-        if !matches!(frame.decode()?, Authentication::Accepted {}) {
-            return Err(ContractError::Denied.into());
+        match frame.decode()? {
+            Authentication::Accepted {} => {}
+            Authentication::Refused { reason } => return Err(Error::Refused(reason)),
+            _ => return Err(ContractError::Denied.into()),
         }
         drop(frame);
         stream
@@ -143,6 +156,41 @@ impl Validate for Authentication {
             Self::Challenge { challenge } => challenge.validate(),
             Self::Proof { proof } => proof.validate(),
             Self::Accepted {} | Self::Denied {} => Ok(()),
+            Self::Refused {
+                reason: festerm_host_protocol::Refusal::Busy,
+            } => Ok(()),
+            Self::Refused { .. } => Err(ContractError::Malformed),
+        }
+    }
+}
+
+#[cfg(feature = "relay")]
+fn with_authentication_policy<T, R>(
+    source: &impl ProtectedPolicySource,
+    state: T,
+    deadline: tokio::time::Instant,
+    cancel: &CancellationToken,
+    work: impl FnOnce(T, &crate::owner_auth::OwnerVerifier) -> R,
+) -> Result<R, Box<(T, Error)>> {
+    loop {
+        if cancel.is_cancelled() {
+            return Err(Box::new((state, Error::Cancelled)));
+        }
+        match source.current_policy() {
+            Ok(current) => return Ok(work(state, current.verifier())),
+            Err(ContractError::Busy) => {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining <= AUTH_REFUSAL_RESERVE {
+                    return Err(Box::new((
+                        state,
+                        Error::Refused(festerm_host_protocol::Refusal::Busy),
+                    )));
+                }
+                // Leave wire-publication time inside the original authentication
+                // deadline. No policy lease or verifier survives a Busy wait.
+                std::thread::sleep(Duration::from_millis(10).min(remaining - AUTH_REFUSAL_RESERVE));
+            }
+            Err(error) => return Err(Box::new((state, error.into()))),
         }
     }
 }
@@ -235,10 +283,14 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
         // Blocking protected-policy work owns a permit even if its async waiter
         // times out. A cancelled client cannot accumulate uncharged vault work.
         let permit = Arc::new(permit);
+        let deadline = tokio::time::Instant::now() + AUTH_DEADLINE;
         let authenticated = tokio::select! {
             biased;
             _ = shutdown.cancelled() => return Err(Error::Cancelled),
-            result = tokio::time::timeout(AUTH_DEADLINE, self.authenticate(stream, permit.clone())) =>
+            result = tokio::time::timeout_at(
+                deadline,
+                self.authenticate(stream, permit.clone(), deadline, shutdown.clone()),
+            ) =>
                 result.map_err(|_| Error::Deadline)??,
         };
         let (mut stream, owner, guard) = authenticated.into_parts();
@@ -284,17 +336,35 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
         &self,
         stream: HostStream,
         permit: Arc<ConnectionPermit>,
+        deadline: tokio::time::Instant,
+        cancel: CancellationToken,
     ) -> Result<OwnerAuthenticatedStream, Error> {
         let source = self.policy.clone();
         let charge = permit.clone();
-        let (mut stream, pending) = tokio::task::spawn_blocking(move || {
+        let policy_cancel = cancel.clone();
+        let challenge = tokio::task::spawn_blocking(move || {
             let _charge = charge;
-            let current = source.current_policy()?;
-            let pending = stream.challenge_owner(current.verifier())?;
-            Ok::<_, ContractError>((stream, pending))
+            with_authentication_policy(
+                source.as_ref(),
+                stream,
+                deadline,
+                &policy_cancel,
+                |stream, verifier| {
+                    stream
+                        .challenge_owner(verifier)
+                        .map(|pending| (stream, pending))
+                },
+            )
         })
         .await
-        .map_err(|_| Error::Closed)??;
+        .map_err(|_| Error::Closed)?;
+        let (mut stream, pending) = match challenge {
+            Ok(result) => result?,
+            Err(failure) => {
+                let (stream, error) = *failure;
+                return Self::refuse_authentication(stream, &permit, deadline, error).await;
+            }
+        };
         write_frame(
             &mut stream,
             permit.budgets(),
@@ -312,11 +382,25 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
         let charge = permit.clone();
         let verified = tokio::task::spawn_blocking(move || {
             let _charge = charge;
-            let current = source.current_policy()?;
-            Ok::<_, ContractError>(stream.authenticate_owner(pending, &proof, current.verifier()))
+            with_authentication_policy(
+                source.as_ref(),
+                (stream, pending, proof),
+                deadline,
+                &cancel,
+                |(stream, pending, proof), verifier| {
+                    stream.authenticate_owner(pending, &proof, verifier)
+                },
+            )
         })
         .await
-        .map_err(|_| Error::Closed)??;
+        .map_err(|_| Error::Closed)?;
+        let verified = match verified {
+            Ok(result) => result,
+            Err(failure) => {
+                let ((stream, _, _), error) = *failure;
+                return Self::refuse_authentication(stream, &permit, deadline, error).await;
+            }
+        };
         match verified {
             Ok(mut authenticated) => {
                 // Success is sent before either dispatcher reads its first frame.
@@ -335,5 +419,28 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
                 Err(ContractError::Denied.into())
             }
         }
+    }
+
+    async fn refuse_authentication(
+        mut stream: HostStream,
+        permit: &ConnectionPermit,
+        deadline: tokio::time::Instant,
+        error: Error,
+    ) -> Result<OwnerAuthenticatedStream, Error> {
+        if !matches!(error, Error::Cancelled) {
+            let refusal = if matches!(error, Error::Refused(festerm_host_protocol::Refusal::Busy)) {
+                Authentication::Refused {
+                    reason: festerm_host_protocol::Refusal::Busy,
+                }
+            } else {
+                Authentication::Denied {}
+            };
+            let _ = tokio::time::timeout_at(
+                deadline,
+                write_frame(&mut stream, permit.budgets(), &refusal),
+            )
+            .await;
+        }
+        Err(error)
     }
 }

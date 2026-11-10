@@ -9569,3 +9569,51 @@ This is bounded combined-head publication evidence, not a transfer of the
 native checkpoint's 132-test result or installed/native-vault/cloud/product
 acceptance. Independent exact-head reviews, required cross-platform CI and
 the previously named native/client prerequisites remain gates.
+
+### ADR 0084 handshake policy-contention correction
+
+Independent review of the fixed native/runtime composition found that each
+authentication phase tried protected policy only once. Ordinary competing
+policy leases therefore dropped the actual SSH stream without a Busy frame.
+The host now retries only Busy against one captured 15-second deadline shared
+by challenge and proof verification. Every attempt reacquires current policy;
+no verifier/lease survives the wait. The original signed SSH session/channel
+and pending proof are retained rather than replayed or replaced.
+
+A 100-ms portion of that same deadline is reserved for bounded publication of
+the authentication `refused` frame with the existing protocol Busy reason.
+Both portable-client read phases surface `Error::Refused(Refusal::Busy)`;
+there is no client reconnect, proof retry, invented absence or success.
+Reserved aggregate client permits remain charged through blocking work even
+after async cancellation. Denial/stale policy never retries.
+
+Four actual signed-SSH regressions exercise first-three Busy and a real held
+policy guard at both phases, successful exact-channel authentication, fresh
+revocation while proof waits, original shared-deadline exhaustion at either
+phase, persistent Busy under the real 15-second deadline, and cancellation
+followed by recovery of all four single-unit client permits. The first compile
+errors and the fixture's initially invalid multi-unit permit oracle remain
+separately retained, as does strict clippy's large-error-state failure.
+Refusal state is now boxed only on exit under the already reserved charge,
+not allocated per Busy attempt. No production limit or assertion is weakened.
+
+Fresh delta qualification: **114 bridge library passes/14 explicit ignores**
+in 15.16 seconds, **12 default host CLI passes** (four unit/eight integration),
+**13 protocol contract passes**, portable client-only check and strict affected
+five-package all-target clippy pass. The four new contention cases are included
+in those 114 passes; their separate focused run also passes all four.
+The actual two-daemon SSH isolation/adoption/detach case is additionally rerun
+against this fix and passes in 3.56 seconds:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib authenticated_runtime_policy_
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input -- --ignored
+```
+
+Final green evidence is `auth-busy-boxed-*.log` and
+`auth-busy-two-daemon.log`. Fmt, traceability (311 edges) and diff checks pass.
+The preceding coherent checkpoint `73f9b3d` separately owns the fourteen-case
+127.56-second native aggregate; that full aggregate is not relabelled as a
+fresh run of this delta. The separately owned native controller watch-loop and
+other review corrections are not consumed here. Independent review follow-up,
+required cross-platform CI and native/client/product gates remain open.

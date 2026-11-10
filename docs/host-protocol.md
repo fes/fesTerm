@@ -42,6 +42,14 @@ protected-policy/vault work retains its aggregate client permit even if its
 waiter cancels. No policy guard spans network I/O. Existing frame/byte budgets,
 per-operation current-policy checks, native authorities, receipt-only detach
 publication and FIFO terminal output scheduling remain unchanged.
+Both host-side policy acquisitions retry only Busy against the same original
+15-second authentication deadline, reacquiring protected state each time.
+The host reserves 100 ms within that deadline for a bounded authentication
+`{"message":"refused","reason":"busy"}` frame; the portable client returns
+`Error::Refused(Refusal::Busy)` at either phase rather than treating contention
+as denial, absence or a successful authentication. The client never reconnects
+or retries the proof. Cancelled blocking work retains its reserved client charge
+until it drains; no verifier or lease is cached across a Busy wait.
 
 Authored tests use signed SSH over exact-owned native loopback sockets,
 including queued rekey with original-binding preservation and cross-connection
