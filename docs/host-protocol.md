@@ -1028,6 +1028,21 @@ strict `client,owner-auth` lib clippy step disables default features to preserve
 the portable client-only boundary. This is
 portable regression coverage, not native enrollment/channel/service acceptance.
 
+Ordinary private local sharing uses the distinct
+[`private_session_sharing` boundary](adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing)
+into an already-Provisioned NativeVault/Desktop host. Binding descriptors
+explicitly discriminate `private-session-v1` from legacy installation authority;
+legacy wire descriptors omit the default discriminator unchanged. Version-2
+generation capabilities advertise authenticated `ProbePrivate`; version-1
+helpers are explicitly unsupported for this source kind, without affecting
+legacy use. The separate `native-private-source-v1` MAC binds the whole exact
+operation/host/account/principal/namespace/epoch/generation descriptor.
+Connected-local root metadata alone never authorizes sharing. Existing protected
+records provide private preparation, separate explicit activation and exact
+irreversible reduction; journal lookup is observation, never admission/readiness.
+No owner-key, creation grant, new endpoint, legacy receipt fabrication or frontend
+attachment is introduced.
+
 The separate local [owned-migration boundary](owned-installation-migration.md#authenticated-binding-and-retained-root-boundary)
 authenticates explicitly selected capability-enabled current daemons over their
 original native endpoint, without entering frontend admission. Its `FSB1`

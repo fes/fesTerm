@@ -1,5 +1,25 @@
 # Milestone Progress Narrative
 
+## Sharing an ordinary private generation without inventing migration authority
+
+Desktop sharing exposed a missing seam: legacy migration correctly required
+installation receipts and a fresh destination, whereas a running ordinary shell
+has neither and must join the already-Provisioned Desktop host. A separate
+private-source discriminator now binds connected-local provenance, protected
+live-generation evidence and authenticated capability possession to the existing
+host's fresh NativeVault policy. The original protected SessionControl journal
+owns reservation, explicit switch, same-operation resume and exact irreversible
+reduction; sharing never acquires the frontend or changes shell lifetime.
+Opening/lookup cannot initialize a namespace, and lookup is observation rather
+than readiness. Legacy migration policy remains unchanged.
+
+Deterministic tests cover authority/provenance/domain refusal and older-helper
+compatibility; the controlled ordinary-private Local fixture proves unchanged
+PID/generation/frontend/PTY through bind/switch/resume/revocation/release/rollback.
+Its NativeVault is in-memory: actual vault, installed platforms, GUI/endpoint and
+provider acceptance remain separate. Existing required native CI contention
+failures remain unresolved and are not attributed to or fixed by this adapter.
+
 ## Locating uncertain second-attachment failures without exposing authority
 
 The required macOS native bridge run retained an unresolved 13-pass/1-fail

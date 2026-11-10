@@ -424,6 +424,7 @@ impl Inventory {
                     )?,
                     issuance_epoch: issuer,
                     logical: row.selection.logical_id.clone().try_into()?,
+                    source_authority: Default::default(),
                     namespace: namespace.clone(),
                     control_root: state.join("daemon"),
                     source_installation: row.selection.source.installation().into(),

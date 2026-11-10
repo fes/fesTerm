@@ -52,6 +52,44 @@ fn imported_record(binding: &Binding) -> Result<Record, ControlError> {
 }
 
 impl SessionControl {
+    /// Read the original protected private-sharing operation, never infer it
+    /// from a name, PID, native receipt or caller-supplied descriptor.
+    pub fn private_binding(
+        &self,
+        operation: &OperationId,
+    ) -> Result<Option<Receipt>, ControlError> {
+        let tx = self.transaction()?;
+        let mut found = None;
+        for record in tx
+            .state
+            .sessions
+            .values()
+            .filter(|record| &record.launch == operation)
+        {
+            let imported = record
+                .binding
+                .as_ref()
+                .ok_or(ControlError::OperationConflict)?;
+            if imported.binding.source_authority.is_legacy() || found.is_some() {
+                return Err(ControlError::OperationConflict);
+            }
+            found = Some(Receipt {
+                version: 1,
+                binding: imported.binding.clone(),
+                phase: if imported.released {
+                    BindingPhase::Released
+                } else if imported.activated && record.revoked {
+                    BindingPhase::Revoked
+                } else if imported.activated {
+                    BindingPhase::Active
+                } else {
+                    BindingPhase::Prepared
+                },
+            });
+        }
+        Ok(found)
+    }
+
     pub fn has_binding_records(&self) -> Result<bool, ControlError> {
         let tx = self.transaction()?;
         tx.save()?;
@@ -129,6 +167,17 @@ impl SessionControl {
                 return Err(ControlError::Stale);
             }
             let _guard = admit(binding)?;
+            if !binding.source_authority.is_legacy()
+                && tx.state.sessions.values().any(|record| {
+                    record.launch == binding.operation
+                        && record
+                            .binding
+                            .as_ref()
+                            .is_none_or(|imported| imported.binding != *binding)
+                })
+            {
+                return Err(ControlError::OperationConflict);
+            }
             if let Some(record) = tx.state.sessions.get(&binding.logical) {
                 let imported = record.binding.as_ref().ok_or(ControlError::AlreadyExists)?;
                 if imported.binding != *binding {

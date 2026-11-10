@@ -504,6 +504,18 @@ impl SessionControl {
         })
     }
 
+    /// Lazy non-launching handle. No filesystem effects; trusted composition
+    /// must gate namespace initialization with current protected consent.
+    pub fn retained_namespace(root: &Path) -> Result<Self, ControlError> {
+        if !root.is_absolute() {
+            return Err(ControlError::Invalid);
+        }
+        Ok(Self {
+            root: root.into(),
+            helper: PathBuf::new(),
+        })
+    }
+
     pub fn open(root: &Path) -> Result<Self, ControlError> {
         let helper =
             crate::daemon_executable_for_root(Some(root)).map_err(|_| ControlError::Storage)?;
@@ -702,6 +714,10 @@ impl SessionControl {
         match binding.source_fence() {
             Ok(guard) => Ok(guard),
             Err(error) if crate::lock_is_contended(&error) => Err(ControlError::Busy),
+            // Private sources have no legacy consent receipt whose loss means
+            // revocation. Failed proof stays unavailable; only exact protected
+            // reduction may revoke/release its retained grant.
+            Err(_) if !binding.source_authority.is_legacy() => Err(ControlError::Unknown),
             Err(_) => {
                 let generation = GenerationId::new(binding.identity.created_at_unix_ms)
                     .map_err(|_| ControlError::Invalid)?;

@@ -281,6 +281,43 @@ through the host endpoint rather than provisioning a separate tunnel. Ordinary
 profile saves stay inert. Protected host-local consent, not portable TOML,
 authorizes exposure; startup/update cannot reconstruct revoked grants.
 
+An ordinary **private** persistent local generation joins the **current**
+Provisioned Desktop host through `private_session_sharing`, not §11's legacy
+installation inventory or fresh Disabled destination. Its explicit
+`private-session-v1` source discriminator excludes legacy ownership/claim fields;
+never fabricate those files or treat a profile, name, same-user process, or
+`NativeSessionIdentity` alone as source authority. The opaque connected-local
+target retains the actual admitted runtime root together with its generation;
+remote/unknown transports cannot manufacture that provenance.
+
+Admission additionally verifies protected recorded launch evidence, the live
+generation's PID/start/lifetime lease and capability, and an authenticated
+private-generation probe. Capability version 2 advertises that probe; version 1
+helpers remain usable for legacy binding but are explicitly unsupported here,
+without restart or frontend acquisition. A separate `native-private-source-v1`
+MAC domain binds the entire original operation/target/namespace/host/account/
+principal/epoch context. Managed or previously bound generations cannot silently
+be adopted as new private sources.
+
+Fresh NativeVault/Desktop authority, full current installation snapshot,
+canonical `github:<numeric>` account, owner revision and already-approved narrow
+inventory/attach/detach permission fence effects and publication. Recheck the
+current state directory identity as well as policy; retain short protected leases
+only across local durable admission, never native waits. Opening the adapter is
+read-only; namespace initialization occurs lazily under reviewed bind consent and
+the current-selection/cancellation fence. Neither setup nor owner approval is
+performed as a fallback.
+
+Bind reserves/prepares privately; Switch is a separate explicit action.
+Original-operation lookup reports protected journal phase, **not** native
+readiness/admission; incomplete Prepared work resumes through the same original
+Bind, never an implicit Switch or replacement operation. Exact release/rollback
+revalidates protected ownership and permits newer revocation solely for reduction.
+Unknown/partial outcomes retain that operation for recovery. Reduction preserves
+the original local frontend, PTY, PID, generation and persistent lifetime and
+cannot resurrect revoked exposure. No new journal, endpoint or creation grant
+is introduced.
+
 Offer accurately labeled startup choices: manual, at user sign-in, and after
 reboot before interactive login only on qualified platforms/configurations.
 Do not claim that sign-in registration provides pre-login availability.
@@ -585,6 +622,16 @@ boot-start, temporary-lease or upgrade behavior. No live credentials or service
 changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
+
+`HOST-03` additionally covers the distinct private-generation/current-Desktop
+adapter: deterministic source-domain/compatibility, connected-root provenance and
+NativeVault-fixture admission tests, plus the opt-in ordinary-private Local
+preservation fixture. `HOST-04` retains separate setup/owner consent gates and
+`HOST-06` retains unchanged legacy migration authority. The real-daemon fixture
+uses an in-memory NativeVault implementation, **not** actual native-vault,
+installed service, GUI, remote endpoint or provider acceptance. Required native
+CI contention failures remain independently unresolved; this adapter is not
+their fix.
 
 The owned-installation increment adds executable headless protected inventory,
 exact preview mapping, destination identity/source-claim reservation, interrupted

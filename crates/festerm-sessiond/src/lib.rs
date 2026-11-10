@@ -238,6 +238,63 @@ struct ConnectedSession {
     protocol_version: u16,
     snapshot_schema_version: u16,
     identity: Option<NativeSessionIdentity>,
+    local_root: Option<PathBuf>,
+}
+
+/// Connected local provenance only, not sharing consent or generation authority.
+/// Remote transports cannot construct this target.
+#[derive(Clone, Eq, PartialEq)]
+pub struct LocalSessionTarget {
+    root: PathBuf,
+    identity: NativeSessionIdentity,
+}
+
+impl std::fmt::Debug for LocalSessionTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LocalSessionTarget { .. }")
+    }
+}
+
+impl LocalSessionTarget {
+    pub fn identity(&self) -> &NativeSessionIdentity {
+        &self.identity
+    }
+    pub fn runtime_root(&self) -> &Path {
+        &self.root
+    }
+}
+
+struct ConnectionProvenance {
+    identity: Option<NativeSessionIdentity>,
+    local_root: Option<PathBuf>,
+}
+
+#[cfg(test)]
+#[test]
+fn private_local_provenance_never_promotes_validated_transport_or_identity_metadata() {
+    let remote = PersistentSession::from_validated_transport(
+        std::io::Cursor::new(Vec::<u8>::new()),
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    assert!(remote.local_session_target().is_none());
+    let asserted = PersistentSession::from_stream_with_protocol_and_identity(
+        Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+        noop_session_event_notifier(),
+        None,
+        3,
+        RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        Some(NativeSessionIdentity {
+            name: "metadata-only".into(),
+            pid: std::process::id(),
+            created_at_unix_ms: 123,
+            endpoint: "not-connected-local-provenance".into(),
+        }),
+        None,
+    )
+    .unwrap();
+    assert!(asserted.native_identity().is_some());
+    assert!(asserted.local_session_target().is_none());
 }
 
 type Reconnector =
@@ -967,7 +1024,7 @@ struct Shared {
     lifecycle: Mutex<SessionLifecycle>,
     metrics: Mutex<SessionMetrics>,
     protocol_version: Mutex<u16>,
-    identity: Mutex<Option<NativeSessionIdentity>>,
+    identity: Mutex<ConnectionProvenance>,
     recovered_terminal: Mutex<Option<Terminal>>,
     recovery_resize_blocked: AtomicBool,
     recovery_adoption_blocked: AtomicBool,
@@ -1110,6 +1167,7 @@ impl PersistentSession {
             None,
             3,
             RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+            None,
             None,
         )
     }
@@ -1435,6 +1493,7 @@ impl PersistentSession {
             connection.protocol_version,
             connection.snapshot_schema_version,
             connection.identity,
+            connection.local_root,
         )
     }
 
@@ -1453,6 +1512,7 @@ impl PersistentSession {
             protocol_version,
             snapshot_schema_version,
             None,
+            None,
         )
     }
 
@@ -1463,6 +1523,7 @@ impl PersistentSession {
         protocol_version: u16,
         snapshot_schema_version: u16,
         identity: Option<NativeSessionIdentity>,
+        local_root: Option<PathBuf>,
     ) -> Result<Self, PersistentSessionError> {
         let (events_tx, events_rx) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
         let (commands_tx, commands_rx) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
@@ -1477,7 +1538,10 @@ impl PersistentSession {
                 ..SessionMetrics::default()
             }),
             protocol_version: Mutex::new(protocol_version),
-            identity: Mutex::new(identity),
+            identity: Mutex::new(ConnectionProvenance {
+                identity,
+                local_root,
+            }),
             recovered_terminal: Mutex::new(None),
             recovery_resize_blocked: AtomicBool::new(recovery_snapshot_required(
                 protocol_version,
@@ -1531,7 +1595,26 @@ impl PersistentSession {
             .identity
             .lock()
             .expect("healthy native-identity lock")
+            .identity
             .clone()
+    }
+
+    /// No filesystem discovery, IPC, attachment or environment lookup.
+    pub fn local_session_target(&self) -> Option<LocalSessionTarget> {
+        if self.shared.cancelled.load(Ordering::Acquire)
+            || self.shared.reconnecting.load(Ordering::Acquire)
+        {
+            return None;
+        }
+        let provenance = self
+            .shared
+            .identity
+            .lock()
+            .expect("healthy native-identity lock");
+        Some(LocalSessionTarget {
+            root: provenance.local_root.clone()?,
+            identity: provenance.identity.clone()?,
+        })
     }
 
     /// Whether a manual, resume-only reconnect can currently be requested.
@@ -1679,7 +1762,10 @@ impl PersistentSession {
                         *shared
                             .identity
                             .lock()
-                            .expect("healthy native-identity lock") = connection.identity;
+                            .expect("healthy native-identity lock") = ConnectionProvenance {
+                            identity: connection.identity,
+                            local_root: connection.local_root,
+                        };
                         *shared
                             .protocol_version
                             .lock()
@@ -1872,13 +1958,15 @@ fn connect_discovered_with_cancel(
             "This older native daemon cannot verify the selected generation at admission. Use its compatible fesTerm version to access or end the session.",
         ));
     }
-    connect_record_admitted(
+    let mut connected = connect_record_admitted(
         record,
         cancelled,
         !require_unattached,
         AttachKind::Local,
         MAX_RECOVERY_SNAPSHOT_BYTES as u32,
-    )
+    )?;
+    connected.local_root = Some(root.into());
+    Ok(connected)
 }
 
 fn connect_existing_with_cancel(
@@ -1889,8 +1977,12 @@ fn connect_existing_with_cancel(
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
-    let registry = load_registry()?;
-    connect_existing_in_registry_with_cancel(&registry, name, cancelled, snapshot_protocol)
+    let root = runtime_root()?;
+    let registry = load_registry_in_with_cancel(&root, cancelled)?;
+    let mut connected =
+        connect_existing_in_registry_with_cancel(&registry, name, cancelled, snapshot_protocol)?;
+    connected.local_root = Some(root);
+    Ok(connected)
 }
 
 #[cfg(test)]
@@ -2715,7 +2807,8 @@ fn connect_or_start(
     scrollback_limit_bytes: usize,
     takeover: bool,
 ) -> Result<ConnectedSession, PersistentSessionError> {
-    let registry = load_registry()?;
+    let root = runtime_root()?;
+    let registry = load_registry_in(&root)?;
     if let Some(declared) = registry.unreadable.get(name) {
         // Starting a replacement would overwrite a record this build cannot
         // read, so an unreadable name is a refusal rather than a fresh shell.
@@ -2729,10 +2822,13 @@ fn connect_or_start(
             ));
         }
         if !takeover && process_alive(record.pid) {
-            return connect_unattached_record(record);
+            let mut connected = connect_unattached_record(record)?;
+            connected.local_root = Some(root);
+            return Ok(connected);
         }
         if takeover {
-            if let Ok(stream) = connect_record(record) {
+            if let Ok(mut stream) = connect_record(record) {
+                stream.local_root = Some(root);
                 return Ok(stream);
             }
         }
@@ -2741,6 +2837,7 @@ fn connect_or_start(
     let daemon = daemon_executable()?;
     let mut command = Command::new(&daemon);
     command
+        .env("FESTERM_SESSIOND_RUNTIME_ROOT", &root)
         .arg("start")
         .arg("--name")
         .arg(name)
@@ -2790,7 +2887,7 @@ fn connect_or_start(
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut last_refusal = None;
     loop {
-        if let Some(record) = load_registry()?.sessions.get(name) {
+        if let Some(record) = load_registry_in(&root)?.sessions.get(name) {
             if !takeover && record.name != name {
                 return Err(PersistentSessionError::new(
                     "The native session registry identity changed; no client was disconnected.",
@@ -2802,7 +2899,10 @@ fn connect_or_start(
                 connect_unattached_record(record)
             };
             match connection {
-                Ok(stream) => return Ok(stream),
+                Ok(mut stream) => {
+                    stream.local_root = Some(root);
+                    return Ok(stream);
+                }
                 Err(error) if !takeover => last_refusal = Some(error),
                 Err(_) => {}
             }
@@ -2915,6 +3015,7 @@ fn connect_record_admitted_ticket(
             protocol_version: record.protocol_version,
             snapshot_schema_version: record.snapshot_schema_version,
             identity: Some(NativeSessionIdentity::from_record(record)),
+            local_root: None,
         })
     }
 
@@ -2943,6 +3044,7 @@ fn connect_record_admitted_ticket(
             protocol_version: record.protocol_version,
             snapshot_schema_version: record.snapshot_schema_version,
             identity: Some(NativeSessionIdentity::from_record(record)),
+            local_root: None,
         })
     }
 }
@@ -3550,11 +3652,6 @@ fn prune_packaged_windows_daemons(
         }
     }
     Ok(())
-}
-
-fn load_registry() -> Result<SessionRegistry, PersistentSessionError> {
-    let root = runtime_root()?;
-    load_registry_in(&root)
 }
 
 fn load_registry_in(root: &std::path::Path) -> Result<SessionRegistry, PersistentSessionError> {
@@ -4483,6 +4580,7 @@ mod client_worker_tests {
             protocol_version: 1,
             snapshot_schema_version: LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             identity: None,
+            local_root: None,
         }
     }
 
@@ -4618,6 +4716,7 @@ mod client_worker_tests {
                         protocol_version: next_protocol,
                         snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
                         identity: None,
+                        local_root: None,
                     })
                 })),
                 initial_protocol,
@@ -5433,6 +5532,7 @@ mod tests {
             protocol_version: 1,
             snapshot_schema_version: LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             identity: None,
+            local_root: None,
         }
     }
 

@@ -97,6 +97,23 @@ fn verify(
     mac.verify_slice(expected).map_err(|_| invalid())
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum SourceAuthority {
+    #[default]
+    LegacyInstallation,
+    PrivateSessionV1 {
+        tag: String,
+    },
+}
+
+impl SourceAuthority {
+    pub fn is_legacy(&self) -> bool {
+        matches!(self, Self::LegacyInstallation)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Binding {
@@ -112,6 +129,8 @@ pub struct Binding {
     pub namespace: OperationId,
     pub control_root: PathBuf,
     pub logical: LogicalSessionId,
+    #[serde(default, skip_serializing_if = "SourceAuthority::is_legacy")]
+    pub source_authority: SourceAuthority,
     pub source_installation: String,
     pub source_host: HostId,
     pub source_key_fingerprint: String,
@@ -129,20 +148,53 @@ pub struct Binding {
 
 impl Binding {
     pub fn validate(&self) -> io::Result<()> {
-        for id in [&self.installation, &self.source_installation] {
+        let ids = if self.source_authority.is_legacy() {
+            vec![&self.installation, &self.source_installation]
+        } else {
+            vec![&self.installation]
+        };
+        for id in ids {
             let value = uuid::Uuid::parse_str(id).map_err(|_| invalid())?;
             if value.get_version_num() != 4 || value.to_string() != *id {
                 return Err(invalid());
             }
         }
-        for digest in [
+        let legacy_digests = [
             &self.source_installation_digest,
             &self.source_ownership_digest,
             &self.source_key_digest,
             &self.source_claim_digest,
-        ] {
-            if !Self::canonical_digest(digest) {
-                return Err(invalid());
+        ];
+        match &self.source_authority {
+            SourceAuthority::LegacyInstallation => {
+                for digest in legacy_digests {
+                    if !Self::canonical_digest(digest) {
+                        return Err(invalid());
+                    }
+                }
+                if self.source_key_fingerprint.is_empty()
+                    || !Self::canonical_digest(&self.source_receipt_digest)
+                    || !canonical_account(&self.account)
+                {
+                    return Err(invalid());
+                }
+            }
+            SourceAuthority::PrivateSessionV1 { tag } => {
+                if !Self::canonical_digest(tag)
+                    || !self.source_installation.is_empty()
+                    || self.source_host != self.host
+                    || !self.source_key_fingerprint.is_empty()
+                    || !self.source_receipt_digest.is_empty()
+                    || legacy_digests.iter().any(|digest| !digest.is_empty())
+                    || self.source_profile
+                    || self.source_root != self.runtime_root
+                    || !self
+                        .account
+                        .strip_prefix("github:")
+                        .is_some_and(canonical_account)
+                {
+                    return Err(invalid());
+                }
             }
         }
         if !self.runtime_root.is_absolute()
@@ -151,20 +203,12 @@ impl Binding {
             || self.identity.pid == 0
             || self.identity.created_at_unix_ms == 0
             || self.identity.created_at_unix_ms > u64::MAX as u128
-            || self
-                .account
-                .parse::<u64>()
-                .ok()
-                .filter(|value| *value != 0)
-                .is_none_or(|value| value.to_string() != self.account)
             || self.host_key_fingerprint.is_empty()
-            || self.source_key_fingerprint.is_empty()
             || [&self.host_key_fingerprint, &self.source_key_fingerprint]
                 .iter()
                 .any(|value| value.len() > 256 || value.chars().any(char::is_control))
             || self.spawn_fingerprint.len() != 67
             || !self.spawn_fingerprint.starts_with("v1:")
-            || !Self::canonical_digest(&self.source_receipt_digest)
             || !Self::canonical_digest(&self.spawn_fingerprint[3..])
             || [&self.runtime_root, &self.source_root, &self.control_root]
                 .iter()
@@ -186,6 +230,38 @@ impl Binding {
     }
 
     pub(crate) fn source_fence(&self) -> io::Result<SourceFence> {
+        if let SourceAuthority::PrivateSessionV1 { tag: expected } = &self.source_authority {
+            self.validate()?;
+            let capability =
+                read_capability(&self.runtime_root, &self.identity, &self.spawn_fingerprint)?;
+            if capability.version != 2 {
+                return Err(invalid());
+            }
+            let expected = decode_tag(expected)?;
+            verify(
+                &capability.key,
+                b"native-private-source-v1",
+                &[],
+                &private_context(self)?,
+                &expected,
+            )?;
+            let directory = storage::private_directory(&self.runtime_root, false)?;
+            let name = format!(
+                "lease-{}-{}",
+                self.identity.pid, self.identity.created_at_unix_ms
+            );
+            let lifetime = storage::open_private_file(&directory, Path::new(&name), false)?;
+            match FileExt::try_lock_shared(&lifetime) {
+                Err(error)
+                    if crate::lock_is_contended(&error)
+                        && crate::process_alive(self.identity.pid) => {}
+                Err(error) => return Err(error),
+                Ok(()) => return Err(invalid()),
+            }
+            return Ok(SourceFence {
+                _locks: vec![directory, lifetime],
+            });
+        }
         let directory = storage::private_directory(&self.source_root, false)?;
         let mut locks = Vec::new();
         let lock = storage::open_private_file(&directory, Path::new("installer.lock"), false)?;
@@ -227,6 +303,111 @@ impl Binding {
         }
         Ok(SourceFence { _locks: locks })
     }
+}
+
+fn canonical_account(value: &str) -> bool {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value != 0)
+        .is_some_and(|number| number.to_string() == value)
+}
+
+fn private_context(binding: &Binding) -> io::Result<Vec<u8>> {
+    let mut context = binding.clone();
+    context.source_authority = SourceAuthority::PrivateSessionV1 { tag: String::new() };
+    serde_json::to_vec(&context).map_err(|_| invalid())
+}
+
+fn decode_tag(value: &str) -> io::Result<[u8; 32]> {
+    if !Binding::canonical_digest(value) {
+        return Err(invalid());
+    }
+    let mut bytes = [0; 32];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).map_err(|_| invalid())?;
+    }
+    Ok(bytes)
+}
+
+fn read_capability(
+    root: &Path,
+    identity: &NativeSessionIdentity,
+    fingerprint: &str,
+) -> io::Result<Capability> {
+    let directory = storage::private_directory(root, false)?;
+    let bytes = storage::read_private(&directory, Path::new(&capability_name(identity)), 4096)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "native.binding_older_helper_defer",
+                )
+            } else {
+                error
+            }
+        })?;
+    let capability: Capability = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    if !matches!(capability.version, 1 | 2)
+        || capability.identity != *identity
+        || capability.fingerprint != fingerprint
+    {
+        return Err(invalid());
+    }
+    Ok(capability)
+}
+
+/// Trusted local composition only; current owner consent is a separate admission.
+/// The private probe proves a live, ordinary unmanaged daemon, without attachment.
+pub fn authenticate_private_source(binding: &mut Binding) -> io::Result<()> {
+    if !matches!(
+        binding.source_authority,
+        SourceAuthority::PrivateSessionV1 { .. }
+    ) {
+        return Err(invalid());
+    }
+    let capability = read_capability(
+        &binding.runtime_root,
+        &binding.identity,
+        &binding.spawn_fingerprint,
+    )?;
+    if capability.version != 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native.private_source_older_helper_defer",
+        ));
+    }
+    if exchange(
+        &binding.runtime_root,
+        &binding.identity,
+        &binding.spawn_fingerprint,
+        &Request::ProbePrivate {},
+    )?
+    .is_some()
+    {
+        return Err(invalid());
+    }
+    let signature = tag(
+        &capability.key,
+        b"native-private-source-v1",
+        &[],
+        &private_context(binding)?,
+    );
+    binding.source_authority = SourceAuthority::PrivateSessionV1 {
+        tag: signature.iter().map(|byte| format!("{byte:02x}")).collect(),
+    };
+    binding.validate()
+}
+
+pub fn private_fingerprint(target: &crate::LocalSessionTarget) -> io::Result<String> {
+    crate::detached::private_generation_fingerprint(target.runtime_root(), target.identity())
+}
+
+pub fn verify_private_source(binding: &Binding) -> io::Result<()> {
+    if binding.source_authority.is_legacy() {
+        return Err(invalid());
+    }
+    binding.source_fence().map(|_| ())
 }
 
 pub(crate) struct SourceFence {
@@ -343,7 +524,7 @@ pub fn cleanup_dead_capability(
     let mut bytes = Zeroizing::new(Vec::with_capacity(4097));
     Read::by_ref(&mut file).take(4097).read_to_end(&mut bytes)?;
     let capability: Capability = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    if capability.version != 1
+    if !matches!(capability.version, 1 | 2)
         || capability.identity != *identity
         || Some(capability.fingerprint.as_str()) != fingerprint
     {
@@ -364,6 +545,7 @@ pub struct DaemonBinding {
 #[serde(deny_unknown_fields)]
 enum Request {
     Probe {},
+    ProbePrivate {},
     Bind { binding: Box<Binding> },
     Release { binding: Box<Binding> },
 }
@@ -475,7 +657,7 @@ impl DaemonBinding {
     ) -> io::Result<(Self, CapabilityOwner)> {
         let directory = storage::private_directory(root, false)?;
         let capability = Capability {
-            version: 1,
+            version: 2,
             identity,
             fingerprint,
             key: random(),
@@ -510,6 +692,14 @@ impl DaemonBinding {
         }
         match request {
             Request::Probe {} => {}
+            Request::ProbePrivate {} => {
+                if self.receipt.is_some() || watch.is_some() {
+                    return Ok(Reply {
+                        supports_binding: false,
+                        receipt: self.receipt.clone(),
+                    });
+                }
+            }
             Request::Bind { binding } => {
                 binding.validate()?;
                 if binding.identity != self.capability.identity
@@ -682,25 +872,7 @@ fn exchange(
     fingerprint: &str,
     request: &Request,
 ) -> io::Result<Option<Receipt>> {
-    let directory = storage::private_directory(root, false)?;
-    let bytes = storage::read_private(&directory, Path::new(&capability_name(identity)), 4096)
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "native.binding_older_helper_defer",
-                )
-            } else {
-                error
-            }
-        })?;
-    let capability: Capability = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    if capability.version != 1
-        || capability.identity != *identity
-        || capability.fingerprint != fingerprint
-    {
-        return Err(invalid());
-    }
+    let capability = read_capability(root, identity, fingerprint)?;
     crate::verify_spawn_fingerprint_in(root, identity, fingerprint).map_err(|_| invalid())?;
     #[cfg(unix)]
     let mut stream = {
@@ -840,6 +1012,7 @@ pub(crate) mod tests {
             namespace: OperationId::new(),
             control_root: root.join("control"),
             logical: LogicalSessionId::new(),
+            source_authority: SourceAuthority::LegacyInstallation,
             source_installation: uuid::Uuid::new_v4().to_string(),
             source_host: HostId::new(),
             source_key_fingerprint: "SHA256:source".into(),
@@ -859,6 +1032,114 @@ pub(crate) mod tests {
             },
             spawn_fingerprint: format!("v1:{}", "a".repeat(64)),
         }
+    }
+
+    #[test]
+    fn private_source_domain_binds_original_operation_owner_namespace_and_generation_without_legacy_receipts(
+    ) {
+        let root = storage::private_test_directory();
+        let legacy = descriptor(root.path());
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("source_authority"));
+        assert_eq!(serde_json::from_slice::<Binding>(&bytes).unwrap(), legacy);
+        let mut private = legacy;
+        private.account = "github:42".into();
+        private.source_installation.clear();
+        private.source_host = private.host.clone();
+        private.source_key_fingerprint.clear();
+        private.source_receipt_digest.clear();
+        private.source_root = private.runtime_root.clone();
+        private.source_profile = false;
+        private.source_installation_digest.clear();
+        private.source_ownership_digest.clear();
+        private.source_key_digest.clear();
+        private.source_claim_digest.clear();
+        let key = [29; 32];
+        private.source_authority = SourceAuthority::PrivateSessionV1 { tag: String::new() };
+        let signature = tag(
+            &key,
+            b"native-private-source-v1",
+            &[],
+            &private_context(&private).unwrap(),
+        );
+        private.source_authority = SourceAuthority::PrivateSessionV1 {
+            tag: signature.iter().map(|byte| format!("{byte:02x}")).collect(),
+        };
+        private.validate().unwrap();
+        verify(
+            &key,
+            b"native-private-source-v1",
+            &[],
+            &private_context(&private).unwrap(),
+            &signature,
+        )
+        .unwrap();
+        assert!(verify(
+            &key,
+            b"native-bind-request-v1",
+            &[],
+            &private_context(&private).unwrap(),
+            &signature
+        )
+        .is_err());
+        for change in [
+            (|value: &mut Binding| value.operation = OperationId::new()) as fn(&mut Binding),
+            |value| value.namespace = OperationId::new(),
+            |value| value.host = HostId::new(),
+            |value| value.principal = PrincipalId::new(),
+            |value| value.account = "github:999".into(),
+            |value| value.owner_epoch = value.owner_epoch.next().unwrap(),
+            |value| value.issuance_epoch = value.issuance_epoch.next().unwrap(),
+            |value| value.identity.created_at_unix_ms += 1,
+            |value| value.identity.pid += 1,
+            |value| value.runtime_root = value.runtime_root.join("foreign"),
+        ] {
+            let mut changed = private.clone();
+            change(&mut changed);
+            assert!(verify(
+                &key,
+                b"native-private-source-v1",
+                &[],
+                &private_context(&changed).unwrap(),
+                &signature
+            )
+            .is_err());
+        }
+        assert!(
+            private.source_fence().is_err(),
+            "metadata and a tag without real native capability/liveness are not authority"
+        );
+        let directory = storage::private_directory(root.path(), false).unwrap();
+        let older = Capability {
+            version: 1,
+            identity: private.identity.clone(),
+            fingerprint: private.spawn_fingerprint.clone(),
+            key,
+        };
+        storage::write_new_private(
+            &directory,
+            Path::new(&capability_name(&private.identity)),
+            &serde_json::to_vec(&older).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            authenticate_private_source(&mut private)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::Unsupported
+        );
+        let mut mixed = private.clone();
+        mixed.source_installation_digest = "0".repeat(64);
+        assert!(mixed.validate().is_err());
+        mixed = private.clone();
+        mixed.source_authority = SourceAuthority::LegacyInstallation;
+        assert!(
+            mixed.validate().is_err(),
+            "private authority must not enter the legacy fence"
+        );
+        let mut encoded = serde_json::to_value(&private).unwrap();
+        encoded["source_authority"]["kind"] = "private-session-v2".into();
+        assert!(serde_json::from_value::<Binding>(encoded).is_err());
     }
 
     #[test]

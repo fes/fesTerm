@@ -276,6 +276,12 @@ pub(crate) struct MigrationOwnerPolicy {
     pub(crate) installation: Snapshot,
 }
 
+pub(crate) struct PrivateSessionPolicy {
+    _lease: protected_state::Lease,
+    pub(crate) enrollment: EnrollmentSnapshot,
+    pub(crate) installation: Snapshot,
+}
+
 impl CurrentOwnerPolicy {
     pub fn verifier(&self) -> &OwnerVerifier {
         &self.verifier
@@ -378,6 +384,39 @@ impl Store {
 }
 
 impl OwnerEnrollment<'_> {
+    pub(crate) fn private_session_policy(&self, state: &Path) -> io::Result<PrivateSessionPolicy> {
+        self.installation
+            .with_owned_lease(|directory, installation, lease| {
+                if self.storage != OwnerStorage::NativeVault
+                    || installation.origin != Origin::Desktop
+                {
+                    return Err(refused(
+                        "owner.private_sharing_requires_desktop_native_vault",
+                    ));
+                }
+                let selected = storage::private_directory(state, false)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let actual = directory.metadata()?;
+                    let current = selected.metadata()?;
+                    if (actual.dev(), actual.ino()) != (current.dev(), current.ino()) {
+                        return Err(refused("owner.private_sharing_state_replaced"));
+                    }
+                }
+                #[cfg(windows)]
+                if !festerm_windows_security::same_file_identity(directory, &selected)? {
+                    return Err(refused("owner.private_sharing_state_replaced"));
+                }
+                let (_, enrollment) = self.read(directory, installation)?;
+                Ok(PrivateSessionPolicy {
+                    _lease: lease,
+                    enrollment,
+                    installation: installation.clone(),
+                })
+            })
+    }
+
     fn storage_error(&self, error: festerm_secret_store::SecretStoreError) -> io::Error {
         match self.storage {
             OwnerStorage::NativeVault => vault_error(error),
@@ -923,7 +962,7 @@ fn add_key(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::lifecycle::{Origin, Settings, Startup};
     use festerm_host_protocol::{Envelope, OperationId, Request};
@@ -934,9 +973,9 @@ mod tests {
         Arc,
     };
 
-    struct Vault {
+    pub(crate) struct Vault {
         memory: MemorySecretStore,
-        locked: AtomicBool,
+        pub(crate) locked: AtomicBool,
     }
     struct SharedVault(Arc<Vault>);
     impl SecretStore for SharedVault {
@@ -987,10 +1026,24 @@ mod tests {
         }
     }
     fn setup() -> (storage::PrivateTestDirectory, Store, Arc<Vault>) {
+        setup_origin(Origin::Headless)
+    }
+
+    pub(crate) fn fixture_owners(installation: &Store, vault: Arc<Vault>) -> OwnerEnrollment<'_> {
+        OwnerEnrollment {
+            installation,
+            vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
+        }
+    }
+
+    pub(crate) fn setup_origin(
+        origin: Origin,
+    ) -> (storage::PrivateTestDirectory, Store, Arc<Vault>) {
         let root = storage::private_test_directory();
         let store = Store::create(
             &root.path().join("installation"),
-            Origin::Headless,
+            origin,
             Settings {
                 friendly_name: "owner fixture".into(),
                 allow_creation: false,

@@ -3712,6 +3712,30 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 | HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/schema-2 host packaging, bounded pin acquisition/staging and native-control/executable-publication fixtures; actual signed native service/executable acceptance and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, integration/qualification of the [same-user native component](native-host-services.md), trusted first-verifier delivery and native publisher/executable acceptance. Windows/macOS/Linux startup, interrupted registration/cleanup, unavailable-manager/vault behavior and daemon independence require real platform evidence; fixture success is not that evidence. |
 | HOSTMIG-01 | Explicit owned account/key/source/claim/generation mapping and separate owner approval; authenticated current-daemon bind/switch/resume/defer/exact rollback without duplicate host/shell, frontend acquisition or restored revocation. Older helpers remain usable/deferred; any live stop needs separate exact-generation default-No confirmation. Pending cloud cleanup stays disabled until authenticated verified absence. | Deterministic protected reservation/owner/authentication and creation-owner key cleanup regressions; opt-in real current-daemon bind/switch/resume/revocation/release/rollback preserving original PID/generation/frontend/PTY, plus Prepared/Active ordinary-shell-exit key removal and authoritative-absence rollback/enable recovery with Busy/corrupt outcomes pending. Installed Windows/macOS/Linux, old-release, vault/cloud and GUI acceptance remain deferred | #681 / ADR 0084 §11 / ADR 0085: [executable binding/retained-root boundary](owned-installation-migration.md#authenticated-binding-and-retained-root-boundary); independently qualify installed/native transport and partial failures, real separately consented endpoint enable, vault and GUI paths. Controlled fixtures authorize no service/OS/account/vault change or cloud operation; shell-exit fixtures send an explicit fixture-only exit line, not a production stop, and do not claim complete migration acceptance. |
 
+`HOST-03` additionally has the opt-in
+`private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_preserves_frontend`
+fixture. It starts an ordinary private daemon without legacy installation,
+claim, consent or host-key files; uses the existing in-memory NativeVault fixture
+for an already-Provisioned Desktop host; and checks original PID/generation,
+Local frontend, PTY I/O, unchanged master settings and capability retention/exit
+cleanup through explicit private Bind, Switch, original-operation lookup/resume,
+revocation and exact release/rollback. Deterministic tests separately reject
+stale revision/account, replaced state directory, foreign/portable/headless/
+locked/corrupt authority, missing narrow approval and metadata-only provenance.
+
+Run the named case with `cargo test --locked -p festerm-host-setup --features
+owner-enrollment --lib private_session_sharing::tests::private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_preserves_frontend
+-- --exact --ignored --nocapture --test-threads=1`, explicitly setting
+`FESTERM_PRIVATE_SHARING_HELPER` to a qualified current-source helper.
+`FESTERM_PRIVATE_SHARING_EVIDENCE` optionally retains the exited fixture under an
+existing absolute project-local evidence directory. The optional-validation
+aggregator invokes this case only with the explicit helper and Unix prerequisite.
+No actual native vault/provider/OS registration is authorized by this fixture.
+Installed platforms, actual vault lock/revocation, GUI target/cancellation races
+and endpoint visibility remain native/manual gates, not inferred from lookup or
+fixture success. Existing required macOS/Linux native contention failures remain
+unresolved; this case is not their fix.
+
 `HOSTMIG-01` additionally has an actual authenticated-binding Local frontend
 fixture, distinct from the Local reservation-only case. It retains original
 PID/generation, PTY and capability bytes through bind/switch/resume/revocation/
