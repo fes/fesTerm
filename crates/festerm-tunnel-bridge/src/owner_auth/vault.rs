@@ -1,4 +1,5 @@
-//! Native-vault owner credentials. No provider token or portable-config fallback.
+//! Owner credentials: native by default, explicitly selected protected files for
+//! headless only. No provider-token borrowing or automatic/config fallback.
 use super::{OwnerSigningKey, PinnedHost};
 use festerm_host_protocol::{ContractError, HostId, PrincipalId, Validate};
 use festerm_secret_store::{
@@ -65,15 +66,55 @@ impl From<SecretStoreError> for OwnerKeyError {
     }
 }
 
-/// The seed and approved binding live together in the native vault.
+/// The seed and approved binding live together in the selected credential store.
 /// Persist only this opaque reference in protected local credential metadata,
 /// never in a recipe, connection JSON, ordinary configuration or logs.
 pub struct ClientOwnerKey {
     reference: SecretReference,
     public_key: [u8; 32],
+    headless_installation: Option<String>,
 }
 
 impl ClientOwnerKey {
+    #[cfg(feature = "relay")]
+    pub fn generate_headless(
+        selected: &super::ExplicitHeadlessFileStore,
+        approved: &OwnerBinding,
+    ) -> Result<Self, OwnerKeyError> {
+        if selected.installation() != approved.installation {
+            return Err(OwnerKeyError::InvalidBinding);
+        }
+        let mut key = Self::generate(selected, approved)?;
+        key.headless_installation = Some(approved.installation.clone());
+        Ok(key)
+    }
+
+    #[cfg(feature = "relay")]
+    pub fn open_headless(
+        selected: &super::ExplicitHeadlessFileStore,
+        reference: SecretReference,
+        approved: &OwnerBinding,
+    ) -> Result<Self, OwnerKeyError> {
+        if selected.installation() != approved.installation {
+            return Err(OwnerKeyError::InvalidBinding);
+        }
+        let mut key = Self::open(selected, reference, approved)?;
+        key.headless_installation = Some(approved.installation.clone());
+        Ok(key)
+    }
+
+    #[cfg(feature = "relay")]
+    pub fn remove_headless(
+        &self,
+        selected: &super::ExplicitHeadlessFileStore,
+    ) -> Result<(), OwnerKeyError> {
+        if self.headless_installation.as_deref() != Some(selected.installation()) {
+            return Err(OwnerKeyError::InvalidBinding);
+        }
+        selected.delete(&self.reference)?;
+        Ok(())
+    }
+
     pub fn generate_native(approved: &OwnerBinding) -> Result<Self, OwnerKeyError> {
         Self::generate(native_store()?.as_ref(), approved)
     }
@@ -96,6 +137,9 @@ impl ClientOwnerKey {
     /// Delete local signing material; host-side revocation is a separate local
     /// consent operation. Retain the reference on failure so deletion is retryable.
     pub fn remove_native(&self) -> Result<(), OwnerKeyError> {
+        if self.headless_installation.is_some() {
+            return Err(OwnerKeyError::InvalidBinding);
+        }
         native_store()?.delete(&self.reference)?;
         Ok(())
     }
@@ -113,6 +157,7 @@ impl ClientOwnerKey {
         Ok(Self {
             reference,
             public_key: key.public_key(),
+            headless_installation: None,
         })
     }
 
@@ -144,6 +189,7 @@ impl ClientOwnerKey {
         Ok(Self {
             reference,
             public_key,
+            headless_installation: None,
         })
     }
 }

@@ -8703,7 +8703,19 @@ use compare-and-swap revisions under the setup lease; native-vault policy
 high-water and revoked-key tombstones refuse disk rollback and stale results.
 Importing a key enables neither access nor creation. Client seeds and their
 approved bindings stay in the native vault behind opaque references, without
-plaintext fallback.
+automatic plaintext fallback.
+
+Reliability review then found three practical gaps: a vault-first crash could
+strand the policy, settings denial could accidentally block revocation, and
+full policy JSON would exceed Windows' 2,560-byte credential limit well before
+64 historical keys. The anchor is now a compact revision/digest/predecessor;
+prepared private records and pre-reserved native references permit validated
+forward reconciliation. Settings mask effective creation while removal remains
+available. Initial owner consent must match an already provisioned exact account
+and stable host identity. A deliberate product decision additionally permits
+headless-only protected-file credential/anchor storage, explicitly bound to its
+origin/installation and never selected after native failure. It has weaker
+whole-store/home rollback protection; GUI/native defaults do not change.
 
 The transport investigation also found a real stop condition: pinned inner SSH
 verifies its host key, but the handed-off streams do not expose a shared

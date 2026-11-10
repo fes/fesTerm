@@ -140,8 +140,10 @@ management-token authentication.
    separately from portable configuration.
 2. Each authorized device generates a dedicated **per-host** `OwnerSigningKey`.
    Its seed is stored through existing native `SecretBytes`/opaque-reference
-   vault storage, including headless clients; there is no private-file/plaintext
-   seed fallback. Never store it in TOML, portable recipes, exports, cloud metadata,
+   vault storage by default. A deliberate headless-only protected-file selection
+   may instead hold the credential and anchor, bound to that installation/origin.
+   There is no automatic vault-failure fallback or desktop/GUI file policy.
+   Never store it in TOML, portable recipes, exports, cloud metadata,
    command arguments, environment variables or logs. `OwnerSigningKey` has no
    Debug/Clone/serde; exported seed views are zeroizing.
 3. Via a trusted operator channel, transfer only the public key to the host.
@@ -160,8 +162,9 @@ The opt-in `festerm-host-setup/owner-enrollment` feature now implements protecte
 local persistence through `Store::owner_enrollment() -> OwnerEnrollment`.
 `initialize(identity_filename, account)` loads the existing stable `HostIdentity`
 through the verified private installation handle (never generates a replacement)
-and creates a local principal bound to the exact installation/host/key/account,
-with no keys or permissions. Each policy read reloads that exact identity;
+and requires the exact existing Provisioned host/account binding before creating
+a local principal with no keys or permissions. Arbitrary pre-provision account
+selection is refused. Each policy read reloads that exact identity;
 changed/missing host identity or a changed provisioning account refuses admission.
 `enroll(revision, key, confirmed_fingerprint)`, `revoke` and `rotate` compare the
 current revision; fingerprint confirmation is exact `ED25519-SHA256:` of the raw
@@ -169,7 +172,10 @@ Ed25519 public key, distinct from the SSH host-key fingerprint. Four active keys
 and 64 lifetime entries bound the store; revoked-key tombstones cannot be
 reenrolled. Key import does not enable access or shell creation.
 `approve_permissions` is separate host-local consent, never a remote request or
-config import. Creation also requires existing host settings permission; remote
+config import. Creation also requires existing host settings permission; a later settings deny
+masks effective creation without invalidating the stored record or blocking
+revocation/permission removal. New creation approval still requires settings
+consent. Remote
 admission additionally requires the lifecycle's Provisioned phase (not a Ready
 claim). No CLI/UI enrollment controls are exposed by this backend slice.
 
@@ -182,14 +188,40 @@ guard but drops it before startup/attachment waits. Reacquire for final effects.
 cached verifiers are not current policy.
 Every policy mutation advances the grant revision, fencing pending proofs and
 live admission. Observed lifecycle epochs advance a persisted high-water.
-The native vault holds the authoritative complete policy snapshot; a private
-immutable opaque reference identifies it. Vault update precedes private atomic
-disk publication. Old disk/startup/rollback state, a missing native anchor or an
-interrupted publication refuses admission rather than reviving old grants.
-Preserve both records for explicit local reconciliation; automated repair/reset
-is intentionally unavailable. Locked/unavailable vault errors request native
-unlock/retry, with no fallback. This does not claim resistance to an attacker
-able to roll back the native credential store itself.
+The native vault holds a fixed approximately 100-byte revision/record-digest/
+predecessor anchor, not the full policy JSON (which must fit neither Windows'
+2,560-byte credential limit nor one credential per history entry). The policy
+remains bounded to 16 KiB and 64 historical keys in protected private files.
+A complete prepared record is synchronized before anchor update, followed by
+atomic committed-record publication. Initial creation first durably reserves the
+exact opaque reference, then uses `SecretStore::create_reserved` without replacing
+existing data, so failed creation/publication retains a recoverable receipt.
+
+Interrupted publication or stale disk state refuses ordinary admission.
+Explicit local `reconcile()` under the installation lease only publishes the
+prepared record matching the selected store's exact revision/digest/predecessor.
+It validates installation/origin/storage, existing stable identity, account,
+forward revision and retained compromised-key tombstones. A merely newer,
+tampered, foreign or uncommitted prepared record is not consent. If the current
+record already matches the anchor, uncommitted proposals are ignored. Missing
+anchors, corrupt predecessor evidence and old full-JSON anchor formats require
+local review, not reset/adoption or silent format migration. Native locked/
+unavailable errors request unlock/retry, with no storage fallback.
+
+`Store::owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)` is an
+explicit advanced **headless-only** alternative. It records exact origin,
+installation and storage selection, uses the same no-follow owner-only private
+handle boundary, and refuses switching an existing policy to another backend.
+Its `ExplicitHeadlessFileStore` holds credentials/anchors separately from public
+policy metadata; `ClientOwnerKey::generate_headless/open_headless` preserve the
+same per-host approved binding and opaque-reference semantics. This is not
+unencrypted data in portable config, nor a fallback when SecretService is down.
+Without that explicit selection, headless Linux needs its native SecretService.
+**Weaker guarantee:** rolling back the whole selected protected file store/home
+can also roll back its anchor and restore revoked state. That attack is not
+claimed resisted; likewise native-store rollback itself is outside the native
+anchor guarantee. Native private-path/credential/service qualification remains
+manual; the library option exposes no setup UI or remote enrollment endpoint.
 
 `ClientOwnerKey::generate_native/open_native` store the generated seed and exact
 `OwnerBinding` together through the existing native store. The handle exposes
