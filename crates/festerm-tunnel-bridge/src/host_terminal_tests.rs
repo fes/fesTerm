@@ -686,9 +686,11 @@ mod native_routes {
             &scheduler,
         )
         .await;
+        let held_policy = source.0.clone().lock_owned().await;
         drop(unadopted.unwrap());
         assert!(pending_server.await.unwrap().is_err());
         tokio::time::sleep(Duration::from_millis(200)).await;
+        drop(held_policy);
         assert_eq!(
             festerm_sessiond::list_running_sessions_in(&fixture.root)
                 .unwrap()

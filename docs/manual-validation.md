@@ -3421,23 +3421,36 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 ## Host-based Dev Tunnels stages 1–2 classification (#681)
 
 The opt-in authenticated runtime source checkpoint adds an actual signed SSH
-stream handshake and control/terminal dispatch, with authored encrypted-channel
+stream handshake and control/terminal dispatch, with four passing native TCP SSH
 tests for inventory/terminal negotiation, revocation, replay and frame/client
-bounds. These tests are not yet run on this head. They use constrained test
+bounds. The owned-daemon cases now run explicitly on Unix CI, including actual
+signed-SSH lifecycle and real temporary deadlines. They use constrained test
 policy/vault state and do not qualify protected production enrollment or an
-actual multi-session shell host. HOSTAUTH-01, DT-07/DT-08, CP-11 and mobile gates
-remain manual/native or deferred behind the qualified final session correction,
-protected enrollment adapter and consuming native endpoint. No service is
+installed multi-session shell host. HOSTAUTH-01, DT-07/DT-08, CP-11 and mobile gates
+remain manual/native or deferred behind installed endpoint/approval qualification.
+Fixed session and protected policy adapters are integrated. No service is
 installed or Ready state asserted; legacy qualification is unchanged.
 
 [ADR 0084](adr/0084-host-based-dev-tunnels.md) remains Proposed.
+The corrected runtime/session/native-policy union has fresh owned macOS evidence for fourteen native
+bridge routes, including two real signed SSH terminal channels with isolated
+input, independent inventory and correlated persistent detach. Constrained
+fixture policy is not native-vault consent, installation or platform acceptance;
+additional actual SSH cases pass for issued creation/end, stale-generation
+takeover and key/host/session revocation without persistent-shell termination.
+The temporary case runs for 126.29 seconds with real heartbeat and transport-loss
+grace deadlines; it is not simulated-clock or physical mobile suspension evidence.
+The fixed lease-backed setup policy adapter and Windows session source correction
+are integrated, but cross-platform/installed/native-vault and exact-head independent
+consumer review remain required.
 [HOST contract primitives](host-protocol.md) have automated codec, canonical
 signature, default-deny owner/session admission, revocation/replay, privacy/
 pagination and budget evidence. This is not a native host endpoint, installation,
 owner-enrollment ceremony or actual pinned-channel proof.
 Protected local enrollment/revocation/rotation and opaque native-vault key APIs
 now have deterministic fixture evidence; real pinned SSH streams exercise the
-explicit missing-exporter refusal, not successful owner channel authentication.
+signed channel exporter and exact-stream owner proof, not an installed endpoint
+or native-vault qualification.
 No live credentials/services were used or installed by this slice.
 
 The stage-3 unexposed dispatcher/paired transport adds automated owned-duplex
@@ -3496,6 +3509,35 @@ generation revocation, stopped-detach publication-only receipts, initial
 temporary cancellation and revoked-live local end/reconsent. Missing/unsupported
 journals never reset issuance. These are local fixture evidence, not endpoint
 readiness or complete disk-fault/native lifecycle qualification.
+Additional regressions cover actual-current post-rotation publication admission,
+stalled private snapshot readers without a pinned mutation lock, retained-directory
+CAS across path replacement, closed pending clients and ordered adoption of more
+than 64 small output chunks. The native fixture waits for its real child's READY
+output before obtaining the asserted recovery snapshot; no assertion, timeout or
+native acceptance requirement is weakened.
+The integrated-main regressions
+`host_reservation_requires_its_exact_native_launch_journal` and
+`second_client_replaces_first_client_and_first_receives_stolen_notice` cover
+missing/foreign native launch journals and committed-only attachment events.
+Unix socket/generation unit fixtures use fresh private in-checkout roots;
+native integration runs select a fresh owned root with
+`FESTERM_SESSIOND_TEST_RUNTIME_ROOT`, never production runtime state.
+The journal regression has a retained RED proof with unowned adoption restored.
+macOS automated evidence does not substitute for Linux/Windows native gates.
+Windows CI at `8ebbaf29` retained two real failures: primary run `42788442336`
+job `129735461598` rejected an unused checkpoint staging pathname under strict
+Clippy; native run `42788442164` job `129735457213` ran two bridge tests, with
+`native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated` failing
+at the adoption write with Win32 232/BrokenPipe after approximately 27 seconds.
+The stale-generation/missing-takeover test passed. Windows checkpoint publication
+and abort cleanup remain exact-handle based; only Unix retains the staging name.
+The bridge fixture now batches 96 pending lines, checks every old-writer echo
+before adoption and every delta after it, without increasing the 15-second
+production adoption deadline. Windows baseline/corrected trace and exact-head
+strict Clippy/native results remain required; macOS success is not Windows proof.
+The new persistent-host ordinary local unticketed attach fixture is Unix-only;
+Unix lease tests separately prove persistent admission and temporary refusal.
+These are automated corrections, not new completed manual or usability gates.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot

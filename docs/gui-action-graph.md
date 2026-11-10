@@ -1578,9 +1578,9 @@ branch silently.
 
 HOST-01–03 additionally have an opt-in source implementation of actual
 SSH-stream owner challenge/proof framing and control/terminal dispatch
-(`host_runtime`). Authored encrypted-channel tests cover control inventory,
+(`host_runtime`). Four passing native TCP SSH tests cover control inventory,
 terminal negotiation, revoked policy, cross-connection proof replay and aggregate
-admission/frame bounds. Their execution, qualified session correction, consuming
+admission/frame bounds. The qualified session correction, consuming
 protected enrollment and actual multi-session daemon round trips remain pending;
 this adds no GUI transition or installed endpoint and does not change P/H/N status.
 
@@ -1637,8 +1637,30 @@ signed exact-target metadata, immutable verified bytes and bounded archive
 allowlists. It does not
 implement service switching, rollback or migration; the legacy Linux script
 path is not promoted to authenticated setup.
+
+HOST-02/03 integrated session regressions additionally require the exact native
+launch journal, not matching metadata alone, and observe attachment only after
+recovery adoption/writer activation; abandoned candidates are not Attached.
+These remain local automated evidence, not endpoint or native-platform acceptance.
+The runtime/session union also passes the actual two-daemon signed-SSH
+input-isolation, independent attached inventory and persistent-detach route;
+additional actual signed-SSH cases pass for original-issued creation/end,
+creation-disabled resume versus denied virgin execution, adoption-gated takeover,
+and per-frame key/host/session revocation preserving persistent/local shells.
+A real 65-second active temporary terminal and subsequent 60-second transport-loss
+grace prove the bridge's 20-second heartbeat and daemon-owned expiry. This does
+not qualify physical mobile suspension, native credentials or installed services.
+
 The component's macOS admission pins the release Developer ID team/runtime;
 Windows promotion refuses pending authoritative publisher policy.
 Windows registration/start and running-task stop also
 refuse until authenticated graceful stop can preserve independent daemons.
 Those are native prerequisites, not enabled headless/desktop controls.
+
+The persistent-host local unticketed attach fixture observes recovery adoption
+before Local activation and preserves the exact shell after detach; a Unix
+lease regression still refuses temporary unticketed admission/commit.
+The native binary bridge fixture batches its 96 pending input lines and verifies
+all echoes before adoption and all ordered deltas afterward, rather than spending
+the unchanged adoption deadline on serialized ConPTY round trips. Deterministic
+unit coverage, not native PTY chunking, proves the more-than-64-chunk boundary.

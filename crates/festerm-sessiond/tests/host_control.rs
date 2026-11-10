@@ -51,6 +51,20 @@ fn eventually(mut predicate: impl FnMut() -> bool) {
     }
 }
 
+fn retry_busy<T>(
+    mut operation: impl FnMut() -> Result<T, ControlError>,
+) -> Result<T, ControlError> {
+    let mut outcome = None;
+    eventually(|| match operation() {
+        Err(ControlError::Busy) => false,
+        result => {
+            outcome = Some(result);
+            true
+        }
+    });
+    outcome.unwrap()
+}
+
 impl Fixture {
     fn new() -> Self {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -63,6 +77,23 @@ impl Fixture {
                 &uuid::Uuid::new_v4().simple().to_string()[..8]
             ));
         storage::private_directory(&root, true).unwrap();
+        if std::env::var_os("FESTERM_HOST_TEST_DIAGNOSTICS").is_some() {
+            use std::os::unix::fs::PermissionsExt;
+            let helper = Path::new(env!("CARGO_BIN_EXE_festerm-sessiond"));
+            let wrapper = root.join("owned-captured-helper");
+            let quoted = |path: &Path| path.to_str().unwrap().replace('\'', "'\\''");
+            fs::write(
+                &wrapper,
+                format!(
+                    "#!/bin/sh\numask 077\nexport FESTERM_SESSIOND_TRACE_FILE='{}'\nexec '{}' \"$@\" >>'{}' 2>&1\n",
+                    quoted(&root.join("owned-native-trace.log")),
+                    quoted(helper),
+                    quoted(&root.join("owned-native-start.log")),
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         Self {
             root,
             owner: PrincipalId::new(),
@@ -70,15 +101,22 @@ impl Fixture {
     }
 
     fn control(&self) -> SessionControl {
+        let captured = self.root.join("owned-captured-helper");
         SessionControl::with_helper(
             &self.root,
-            Path::new(env!("CARGO_BIN_EXE_festerm-sessiond")),
+            if captured.is_file() {
+                &captured
+            } else {
+                Path::new(env!("CARGO_BIN_EXE_festerm-sessiond"))
+            },
         )
         .unwrap()
     }
 
     fn issued(&self) -> IssuedOperation {
-        IssuedOperation::new(self.control().issuance_epoch(&self.owner, allow).unwrap())
+        IssuedOperation::new(
+            retry_busy(|| self.control().issuance_epoch(&self.owner, allow)).unwrap(),
+        )
     }
 
     fn failing_control(&self) -> (SessionControl, PathBuf) {
@@ -424,6 +462,71 @@ fn logical_capacity_retires_absent_records_but_never_erases_revocation_or_genera
 }
 
 #[test]
+fn issuance_rotation_reauthorizes_actual_epoch_before_durable_publication() {
+    struct Guard {
+        root: PathBuf,
+        epoch: u64,
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let directory = storage::private_directory(&self.root, false).unwrap();
+            let bytes =
+                storage::read_private(&directory, Path::new("host-sessions.json"), 4 * 1024 * 1024)
+                    .unwrap();
+            let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(state["issuance_epoch"].as_u64(), Some(self.epoch));
+        }
+    }
+    let fixture = Fixture::new();
+    fixture.ensure(&fixture.creation(Lifetime::Persistent {}));
+    let mut state = fixture.state();
+    let old = state["issuance_epoch"].as_u64().unwrap();
+    let mut operation = state["operations"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    operation["created"] = false.into();
+    for _ in state["operations"].as_object().unwrap().len()
+        ..festerm_host_protocol::MAX_IDEMPOTENCY_RECORDS
+    {
+        state["operations"][OperationId::new().as_str()] = operation.clone();
+    }
+    fixture.save_state(&state);
+    assert_eq!(
+        fixture.control().issuance_epoch(&fixture.owner, |state| {
+            if state.issuance_epoch.unwrap().get() == old {
+                Ok(())
+            } else {
+                Err(ControlError::Denied)
+            }
+        }),
+        Err(ControlError::Denied)
+    );
+    assert_eq!(fixture.state(), state);
+    let mut captured = Vec::new();
+    let returned = fixture
+        .control()
+        .issuance_epoch(&fixture.owner, |state| {
+            let epoch = state.issuance_epoch.unwrap().get();
+            captured.push(epoch);
+            Ok(Guard {
+                root: fixture.root.clone(),
+                epoch,
+            })
+        })
+        .unwrap();
+    assert_eq!(captured, [old, returned.get()]);
+    assert_eq!(returned.get(), old + 1);
+    assert!(fixture.state()["operations"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn local_pending_retirement_requires_positive_native_absence_and_fences_old_scopes() {
     use festerm_host_protocol::MAX_PENDING_CREATES;
     let fixture = Fixture::new();
@@ -687,6 +790,48 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if thread::panicking() {
+            if let Ok(directory) = storage::private_directory(&self.root, false) {
+                for entry in fs::read_dir(&self.root).unwrap().flatten() {
+                    let name = entry.file_name();
+                    if name.to_string_lossy().ends_with(".json")
+                        || name == "owned-native-start.log"
+                        || name == "owned-native-trace.log"
+                    {
+                        if let Ok(bytes) =
+                            storage::read_private(&directory, Path::new(&name), 4 * 1024 * 1024)
+                        {
+                            eprintln!(
+                                "OWNED FAILURE {}: {}",
+                                entry.path().display(),
+                                String::from_utf8_lossy(&bytes)
+                            );
+                        }
+                    }
+                }
+            }
+            if let Ok(directory) = storage::private_directory(&self.root.join("lifecycle"), false) {
+                for entry in fs::read_dir(self.root.join("lifecycle")).unwrap().flatten() {
+                    if entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+                    {
+                        if let Ok(bytes) = storage::read_private(
+                            &directory,
+                            Path::new(&entry.file_name()),
+                            32 * 1024,
+                        ) {
+                            eprintln!(
+                                "OWNED FAILURE {}: {}",
+                                entry.path().display(),
+                                String::from_utf8_lossy(&bytes)
+                            );
+                        }
+                    }
+                }
+            }
+        }
         let mut pids = Vec::new();
         if let Ok(directory) = storage::private_directory(&self.root.join("lifecycle"), false) {
             for entry in fs::read_dir(self.root.join("lifecycle")).unwrap().flatten() {
@@ -924,15 +1069,16 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
         Err(ControlError::Denied)
     ));
     let cancelled = AtomicBool::new(true);
+    let operation = fixture.issued();
     assert!(matches!(
-        fixture.control().ensure(
+        retry_busy(|| fixture.control().ensure(
             &fixture.owner,
-            &fixture.issued(),
+            &operation,
             &creation,
             false,
             &cancelled,
             allow
-        ),
+        )),
         Err(ControlError::Cancelled)
     ));
     cancelled.store(false, Ordering::Release);
@@ -1300,12 +1446,12 @@ fn intentional_initial_cancellation_cannot_stop_pending_or_transferred_temporary
     let authority = running.initial_lease_authority.as_ref().unwrap();
     let pending = fixture.attach(&running.target, &creation.attachment, false);
     assert_eq!(
-        fixture.control().cancel_initial_lease(authority, allow),
+        retry_busy(|| fixture.control().cancel_initial_lease(authority, allow)),
         Err(ControlError::Stale)
     );
     let (session, _, attached) = fixture.adopt_authorized(&running.target, pending);
     assert_eq!(
-        fixture.control().cancel_initial_lease(authority, allow),
+        retry_busy(|| fixture.control().cancel_initial_lease(authority, allow)),
         Err(ControlError::Stale)
     );
     fixture
@@ -1316,10 +1462,12 @@ fn intentional_initial_cancellation_cannot_stop_pending_or_transferred_temporary
     let next = fixture.ensure(&fixture.creation(Lifetime::Temporary {
         reconnect_grace_seconds: 60,
     }));
-    fixture
-        .control()
-        .cancel_initial_lease(next.initial_lease_authority.as_ref().unwrap(), allow)
-        .unwrap();
+    retry_busy(|| {
+        fixture
+            .control()
+            .cancel_initial_lease(next.initial_lease_authority.as_ref().unwrap(), allow)
+    })
+    .unwrap();
     fixture.wait_absent(&next.target);
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
 }
@@ -1370,6 +1518,53 @@ fn missing_or_unsupported_durable_journal_never_resets_issuance_or_infers_absenc
         Lookup::Running(running.target)
     );
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
+}
+
+#[test]
+fn persistent_host_shell_accepts_ordinary_local_unticketed_attachment() {
+    let fixture = Fixture::new();
+    let running = fixture.ensure(&fixture.creation(Lifetime::Persistent {}));
+    let selected = list_running_sessions_in(&fixture.root)
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.session.created_at_unix_ms == running.target.generation.get())
+        .unwrap()
+        .session;
+    let local = festerm_sessiond::PersistentSession::resume_discovered_in(
+        &selected,
+        &fixture.root,
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    eventually(|| local.take_recovered_terminal_deferred().is_some());
+    assert!(list_running_sessions_in(&fixture.root)
+        .unwrap()
+        .iter()
+        .all(|entry| entry.attached_by.is_none()));
+    local.acknowledge_recovery_adoption();
+    eventually(|| {
+        list_running_sessions_in(&fixture.root)
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry.session.created_at_unix_ms == running.target.generation.get()
+                    && entry.attached_by == Some(festerm_sessiond::AttachKind::Local)
+            })
+    });
+    drop(local);
+    eventually(|| {
+        list_running_sessions_in(&fixture.root)
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry.session.created_at_unix_ms == running.target.generation.get()
+                    && entry.attached_by.is_none()
+            })
+    });
+    assert!(matches!(
+        fixture.control().lookup(&fixture.owner, &running.target.logical, allow),
+        Ok(Lookup::Running(target)) if target == running.target
+    ));
 }
 
 #[test]

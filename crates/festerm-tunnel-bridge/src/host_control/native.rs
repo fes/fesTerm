@@ -1,7 +1,7 @@
 //! Real local session-control adapter, still unexposed remotely.
 //!
-//! Only inventory is advertised until the adopted terminal relay is integrated.
-//! Attachment and detach refuse rather than manufacture a frontend lease.
+//! Standalone composition advertises only inventory. The authenticated runtime
+//! also supplies adopted terminal routes before advertising lifecycle control.
 use super::{
     InventoryCapture, OperationAdmission, PolicyGuard, ProtectedPolicySource, SessionBackend,
 };
@@ -21,6 +21,7 @@ use std::{
 pub struct NativeControl<A: ProtectedPolicySource> {
     sessions: Arc<SessionControl>,
     policy: Arc<A>,
+    terminal_routes: bool,
     #[cfg(test)]
     test_capabilities: bool,
 }
@@ -30,6 +31,17 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
         Self {
             sessions: sessions.into(),
             policy,
+            terminal_routes: false,
+            #[cfg(test)]
+            test_capabilities: false,
+        }
+    }
+
+    pub(crate) fn with_terminal_routes(sessions: Arc<SessionControl>, policy: Arc<A>) -> Self {
+        Self {
+            sessions,
+            policy,
+            terminal_routes: true,
             #[cfg(test)]
             test_capabilities: false,
         }
@@ -40,11 +52,15 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
         Self {
             sessions: sessions.into(),
             policy,
+            terminal_routes: false,
             test_capabilities: true,
         }
     }
 
     fn advertised(&self, current: Capabilities) -> Capabilities {
+        if self.terminal_routes {
+            return current;
+        }
         #[cfg(test)]
         if self.test_capabilities {
             return current;
@@ -56,6 +72,11 @@ impl<A: ProtectedPolicySource> NativeControl<A> {
     }
 
     fn supports(&self, request: &Request) -> bool {
+        if self.terminal_routes {
+            // Attach and Detach use their independently authenticated terminal
+            // stream, never acquire a frontend on this control connection.
+            return !matches!(request, Request::Attach { .. } | Request::Detach { .. });
+        }
         #[cfg(test)]
         if self.test_capabilities {
             return true;
@@ -264,7 +285,7 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
         admission: &OperationAdmission,
     ) -> Result<Response, Refusal> {
         // Defense in depth for direct backend composition: executable code is
-        // not an advertisement. Production remains inventory-only.
+        // not an advertisement. Standalone composition remains inventory-only.
         if !self.supports(&request.body) {
             return Err(Refusal::Unsupported);
         }

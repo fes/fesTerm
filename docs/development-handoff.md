@@ -22,6 +22,21 @@ M7 and M8 are implemented; M6 remains the open compatibility acceptance gate.
 M9 scrollback/reflow and M10 packaging/updater work are substantially
 implemented but retain the completion work recorded in `ROADMAP.md`.
 
+ADR 0084's [runtime contract](host-protocol.md#authenticated-runtime-composition-uninstalled-integration)
+now pairs separately authenticated actual SSH control/terminal streams with
+protected current policy and daemon-owned lifecycle. This is not an installed
+endpoint or product/native acceptance. Fixed native policy `7e27edd5` and session
+correction `28e0391a` are normally integrated; consume fixed reviewed heads, not
+moving parallel branches. To reproduce the owned Unix routes, build
+`festerm-sessiond` and `festerm-pty-test-child`, point `FESTERM_HOST_TEST_HELPER`
+at that exact rebuilt helper, then run
+`cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored --test-threads=1`.
+Use an owned private target/runtime, never production service or credentials.
+The temporary test intentionally takes about 126 seconds for real heartbeat and
+transport-loss grace; do not shorten deadlines or report it from a protocol mock.
+Native-vault/foreground approval, actual Dev Tunnels service, platform lifecycle,
+physical mobile suspension and independent exact-head consumer review remain gates.
+
 At startup, the app loads `config.toml` from the native per-user project
 configuration location (`com.fes.fesTerm`) or the explicit
 `FESTERM_CONFIG_PATH` support/test override. Missing configuration starts with

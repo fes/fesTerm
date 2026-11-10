@@ -68,7 +68,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn private_publication_preserves_shared_atomic_no_replace_boundary() {
+    fn protected_publication_preserves_shared_no_replace_boundary() {
         let root = storage::private_test_directory();
         for name in ["host-lifecycle.json", "devtunnel"] {
             let path = root.path().join(format!("{name}-stage"));
@@ -83,6 +83,7 @@ mod tests {
                     .as_slice(),
                 b"complete"
             );
+            assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
         }
     }
 }

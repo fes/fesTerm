@@ -753,18 +753,29 @@ feature implements the runtime policy traits directly: each admission reacquires
 the explicitly selected credential store and returns an owned enrollment lease,
 not cached authority. The app wrapper delegates; its default remains native vault
 with no file-store fallback. Owned native fixtures cover
-control routing/retry without frontend leases. No listener uses these modules.
+control routing/retry without frontend leases. No installed listener uses these modules.
 The unexposed `host_terminal` module pairs bounded binary terminal framing with
-an immutable client handle and a fixture-only actual native attachment actor. Recovery
+an immutable client handle and an opt-in actual native attachment actor. Recovery
 adoption and observed native writer admission precede Attached; exact temporary
 leases distinguish intentional detach from transport loss. FIFO output turns
 are released before network I/O; current authorization can cancel slow output.
 The native actor retains original opaque generation/attachment authority, and
 freshly checks an intentional-detach receipt before publishing stopped success;
 no client lease fields can mint replacement authority.
-Actual consuming same-channel authentication integration, backend hotpath/history
-qualification and fair control-under-load remain gates; legacy exact-generation relay
-and independent grants are unchanged.
+`HostRuntime` consumes proof on each actual signed SSH stream and pairs these
+control/terminal adapters over the same protected backend. Only that paired
+constructor advertises current lifecycle capabilities and the backend-reserved
+issuer; standalone control stays inventory-only. No claimed issuer or cached
+permission can replace protected current admission. Every frame/action and output
+publication revalidates the opaque attachment against fresh protected state.
+Key/host/session revocation closes the remote and native attachment, not the
+persistent daemon. A 20-second heartbeat renews the daemon's 60-second connected
+temporary deadline; unexpected closure uses original-authority TransportLost,
+leaving grace/expiry daemon-owned. Persistent unticketed local attachment remains
+available; temporary attachment always requires its actual ticket.
+Independent exact-head consumer review, native-vault/first-connect/service
+qualification and fair control-under-load remain gates; legacy exact-generation
+relay and independent grants are unchanged.
 
 The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small
 `festerm-host-protocol` serde/UUID crate for shared HOST identities, bounded
@@ -780,6 +791,19 @@ Its local `host_control::SessionControl` journals owner/logical identity,
 immutable launch intent, reserved generations, operation results and revocation
 revisions through the existing private no-follow/atomic storage boundary. It
 uses the real detached native launcher and single-writer daemon admission.
+HOST reservations require their exact native launch journal, preserving
+ADR 0085's refusal to adopt an unrelated live generation from metadata alone.
+Read-only private native checkpoint snapshots do not hold the mutation lock
+during file/ACL I/O; serialized mutation CAS retains its validated directory
+handle across publication. Private global-registry mutations compute their
+change once under the lock, prepare and sync a private checkpoint after releasing
+it, then reacquire it to revalidate before atomic publication. Disjoint concurrent
+changes rebase without replaying effects, with at most four preparation attempts;
+a conflicting same-name lineage refuses rather than replacing another generation.
+The directory stays retained through preparation/publication; final directory sync
+runs outside the lock. Abandoned checkpoints remove only their owned staging file:
+Unix retains its directory-relative name, Windows its exact open file handle.
+Legacy nonprivate reads and mutations remain locked.
 Read-only reconciliation cannot create a fresh reservation. A durable issuance
 namespace bounds the entire 128-entry operation ledger without receipt archives;
 old captured scopes become Stale, never fresh creation. The 64 logical records
@@ -788,6 +812,10 @@ sealed supervision and positive native absence proof. Capacity reclamation takes
 only one requesting-owner known-Absent record, never another owner's or a revoked
 fence. Revoked live shells remain accounted and locally manageable; exact local
 end and new explicit consent are required before retiring their fence.
+Namespace publication reauthorizes the actual post-rotation epoch under the
+same reservation and retains that policy guard through the durable checkpoint.
+At capacity, authorized inventory/inspection may first reconcile owned dead
+Running/Ending records, followed by retry of Busy with the original operation.
 Opaque attachment authorities retain current policy and per-generation
 grant/writer/liveness guards across nonblocking local actions, without parsing or
 locking the global journal. Intentional detach yields a publication-only receipt,
@@ -800,12 +828,15 @@ recovery adoption; a pending attachment is not an Attached success. Persistent
 shells never acquire temporary cleanup merely through attachment. Endpoint
 routing must not stall an existing writer while a candidate adopts: the native
 daemon queues one candidate, bounds its post-snapshot output/control delta to
-512 KiB, and cancels only that candidate on saturation. The candidate's input
+512 KiB including queue allocation headroom, independently of the live 64-frame
+queue, and cancels only that candidate on saturation. Committed delta drains
+before newer output. New-client admission/refusal errors cannot terminate the
+daemon or persistent PTY; listener errors still propagate. The candidate's input
 worker waits for the daemon's actual writer commit before accepting commands.
 The existing writer remains usable until that commit. Endpoint
 routing, protected enrollment/channel integration, migration and native
 reboot/device qualification remain gated; this is not remote exposure.
-The non-default
+Legacy bearer connectivity is not principal proof. The non-default
 `festerm-host-setup/owner-enrollment` feature persists exact-installation
 owner/key/account policy under the lifecycle lease, with compact native-vault
 revision/digest fencing, durable prepared-record forward recovery and monotonic
@@ -837,8 +868,10 @@ This source checkpoint does not install/enable a listener: consuming protected
 enrollment, the qualified final session correction and native end-to-end gates
 remain mandatory before exposure.
 Endpoint integration and independent security review are mandatory before
-new remote capabilities; all new capabilities default denied. No session routing,
-creation, migration or lifetime-supervisor implementation is claimed by this slice.
+new remote capabilities; all new capabilities default denied. The enrollment/
+channel prerequisite does not itself implement session routing, creation,
+migration or lifetime supervision; the separate local control backend above
+does not expose an endpoint.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

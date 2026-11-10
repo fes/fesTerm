@@ -609,9 +609,9 @@ fn native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_
     assert!(stale_output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&stale_output.stderr).contains("generation changed"));
 
-    let mut client = connect(
+    let mut client = connect_with_ready_snapshot(
         &selection.endpoint,
-        Admission {
+        &Admission {
             pid: selection.pid,
             generation: selection.generation,
             takeover: true,
@@ -643,53 +643,20 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
         name: name.clone(),
     };
     let shell = pty_test_child(&executable);
+    let mut arguments = vec!["emit:READY"];
+    for _ in 0..101 {
+        arguments.extend(["read-line", "echo:INPUT"]);
+    }
+    arguments.push("spin");
     #[cfg(unix)]
-    launch_session_with(
-        &executable,
-        &runtime,
-        &name,
-        &shell,
-        &[
-            "emit:READY",
-            "read-line",
-            "echo:INPUT",
-            "read-line",
-            "echo:INPUT",
-            "read-line",
-            "echo:INPUT",
-            "read-line",
-            "echo:INPUT",
-            "read-line",
-            "echo:INPUT",
-            "spin",
-        ],
-    );
+    launch_session_with(&executable, &runtime, &name, &shell, &arguments);
     #[cfg(windows)]
-    let mut daemon = launch_session_with(
-        &executable,
-        &runtime,
-        &name,
-        &shell,
-        &[
-            "emit:READY",
-            "read-line",
-            "echo:INPUT",
-            "read-line",
-            "echo:INPUT",
-            "read-line",
-            "echo:INPUT",
-            "read-line",
-            "echo:INPUT",
-            "read-line",
-            "echo:INPUT",
-            "spin",
-        ],
-    );
+    let mut daemon = launch_session_with(&executable, &runtime, &name, &shell, &arguments);
     let selection = bridge_selection(&runtime, &name);
 
-    let mut old = connect(
+    let mut old = connect_with_ready_snapshot(
         &selection.endpoint,
-        Admission {
+        &Admission {
             pid: selection.pid,
             generation: selection.generation,
             takeover: true,
@@ -729,6 +696,11 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
         still_attached.attached_by,
         Some(festerm_sessiond::AttachKind::Local)
     );
+    #[cfg(unix)]
+    for _ in 0..32 {
+        let rejected = UnixStream::connect(&selection.endpoint).unwrap();
+        rejected.shutdown(std::net::Shutdown::Both).unwrap();
+    }
     send_input(&mut old, &test_input("while-candidate-pending")).unwrap();
     assert_contains(&mut old, b"INPUT:while-candidate-pending");
     write_bridge_client_frame(
@@ -747,16 +719,63 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
     let mut bridge = spawn_bridge(&executable, &runtime, &selection);
     let snapshot = read_bridge_snapshot(bridge.stdout.as_mut().unwrap());
     assert!(terminal_contains(&snapshot, b"INPUT:old-still-attached"));
-    send_input(&mut old, &test_input("before-candidate-adopts")).unwrap();
-    assert_contains(&mut old, b"INPUT:before-candidate-adopts");
+    let pending_started = std::time::Instant::now();
+    // Exercise the post-snapshot backlog, not 96 serialized ConPTY round trips
+    // that can legitimately outlive the daemon's bounded adoption window.
+    let mut pending_input = Vec::new();
+    for index in 0..96 {
+        let line = format!("pending-chunk-{index:02}");
+        pending_input.extend(test_input(&line));
+    }
+    pending_input.extend(test_input("before-candidate-adopts"));
+    send_input(&mut old, &pending_input).unwrap();
+    let mut pending_output = Vec::new();
+    let mut buffer = [0; 4096];
+    let final_marker = b"INPUT:before-candidate-adopts";
+    while !pending_output
+        .windows(final_marker.len())
+        .any(|bytes| bytes == final_marker)
+    {
+        let count = old.read(&mut buffer).unwrap();
+        assert_ne!(count, 0, "old writer closed while candidate was pending");
+        pending_output.extend_from_slice(&buffer[..count]);
+        assert!(pending_output.len() < 512 * 1024);
+    }
+    for index in 0..96 {
+        let expected = format!("INPUT:pending-chunk-{index:02}");
+        assert!(
+            pending_output
+                .windows(expected.len())
+                .any(|bytes| bytes == expected.as_bytes()),
+            "old writer missing {expected}"
+        );
+    }
+    eprintln!(
+        "bridge pending backlog observed in {:?}",
+        pending_started.elapsed()
+    );
     acknowledge_bridge_recovery(bridge.stdin.as_mut().unwrap()).unwrap();
     assert_contains(&mut old, STOLEN_NOTICE);
-    read_bridge_frame_until(bridge.stdout.as_mut().unwrap(), |kind, payload| {
-        kind == 1
-            && payload
-                .windows(b"INPUT:before-candidate-adopts".len())
-                .any(|bytes| bytes == b"INPUT:before-candidate-adopts")
-    });
+    let mut delta = Vec::new();
+    while !delta
+        .windows(b"INPUT:before-candidate-adopts".len())
+        .any(|bytes| bytes == b"INPUT:before-candidate-adopts")
+    {
+        delta.extend(read_bridge_frame_until(
+            bridge.stdout.as_mut().unwrap(),
+            |kind, _| kind == 1,
+        ));
+        assert!(delta.len() < 512 * 1024);
+    }
+    for index in 0..96 {
+        let expected = format!("INPUT:pending-chunk-{index:02}");
+        assert!(
+            delta
+                .windows(expected.len())
+                .any(|bytes| bytes == expected.as_bytes()),
+            "missing {expected}"
+        );
+    }
     bounded_poll(
         || {
             festerm_sessiond::list_running_sessions_in(&runtime_registry_root(&runtime))
@@ -2918,6 +2937,46 @@ fn terminal_text(terminal: &Terminal) -> String {
         text.push('\n');
     }
     text
+}
+
+fn connect_with_ready_snapshot(endpoint: &str, admission: &Admission) -> ConnectedClient {
+    let fresh = || {
+        connect(
+            endpoint,
+            Admission {
+                pid: admission.pid,
+                generation: admission.generation,
+                takeover: admission.takeover,
+            },
+        )
+    };
+    let client = fresh();
+    #[cfg(unix)]
+    if !terminal_contains(&client.snapshot, b"READY") {
+        let mut probe = client;
+        assert_contains(&mut probe, b"READY");
+        let attachment = || {
+            festerm_sessiond::list_running_sessions_in(Path::new(endpoint).parent().unwrap())
+                .ok()?
+                .into_iter()
+                .find(|session| {
+                    session.session.pid == admission.pid
+                        && session.session.created_at_unix_ms == admission.generation
+                })
+                .map(|session| session.attached_by)
+        };
+        bounded_poll(
+            || attachment() == Some(Some(festerm_sessiond::AttachKind::Local)),
+            "READY probe committed to exact fixture generation",
+        );
+        drop(probe);
+        bounded_poll(
+            || attachment() == Some(None),
+            "READY probe detached from exact fixture generation",
+        );
+        return fresh();
+    }
+    client
 }
 
 #[cfg(unix)]
