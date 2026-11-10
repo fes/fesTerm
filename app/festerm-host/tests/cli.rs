@@ -72,7 +72,7 @@ fn headless_package_staging_refuses_unauthenticated_input_before_writing() {
 
 #[test]
 fn headless_acquisition_rejects_provenance_overrides_without_network_or_state() {
-    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let root = festerm_sessiond::private_storage::private_test_directory();
     let cache = root.path().join("cache");
     for option in ["--url", "--sha256", "--key", "--token"] {
         let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
