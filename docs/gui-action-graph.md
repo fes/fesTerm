@@ -1651,3 +1651,11 @@ Windows promotion refuses pending authoritative publisher policy.
 Windows registration/start and running-task stop also
 refuse until authenticated graceful stop can preserve independent daemons.
 Those are native prerequisites, not enabled headless/desktop controls.
+
+The persistent-host local unticketed attach fixture observes recovery adoption
+before Local activation and preserves the exact shell after detach; a Unix
+lease regression still refuses temporary unticketed admission/commit.
+The native binary bridge fixture batches its 96 pending input lines and verifies
+all echoes before adoption and all ordered deltas afterward, rather than spending
+the unchanged adoption deadline on serialized ConPTY round trips. Deterministic
+unit coverage, not native PTY chunking, proves the more-than-64-chunk boundary.

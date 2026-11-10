@@ -1521,6 +1521,53 @@ fn missing_or_unsupported_durable_journal_never_resets_issuance_or_infers_absenc
 }
 
 #[test]
+fn persistent_host_shell_accepts_ordinary_local_unticketed_attachment() {
+    let fixture = Fixture::new();
+    let running = fixture.ensure(&fixture.creation(Lifetime::Persistent {}));
+    let selected = list_running_sessions_in(&fixture.root)
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.session.created_at_unix_ms == running.target.generation.get())
+        .unwrap()
+        .session;
+    let local = festerm_sessiond::PersistentSession::resume_discovered_in(
+        &selected,
+        &fixture.root,
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    eventually(|| local.take_recovered_terminal_deferred().is_some());
+    assert!(list_running_sessions_in(&fixture.root)
+        .unwrap()
+        .iter()
+        .all(|entry| entry.attached_by.is_none()));
+    local.acknowledge_recovery_adoption();
+    eventually(|| {
+        list_running_sessions_in(&fixture.root)
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry.session.created_at_unix_ms == running.target.generation.get()
+                    && entry.attached_by == Some(festerm_sessiond::AttachKind::Local)
+            })
+    });
+    drop(local);
+    eventually(|| {
+        list_running_sessions_in(&fixture.root)
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry.session.created_at_unix_ms == running.target.generation.get()
+                    && entry.attached_by.is_none()
+            })
+    });
+    assert!(matches!(
+        fixture.control().lookup(&fixture.owner, &running.target.logical, allow),
+        Ok(Lookup::Running(target)) if target == running.target
+    ));
+}
+
+#[test]
 fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease() {
     let fixture = Fixture::new();
     let creation = fixture.creation(Lifetime::Temporary {

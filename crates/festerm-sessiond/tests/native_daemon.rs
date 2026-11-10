@@ -719,13 +719,41 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
     let mut bridge = spawn_bridge(&executable, &runtime, &selection);
     let snapshot = read_bridge_snapshot(bridge.stdout.as_mut().unwrap());
     assert!(terminal_contains(&snapshot, b"INPUT:old-still-attached"));
+    let pending_started = std::time::Instant::now();
+    // Exercise the post-snapshot backlog, not 96 serialized ConPTY round trips
+    // that can legitimately outlive the daemon's bounded adoption window.
+    let mut pending_input = Vec::new();
     for index in 0..96 {
         let line = format!("pending-chunk-{index:02}");
-        send_input(&mut old, &test_input(&line)).unwrap();
-        assert_contains(&mut old, format!("INPUT:{line}").as_bytes());
+        pending_input.extend(test_input(&line));
     }
-    send_input(&mut old, &test_input("before-candidate-adopts")).unwrap();
-    assert_contains(&mut old, b"INPUT:before-candidate-adopts");
+    pending_input.extend(test_input("before-candidate-adopts"));
+    send_input(&mut old, &pending_input).unwrap();
+    let mut pending_output = Vec::new();
+    let mut buffer = [0; 4096];
+    let final_marker = b"INPUT:before-candidate-adopts";
+    while !pending_output
+        .windows(final_marker.len())
+        .any(|bytes| bytes == final_marker)
+    {
+        let count = old.read(&mut buffer).unwrap();
+        assert_ne!(count, 0, "old writer closed while candidate was pending");
+        pending_output.extend_from_slice(&buffer[..count]);
+        assert!(pending_output.len() < 512 * 1024);
+    }
+    for index in 0..96 {
+        let expected = format!("INPUT:pending-chunk-{index:02}");
+        assert!(
+            pending_output
+                .windows(expected.len())
+                .any(|bytes| bytes == expected.as_bytes()),
+            "old writer missing {expected}"
+        );
+    }
+    eprintln!(
+        "bridge pending backlog observed in {:?}",
+        pending_started.elapsed()
+    );
     acknowledge_bridge_recovery(bridge.stdin.as_mut().unwrap()).unwrap();
     assert_contains(&mut old, STOLEN_NOTICE);
     let mut delta = Vec::new();
