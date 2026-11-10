@@ -84,6 +84,269 @@ fn caps() -> Capabilities {
     }
 }
 
+#[tokio::test]
+async fn selected_host_end_refusals_and_lost_reply_retain_original_without_creation_authority() {
+    for reason in [
+        Some(Refusal::Busy),
+        Some(Refusal::Unknown),
+        Some(Refusal::Denied),
+        Some(Refusal::Offline),
+        Some(Refusal::Revoked),
+        Some(Refusal::Stale),
+        Some(Refusal::OutcomeUncertain),
+        None,
+    ] {
+        let context = context();
+        let target = Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(8).unwrap(),
+        };
+        let intent = Arc::new(EndIntent::new(&context, target.clone()));
+        let original = intent.operation().clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let capabilities = Capabilities {
+            explicit_end: true,
+            ..Capabilities::default()
+        };
+        let server = tokio::spawn(async move {
+            handshake(&mut peer, capabilities).await;
+            let request = read_frame(&mut peer, &Budgets::default())
+                .await
+                .unwrap()
+                .decode::<Envelope<Request>>()
+                .unwrap();
+            assert_eq!(request.body, Request::ExplicitEnd { target });
+            assert!(
+                request.issuance_epoch.is_none(),
+                "End is not a creation-issued operation"
+            );
+            if let Some(reason) = reason {
+                respond(&mut peer, &request, Response::Refused { reason }).await;
+            }
+            request
+        });
+        let result = end_authenticated(
+            &mut client(stream, &context),
+            intent.clone(),
+            &CancellationToken::new(),
+        )
+        .await;
+        match reason {
+            Some(expected) => assert!(
+                matches!(result, Err(Failure::Control(Error::Refused(actual))) if actual == expected)
+            ),
+            None => assert!(matches!(result, Err(Failure::Control(Error::Offline)))),
+        }
+        assert!(intent.is_issued());
+        assert!(!intent.is_resolved());
+        assert_eq!(intent.operation(), &original);
+        let first = server.await.unwrap();
+        let expected = first.clone();
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            handshake(
+                &mut peer,
+                Capabilities {
+                    explicit_end: true,
+                    ..Capabilities::default()
+                },
+            )
+            .await;
+            let retry = read_frame(&mut peer, &Budgets::default())
+                .await
+                .unwrap()
+                .decode::<Envelope<Request>>()
+                .unwrap();
+            assert_eq!(
+                retry, expected,
+                "explicit retry cannot change host, operation or exact generation"
+            );
+            let Request::ExplicitEnd { target } = retry.body.clone() else {
+                panic!("no substitution")
+            };
+            respond(&mut peer, &retry, Response::Ended { target }).await;
+        });
+        assert!(
+            matches!(end_authenticated(&mut client(stream, &context), intent.clone(), &CancellationToken::new()).await.unwrap(),
+            Outcome::Ended { target } if &target == intent.target())
+        );
+        assert!(intent.is_resolved());
+        assert_eq!(intent.operation(), &original);
+        server.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn selected_host_end_requires_capability_and_rejects_replacement_receipt() {
+    for supported in [false, true] {
+        let context = context();
+        let intent = Arc::new(EndIntent::new(
+            &context,
+            Target {
+                logical: LogicalSessionId::new(),
+                generation: GenerationId::new(9).unwrap(),
+            },
+        ));
+        let (stream, mut peer) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            handshake(
+                &mut peer,
+                Capabilities {
+                    explicit_end: supported,
+                    ..Capabilities::default()
+                },
+            )
+            .await;
+            if supported {
+                let request = read_frame(&mut peer, &Budgets::default())
+                    .await
+                    .unwrap()
+                    .decode::<Envelope<Request>>()
+                    .unwrap();
+                let Request::ExplicitEnd { mut target } = request.body.clone() else {
+                    panic!("End")
+                };
+                target.generation = GenerationId::new(target.generation.get() + 1).unwrap();
+                respond(&mut peer, &request, Response::Ended { target }).await;
+            } else {
+                assert!(
+                    peer.read_u8().await.is_err(),
+                    "unsupported End must not reach wire"
+                );
+            }
+        });
+        let result = end_authenticated(
+            &mut client(stream, &context),
+            intent.clone(),
+            &CancellationToken::new(),
+        )
+        .await;
+        if supported {
+            assert!(matches!(
+                result,
+                Err(Failure::Control(Error::Contract(ContractError::Stale)))
+            ));
+        } else {
+            assert!(matches!(
+                result,
+                Err(Failure::Control(Error::Refused(Refusal::Unsupported)))
+            ));
+            assert!(!intent.is_issued());
+        }
+        assert!(!intent.is_resolved());
+        server.await.unwrap();
+    }
+}
+
+#[test]
+fn selected_host_end_context_and_precancel_fence_before_vault_or_worker() {
+    let approved = context();
+    let intent = Arc::new(EndIntent::new(
+        &approved,
+        Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(2).unwrap(),
+        },
+    ));
+    let scope = Scope {
+        request: OperationId::new(),
+        generation: 1,
+        binding: approved.binding().clone(),
+    };
+    let foreign = context();
+    assert!(!intent.matches_context(&foreign));
+    let mut same_binding_foreign_principal = foreign;
+    same_binding_foreign_principal.binding = approved.binding().clone();
+    assert!(matches!(
+        Worker::start(
+            same_binding_foreign_principal,
+            scope.clone(),
+            Operation::End(intent.clone()),
+            &Budgets::default(),
+            Arc::new(|| {})
+        ),
+        Err(Failure::BindingMismatch)
+    ));
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    assert!(matches!(
+        Worker::start_with_cancellation(
+            approved,
+            scope,
+            Operation::End(intent.clone()),
+            &Budgets::default(),
+            Arc::new(|| {}),
+            cancel
+        ),
+        Err(Failure::Control(Error::Cancelled))
+    ));
+    assert!(!intent.is_issued() && !intent.is_resolved());
+}
+
+#[tokio::test]
+async fn selected_host_end_single_flight_and_post_send_cancel_keep_original() {
+    let context = context();
+    let intent = Arc::new(EndIntent::new(
+        &context,
+        Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(2).unwrap(),
+        },
+    ));
+    let original = intent.operation().clone();
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let mut first_client = client(stream, &context);
+    let (sent, received) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        handshake(
+            &mut peer,
+            Capabilities {
+                explicit_end: true,
+                ..Capabilities::default()
+            },
+        )
+        .await;
+        let request = read_frame(&mut peer, &Budgets::default())
+            .await
+            .unwrap()
+            .decode::<Envelope<Request>>()
+            .unwrap();
+        sent.send(request).unwrap();
+        released.await.unwrap();
+    });
+    let cancel = CancellationToken::new();
+    let token = cancel.clone();
+    let action = intent.clone();
+    let first =
+        tokio::spawn(async move { end_authenticated(&mut first_client, action, &token).await });
+    let request = received.await.unwrap();
+    assert_eq!(request.operation, original);
+    let (stream, mut second_peer) = tokio::io::duplex(8192);
+    assert!(matches!(
+        end_authenticated(
+            &mut client(stream, &context),
+            intent.clone(),
+            &CancellationToken::new()
+        )
+        .await,
+        Err(Failure::Control(Error::Contract(ContractError::Busy)))
+    ));
+    assert!(
+        second_peer.read_u8().await.is_err(),
+        "single flight emits no second handshake/request"
+    );
+    cancel.cancel();
+    assert!(matches!(
+        first.await.unwrap(),
+        Err(Failure::Control(Error::Cancelled))
+    ));
+    assert!(intent.is_issued() && !intent.is_resolved());
+    assert_eq!(intent.operation(), &original);
+    release.send(()).unwrap();
+    server.await.unwrap();
+}
+
 fn client(stream: DuplexStream, context: &ApprovedContext) -> ControlClient<DuplexStream> {
     ControlClient::on_authenticated_stream(
         stream,

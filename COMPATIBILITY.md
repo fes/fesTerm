@@ -86,6 +86,11 @@ fixture passes in combined `c5f2d024` qualification (all sixteen actual-helper
 routes pass individually once with fresh private1.98 helpers). The combined
 Simulator executable links; neither result is physical mobile acceptance.
 The prior a13a 2/14 native RED remains separately recorded.
+The lifecycle child adds exact mobile End review/original-operation retention
+and bounded correlated Close/Disconnect retirement. Focused framed and two
+actual SSH/native-PTY cases cover stale End/replacement immunity and persistent/
+owning-temporary detach; native StopRequested remains OutcomeUncertain. This
+is not physical mobile lifecycle/vault acceptance or a rerun of the sixteen cases.
 Offline/live-SSH defaults remain
 unchanged. Native mobile installation, local Settings/Remote Access,
 durable restart reconciliation and signed/native/vault/service/device

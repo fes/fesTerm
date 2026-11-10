@@ -124,6 +124,10 @@ impl TextSize {
 pub enum ShellAction {
     #[cfg(feature = "host-clients")]
     OpenHosts,
+    #[cfg(feature = "host-clients")]
+    EndHostSurface(u64),
+    #[cfg(feature = "live-ssh")]
+    DisconnectSurface(u64),
     NewProfile,
     OpenProfile(String),
     EditProfile(String),

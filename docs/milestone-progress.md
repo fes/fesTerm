@@ -1,5 +1,58 @@
 # Milestone Progress Narrative
 
+## Ending a mobile HOST generation without ending its replacement
+
+The shared mobile client could create/adopt an actual HOST terminal, but lacked
+explicit End UI and dropped closed attachments as transport loss. This normal
+child of published `19442f6c` completes one bounded lifecycle increment, not ADR
+0084 or mobile acceptance. Authorized inventory and the adopted-tab menu route
+through one application-owned exact, default-unconfirmed End review. Full
+account/protected owner/reference/endpoint, native privacy/request epochs and
+the originating Session identity fence confirmation. The existing protocol
+addresses logical/native generation; native namespace/PID resolution remains
+host-journal-owned rather than fabricated from a profile. No protocol, service,
+dependency, generic retirement or persistence framework is added.
+
+The shared worker freshly authenticates the existing ExplicitEnd command and
+retains its immutable original operation/target on Busy, unknown, denied,
+revoked, offline, cancellation, stale or lost reply. End does not borrow
+creation permission or attach a forbidden creation issuance epoch. The actual
+native backend deliberately returns **OutcomeUncertain** after StopRequested;
+only an exactly correlated Ended reply is displayed as confirmed End. An old
+original End cannot terminate a replacement generation.
+
+Close-tab and the common typed Disconnect command move the exact old HOST
+Session into a bounded background job using existing `Session::shutdown`.
+Correlated detach receipt completes only that old attachment, never a new
+foreground terminal. Persistent daemons survive/re-adopt; an owning temporary
+lease ends under host policy. Native lock/suspend still cancel directly without
+a UI frame, intentional detach or replay. Sixteen process-local End originals
+and sixteen retirement jobs are bounded and observable; cold-restart original
+action reconciliation remains the explicit next slice, not automatic retry.
+
+Focused framed tests retain the original app-lock/no-replay oracle and add
+close/disconnect-versus-End, exact confirmation/account/epoch and late-frontend
+isolation. Four shared End cases cover negative typed replies, original retry,
+fresh capability without creation authority, wrong-generation receipt,
+single-flight and cancellation. The two selected actual SSH/native-PTY cases
+pass once each: End/authoritative absence/recreation plus original-End Stale
+without harming the replacement, and actual frontend-adopted persistent versus
+temporary correlated retirement/recovery. The older sixteen-route c5f proof,
+0747/42/194 receipts, helper copies, Simulator executables and original a13a RED
+remain separate; no aggregate requalification is claimed.
+
+Initial iteration receipts remain retained: malformed Cargo `-VV` diagnostic
+exit1, private-field and widget-context compile errors, a typed-command
+formatting scope diagnostic, and a meaningful 3-pass/1-fail End
+pre-admission test that caught a wrongly nested authority check before the
+synchronous fence was fixed. No assertion was weakened. Detailed final
+source/tool/count/hash attribution follows in this section's qualification
+receipt. Physical iOS/Android lifecycle/vault, GUI/accessibility, provider/
+service, signed release, mobile sharing and durable restart reconciliation
+remain open. Desktop local Settings/Remote Access stays with its separate owner.
+The parent's Android native-library-only proof belongs to exact42/194 inputs,
+not this changed lifecycle child; no APK/device/runtime claim is transferred.
+
 ## Keeping the portable receipt crash regressions in mandatory CI
 
 The retained reliability review found that default bridge tests enable relay

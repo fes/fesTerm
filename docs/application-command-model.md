@@ -160,6 +160,29 @@ end the daemon-owned shell; no automatic reconnect or replay is added. Default
 offline and legacy live-SSH/bridge behavior remain separate. Physical/native
 mobile acceptance remains open under HOST-01–03/MOB-01–06.
 
+Mobile inventory and `EndHostSurface(tab)` converge on one application-owned,
+default-unconfirmed exact End review. Confirmation revalidates the full account,
+protected owner/reference/endpoint, native privacy epoch, request generation and,
+for an adopted tab, its original Session identity. `EndIntent` retains one
+operation and logical/native generation across explicit retries; it does not
+borrow creation permission or a creation issuance epoch (the existing End wire
+contract forbids that field). Fresh authenticated End capability and protected
+host admission remain mandatory. Native namespace/PID resolution stays in the
+host's exact-generation journal, not profile authority or an invented UI PID.
+Busy/unknown/denied/offline/Stale/cancellation/lost reply never mean absence.
+The current native backend returns OutcomeUncertain after durable stop intent;
+only an exactly correlated Ended reply is presented as confirmed End.
+
+Close-tab and `DisconnectSurface(tab)` retire the exact old HOST Session through
+the existing correlated `Session::shutdown` helper on a bounded background job,
+never a blocking UI call or ExplicitEnd. A late receipt only completes that old
+attachment; it cannot mutate the replacement frontend. Persistent daemons
+survive; an owning temporary lease follows the host's intentional-detach policy.
+Lock/suspension still directly cancel transport without a UI frame or a false
+detach; unexpected-loss heartbeat/grace remains host-owned. End originals and
+retirements are bounded to sixteen each; original End actions remain process-local
+across review closure, not a durable restart reconciliation journal.
+
 No implicit discovery, background sign-in or input replay is implemented by this
 executor. Shared framing, protected-file/memory-vault, headless application tests
 and owned native SSH/PTY fixtures are not native-vault, development-wrapper GUI

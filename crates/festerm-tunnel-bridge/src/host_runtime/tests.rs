@@ -522,6 +522,181 @@ async fn client_create_worker(
 }
 
 #[cfg(unix)]
+async fn client_end_worker(
+    fixture: &mut NativeRuntimeFixture,
+    intent: Arc<crate::host_client::EndIntent>,
+) -> crate::host_client::Outcome {
+    let (stream, permit) = fixture.stream(StreamRole::Control).await;
+    let scope = crate::host_client::Scope {
+        binding: fixture.binding(),
+        request: OperationId::new(),
+        generation: 1,
+    };
+    let binding = scope.binding.clone();
+    let worker = crate::host_client::Worker::spawn(
+        scope.clone(),
+        Arc::new(|| {}),
+        move |_, cancel, _, _| async move {
+            let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
+            crate::host_client::end_authenticated(&mut client, intent, &cancel).await
+        },
+    )
+    .unwrap();
+    client_worker_result(&worker, &scope).await
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_mobile_host_retirement_keeps_persistent_and_ends_only_owning_temporary() {
+    use crate::host_client::{CreationIntent, CreationMode, HostSession, Scope, Worker};
+    use festerm_host_protocol::Lifetime;
+    use festerm_session::{
+        Session, SessionEvent, SessionEventNotifier, SessionLifecycle, ShutdownResult,
+    };
+    struct Wake;
+    impl SessionEventNotifier for Wake {
+        fn notify(&self) {}
+    }
+    let mut fixture = NativeRuntimeFixture::new();
+    let context = fixture.client_context();
+    let mut persistent_target = None;
+    for (temporary, label) in [(false, "PERSISTENT"), (true, "TEMPORARY")] {
+        let mut creation = fixture.native.creation();
+        if temporary {
+            creation.lifetime = Lifetime::Temporary {
+                reconnect_grace_seconds: 60,
+            };
+        }
+        creation.recipe.args = vec![
+            format!("emit:{label}-READY"),
+            "read-line".into(),
+            format!("echo:{label}"),
+            "spin".into(),
+        ];
+        let intent =
+            Arc::new(CreationIntent::new(&context, CreationMode::Create, creation).unwrap());
+        let created = client_create_worker(&mut fixture, intent.clone()).await;
+        let target = created.session().target.clone();
+        let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
+        let scope = Scope {
+            request: OperationId::new(),
+            generation: 1,
+            binding: fixture.binding(),
+        };
+        let selection = (target.clone(), intent.creation().attachment.clone());
+        let worker = Worker::spawn(
+            scope,
+            Arc::new(|| {}),
+            move |scope, cancel, events, wake| async move {
+                crate::host_client::attach_reserved_authenticated(
+                    stream, permit, &scope, selection, &cancel, &events, &wake,
+                )
+                .await
+            },
+        )
+        .unwrap();
+        let session = Arc::new(HostSession::from_worker(worker, Arc::new(Wake)));
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while !session.has_pending_snapshot() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut frontend =
+            festerm_core::Terminal::new(festerm_core::Dimensions::new(40, 12).unwrap()).unwrap();
+        assert!(session.adopt_into(&mut frontend).unwrap());
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while session.lifecycle() != SessionLifecycle::Running {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        session.try_send_input(b"once\n").unwrap();
+        let expected = format!("{label}:once");
+        let foreign = if temporary {
+            "PERSISTENT:once"
+        } else {
+            "TEMPORARY:once"
+        };
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                if let Ok(SessionEvent::Output(bytes)) = session.try_recv_event() {
+                    frontend.ingest(&bytes);
+                }
+                assert!(!frontend.text_snapshot().text().contains(foreign));
+                if frontend.text_snapshot().text().contains(&expected) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let retiring = session.clone();
+        assert_eq!(
+            tokio::task::spawn_blocking(move || retiring.shutdown(Duration::from_secs(3)))
+                .await
+                .unwrap()
+                .unwrap(),
+            ShutdownResult::Stopped
+        );
+        assert_eq!(session.lifecycle(), SessionLifecycle::Stopped);
+        assert!(session.try_send_input(b"never-replay").is_err());
+        let lease = fixture.lease(&target);
+        assert_eq!(lease["connected"], false);
+        assert_eq!(lease["stopped"], temporary);
+        if temporary {
+            tokio::time::timeout(Duration::from_secs(8), async {
+                while festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+                    .unwrap()
+                    .len()
+                    != 1
+                {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await
+            .unwrap();
+        } else {
+            assert_eq!(
+                festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            persistent_target = Some(target.clone());
+        }
+        drop(session);
+    }
+    let target = persistent_target.unwrap();
+    let mut pending = fixture
+        .pending(
+            target.clone(),
+            festerm_host_protocol::AttachmentId::new(),
+            false,
+        )
+        .await;
+    let recovered = pending.take_snapshot().unwrap();
+    assert!(recovered.text_snapshot().text().contains("PERSISTENT:once"));
+    assert!(!recovered.text_snapshot().text().contains("TEMPORARY:once"));
+    let terminal = pending
+        .adopt(&CancellationToken::new())
+        .await
+        .unwrap()
+        .spawn()
+        .unwrap();
+    drop(terminal);
+    assert!(
+        !fixture.lease(&target)["stopped"].as_bool().unwrap(),
+        "client disappearance is not persistent End"
+    );
+    fixture.shutdown().await;
+}
+
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_selected_host_creation_worker_adopts_isolated_frontends_and_original_ensure() {
@@ -1377,36 +1552,27 @@ async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_auth
     let mut stale = target.clone();
     stale.generation =
         festerm_host_protocol::GenerationId::new(target.generation.get() + 1).unwrap();
+    let context = fixture.client_context();
+    let stale = Arc::new(crate::host_client::EndIntent::new(&context, stale));
     assert!(matches!(
-        control
-            .request(
-                OperationId::new(),
-                Request::ExplicitEnd { target: stale },
-                &CancellationToken::new(),
-            )
-            .await
-            .unwrap()
-            .body,
-        Response::Refused {
-            reason: Refusal::Stale
-        }
+        client_end_worker(&mut fixture, stale.clone()).await,
+        crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::Stale)
+        ))
     ));
+    assert!(stale.is_issued() && !stale.is_resolved());
+    let end = Arc::new(crate::host_client::EndIntent::new(&context, target.clone()));
+    let original_end = end.operation().clone();
     assert!(matches!(
-        control
-            .request(
-                OperationId::new(),
-                Request::ExplicitEnd {
-                    target: target.clone(),
-                },
-                &CancellationToken::new(),
-            )
-            .await
-            .unwrap()
-            .body,
-        Response::Refused {
-            reason: Refusal::OutcomeUncertain
-        }
+        client_end_worker(&mut fixture, end.clone()).await,
+        crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
+        ))
     ));
+    assert!(
+        end.is_issued() && !end.is_resolved(),
+        "durable stop intent is not observed Ended"
+    );
     tokio::time::timeout(Duration::from_secs(8), async {
         while !festerm_sessiond::list_running_sessions_in(&fixture.native.root)
             .unwrap()
@@ -1456,6 +1622,21 @@ async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_auth
     };
     assert_eq!(session.target.logical, target.logical);
     assert_ne!(session.target.generation, target.generation);
+    assert!(matches!(
+        client_end_worker(&mut fixture, end.clone()).await,
+        crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::Stale)
+        ))
+    ));
+    assert_eq!(end.operation(), &original_end);
+    assert!(!end.is_resolved());
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .len(),
+        1,
+        "retrying original End must not stop the replacement generation"
+    );
     drop(control);
     fixture.auth.policy.capabilities.creation_allowed = false;
     fixture.auth.policy.grant_epoch = fixture.auth.policy.grant_epoch.next().unwrap();

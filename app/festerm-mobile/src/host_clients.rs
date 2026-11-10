@@ -13,12 +13,13 @@ use festerm_mobile_profiles::{
     },
     TunnelAccount,
 };
+use festerm_session::{Session, ShutdownError, ShutdownResult};
 use festerm_tunnel_bridge::{
     host_client::{
         self,
         approvals::{Receipt, ReceiptIndex, ReviewedOwner},
-        ApprovedAttachment, ApprovedContext, Budgets, CreationIntent, CreationMode, HostSession,
-        Inventory, Outcome, Scope, Worker,
+        ApprovedAttachment, ApprovedContext, Budgets, CreationIntent, CreationMode, EndIntent,
+        HostSession, Inventory, Outcome, Scope, Worker,
     },
     owner_auth::{owner_key_fingerprint, OwnerBinding},
 };
@@ -145,6 +146,52 @@ struct Original {
     intent: Arc<CreationIntent>,
 }
 
+struct SessionAccount {
+    session: Weak<HostSession>,
+    account: TunnelAccount,
+    tab: u64,
+    owner: Option<OwnerBinding>,
+}
+
+struct OriginalEnd {
+    account: TunnelAccount,
+    intent: Arc<EndIntent>,
+}
+
+struct EndReview {
+    account: TunnelAccount,
+    intent: Arc<EndIntent>,
+    epoch: u64,
+    generation: u64,
+    confirmed: bool,
+    source: Option<(u64, festerm_session::SessionId)>,
+}
+
+impl EndReview {
+    fn authorize(
+        &self,
+        account: &TunnelAccount,
+        context: &ApprovedContext,
+        epoch: u64,
+        generation: u64,
+    ) -> Result<Arc<EndIntent>, String> {
+        if !self.confirmed
+            || &self.account != account
+            || self.epoch != epoch
+            || self.generation != generation
+            || !self.intent.matches_context(context)
+        {
+            return Err("End confirmation expired or is incomplete; no operation issued.".into());
+        }
+        Ok(self.intent.clone())
+    }
+}
+
+struct Retirement {
+    tab: u64,
+    job: Job<Result<ShutdownResult, ShutdownError>>,
+}
+
 #[derive(Default)]
 pub(super) struct HostUi {
     pub(super) open: bool,
@@ -167,8 +214,11 @@ pub(super) struct HostUi {
     pending: Option<Pending>,
     worker: Option<Arc<Worker>>,
     worker_account: Option<TunnelAccount>,
-    session_accounts: Vec<(Weak<HostSession>, TunnelAccount)>,
+    session_accounts: Vec<SessionAccount>,
     originals: Vec<Original>,
+    ends: Vec<OriginalEnd>,
+    end_review: Option<EndReview>,
+    retirements: Vec<Retirement>,
     budgets: Budgets,
     epoch: u64,
     generation: u64,
@@ -195,6 +245,7 @@ impl HostUi {
         self.trust = false;
         self.enrolled = false;
         self.launch = false;
+        self.end_review = None;
     }
 
     fn clear_review(&mut self) {
@@ -305,6 +356,10 @@ enum Action {
     Resolve,
     Create,
     Attach(usize),
+    ReviewEnd(usize),
+    ReviewOriginalEnd(usize),
+    ConfirmEnd,
+    CancelEnd,
     Save,
     Import,
     Close,
@@ -332,6 +387,109 @@ fn selected_target(
 }
 
 impl MobileApp {
+    fn review_end(&mut self, account: TunnelAccount, intent: Arc<EndIntent>) {
+        self.hosts.end_review = Some(EndReview {
+            account,
+            intent,
+            epoch: self.hosts.epoch,
+            generation: self.hosts.generation,
+            confirmed: false,
+            source: None,
+        });
+        self.hosts.open = true;
+    }
+
+    pub(super) fn review_host_end(&mut self, tab: u64) -> Result<(), String> {
+        self.hosts.open = true;
+        if !self.host_foreground()
+            || !self
+                .tabs
+                .iter()
+                .any(|current| current.id == tab && current.host)
+        {
+            return Err("The original HOST tab is no longer current or foreground.".into());
+        }
+        let owner = self
+            .hosts
+            .session_accounts
+            .iter()
+            .find(|owner| owner.tab == tab)
+            .ok_or("Refresh the original host's authorized inventory to review End.")?;
+        let session = owner
+            .session
+            .upgrade()
+            .ok_or("The attachment retired; refresh authorized inventory before End.")?;
+        let context = self.hosts.context()?;
+        if self.host_account().as_ref() != Some(&owner.account)
+            || owner.owner.as_ref() != self.hosts.receipt.as_ref().map(Receipt::binding)
+            || context.binding() != session.binding()
+        {
+            return Err("Review the original protected host, principal and account before End; no tab metadata grants authority.".into());
+        }
+        let target = session
+            .target()
+            .ok_or("The exact adopted generation is unavailable; refresh inventory.")?
+            .clone();
+        let account = owner.account.clone();
+        let intent = self
+            .hosts
+            .ends
+            .iter()
+            .find(|original| {
+                original.account == account
+                    && original.intent.target() == &target
+                    && original.intent.matches_context(&context)
+            })
+            .map(|original| original.intent.clone())
+            .unwrap_or_else(|| Arc::new(EndIntent::new(&context, target)));
+        self.review_end(account, intent);
+        self.hosts.end_review.as_mut().expect("new review").source = Some((tab, session.id()));
+        Ok(())
+    }
+
+    pub(super) fn retire_host_tab(&mut self, tab: u64) -> bool {
+        if !self
+            .tabs
+            .iter()
+            .any(|current| current.id == tab && current.host)
+        {
+            return true;
+        }
+        if self.hosts.retirements.len() >= 16 {
+            self.notice = Some(
+                "HOST detach workers are busy; wait before closing another attachment.".into(),
+            );
+            return false;
+        }
+        let retiring = if self.active_tab == Some(tab) {
+            self.sink
+                .live
+                .connection
+                .borrow_mut()
+                .as_mut()
+                .and_then(live_ssh::LiveSsh::take_host_for_retirement)
+        } else {
+            self.sink
+                .live
+                .background
+                .borrow_mut()
+                .iter_mut()
+                .find(|(id, _)| *id == tab)
+                .and_then(|(_, live)| live.take_host_for_retirement())
+        };
+        if let Some((session, ctx)) = retiring {
+            let job = Job::spawn(&ctx, move |_| {
+                let result = session.shutdown(std::time::Duration::from_secs(2));
+                if result.is_err() {
+                    session.cancel();
+                }
+                result
+            });
+            self.hosts.retirements.push(Retirement { tab, job });
+        }
+        true
+    }
+
     pub(super) fn open_hosts(&mut self) {
         self.hosts.clear_approval();
         self.hosts.epoch = self.sink.live.host.epoch();
@@ -382,6 +540,32 @@ impl MobileApp {
     }
 
     pub(super) fn poll_hosts(&mut self, ctx: &egui::Context) {
+        self.hosts.retirements.retain(|retirement| {
+            match retirement.job.poll() {
+                Poll::Pending => true,
+                Poll::Done(result) => {
+                    self.notice = Some(match result {
+                        Ok(ShutdownResult::Stopped) => format!(
+                            "HOST tab {}: correlated attachment detach confirmed; no End was issued.",
+                            retirement.tab
+                        ),
+                        Ok(ShutdownResult::AlreadyStopped) => format!(
+                            "HOST tab {}: attachment already stopped; no detach receipt or End inferred.",
+                            retirement.tab
+                        ),
+                        Err(_) => format!(
+                            "HOST tab {}: detach unconfirmed; daemon owns transport-loss grace. No End or retry.",
+                            retirement.tab
+                        ),
+                    });
+                    false
+                }
+                Poll::Lost => {
+                    self.notice = Some("HOST retirement worker lost; no detach or End success inferred.".into());
+                    false
+                }
+            }
+        });
         if let Some(error) = self
             .sink
             .live
@@ -394,7 +578,7 @@ impl MobileApp {
         }
         self.hosts
             .session_accounts
-            .retain(|(session, _)| session.strong_count() > 0);
+            .retain(|owner| owner.session.strong_count() > 0);
         let current_accounts = self
             .profiles
             .as_ref()
@@ -405,7 +589,7 @@ impl MobileApp {
             .hosts
             .session_accounts
             .iter()
-            .any(|(_, expected)| !current_accounts.contains(expected))
+            .any(|owner| !current_accounts.contains(&owner.account))
         {
             self.sink.live.host.invalidate();
             self.hosts.session_accounts.clear();
@@ -493,6 +677,13 @@ impl MobileApp {
                     }
                 }
                 Outcome::Failed(error) => self.hosts.error = Some(error.message().into()),
+                Outcome::Ended { target } => {
+                    self.hosts.inventory = None;
+                    self.hosts.error = Some(format!(
+                        "Host confirmed End for logical {} generation {}. No replacement was touched.",
+                        target.logical, target.generation.get()
+                    ));
+                }
                 _ => {
                     self.hosts.error =
                         Some("Unexpected HOST control result; no terminal was installed.".into())
@@ -587,11 +778,18 @@ impl MobileApp {
                 Some("The original protected account changed before terminal installation.".into());
             return;
         }
-        self.hosts
-            .session_accounts
-            .push((Arc::downgrade(&session), account));
         self.park_active();
         let id = self.push_tab(title, None);
+        self.hosts.session_accounts.push(SessionAccount {
+            session: Arc::downgrade(&session),
+            account,
+            tab: id,
+            owner: self
+                .hosts
+                .receipt
+                .as_ref()
+                .map(|receipt| receipt.binding().clone()),
+        });
         self.tabs.last_mut().expect("new tab").host = true;
         self.terminal = self.blank_terminal();
         self.view = self.fresh_view();
@@ -605,6 +803,10 @@ impl MobileApp {
     }
 
     fn host_action(&mut self, ctx: &egui::Context, action: Action) -> Result<(), String> {
+        if matches!(action, Action::CancelEnd) {
+            self.hosts.end_review = None;
+            return Ok(());
+        }
         if matches!(action, Action::Close) {
             self.hosts.cancel();
             self.hosts.open = false;
@@ -696,6 +898,102 @@ impl MobileApp {
             return Err("This recipe belongs to another account. No operation was issued.".into());
         }
         match action {
+            Action::ReviewEnd(index) => {
+                let inventory = self
+                    .hosts
+                    .inventory
+                    .as_ref()
+                    .ok_or("Refresh authorized inventory first.")?;
+                if !inventory.capabilities.explicit_end {
+                    return Err("This host does not advertise explicit End.".into());
+                }
+                let target = inventory
+                    .sessions
+                    .get(index)
+                    .ok_or("End selection expired.")?
+                    .target
+                    .clone();
+                let context = self.hosts.context()?;
+                let intent = self
+                    .hosts
+                    .ends
+                    .iter()
+                    .find(|original| {
+                        original.intent.target() == &target
+                            && original.account == account
+                            && original.intent.matches_context(&context)
+                    })
+                    .map(|original| original.intent.clone())
+                    .unwrap_or_else(|| Arc::new(EndIntent::new(&context, target)));
+                self.review_end(account, intent);
+                return Ok(());
+            }
+            Action::ReviewOriginalEnd(index) => {
+                let original = self
+                    .hosts
+                    .ends
+                    .get(index)
+                    .ok_or("Original End selection expired.")?;
+                if original.account != account
+                    || !original.intent.matches_context(&self.hosts.context()?)
+                {
+                    return Err(
+                        "Review the original protected host and account before retrying End."
+                            .into(),
+                    );
+                }
+                let intent = original.intent.clone();
+                self.review_end(account, intent);
+                return Ok(());
+            }
+            Action::ConfirmEnd => {
+                let review = self
+                    .hosts
+                    .end_review
+                    .as_ref()
+                    .ok_or("Review the exact End target first.")?;
+                if let Some((tab, session)) = review.source {
+                    if !self
+                        .tabs
+                        .iter()
+                        .any(|current| current.id == tab && current.host)
+                        || !self.hosts.session_accounts.iter().any(|owner| {
+                            owner.tab == tab
+                                && owner
+                                    .session
+                                    .upgrade()
+                                    .is_some_and(|current| current.id() == session)
+                        })
+                    {
+                        return Err("The original adopted HOST tab retired; review authorized inventory again.".into());
+                    }
+                }
+                let intent = review.authorize(
+                    &account,
+                    &self.hosts.context()?,
+                    self.hosts.epoch,
+                    self.hosts.generation,
+                )?;
+                if !self
+                    .hosts
+                    .ends
+                    .iter()
+                    .any(|original| Arc::ptr_eq(&original.intent, &intent))
+                {
+                    if self.hosts.ends.len() >= 16 {
+                        return Err(
+                            "Original End registry full; uncertain actions retained.".into()
+                        );
+                    }
+                    self.hosts.ends.push(OriginalEnd {
+                        account,
+                        intent: intent.clone(),
+                    });
+                }
+                self.start_host_operation(ctx, host_client::Operation::End(intent))?;
+                self.hosts.end_review = None;
+                return Ok(());
+            }
             Action::Create => {
                 if !self.hosts.launch {
                     return Err("Confirm the exact recipe and lifetime separately.".into());
@@ -934,11 +1232,13 @@ impl MobileApp {
             ui.add_enabled(self.hosts.receipt.is_some(), egui::Checkbox::new(&mut self.hosts.enrolled, "I confirm this exact host fingerprint and that the displayed owner public key was approved on this host"));
             if ui.button("Connect / refresh authorized sessions").clicked() { action = Some(Action::Resolve); }
             if let Some(inventory) = &self.hosts.inventory {
-                ui.label(format!("Capabilities: attach={} create={} ensure={} · protected creation={} temporary={}", inventory.capabilities.attach, inventory.capabilities.create, inventory.capabilities.ensure, inventory.capabilities.creation_allowed, inventory.capabilities.temporary));
+                ui.label(format!("Capabilities: attach={} create={} ensure={} End={} · protected creation={} temporary={}", inventory.capabilities.attach, inventory.capabilities.create, inventory.capabilities.ensure, inventory.capabilities.explicit_end, inventory.capabilities.creation_allowed, inventory.capabilities.temporary));
                 if !inventory.unknown.is_empty() { ui.label("Some sessions are unknown, NOT absent."); }
                 for (index, session) in inventory.sessions.iter().enumerate() {
                     let allowed = inventory.capabilities.attach && selected_target(self.hosts.selected.as_ref(), &session.target).is_ok();
                     if ui.add_enabled(allowed, egui::Button::new(format!("Attach {} · generation {}", session.target.logical, session.target.generation.get()))).clicked() { action = Some(Action::Attach(index)); }
+                    ui.label(format!("{} · {:?}", session.name, session.lifetime));
+                    if ui.add_enabled(inventory.capabilities.explicit_end, egui::Button::new(format!("End session {}…", session.target.logical))).clicked() { action = Some(Action::ReviewEnd(index)); }
                 }
             }
             if let Some(recipe) = &self.hosts.selected {
@@ -956,6 +1256,25 @@ impl MobileApp {
             for (index, original) in self.hosts.originals.iter().enumerate() {
                 ui.label(format!("Retained original {} · logical {} · issued {:?}; in-process only, never automatic retry", original.recipe.name, original.intent.creation().logical, original.intent.issued_operation()));
                 if ui.button(format!("Review retained original: {}", original.recipe.name)).clicked() { action = Some(Action::ReviewOriginal(index)); }
+            }
+            for (index, original) in self.hosts.ends.iter().enumerate() {
+                ui.label(format!("Original End {} · generation {} · operation {} · issued={} confirmed-ended={}; process-local only",
+                    original.intent.target().logical, original.intent.target().generation.get(),
+                    original.intent.operation(), original.intent.is_issued(), original.intent.is_resolved()));
+                if ui.add_enabled(!original.intent.is_resolved(), egui::Button::new("Review original End / retry")).clicked() { action = Some(Action::ReviewOriginalEnd(index)); }
+            }
+            if let Some(review) = &mut self.hosts.end_review {
+                ui.separator();
+                ui.heading("Confirm End session — not Close tab");
+                ui.label(format!("Account github:{} · logical {} · native generation {} · original operation {}",
+                    review.account.account_id, review.intent.target().logical,
+                    review.intent.target().generation.get(), review.intent.operation()));
+                ui.label(format!("Native privacy epoch {} · foreground request generation {}", review.epoch, review.generation));
+                ui.label("The protected host/installation/principal above and this exact generation are fixed. Native PID/namespace stay host-journal-owned; inventory does not expose a PID.");
+                ui.label("End stops the remote process. Closing a persistent attachment does not. Stop-requested/timeout/denial is NOT confirmation that it ended or is absent.");
+                ui.checkbox(&mut review.confirmed, "I explicitly authorize End for this exact host and generation");
+                if ui.add_enabled(review.confirmed, egui::Button::new("Confirm exact End once")).clicked() { action = Some(Action::ConfirmEnd); }
+                if ui.button("Cancel End (no request)").clicked() { action = Some(Action::CancelEnd); }
             }
             ui.label("After restart, reconcile uncertain actions on the host before approving another creation. No input replay or background reconnect.");
             if self.hosts.pending.is_some() || self.hosts.worker.is_some() { ui.label("Bounded foreground HOST work in progress…"); }

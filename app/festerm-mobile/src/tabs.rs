@@ -325,6 +325,8 @@ impl MobileApp {
         let document = self.documents.contains(id);
         let mut activate = false;
         let mut close = false;
+        #[cfg(feature = "host-clients")]
+        let mut end_host = false;
         let mut cancel = false;
         let outcome = widgets::bottom_sheet(ctx, "work-tab-menu", bounds, |ui| {
             cancel |= widgets::sheet_title(ui, &surface.title, None);
@@ -342,8 +344,24 @@ impl MobileApp {
                 true,
             )
             .clicked();
+            #[cfg(feature = "host-clients")]
+            if self.tabs.iter().any(|tab| tab.id == id && tab.host) {
+                end_host = widgets::button(
+                    ui,
+                    widgets::ButtonKind::Destructive,
+                    "End HOST session…",
+                    true,
+                )
+                .clicked();
+            }
             cancel |= widgets::button(ui, widgets::ButtonKind::Secondary, "Cancel", true).clicked();
         });
+        #[cfg(feature = "host-clients")]
+        if end_host {
+            self.tab_menu = None;
+            self.apply_shell_actions(ctx, vec![shell::ShellAction::EndHostSurface(id)]);
+            return;
+        }
         if activate {
             self.tab_menu = None;
             self.activate_tab(id);
@@ -358,6 +376,10 @@ impl MobileApp {
     pub(super) fn close_tab(&mut self, id: u64) {
         if self.documents.contains(id) {
             self.documents.request_close(id);
+            return;
+        }
+        #[cfg(feature = "host-clients")]
+        if !self.retire_host_tab(id) {
             return;
         }
         #[cfg(feature = "live-ssh")]

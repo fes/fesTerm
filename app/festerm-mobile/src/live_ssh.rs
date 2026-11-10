@@ -324,6 +324,21 @@ impl LiveSsh {
         self.session.is_none()
     }
 
+    #[cfg(feature = "host-clients")]
+    pub(super) fn take_host_for_retirement(
+        &mut self,
+    ) -> Option<(
+        Arc<festerm_tunnel_bridge::host_client::HostSession>,
+        egui::Context,
+    )> {
+        let host = self.host.take()?;
+        self.session = None;
+        self.running = false;
+        self.pending_resize = None;
+        self.status = "HOST attachment retiring; no End session was issued";
+        Some((host, self.context.clone()))
+    }
+
     /// Native callback: retain established tunnels, cancel any old check and gate input.
     pub(super) fn suspend(&mut self) {
         #[cfg(feature = "host-clients")]

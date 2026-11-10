@@ -31,6 +31,7 @@ pub struct HostSession {
     state: Mutex<State>,
     notifier: Arc<dyn SessionEventNotifier>,
     creation_intent: Option<Arc<CreationIntent>>,
+    target: Option<Target>,
 }
 
 impl HostSession {
@@ -75,6 +76,12 @@ impl HostSession {
         notifier: Arc<dyn SessionEventNotifier>,
         cancel: CancellationToken,
     ) -> Result<Self, Failure> {
+        let target = match &operation {
+            Operation::Attach { target } | Operation::AttachReserved { target, .. } => {
+                Some(target.clone())
+            }
+            _ => None,
+        };
         let notify = notifier.clone();
         let worker = Worker::start_with_cancellation(
             context,
@@ -84,7 +91,9 @@ impl HostSession {
             Arc::new(move || notify.notify()),
             cancel,
         )?;
-        Ok(Self::from_worker(worker, notifier))
+        let mut session = Self::from_worker(worker, notifier);
+        session.target = target;
+        Ok(session)
     }
 
     pub(crate) fn from_worker(worker: Worker, notifier: Arc<dyn SessionEventNotifier>) -> Self {
@@ -105,11 +114,25 @@ impl HostSession {
             }),
             notifier,
             creation_intent: None,
+            target: None,
         }
     }
 
     pub(crate) fn set_creation_intent(&mut self, intent: Option<Arc<CreationIntent>>) {
         self.creation_intent = intent;
+    }
+
+    #[cfg(feature = "testing")]
+    pub(super) fn set_target(&mut self, target: Target) {
+        self.target = Some(target);
+    }
+
+    pub fn target(&self) -> Option<&Target> {
+        self.target.as_ref()
+    }
+
+    pub fn binding(&self) -> &Binding {
+        &self.scope.binding
     }
 
     pub fn has_pending_snapshot(&self) -> bool {

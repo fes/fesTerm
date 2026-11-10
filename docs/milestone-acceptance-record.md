@@ -32,6 +32,10 @@ milestone acceptance: physical iOS/Android, native vault, lifecycle/app-lock,
 live-service, accessibility and usability gates remain pending. See
 [the precise manual boundary](manual-validation.md#adr-0084-mobile-host-execution)
 and [fixed-head qualification](milestone-progress.md).
+The later exact-End/correlated-retirement child has focused framed and two
+selected actual SSH/native-PTY lifecycle cases, not a fresh sixteen-route
+aggregate or physical lifecycle acceptance. StopRequested is still uncertain;
+durable cold-restart original-action reconciliation and mobile sharing are open.
 
 - **Implemented:** capability exists in code with focused automated tests.
 - **Validation pending:** implementation exists, but required integration,

@@ -25,9 +25,12 @@ pub mod approvals;
 mod creation;
 #[cfg(test)]
 mod creation_tests;
+mod ending;
 mod session;
 pub(crate) use creation::create_authenticated;
 pub use creation::{Created, CreationIntent, CreationMode};
+pub(crate) use ending::end_authenticated;
+pub use ending::EndIntent;
 pub use festerm_host_protocol::{AttachmentId, Budgets, Creation, LogicalSessionId, Target};
 pub use session::HostSession;
 #[cfg(feature = "testing")]
@@ -46,6 +49,7 @@ pub mod testing {
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let notify = notifier.clone();
+        let selected = target.clone();
         let worker = Worker::spawn(
             scope,
             Arc::new(move || notify.notify()),
@@ -53,7 +57,9 @@ pub mod testing {
                 attach_authenticated(stream, permit, &scope, target, &cancel, &events, &wake).await
             },
         )?;
-        Ok(Arc::new(HostSession::from_worker(worker, notifier)))
+        let mut session = HostSession::from_worker(worker, notifier);
+        session.set_target(selected);
+        Ok(Arc::new(session))
     }
 }
 
@@ -235,6 +241,7 @@ pub enum Operation {
         target: Target,
     },
     Create(Arc<CreationIntent>),
+    End(Arc<EndIntent>),
     AttachReserved {
         target: Target,
         attachment: AttachmentId,
@@ -362,6 +369,7 @@ impl ApprovedAttachment {
 pub enum Outcome {
     Inventory(Inventory),
     Created(Box<Created>),
+    Ended { target: Target },
     Snapshot(Box<Adoption>),
     Attached(TerminalHandle),
     Failed(Failure),
@@ -437,6 +445,11 @@ impl Worker {
         }
         if let Operation::Create(intent) = &operation {
             if !intent.matches(&context) {
+                return Err(Failure::BindingMismatch);
+            }
+        }
+        if let Operation::End(intent) = &operation {
+            if !intent.matches_context(&context) {
                 return Err(Failure::BindingMismatch);
             }
         }
@@ -582,7 +595,7 @@ async fn execute(
     wake: &Arc<dyn Fn() + Send + Sync>,
 ) -> Result<Outcome, Failure> {
     let role = match operation {
-        Operation::Inventory | Operation::Create(_) => StreamRole::Control,
+        Operation::Inventory | Operation::Create(_) | Operation::End(_) => StreamRole::Control,
         Operation::Attach { .. } | Operation::AttachReserved { .. } => StreamRole::Terminal,
     };
     let (stream, permit, binding) = context.connect(permit, role, cancel).await?;
@@ -600,6 +613,10 @@ async fn execute(
         Operation::Create(intent) => {
             let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
             create_authenticated(&mut client, intent, cancel).await
+        }
+        Operation::End(intent) => {
+            let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
+            end_authenticated(&mut client, intent, cancel).await
         }
         Operation::AttachReserved { target, attachment } => {
             attach_reserved_authenticated(

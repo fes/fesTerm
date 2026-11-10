@@ -69,6 +69,19 @@ adoption route and both frontend/collector oracles pass; the original a13a
 links but was not launched. Exact source/tool/helper attribution and remaining
 gates are in [the qualification receipt](milestone-progress.md#qualifying-the-combined-executable-mobile-host-client).
 
+The lifecycle child adds explicit, separate End confirmation from authorized
+inventory or the adopted HOST tab menu. Exact protected owner/account/endpoint,
+logical/native generation, original operation and native/request epochs are
+revalidated; native PID/namespace stay private to the host journal. Closing or
+Disconnect routes the old attachment through bounded background correlated
+retirement, not End. Focused framed tests prove late detach cannot touch a new
+frontend and lock still emits no detach/replay. Two individually selected
+controlled native SSH/PTY cases prove original End cannot stop a replacement,
+persistent detach survives/re-adopts actual output, and only the owning temporary
+lease ends. Current native End returns **OutcomeUncertain** after StopRequested,
+not an Ended receipt. This does not requalify the older sixteen-case matrix or
+establish physical lifecycle/vault behavior.
+
 In an explicitly owned iOS/Android native window, still verify:
 
 - jetsam/disk-full receipt preparation: deterministic non-relay fixtures now
@@ -92,11 +105,15 @@ In an explicitly owned iOS/Android native window, still verify:
 - actual mobile terminal snapshot/output isolation, phone/tablet scrolling,
   software-keyboard/safe-area behavior, accessibility labels/focus and actionable
   approval/uncertainty errors.
+- explicit End confirmation versus Close/Disconnect on persistent and temporary
+  sessions; cancel and stale account/tab/generation/lock confirmations; late
+  detach/End replies while another foreground tab is installed; independently
+  observe native process lifetime without mistaking StopRequested for Ended.
 
-Original actions are bounded to sixteen **process-local** entries. Restart
+Creation and End originals each have sixteen **process-local** entries. Restart
 does not restore their tickets or grant a replacement action: reconcile uncertain
-host actions before another creation. Durable restart reconciliation, full mobile
-sharing/end/detach controls, live cloud/device/native-vault evidence and usability
+host actions before another creation or End. Durable restart reconciliation,
+mobile sharing, physical End/detach/lifecycle, live cloud/device/native-vault evidence and usability
 remain open. Desktop local Settings/Remote Access and local sharing are a
 separately owned HOST-03–05 slice, not implemented or claimed by this increment.
 

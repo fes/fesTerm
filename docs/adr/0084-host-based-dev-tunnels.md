@@ -915,6 +915,18 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   overwrite the final receipt. Abandoned staging remains inert; malformed
   finals remain Storage without key creation. Focused non-relay regressions
   cover those boundaries; native vault/jetsam/device acceptance remains open.
+  The mobile lifecycle child adds application-owned exact End confirmation and
+  a protected `EndIntent` retaining the original operation/target across explicit
+  retries. Current account, native/request epoch and adopted Session identity
+  fence confirmation; fresh authenticated capability/admission fence execution.
+  End uses the existing non-creation wire contract, with native PID/namespace
+  resolved only by the host journal. StopRequested remains OutcomeUncertain,
+  never a fabricated Ended/absence. Close/Disconnect uses the existing correlated
+  Session shutdown off-UI in bounded old-attachment retirement; persistent
+  daemons survive and temporary intentional detach stays lease-owned. Framed
+  old/new-frontend, End refusal/cancellation/original-operation regressions and
+  two selected actual native SSH/PTY routes cover this increment, not physical
+  app suspension, native vault or the entire earlier sixteen-case matrix.
   Combined fixed source `c5f2d024` passes all
   sixteen separately selected actual-helper SSH/native-PTY routes, including
   mobile adoption, original-operation replay and both collector/frontend

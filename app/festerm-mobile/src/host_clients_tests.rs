@@ -163,6 +163,20 @@ async fn response(peer: &mut tokio::io::DuplexStream, request: &Envelope<Request
 
 #[tokio::test]
 async fn mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays() {
+    installed_host_round_trip(false, false).await;
+}
+
+#[tokio::test]
+async fn mobile_host_close_retires_correlated_attachment_without_end_or_late_frontend_mutation() {
+    installed_host_round_trip(true, false).await;
+}
+
+#[tokio::test]
+async fn mobile_host_disconnect_uses_correlated_retirement_not_end_or_transport_abandonment() {
+    installed_host_round_trip(true, true).await;
+}
+
+async fn installed_host_round_trip(intentional_close: bool, disconnect: bool) {
     let context = egui::Context::default();
     let host = HostId::new();
     let scope = Scope {
@@ -219,6 +233,7 @@ async fn mobile_host_installed_frontend_adopts_before_running_and_lock_never_det
         .input_enabled());
     let (snapshot_sent, received_snapshot) = tokio::sync::oneshot::channel();
     let (activation_allowed, allow_activation) = tokio::sync::oneshot::channel();
+    let (detach_allowed, allow_detach) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
         let hello = request(&mut peer).await;
         response(
@@ -263,8 +278,8 @@ async fn mobile_host_installed_frontend_adopts_before_running_and_lock_never_det
             &mut peer,
             &attach,
             Response::Attached {
-                target,
-                attachment,
+                target: target.clone(),
+                attachment: attachment.clone(),
                 lease: None,
             },
         )
@@ -275,12 +290,25 @@ async fn mobile_host_installed_frontend_adopts_before_running_and_lock_never_det
             b"\r\nOWNED-MOBILE-OUTPUT",
         )
         .await;
-        let mut byte = [0];
-        assert_eq!(
-            peer.read(&mut byte).await.unwrap(),
-            0,
-            "native lock abandons transport; it must not emit input, replay or intentional detach"
-        );
+        if intentional_close {
+            let detach = request(&mut peer).await;
+            assert!(
+                matches!(&detach.body, Request::Detach {
+                target: actual, attachment: actual_attachment, lease: None, lease_epoch: None,
+                reason: festerm_host_protocol::DetachKind::Intentional,
+            } if actual == &target && actual_attachment == &attachment),
+                "close emits only exact attachment detach, never ExplicitEnd/input/replay"
+            );
+            allow_detach.await.unwrap();
+            response(&mut peer, &detach, Response::Detached { target }).await;
+        } else {
+            let mut byte = [0];
+            assert_eq!(
+                peer.read(&mut byte).await.unwrap(),
+                0,
+                "native lock abandons transport; it must not emit input, replay or intentional detach"
+            );
+        }
     });
     received_snapshot.await.unwrap();
     tokio::time::timeout(Duration::from_secs(3), async {
@@ -358,6 +386,63 @@ async fn mobile_host_installed_frontend_adopts_before_running_and_lock_never_det
         app.chrome().line.state,
         crate::model::SurfaceState::Connected
     );
+    if intentional_close {
+        if disconnect {
+            app.apply_shell_actions(
+                &context,
+                vec![crate::shell::ShellAction::DisconnectSurface(host_tab)],
+            );
+            assert!(app.tabs.iter().any(|tab| tab.id == host_tab));
+            assert!(!app
+                .sink
+                .live
+                .connection
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .input_enabled());
+        } else {
+            app.close_tab(host_tab);
+            assert!(!app.tabs.iter().any(|tab| tab.id == host_tab));
+        }
+        assert_eq!(app.hosts.retirements.len(), 1);
+        assert!(app.hosts.ends.is_empty());
+        app.reset_fixture();
+        let replacement = app.active_tab;
+        app.terminal.ingest(b"UNRELATED-REPLACEMENT-FRONTEND");
+        detach_allowed.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !app.hosts.retirements.is_empty() {
+                app.poll_hosts(&context);
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(session.lifecycle(), SessionLifecycle::Stopped);
+        assert_eq!(app.active_tab, replacement);
+        assert!(app
+            .terminal
+            .text_snapshot()
+            .text()
+            .contains("UNRELATED-REPLACEMENT-FRONTEND"));
+        assert!(!app
+            .terminal
+            .text_snapshot()
+            .text()
+            .contains("OWNED-MOBILE-OUTPUT"));
+        assert!(app
+            .notice
+            .as_ref()
+            .unwrap()
+            .contains("correlated attachment detach confirmed"));
+        assert!(
+            app.hosts.ends.is_empty(),
+            "retirement cannot mint End authority"
+        );
+        server.await.unwrap();
+        return;
+    }
     app.sink.live.content_lock_callback()();
     assert!(
         !app.sink
@@ -436,6 +521,111 @@ fn creation_context() -> ApprovedContext {
     serde_json::from_value(serde_json::json!({"connectionMode":"TunnelRelay","hostId":"fixture",
         "hostPublicKeys":[public.split_whitespace().nth(1).unwrap()],"clientRelayUri":"wss://example.invalid/client"})).unwrap(),
     22, Zeroizing::new("not-a-service-token".into()), Binding::new(host, "github:7".into(), "fixture".into()).unwrap()).unwrap()
+}
+
+#[test]
+fn mobile_host_end_confirmation_fences_account_native_epoch_generation_and_protected_owner() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", false);
+    let account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|account| account.id == id)
+        .unwrap()
+        .clone();
+    let context = creation_context();
+    let intent = Arc::new(EndIntent::new(
+        &context,
+        host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(9).unwrap(),
+        },
+    ));
+    let mut review = EndReview {
+        account: account.clone(),
+        intent: intent.clone(),
+        epoch: 3,
+        generation: 7,
+        confirmed: false,
+        source: None,
+    };
+    assert!(review.authorize(&account, &context, 3, 7).is_err());
+    review.confirmed = true;
+    assert!(Arc::ptr_eq(
+        &review.authorize(&account, &context, 3, 7).unwrap(),
+        &intent
+    ));
+    let mut changed = account.clone();
+    changed.account_id += 1;
+    assert!(review.authorize(&changed, &context, 3, 7).is_err());
+    assert!(review.authorize(&account, &context, 4, 7).is_err());
+    assert!(review.authorize(&account, &context, 3, 8).is_err());
+    assert!(review
+        .authorize(&account, &creation_context(), 3, 7)
+        .is_err());
+    assert!(!intent.is_issued() && !intent.is_resolved());
+}
+
+#[test]
+fn mobile_host_end_cancel_close_lock_and_metadata_never_issue_and_keep_original() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", false);
+    let account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|account| account.id == id)
+        .unwrap()
+        .clone();
+    let context = creation_context();
+    let intent = Arc::new(EndIntent::new(
+        &context,
+        host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(9).unwrap(),
+        },
+    ));
+    let operation = intent.operation().clone();
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    app.hosts.account = id;
+    app.hosts.ends.push(OriginalEnd {
+        account: account.clone(),
+        intent: intent.clone(),
+    });
+    app.review_end(account.clone(), intent.clone());
+    app.hosts.end_review.as_mut().unwrap().confirmed = true;
+    app.host_action(&egui::Context::default(), Action::CancelEnd)
+        .unwrap();
+    assert!(app.hosts.end_review.is_none());
+    app.review_end(account, intent.clone());
+    app.host_action(&egui::Context::default(), Action::Close)
+        .unwrap();
+    app.open_hosts();
+    assert!(app.hosts.end_review.is_none());
+    app.hosts.trust = true;
+    app.hosts.enrolled = true;
+    assert!(app
+        .host_action(&egui::Context::default(), Action::ConfirmEnd)
+        .is_err());
+    assert!(
+        app.host_action(&egui::Context::default(), Action::ReviewOriginalEnd(0))
+            .is_err(),
+        "public flags/account cannot replace the original protected receipt"
+    );
+    app.sink.live.content_lock_callback()();
+    assert!(app
+        .host_action(&egui::Context::default(), Action::ConfirmEnd)
+        .is_err());
+    assert!(app.hosts.worker.is_none());
+    assert_eq!(app.hosts.ends.len(), 1);
+    assert_eq!(app.hosts.ends[0].intent.operation(), &operation);
+    assert!(!intent.is_issued() && !intent.is_resolved());
 }
 
 #[test]

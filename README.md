@@ -163,6 +163,8 @@ opt-in shared mobile `host-clients` now execute protected foreground inventory,
 attachment and explicit Create/Ensure; public recipes never grant trust or
 creation permission. Native GUI/vault/cloud/device acceptance remains open;
 offline defaults and legacy launch behavior are unchanged.
+Mobile also exposes separate exact End confirmation and correlated Close/
+Disconnect retirement; uncertain stop intent is not confirmed End or absence.
 
 Explicit [smart selection](docs/gui-design.md#smart-terminal-selection)
 highlights sentences, paragraphs or indented blocks from terminal cells before

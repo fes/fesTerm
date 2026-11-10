@@ -2030,6 +2030,25 @@ impl MobileApp {
                 ShellAction::OpenHostSetup => self.host_setup.open(),
                 #[cfg(feature = "host-clients")]
                 ShellAction::OpenHosts => self.open_hosts(),
+                #[cfg(feature = "host-clients")]
+                ShellAction::EndHostSurface(id) => {
+                    if let Err(error) = self.review_host_end(id) {
+                        self.notice = Some(error);
+                    }
+                }
+                #[cfg(feature = "live-ssh")]
+                ShellAction::DisconnectSurface(id) => {
+                    #[cfg(feature = "host-clients")]
+                    if self.tabs.iter().any(|tab| tab.id == id && tab.host) {
+                        self.retire_host_tab(id);
+                        continue;
+                    }
+                    if self.active_tab == Some(id) {
+                        if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
+                            live.stop("Disconnected. Reconnect to continue.");
+                        }
+                    }
+                }
                 ShellAction::SetTextSize(size) => {
                     self.apply_text_size(size);
                     if let Some(Err(error)) = self.profiles.as_ref().map(|p| p.save_text_size(size))
@@ -2487,6 +2506,12 @@ impl MobileApp {
                     } else {
                         "Close this offline tab. No remote process is running."
                     };
+                    #[cfg(feature = "host-clients")]
+                    let detail = if tab.host {
+                        "Close this HOST attachment, not End session. Persistent daemons keep running; an owning temporary lease ends on confirmed intentional detach. If detach is unconfirmed, the host owns grace. No replacement is targeted."
+                    } else {
+                        detail
+                    };
                     match terminal_chrome::close_session_sheet(ctx, bounds, &title, detail) {
                         Some(true) => {
                             self.confirm_close = None;
@@ -2905,8 +2930,11 @@ impl MobileApp {
                     }
                     if session_active && ui.button("Disconnect").clicked() {
                         #[cfg(feature = "live-ssh")]
-                        if let Some(live) = self.sink.live.connection.borrow_mut().as_mut() {
-                            live.stop("Disconnected. Reconnect to continue.");
+                        if let Some(id) = self.active_tab {
+                            self.apply_shell_actions(
+                                ui.ctx(),
+                                vec![shell::ShellAction::DisconnectSurface(id)],
+                            );
                         }
                         ui.close();
                     }
