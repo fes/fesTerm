@@ -601,6 +601,12 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
   `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
   `headless_package_staging_refuses_unauthenticated_input_before_writing`.
+  Windows configuration/journal/staging fixtures share the existing
+  policy-validated private-storage fixture-root selection, not an assumption
+  that checkout ancestors are safe. The native
+  `staging_parent_rejects_a_dacl_that_allows_child_substitution` regression
+  retains strict ancestor refusal; fixture selection does not qualify startup
+  or service behavior.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic

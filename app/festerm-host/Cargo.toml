@@ -20,7 +20,7 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
-festerm-sessiond = { path = "../../crates/festerm-sessiond" }
+festerm-sessiond = { path = "../../crates/festerm-sessiond", features = ["test-support"] }
 
 [lints]
 workspace = true

@@ -7,6 +7,9 @@ authors.workspace = true
 repository.workspace = true
 description = "Minimal local persistence daemon for fesTerm sessions."
 
+[features]
+test-support = []
+
 [dependencies]
 festerm-core = { path = "../festerm-core" }
 festerm-pty = { path = "../festerm-pty" }
