@@ -364,6 +364,11 @@ continue working through the legacy adapter. Do not silently add creation
 permission, convert a strict legacy attachment into resume-or-create, or merge
 tunnels by display name.
 
+Any hosted-runtime migration must preserve protected state and account binding.
+It must not stop a live legacy session without a separate, default-No
+confirmation for that exact generation; manual deferral remains available.
+Host setup or sharing consent alone is not consent to restart a session.
+
 Provide an explicit owned-installation migration: inventory, preview mapping,
 verify account/key/ownership, reserve new host records, bind selected existing
 daemons without frontend takeover, then switch and retain rollback evidence.
