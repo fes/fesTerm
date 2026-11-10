@@ -216,9 +216,10 @@ and observed process state instead of Ready-shaped command success.
 Deterministic native-runner/filesystem fixtures cover Windows tasks, macOS
 LaunchAgents and Linux user units without changing services or reading secrets.
 Late task creation retains its observed identity after revocation, so cleanup
-does not lose ownership evidence. CLI setup/run remain unavailable; the actual
-endpoint, foreground sign-in, native signing/startup/cleanup and daemon-lifetime
-qualification remain prerequisites. ADR 0084 stays Proposed.
+does not lose ownership evidence. At this historical stage CLI setup/run remained
+unavailable. The later explicit headless composition below supersedes that source
+limitation, not native signing/startup/cleanup, cloud/vault, daemon-lifetime or
+client first-connect qualification. ADR 0084 stays Proposed.
 
 The native component now treats historical systemd exit identity separately
 from current `MainPID`, journals definition retirement for crash-safe scoped
@@ -9617,3 +9618,102 @@ The preceding coherent checkpoint `73f9b3d` separately owns the fourteen-case
 fresh run of this delta. The separately owned native controller watch-loop and
 other review corrections are not consumed here. Independent review follow-up,
 required cross-platform CI and native/client/product gates remain open.
+
+### ADR 0084 revoke-first owned removal composition
+
+Native manager stop alone cannot prove a manually invoked host has exited.
+The shared disable controller now revokes first, validates the exact native
+stop observation and waits boundedly for the separate foreground runtime lease
+without holding the installation/policy lock. Only then can it confirm Disabled.
+Foreign evidence, contention and uncertain cloud submission retain StopRequested
+or Reconciling rather than authorizing cleanup. Explicit uninstall composes that
+stop with exact native registration cleanup and authenticated cloud observation:
+absence may commit Removed, but an existing generation keeps unsuccessful
+CleanupPending without sending an unqualified ID-only DELETE. Existing removed
+tombstones report history without pretending to reobserve availability.
+
+The production foreground setup path already initializes `HostIdentity` under
+the current installation ticket; a new regression starts from a genuinely absent
+key, calls that public production initializer, reuses it through zero-shell
+provision and relay authorization and proves missing keys are never regenerated
+under existing records. No fixture injects the initial host identity for this
+test. Linux runnable setup/run also now refuses UserSignIn: `default.target` under
+an already lingering user manager is not proof of a current logon. Manual hosting
+remains implemented; no host linger/permission setting is changed.
+
+Before the subsequent review corrections, the private jobs1/debug0/incremental0
+warm target passed:
+
+- `cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_runtime_` — 9 passed.
+- `cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_cloud_foreground_initializes_real_identity` — 1 passed.
+- `cargo test --locked -p festerm-host -p festerm-host-setup` — 106 passed, one existing ignored native case.
+- `cargo test --locked -p festerm-host --no-default-features` — 10 passed.
+- `cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings` — passed.
+
+Owned logs remain under `target/adr84-native-evidence/disable-*.log`.
+Packaging metadata, 59 focused Python packaging tests (7 skipped), fmt,
+traceability311 and diff checks pass. These are isolated fixtures/source checks,
+not positive real release/native-vault/cloud/service evidence. Authenticated
+stopped-version replacement remains active incomplete work, not an accepted
+update operation or an excuse to treat unqualified cloud deletion as success.
+
+### ADR 0084 native controller review corrections
+
+The production run watchdog no longer mistakes the installation lock held by a
+normal current-policy guard for revocation. WouldBlock is currently unobservable:
+it keeps serving and retries bounded one-second ticks without asserting consent,
+absence or success. Real snapshot changes and nonbusy errors still close hosting;
+each actual runtime admission continues to require fresh authority. The regression
+holds the real Store lease across four pending serving ticks, checks Listening,
+then releases and revokes to observe ConsentChanged, never InstallationBusy.
+
+`approve-owner --temporary allow|deny` is independent explicit foreground
+permission, default No, and never grants creation. Creation still requires both
+configured permission and owner consent. Public setup/approval use the same
+controller core as six new deterministic boundary tests; only crate-private typed
+native/network/credential dependencies are substituted. Those tests cover actual
+identity→sign-in→zero-shell provision→owner initialization→install order, approved
+key reuse, fingerprint/Provisioned/creation/issuer/account fences, late revocation,
+failed-install retry and no effects after missing/cancelled account consent.
+An initial fixture-parent RED was fixed in test support. The late-revocation test
+then exposed owner-provider invocation before the final epoch fence; production
+ordering was corrected rather than weakening the assertion. Both RED logs remain.
+
+Canonical architecture/protocol/headless/ADR/readme/roadmap descriptions now
+distinguish the default headless build's explicit signed setup/approval/run from
+optional library features and disabled configuration, and paired lifecycle from
+standalone inventory-only control. Historical milestones remain historical.
+UserSignIn registration arms next-login activation; runnable Linux still refuses
+until a current-logon fence exists. Bounded cloud-operation serialization may span
+network; installation/policy/journal guards do not. Host-local key approval is
+not the separate client foreground trust/context/receipt/index/session chooser.
+
+The final default host/setup union passes **114 tests, one existing ignored
+native case** (101 setup-library, 5 CLI units and 8 CLI integrations).
+Focused review runs passed watch1, controller6 and temporary1. Logs:
+`target/adr84-native-evidence/review-{watch-busy,controller-first,controller-green1,controller-green2,temporary,final-packages}.log`.
+Final commands used the private warm `target/adr84-native`, jobs1, dev/test debug0,
+incremental0 and repository-owned fixture root:
+
+- `cargo test --locked -p festerm-host -p festerm-host-setup` — 114 passed / 1 existing ignored.
+- `cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings` — passed.
+- `cargo test --locked -p festerm-host --no-default-features` — 10 passed.
+- `cargo check --locked -p festerm-host-setup --no-default-features --features native-services --lib` — passed.
+- `python3 scripts/check_packaging.py` — passed.
+- `python3 -m unittest scripts.tests.test_check_packaging scripts.tests.test_host_manifest scripts.tests.test_tunnel_bundle` — 66 run, 59 passed / 7 skipped.
+
+The existing vendored proxy-helper warning and optional-feature transport-helper
+warning remain, without weakening strict affected-package Clippy or changing
+dependencies. Final strict/compatibility/library/packaging logs use
+`target/adr84-native-evidence/review-final-*.log`.
+These are real controller/source boundary regressions, not production cloud,
+native-vault, signed install/start/stop or cross-platform acceptance. Remaining
+reliability lifecycle review and independent combined-source gates are not cleared.
+Authenticated stopped-version replacement/update remains active incomplete work;
+unqualified cloud deletion remains unsuccessful CleanupPending.
+The qualified native review-correction source is fixed at `3d18fff1`; subsequent
+documentation does not change those tested bytes. Runtime's separate
+`1b5987ec` authentication Busy correction is not consumed here. A future normal
+integration must retain its original authentication deadline and both
+same-issued-operation/lost-reply and actual two-daemon adoption/detach oracles,
+then qualify the new combined head independently.

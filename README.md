@@ -35,18 +35,21 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 [Host protocol contracts](docs/host-protocol.md) provide the first ADR 0084
 foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
-messages, opt-in owner-key authentication primitives and an unexposed bounded
+messages, protected owner-key authentication and a bounded
 dispatcher/paired framed-client core. Stage 2 adds a local
 durable session-control backend with real detached daemons and daemon-enforced
-temporary leases. No installed HOST endpoint or product remote-creation control is enabled; independent
-review, native enrollment/channel qualification and later implementation/native
-gates remain open. Legacy Dev Tunnels behavior is unchanged.
+temporary leases. The default headless build now has explicit authenticated
+setup/owner approval/run; no listener or permission is enabled merely by
+compilation/configuration. Independent combined review and native/cloud/vault/
+service/device gates remain open. Desktop/mobile first-connect and session-choice
+UI are separate ongoing work, not supplied by host-local key approval.
+Legacy Dev Tunnels behavior is unchanged.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
 coverage (file mode has weaker whole-store rollback protection and is never a
 native failure fallback). Optional owner proof helpers now bind the actual pinned
 inner SSH connection/channel and transfer server authority with that exact
-stream; independent review, endpoint integration and native acceptance remain open.
+stream; independent combined review and native/first-connect acceptance remain open.
 An opt-in `host_runtime` now supplies the actual SSH-stream owner handshake and
 control/terminal dispatcher composition. Four focused native TCP SSH tests pass
 for encrypted request routing, stream-bound proof rejection and bounds.
@@ -55,20 +58,23 @@ integrated. Owned native routes include actual two-daemon SSH input isolation
 and persistent detach. The paired runtime supports protected Ensure/Create/end
 with the original backend-issued operation; standalone control stays inventory-only.
 Independent consumer/native qualification remains pending.
-No installed endpoint or Ready state is enabled.
+Explicit headless run consumes this source; no native Ready/acceptance is claimed.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition
 and authenticated schema-2 headless/helper staging without execution.
-An off-default [same-user native service component](docs/native-host-services.md)
-adds receipt-bound control APIs, not endpoint startup or native qualification.
+The optional library [same-user native service component](docs/native-host-services.md),
+included by the default headless binary, adds receipt-bound control APIs, not
+native qualification.
 Headless `service-status`, `disable`, `cleanup-local`, `recover-cleanup` and
 `qualify-package` now expose their supported management boundaries without
-claiming endpoint readiness, registration/start or successful cloud deletion.
+claiming endpoint readiness or successful cloud deletion.
 Explicit headless setup/owner approval/run composition is implemented in source,
 not yet qualified as an installed native host ([#681](https://github.com/fes/fesTerm/issues/681)).
 It requires real authenticated release inputs and existing native credentials;
-update/uninstall remain unavailable. The legacy installer is unchanged.
+uninstall removes only exact stopped native resources and retains unqualified
+cloud deletion as unsuccessful CleanupPending; update remains unavailable.
+The legacy installer is unchanged.
 An opt-in shared library adds foreground native-vault GitHub authentication and
 zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;
 generation-atomic cloud deletion remains an explicit qualification blocker.

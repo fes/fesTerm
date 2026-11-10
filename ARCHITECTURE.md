@@ -723,17 +723,20 @@ It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
 the shared authenticated-artifact verifier. Verified helper entries and their
 exact signed provenance are staged immutably without execution;
 default legacy/mobile installer-review dependencies remain unchanged.
-The off-default `native-services` feature adds a
+The optional setup-library `native-services` feature, selected by the default
+headless binary, adds a
 [same-user native control component](docs/native-host-services.md):
 sealed updater-authenticated executable receipts, protected exact-owned
 registration and epoch-fenced native observations/control.
 macOS admission pins the release Developer ID team and hardened runtime; Windows
 publisher admission remains fail-closed pending authoritative policy.
 Windows registration/start require authenticated
-graceful-stop support rather than destructive task termination. It has no endpoint,
-Ready result or shell-launch ownership. CLI configuration/status/staging remain
-local-only; service commands explicitly refuse until endpoint/native integration
-and qualification. Default legacy/mobile dependencies remain unchanged. See the
+graceful-stop support rather than destructive task termination. The native
+component itself owns neither endpoint readiness nor shell launch. The headless
+controller now composes explicit setup, separate owner-key/permission approval,
+run, disable and exact-owned removal with those APIs. Configure defaults disabled;
+compilation, native Running and last-run history confer no consent or Ready claim.
+Default legacy/mobile dependencies remain unchanged. See the
 [headless boundary and adapter contract](docs/headless-host.md).
 
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
@@ -747,14 +750,18 @@ Creation RPCs retain an opaque issued operation bound to that destination and
 the original negotiated namespace across reconnects; lifecycle RPCs never
 inherit a creation scope. Correlation includes the exact echoed namespace.
 `host_control::native::NativeControl` uses actual sessiond reservations and owned
-policy guards; the off-by-default headless `owner-routing` composition adapts
-protected enrollment, not portable configuration. Setup's opt-in `host-runtime`
+policy guards; the headless binary's default-enabled `owner-routing` composition
+adapts protected enrollment, not portable configuration. The setup library's
+optional `host-runtime`
 feature implements the runtime policy traits directly: each admission reacquires
 the explicitly selected credential store and returns an owned enrollment lease,
 not cached authority. The app wrapper delegates; its default remains native vault
 with no file-store fallback. Owned native fixtures cover
-control routing/retry without frontend leases. No installed listener uses these modules.
-The unexposed `host_terminal` module pairs bounded binary terminal framing with
+control routing/retry without frontend leases. Explicit headless `run` consumes
+these modules only after authenticated release provenance, current protected
+account/host identity and separate local owner approval. That source integration
+does not establish signed native-service or first-connect acceptance.
+The `host_terminal` module pairs bounded binary terminal framing with
 an immutable client handle and an opt-in actual native attachment actor. Recovery
 adoption and observed native writer admission precede Attached; exact temporary
 leases distinguish intentional detach from transport loss. FIFO output turns
@@ -860,18 +867,18 @@ stream; server authentication transfers that stream and owner/guard together.
 The opt-in bridge `host_runtime` composes that exact stream with bounded owner
 challenge/proof framing, then a control or terminal role. Its host shares one
 aggregate budget and FIFO output scheduler; protected policy work retains client
-admission through cancellation. Control remains inventory-only, while separately
-proven terminal channels use the existing exact-generation adoption/receipt
-adapter. No raw socket, principal string or fabricated owner can enter the
+admission through cancellation. Paired `HostRuntime` advertises protected
+lifecycle support/current backend issuer; standalone `NativeControl` remains
+inventory-only. Separately proven terminal channels use the exact-generation
+adoption/receipt adapter. No raw socket, principal string or fabricated owner can enter the
 runtime. The portable client handshake creates no key and changes no trust.
-This source checkpoint does not install/enable a listener: consuming protected
-enrollment, the qualified final session correction and native end-to-end gates
-remain mandatory before exposure.
-Endpoint integration and independent security review are mandatory before
-new remote capabilities; all new capabilities default denied. The enrollment/
-channel prerequisite does not itself implement session routing, creation,
-migration or lifetime supervision; the separate local control backend above
-does not expose an endpoint.
+The default headless build now composes that runtime through explicit foreground
+setup/approval/run with the fixed protected adapter and corrected session source.
+There is no automatic listener or portable-import authority; current permissions
+remain default denied. Independent combined-source review, real release/native
+vault/service and client first-connect/device qualification remain mandatory.
+The enrollment/channel helpers alone grant no routing, creation, migration or
+lifetime authority; those effects require the separate current protected backend.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

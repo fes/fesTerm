@@ -1,5 +1,6 @@
-//! Foreground account scope and zero-shell cloud provisioning. The lifecycle
-//! journal remains consent authority; this adapter never starts an endpoint.
+//! Foreground account scope and zero-shell cloud provisioning. Optional runtime
+//! relay admission reuses only the exact existing protected identity/receipt;
+//! the lifecycle journal remains consent authority.
 
 use crate::{
     lifecycle::{Binding, Origin, Phase, Snapshot, Store, Ticket},
@@ -1418,6 +1419,491 @@ mod tests {
         let settings = adapter.store.snapshot().unwrap().settings;
         let ticket = adapter.store.request_enable(&settings).unwrap();
         adapter.foreground(&ticket, 42).unwrap()
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    struct ControllerBoundary<'a> {
+        network: FixtureNetwork<'a>,
+        secrets: MemorySecretStore,
+        events: std::cell::RefCell<Vec<&'static str>>,
+        fail_install: std::cell::Cell<bool>,
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    impl crate::controller::SetupBoundary for ControllerBoundary<'_> {
+        async fn sign_in(
+            &self,
+            cloud: &CloudHostAdapter<'_>,
+            foreground: &Foreground,
+            cancel: &CancellationToken,
+            prompt: impl FnOnce(DevicePrompt),
+        ) -> io::Result<()> {
+            self.events.borrow_mut().push("sign-in");
+            cloud
+                .sign_in_with(foreground, cancel, prompt, &self.network, &self.secrets)
+                .await
+        }
+
+        async fn provision(
+            &self,
+            cloud: &CloudHostAdapter<'_>,
+            foreground: &Foreground,
+            cancel: &CancellationToken,
+        ) -> io::Result<()> {
+            self.events.borrow_mut().push("provision");
+            cloud
+                .provision_with(foreground, cancel, &self.network, &self.secrets)
+                .await
+                .map(|_| ())
+        }
+
+        async fn health(
+            &self,
+            cloud: &CloudHostAdapter<'_>,
+            cancel: &CancellationToken,
+        ) -> io::Result<Health> {
+            self.events.borrow_mut().push("health");
+            cloud
+                .health_with(cancel, &self.network, &self.secrets)
+                .await
+        }
+
+        fn owners<'a>(
+            &self,
+            store: &'a Store,
+        ) -> io::Result<crate::enrollment::OwnerEnrollment<'a>> {
+            self.events.borrow_mut().push("owners");
+            store.owner_enrollment_with_storage(
+                crate::enrollment::OwnerStorage::HeadlessProtectedFile,
+            )
+        }
+
+        fn install(
+            &self,
+            store: &Store,
+            _state: &Path,
+            stage: &crate::services::TrustedStage,
+            epoch: u64,
+        ) -> io::Result<crate::services::Observation> {
+            stage.sessiond_path()?;
+            let snapshot = store.snapshot()?;
+            assert_eq!(snapshot.phase, Phase::Provisioned);
+            assert_eq!(snapshot.epoch, epoch);
+            let policy = store
+                .owner_enrollment_with_storage(
+                    crate::enrollment::OwnerStorage::HeadlessProtectedFile,
+                )?
+                .snapshot()?;
+            assert_eq!(
+                policy.binding.host.host.as_str(),
+                snapshot.binding.as_ref().unwrap().host_id
+            );
+            self.events.borrow_mut().push("install");
+            if self.fail_install.get() {
+                return Err(refused("host.fixture_install_failed"));
+            }
+            Ok(crate::services::Observation {
+                process: crate::services::ProcessState::Stopped,
+                installation: snapshot.installation,
+                origin: snapshot.origin,
+                epoch,
+            })
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    fn controller_boundary(store: &Store, secrets: MemorySecretStore) -> ControllerBoundary<'_> {
+        ControllerBoundary {
+            network: FixtureNetwork::new(store),
+            secrets,
+            events: Default::default(),
+            fail_install: Default::default(),
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    fn owner_consent(key: [u8; 32]) -> crate::controller::OwnerConsent {
+        crate::controller::OwnerConsent {
+            owner_public_key: key,
+            confirmed_owner_fingerprint: crate::enrollment::owner_key_fingerprint(&key).unwrap(),
+            permissions: festerm_host_protocol::Capabilities {
+                inventory: true,
+                attach: true,
+                detach: true,
+                ensure: true,
+                create: true,
+                temporary: true,
+                ..Default::default()
+            },
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_controller_setup_orders_real_identity_account_policy_and_registration_without_shells(
+    ) {
+        let (root, store, secrets) = fixture();
+        let boundary = controller_boundary(&store, secrets);
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        let cancel = CancellationToken::new();
+        let result = crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &cancel,
+            },
+            |_| boundary.events.borrow_mut().push("prompt"),
+            &boundary,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            &*boundary.events.borrow(),
+            &["sign-in", "prompt", "provision", "owners", "install"]
+        );
+        let initial = result.owner_approval_prerequisite;
+        assert!(initial.keys.is_empty());
+        assert!(!initial.remote_access);
+        assert_eq!(initial.binding.account, "github:42");
+        assert_eq!(
+            result.native_registration.process,
+            crate::services::ProcessState::Stopped
+        );
+        assert!(!root.path().join("host/daemon").exists());
+        let identity =
+            HostIdentity::load(&root.path().join("host").join(HOST_IDENTITY_FILE)).unwrap();
+        assert_eq!(initial.binding.host.host.as_str(), identity.host_id());
+        assert_eq!(
+            initial.binding.host.host_key_fingerprint,
+            identity.fingerprint().unwrap()
+        );
+        let key = festerm_tunnel_bridge::owner_auth::OwnerSigningKey::generate()
+            .unwrap()
+            .public_key();
+        let approved =
+            crate::controller::approve_owner_with(&store, owner_consent(key), &boundary).unwrap();
+        assert!(approved.remote_access && approved.capabilities.temporary);
+        assert!(!approved.capabilities.creation_allowed);
+        assert_eq!(approved.binding, initial.binding);
+        assert_eq!(approved.keys.len(), 1);
+        let repeated =
+            crate::controller::approve_owner_with(&store, owner_consent(key), &boundary).unwrap();
+        assert_eq!(repeated.keys, approved.keys);
+        assert_eq!(repeated.binding, approved.binding);
+        boundary.events.borrow_mut().clear();
+        let resumed = crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &cancel,
+            },
+            |_| panic!("no repeated sign-in"),
+            &boundary,
+        )
+        .await
+        .unwrap();
+        assert_eq!(&*boundary.events.borrow(), &["health", "owners", "install"]);
+        assert_eq!(
+            resumed.owner_approval_prerequisite.binding,
+            approved.binding
+        );
+        assert_eq!(resumed.owner_approval_prerequisite.keys.len(), 1);
+        assert_eq!(boundary.network.state.borrow().creates, 1);
+        assert_eq!(boundary.network.state.borrow().sign_ins, 1);
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_controller_owner_approval_fences_fingerprint_phase_creation_and_runtime_issuer() {
+        let (root, store, secrets) = fixture();
+        let boundary = controller_boundary(&store, secrets);
+        let key = festerm_tunnel_bridge::owner_auth::OwnerSigningKey::generate()
+            .unwrap()
+            .public_key();
+        assert!(
+            crate::controller::approve_owner_with(&store, owner_consent(key), &boundary).is_err()
+        );
+        assert!(boundary.events.borrow().is_empty());
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &CancellationToken::new(),
+            },
+            |_| {},
+            &boundary,
+        )
+        .await
+        .unwrap();
+        let owners = store
+            .owner_enrollment_with_storage(crate::enrollment::OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        let initial = owners.snapshot().unwrap();
+        boundary.events.borrow_mut().clear();
+        for refusal in ["fingerprint", "creation", "issuer"] {
+            let mut consent = owner_consent(key);
+            match refusal {
+                "fingerprint" => {
+                    consent.confirmed_owner_fingerprint = "wrong-reviewed-fingerprint".into()
+                }
+                "creation" => consent.permissions.creation_allowed = true,
+                "issuer" => {
+                    consent.permissions.issuance_epoch =
+                        Some(festerm_host_protocol::Epoch::new(1).unwrap())
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                crate::controller::approve_owner_with(&store, consent, &boundary).is_err(),
+                "{refusal}"
+            );
+            assert_eq!(owners.snapshot().unwrap(), initial);
+            assert!(boundary.events.borrow().is_empty());
+        }
+        let state = store.snapshot().unwrap();
+        assert_eq!(state.phase, Phase::Provisioned);
+        let wrong_account = crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 43,
+                cancel: &CancellationToken::new(),
+            },
+            |_| panic!("no account switch"),
+            &boundary,
+        )
+        .await;
+        assert!(wrong_account.is_err());
+        assert!(boundary.events.borrow().is_empty());
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_controller_setup_late_revocation_retains_receipt_without_owner_or_install() {
+        for after in ["sign-in", "provision"] {
+            let (root, store, secrets) = fixture();
+            let boundary = controller_boundary(&store, secrets);
+            if after == "sign-in" {
+                boundary.network.state.borrow_mut().revoke_sign_in = true;
+            } else {
+                boundary.network.state.borrow_mut().revoke_create = true;
+            }
+            let stage = crate::services::fixture_stage(&root.path().join("stage"));
+            assert!(crate::controller::setup_with(
+                crate::controller::SetupRequest {
+                    store: &store,
+                    state: &root.path().join("host"),
+                    stage: &stage,
+                    account: 42,
+                    cancel: &CancellationToken::new()
+                },
+                |_| {},
+                &boundary,
+            )
+            .await
+            .is_err());
+            assert!(!boundary.events.borrow().contains(&"owners"));
+            assert!(!boundary.events.borrow().contains(&"install"));
+            assert!(!root.path().join("host/owner-enrollment.json").exists());
+            assert!(!root.path().join("host/daemon").exists());
+            if after == "provision" {
+                assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+                assert!(CloudHostAdapter::new(&store)
+                    .load()
+                    .unwrap()
+                    .receipt
+                    .is_some());
+            } else {
+                assert_eq!(store.snapshot().unwrap().phase, Phase::Reconciling);
+                assert_eq!(boundary.network.state.borrow().creates, 0);
+            }
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_controller_setup_retries_failed_install_without_duplicate_cloud_or_owner_identity(
+    ) {
+        let (root, store, secrets) = fixture();
+        let boundary = controller_boundary(&store, secrets);
+        boundary.fail_install.set(true);
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        assert!(crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &CancellationToken::new()
+            },
+            |_| {},
+            &boundary,
+        )
+        .await
+        .is_err());
+        let owners = store
+            .owner_enrollment_with_storage(crate::enrollment::OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        let initial = owners.snapshot().unwrap();
+        assert!(initial.keys.is_empty() && !initial.remote_access);
+        boundary.fail_install.set(false);
+        boundary.events.borrow_mut().clear();
+        let retried = crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &CancellationToken::new(),
+            },
+            |_| panic!("no repeated sign-in"),
+            &boundary,
+        )
+        .await
+        .unwrap();
+        assert_eq!(retried.owner_approval_prerequisite, initial);
+        assert_eq!(&*boundary.events.borrow(), &["health", "owners", "install"]);
+        assert_eq!(boundary.network.state.borrow().creates, 1);
+        assert_eq!(boundary.network.state.borrow().sign_ins, 1);
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_controller_creation_requires_configuration_and_independent_owner_consent() {
+        let (root, store, secrets) = fixture();
+        let mut settings = store.snapshot().unwrap().settings;
+        settings.allow_creation = true;
+        store.configure(settings).unwrap();
+        let boundary = controller_boundary(&store, secrets);
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &CancellationToken::new(),
+            },
+            |_| {},
+            &boundary,
+        )
+        .await
+        .unwrap();
+        let key = festerm_tunnel_bridge::owner_auth::OwnerSigningKey::generate()
+            .unwrap()
+            .public_key();
+        let denied =
+            crate::controller::approve_owner_with(&store, owner_consent(key), &boundary).unwrap();
+        assert!(denied.capabilities.temporary);
+        assert!(!denied.capabilities.creation_allowed);
+        let mut explicit = owner_consent(key);
+        explicit.permissions.creation_allowed = true;
+        explicit.permissions.temporary = false;
+        let approved = crate::controller::approve_owner_with(&store, explicit, &boundary).unwrap();
+        assert!(approved.capabilities.creation_allowed);
+        assert!(!approved.capabilities.temporary);
+        assert_eq!(approved.keys.len(), 1);
+        assert_eq!(approved.binding, denied.binding);
+        assert!(!root.path().join("host/daemon").exists());
+        store.revoke().unwrap();
+        assert!(
+            crate::controller::approve_owner_with(&store, owner_consent(key), &boundary).is_err()
+        );
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_controller_cancelled_or_missing_account_consent_has_no_identity_or_account_effect(
+    ) {
+        let (root, store, secrets) = fixture();
+        let boundary = controller_boundary(&store, secrets);
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        for account in [0, 42] {
+            let cancel = CancellationToken::new();
+            if account == 42 {
+                cancel.cancel();
+            }
+            assert!(crate::controller::setup_with(
+                crate::controller::SetupRequest {
+                    store: &store,
+                    state: &root.path().join("host"),
+                    stage: &stage,
+                    account,
+                    cancel: &cancel
+                },
+                |_| panic!("no prompt without consent"),
+                &boundary,
+            )
+            .await
+            .is_err());
+            assert!(boundary.events.borrow().is_empty());
+            assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
+            assert!(store.snapshot().unwrap().pending_ticket().is_none());
+            assert!(!root.path().join("host").join(HOST_IDENTITY_FILE).exists());
+        }
+    }
+
+    #[cfg(feature = "host-runtime")]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_foreground_initializes_real_identity_once_for_provision_and_run() {
+        let (root, store, secrets) = fixture();
+        let path = root.path().join("host").join(HOST_IDENTITY_FILE);
+        assert!(!path.exists());
+        let adapter = CloudHostAdapter::new(&store);
+        let approved = foreground(&adapter);
+        let created = HostIdentity::load(&path).unwrap();
+        let host_id = created.host_id();
+        let fingerprint = created.fingerprint().unwrap();
+        assert_eq!(approved.record.host_id, host_id);
+        assert_eq!(approved.record.fingerprint, fingerprint);
+        let repeated = adapter.foreground(&approved.record.ticket, 42).unwrap();
+        assert_eq!(repeated.record.host_id, host_id);
+        assert_eq!(repeated.record.fingerprint, fingerprint);
+
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&approved, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        adapter
+            .provision_with(&approved, &cancel, &network, &secrets)
+            .await
+            .unwrap();
+        let (_, receipt, _token, existing) = adapter
+            .relay_authorization_with(&cancel, &network, &secrets)
+            .await
+            .unwrap();
+        assert_eq!(existing.host_id(), host_id);
+        assert_eq!(existing.fingerprint().unwrap(), fingerprint);
+        assert_eq!(receipt.resource.account_id, 42);
+        assert_eq!(HostIdentity::load(&path).unwrap().host_id(), host_id);
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(adapter
+            .relay_authorization_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert!(adapter.foreground(&approved.record.ticket, 42).is_err());
+        assert!(!path.exists());
+        assert_eq!(network.state.borrow().creates, 1);
+        assert_eq!(network.state.borrow().sign_ins, 1);
+
+        let (other_root, other_store, _other_secrets) = fixture();
+        let other_adapter = CloudHostAdapter::new(&other_store);
+        let other = foreground(&other_adapter);
+        let missing = other_root.path().join("host").join(HOST_IDENTITY_FILE);
+        std::fs::remove_file(&missing).unwrap();
+        assert!(other_adapter.foreground(&other.record.ticket, 42).is_err());
+        assert!(!missing.exists());
     }
 
     #[cfg(feature = "host-runtime")]

@@ -123,22 +123,38 @@ paths cannot substitute for them.
 After `configure`, explicit `setup` requires the signed package inputs above,
 `--state-dir`, `--account-id` and `--consent enable`. It authenticates every
 executable before foreground GitHub device sign-in, provisions the zero-shell
-endpoint and registers the same-user host without launch. Initial owner policy
+endpoint and registers the same-user host without an explicit start command.
+UserSignIn registration arms next-login activation (Linux user-unit enable /
+macOS RunAtLoad); it is not a guarantee of never launching. The runnable Linux
+controller currently refuses UserSignIn pending the current-logon fence below.
+Initial owner policy
 has no keys and access off. Its public `owner_approval_prerequisite` describes the
 exact installation/host/account/principal for independent foreground pin review;
 it is not a trusted client import or execution grant. A retry in Provisioned
 state reobserves only the original account/resource and never creates another
 tunnel. Interrupted/incomplete protected enrollment refuses, rather than
 discarding anchors.
+Production identity initialization is reachable through
+`controller::setup` → `CloudHostAdapter::foreground` →
+`HostIdentity::load_or_create_from_private_directory`, under the exact current
+installation ticket and only before the cloud record exists. It is not a test-
+only helper. That identity is retained through owner initialization and relay
+run; existing records with missing or malformed identity fail without regeneration.
 
 The client must separately review that context and generate a protected native
 key for it. `approve-owner --state-dir PATH --public-key HEX --fingerprint VALUE
 --consent approve` explicitly approves that public key on the host. Inventory,
 attach/detach and resume are approved; independent `--creation allow` (also
-requiring configured creation consent) and `--end allow` default to deny.
+requiring configured creation consent), `--end allow` and independent
+`--temporary allow` default to deny. Temporary permission never grants creation.
 There is no bearer enrollment, recipe-derived trust or file-store fallback.
 The protected client-local receipt/index and actual first-connect UI remain
 separate prerequisites.
+Linux runnable setup/run currently requires Manual startup. Enabling a user unit
+under `default.target` does not prove sign-in-only activation when user lingering
+is already enabled; until a verified current-logon/session activation fence is
+implemented, UserSignIn refuses before account or listener effects. No host
+linger/permission setting is changed to bypass that prerequisite.
 
 `run --state-dir PATH` reauthenticates retained signed bundle provenance, selects
 only its same-version daemon helper and reopens existing native account/owner
@@ -150,6 +166,18 @@ daemon. `run-status` reports durable last-run history (Starting, Listening,
 Stopped or Failed with bounded typed failure), **not liveness or Ready**.
 An interrupted Listening record remains history, never automatic startup
 authority. Concurrent runs refuse under a separate exact-installation lease.
+
+`disable` revokes before native stop and requires the exact foreground-runtime
+lease to be released before confirming Disabled. Its bounded wait holds no
+installation lease; timeout/foreign stop evidence cannot become absence.
+`uninstall --state-dir PATH --consent remove` then requests CleanupPending,
+removes only the stopped receipt-owned native registration and reconciles the
+exact cloud receipt. Authenticated cloud absence can commit Removed. A still
+present resource has no qualified generation-atomic delete operation, so no
+DELETE is sent: the command exits unsuccessfully with
+`host.native_removed_cloud_cleanup_pending`, retaining all retry/cleanup evidence.
+Persistent daemon/session state is never a removal target. Repeating an already
+Removed tombstone reports recorded history, not fresh resource observation.
 
 ## Management and unavailable operations
 
@@ -163,7 +191,8 @@ uncertain. `qualify-package` verifies the current authenticated native publisher
 and publishes private executable bytes without registration or launch.
 See [native management and lab commands](native-host-services.md).
 
-The off-default `native-services` library now provides real same-user
+The optional `native-services` library, selected by the default headless binary,
+provides real same-user
 registration/control and authenticated executable-publication APIs, with
 deterministic native-adapter fixtures. The shared CLI controller consumes those
 APIs; desktop controls and native endpoint qualification remain separate. macOS admission
@@ -190,9 +219,9 @@ First-connect foreground handoff versus advanced explicit public-key import
 remains a bounded UX prerequisite. Neither bearer presence nor a provisioning
 account string enrolls an owner.
 
-`update` and `uninstall` return unsuccessful exit status and
-`host.endpoint_adapter_unavailable`. They are not successful stub commands and
-never dispatch to the legacy one-shell scripts/helpers. Requirements still open:
+`update` returns unsuccessful exit status and
+`host.endpoint_adapter_unavailable`. It is not a successful stub command and
+never dispatches to the legacy one-shell scripts/helpers. Requirements still open:
 
 - New zero-shell host endpoint and observed health/principal-authentication gate.
 - Composition of foreground secure account sign-in and protected host consent
@@ -267,7 +296,9 @@ Neither configuration nor a `provisioned` phase authorizes remote access.
 Desktop cancellation must preserve its own draft and reconcile this journal;
 there is no new desktop control in this slice.
 
-## In-process cloud adapter (library only)
+<a id="in-process-cloud-adapter-library-only"></a>
+
+## In-process cloud adapter (shared CLI/library API)
 
 The opt-in `festerm-host-setup/cloud` feature supplies
 `cloud::CloudHostAdapter::new(&Store)` for desktop/headless composition. It reuses
@@ -339,7 +370,8 @@ executable authority, and no shell/session/profile identity is created.
    account. Its only present state is `PresentEndpointUnqualified`, **not Ready**.
    An authenticated exact-ID/cluster 404 is `Absent`; denial, refresh failure,
    offline, malformed, foreign ownership/port/ACL and changed incarnation are
-   errors, never absence. Service/channel/principal health is not implemented.
+   errors, never absence. This cloud-resource health API does not probe service/
+   channel/principal health or establish listener readiness.
 
 For an **unbound cancelled uncertain submission**, there is a specific offline
 foreground exit, not a directory-deletion/manual workaround:
@@ -401,8 +433,11 @@ test origins. Private fake HTTP transports exercise actual request construction
 and bounded response/ownership parsing; setup fixtures exercise consent,
 credential references and lifecycle receipts. No real sign-in, cloud operation,
 vault write, downloaded binary or installed service is exercised by these tests.
-There is no new setup command/UI, trust bypass, grant model or pairing service.
-Normal first-connect UX and runtime/service composition remain separate gates.
+The default headless controller now consumes this adapter for explicit setup/run.
+It adds no trust bypass, implicit pairing or recipe authority. Host-local key
+approval does not complete the separate client foreground trust/approved-context
+receipt/index and inventory/session-choice UI; that producer is ongoing work.
+Real cloud/native-vault/service and first-connect evidence remain separate gates.
 
 ## Evidence
 
@@ -415,12 +450,15 @@ unchanged source then passed. No cloud fixture migration or policy relaxation
 was needed. This is local fixture evidence, not any live/native qualification
 listed above.
 
-The off-by-default `festerm-host/owner-routing` library feature adds only the
-`routing::EnrollmentPolicy` composition adapter. It owns a protected `Store`;
+At the adapter-only milestone, `festerm-host/owner-routing` was off by default.
+It is now the default headless feature and selects the explicit controller/CLI
+setup, owner approval and run, while configure remains disabled. Its thin
+`routing::EnrollmentPolicy` adapter owns a protected `Store`;
 each backend callback acquires actual native-vault-fenced `CurrentOwnerPolicy`
 and returns an owned `EnrollmentGuard` implementing bridge `PolicyGuard`.
-Missing/busy/revoked enrollment fails closed. It does not expose a listener,
-change CLI `run`, advertise Ready or bypass the actual SSH channel-binding gate.
+Missing/busy/revoked enrollment fails closed. The adapter alone does not start
+a listener or advertise Ready; explicit run consumes it behind actual signed
+SSH channel binding, not a bypass of that gate.
 The native control adapter's owned-daemon tests use synthetic protected policy,
 not the user's vault; compilation of this composition is not native vault or
 service acceptance.
