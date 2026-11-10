@@ -11,6 +11,32 @@ pub(crate) fn fixture_stage(root: &std::path::Path) -> TrustedStage {
     trusted::fixture(root)
 }
 
+#[cfg(all(test, feature = "cloud", feature = "host-runtime"))]
+pub(crate) fn fixture_services<'a>(
+    store: &'a Store,
+    state: &std::path::Path,
+) -> std::io::Result<Services<'a, impl CommandRunner>> {
+    struct NoNativeCalls;
+    impl CommandRunner for NoNativeCalls {
+        fn execute(&self, _: &NativeRequest) -> io::Result<NativeOutput> {
+            panic!("pure unpublished-registration fixture must not call a native manager")
+        }
+    }
+    definitions::path_text(state)?;
+    let services = Services {
+        store,
+        state: state.into(),
+        context: Context {
+            platform: Platform::Windows,
+            user: "S-1-5-21-1-2-3-1001".into(),
+            registration: state.join("fixture-registration"),
+        },
+        runner: NoNativeCalls,
+    };
+    services.with_record(|_, _| Ok(()))?;
+    Ok(services)
+}
+
 use crate::{
     lifecycle::{Binding, Origin, Phase, Settings, Snapshot, Startup, Store},
     protected_state::{self, Lease},
