@@ -278,14 +278,33 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
             .windows(foreign.len())
             .any(|bytes| bytes == foreign));
     }
-    assert!(matches!(
-        control
-            .request(OperationId::new(), Request::List { cursor: None }, &cancel)
-            .await
-            .unwrap()
-            .body,
-        Response::Inventory { .. }
-    ));
+    let inventory_operation = OperationId::new();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match control
+                .request(
+                    inventory_operation.clone(),
+                    Request::List { cursor: None },
+                    &cancel,
+                )
+                .await
+                .unwrap()
+                .body
+            {
+                Response::Inventory { page } => {
+                    assert_eq!(page.sessions.len(), 2);
+                    assert!(page.sessions.iter().all(|session| session.attached));
+                    break;
+                }
+                Response::Refused {
+                    reason: festerm_host_protocol::Refusal::Busy,
+                } => tokio::time::sleep(Duration::from_millis(10)).await,
+                response => panic!("independent inventory failed: {response:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
     for terminal in &mut live {
         let operation = terminal.request_detach().unwrap();
         tokio::time::timeout(Duration::from_secs(8), async {

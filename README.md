@@ -50,8 +50,10 @@ stream; independent review, endpoint integration and native acceptance remain op
 An opt-in `host_runtime` now supplies the actual SSH-stream owner handshake and
 control/terminal dispatcher composition. Four focused native TCP SSH tests pass
 for encrypted request routing, stream-bound proof rejection and bounds.
-Owned-daemon end-to-end testing, protected enrollment composition and the final
-session correction remain pending. No installed endpoint or Ready state is enabled.
+The qualified session correction is integrated, and ten owned native bridge
+routes pass, including actual two-daemon SSH input isolation and persistent
+detach. Protected enrollment composition and independent consumer qualification
+remain pending. No installed endpoint or Ready state is enabled.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, offline pinned-CLI staging and

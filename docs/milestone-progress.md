@@ -9088,6 +9088,28 @@ Historical nine-of-nine evidence is not qualification of this new union.
 
 ### ADR 0084 authenticated stream composition source checkpoint
 
+Recovery normally merged corrected session `8ebbaf29` into runtime at
+`ae1ef27a`. A fresh owned helper/fixture-child build and actual two-daemon SSH
+round trip passed. Fresh integrated checks: bridge library 108 passed/10
+explicitly ignored; explicitly selected owned native routes 10 passed; protocol
+contracts 13 passed; portable client-only check, strict bridge all-target clippy,
+fmt, traceability (311 edges) and diff checks passed. Commands used the private
+`.runtime-target`, jobs 1, dev/test debug 0 and incremental 0:
+`cargo build -p festerm-sessiond -p festerm-pty-test-child`,
+`cargo test -p festerm-tunnel-bridge --features host-routing --lib`,
+`cargo test -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored`,
+`cargo test -p festerm-host-protocol --test contracts`,
+`cargo check -p festerm-tunnel-bridge --no-default-features --features host-routing --lib`,
+and `cargo clippy -p festerm-tunnel-bridge --features host-routing --all-targets -- -D warnings`.
+Native commands set `FESTERM_HOST_TEST_HELPER` to the exact owned rebuilt helper.
+The first concurrent native run retained nine passes and an independent
+inventory Busy assertion failure in `.runtime-validation/integrated-native-routes.log`;
+the corrected fixture retains its inventory operation, retries only correlated
+Busy within eight seconds and requires both sessions attached. Production policy
+contention and native assertions remain unchanged. The rerun is separately
+retained in `integrated-native-routes-corrected.log`. This does not transfer
+historical session counts or claim protected-vault, installed or product acceptance.
+
 The earlier routing core could accept opaque owner authorities but did not
 consume the actual SSH owner proof into a dispatcher. The opt-in runtime now
 owns bounded challenge/proof exchange on the signed original SSH stream, then

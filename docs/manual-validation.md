@@ -3382,6 +3382,11 @@ protected enrollment adapter and consuming native endpoint. No service is
 installed or Ready state asserted; legacy qualification is unchanged.
 
 [ADR 0084](adr/0084-host-based-dev-tunnels.md) remains Proposed.
+The corrected runtime/session union has fresh owned macOS evidence for ten native
+bridge routes, including two real signed SSH terminal channels with isolated
+input, independent inventory and correlated persistent detach. Constrained
+fixture policy is not native-vault consent, installation or platform acceptance;
+temporary active/grace and live policy changes require actual runtime evidence.
 [HOST contract primitives](host-protocol.md) have automated codec, canonical
 signature, default-deny owner/session admission, revocation/replay, privacy/
 pagination and budget evidence. This is not a native host endpoint, installation,

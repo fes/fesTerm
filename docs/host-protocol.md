@@ -44,10 +44,15 @@ including queued rekey with original-binding preservation and cross-connection
 proof rejection. The opt-in native case additionally routes two owned daemon
 terminals and verifies exact input isolation, independent inventory and
 persistent detach. The four focused native TCP SSH tests pass on macOS; the
-owned-daemon case awaits the qualified session correction.
+owned-daemon case passes after normal integration of the qualified session
+correction (`8ebbaf29`) at `ae1ef27a`. Both independent terminal streams route
+exact input, live control inventory remains available, and correlated detach
+preserves both persistent daemons. Under concurrent native routes the read-only
+inventory may return correlated Busy; its bounded fixture retry retains the
+operation and requires eventual exact attached inventory, not a weakened refusal.
 Constrained test policy/vault state is not production enrollment, native vault,
 Dev Tunnels service/rekey qualification or installed readiness. Consume the
-qualified final session correction and protected enrollment adapter before
+protected enrollment adapter before
 native end-to-end exposure; installation/CLI activation remains separate.
 
 `festerm-host-protocol` contains transport-independent serde/UUID contracts.

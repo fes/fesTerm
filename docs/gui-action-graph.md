@@ -1638,3 +1638,6 @@ HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after
 recovery adoption/writer activation; abandoned candidates are not Attached.
 These remain local automated evidence, not endpoint or native-platform acceptance.
+The runtime/session union also passes the actual two-daemon signed-SSH
+input-isolation, independent attached inventory and persistent-detach route;
+temporary heartbeat and current-policy revocation consumer evidence remain open.

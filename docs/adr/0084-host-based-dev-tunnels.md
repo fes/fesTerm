@@ -544,6 +544,17 @@ changes are part of the stage-1 contract slice.
 
 ## Validation impact
 
+The actual-runtime/session union normally integrates qualified session head
+`8ebbaf29` at `ae1ef27a`, preserving ADR 0085. Fresh macOS owned-helper evidence
+passes ten native bridge routes, including two separately authenticated SSH
+terminal streams, exact input isolation, independent attached inventory and
+correlated persistent detach. The concurrent first run retained nine passes and
+one inventory-contention failure; a bounded same-operation read-only Busy retry
+then passed all ten, without changing production contention behavior. This is
+local automated runtime evidence, not installed/native or whole-ADR acceptance.
+Temporary heartbeat/transport-loss and live policy revocation still require
+their own actual runtime evidence.
+
 **Authenticated runtime source checkpoint (#681):** the non-default bridge
 `host_runtime` consumes only actual `HostStream`s, reserves aggregate admission
 before protected policy/proof work, bounds challenge/proof frames and deadlines,
