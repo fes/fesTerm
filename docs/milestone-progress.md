@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Locating uncertain second-attachment failures without exposing authority
+
+The required macOS native bridge run retained an unresolved 13-pass/1-fail
+second non-takeover attachment result. Existing test-support builds now label
+only its failed reservation/publication/unwind boundaries, recording fieldless
+control codes and available I/O kind/OS integers, never error text or protected
+context. Normal builds omit diagnostics. Refusals, guards, retries, budgets and
+assertions are unchanged; these diagnostics are not a fix or CI acceptance.
+
 ## Keeping capability publication strict on Windows
 
 Required Windows CI found an always-success directory-sync closure after cfg

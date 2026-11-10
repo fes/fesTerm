@@ -5669,6 +5669,7 @@
         "native_temporary_detach_and_pending_cancellation_keep_lease_meanings_distinct",
         "native_revocation_tears_down_slow_output_without_stopping_persistent_shell",
         "native_takeover_waits_for_adoption_and_stale_generation_cannot_attach",
+        "native_attachment_failure_diagnostics_are_redacted_and_boundary_exact",
         "authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation",
         "authenticated_runtime_terminal_role_uses_separate_bounded_framing",
         "authenticated_runtime_rejects_proof_replayed_on_another_actual_ssh_channel",

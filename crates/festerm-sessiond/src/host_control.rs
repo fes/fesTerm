@@ -68,6 +68,100 @@ fn storage_error(error: io::Error) -> ControlError {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy)]
+enum AttachFailureDiagnostic<'a> {
+    ReservePublish(&'a io::Error),
+    UnwindAcquire(&'a io::Error),
+    UnwindRead(&'a io::Error),
+    UnwindCommitted,
+    UnwindPublish(&'a io::Error),
+    PublicationReadmit(ControlError),
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl AttachFailureDiagnostic<'_> {
+    fn message(self, enabled: bool) -> Option<String> {
+        if !enabled {
+            return None;
+        }
+        let uncertain = ControlError::CommittedButNotPublished;
+        let (step, error, control) = match self {
+            Self::ReservePublish(error) => ("reserve-publish", Some(error), uncertain),
+            Self::UnwindAcquire(error) => ("unwind-acquire", Some(error), uncertain),
+            Self::UnwindRead(error) => ("unwind-read", Some(error), uncertain),
+            Self::UnwindCommitted => ("unwind-already-committed", None, uncertain),
+            Self::UnwindPublish(error) => ("unwind-publish", Some(error), uncertain),
+            Self::PublicationReadmit(control) => ("publication-readmit", None, control),
+        };
+        Some(match error {
+            Some(error) => format!(
+                "host attach boundary={step} control={control:?} io_kind={:?} raw_os={:?}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+            None => format!("host attach boundary={step} control={control:?}"),
+        })
+    }
+
+    fn report(self, enabled: bool) {
+        if let Some(message) = self.message(enabled) {
+            eprintln!("{message}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod attach_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn native_attachment_failure_diagnostics_are_redacted_and_boundary_exact() {
+        let error = io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "SECRET /private/path account fingerprint receipt operation key input credential",
+        );
+        for (diagnostic, step) in [
+            (
+                AttachFailureDiagnostic::ReservePublish(&error),
+                "reserve-publish",
+            ),
+            (
+                AttachFailureDiagnostic::UnwindAcquire(&error),
+                "unwind-acquire",
+            ),
+            (AttachFailureDiagnostic::UnwindRead(&error), "unwind-read"),
+            (
+                AttachFailureDiagnostic::UnwindPublish(&error),
+                "unwind-publish",
+            ),
+        ] {
+            assert!(diagnostic.message(false).is_none());
+            assert_eq!(
+                diagnostic.message(true).unwrap(),
+                format!("host attach boundary={step} control=CommittedButNotPublished io_kind=PermissionDenied raw_os=None")
+            );
+        }
+        assert_eq!(
+            AttachFailureDiagnostic::UnwindCommitted
+                .message(true)
+                .unwrap(),
+            "host attach boundary=unwind-already-committed control=CommittedButNotPublished"
+        );
+        assert_eq!(
+            AttachFailureDiagnostic::PublicationReadmit(ControlError::Denied)
+                .message(true)
+                .unwrap(),
+            "host attach boundary=publication-readmit control=Denied"
+        );
+        let os_error = io::Error::from_raw_os_error(5);
+        assert_eq!(
+            AttachFailureDiagnostic::ReservePublish(&os_error).message(true).unwrap(),
+            format!("host attach boundary=reserve-publish control=CommittedButNotPublished io_kind={:?} raw_os=Some(5)", os_error.kind())
+        );
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Effect {
     Lookup,
@@ -1455,6 +1549,9 @@ impl SessionControl {
             return Err(ControlError::Ended);
         }
 
+        // Persistent adoption records a ticket without setting temporary.connected.
+        #[cfg(any(test, feature = "test-support"))]
+        let diagnose = !takeover && lease.last_attachment.is_some();
         let transfer = lease
             .temporary
             .as_ref()
@@ -1482,9 +1579,12 @@ impl SessionControl {
             binding.epoch = binding.epoch.next().map_err(|_| ControlError::Storage)?;
             binding.attachment = attachment.clone();
         }
-        guard
-            .replace(&mut lease)
-            .map_err(|_| ControlError::CommittedButNotPublished)?;
+        let publication = guard.replace(&mut lease);
+        #[cfg(any(test, feature = "test-support"))]
+        if let Err(error) = &publication {
+            AttachFailureDiagnostic::ReservePublish(error).report(diagnose);
+        }
+        publication.map_err(|_| ControlError::CommittedButNotPublished)?;
         let identity = record.native().ok_or(ControlError::Unknown)?;
         let authority = AttachmentAuthority {
             root: self.root.clone(),
@@ -1526,12 +1626,21 @@ impl SessionControl {
             Ok(session) => session,
             Err(_) => {
                 if let Some(ticket) = &ticket {
-                    let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
-                        .map_err(|_| ControlError::CommittedButNotPublished)?;
-                    let mut lease = guard
-                        .read()
-                        .map_err(|_| ControlError::CommittedButNotPublished)?;
+                    let acquired = LeaseGuard::acquire(record.root(&self.root), record.generation);
+                    #[cfg(any(test, feature = "test-support"))]
+                    if let Err(error) = &acquired {
+                        AttachFailureDiagnostic::UnwindAcquire(error).report(diagnose);
+                    }
+                    let guard = acquired.map_err(|_| ControlError::CommittedButNotPublished)?;
+                    let read = guard.read();
+                    #[cfg(any(test, feature = "test-support"))]
+                    if let Err(error) = &read {
+                        AttachFailureDiagnostic::UnwindRead(error).report(diagnose);
+                    }
+                    let mut lease = read.map_err(|_| ControlError::CommittedButNotPublished)?;
                     if lease.last_attachment.as_ref() == Some(ticket) {
+                        #[cfg(any(test, feature = "test-support"))]
+                        AttachFailureDiagnostic::UnwindCommitted.report(diagnose);
                         return Err(ControlError::CommittedButNotPublished);
                     }
                     if lease
@@ -1540,16 +1649,23 @@ impl SessionControl {
                         .is_some_and(|pending| &pending.ticket == ticket)
                     {
                         lease.pending = None;
-                        guard
-                            .replace(&mut lease)
-                            .map_err(|_| ControlError::CommittedButNotPublished)?;
+                        let publication = guard.replace(&mut lease);
+                        #[cfg(any(test, feature = "test-support"))]
+                        if let Err(error) = &publication {
+                            AttachFailureDiagnostic::UnwindPublish(error).report(diagnose);
+                        }
+                        publication.map_err(|_| ControlError::CommittedButNotPublished)?;
                     }
                 }
                 return Err(ControlError::Busy);
             }
         };
-        let _publication = Self::admission(Some(record), owner, Effect::Attach, &mut admit)
-            .map_err(|_| ControlError::CommittedButNotPublished)?;
+        let publication = Self::admission(Some(record), owner, Effect::Attach, &mut admit);
+        #[cfg(any(test, feature = "test-support"))]
+        if let Err(error) = &publication {
+            AttachFailureDiagnostic::PublicationReadmit(*error).report(diagnose);
+        }
+        let _publication = publication.map_err(|_| ControlError::CommittedButNotPublished)?;
         Ok(PendingAttachment {
             session,
             ticket,
