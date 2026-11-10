@@ -40,11 +40,27 @@ impl HostSession {
         budgets: &Budgets,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, Failure> {
+        Self::start_operation(
+            context,
+            scope,
+            Operation::Attach { target },
+            budgets,
+            notifier,
+        )
+    }
+
+    pub(super) fn start_operation(
+        context: ApprovedContext,
+        scope: Scope,
+        operation: Operation,
+        budgets: &Budgets,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, Failure> {
         let notify = notifier.clone();
         let worker = Worker::start(
             context,
             scope,
-            Operation::Attach { target },
+            operation,
             budgets,
             Arc::new(move || notify.notify()),
         )?;

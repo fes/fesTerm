@@ -1,5 +1,138 @@
 # Milestone Progress Narrative
 
+## Explicit desktop Create and atomic resume-or-create
+
+The creation lane normally consumes exact qualified #695 repair `602f19f8`
+on the accepted client/core union (#693 `1debea97` plus #691 metadata). It adds
+actual typed Create/Ensure execution, not new profile authority or placeholder
+sessions. No moving core/native/platform source, stopped-update c75, pending
+Windows warning repair or Linux retirement correction is consumed.
+
+The existing foreground recipe review now shows host capabilities and independent
+creation/temporary grants, exact shell/argv/cwd/lifetime and a separate launch
+confirmation. Create freezes a fresh logical ID and future attachment once;
+Ensure keeps the saved logical ID and delegates authorized absence/resume to the
+host. Resume-only Ensure remains usable without creation permission, while the
+host must refuse absence and explicit Create is unavailable. AttachOnly cannot
+create. Fresh authenticated capabilities are checked again by the worker.
+
+`CreationIntent` freezes the full approved owner/native reference, endpoint,
+launch/lifetime and original sealed `IssuedControlOperation`. Retries use that
+same operation/epoch even if the new handshake advertises a newer epoch.
+Busy, Unknown, Denied, Offline, revoked, uncertain, cancelled and incompatible
+replies never mean absence or replacement permission. The incompatible-result
+path was corrected not to claim that no shell was created. One mutation flight
+per action is allowed; no automatic reconnect, fallback or input replay is added.
+
+The application owns a bounded sixteen-entry registry across review closure.
+Changed recipe/credential and overflow cannot discard an unresolved original.
+A correlated wire success is deliberately separate from presentation admission:
+closing/cancelling review or failing terminal admission must not retire the
+action and silently allocate another shell on retry. Only admission of its
+authoritative target to a presentation session retires that entry; this is not
+terminal activation. Created/Resumed/Recreated plus exact logical/generation
+identity remain visible. Reserved attachment continuation uses the existing
+origin/account-fenced command, installed frontend, snapshot acknowledgment and
+host-confirmed activation path.
+
+Eight deterministic mutation tests cover exact typed refusals/lost reply,
+fresh-epoch original issuance, capability/permission/temporary and seven
+owner/reference/binding fences, cancellation, duplicate flight, unpresented
+success, resume-only Ensure and incompatible target correlation. Four additional
+headless application tests cover consent, launch/behavior and registry
+retention/rotation/overflow. The new native case uses the real bounded worker
+and production mutation/adoption functions on independently authenticated signed
+SSH streams: Create A and absent-to-created Ensure B produce independent native
+PTYs; retries preserve both original issuers/targets and create no extra daemon;
+fresh Ensure resumes A's exact generation. Each frontend adopts its stored
+snapshot before activation, ingests actual expected native-child output and
+excludes foreign text. Correlated exact-target detach leaves both persistent
+shells running. The fixture injects controlled authenticated streams rather than
+opening native vault/cloud credentials. Both earlier collector/frontend
+adoption/isolation oracles and production 15-second auth-Busy/original-issued
+lost-reply sources are unchanged.
+
+### Creation qualification and retained diagnostics
+
+Qualification uses the existing official private Rust **1.98.0**, not a
+Homebrew binary receiving an ineffective `+1.98.0` argument. Source
+`target/creation-env.sh`: `RUSTUP_HOME` is
+`/Users/fes/src/fesTerm-adr84-clients-nov10/target/adr84-rustup`; `PATH`,
+`RUSTC`, `RUSTDOC` and `RUSTFMT` explicitly select its
+`toolchains/1.98.0-aarch64-apple-darwin/bin`. Rustc commit is
+`88d9e12ae178fab0fb5cc050a94da85685d449ea`; Cargo commit is
+`797e8a9bca276c1c9f9f738d2a20f484fa4eea9d`. Raw executable/version receipt:
+`target/create-toolchain.log`. Global defaults/overrides, manifests and locked
+package versions are unchanged. The separate target is
+`target/adr84-clients-create-rust198`, with jobs=1, dev/test debug=0 and
+incremental=0; fixture scratch stays under `target/work`.
+
+The same-toolchain owned sessiond/PTY-child build passed
+(`target/create-helper-build.log`). Eight mutation-boundary tests passed,
+the new actual native worker/PTY test passed, nineteen selected desktop tests
+passed, and the bridge library passed 141 tests with fifteen explicit native
+ignores. Raw receipts are `target/create-qualified-boundaries.log`,
+`target/create-qualified-native-worker.log`,
+`target/create-qualified-desktop-tests-final.log` and
+`target/create-qualified-bridge-lib.log`. Desktop check, strict all-target
+desktop Clippy, strict all-target bridge/client Clippy and the portable
+no-default bridge check passed; corresponding receipts are
+`target/create-qualified-{desktop-check,desktop-clippy,client-clippy,portable}.log`.
+Existing vendor warnings and private `rust-objcopy`'s missing-LLVM debug-strip
+fallback warning are retained, not suppressed or described as warning-free.
+
+Two complete native aggregates each passed fourteen cases and failed one
+**unchanged** inherited oracle. The first final persistent-session count could
+not acquire its 500 ms registry lock
+(`target/create-qualified-native-all.log`); its exact isolated rerun passed
+(`target/create-qualified-unmodified-oracle-rerun.log`). The second observed
+OutcomeUncertain instead of the required Busy on an already-owned attachment
+(`target/create-qualified-native-all-final.log`); its exact isolated rerun
+passed (`target/create-qualified-unmodified-takeover-rerun.log`). Neither error
+was converted to absence or accepted as the expected refusal. No production
+backend or old assertion was changed, and these REDs remain evidence of
+intermittent native-fixture/observation behavior, not a flake-free claim.
+`target/create-source-oracle-audit-final.log` verifies the original native
+runtime functions, auth/Busy/control lost-reply sources and manifests/lock are
+byte-for-byte preserved. Formatting, range-aware traceability (311 edges,
+zero broken references), unique JSON keys and diff checks pass.
+
+### Remaining mobile and local Settings/Remote Access capsule
+
+This is one creation increment, not ADR acceptance. The in-memory original-action
+registry is **not** durable restart reconciliation; the UI says so and never
+automatically resumes/reissues it after restart. A later protected journal and
+reviewed original-issuance restoration/reconciliation boundary must preserve the
+same owner/key/endpoint/epoch and refuse ambiguous replacement, not serialize
+authority into profiles.
+
+Next mobile execution uses the same `ApprovedContext`/`CreationIntent`/
+`ApprovedAttachment`/`HostSession`, not a second protocol or profile approval
+flag. Integrate with the shared mobile session/presentation owner, install the
+actual frontend before acknowledging recovery, and retain foreground
+account/credential/request/generation fencing. Wire native lock/suspension
+cancellation directly to the live owner without requiring another UI frame;
+preserve healthy legacy retention/reconnect and never replay input. Add
+headless mobile lifecycle/late-result tests and separately qualify the actual
+iOS/Android feature builds, vault adapters and physical-device boundaries.
+Parent-qualified final CORE mobile/platform repairs must be consumed only at an
+authorized immutable head, not duplicated from moving worktrees.
+
+Local **Settings → Remote Access** and sharing remain required HOST-04/05
+frontdoors, not silently supplied by client key preparation. Use the existing
+shared controller for explicit identity → account sign-in → zero-shell
+provisioning → protected owner approval → exact native registration. Keep
+fresh origin/settings/account/epoch and cancellation fences, independent
+default-No remote-access/creation/temporary/end permissions and separate
+host/client fingerprint approvals. Sharing starts with an exact owned local
+generation/private default; setup/sharing consent cannot stop or restart a live
+legacy shell. That requires separate default-No exact-generation confirmation
+and manual deferral under ADR 0085. Test the real coordinator with typed owned
+adapters before any separately authorized native service/cloud/vault/GUI window.
+A future lifecycle feature must be justified by this actual local setup path,
+never reintroduced merely to format a client fingerprint. Account-wide explicit
+Find hosts and signed/native/device acceptance also remain separate.
+
 ## #695 client-safe fingerprint dependency repair
 
 This surgical child of immutable `a6d4bf6c` contains no Create/Ensure feature.

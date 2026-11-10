@@ -3505,6 +3505,12 @@ pub struct AppState {
     #[cfg(feature = "experimental-dev-tunnels")]
     pub(crate) host_client_budgets: festerm_tunnel_bridge::host_client::Budgets,
     #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) host_creation_intents: Vec<(
+        festerm_config::host_recipes::PublicRecipe,
+        festerm_secret_store::SecretReference,
+        std::sync::Arc<festerm_tunnel_bridge::host_client::CreationIntent>,
+    )>,
+    #[cfg(feature = "experimental-dev-tunnels")]
     host_account_bindings:
         std::collections::HashMap<SessionId, festerm_secret_store::SecretReference>,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -3669,6 +3675,8 @@ impl AppState {
             pending_resume: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             host_client_budgets: Default::default(),
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_creation_intents: Vec::new(),
             #[cfg(feature = "experimental-dev-tunnels")]
             host_account_bindings: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -6490,6 +6498,7 @@ impl AppState {
         let label = format!("Host {}", binding.host());
         let host = binding.host().to_string();
         let port = attachment.port();
+        let operation_description = attachment.description();
         let session = match attachment.start(&self.host_client_budgets, make_notifier(context)) {
             Ok(session) => session,
             Err(error) => {
@@ -6509,7 +6518,7 @@ impl AppState {
             Dimensions::new(80, 24).expect("default dimensions"),
             SessionResultMeta {
                 label: &label,
-                launch_secondary: Some("Approved HOST · attaching existing generation".into()),
+                launch_secondary: Some(operation_description),
                 profile_identifier: None,
                 session_name: "Approved host session",
                 inspector_transport: InspectorTransport::DevTunnel {

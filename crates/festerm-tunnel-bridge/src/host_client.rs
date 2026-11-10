@@ -10,8 +10,8 @@ use crate::{
 };
 use festerm_core::Terminal;
 use festerm_host_protocol::{
-    AttachmentId, Capabilities, ContractError, InventoryPage, OperationId, Request, Response,
-    SessionSummary, Validate, MAX_SESSIONS, PAGE_SIZE,
+    Capabilities, ContractError, InventoryPage, OperationId, Request, Response, SessionSummary,
+    Validate, MAX_SESSIONS, PAGE_SIZE,
 };
 use festerm_secret_store::SecretReference;
 use festerm_tunnel_client::host_control::{Binding, ConnectionPermit, ControlClient, Error};
@@ -23,8 +23,13 @@ use zeroize::Zeroizing;
 
 #[cfg(feature = "relay")]
 pub mod approvals;
+mod creation;
+#[cfg(test)]
+mod creation_tests;
 mod session;
-pub use festerm_host_protocol::{Budgets, Target};
+pub(crate) use creation::create_authenticated;
+pub use creation::{Created, CreationIntent, CreationMode};
+pub use festerm_host_protocol::{AttachmentId, Budgets, Creation, LogicalSessionId, Target};
 pub use session::HostSession;
 
 pub const ENROLLMENT_PREREQUISITE: &str =
@@ -80,7 +85,7 @@ impl Failure {
             Self::Control(Error::Deadline) => "The host operation timed out. Its sessions are not known to be absent.",
             Self::Control(Error::Offline | Error::Closed) =>
                 "The host connection is unavailable. Its sessions are not known to be absent.",
-            Self::Control(_) => "The host refused the operation or returned an incompatible or stale result. No shell was created.",
+            Self::Control(_) => "The host refused the operation or returned an incompatible or stale result. Its outcome is not known; retain the original action rather than creating a replacement.",
             Self::WorkerUnavailable => "The bounded host worker could not start. Retry the explicit action.",
         }
     }
@@ -194,7 +199,14 @@ pub struct Inventory {
 
 pub enum Operation {
     Inventory,
-    Attach { target: Target },
+    Attach {
+        target: Target,
+    },
+    Create(Arc<CreationIntent>),
+    AttachReserved {
+        target: Target,
+        attachment: AttachmentId,
+    },
 }
 
 /// An existing target selected after foreground approval. This command carries
@@ -203,6 +215,9 @@ pub struct ApprovedAttachment {
     context: ApprovedContext,
     scope: Scope,
     target: Target,
+    attachment: Option<AttachmentId>,
+    disposition: Option<festerm_host_protocol::EnsureDisposition>,
+    creation_intent: Option<Arc<CreationIntent>>,
 }
 
 impl std::fmt::Debug for ApprovedAttachment {
@@ -222,7 +237,50 @@ impl ApprovedAttachment {
             context,
             scope,
             target,
+            attachment: None,
+            disposition: None,
+            creation_intent: None,
         })
+    }
+
+    pub fn from_created(
+        context: ApprovedContext,
+        scope: Scope,
+        created: Created,
+    ) -> Result<Self, Failure> {
+        if !created.intent.matches(&context) || context.binding() != &scope.binding {
+            return Err(Failure::BindingMismatch);
+        }
+        let disposition = Some(created.disposition());
+        Ok(Self {
+            context,
+            scope,
+            target: created.session.target,
+            attachment: Some(created.attachment),
+            disposition,
+            creation_intent: Some(created.intent),
+        })
+    }
+
+    pub fn description(&self) -> String {
+        use festerm_host_protocol::EnsureDisposition;
+        let state = match self.disposition {
+            Some(EnsureDisposition::Created) => {
+                "Approved HOST · host confirmed creation; attaching generation"
+            }
+            Some(EnsureDisposition::Recreated) => {
+                "Approved HOST · host confirmed recreation; attaching generation"
+            }
+            Some(EnsureDisposition::Resumed) => {
+                "Approved HOST · host confirmed resume; attaching generation"
+            }
+            None => "Approved HOST · attaching selected existing generation",
+        };
+        format!(
+            "{state} · logical {} · generation {}",
+            self.target.logical,
+            self.target.generation.get()
+        )
     }
 
     pub fn scope(&self) -> &Scope {
@@ -238,12 +296,29 @@ impl ApprovedAttachment {
         budgets: &Budgets,
         notifier: Arc<dyn festerm_session::SessionEventNotifier>,
     ) -> Result<HostSession, Failure> {
-        HostSession::start(self.context, self.scope, self.target, budgets, notifier)
+        let session = match self.attachment {
+            None => HostSession::start(self.context, self.scope, self.target, budgets, notifier),
+            Some(attachment) => HostSession::start_operation(
+                self.context,
+                self.scope,
+                Operation::AttachReserved {
+                    target: self.target,
+                    attachment,
+                },
+                budgets,
+                notifier,
+            ),
+        }?;
+        if let Some(intent) = self.creation_intent {
+            intent.mark_presented();
+        }
+        Ok(session)
     }
 }
 
 pub enum Outcome {
     Inventory(Inventory),
+    Created(Box<Created>),
     Snapshot(Box<Adoption>),
     Attached(TerminalHandle),
     Failed(Failure),
@@ -296,8 +371,34 @@ impl Worker {
         if context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
+        if let Operation::Create(intent) = &operation {
+            if !intent.matches(&context) {
+                return Err(Failure::BindingMismatch);
+            }
+        }
         // Admission precedes thread/runtime allocation, vault lookup and connect.
         let permit = ConnectionPermit::reserve(budgets)?;
+        Self::spawn(scope, wake, move |scope, cancel, events, wake| async move {
+            execute(context, permit, &scope, operation, &cancel, &events, &wake).await
+        })
+    }
+
+    pub(crate) fn spawn<F, Fut>(
+        scope: Scope,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        task: F,
+    ) -> Result<Self, Failure>
+    where
+        F: FnOnce(
+                Scope,
+                CancellationToken,
+                flume::Sender<Completion>,
+                Arc<dyn Fn() + Send + Sync>,
+            ) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = Result<Outcome, Failure>>,
+    {
         let cancel = CancellationToken::new();
         let (events, receiver) = flume::bounded(2);
         let worker_cancel = cancel.clone();
@@ -321,14 +422,11 @@ impl Worker {
                     return;
                 };
                 runtime.block_on(async {
-                    let result = execute(
-                        context,
-                        permit,
-                        &worker_scope,
-                        operation,
-                        &worker_cancel,
-                        &events,
-                        &wake,
+                    let result = task(
+                        worker_scope.clone(),
+                        worker_cancel.clone(),
+                        events.clone(),
+                        wake.clone(),
                     )
                     .await;
                     let live = matches!(result, Ok(Outcome::Attached(_)));
@@ -392,8 +490,8 @@ async fn execute(
     wake: &Arc<dyn Fn() + Send + Sync>,
 ) -> Result<Outcome, Failure> {
     let role = match operation {
-        Operation::Inventory => StreamRole::Control,
-        Operation::Attach { .. } => StreamRole::Terminal,
+        Operation::Inventory | Operation::Create(_) => StreamRole::Control,
+        Operation::Attach { .. } | Operation::AttachReserved { .. } => StreamRole::Terminal,
     };
     let (stream, permit, binding) = context.connect(permit, role, cancel).await?;
     match operation {
@@ -406,6 +504,22 @@ async fn execute(
         Operation::Attach { target } => {
             debug_assert_eq!(&binding, &scope.binding);
             attach_authenticated(stream, permit, scope, target, cancel, events, wake).await
+        }
+        Operation::Create(intent) => {
+            let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
+            create_authenticated(&mut client, intent, cancel).await
+        }
+        Operation::AttachReserved { target, attachment } => {
+            attach_reserved_authenticated(
+                stream,
+                permit,
+                scope,
+                (target, attachment),
+                cancel,
+                events,
+                wake,
+            )
+            .await
         }
     }
 }
@@ -422,13 +536,37 @@ pub(crate) async fn attach_authenticated<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    attach_reserved_authenticated(
+        stream,
+        permit,
+        scope,
+        (target, AttachmentId::new()),
+        cancel,
+        events,
+        wake,
+    )
+    .await
+}
+
+pub(crate) async fn attach_reserved_authenticated<S>(
+    stream: S,
+    permit: ConnectionPermit,
+    scope: &Scope,
+    selection: (Target, AttachmentId),
+    cancel: &CancellationToken,
+    events: &flume::Sender<Completion>,
+    wake: &Arc<dyn Fn() + Send + Sync>,
+) -> Result<Outcome, Failure>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let mut pending = host_terminal::establish(
         stream,
         permit,
         scope.binding.clone(),
         scope.request.clone(),
-        target,
-        AttachmentId::new(),
+        selection.0,
+        selection.1,
         false,
         cancel,
     )

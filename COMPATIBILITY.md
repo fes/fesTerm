@@ -56,7 +56,8 @@ hosting on Save (ADR 0072), with host-local consent, non-attaching one-shot
 launch, verified helper staging and shell-preserving revocation/cleanup.
 Signed native provisioning, servicing and physical-client acceptance remain
 open under DT-08; no file/observation grant is implied. This is separate from
-remote session inventory/create/terminate, which remain unavailable. Native GitHub device
+the experimental HOST client execution below; legacy hosting does not gain
+remote session creation/termination authority. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
 coverage, not live qualification: the project-owned public client is registered
 and included in default builds; actual service acceptance remains pending
@@ -71,8 +72,14 @@ advertises HOST or provides inventory/create/end, no legacy profile is converted
 and no native/service/migration qualification is added. Enrollment and encrypted
 channel integration require independent security review before exposure.
 Desktop Profiles includes experimental offline recipe metadata management,
-with deterministic interaction/transaction tests. This is not live host
-inventory/Connect, protected trust approval or stage 6/native acceptance.
+with deterministic interaction/transaction tests. The later selected-host client
+adds protected foreground review, authorized inventory, existing attachment and
+explicit host-authorized Create/Ensure through the same actual worker and HOST
+protocol. Owned signed-SSH/native-PTY frontend isolation and headless consent/
+original-request regressions are automated evidence, not stage-6 acceptance.
+Mobile installation, account-wide Find hosts, local Settings/Remote Access,
+durable restart reconciliation and signed/native/vault/service/device
+qualification remain open; public recipes never confer authority.
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 

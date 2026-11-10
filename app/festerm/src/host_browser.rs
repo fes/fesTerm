@@ -12,7 +12,8 @@ use festerm_secret_store::{SecretReference, SecretStore};
 use festerm_tunnel_bridge::host_client::{
     self,
     approvals::{Receipt, ReceiptIndex, ReviewedOwner},
-    ApprovedAttachment, ApprovedContext, Inventory, Outcome, Scope, Target, Worker,
+    ApprovedAttachment, ApprovedContext, CreationIntent, CreationMode, Inventory, Outcome, Scope,
+    Target, Worker,
 };
 use festerm_tunnel_client::{
     host_control::{Binding, ConnectionPermit},
@@ -35,6 +36,7 @@ enum Action {
     Prepare,
     Inventory,
     Attach(Target),
+    Create,
 }
 
 pub(super) struct Browser {
@@ -48,6 +50,7 @@ pub(super) struct Browser {
     fingerprint: String,
     consent: bool,
     host_approved: bool,
+    creation_confirmed: bool,
     locator: String,
     receipt: Option<Receipt>,
     resolved: Option<ResolvedTunnel>,
@@ -137,6 +140,52 @@ impl Browser {
         }
     }
 
+    fn creation_mode(&self) -> Option<CreationMode> {
+        match self.recipe.behavior {
+            ConnectionBehavior::ResumeOrCreate => Some(CreationMode::Ensure),
+            ConnectionBehavior::AlwaysCreate | ConnectionBehavior::ChooseSession => {
+                Some(CreationMode::Create)
+            }
+            ConnectionBehavior::AttachOnly { .. } => None,
+        }
+    }
+
+    fn allows_creation(&self) -> bool {
+        self.host_approved
+            && self.creation_confirmed
+            && self.inventory.as_ref().is_some_and(|inventory| {
+                let caps = inventory.capabilities;
+                caps.attach
+                    && (matches!(self.recipe.lifetime, Lifetime::Persistent {}) || caps.temporary)
+                    && match self.creation_mode() {
+                        Some(CreationMode::Create) => caps.create && caps.creation_allowed,
+                        Some(CreationMode::Ensure) => caps.ensure,
+                        None => false,
+                    }
+            })
+    }
+
+    fn creation_request(&self) -> Option<(CreationMode, host_client::Creation)> {
+        if !self.allows_creation() {
+            return None;
+        }
+        let mode = self.creation_mode()?;
+        Some((
+            mode,
+            host_client::Creation {
+                logical: if mode == CreationMode::Ensure {
+                    self.recipe.logical_session.clone()
+                } else {
+                    host_client::LogicalSessionId::new()
+                },
+                attachment: host_client::AttachmentId::new(),
+                name: Some(self.recipe.name.clone()),
+                recipe: self.recipe.launch.clone(),
+                lifetime: self.recipe.lifetime,
+            },
+        ))
+    }
+
     fn expire_pending(&mut self, now: Instant) {
         if self
             .pending_deadline
@@ -148,6 +197,43 @@ impl Browser {
             self.receiver = None;
             self.feedback = Some("The protected owner worker timed out. Native preparation may have completed locally; reload the same protected receipt. No host session is known to be absent.".into());
         }
+    }
+}
+
+impl crate::tabs::AppState {
+    fn host_creation_intent(
+        &mut self,
+        recipe: &PublicRecipe,
+        reference: &SecretReference,
+        approved: &ApprovedContext,
+        make: impl FnOnce() -> Option<(CreationMode, host_client::Creation)>,
+    ) -> Result<Arc<CreationIntent>, String> {
+        self.host_creation_intents
+            .retain(|(_, _, intent)| !intent.is_presented());
+        if let Some((original, credential, intent)) = self
+            .host_creation_intents
+            .iter()
+            .find(|(original, _, _)| original.id == recipe.id)
+        {
+            if original != recipe || credential != reference {
+                return Err("The original action remains unresolved under its original recipe/account credential. No replacement action was issued.".into());
+            }
+            return Ok(intent.clone());
+        }
+        if self.host_creation_intents.len() >= 16 {
+            return Err("The bounded original-operation registry is full. Unresolved actions were retained; no new action was issued.".into());
+        }
+        let (mode, creation) = make().ok_or("Explicit creation approval is no longer current.")?;
+        let intent = Arc::new(
+            CreationIntent::new(approved, mode, creation)
+                .map_err(|error| error.message().to_owned())?,
+        );
+        self.host_creation_intents.push((
+            recipe.clone(),
+            reference.duplicate_for_transport(),
+            intent.clone(),
+        ));
+        Ok(intent)
     }
 }
 
@@ -198,6 +284,7 @@ impl FesTermApp {
             fingerprint: String::new(),
             consent: false,
             host_approved: false,
+            creation_confirmed: false,
             locator: String::new(),
             receipt: None,
             resolved: None,
@@ -267,6 +354,7 @@ impl FesTermApp {
             .as_ref()
             .and_then(|worker| worker.try_receive(worker.scope()));
         if let Some(completion) = completion {
+            let completed_scope = completion.scope;
             browser.worker = None;
             match completion.outcome {
                 Outcome::Inventory(inventory) => {
@@ -274,6 +362,28 @@ impl FesTermApp {
                     browser.feedback = None;
                 }
                 Outcome::Failed(error) => browser.feedback = Some(error.message().into()),
+                Outcome::Created(created) => {
+                    let result = browser.context().and_then(|approved| {
+                        ApprovedAttachment::from_created(approved, completed_scope, *created)
+                            .map_err(|error| error.message().to_owned())
+                    });
+                    match result {
+                        Ok(attachment) => {
+                            let tab_id = browser.tab;
+                            let request = browser.request;
+                            self.state.dispatch(
+                                AppCommand::OpenApprovedHostFromProfiles {
+                                    tab_id,
+                                    request,
+                                    attachment: Box::new(attachment),
+                                },
+                                context,
+                            );
+                            self.host_browser = None;
+                        }
+                        Err(error) => browser.feedback = Some(error),
+                    }
+                }
                 _ => {
                     browser.feedback =
                         Some("Unexpected inventory completion; no session was attached.".into())
@@ -318,11 +428,13 @@ impl FesTermApp {
                         {
                             browser.inventory = None;
                             browser.resolved = None;
+                            browser.creation_confirmed = false;
                         }
                         ui.label("Selected host's Dev Tunnel locator (id.cluster):");
                         if ui.add(egui::TextEdit::singleline(&mut browser.locator).char_limit(201)).changed() {
                             browser.inventory = None;
                             browser.resolved = None;
+                            browser.creation_confirmed = false;
                         }
                         if ui.add_enabled(browser.host_approved && service::locator(&browser.locator).is_ok(),
                             egui::Button::new("Find authorized sessions on this host")).clicked() {
@@ -350,13 +462,39 @@ impl FesTermApp {
                         if inventory.sessions.is_empty() {
                             ui.label("No authorized sessions returned. This is not permission or authority to create a shell.");
                         }
-                        ui.label("Creation/ensure is not available in this client slice. No recipe launch options will be executed.");
+                        ui.label(format!("Host permissions: create {} · ensure {} · creation grant {} · temporary {}",
+                            inventory.capabilities.create, inventory.capabilities.ensure,
+                            inventory.capabilities.creation_allowed, inventory.capabilities.temporary));
                         ui.label(match browser.recipe.behavior {
-                            ConnectionBehavior::ChooseSession => "Recipe: choose an existing session on this host.",
-                            ConnectionBehavior::ResumeOrCreate => "Recipe: only its existing logical session may resume; absent or unknown will not create.",
-                            ConnectionBehavior::AlwaysCreate => "Recipe: AlwaysCreate is unsupported by this client. No existing session substitutes for a new shell.",
+                            ConnectionBehavior::ChooseSession => "Recipe: choose an existing session, or explicitly create a fresh logical session.",
+                            ConnectionBehavior::ResumeOrCreate => "Recipe: explicit ensure lets the host resume this logical session or authorize creation under its journal. Client inventory is never absence authority.",
+                            ConnectionBehavior::AlwaysCreate => "Recipe: explicitly create one fresh logical session. An uncertain reply retains this same action, never another shell.",
                             ConnectionBehavior::AttachOnly { .. } => "Recipe: attach only to its exact logical session and generation.",
                         });
+                        if browser.creation_mode().is_some() {
+                            ui.monospace(format!("shell {:?}\nargv {:?}\ncwd {:?}\nlifetime {:?}",
+                                browser.recipe.launch.shell, browser.recipe.launch.args,
+                                browser.recipe.launch.cwd, browser.recipe.lifetime));
+                            ui.checkbox(&mut browser.creation_confirmed,
+                                "I approve executing these exact launch options and lifetime if the host authorizes creation");
+                            if let Some((_, _, intent)) = self.state.host_creation_intents.iter()
+                                .find(|(recipe, _, _)| recipe.id == browser.recipe.id) {
+                                ui.monospace(format!("Original action · logical {} · attachment {} · issued {:?}",
+                                    intent.creation().logical, intent.creation().attachment,
+                                    intent.issued_operation()));
+                                if intent.is_resolved() && !intent.is_presented() {
+                                    ui.label("The host confirmed this action, but it was not admitted for presentation. Retry retains this same action and cannot create a replacement.");
+                                }
+                            }
+                            if ui.add_enabled(browser.allows_creation(),
+                                egui::Button::new("Execute / retry the original create or ensure action")).clicked() {
+                                action = Some(Action::Create);
+                            }
+                            ui.label("A failed/unknown action is retained in this app process, even after this review closes. Retry reuses its original logical ID, attachment and issued operation. Process restart is not durable reconciliation.");
+                            if !inventory.capabilities.creation_allowed {
+                                ui.label("Creation permission is not granted. Ensure may only resume an authorized existing session; absence must be refused by the host.");
+                            }
+                        }
                         for session in &inventory.sessions {
                             ui.horizontal_wrapped(|ui| {
                                 ui.label(format!("{} · logical {} · generation {} · {}", session.name, session.target.logical,
@@ -401,6 +539,47 @@ impl FesTermApp {
         }
         let browser = self.host_browser.as_mut().expect("current browser");
         browser.feedback = None;
+        if matches!(action, Action::Create) {
+            if !browser.allows_creation() {
+                return;
+            }
+            let approved = match browser.context() {
+                Ok(approved) => approved,
+                Err(error) => {
+                    browser.feedback = Some(error);
+                    return;
+                }
+            };
+            let intent = match self.state.host_creation_intent(
+                &browser.recipe,
+                &browser.account_reference,
+                &approved,
+                || browser.creation_request(),
+            ) {
+                Ok(intent) => intent,
+                Err(error) => {
+                    browser.feedback = Some(error);
+                    return;
+                }
+            };
+            let Some(generation) = browser.generation.checked_add(1) else {
+                return;
+            };
+            browser.generation = generation;
+            let scope = browser.scope(&approved);
+            let wake = context.clone();
+            match Worker::start(
+                approved,
+                scope,
+                host_client::Operation::Create(intent),
+                &self.state.host_client_budgets,
+                Arc::new(move || wake.request_repaint()),
+            ) {
+                Ok(worker) => browser.worker = Some(worker),
+                Err(error) => browser.feedback = Some(error.message().into()),
+            }
+            return;
+        }
         if let Action::Attach(target) = action {
             let selected = browser.inventory.as_ref().is_some_and(|inventory| {
                 browser.host_approved

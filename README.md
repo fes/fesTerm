@@ -51,9 +51,13 @@ The shared Session adapter and typed desktop installation preserve frontend
 ownership, activation and account-credential fencing. Desktop foreground review
 can prepare/load an exact private native-key receipt, show its public key for
 separate host-local approval, explicitly resolve one HOST endpoint and choose an
-authorized existing session. It never silently enrolls a key, falls back to a
-legacy bridge or creates a shell. Mobile installation, account-wide Find hosts,
-creation and native acceptance remain open; this is not stage-6 completion.
+authorized existing session. A separate exact-launch confirmation enables
+advertised, host-authorized Create or atomic resume-or-create; uncertain results
+retain the original issued action for explicit in-process retry. It never
+silently enrolls a key, falls back to a legacy bridge or infers creation
+authority from inventory. Mobile installation, account-wide Find hosts, local
+Settings/Remote Access, durable client-action reconciliation and native
+acceptance remain open; this is not stage-6 completion.
 The default headless build now has explicit authenticated
 setup/owner approval/run; no listener or permission is enabled merely by
 compilation/configuration. Independent combined review and native/cloud/vault/

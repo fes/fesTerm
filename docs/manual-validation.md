@@ -80,8 +80,9 @@ Signed Windows/macOS/Linux checks remain **manual/native and usability**:
 keyboard/focus traversal and screen-reader labels at narrow sizes, clipboard
 export, explicit error recovery and network/service/vault instrumentation while
 opening, editing, saving, copying, importing and deleting. Confirm legacy account
-selection, generation pins and manual-migration UI remain unchanged. The panel
-must not display an enabled Connect/Create/Review Trust action.
+selection, generation pins and manual-migration UI remain unchanged. Metadata editing/import must not itself enable execution or trust. The distinct
+protected foreground execution path is described in the current HOST procedure
+below; it does not change offline metadata-command behavior.
 
 Before future stage 6 execution is exposed, qualify explicit first-execution
 review/reconfirmation of imported shell/argv/cwd, lifetime and resume/create
@@ -3758,13 +3759,44 @@ development wrapper, not installed or production services:
    Busy and unknown targets must not become empty inventory or creation authority.
 5. Attach an allowed existing generation and verify the installed frontend receives
    recovery before activation/input. Respect exact-generation and logical resume
-   restrictions; AlwaysCreate remains unavailable. Exercise account credential
+   restrictions; it must not substitute existing attachment for AlwaysCreate.
+   Exercise account credential
    replacement, editor/recipe replacement, cancellation, 15-second vault and
    45-second resolver deadlines, and late completion while admission stays charged.
    Detach requires its correlated receipt; loss never replays input.
+6. Separately approve the exact displayed launch arguments, working directory
+   and lifetime. Verify visible create/ensure, creation and temporary permissions
+   against fresh host policy. Create freezes a fresh logical ID; Ensure preserves
+   the recipe logical ID and lets the host decide authorized resume/creation.
+   With no creation permission, Ensure may resume an authorized existing
+   generation but must refuse absence; explicit Create is unavailable.
+   Busy, Unknown, denied, offline, timeout, malformed correlation and revocation
+   must never be shown as absence or start a replacement action.
+7. Interrupt a Create/Ensure reply and explicitly retry. Compare the displayed
+   original logical ID, reserved attachment and issued operation/epoch; a fresh
+   handshake epoch must not replace the original. Close/reopen review and
+   verify the in-process registry retains the action. Changed recipe/credential,
+   duplicate flight and sixteen-entry overflow refuse replacement. A confirmed
+   reply that was cancelled or failed frontend admission remains retained.
+   Successful presentation identifies the host-confirmed logical/generation
+   and Created/Resumed/Recreated state. Verify real independent frontend output
+   and no foreign-session bytes, input before adoption or replay after detach.
+   Process restart is not durable reconciliation and must not be reported as
+   recovery of this in-memory action.
 
 These are pending native/manual checks, not results from the headless recipe
 button, memory-vault/protected-file or framed-session fixtures.
+
+The explicit-creation increment adds automated typed refusal/lost-reply/
+fresh-epoch, incompatible-result, resume-only Ensure, cancellation/duplicate-flight,
+failed frontend admission and app-registry/consent tests. Its opt-in owned native
+fixture uses the actual bounded worker and production control/adoption functions
+over signed SSH with two real PTYs, same-operation retry/same-generation resume,
+stored frontend snapshot/output ingestion, positive expected-text and negative
+foreign-text checks, and exact-target correlated persistent detach. Both earlier
+collector/frontend fixtures remain. Exact counts and source/compiler boundaries
+are recorded in `milestone-progress.md`; none performs the native-vault,
+development-wrapper GUI, cloud, mobile/device or installed-manager procedure.
 
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;

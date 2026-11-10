@@ -389,6 +389,24 @@ struct NativeRuntimeFixture {
 
 #[cfg(unix)]
 impl NativeRuntimeFixture {
+    fn client_context(&self) -> crate::host_client::ApprovedContext {
+        let public = self.auth.ssh_key.public_key().to_openssh().unwrap();
+        crate::host_client::ApprovedContext::from_protected_approval(
+            self.auth.approved.clone(),
+            festerm_secret_store::SecretReference::generate(),
+            serde_json::from_value(serde_json::json!({
+                "connectionMode": "TunnelRelay", "hostId": "owned-native-runtime",
+                "hostPublicKeys": [public.split_whitespace().nth(1).unwrap()],
+                "clientRelayUri": "wss://example.invalid/client"
+            }))
+            .unwrap(),
+            22,
+            zeroize::Zeroizing::new("fixture-token".into()),
+            self.binding(),
+        )
+        .unwrap()
+    }
+
     fn new() -> Self {
         let mut auth = Fixture::new();
         let mut native = crate::host_control::tests::native_routes::NativeFixture::new(true);
@@ -418,7 +436,239 @@ impl NativeRuntimeFixture {
             connections: Vec::new(),
         }
     }
+}
 
+#[cfg(unix)]
+async fn client_worker_result(
+    worker: &crate::host_client::Worker,
+    scope: &crate::host_client::Scope,
+) -> crate::host_client::Outcome {
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if let Some(completion) = worker.try_receive(scope) {
+                assert_eq!(&completion.scope, scope);
+                return completion.outcome;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("bounded actual app worker completion")
+}
+
+#[cfg(unix)]
+async fn client_create_worker(
+    fixture: &mut NativeRuntimeFixture,
+    intent: Arc<crate::host_client::CreationIntent>,
+) -> crate::host_client::Created {
+    tokio::time::timeout(Duration::from_secs(8), async {
+        let mut original = intent.issued_operation();
+        loop {
+            let (stream, permit) = fixture.stream(StreamRole::Control).await;
+            let scope = crate::host_client::Scope {
+                binding: fixture.binding(),
+                request: OperationId::new(),
+                generation: 1,
+            };
+            let binding = scope.binding.clone();
+            let action = intent.clone();
+            let worker = crate::host_client::Worker::spawn(
+                scope.clone(),
+                Arc::new(|| {}),
+                move |_, cancel, _, _| async move {
+                    let mut client =
+                        ControlClient::on_authenticated_stream(stream, binding, permit);
+                    crate::host_client::create_authenticated(&mut client, action, &cancel).await
+                },
+            )
+            .unwrap();
+            let result = client_worker_result(&worker, &scope).await;
+            let issued = intent.issued_operation();
+            if let Some(expected) = &original {
+                assert_eq!(
+                    issued.as_ref(),
+                    Some(expected),
+                    "fixture retry retains original issuance"
+                );
+            } else {
+                original = issued;
+            }
+            match result {
+                crate::host_client::Outcome::Created(created) => return *created,
+                crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
+                    festerm_tunnel_client::host_control::Error::Refused(
+                        festerm_host_protocol::Refusal::Busy,
+                    ),
+                )) => {
+                    drop(worker);
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                crate::host_client::Outcome::Failed(error) => {
+                    panic!("actual creation worker: {error:?}")
+                }
+                _ => {
+                    panic!("actual app creation worker must return a correlated native generation")
+                }
+            }
+        }
+    })
+    .await
+    .expect("same original bounded native creation fixture deadline")
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_selected_host_creation_worker_adopts_isolated_frontends_and_original_ensure() {
+    use crate::host_client::{CreationIntent, CreationMode, Outcome, Scope, Worker};
+    use festerm_host_protocol::EnsureDisposition;
+    let mut fixture = NativeRuntimeFixture::new();
+    let context = fixture.client_context();
+    let mut intents = Vec::new();
+    let mut targets = Vec::new();
+    for label in ["A", "B"] {
+        let mut creation = fixture.native.creation();
+        creation.recipe.args = vec![
+            format!("emit:ready-{label}"),
+            "read-line".into(),
+            format!("echo:{label}"),
+            "spin".into(),
+        ];
+        let mode = if label == "A" {
+            CreationMode::Create
+        } else {
+            CreationMode::Ensure
+        };
+        let intent = Arc::new(CreationIntent::new(&context, mode, creation).unwrap());
+        let created = client_create_worker(&mut fixture, intent.clone()).await;
+        assert_eq!(created.disposition(), EnsureDisposition::Created);
+        assert_eq!(created.session().target.logical, intent.creation().logical);
+        targets.push(created.session().target.clone());
+        intents.push(intent);
+    }
+    for (intent, target) in intents.iter().zip(&targets) {
+        let issued = intent.issued_operation().unwrap();
+        let retry = client_create_worker(&mut fixture, intent.clone()).await;
+        assert_eq!(&retry.session().target, target);
+        assert_eq!(retry.disposition(), EnsureDisposition::Created);
+        assert_eq!(intent.issued_operation(), Some(issued));
+    }
+    let ensure = Arc::new(
+        CreationIntent::new(
+            &context,
+            CreationMode::Ensure,
+            intents[0].creation().clone(),
+        )
+        .unwrap(),
+    );
+    let resumed = client_create_worker(&mut fixture, ensure).await;
+    assert_eq!(resumed.disposition(), EnsureDisposition::Resumed);
+    assert_eq!(resumed.session().target, targets[0]);
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let mut workers = Vec::new();
+    let mut live = Vec::new();
+    let mut frontends = Vec::new();
+    for (target, intent) in targets.iter().cloned().zip(&intents) {
+        let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
+        let scope = Scope {
+            binding: fixture.binding(),
+            request: OperationId::new(),
+            generation: 2,
+        };
+        let selection = (target, intent.creation().attachment.clone());
+        let worker = Worker::spawn(
+            scope.clone(),
+            Arc::new(|| {}),
+            move |scope, cancel, events, wake| async move {
+                crate::host_client::attach_reserved_authenticated(
+                    stream, permit, &scope, selection, &cancel, &events, &wake,
+                )
+                .await
+            },
+        )
+        .unwrap();
+        let Outcome::Snapshot(adoption) = client_worker_result(&worker, &scope).await else {
+            panic!("real frontend snapshot must precede activation/input")
+        };
+        assert!(worker.try_receive(&scope).is_none());
+        let mut frontend =
+            festerm_core::Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
+        adoption.adopt_into(&scope, &mut frontend).unwrap();
+        let Outcome::Attached(handle) = client_worker_result(&worker, &scope).await else {
+            panic!("host must independently confirm frontend activation")
+        };
+        live.push(handle);
+        workers.push(worker);
+        frontends.push(frontend);
+    }
+    live[0].input(b"alpha\n").unwrap();
+    live[1].input(b"beta\n").unwrap();
+    for (index, expected, foreign) in [(0, "A:alpha", "B:beta"), (1, "B:beta", "A:alpha")] {
+        let mut observed = Vec::new();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                let frame = live[index].next_event().await.unwrap();
+                if frame.kind() == crate::protocol::OUTPUT {
+                    frontends[index].ingest(frame.payload());
+                    observed.extend_from_slice(frame.payload());
+                    assert!(observed.len() < 64 * 1024);
+                    assert!(!observed
+                        .windows(foreign.len())
+                        .any(|bytes| bytes == foreign.as_bytes()));
+                    if observed
+                        .windows(expected.len())
+                        .any(|bytes| bytes == expected.as_bytes())
+                    {
+                        break;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let text = frontends[index].text_snapshot();
+        assert!(
+            text.text().contains(expected),
+            "actual presented frontend must contain its native child output"
+        );
+        assert!(!text.text().contains(foreign));
+    }
+    for (handle, target) in live.iter_mut().zip(&targets) {
+        let operation = handle.request_detach().unwrap();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                let frame = handle.next_event().await.unwrap();
+                if frame.kind() == crate::host_terminal::HOST_REPLY {
+                    let reply: Envelope<Response> =
+                        festerm_host_protocol::decode(frame.payload()).unwrap();
+                    assert_eq!(reply.operation, operation);
+                    assert!(matches!(reply.body, Response::Detached { target: actual } if actual == *target));
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+    drop(live);
+    drop(workers);
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .len(),
+        2
+    );
+    fixture.shutdown().await;
+}
+
+#[cfg(unix)]
+impl NativeRuntimeFixture {
     fn binding(&self) -> Binding {
         Binding::new(
             self.auth.approved.host.host.clone(),

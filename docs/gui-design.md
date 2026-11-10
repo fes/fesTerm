@@ -1884,7 +1884,7 @@ have an experimental desktop **Profiles → Host/session recipes** surface over
 shared offline metadata commands/persistence
 ([#681](https://github.com/fes/fesTerm/issues/681)). They are separate from
 legacy Dev Tunnel forms and the installed Local-profile exposure flow below.
-No new working Connect control, online indicator or sign-in-on-save is implied.
+Metadata management does not imply an online indicator or sign-in-on-save.
 The desktop surface lists public host/account/logical identity and exact
 generation targets, with add/edit, duplicate, confirmed delete, reviewed JSON
 import and explicit JSON export/copy. Arguments use a JSON string vector so
@@ -1893,9 +1893,16 @@ by editing. Failed writes retain the draft; results are bound to its tab/request
 Delete initially focuses Cancel, Escape cancels without a command, and changed
 or removed records require reopening the confirmation rather than stale deletion.
 Import review is metadata inspection only, never persisted execution approval.
-All rows say execution review is required; this slice neither records provenance
-nor claims any recipe has a verified host or approval. No Connect, Create,
-Find hosts or Review Trust control is exposed. The existing experimental
+All rows say execution review is required; metadata never claims a verified host
+or approval. A distinct **Review and connect…** action enters protected foreground
+binding/pin review and explicit native-key preparation. Host-local owner approval
+remains separate. After explicit selected-host resolution and authorized inventory,
+existing-session attachment and a separate exact-launch/lifetime confirmation
+are available. Advertised create/ensure, creation permission and independent
+temporary permission remain visible. Explicit Create freezes a fresh logical ID;
+ResumeOrCreate delegates atomic resume/creation to the host, never to an empty
+client inventory. Without creation permission, Ensure can only resume an
+authorized existing session. AttachOnly cannot create. The existing experimental
 Dev Tunnels feature gate controls this desktop-only surface.
 The eventual iOS/Android UI must also use those shared commands: Save,
 edit, duplicate, import/export and delete do not create or end a shell.
@@ -1910,12 +1917,16 @@ count/quarantine notification convention instead of silently clearing recipes.
 Opening the new host card/launcher shows local metadata only. Find hosts and
 single-host selection/Refresh are explicit network intents; cancellation and
 account changes fence results. Never inherit legacy automatic discovery or
-display cached hosts as online. Actual controls/workers, account/key binding,
-trust, authorized inventory, Connect and native qualification remain deferred
-behind the reviewed host endpoint contract, not simulated in this foundation.
+display cached hosts as online. Selected-host execution has a bounded actual HOST
+worker; account-wide Find hosts, mobile installation and native GUI/vault/service
+qualification remain separate. The original action's logical ID, reserved
+attachment and issued operation are shown for explicit retry. The process-local
+bounded registry survives closing review, but is not durable restart
+reconciliation. Unknown, denied, offline, busy and incompatible replies retain
+the original action; none means absence or authorizes a replacement shell.
 
 Import never grants execution consent. Before first executing an imported
-recipe, the future Connect UI must explicitly review/reconfirm its shell,
+recipe, the foreground execution UI must explicitly review/reconfirm its shell,
 argument vector, remote cwd, lifetime and connection behavior with the
 verified host/account/principal. No imported field may stand in for that
 approval; native UI and execution-gate tests remain deferred under #681.

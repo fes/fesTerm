@@ -582,6 +582,45 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+### Explicit desktop Create/Ensure execution increment
+
+The client extends protected selected-host execution with actual HOST Create and
+Ensure, not metadata-only commands or simulated sessions. The foreground
+coordinator requires exact launch/lifetime confirmation and displays capabilities
+and independent creation/temporary permissions. The bounded worker checks fresh
+authenticated capabilities. Ensure may resume an authorized existing generation
+without creation permission; only the host can authorize absence-to-creation.
+Public recipes, empty inventory, Busy, Unknown, denial, offline, incompatible
+replies and cancellation never imply absence or replacement authority.
+
+An immutable action binds full approved owner/key reference and endpoint to
+logical ID, launch, future attachment and the original sealed issued operation.
+Explicit retries retain that operation even across a newer handshake epoch.
+Only one flight per action is admitted. A sixteen-entry app registry survives
+review closure and refuses changed recipe/credential or overflow without
+discarding unresolved actions. A confirmed wire reply is not frontend
+presentation; failed admission or dropped completion retains the original action.
+The host-confirmed target/disposition follows the existing typed command,
+installed frontend, snapshot acknowledgment and activation route. No automatic
+retry/reconnect or input replay is added.
+
+Deterministic tests cover exact typed refusals/lost reply, malformed correlation,
+fresh-epoch retry, resume-only Ensure, capability/grant/owner fences,
+cancellation, duplicate flight, failed frontend admission and app-registry
+retention/bounds. The additional opt-in native case drives the actual bounded
+worker and production mutation/adoption functions over signed SSH, creates two
+independent native PTYs, retries the original action, resumes the same generation,
+installs snapshots before activation, ingests actual expected frontend output,
+excludes foreign output and checks exact-target correlated persistent detach.
+Both earlier collector/frontend oracles remain unchanged. Exact commands/results
+are recorded in `milestone-progress.md`; this is not GUI/vault/cloud acceptance.
+
+The current action registry is process-local, not a durable restart journal.
+Mobile execution installation/lock cancellation, account-wide explicit Find
+hosts, local Settings/Remote Access setup/sharing and native/device qualification
+remain required separate milestones. HOST statuses and ADR acceptance remain
+partial; existing legacy hosting and ADR 0085 boundaries are unchanged.
+
 ### Client-safe owner-key fingerprint boundary
 
 The selected-host desktop review formats the approved public key through the
