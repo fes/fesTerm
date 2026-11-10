@@ -657,6 +657,10 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
             "echo:INPUT",
             "read-line",
             "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
             "spin",
         ],
     );
@@ -668,6 +672,10 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
         &shell,
         &[
             "emit:READY",
+            "read-line",
+            "echo:INPUT",
+            "read-line",
+            "echo:INPUT",
             "read-line",
             "echo:INPUT",
             "read-line",
@@ -721,6 +729,8 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
         still_attached.attached_by,
         Some(festerm_sessiond::AttachKind::Local)
     );
+    send_input(&mut old, &test_input("while-candidate-pending")).unwrap();
+    assert_contains(&mut old, b"INPUT:while-candidate-pending");
     write_bridge_client_frame(
         premature.stdin.as_mut().unwrap(),
         FRAME_INPUT,
@@ -737,8 +747,16 @@ fn native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated() {
     let mut bridge = spawn_bridge(&executable, &runtime, &selection);
     let snapshot = read_bridge_snapshot(bridge.stdout.as_mut().unwrap());
     assert!(terminal_contains(&snapshot, b"INPUT:old-still-attached"));
+    send_input(&mut old, &test_input("before-candidate-adopts")).unwrap();
+    assert_contains(&mut old, b"INPUT:before-candidate-adopts");
     acknowledge_bridge_recovery(bridge.stdin.as_mut().unwrap()).unwrap();
     assert_contains(&mut old, STOLEN_NOTICE);
+    read_bridge_frame_until(bridge.stdout.as_mut().unwrap(), |kind, payload| {
+        kind == 1
+            && payload
+                .windows(b"INPUT:before-candidate-adopts".len())
+                .any(|bytes| bytes == b"INPUT:before-candidate-adopts")
+    });
     bounded_poll(
         || {
             festerm_sessiond::list_running_sessions_in(&runtime_registry_root(&runtime))

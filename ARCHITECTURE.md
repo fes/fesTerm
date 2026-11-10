@@ -764,6 +764,11 @@ generation/lease-fenced private records, independently of bridge/client lifetime
 Temporary ownership changes commit beside the writer replacement only after
 recovery adoption; a pending attachment is not an Attached success. Persistent
 shells never acquire temporary cleanup merely through attachment. Endpoint
+routing must not stall an existing writer while a candidate adopts: the native
+daemon queues one candidate, bounds its post-snapshot output/control delta to
+512 KiB, and cancels only that candidate on saturation. The candidate's input
+worker waits for the daemon's actual writer commit before accepting commands.
+The existing writer remains usable until that commit. Endpoint
 routing, protected enrollment/channel integration, migration and native
 reboot/device qualification remain gated; this is not remote exposure.
 The non-default

@@ -1529,17 +1529,18 @@ fn session_client_loop<R: Read + Send + 'static>(
             shutdown();
             break Err(error);
         }
+        poll_replacement(&mut active, &mut retired_clients, &mut pending);
         // Output the client has not taken yet must be delivered before any more
         // is consumed from the reader channel, so delivery stays ordered.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
         if let Err(error) = accept_unix_clients(
             &listener,
             &mut active,
-            &mut retired_clients,
             terminal,
             observer.as_ref(),
             &client_input_tx,
             &mut next_generation,
+            &mut pending,
         ) {
             shutdown();
             break Err(error);
@@ -1608,6 +1609,7 @@ fn session_client_loop<R: Read + Send + 'static>(
         }
     };
 
+    pending.cancel_replacement(&mut retired_clients);
     let result = result
         .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
     retire_active(&mut active, &mut retired_clients, false);
@@ -1643,11 +1645,11 @@ fn configure_accepted_client_stream(stream: &UnixStream) -> io::Result<()> {
 fn accept_unix_clients(
     listener: &UnixListener,
     active: &mut Option<ActiveClient>,
-    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     terminal: &Terminal,
     observer: Option<&mpsc::Sender<ClientLoopEvent>>,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
+    pending: &mut PendingOutput,
 ) -> io::Result<()> {
     loop {
         if host_daemon_should_stop() {
@@ -1656,13 +1658,15 @@ fn accept_unix_clients(
         match listener.accept() {
             Ok((mut stream, _)) => {
                 configure_accepted_client_stream(&stream)?;
+                if pending.candidate.is_some() {
+                    stream.write_all(&[0])?;
+                    continue;
+                }
                 let Some((recovery_limit, kind, ticket)) = admit_client(&mut stream, active)?
                 else {
                     continue;
                 };
-                if let Err(error) = replace_active_authorized(
-                    active,
-                    retired_clients,
+                if let Err(error) = begin_replacement(
                     stream,
                     terminal,
                     client_input_tx.clone(),
@@ -1670,6 +1674,7 @@ fn accept_unix_clients(
                     recovery_limit,
                     kind,
                     ticket.as_ref(),
+                    pending,
                 ) {
                     eprintln!("fesTerm rejected a replacement session client: {error}");
                     return Ok(());
@@ -1807,14 +1812,15 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             let _ = spawned.child.kill();
             break Err(error);
         }
+        poll_replacement(&mut active, &mut retired_clients, &mut pending);
         // Accept before checking backpressure so a stalled client can be replaced.
         if let Err(error) = accept_windows_clients(
             &accept_rx,
             &mut active,
-            &mut retired_clients,
             terminal,
             &client_input_tx,
             &mut next_generation,
+            &mut pending,
         ) {
             let _ = spawned.child.kill();
             break Err(error);
@@ -1887,6 +1893,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
 
     accept_cancelled.store(true, Ordering::Release);
     drop(accept_rx);
+    pending.cancel_replacement(&mut retired_clients);
     sessiond_trace(format_args!("shutdown: loop ended: {result:?}"));
     let result = result
         .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
@@ -2001,22 +2008,24 @@ fn spawn_windows_attachment_listener(
 fn accept_windows_clients(
     accept_rx: &WindowsAttachmentInbox<Pipe>,
     active: &mut Option<ActiveClient>,
-    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     terminal: &Terminal,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
+    pending: &mut PendingOutput,
 ) -> io::Result<()> {
     accept_rx.process_one(|mut stream| {
         sessiond_trace("accept_windows_clients: new client");
         stream.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
+        if pending.candidate.is_some() {
+            let _ = stream.write_all(&[0]);
+            return;
+        }
         let (recovery_limit, kind, ticket) = match admit_client(&mut stream, active) {
             Ok(Some(admitted)) => admitted,
             _ => return,
         };
-        if let Err(error) = replace_active_authorized(
-            active,
-            retired_clients,
+        if let Err(error) = begin_replacement(
             stream,
             terminal,
             client_input_tx.clone(),
@@ -2024,6 +2033,7 @@ fn accept_windows_clients(
             recovery_limit,
             kind,
             ticket.as_ref(),
+            pending,
         ) {
             eprintln!("fesTerm rejected a replacement session client: {error}");
         }
@@ -2080,7 +2090,7 @@ struct ClientInput {
     command: ClientCommand,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum ClientOutput {
     Data(Vec<u8>),
     RecoverySync(Vec<u8>),
@@ -2094,6 +2104,21 @@ struct ActiveClient {
     output: mpsc::SyncSender<ClientOutput>,
     stolen: Arc<AtomicBool>,
     thread: thread::JoinHandle<io::Result<()>>,
+}
+
+struct AdoptionHandshake {
+    adopted: mpsc::SyncSender<()>,
+    activated: mpsc::Receiver<()>,
+}
+
+struct PendingCandidate {
+    client: ActiveClient,
+    adopted: mpsc::Receiver<()>,
+    activate: mpsc::SyncSender<()>,
+    deadline: Instant,
+    ticket: Option<festerm_host_protocol::OperationId>,
+    charged: usize,
+    failed: bool,
 }
 
 #[cfg(all(test, windows))]
@@ -2117,8 +2142,8 @@ fn replace_active<S: Read + Write + Send + 'static>(
     )
 }
 
-/// This runs on the sole daemon admission loop, not an independent registry
-/// check. No other client can become active between refusal and replacement.
+/// Admission and later adoption commit run on the sole daemon loop. A pending
+/// recovery candidate never suspends the current writer.
 fn admit_client(
     stream: &mut (impl Read + Write),
     active: &Option<ActiveClient>,
@@ -2224,9 +2249,9 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
     recovery_limit: usize,
     kind: AttachKind,
 ) -> io::Result<()> {
-    replace_active_authorized(
-        active,
-        retired_clients,
+    let expected = *next_generation;
+    let mut pending = PendingOutput::default();
+    begin_replacement(
         replacement,
         terminal,
         input,
@@ -2234,13 +2259,27 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
         recovery_limit,
         kind,
         None,
-    )
+        &mut pending,
+    )?;
+    while pending.candidate.is_some() {
+        poll_replacement(active, retired_clients, &mut pending);
+        thread::sleep(CLIENT_POLL_INTERVAL);
+    }
+    if active
+        .as_ref()
+        .is_some_and(|client| client.generation == expected)
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "replacement was not adopted",
+        ))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn replace_active_authorized<S: Read + Write + Send + 'static>(
-    active: &mut Option<ActiveClient>,
-    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+fn begin_replacement<S: Read + Write + Send + 'static>(
     replacement: S,
     terminal: &Terminal,
     input: mpsc::SyncSender<ClientInput>,
@@ -2248,13 +2287,24 @@ fn replace_active_authorized<S: Read + Write + Send + 'static>(
     recovery_limit: usize,
     kind: AttachKind,
     ticket: Option<&festerm_host_protocol::OperationId>,
+    pending: &mut PendingOutput,
 ) -> io::Result<()> {
+    if pending.candidate.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "recovery candidate already pending",
+        ));
+    }
     let recovery = festerm_sessiond::encode_recovery_snapshot_with_limit(terminal, recovery_limit)
         .map_err(|error| io::Error::other(error.to_string()))?;
     let generation = *next_generation;
+    *next_generation = next_generation
+        .checked_add(1)
+        .ok_or_else(|| io::Error::other("client generation exhausted"))?;
     sessiond_trace(format_args!("replace_active: generation={generation}"));
     let (output, output_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
     let (adopted_tx, adopted_rx) = mpsc::sync_channel(1);
+    let (activate_tx, activate_rx) = mpsc::sync_channel(1);
     let stolen = Arc::new(AtomicBool::new(false));
     let worker_stolen = Arc::clone(&stolen);
     let thread = thread::Builder::new()
@@ -2267,7 +2317,10 @@ fn replace_active_authorized<S: Read + Write + Send + 'static>(
                 input,
                 output_rx,
                 worker_stolen,
-                Some(adopted_tx),
+                Some(AdoptionHandshake {
+                    adopted: adopted_tx,
+                    activated: activate_rx,
+                }),
             );
             if let Err(error) = &result {
                 sessiond_trace(format_args!(
@@ -2276,41 +2329,60 @@ fn replace_active_authorized<S: Read + Write + Send + 'static>(
             }
             result
         })?;
-    let deadline = Instant::now() + ATTACH_RECOVERY_DEADLINE;
-    let adopted = loop {
-        match adopted_rx.recv_timeout(CLIENT_POLL_INTERVAL) {
-            Ok(()) => break Ok(()),
-            Err(mpsc::RecvTimeoutError::Timeout)
-                if Instant::now() < deadline
-                    && !host_daemon_should_stop()
-                    && !host_attachment_cancelled(ticket, kind) =>
-            {
-                continue
-            }
-            Err(error) => break Err(io::Error::other(error)),
-        }
-    }
-    .and_then(|()| host_commit_attachment(ticket, kind));
-    if let Err(error) = adopted {
-        stolen.store(true, Ordering::Release);
-        drop(output);
-        retired_clients.push(thread);
-        return Err(io::Error::new(
-            io::ErrorKind::ConnectionAborted,
-            format!("replacement did not adopt its recovery snapshot: {error}"),
-        ));
-    }
-    retire_active(active, retired_clients, true);
-    *next_generation = next_generation.wrapping_add(1);
-    let client = ActiveClient {
-        generation,
-        kind,
-        output,
-        stolen,
-        thread,
-    };
-    *active = Some(client);
+    pending.candidate = Some(PendingCandidate {
+        client: ActiveClient {
+            generation,
+            kind,
+            output,
+            stolen,
+            thread,
+        },
+        adopted: adopted_rx,
+        activate: activate_tx,
+        deadline: Instant::now() + ATTACH_RECOVERY_DEADLINE,
+        ticket: ticket.cloned(),
+        charged: 0,
+        failed: false,
+    });
     Ok(())
+}
+
+fn poll_replacement(
+    active: &mut Option<ActiveClient>,
+    retired: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    pending: &mut PendingOutput,
+) {
+    let Some(candidate) = pending.candidate.as_ref() else {
+        return;
+    };
+    let adopted = match candidate.adopted.try_recv() {
+        Ok(()) => true,
+        Err(mpsc::TryRecvError::Empty) => false,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            pending.cancel_replacement(retired);
+            return;
+        }
+    };
+    if candidate.failed
+        || Instant::now() >= candidate.deadline
+        || host_attachment_cancelled(candidate.ticket.as_ref(), candidate.client.kind)
+    {
+        pending.cancel_replacement(retired);
+        return;
+    }
+    if !adopted {
+        return;
+    }
+    if host_commit_attachment(candidate.ticket.as_ref(), candidate.client.kind).is_err() {
+        pending.cancel_replacement(retired);
+        return;
+    }
+    let candidate = pending.candidate.take().expect("checked candidate");
+    retire_active(active, retired, true);
+    *active = Some(candidate.client);
+    if candidate.activate.try_send(()).is_err() {
+        retire_active(active, retired, false);
+    }
 }
 
 fn retire_active(
@@ -2398,9 +2470,18 @@ struct PendingOutput {
     /// rather than delivered, because the replacement already received a fresh
     /// recovery snapshot that includes it.
     held: VecDeque<(u64, ClientOutput)>,
+    candidate: Option<PendingCandidate>,
 }
 
 impl PendingOutput {
+    fn cancel_replacement(&mut self, retired: &mut Vec<thread::JoinHandle<io::Result<()>>>) {
+        if let Some(candidate) = self.candidate.take() {
+            candidate.client.stolen.store(true, Ordering::Release);
+            drop(candidate.client.output);
+            retired.push(candidate.client.thread);
+        }
+    }
+
     fn is_pending(&self) -> bool {
         !self.held.is_empty()
     }
@@ -2410,6 +2491,23 @@ impl PendingOutput {
     }
 
     fn hold_output(&mut self, generation: Option<u64>, output: ClientOutput) {
+        if let Some(candidate) = self
+            .candidate
+            .as_mut()
+            .filter(|candidate| !candidate.failed)
+        {
+            let bytes = match &output {
+                ClientOutput::Data(bytes) | ClientOutput::RecoverySync(bytes) => bytes.len(),
+                ClientOutput::ResizeApplied(_) | ClientOutput::Exited => 16,
+            };
+            candidate.charged = candidate.charged.saturating_add(bytes);
+            if candidate.charged > 512 * 1024
+                || candidate.client.output.try_send(output.clone()).is_err()
+            {
+                candidate.failed = true;
+                candidate.client.stolen.store(true, Ordering::Release);
+            }
+        }
         let Some(generation) = generation else {
             // With no client attached the authoritative recovery terminal
             // already reflects this output, so there is nothing to deliver.
@@ -2655,7 +2753,7 @@ fn client_io_loop<S: Read + Write>(
     input: mpsc::SyncSender<ClientInput>,
     output: mpsc::Receiver<ClientOutput>,
     stolen: Arc<AtomicBool>,
-    mut adoption: Option<mpsc::SyncSender<()>>,
+    mut adoption: Option<AdoptionHandshake>,
 ) -> io::Result<()> {
     let mut parser = ClientFrameParser::default();
     let mut pending_input = None;
@@ -2699,12 +2797,23 @@ fn client_io_loop<S: Read + Write>(
                         }
                         recovery_adopted = true;
                         if let Some(adoption) = adoption.take() {
-                            adoption.send(()).map_err(|_| {
+                            adoption.adopted.send(()).map_err(|_| {
                                 io::Error::new(
                                     io::ErrorKind::BrokenPipe,
                                     "recovery candidate cancelled",
                                 )
                             })?;
+                            loop {
+                                match adoption.activated.recv_timeout(CLIENT_POLL_INTERVAL) {
+                                    Ok(()) => break,
+                                    Err(mpsc::RecvTimeoutError::Timeout)
+                                        if Instant::now() < adoption_deadline
+                                            && !stolen.load(Ordering::Acquire) => {}
+                                    Err(_) => {
+                                        return finish_disconnected_client(&mut stream, &stolen)
+                                    }
+                                }
+                            }
                         }
                         continue;
                     }
@@ -7527,5 +7636,74 @@ mod tests {
         report_attach_state_change(None, &mut reported, &mut |_| {
             panic!("successful publication is not repeated")
         });
+    }
+    #[test]
+    fn pending_candidate_delta_overflow_preserves_current_writer() {
+        let worker = || {
+            let (stop, receiver) = mpsc::channel::<()>();
+            let worker = thread::spawn(move || {
+                let _ = receiver.recv();
+                Ok(())
+            });
+            (stop, worker)
+        };
+        let (old_stop, old_thread) = worker();
+        let (candidate_stop, candidate_thread) = worker();
+        let (old_output, old_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (candidate_output, _candidate_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (_adopt, adopted) = mpsc::sync_channel(1);
+        let (activate, _activated) = mpsc::sync_channel(1);
+        let old_stolen = Arc::new(AtomicBool::new(false));
+        let mut active = Some(ActiveClient {
+            generation: 1,
+            kind: AttachKind::Local,
+            output: old_output,
+            stolen: old_stolen.clone(),
+            thread: old_thread,
+        });
+        let mut pending = PendingOutput {
+            candidate: Some(PendingCandidate {
+                client: ActiveClient {
+                    generation: 2,
+                    kind: AttachKind::Remote,
+                    output: candidate_output,
+                    stolen: Arc::new(AtomicBool::new(false)),
+                    thread: candidate_thread,
+                },
+                adopted,
+                activate,
+                deadline: Instant::now() + ATTACH_RECOVERY_DEADLINE,
+                ticket: None,
+                charged: 0,
+                failed: false,
+            }),
+            ..PendingOutput::default()
+        };
+        let mut retired = Vec::new();
+        for byte in 0..=CLIENT_QUEUE_CAPACITY {
+            let data = vec![byte as u8; 4096];
+            send_to_active(&mut active, &mut retired, &mut pending, data.clone());
+            assert_eq!(old_rx.try_recv().unwrap(), ClientOutput::Data(data));
+        }
+        poll_replacement(&mut active, &mut retired, &mut pending);
+        assert!(pending.candidate.is_none());
+        assert_eq!(active.as_ref().unwrap().generation, 1);
+        assert!(!old_stolen.load(Ordering::Acquire));
+        send_to_active(
+            &mut active,
+            &mut retired,
+            &mut pending,
+            b"still-current".to_vec(),
+        );
+        assert_eq!(
+            old_rx.try_recv().unwrap(),
+            ClientOutput::Data(b"still-current".to_vec())
+        );
+        retire_active(&mut active, &mut retired, false);
+        drop(old_stop);
+        drop(candidate_stop);
+        for worker in retired {
+            worker.join().unwrap().unwrap();
+        }
     }
 }
