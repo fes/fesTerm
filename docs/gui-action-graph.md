@@ -1644,6 +1644,8 @@ into an active grant. Generation keys have creation-owner-only normal/failed-sta
 cleanup; live release retains the key and released receipt tombstones. An ordinary
 shell exit permits release/claims rollback only with authoritative exact-generation
 absence; Busy/corrupt/unknown outcomes remain pending, not failed-I/O-as-absence.
+The reused actual-binding fixture selects both pre-existing Local and Remote
+frontends; the Local proof is not the earlier reservation-only fixture.
 Controlled live fixtures are not service switching/rollback,
 installed/old-release or complete migration acceptance; the legacy Linux script
 path is not promoted to authenticated setup.

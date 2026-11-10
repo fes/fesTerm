@@ -5859,6 +5859,7 @@
         "owned_migration_owner_initialization_and_separate_approval_never_enable_or_widen_grants",
         "owned_migration_unsupported_helper_defers_without_binding_checkpoint_or_source_mutation",
         "owned_migration_native_authenticated_binding_switch_resume_release_preserve_frontend",
+        "owned_migration_native_authenticated_binding_preserves_local_frontend",
         "authenticated_binding_mac_rejects_replay_foreign_key_domain_and_payload",
         "authenticated_binding_rejects_unknown_protocol_fields_and_actions",
         "authenticated_binding_deadline_expires_without_reading_or_writing",

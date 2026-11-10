@@ -197,7 +197,7 @@ impl Drop for Fixture {
 #[test]
 #[ignore = "requires an explicitly supplied current-source helper; no installed runtime or services"]
 fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existing_frontend() {
-    native_migration_fixture(false, None);
+    native_migration_fixture(false, None, festerm_sessiond::AttachKind::Local);
 }
 
 #[cfg(feature = "owner-enrollment")]
@@ -355,7 +355,14 @@ fn owned_migration_unsupported_helper_defers_without_binding_checkpoint_or_sourc
 #[test]
 #[ignore = "explicit current-source binaries and test-owned daemon only; no installed runtime or services"]
 fn owned_migration_native_authenticated_binding_switch_resume_release_preserve_frontend() {
-    native_migration_fixture(true, None);
+    native_migration_fixture(true, None, festerm_sessiond::AttachKind::Remote);
+}
+
+#[cfg(all(unix, feature = "owner-enrollment"))]
+#[test]
+#[ignore = "explicit current-source binaries and test-owned daemon only; no installed runtime or services"]
+fn owned_migration_native_authenticated_binding_preserves_local_frontend() {
+    native_migration_fixture(true, None, festerm_sessiond::AttachKind::Local);
 }
 
 #[cfg(all(unix, feature = "owner-enrollment"))]
@@ -363,12 +370,16 @@ fn owned_migration_native_authenticated_binding_switch_resume_release_preserve_f
 #[ignore = "explicit current-source binaries and test-owned daemon only; no installed runtime or services"]
 fn owned_migration_native_prepared_and_active_shell_exit_release_claims_and_unblock_enable() {
     for active in [false, true] {
-        native_migration_fixture(true, Some(active));
+        native_migration_fixture(true, Some(active), festerm_sessiond::AttachKind::Remote);
     }
 }
 
 #[cfg(unix)]
-fn native_migration_fixture(_binding: bool, _exit_after_switch: Option<bool>) {
+fn native_migration_fixture(
+    _binding: bool,
+    _exit_after_switch: Option<bool>,
+    frontend: festerm_sessiond::AttachKind,
+) {
     use std::{
         io::{Read, Write},
         os::unix::net::UnixStream,
@@ -708,11 +719,7 @@ fn native_migration_fixture(_binding: bool, _exit_after_switch: Option<bool>) {
             selected.pid,
             selected.created_at_unix_ms,
             false,
-            if _binding {
-                festerm_sessiond::AttachKind::Remote
-            } else {
-                festerm_sessiond::AttachKind::Local
-            },
+            frontend,
             768 * 1024 * 1024,
         ))
         .unwrap();
@@ -732,7 +739,15 @@ fn native_migration_fixture(_binding: bool, _exit_after_switch: Option<bool>) {
     input(&mut stream, b"before\n");
     marker(&mut stream, b"MIGRATION-INPUT:before");
     let before = festerm_sessiond::list_running_sessions_strict_in(runtime).unwrap();
-    assert!(before[0].attached_by.is_some());
+    assert_eq!(before[0].attached_by, Some(frontend));
+    let runtime_directory = storage::private_directory(runtime, false).unwrap();
+    let capability_name = format!(
+        "native-binding-{}-{}.key",
+        selected.pid, selected.created_at_unix_ms
+    );
+    let capability_digest = Sha256::digest(
+        &*storage::read_private(&runtime_directory, Path::new(&capability_name), 4096).unwrap(),
+    );
     let source_bytes = raw(&fixture.source_directory(), "installation.json").unwrap();
     write(
         &log_directory,
@@ -1064,6 +1079,13 @@ fn native_migration_fixture(_binding: bool, _exit_after_switch: Option<bool>) {
     input(&mut stream, b"after-rollback\n");
     marker(&mut stream, b"MIGRATION-INPUT:after-rollback");
     assert_eq!(
+        capability_digest,
+        Sha256::digest(
+            &*storage::read_private(&runtime_directory, Path::new(&capability_name), 4096).unwrap(),
+        ),
+        "binding/switch/resume/revocation/release/rollback changed the live capability",
+    );
+    assert_eq!(
         before,
         festerm_sessiond::list_running_sessions_strict_in(runtime).unwrap()
     );
@@ -1101,7 +1123,7 @@ fn native_migration_fixture(_binding: bool, _exit_after_switch: Option<bool>) {
                 crate::enrollment::OwnerStorage::HeadlessProtectedFile
             )
             .is_err());
-        println!("authenticated current-source native binding: pid={} generation={} frontend={:?}; prepared/switch/resume/revoked/released; retained runtime={}; no stop/restart/frontend acquisition", selected.pid, selected.created_at_unix_ms, before[0].attached_by, runtime.display());
+        println!("authenticated current-source native binding: pid={} generation={} frontend={:?} namespace={}; prepared/switch/resume/revoked/released; retained runtime={}; live capability unchanged; no stop/restart/frontend acquisition", selected.pid, selected.created_at_unix_ms, before[0].attached_by, binding.namespace.as_str(), runtime.display());
     }
     println!(
             "current-source native fixture: helper={} host={} pid={} generation={} frontend={:?}; reservation={} retained-host={:?}; reservation-only fixture does not establish remote endpoint readiness",

@@ -606,6 +606,11 @@ authority. The Disabled master gate stays off until ordinary separately consente
 setup. Older helpers without startup capability remain explicitly deferred.
 The controlled live fixture exercises actual bind/defer/switch/resume/revocation/
 release/rollback and original PTY I/O with unchanged PID/generation/frontend.
+The same actual-binding fixture additionally selects an original Local frontend,
+not the reservation-only Local case: current namespace admission, switch,
+resume, source revocation, release and rollback preserve its original PTY and
+generation-local capability bytes. Prepared/Active ordinary-exit absence cases
+remain separate from this live-frontend preservation proof.
 This is not old-release, signed installed-platform, provider, vault or GUI
 acceptance; those `HOSTMIG-01` gates remain open.
 

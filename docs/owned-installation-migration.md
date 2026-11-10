@@ -235,6 +235,16 @@ requests, held native lease and no duplicate identity. This is controlled
 current-source local evidence, not an installed old-release or cloud exposure
 acceptance claim.
 
+`owned_migration_native_authenticated_binding_preserves_local_frontend` reuses
+that same complete authenticated sequence with an original **Local** frontend.
+It checks Local admission explicitly and retains original PID/generation,
+current namespace authority, PTY I/O and unchanged live capability bytes through
+bind/switch/resume/source revocation/release/rollback. This is actual binding,
+unlike the earlier Local reservation-only case; it is still not Desktop GUI
+sharing or installed-platform acceptance. The separate Prepared/Active ordinary
+shell-exit regression covers authoritative-absence rollback and pending
+Busy/corrupt observations.
+
 Ticketed HOST admission uses the new imported grant; the ordinary generation's
 pre-existing unticketed exact-generation local/legacy path is unchanged, including
 its original independently enforced bridge consent. Sealing HOST access never

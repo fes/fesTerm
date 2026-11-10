@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Proving actual binding with the original Local frontend
+
+The authenticated live migration proof originally exercised an unticketed Remote
+frontend; its Local predecessor proved only reservation, not binding. The same
+bounded fixture now explicitly selects Local admission and executes the complete
+bind/switch/resume/source-revocation/release/rollback sequence under the current
+namespace. It preserves original PID/generation, original frontend PTY I/O and
+the live generation capability bytes, without introducing a fixture framework or
+production behavior. Prepared/Active ordinary-exit rollback remains a separate
+safe-absence proof. This does not claim Desktop Local sharing, installed helpers,
+old releases, vault/provider or GUI acceptance.
+
 ## Closing migration capability ownership and ordinary-exit cleanup
 
 Review found two lifecycle gaps in the current-daemon migration increment:
