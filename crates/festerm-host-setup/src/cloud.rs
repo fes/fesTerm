@@ -984,8 +984,8 @@ mod tests {
         }
     }
 
-    fn fixture() -> (tempfile::TempDir, Store, MemorySecretStore) {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    fn fixture() -> (storage::PrivateTestDirectory, Store, MemorySecretStore) {
+        let root = storage::private_test_directory();
         let store = Store::create(
             &root.path().join("host"),
             Origin::Headless,
