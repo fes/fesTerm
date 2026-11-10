@@ -48,6 +48,11 @@ pub(crate) struct SetupRequest<'a> {
 }
 
 pub(crate) trait SetupBoundary {
+    #[cfg(test)]
+    fn cloud<'a>(&self, store: &'a Store) -> CloudHostAdapter<'a> {
+        CloudHostAdapter::new(store)
+    }
+
     async fn sign_in(
         &self,
         cloud: &CloudHostAdapter<'_>,
@@ -164,6 +169,9 @@ pub(crate) async fn setup_with(
     if account == 0 || cancel.is_cancelled() {
         return Err(refused("host.foreground_account_consent_required"));
     }
+    #[cfg(test)]
+    let cloud = boundary.cloud(store);
+    #[cfg(not(test))]
     let cloud = CloudHostAdapter::new(store);
     let expected_epoch = match before.phase {
         Phase::Disabled => {
@@ -369,6 +377,23 @@ pub(crate) async fn uninstall_with(
     cancel: &CancellationToken,
     cleanup: impl std::future::Future<Output = io::Result<Cleanup>>,
 ) -> io::Result<UninstallResult> {
+    uninstall_with_native(
+        store,
+        cancel,
+        || disable(store, state),
+        |epoch| Services::current_user(store, state)?.cleanup(epoch),
+        cleanup,
+    )
+    .await
+}
+
+async fn uninstall_with_native(
+    store: &Store,
+    cancel: &CancellationToken,
+    stop: impl FnOnce() -> io::Result<DisableResult>,
+    native_cleanup: impl FnOnce(u64) -> io::Result<Observation>,
+    cleanup: impl std::future::Future<Output = io::Result<Cleanup>>,
+) -> io::Result<UninstallResult> {
     let before = store.snapshot()?;
     if cancel.is_cancelled() {
         return Err(refused("host.cloud_cancelled"));
@@ -377,17 +402,41 @@ pub(crate) async fn uninstall_with(
         return Ok(UninstallResult::AlreadyRemovedNotReobserved);
     }
     if before.phase != Phase::CleanupPending {
-        disable(store, state)?;
+        stop()?;
         store.request_cleanup()?;
     }
     let epoch = store.snapshot()?.epoch;
-    Services::current_user(store, state)?.cleanup(epoch)?;
+    native_cleanup(epoch)?;
     match cleanup.await? {
         Cleanup::Removed => Ok(UninstallResult::Removed),
         Cleanup::GenerationConditionalDeleteUnavailable => {
             Ok(UninstallResult::NativeRemovedCloudCleanupPending)
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_disable(store: &Store, state: &Path) -> io::Result<DisableResult> {
+    disable_with(store, Duration::ZERO, |epoch| {
+        crate::services::fixture_services(store, state)?.stop(epoch)
+    })
+}
+
+#[cfg(test)]
+pub(crate) async fn fixture_uninstall(
+    store: &Store,
+    state: &Path,
+    cancel: &CancellationToken,
+    cleanup: impl std::future::Future<Output = io::Result<Cleanup>>,
+) -> io::Result<UninstallResult> {
+    uninstall_with_native(
+        store,
+        cancel,
+        || fixture_disable(store, state),
+        |epoch| crate::services::fixture_services(store, state)?.cleanup(epoch),
+        cleanup,
+    )
+    .await
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -780,16 +829,17 @@ mod tests {
         provision(&store);
         let (lease, before, _) = reserve(&store).unwrap();
         let error = disable_with(&store, Duration::ZERO, |epoch| {
-            Services::current_user(&store, &state)?.stop(epoch)
+            crate::services::fixture_services(&store, &state)?.stop(epoch)
         })
         .err()
         .unwrap();
         assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(error.to_string(), "host.runtime_stop_pending");
         assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
         assert!(store.snapshot().unwrap().epoch > before.epoch);
         drop(lease);
         let stopped = disable_with(&store, Duration::ZERO, |epoch| {
-            Services::current_user(&store, &state)?.stop(epoch)
+            crate::services::fixture_services(&store, &state)?.stop(epoch)
         })
         .unwrap();
         assert_eq!(stopped.lifecycle.phase, Phase::Disabled);
@@ -831,10 +881,15 @@ mod tests {
         drop(lease);
         std::fs::remove_file(state.join(LOCK)).unwrap();
         assert!(reserve(&store).is_err());
-        assert!(disable_with(&store, Duration::ZERO, |epoch| {
-            Services::current_user(&store, &state)?.stop(epoch)
+        let error = disable_with(&store, Duration::ZERO, |epoch| {
+            crate::services::fixture_services(&store, &state)?.stop(epoch)
         })
-        .is_err());
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "host.runtime_lock_missing_reconciliation_required"
+        );
         assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
         assert!(store.request_cleanup().is_err());
         assert_eq!(last_run(&store).unwrap().unwrap(), record);
@@ -851,7 +906,7 @@ mod tests {
             .await
             .is_err());
         assert_eq!(store.snapshot().unwrap(), before);
-        disable(&store, &root.path().join("host")).unwrap();
+        fixture_disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
         let pending = store.snapshot().unwrap();
         store
@@ -869,6 +924,23 @@ mod tests {
             .join("native-service.json")
             .exists());
         assert!(!root.path().join("host").join("host-cloud.json").exists());
+    }
+
+    #[tokio::test]
+    async fn host_runtime_native_cleanup_denial_never_polls_cloud_cleanup() {
+        let (root, store) = fixture();
+        provision(&store);
+        let error = uninstall_with_native(
+            &store,
+            &CancellationToken::new(),
+            || fixture_disable(&store, &root.path().join("host")),
+            |_| Err(io::ErrorKind::PermissionDenied.into()),
+            async { panic!("native cleanup denial must not poll cloud cleanup") },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
     }
 
     #[tokio::test]

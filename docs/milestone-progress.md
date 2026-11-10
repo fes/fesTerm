@@ -1,5 +1,47 @@
 # Milestone Progress Narrative
 
+## Isolating fake cloud orchestration from native-account fixture admission
+
+After published `b986d5b7`, Windows required run `42916947510`, job
+`130181723505`, advances past CLI and reaches setup 81 passed / 26 failed /
+one ignored in 21.71 seconds. The retained 215341-byte raw log has SHA-256
+`7010a965b3e51fb39ac745c9a5f65a2a8bced75261df20b4fe5040029718a2f8`.
+All 26 failing names and original panic sites are mapped: 24 cloud/controller-
+boundary cases and two controller cases. Nineteen fail at the shared foreground
+fixture's PermissionDenied unwrap; the remaining sites include setup admission,
+EnableRequested versus Reconciling, missing-file and PermissionDenied versus
+WouldBlock outcomes. These observations do not identify the actual Windows
+principal or ACL root cause.
+
+Only the source-compatible cloud/controller/services fixture hunks from
+published #704 exact `d25844f12f7e36d10bc3ad39f89505c142f9e6e0` are reused.
+A per-instance `cfg(test)` cloud account and explicit fixture constructor serve
+fake network/controller tests. The public constructor always selects native
+admission, including test builds. A native/foreign-account guard proves fixture
+records do not authorize either. User lookup remains lazy at its original
+short-circuit position. There is no global account override or native fallback.
+
+Unpublished-registration fixtures use real protected Services stop/cleanup
+logic with a test-only context and a runner that panics on any native-manager
+call. Production still uses `Services::current_user`. Both routes share the
+same private stop, request-cleanup, native-cleanup, then cloud-await helper;
+native cleanup denial must never poll cloud cleanup. Existing consent,
+revocation, lease/Busy, missing-lock, uncertain-receipt and phase assertions
+remain intact or become more specific. No owned-migration, root-selection,
+ACL, OS policy or actual-account changes are included.
+
+Qualification selects every failing-name macOS counterpart plus directly
+coupled guards, not native or full suites. Exact failure/source maps, command
+exits, compiler attribution and retained history live separately under
+`target/adr84-cloud-fixtures-evidence/`. All earlier acquisition, update,
+old-helper and CLI proofs remain unchanged. This is source/fixture parity,
+not Windows execution, native readiness or genuine-release acceptance.
+The selection lists and passes 37 / zero failed / zero ignored (93 filtered),
+including all 26 original names and both added guards. Pinned Rust 1.99.1,
+jobs 1, debug 0 and incremental 0 pass both minimal/affected strict profiles,
+fmt and trace311/zero-broken-reference gates; memory gates stay at 49–51%.
+Fresh exact-source reviews and required CI remain prerequisites to publication.
+
 ## Keeping update-status CLI assertions consistent with real native admission
 
 Required run `42901808856` for exact `09485ce130e529932c53df77454b8d787b5c8ada`
