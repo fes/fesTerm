@@ -88,7 +88,7 @@ class HostManifestTests(unittest.TestCase):
 
     def test_signed_metadata_workflow_uses_existing_key_and_verifies_before_publication(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        step = workflow.split("      - name: Authenticate standalone helper release metadata\n")[1]
+        step = workflow.split("      - name: Prepare standalone helper metadata and verifier without signing secrets\n")[1]
         step = step.split("      - name: Generate release notes")[0]
         self.assertIn("secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY", step)
         self.assertIn('test "$FESTERM_UPDATE_PUBLIC_KEY" = "$(cat packaging/updater.pub)"', step)
@@ -100,6 +100,36 @@ class HostManifestTests(unittest.TestCase):
                         workflow.index("gh release upload"))
         self.assertIn("cargo install cargo-packager --version \"$CARGO_PACKAGER_VERSION\" --locked",
                       workflow)
+
+    def test_signing_secrets_are_absent_from_build_generation_and_verification_steps(self):
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        publish_environment = workflow.split("  publish:\n", 1)[1].split("    steps:\n", 1)[0]
+        self.assertNotIn("CARGO_PACKAGER_SIGN_PRIVATE_KEY", publish_environment)
+        installation, remainder = workflow.split(
+            "      - name: Install pinned cargo-packager for helper metadata signatures\n", 1
+        )[1].split(
+            "      - name: Prepare standalone helper metadata and verifier without signing secrets\n", 1
+        )
+        preparation, remainder = remainder.split(
+            "      - name: Sign standalone helper release metadata\n", 1
+        )
+        signing, remainder = remainder.split(
+            "      - name: Authenticate standalone helper release metadata\n", 1
+        )
+        verification = remainder.split("      - name: Generate release notes", 1)[0]
+        for step in (installation, preparation, verification):
+            self.assertNotIn("secrets.", step)
+            self.assertNotIn("CARGO_PACKAGER_SIGN_PRIVATE_KEY", step)
+        self.assertIn("cargo build --locked", preparation)
+        self.assertIn("build_host_manifest.py", preparation)
+        self.assertIn('test "$FESTERM_UPDATE_PUBLIC_KEY" = "$(cat packaging/updater.pub)"',
+                      preparation)
+        self.assertIn("secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY", signing)
+        self.assertIn("secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD", signing)
+        self.assertIn("cargo packager signer sign", signing)
+        for command in ("cargo build", "cargo install", "python", "target/release/", "find "):
+            self.assertNotIn(command, signing)
+        self.assertIn("target/release/festerm-verify-artifact", verification)
 
     def test_normal_ci_runs_cross_language_and_real_pinned_signer_checks(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()

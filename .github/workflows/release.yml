@@ -935,16 +935,12 @@ jobs:
       - name: Install pinned cargo-packager for helper metadata signatures
         if: needs.validate.outputs.authenticated_helpers == 'true'
         run: cargo install cargo-packager --version "$CARGO_PACKAGER_VERSION" --locked
-      - name: Authenticate standalone helper release metadata
+      - name: Prepare standalone helper metadata and verifier without signing secrets
         if: needs.validate.outputs.authenticated_helpers == 'true'
         env:
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
           FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
-          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
-          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
           test -n "$FESTERM_UPDATE_PUBLIC_KEY"
           test "$FESTERM_UPDATE_PUBLIC_KEY" = "$(cat packaging/updater.pub)"
           cargo build --locked --release -p festerm-host-setup --features artifacts --bin festerm-verify-artifact
@@ -955,7 +951,34 @@ jobs:
               archive="dist/fesTerm-tunnel-${VERSION}-${platform}-${arch}.${extension}"
               python3 scripts/build_host_manifest.py \
                 --version "$VERSION" --platform "$platform" --arch "$arch" "$archive"
+            done
+          done
+      - name: Sign standalone helper release metadata
+        if: needs.validate.outputs.authenticated_helpers == 'true'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
+          for platform in linux macos windows; do
+            extension=tar.gz
+            if [[ "$platform" == windows ]]; then extension=zip; fi
+            for arch in x86_64 aarch64; do
+              archive="dist/fesTerm-tunnel-${VERSION}-${platform}-${arch}.${extension}"
               cargo packager signer sign "$archive.manifest.json"
+            done
+          done
+      - name: Authenticate standalone helper release metadata
+        if: needs.validate.outputs.authenticated_helpers == 'true'
+        run: |
+          set -euo pipefail
+          for platform in linux macos windows; do
+            extension=tar.gz
+            if [[ "$platform" == windows ]]; then extension=zip; fi
+            for arch in x86_64 aarch64; do
+              archive="dist/fesTerm-tunnel-${VERSION}-${platform}-${arch}.${extension}"
               test -s "$archive.manifest.json.sig"
               target/release/festerm-verify-artifact "$VERSION" "$platform" "$arch" "$archive"
             done

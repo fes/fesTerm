@@ -31,6 +31,9 @@ signature format (including authenticated trusted comment). The independent
 verifier uses the same `minisign-verify` implementation as the desktop updater,
 requires modern prehashed signatures and embeds that same public key. It
 accepts no key supplied alongside a download.
+Cargo installation/build and manifest generation run in earlier steps without
+signing secrets. Only the signing step receives the private key/password and
+runs the sign commands; verification runs afterwards without those secrets.
 
 ## Verification and staging API
 
@@ -121,7 +124,8 @@ metadata, wrong version/platform/architecture/filename/length/hash, strict schem
 and size limits, signed unsafe TAR/ZIP entries, duplicate/missing entries,
 links, invalid modes/VERSION and oversized headers. Python fixtures cover
 six generated manifests, unchanged legacy bytes, overwrite refusal, target
-rejection and workflow signing/verification order. Recovery fixtures exercise
+rejection, workflow signing/verification order and signer-secret isolation.
+Recovery fixtures exercise
 the explicit old-tag exception and fail-closed ordinary releases.
 
 `python_produced_six_bundles_and_manifests_authenticate_in_rust` invokes the real
