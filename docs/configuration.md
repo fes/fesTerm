@@ -800,7 +800,11 @@ slots; dead generation artifacts are reclaimed only after sealed supervision
 and positive native absence proof. Ambiguous evidence remains Unknown; contention
 is Busy. Reclamation takes only one requesting-owner known-Absent record, never
 another owner's or a revoked fence. A new explicit operation may reuse the same
-logical ID with a fresh generation.
+logical ID with a fresh generation. At capacity, authorized inventory/inspection
+may first reconcile owned dead Running/Ending records before retrying Busy with
+the original unchanged request. Advertised issuance comes from the current
+protected journal reservation, reauthorized after rotation, not cached enrollment
+consent or a client-provided epoch.
 
 Revoked live shells retain resource accounting and exact local observation/end.
 Their fence requires known absence and explicit new local consent before removal.

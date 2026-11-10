@@ -68,19 +68,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn interrupted_private_publication_never_exposes_torn_final_bytes() {
+    fn protected_publication_preserves_shared_no_replace_boundary() {
         let root = storage::private_test_directory();
         for name in ["host-lifecycle.json", "devtunnel"] {
             let path = root.path().join(format!("{name}-stage"));
             let directory = storage::private_directory(&path, true).unwrap();
             let name = Path::new(name);
-            assert!(
-                publish_new_with(&directory, name, b"complete", |file, bytes| {
-                    file.write_all(&bytes[..3])?;
-                    Err(io::Error::other("fixture.interrupted_write"))
-                })
-                .is_err()
-            );
             assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
             publish_new(&directory, name, b"complete").unwrap();
             assert!(publish_new(&directory, name, b"replacement").is_err());
@@ -90,6 +83,7 @@ mod tests {
                     .as_slice(),
                 b"complete"
             );
+            assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
         }
     }
 }

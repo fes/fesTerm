@@ -1597,6 +1597,7 @@ The stage-1 [HOST contracts](host-protocol.md) provide codec, identity,
 authorization and budget evidence for HOST-01–03; their end-to-end UI/remote
 transitions remain deferred behind endpoint integration and independent review
 in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
+These edges are design contracts, not overall implemented behavior or acceptance.
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
 HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
@@ -1637,6 +1638,7 @@ Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy and framed duplex dispatcher tests; real pinned-channel exporter/native endpoint H,N deferred |
 | `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P; framed control/terminal fixtures plus real-daemon ensure/crash/conflict/cancellation, bounded issuance rotation, own-record positive-proof retirement and healthy-plus-Unknown inventory tests; actual channel/endpoint/H,N deferred |
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; framed native detach/revocation plus daemon expiry, stale takeover, per-generation authority/heartbeat without global journal, stopped-detach receipt and revoked-live local end/reconsent tests; sharing/endpoint/H,N deferred |
+
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings boundary; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings; recover persisted ticket; preserve draft and exact late cleanup identity, never re-enable | P,H,N; partial boundary, native/UI deferred |
 | `HOST-05` | Headless package → configured service | Configure/status/pinned CLI and authenticated helper staging; setup/run/update/uninstall refuse | Shared disabled settings and exact-owned receipt policy; no shell/service changes; pre-login unavailable | Busy/corrupt/foreign state fails closed; retain cleanup and signed artifact evidence | P,H,N; partial boundary, endpoint/headless package/native deferred |
 | `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: manifest/verifier foundation; H,N: switching/migration deferred |
@@ -1646,3 +1648,8 @@ HOST-06 currently has only the independently testable
 metadata, immutable verified bytes and bounded archive allowlists. It does not
 implement service switching, rollback or migration; the legacy Linux script
 path is not promoted to authenticated setup.
+
+HOST-02/03 integrated session regressions additionally require the exact native
+launch journal, not matching metadata alone, and observe attachment only after
+recovery adoption/writer activation; abandoned candidates are not Attached.
+These remain local automated evidence, not endpoint or native-platform acceptance.

@@ -522,6 +522,10 @@ fn apply_recovery_sync_command(
 
 fn main() {
     if let Err(error) = run() {
+        sessiond_trace(format_args!(
+            "command failed pid={}: {error}",
+            process::id()
+        ));
         eprintln!("festerm-sessiond: {error}");
         process::exit(1);
     }
@@ -1529,7 +1533,11 @@ fn session_client_loop<R: Read + Send + 'static>(
             shutdown();
             break Err(error);
         }
-        poll_replacement(&mut active, &mut retired_clients, &mut pending);
+        if poll_replacement(&mut active, &mut retired_clients, &mut pending) {
+            if let Some(observer) = observer.as_ref() {
+                let _ = observer.send(ClientLoopEvent::ClientAttached);
+            }
+        }
         // Output the client has not taken yet must be delivered before any more
         // is consumed from the reader channel, so delivery stays ordered.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
@@ -1537,7 +1545,6 @@ fn session_client_loop<R: Read + Send + 'static>(
             &listener,
             &mut active,
             terminal,
-            observer.as_ref(),
             &client_input_tx,
             &mut next_generation,
             &mut pending,
@@ -1646,7 +1653,6 @@ fn accept_unix_clients(
     listener: &UnixListener,
     active: &mut Option<ActiveClient>,
     terminal: &Terminal,
-    observer: Option<&mpsc::Sender<ClientLoopEvent>>,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
     pending: &mut PendingOutput,
@@ -1657,14 +1663,16 @@ fn accept_unix_clients(
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
-                configure_accepted_client_stream(&stream)?;
-                if pending.candidate.is_some() {
-                    stream.write_all(&[0])?;
+                if configure_accepted_client_stream(&stream).is_err() {
                     continue;
                 }
-                let Some((recovery_limit, kind, ticket)) = admit_client(&mut stream, active)?
-                else {
+                if pending.candidate.is_some() {
+                    let _ = stream.write_all(&[0]);
                     continue;
+                }
+                let (recovery_limit, kind, ticket) = match admit_client(&mut stream, active) {
+                    Ok(Some(admitted)) => admitted,
+                    _ => continue,
                 };
                 if let Err(error) = begin_replacement(
                     stream,
@@ -1678,9 +1686,6 @@ fn accept_unix_clients(
                 ) {
                     eprintln!("fesTerm rejected a replacement session client: {error}");
                     return Ok(());
-                }
-                if let Some(observer) = observer {
-                    let _ = observer.send(ClientLoopEvent::ClientAttached);
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -2117,9 +2122,13 @@ struct PendingCandidate {
     activate: mpsc::SyncSender<()>,
     deadline: Instant,
     ticket: Option<festerm_host_protocol::OperationId>,
+    delta: VecDeque<(u64, ClientOutput)>,
     charged: usize,
     failed: bool,
 }
+
+// Include old and doubled allocations during a deque growth, not just payload.
+const CANDIDATE_FRAME_HEADROOM: usize = 3 * std::mem::size_of::<(u64, ClientOutput)>();
 
 #[cfg(all(test, windows))]
 fn replace_active<S: Read + Write + Send + 'static>(
@@ -2198,7 +2207,7 @@ fn admit_client(
             .ok()
             .and_then(|value| value.parse::<festerm_host_protocol::OperationId>().ok());
         if offset != bytes.len() || ticket.is_none() {
-            stream.write_all(&[0])?;
+            let _ = stream.write_all(&[0]);
             return Ok(None);
         }
         request[3] = b'4';
@@ -2225,12 +2234,12 @@ fn admit_client(
     let Some((_, kind)) = admitted.filter(|&(takeover, kind)| {
         (takeover || !occupied) && host_allows_attachment(ticket.as_ref(), kind)
     }) else {
-        stream.write_all(&[0])?;
+        let _ = stream.write_all(&[0]);
         return Ok(None);
     };
     let limit = limit as usize;
     if limit == 0 {
-        stream.write_all(&[0])?;
+        let _ = stream.write_all(&[0]);
         return Ok(None);
     }
     stream.write_all(&[1])?;
@@ -2341,7 +2350,8 @@ fn begin_replacement<S: Read + Write + Send + 'static>(
         activate: activate_tx,
         deadline: Instant::now() + ATTACH_RECOVERY_DEADLINE,
         ticket: ticket.cloned(),
-        charged: 0,
+        delta: VecDeque::new(),
+        charged: CANDIDATE_FRAME_HEADROOM,
         failed: false,
     });
     Ok(())
@@ -2351,16 +2361,16 @@ fn poll_replacement(
     active: &mut Option<ActiveClient>,
     retired: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     pending: &mut PendingOutput,
-) {
+) -> bool {
     let Some(candidate) = pending.candidate.as_ref() else {
-        return;
+        return false;
     };
     let adopted = match candidate.adopted.try_recv() {
         Ok(()) => true,
         Err(mpsc::TryRecvError::Empty) => false,
         Err(mpsc::TryRecvError::Disconnected) => {
             pending.cancel_replacement(retired);
-            return;
+            return false;
         }
     };
     if candidate.failed
@@ -2368,21 +2378,24 @@ fn poll_replacement(
         || host_attachment_cancelled(candidate.ticket.as_ref(), candidate.client.kind)
     {
         pending.cancel_replacement(retired);
-        return;
+        return false;
     }
     if !adopted {
-        return;
+        return false;
     }
     if host_commit_attachment(candidate.ticket.as_ref(), candidate.client.kind).is_err() {
         pending.cancel_replacement(retired);
-        return;
+        return false;
     }
     let candidate = pending.candidate.take().expect("checked candidate");
     retire_active(active, retired, true);
+    pending.staged = candidate.delta;
     *active = Some(candidate.client);
     if candidate.activate.try_send(()).is_err() {
         retire_active(active, retired, false);
+        return false;
     }
+    true
 }
 
 fn retire_active(
@@ -2470,6 +2483,8 @@ struct PendingOutput {
     /// rather than delivered, because the replacement already received a fresh
     /// recovery snapshot that includes it.
     held: VecDeque<(u64, ClientOutput)>,
+    /// Byte-bounded post-snapshot output drains before newer active output.
+    staged: VecDeque<(u64, ClientOutput)>,
     candidate: Option<PendingCandidate>,
 }
 
@@ -2483,7 +2498,7 @@ impl PendingOutput {
     }
 
     fn is_pending(&self) -> bool {
-        !self.held.is_empty()
+        !self.staged.is_empty() || !self.held.is_empty()
     }
 
     fn hold(&mut self, generation: Option<u64>, data: Vec<u8>) {
@@ -2500,12 +2515,18 @@ impl PendingOutput {
                 ClientOutput::Data(bytes) | ClientOutput::RecoverySync(bytes) => bytes.len(),
                 ClientOutput::ResizeApplied(_) | ClientOutput::Exited => 16,
             };
-            candidate.charged = candidate.charged.saturating_add(bytes);
-            if candidate.charged > 512 * 1024
-                || candidate.client.output.try_send(output.clone()).is_err()
-            {
+            // Charge payload plus queue allocation headroom, not a frame count.
+            candidate.charged = candidate
+                .charged
+                .saturating_add(bytes)
+                .saturating_add(CANDIDATE_FRAME_HEADROOM);
+            if candidate.charged > 512 * 1024 {
                 candidate.failed = true;
                 candidate.client.stolen.store(true, Ordering::Release);
+            } else {
+                candidate
+                    .delta
+                    .push_back((candidate.client.generation, output.clone()));
             }
         }
         let Some(generation) = generation else {
@@ -2530,7 +2551,15 @@ fn flush_pending_output(
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     pending: &mut PendingOutput,
 ) {
-    while let Some((generation, output)) = pending.held.pop_front() {
+    loop {
+        let queue = if pending.staged.is_empty() {
+            &mut pending.held
+        } else {
+            &mut pending.staged
+        };
+        let Some((generation, output)) = queue.pop_front() else {
+            break;
+        };
         let Some(client) = active.as_ref() else {
             continue;
         };
@@ -2540,7 +2569,7 @@ fn flush_pending_output(
         match client.output.try_send(output) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(output)) => {
-                pending.held.push_front((generation, output));
+                queue.push_front((generation, output));
                 break;
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -4215,6 +4244,7 @@ fn lock_session_file(
     Ok(lock)
 }
 
+#[track_caller]
 fn bounded_registry_lock(file: &File, exclusive: bool) -> io::Result<()> {
     let deadline = std::time::Instant::now() + Duration::from_millis(500);
     loop {
@@ -4231,16 +4261,30 @@ fn bounded_registry_lock(file: &File, exclusive: bool) -> io::Result<()> {
             {
                 thread::sleep(Duration::from_millis(20))
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                sessiond_trace(format_args!(
+                    "native lock refused pid={} exclusive={} caller={} error={error}",
+                    process::id(),
+                    exclusive,
+                    std::panic::Location::caller()
+                ));
+                return Err(error);
+            }
         }
     }
 }
 
-fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
-    if let Some(parent) = path.parent() {
-        if let Some(directory) = private_runtime_directory(parent)? {
+struct RegistryAccess {
+    path: PathBuf,
+    lock_file: File,
+    directory: Option<File>,
+}
+
+impl RegistryAccess {
+    fn read(&self) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
+        if let Some(directory) = &self.directory {
             return match festerm_sessiond::private_storage::read_private(
-                &directory,
+                directory,
                 Path::new("registry.json"),
                 4 * 1024 * 1024,
             ) {
@@ -4251,22 +4295,18 @@ fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::
                 Err(error) => Err(error.into()),
             };
         }
+        if !self.path.exists() {
+            return Ok(SessionRegistry::default());
+        }
+        let bytes = fs::read(&self.path)?;
+        if bytes.is_empty() {
+            return Ok(SessionRegistry::default());
+        }
+        Ok(serde_json::from_slice(&bytes)?)
     }
-    if !path.exists() {
-        return Ok(SessionRegistry::default());
-    }
-    let bytes = fs::read(path)?;
-    if bytes.is_empty() {
-        return Ok(SessionRegistry::default());
-    }
-    Ok(serde_json::from_slice(&bytes)?)
 }
 
-fn open_registry_lock_file() -> Result<(PathBuf, File), Box<dyn std::error::Error>> {
-    open_registry_lock_file_in(&festerm_sessiond::runtime_root()?)
-}
-
-fn open_registry_lock_file_in(root: &Path) -> Result<(PathBuf, File), Box<dyn std::error::Error>> {
+fn open_registry_lock_file_in(root: &Path) -> Result<RegistryAccess, Box<dyn std::error::Error>> {
     let path = root.join("registry.json");
     let lock_path = root.join("registry.lock");
     let parent = lock_path.parent().unwrap_or_else(|| Path::new("."));
@@ -4288,7 +4328,11 @@ fn open_registry_lock_file_in(root: &Path) -> Result<(PathBuf, File), Box<dyn st
             }
             Err(error) => return Err(error.into()),
         };
-        return Ok((path, lock_file));
+        return Ok(RegistryAccess {
+            path,
+            lock_file,
+            directory: Some(directory),
+        });
     }
     let lock_file = OpenOptions::new()
         .create(true)
@@ -4297,7 +4341,11 @@ fn open_registry_lock_file_in(root: &Path) -> Result<(PathBuf, File), Box<dyn st
         .write(true)
         .open(&lock_path)?;
     set_file_mode(&lock_path, 0o600)?;
-    Ok((path, lock_file))
+    Ok(RegistryAccess {
+        path,
+        lock_file,
+        directory: None,
+    })
 }
 
 fn with_registry_lock<T>(
@@ -4311,33 +4359,40 @@ fn with_registry_lock_in<T>(
     mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
     mut before_prepare: impl FnMut(),
 ) -> Result<T, Box<dyn std::error::Error>> {
-    let (path, lock_file) = open_registry_lock_file_in(root)?;
+    let access = open_registry_lock_file_in(root)?;
+    let lock_file = &access.lock_file;
     let started = Instant::now();
     sessiond_trace(format_args!("registry acquire pid={}", process::id()));
-    bounded_registry_lock(&lock_file, true)?;
+    bounded_registry_lock(lock_file, true)?;
+    let acquired = Instant::now();
     sessiond_trace(format_args!(
         "registry acquired pid={} after={:?}",
         process::id(),
         started.elapsed()
     ));
-    let before = read_registry_at(&path)?;
+    let before = access.read()?;
     let mut registry = before.clone();
     let result = operation(&mut registry);
     if result.is_err() || registry == before {
-        FileExt::unlock(&lock_file)?;
+        FileExt::unlock(lock_file)?;
+        sessiond_trace(format_args!(
+            "registry unchanged pid={} held={:?}",
+            process::id(),
+            acquired.elapsed()
+        ));
         return result;
     }
-    let Some(directory) = path
-        .parent()
-        .map(private_runtime_directory)
-        .transpose()?
-        .flatten()
-    else {
-        write_registry_at(&path, &registry)?;
-        FileExt::unlock(&lock_file)?;
+    let Some(directory) = &access.directory else {
+        write_registry_at(&access.path, &registry)?;
+        FileExt::unlock(lock_file)?;
+        sessiond_trace(format_args!(
+            "registry effect released pid={} held={:?}",
+            process::id(),
+            acquired.elapsed()
+        ));
         return result;
     };
-    FileExt::unlock(&lock_file)?;
+    FileExt::unlock(lock_file)?;
     // Slow durability barriers must not hold the discovery/admission lock.
     // Rebase disjoint updates and check same-name lineage under that lock
     // immediately before the atomic rename; legacy writers remain serialized.
@@ -4350,15 +4405,21 @@ fn with_registry_lock_in<T>(
             return Err("native registry exceeds metadata bound".into());
         }
         let mut prepared = festerm_sessiond::private_storage::PreparedCheckpoint::prepare(
-            &directory,
+            directory,
             Path::new("registry.json"),
             &bytes,
         )?;
-        bounded_registry_lock(&lock_file, true)?;
-        let current = read_registry_at(&path)?;
+        bounded_registry_lock(lock_file, true)?;
+        let publishing = Instant::now();
+        let current = access.read()?;
         if current == base {
             prepared.publish()?;
-            FileExt::unlock(&lock_file)?;
+            FileExt::unlock(lock_file)?;
+            sessiond_trace(format_args!(
+                "registry publication released pid={} held={:?}",
+                process::id(),
+                publishing.elapsed()
+            ));
             prepared.sync()?;
             sessiond_trace(format_args!(
                 "registry published pid={} total={:?}",
@@ -4368,7 +4429,7 @@ fn with_registry_lock_in<T>(
             return result;
         }
         let rebased = rebase_registry_change(&before, &desired, &current);
-        FileExt::unlock(&lock_file)?;
+        FileExt::unlock(lock_file)?;
         registry = rebased?;
         if registry == current {
             return result;
@@ -4434,10 +4495,30 @@ fn write_registry_at(
 }
 
 fn load_registry() -> Result<SessionRegistry, Box<dyn std::error::Error>> {
-    let (path, lock_file) = open_registry_lock_file()?;
-    bounded_registry_lock(&lock_file, false)?;
-    let result = read_registry_at(&path);
-    FileExt::unlock(&lock_file)?;
+    load_registry_in(&festerm_sessiond::runtime_root()?, || {})
+}
+
+fn load_registry_in(
+    root: &Path,
+    before_read: impl FnOnce(),
+) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
+    let access = open_registry_lock_file_in(root)?;
+    if access.directory.is_some() {
+        // Private writers publish complete atomic checkpoints. Read-only
+        // snapshots must not pin the mutation lock during filesystem I/O.
+        before_read();
+        return access.read();
+    }
+    bounded_registry_lock(&access.lock_file, false)?;
+    let acquired = Instant::now();
+    before_read();
+    let result = access.read();
+    FileExt::unlock(&access.lock_file)?;
+    sessiond_trace(format_args!(
+        "registry read released pid={} held={:?}",
+        process::id(),
+        acquired.elapsed()
+    ));
     result
 }
 
@@ -6182,6 +6263,7 @@ mod tests {
             .unwrap();
         let first_terminal = read_recovery_terminal(&mut first);
         assert_eq!(first_row_text(&first_terminal), "detached");
+        assert!(event_receiver.try_recv().is_err());
         acknowledge_recovery(&mut first);
         assert_eq!(
             event_receiver.recv().unwrap(),
@@ -6207,6 +6289,7 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         let _ = read_recovery_terminal(&mut rejected);
+        assert!(event_receiver.try_recv().is_err());
         drop(rejected);
         write_client_frame(&mut first, CLIENT_FRAME_INPUT, b"survived failed takeover").unwrap();
         match command_receiver
@@ -7128,6 +7211,103 @@ mod tests {
     }
 
     #[test]
+    fn private_registry_snapshot_read_does_not_pin_publication_lock() {
+        let root = env::current_dir()
+            .unwrap()
+            .join(format!("registry-reader-{}", uuid::Uuid::new_v4()));
+        let directory = festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        thread::scope(|scope| {
+            let reader_root = &root;
+            let reader = scope.spawn(move || {
+                load_registry_in(reader_root, || {
+                    ready_tx.send(()).unwrap();
+                    continue_rx.recv().unwrap();
+                })
+                .map_err(|error| error.to_string())
+            });
+            ready_rx.recv().unwrap();
+            let lock = festerm_sessiond::private_storage::open_private_file(
+                &directory,
+                Path::new("registry.lock"),
+                false,
+            )
+            .unwrap();
+            let available = FileExt::try_lock_exclusive(&lock).is_ok();
+            if available {
+                FileExt::unlock(&lock).unwrap();
+            }
+            let published = with_registry_lock_in(
+                &root,
+                |registry| {
+                    registry
+                        .foreign
+                        .insert("published".into(), serde_json::json!({"future": 1}));
+                    Ok(())
+                },
+                || {},
+            )
+            .map_err(|error| error.to_string());
+            continue_tx.send(()).unwrap();
+            let observed = reader.join().unwrap();
+            fs::remove_dir_all(&root).unwrap();
+            assert!(available, "snapshot reading pinned the publication lock");
+            published.unwrap();
+            assert!(observed.unwrap().foreign.contains_key("published"));
+        });
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn registry_publication_retains_validated_directory_across_path_replacement() {
+        let root = env::current_dir()
+            .unwrap()
+            .join(format!("registry-retained-{}", uuid::Uuid::new_v4()));
+        let moved = root.with_extension("retained");
+        let directory = festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+        let mut replaced = false;
+        let result = with_registry_lock_in(
+            &root,
+            |registry| {
+                registry
+                    .foreign
+                    .insert("owned".into(), serde_json::json!({"future": 1}));
+                Ok(())
+            },
+            || {
+                if !replaced {
+                    replaced = true;
+                    fs::rename(&root, &moved).unwrap();
+                    let replacement =
+                        festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+                    festerm_sessiond::private_storage::replace_private(
+                        &replacement,
+                        Path::new("registry.json"),
+                        br#"{"sessions":{"unrelated":{"future":2}}}"#,
+                    )
+                    .unwrap();
+                }
+            },
+        );
+        let bytes = festerm_sessiond::private_storage::read_private(
+            &directory,
+            Path::new("registry.json"),
+            4 * 1024 * 1024,
+        )
+        .unwrap();
+        let original: SessionRegistry = serde_json::from_slice(&bytes).unwrap();
+        let replacement = open_registry_lock_file_in(&root).unwrap().read().unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&moved).unwrap();
+        result.unwrap();
+        assert!(original.foreign.contains_key("owned"));
+        assert!(!original.foreign.contains_key("unrelated"));
+        assert!(replacement.foreign.contains_key("unrelated"));
+        assert!(!replacement.foreign.contains_key("owned"));
+    }
+
+    #[test]
     fn registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers() {
         let root = env::current_dir()
             .unwrap()
@@ -7193,7 +7373,7 @@ mod tests {
             1,
             "effects must not replay during rebase"
         );
-        let registry = read_registry_at(&root.join("registry.json")).unwrap();
+        let registry = open_registry_lock_file_in(&root).unwrap().read().unwrap();
         assert_eq!(registry.foreign.len(), 2);
         fs::remove_dir_all(root).unwrap();
     }
@@ -7220,21 +7400,25 @@ mod tests {
 
     impl GenerationFixture {
         fn new() -> Self {
-            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let base = if cfg!(unix) {
-                PathBuf::from("/tmp")
-            } else {
-                env::temp_dir()
-            };
-            let path = base.join(format!(
-                "fsd-g-{}-{}-{}",
-                process::id(),
-                now_ms(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&path).unwrap();
-            set_dir_mode(&path, 0o700).unwrap();
-            Self(path)
+            #[cfg(unix)]
+            {
+                Self(unique_test_directory("generation"))
+            }
+            #[cfg(windows)]
+            {
+                static NEXT: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                let base = env::temp_dir();
+                let path = base.join(format!(
+                    "fsd-g-{}-{}-{}",
+                    process::id(),
+                    now_ms(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
+                fs::create_dir(&path).unwrap();
+                set_dir_mode(&path, 0o700).unwrap();
+                Self(path)
+            }
         }
 
         fn record(&self, name: &str, generation: u128) -> SessionRecord {
@@ -7578,8 +7762,17 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn unique_test_directory(label: &str) -> PathBuf {
-        env::temp_dir().join(format!("fsd-{label}-{}-{}", process::id(), now_ms()))
+    fn unique_test_directory(_label: &str) -> PathBuf {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join(format!(
+                "ut-{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..12]
+            ));
+        festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+        root
     }
 
     #[cfg(unix)]
@@ -7658,6 +7851,88 @@ mod tests {
         });
     }
     #[test]
+    fn pending_candidate_many_small_chunks_preserves_writer_and_ordered_delta() {
+        let worker = || {
+            let (stop, receiver) = mpsc::channel::<()>();
+            (
+                stop,
+                thread::spawn(move || {
+                    let _ = receiver.recv();
+                    Ok(())
+                }),
+            )
+        };
+        let (old_stop, old_thread) = worker();
+        let (candidate_stop, candidate_thread) = worker();
+        let (old_output, old_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (candidate_output, candidate_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (adopt, adopted) = mpsc::sync_channel(1);
+        let (activate, _activated) = mpsc::sync_channel(1);
+        let old_stolen = Arc::new(AtomicBool::new(false));
+        let mut active = Some(ActiveClient {
+            generation: 1,
+            kind: AttachKind::Local,
+            output: old_output,
+            stolen: old_stolen.clone(),
+            thread: old_thread,
+        });
+        let mut pending = PendingOutput {
+            candidate: Some(PendingCandidate {
+                client: ActiveClient {
+                    generation: 2,
+                    kind: AttachKind::Remote,
+                    output: candidate_output,
+                    stolen: Arc::new(AtomicBool::new(false)),
+                    thread: candidate_thread,
+                },
+                adopted,
+                activate,
+                deadline: Instant::now() + ATTACH_RECOVERY_DEADLINE,
+                ticket: None,
+                delta: VecDeque::new(),
+                charged: CANDIDATE_FRAME_HEADROOM,
+                failed: false,
+            }),
+            ..PendingOutput::default()
+        };
+        let mut retired = Vec::new();
+        for byte in 0..100u8 {
+            send_to_active(&mut active, &mut retired, &mut pending, vec![byte]);
+            assert_eq!(old_rx.try_recv().unwrap(), ClientOutput::Data(vec![byte]));
+            poll_replacement(&mut active, &mut retired, &mut pending);
+            assert!(pending.candidate.is_some());
+            assert_eq!(active.as_ref().unwrap().generation, 1);
+            assert!(!old_stolen.load(Ordering::Acquire));
+        }
+        adopt.send(()).unwrap();
+        poll_replacement(&mut active, &mut retired, &mut pending);
+        assert_eq!(active.as_ref().unwrap().generation, 2);
+        assert!(old_stolen.load(Ordering::Acquire));
+        let mut received = Vec::new();
+        loop {
+            flush_pending_output(&mut active, &mut retired, &mut pending);
+            while let Ok(output) = candidate_rx.try_recv() {
+                received.push(output);
+            }
+            if !pending.is_pending() {
+                break;
+            }
+        }
+        assert_eq!(
+            received,
+            (0..100u8)
+                .map(|byte| ClientOutput::Data(vec![byte]))
+                .collect::<Vec<_>>()
+        );
+        retire_active(&mut active, &mut retired, false);
+        drop(old_stop);
+        drop(candidate_stop);
+        for worker in retired {
+            worker.join().unwrap().unwrap();
+        }
+    }
+
+    #[test]
     fn pending_candidate_delta_overflow_preserves_current_writer() {
         let worker = || {
             let (stop, receiver) = mpsc::channel::<()>();
@@ -7694,13 +7969,14 @@ mod tests {
                 activate,
                 deadline: Instant::now() + ATTACH_RECOVERY_DEADLINE,
                 ticket: None,
+                delta: VecDeque::new(),
                 charged: 0,
                 failed: false,
             }),
             ..PendingOutput::default()
         };
         let mut retired = Vec::new();
-        for byte in 0..=CLIENT_QUEUE_CAPACITY {
+        for byte in 0..=128 {
             let data = vec![byte as u8; 4096];
             send_to_active(&mut active, &mut retired, &mut pending, data.clone());
             assert_eq!(old_rx.try_recv().unwrap(), ClientOutput::Data(data));

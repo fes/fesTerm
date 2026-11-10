@@ -32,6 +32,56 @@ within the shared limit and reports/quarantines rejected entries. Typed adapter
 errors distinguish conflicts and portable-input failures, while desktop export
 has its own status rather than claiming a save. Focused regressions exercise
 recovery across an unrelated save and the actual experimental CI feature path.
+## Qualifying the corrected local session-control integration
+
+The November 10 ADR 0084 correction normally integrates main `8ac8070d`,
+contracts `7b61af7b`, lifecycle `b0e5bff3`, enrollment `e893cdb1` and signed
+channel `6c795246`. ADR 0085 and native checkpoint staging cleanup are preserved.
+The parallel lifecycle publication helper remains delegated to shared atomic
+no-replace storage, with both interrupted-write and delegated-wrapper regressions.
+HOST reserved adoption additionally requires its own exact native launch journal.
+Attachment test observers now report actual recovery adoption/writer activation,
+not merely an accepted candidate. Unix socket/generation unit fixtures use
+private checkout roots.
+
+On installed Homebrew stable Rust/Cargo 1.97.1, the committed source passed:
+
+```sh
+cargo build -q -p festerm-pty-test-child
+cargo test -q -p festerm-sessiond --lib --bins --test host_control --test native_daemon --test detached_native -- --test-threads=2
+cargo test -q -p festerm-host-protocol --test contracts
+cargo test -q -p festerm-tunnel-bridge --features owner-auth --lib host_owner -- --test-threads=2
+cargo test -q -p festerm-tunnel-bridge --features owner-auth --lib native_owner
+cargo test -q -p festerm-tunnel-bridge --features owner-auth --lib interrupted_private_publication -- --test-threads=2
+cargo test -q -p festerm-host-setup --features owner-enrollment --lib -- --test-threads=2
+cargo clippy -q -p festerm-sessiond -p festerm-host-protocol -p festerm-tunnel-bridge -p festerm-host-setup --all-targets --features festerm-tunnel-bridge/owner-auth,festerm-host-setup/owner-enrollment -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py
+git diff --check
+```
+
+The runs used an exclusive per-worktree `CARGO_TARGET_DIR`, two build jobs,
+zero dev/test debug info and disabled incremental compilation. Native integration
+selected a fresh private in-checkout `FESTERM_SESSIOND_TEST_RUNTIME_ROOT`; scratch
+`TMPDIR` also remained inside that checkout. No production service or credentials
+were used. Counts: sessiond library 109, binary 70, detached native 1, host control
+25, native daemon 17 passed/7 existing ignored; protocol 13; owner/channel 13 and
+native-owner-reference 2; interrupted publication 1; setup 38 passed/1 existing
+signer ignored. Total: 289 passed, eight existing ignores. Traceability: 311
+edges, zero broken references. Strict affected all-target clippy passed; the
+vendored Dev Tunnels dependency still emits its existing dead-code warning.
+
+Initial attempts retained real failures: Homebrew Cargo does not accept
+`+stable`; an unbuilt fixture child caused the expected 25 setup failures before
+its explicit build; the complete unit run exposed a premature attachment event.
+The new reserved-journal test was additionally proved RED with unowned adoption
+restored, then GREEN with the strict policy. Neither assertion/deadline nor
+existing ignore was weakened. Remaining gates are independent integrated
+security/reliability/scope review, Linux/Windows native qualification (the host
+control integration suite is Unix-only), ignored native smoke/churn, installed
+service/reboot/job/breakaway behavior and physical mobile reconnect grace.
+No endpoint, native-service, GUI or whole-ADR acceptance is claimed.
+
 ## Separating owner consent from the current host issuer
 
 The ADR 0084 contract correctly refuses Ensure/Create advertisements without
@@ -8842,6 +8892,65 @@ No HOST listener, enrollment shortcut, GUI, service registration or cloud action
 is introduced. Native reboot/ConPTY/service/mobile evidence and independent
 review remain prerequisites; the ADR stays Proposed.
 
+Independent antagonist review (#687) caught a dangerous fallthrough: reconciling a
+reservation with no native launch journal could still execute the helper before
+fresh admission. The read-only path now stops before every fresh reservation,
+and revoked records do no native work. Active, non-stopped lease regressions
+cover the original failure rather than relying on prior termination to hide it.
+
+The same review exposed historical bookkeeping masquerading as active capacity.
+An initial archive-based remedy was rejected because disk still grew forever.
+Captured authenticated issuance scopes now retire old operation namespaces
+atomically, keeping a bounded compact ledger without archives. Old requests
+stay Stale; new explicit operations can keep their logical ID and get fresh
+generations. Fixed native slots bound name locks/lifecycle history, while exact
+generation cleanup requires sealed helpers and positive absence proof.
+Reclamation never sweeps other owners or revoked fences. Revoked live shells
+remain accounted and locally manageable until exact end and new local consent.
+Transient observations no longer turn Running into Launching.
+
+The full native takeover test then exposed the actual registry contention:
+durable checkpoint staging and directory synchronization held the same lock
+used by discovery/admission readers. Instrumented owned runs held it for
+105–426 ms even when passing, close to the unchanged 500-ms refusal deadline.
+Checkpoints now prepare and synchronize outside that lock, then revalidate and
+atomically publish under a short lock. Disjoint updates rebase without replaying
+effects; same-name replacements refuse. Directory synchronization follows
+unlock. Read-only/no-op operations no longer checkpoint, and exact-generation
+bridge admission performs native IPC outside the registry lock. Deterministic
+stalled-preparation/disjoint-writer and conflicting-generation regressions cover
+the boundary rather than increasing deadlines.
+
+A second real takeover regression found adoption waiting on the daemon's sole
+event loop, starving the old writer. One bounded nonblocking candidate now stages
+post-snapshot output and activates input only after actual writer commit.
+Per-generation opaque authorities remove the global session journal from relay
+and heartbeat hotpaths; intentional detach has a separate receipt-only publication
+check, never permission to act on a stopped lease. Healthy inventory remains
+available beside authorized per-target Unknown. Owned-daemon tests cover churn,
+concurrent generations, cancellation, revocation and interrupted cleanup; no
+installed services, accounts or user sessions were touched. Endpoint integration,
+independent gates and native/device qualification remain open.
+
+Further native review caught two different ways a harmless pending attachment
+could hurt the current shell: a closed client's setup/refusal error escaped into
+daemon shutdown, and a 64-frame pre-adoption queue rejected small output bursts
+far below the byte budget. Refusals are now connection-local; byte-charged staging
+retains ordered delta until actual ownership commit without enlarging the live
+queue. Owned child tests exercise closed candidates and more than 64 delayed
+output chunks while the old writer remains usable. Issuer publication also
+reauthorizes the actual post-rotation namespace under the durable reservation,
+rather than advertising a namespace its policy callback never observed.
+
+Concurrent owned runs subsequently captured the remaining startup refusal:
+a starter's read-only file/ACL inspection held the shared native registry lock
+for 635–812 ms while the daemon's unchanged 500-ms publication lock expired.
+Retaining the validated directory alone did not solve it. Private atomic
+checkpoint snapshots now read without pinning the mutation lock; mutations keep
+serialized fresh CAS and handle-relative publication, and nonprivate legacy
+reads retain locking. A deliberately stalled reader regression proves mutation
+can progress, while a path-replacement regression prevents cross-directory
+publication. This is native lock evidence, not a build-cache attribution.
 ### Protected owner enrollment without inventing authenticated transport
 
 ADR 0084's owner proof needs more than a bearer and an account label.

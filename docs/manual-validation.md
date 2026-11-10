@@ -3449,7 +3449,8 @@ pagination and budget evidence. This is not a native host endpoint, installation
 owner-enrollment ceremony or actual pinned-channel proof.
 Protected local enrollment/revocation/rotation and opaque native-vault key APIs
 now have deterministic fixture evidence; real pinned SSH streams exercise the
-explicit missing-exporter refusal, not successful owner channel authentication.
+signed channel exporter and exact-stream owner proof, not an installed endpoint
+or native-vault qualification.
 No live credentials/services were used or installed by this slice.
 
 The stage-3 unexposed dispatcher/paired transport adds automated owned-duplex
@@ -3508,6 +3509,21 @@ generation revocation, stopped-detach publication-only receipts, initial
 temporary cancellation and revoked-live local end/reconsent. Missing/unsupported
 journals never reset issuance. These are local fixture evidence, not endpoint
 readiness or complete disk-fault/native lifecycle qualification.
+Additional regressions cover actual-current post-rotation publication admission,
+stalled private snapshot readers without a pinned mutation lock, retained-directory
+CAS across path replacement, closed pending clients and ordered adoption of more
+than 64 small output chunks. The native fixture waits for its real child's READY
+output before obtaining the asserted recovery snapshot; no assertion, timeout or
+native acceptance requirement is weakened.
+The integrated-main regressions
+`host_reservation_requires_its_exact_native_launch_journal` and
+`second_client_replaces_first_client_and_first_receives_stolen_notice` cover
+missing/foreign native launch journals and committed-only attachment events.
+Unix socket/generation unit fixtures use fresh private in-checkout roots;
+native integration runs select a fresh owned root with
+`FESTERM_SESSIOND_TEST_RUNTIME_ROOT`, never production runtime state.
+The journal regression has a retained RED proof with unowned adoption restored.
+macOS automated evidence does not substitute for Linux/Windows native gates.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
