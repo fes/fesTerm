@@ -1604,3 +1604,8 @@ HOST-06 currently has only the independently testable
 metadata, immutable verified bytes and bounded archive allowlists. It does not
 implement service switching, rollback or migration; the legacy Linux script
 path is not promoted to authenticated setup.
+
+HOST-02/03 integrated session regressions additionally require the exact native
+launch journal, not matching metadata alone, and observe attachment only after
+recovery adoption/writer activation; abandoned candidates are not Attached.
+These remain local automated evidence, not endpoint or native-platform acceptance.

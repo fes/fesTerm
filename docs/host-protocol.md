@@ -182,6 +182,9 @@ Read-only native snapshots use complete private atomic checkpoints without
 holding the mutation lock across file/ACL I/O. Mutations retain the validated
 directory handle and serialize fresh CAS checks/publication; legacy nonprivate
 reads remain locked. Native admission still fences exact generation and writer.
+HOST reserved launches retain ADR 0085's owned-journal policy: matching native
+metadata alone cannot adopt a generation whose exact launch journal is missing.
+The ordinary detached-launch compatibility path keeps its existing policy.
 Uncertain pending reservations count against the two-create bound until safely
 adopted or explicitly abandoned locally. `issuance_epoch(owner, admit)` durably
 publishes the current namespace; a caller captures it once in `IssuedOperation`.

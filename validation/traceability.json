@@ -5583,8 +5583,9 @@
         "host_owner_mutating_policy_requires_advertised_issuance_epoch",
         "native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated",
         "pending_candidate_many_small_chunks_preserves_writer_and_ordered_delta",
-        "pending_candidate_delta_overflow_preserves_current_writer"
-        "host_owner_fence_rejects_changed_intent_for_the_same_operation",
+        "pending_candidate_delta_overflow_preserves_current_writer",
+        "host_reservation_requires_its_exact_native_launch_journal",
+        "second_client_replaces_first_client_and_first_receives_stolen_notice",
         "protected_owner_enrollment_is_explicit_persistent_and_not_creation_consent",
         "protected_owner_rotation_revokes_pending_and_live_admission_and_stale_results",
         "protected_owner_vault_fences_disk_rollback_foreign_installation_and_missing_anchor",

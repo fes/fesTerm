@@ -734,6 +734,8 @@ Its local `host_control::SessionControl` journals owner/logical identity,
 immutable launch intent, reserved generations, operation results and revocation
 revisions through the existing private no-follow/atomic storage boundary. It
 uses the real detached native launcher and single-writer daemon admission.
+HOST reservations require their exact native launch journal, preserving
+ADR 0085's refusal to adopt an unrelated live generation from metadata alone.
 Read-only private native checkpoint snapshots do not hold the mutation lock
 during file/ACL I/O; serialized mutation CAS retains its validated directory
 handle across publication. Legacy nonprivate reads remain locked.
@@ -791,8 +793,10 @@ identifier and role-ordered actual channel IDs, excluding no-KEX outer relays.
 Client signing requires its privately captured actual pin and matching current
 stream; server authentication transfers that stream and owner/guard together.
 Endpoint integration and independent security review are mandatory before
-new remote capabilities; all new capabilities default denied. No session routing,
-creation, migration or lifetime-supervisor implementation is claimed by this slice.
+new remote capabilities; all new capabilities default denied. The enrollment/
+channel prerequisite does not itself implement session routing, creation,
+migration or lifetime supervision; the separate local control backend above
+does not expose an endpoint.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

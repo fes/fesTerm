@@ -498,6 +498,14 @@ checkpoint reader held the shared registry lock beyond the unchanged 500-ms
 mutation deadline. Private atomic snapshot readers no longer pin that lock;
 mutations keep serialized CAS and retained-directory protections. Deterministic
 stalled-reader and directory-replacement tests cover those boundaries.
+Integration with current main preserves ADR 0085's owned-launch policy:
+HOST creation and reconciliation require the exact native launch journal,
+not merely matching live generation/recipe metadata. The
+`host_reservation_requires_its_exact_native_launch_journal` regression refuses
+missing/foreign journals and wrong generations without displacing an attachment.
+`second_client_replaces_first_client_and_first_receives_stolen_notice` now
+observes attachment only after actual recovery adoption/writer activation;
+abandoned candidates emit no successful attachment event.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
@@ -592,6 +600,8 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor`,
   `current_absence_requires_fresh_create_permission_but_live_resume_does_not`,
   `failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create`,
+  `host_reservation_requires_its_exact_native_launch_journal`,
+  `second_client_replaces_first_client_and_first_receives_stolen_notice`,
   `cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner`,
   `lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace` and
   `lease_supervisor_refuses_revision_rollback_or_foreign_generation`.

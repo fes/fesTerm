@@ -1533,7 +1533,11 @@ fn session_client_loop<R: Read + Send + 'static>(
             shutdown();
             break Err(error);
         }
-        poll_replacement(&mut active, &mut retired_clients, &mut pending);
+        if poll_replacement(&mut active, &mut retired_clients, &mut pending) {
+            if let Some(observer) = observer.as_ref() {
+                let _ = observer.send(ClientLoopEvent::ClientAttached);
+            }
+        }
         // Output the client has not taken yet must be delivered before any more
         // is consumed from the reader channel, so delivery stays ordered.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
@@ -1541,7 +1545,6 @@ fn session_client_loop<R: Read + Send + 'static>(
             &listener,
             &mut active,
             terminal,
-            observer.as_ref(),
             &client_input_tx,
             &mut next_generation,
             &mut pending,
@@ -1650,7 +1653,6 @@ fn accept_unix_clients(
     listener: &UnixListener,
     active: &mut Option<ActiveClient>,
     terminal: &Terminal,
-    observer: Option<&mpsc::Sender<ClientLoopEvent>>,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
     pending: &mut PendingOutput,
@@ -1684,9 +1686,6 @@ fn accept_unix_clients(
                 ) {
                     eprintln!("fesTerm rejected a replacement session client: {error}");
                     return Ok(());
-                }
-                if let Some(observer) = observer {
-                    let _ = observer.send(ClientLoopEvent::ClientAttached);
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
@@ -2362,16 +2361,16 @@ fn poll_replacement(
     active: &mut Option<ActiveClient>,
     retired: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     pending: &mut PendingOutput,
-) {
+) -> bool {
     let Some(candidate) = pending.candidate.as_ref() else {
-        return;
+        return false;
     };
     let adopted = match candidate.adopted.try_recv() {
         Ok(()) => true,
         Err(mpsc::TryRecvError::Empty) => false,
         Err(mpsc::TryRecvError::Disconnected) => {
             pending.cancel_replacement(retired);
-            return;
+            return false;
         }
     };
     if candidate.failed
@@ -2379,14 +2378,14 @@ fn poll_replacement(
         || host_attachment_cancelled(candidate.ticket.as_ref(), candidate.client.kind)
     {
         pending.cancel_replacement(retired);
-        return;
+        return false;
     }
     if !adopted {
-        return;
+        return false;
     }
     if host_commit_attachment(candidate.ticket.as_ref(), candidate.client.kind).is_err() {
         pending.cancel_replacement(retired);
-        return;
+        return false;
     }
     let candidate = pending.candidate.take().expect("checked candidate");
     retire_active(active, retired, true);
@@ -2394,7 +2393,9 @@ fn poll_replacement(
     *active = Some(candidate.client);
     if candidate.activate.try_send(()).is_err() {
         retire_active(active, retired, false);
+        return false;
     }
+    true
 }
 
 fn retire_active(
@@ -6262,6 +6263,7 @@ mod tests {
             .unwrap();
         let first_terminal = read_recovery_terminal(&mut first);
         assert_eq!(first_row_text(&first_terminal), "detached");
+        assert!(event_receiver.try_recv().is_err());
         acknowledge_recovery(&mut first);
         assert_eq!(
             event_receiver.recv().unwrap(),
@@ -6287,6 +6289,7 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         let _ = read_recovery_terminal(&mut rejected);
+        assert!(event_receiver.try_recv().is_err());
         drop(rejected);
         write_client_frame(&mut first, CLIENT_FRAME_INPUT, b"survived failed takeover").unwrap();
         match command_receiver
@@ -7397,21 +7400,25 @@ mod tests {
 
     impl GenerationFixture {
         fn new() -> Self {
-            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let base = if cfg!(unix) {
-                PathBuf::from("/tmp")
-            } else {
-                env::temp_dir()
-            };
-            let path = base.join(format!(
-                "fsd-g-{}-{}-{}",
-                process::id(),
-                now_ms(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&path).unwrap();
-            set_dir_mode(&path, 0o700).unwrap();
-            Self(path)
+            #[cfg(unix)]
+            {
+                Self(unique_test_directory("generation"))
+            }
+            #[cfg(windows)]
+            {
+                static NEXT: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                let base = env::temp_dir();
+                let path = base.join(format!(
+                    "fsd-g-{}-{}-{}",
+                    process::id(),
+                    now_ms(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
+                fs::create_dir(&path).unwrap();
+                set_dir_mode(&path, 0o700).unwrap();
+                Self(path)
+            }
         }
 
         fn record(&self, name: &str, generation: u128) -> SessionRecord {
@@ -7755,8 +7762,17 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn unique_test_directory(label: &str) -> PathBuf {
-        env::temp_dir().join(format!("fsd-{label}-{}-{}", process::id(), now_ms()))
+    fn unique_test_directory(_label: &str) -> PathBuf {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join(format!(
+                "ut-{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..12]
+            ));
+        festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+        root
     }
 
     #[cfg(unix)]
