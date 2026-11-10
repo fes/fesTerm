@@ -217,6 +217,89 @@ No ignored native fixture, full workspace, real GUI/network/provider/native vaul
 manager, VM, permissions, signing or release operation was run. Publication and
 the prerequisite CI repairs remain parent-owned; the private build slot is
 released after the stable handoff.
+## Selecting private migration-fixture roots on Windows
+
+Required Windows CI at exact `bb0888d0adb2e7799f9a00200609809f80254b58`,
+run `42913318773` / job `130169270190`, passes host-main **9/0/0** (0.18s)
+and CLI **10/0/0** (0.22s). Both cleanup unit cases and both previously failing
+cleanup/update CLI cases actually pass. The successful CLI output does not
+identify which independently checked native-admission branch ran.
+The next host-setup aggregate is **126 passed / 13 failed / one ignored**
+(27.05s). All 13 failures unwrap migration fixture root creation at tests.rs23
+with explicit `PermissionDenied: private storage ancestor policy refused`.
+The 217517-byte raw log is retained with SHA-256
+`25ed90bc519d5f5ac61f12ca03260b4628592176abe331a01db9f5254684d510`.
+The particular refused ancestor, ACL and principal subtype remain unknown.
+
+This normal backend child changes only fixture root selection/lifetime:
+Windows uses the existing `private_test_directory` candidate-parent factory
+and keeps its private owner alive with the fixture. The existing explicit
+nonretained cleanup assertion remains on both platforms; retained native
+evidence is not removed by that owner. Unix keeps its original short checkout
+path and cleanup. All test bodies, admission/ownership/claim/rollback assertions,
+native opt-in markers and retention decisions remain unchanged. Production
+private-storage/ACL policy, cloud/controller/native account admission, defaults,
+dependencies and CI are untouched. This is direct repository-prior-art parity,
+not a merge of the separately reviewed binding fixture correction.
+
+Actual macOS Rust/Cargo **1.99.1**, jobs1/debug0/incremental0, passes targeted
+`owned_migration::tests::`: **14 passed / zero failed / one existing native
+opt-in ignored**, 151 filtered, 11.11s. Every one of the 13 original Windows
+failure names has an actual passing Mac counterpart. Host-setup all-target
+strict Clippy passes with all features and separately without default features
+with `cloud`; fmt, traceability and diff checks pass. The native opt-in was not
+executed. No native14/full suite/helper rebuild, Windows SDK retry, VM or
+permission/account repair occurred. This current-milestone CI-fixture correction
+changes no ADR/graph/manual classification and grants no new Windows/native
+acceptance; fresh required Windows CI remains pending. The separate native
+macOS/Linux 13/1 failure is not diagnosed or fixed here.
+
+## Keeping CLI fixtures honest about native-account admission
+
+Required Windows CI at exactfd0, run `42904552105` / job `130139015769`,
+passes workspace strict Clippy and all nine host binary unit tests, including
+both corrected cleanup cases. It then reports eight CLI passes and two failures.
+The retained 189892-byte raw log has SHA-256
+`ac49a141c799464d65df09213a457f6968bdcfdb5dba2a30180160b84283be70`.
+Cleanup fails at its synthetic fixture's production `controller::disable` call;
+that operation enters native-account admission before observing stop. The
+update case fails its `update-status` success assertion without printing stderr:
+its actual diagnostic and denied inner call/principal subtype remain **UNKNOWN**.
+Desktop6614 separately reports nine CLI passes/two failures at equivalent sites,
+not the same aggregate count (raw SHA-256
+`f2f50c3cf1017cfb04b938a5bb38d5b9d880290b64e44e364d620cfd626be285`).
+
+The missing-receipt fixture now advances only its synthetic Store through revoke
+and confirmed-stop to CleanupPending; it never registered a native resource.
+All actual CLI uncertainty, no-removal-guidance, binding-withholding, target
+redaction and unchanged-journal assertions remain. The update test independently
+constructs the real `Services::current_user` adapter against its protected state
+before invoking the binary. Construction performs no manager operation. Admitted
+accounts must still return successful null update history with empty stderr;
+only an independently observed `PermissionDenied` requires CLI exit1, empty
+stdout and the exact sanitized private-storage/account diagnostic. Every other
+probe error fails, rather than being caught as an acceptable CLI failure. Both
+paths require the same unchanged snapshot and two-file state inventory, and
+continue through the original explicit-update refusal and status checks.
+No production code, ACL/account check, default feature or CI waiver changes.
+
+Bounded actual macOS Rust/Cargo1.99.1 passes both original CLI test names
+(two passed, zero failed/ignored, eight filtered), all-feature and no-default
+host all-target strict Clippy, fmt and traceability. This is not new Windows
+or denied-Windows-principal execution proof; fresh required Windows CI is pending.
+No native14, broad suite, helper rebuild or cross-SDK attempt is attributed here.
+
+Separate immutable binding source `e44a004c80553c0318a73699db7f37f88c95aa06`
+has at least two fixture families, not one globally waivable failure: migration
+tests create roots beneath the checkout and explicitly hit ancestor-policy
+refusal; fake-cloud setup and exact-run-lease tests still enter production native
+admission. Bare `PermissionDenied` does not identify a principal subtype. Those
+fixtures need their owning lane's protected test-root and per-instance fake
+boundary corrections; this CLI child does not fix or qualify their 72/41/1
+aggregate. Its raw SHA-256 remains
+`d32cfbd803b83e30176960a15a112e8759adb9a75dec1bcaebfd078c85bf9c6b`.
+The separate macOS native13/1 response/root cause remains unknown.
+
 ## Isolating headless cleanup display fixtures from native account admission
 
 Required Windows CI at exact `a8113f6a15fe99f9604bb977635409e645f21723`,

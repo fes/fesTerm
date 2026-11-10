@@ -206,6 +206,10 @@ impl Drop for Fixture {
         if !self.retain {
             std::fs::remove_dir_all(&self.root).unwrap();
         }
+        #[cfg(windows)]
+        if let (true, Some(root)) = (self.retain, self.private_root.take()) {
+            std::mem::forget(root);
+        }
     }
 }
 
