@@ -1501,6 +1501,7 @@
         "native_ssh_remote_sessiond_rejects_a_replaced_generation",
         "native_ssh_remote_sessiond_rejects_an_untrusted_host_key",
         "host_key_rotation_after_discovery_never_authenticates_or_displaces_the_live_session",
+        "remote_pending_adoption_refuses_competing_bridge_before_corrupt_payload_delivery",
         "invalid_remote_snapshots_never_adopt_or_displace_the_live_session"
       ],
       "manual_scenarios": ["CP-24"],

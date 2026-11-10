@@ -1,5 +1,64 @@
 # Milestone Progress Narrative
 
+## Correcting primary-CI fixture admission races
+
+Exact `9d521174` Windows x64 native CI ran both bridge cases successfully:
+run `42793362245`, job `129752153482`, 2 passed/0 failed/0 ignored in 4.88 s
+(784 ms pending backlog). This is actual x64 bridge evidence, not an ARM or
+macOS inference. The old checkpoint dead-field error no longer blocked strict
+Clippy. Required primary jobs nevertheless failed; none is declared green.
+
+Linux run `42793362331`, job `129752154178`, retained 25 host-control passes
+and an initial-attachment `Busy` failure in
+`temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease`.
+Its captured lease still had writer/temporary epochs 1, no pending ticket and
+no committed attachment. The fixture incorrectly unwrapped a nonblocking
+admission result. It now deterministically holds the exact generation's lease
+lock, proves Busy changes neither lease bytes nor the issued-operation ledger,
+then releases it and uses the existing bounded same-target/same-attachment
+helper for the two successful attachments. It checks exactly one native
+generation, the original lease identity and exactly one first-adoption epoch
+advance. No new ensure, issued operation, launch or timeout is introduced.
+The original log does not identify which lock contended; the held-lock control
+proves this legitimate pre-reservation outcome without claiming a syscall trace.
+
+macOS primary job `129752154418` retained 4 SSH passes and a malformed-snapshot
+failure reporting SSH status 1 instead of invalid recovery bytes. Taking a
+snapshot only queues ADOPTED; it does not wait for daemon writer activation.
+The corruption fixture now requires an octal-encoded child-output round trip
+through the original writer before starting its invalid candidate. A new
+controlled case deliberately defers the original adoption and reproduces
+status 1 with **zero corrupt deliveries**, then adopts that original session
+and proves its shell still accepts input. This separates legitimate pending
+admission refusal from malformed-payload decoding; the original malformed,
+truncated, unsupported-semantics, no-adoption and old-writer checks remain.
+
+The two unchanged exact selectors each passed once locally before editing;
+those passes do not erase either original CI failure. With the existing warm
+private target, `CARGO_BUILD_JOBS=1`, dev/test debug info zero and incremental
+compilation disabled, the corrected source passed:
+
+```sh
+cargo test --locked -p festerm-sessiond --test host_control temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease -- --exact --nocapture --test-threads=1
+cargo test --locked -p festerm-sessiond --test remote_ssh -- --nocapture --test-threads=2
+FESTERM_HOST_TEST_DIAGNOSTICS=1 cargo test --locked -p festerm-sessiond --all-targets -- --test-threads=2
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+Focused counts: 1 host-control and all 6 SSH tests passed. The full sessiond
+all-target run passed **245 tests, 7 existing ignored, zero failures**:
+111 library, 70 daemon binary, 1 detached native, all 26 host-control,
+1 mobile-tunnel loopback, 21 native daemon (7 ignored), all 6 real SSH and
+9 example tests. This includes targets omitted from the earlier qualification.
+Evidence is retained under `target/adr84-windows-correction/` in
+`macos-9d-*-baseline.log`, `macos-controlled-*.log` and
+`macos-all-sessiond-targets.log`. Strict affected Clippy, format, traceability
+(311 edges) and diff checks pass. Production code, security/storage policy,
+adoption deadlines and existing failure/preservation assertions are unchanged.
+Fresh corrected-head Linux/
+macOS primary CI and the separately owned Windows legacy corrections remain
+required; local passes do not qualify installed services or native acceptance.
+
 ## Proving native pending-output order rather than presence
 
 Review of `28e0391a` caught that its native assertions still checked only marker
@@ -25,8 +84,8 @@ missing final marker were rejected. All three native bridge cases listed below
 passed with the stronger matcher, zero ignored; the 96-line pending backlog was
 observed in 38 ms. Native runtime and trace remained in this worktree.
 Format, traceability (311 edges) and diff checks pass. The original `8ebbaf29`
-Windows failures remain retained; actual corrected x64 Windows proof is pending,
-and any Windows ARM diagnostic would not substitute for it.
+Windows failures remain retained; corrected x64 bridge evidence was subsequently
+obtained as recorded above. Windows ARM diagnostics do not substitute for x64.
 
 ## Correcting the Windows session-control CI regressions
 
