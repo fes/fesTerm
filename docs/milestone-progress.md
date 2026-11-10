@@ -1,5 +1,54 @@
 # Milestone Progress Narrative
 
+## Normally integrating the six gated backend source pins
+
+The separate `work/adr0084-backend-fanin-nov10` worktree starts at exact
+`3d91702715945383866b9759a30084d8f43a56f7` and normally merges only:
+
+| Backend source | Exact accepted source pin |
+| --- | --- |
+| Stopped update | `9dcc7c4cde495d4930e2edfa24d57da07f6ce35f` |
+| Manual cleanup guidance | `6c2b84aa3e97e58dc50c391da98f51b1b817c81b` |
+| Linux current-login/recovery | `920715a510b0485eed79761900efaec081b7e978` |
+| Existing Linux read-only smoke opt-in | `be8bd06b5f041cf4ee69e098112c054925f348d5` |
+| Windows publisher/graceful-stop source | `3030bcd7008e300a90b67fa6c6bc6c0a37ce88c1` |
+| Migration reservation foundation only | `73f2afa8b72c843b856fd0591cbe32d7fec44b00` |
+
+No source branch is rewritten, and both complete histories are retained.
+The source integration joins fresh manual-cleanup diagnostics with typed
+Linux exit disposition, and shares the existing account validator with the new
+locked full-snapshot cleanup check. Four newly imported fake-network fixtures
+use core34's existing per-instance fake account; three manual fixtures also
+use its panic-on-manager native boundary. Production construction still observes
+the actual native account and refuses denied admission. The cleanup regression
+additionally refuses foreign/native adapters against fixture-owned records,
+preserving the whole lifecycle and receipt. The existing actual-Aborted
+transaction regression now also loses the active receipt and requires stop/
+cleanup to refuse without manager calls, journal mutation or fabricated absence;
+Committed retains its separate existing regression.
+
+Parent-retained actual Windows be8 primary evidence is **87 passed / 27 failed /
+one ignored**, 21.32 seconds, exit101. Its additional Linux final-confirm fixture
+reaches `PermissionDenied` in native account admission; principal subtype is
+unrecorded. This is not relabeled the earlier26 failures or a local Windows pass.
+The analogous new manual fixtures are isolated through the same existing seam,
+not through production account/storage waivers.
+
+**Known native Windows PKI block:** exact3030 run42881664804 attempt1 passed25
+preflight cases with zero skips, including PowerShell0/37 and acquisition
+integrity. The genuine positive started, then aborted on a misaligned timestamp
+pointer at native.rs416:20; the unsigned negative was unreached. No PKI
+acceptance is claimed. Its separately owned FFI correction/security assessment
+and any moving child are excluded from this fan-in.
+
+Combined-source Rust/native validation is pending at this source checkpoint.
+All earlier61/3d commands, results, unknown Linux replies and helper-lifecycle
+qualifications below remain attributed to those sources. The existing be8
+ignored logind test is Linux-only and is not executed or called a zero-test
+native pass on macOS. Migration remains reservation, not live binding/switching.
+Native managers, real providers/vaults/signing, ordinary Windows service
+contexts, OS logout/cgroup survival and complete ADR acceptance remain deferred.
+
 ## Bounding native fixture paths and replaying the original committed operation
 
 Normal merge `ddc91ae8` preserves exact native-fixture correction `1947c416`

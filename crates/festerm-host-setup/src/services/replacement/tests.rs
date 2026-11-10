@@ -361,6 +361,32 @@ fn host_update_partial_new_registration_remains_exact_owned_cleanup_after_revoca
         fixture.store.snapshot().unwrap().phase,
         Phase::CleanupPending
     );
+    std::fs::remove_file(services.state.join(RECORD)).unwrap();
+    let journal = std::fs::read(services.state.join(JOURNAL)).unwrap();
+    for phase in [Phase::CleanupPending, Phase::StopRequested] {
+        if phase == Phase::StopRequested {
+            fixture.store.revoke().unwrap();
+        }
+        let before = fixture.store.snapshot().unwrap();
+        assert_eq!(before.phase, phase);
+        let calls = services.runner.calls.borrow().len();
+        let result = if phase == Phase::CleanupPending {
+            services.cleanup(before.epoch)
+        } else {
+            services.stop(before.epoch)
+        };
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "host.update_missing_registration_reconciliation_required"
+        );
+        assert_eq!(fixture.store.snapshot().unwrap(), before);
+        assert_eq!(services.runner.calls.borrow().len(), calls);
+        assert_eq!(
+            std::fs::read(services.state.join(JOURNAL)).unwrap(),
+            journal
+        );
+        assert!(!services.state.join(RECORD).exists());
+    }
 }
 
 #[test]

@@ -5945,6 +5945,7 @@
       "status": "partial",
       "prerequisites": [
         "Issue #681: integrate and natively qualify the new endpoint installer/executable-publication component; ordinary private data staging does not authorize launch or service switching",
+        "Backend normal fan-in retains exact3030 as source only: actual Windows run42881664804 attempt1 passed25 preflight cases/zero skips, then genuine positive PKI aborted on a misaligned timestamp pointer at native.rs416:20; unsigned negative unreached. Native PKI remains blocked. Separately owned FFI repair and moving binding/client/desktop sources are excluded; see milestone-progress normally-integrating-the-six-gated-backend-source-pins",
         "Issue #681: host service switching/rollback and complete legacy migration remain gated; protected explicit inventory/preview/reservation/resume/local rollback now exist separately without authenticated daemon binding or exposure switching",
         "No authenticated ordinary-daemon bind_existing API exists at base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9. Implement and qualify actual capability/adoption and retained-runtime routing without frontend acquisition, restart, lease fabrication or launch evidence synthesis; ensure is not migration adoption",
         "Consume real exact binding receipts with fresh protected owner/principal/key/permission/generation/source/account/current-issuer fencing, perform the exposure switch and retain exact protected rollback; reserved metadata and source grants do not authorize any of these effects",

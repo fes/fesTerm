@@ -425,8 +425,9 @@ remain open.
 Replacement reconciliation precedes the core's never-published-receipt absence
 path. Missing active receipts with pending old/new journals require both targets
 to reconcile and cannot finalize Aborted cleanup from `None`. Stale epochs and
-corrupt/foreign crash journals refuse. Even settled update history proves prior
-registration, so a lost receipt refuses rather than manufacturing absence.
+corrupt/foreign crash journals refuse. Every journal, including Committed and
+Aborted, proves prior registration, so a lost receipt refuses rather than
+manufacturing absence.
 These coupled negative fixtures retain the native/cloud/vault qualifications.
 
 ### 10. Protocol, resource and failure contract

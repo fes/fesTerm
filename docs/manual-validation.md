@@ -3889,9 +3889,14 @@ review/three gates and a separate one-run owner authorization. See
 Public ZIP/member hashes establish integrity, not independent publisher/updater
 authentication; the existing compiled policy/native OS trust must pass.
 The legacy binary is never executed, and no new-host/whole-bundle acceptance is
-implied. This increment has offline source-contract/pure-policy evidence only,
-**zero workflow dispatches or genuine Windows runs**. Preserve any genuine
-policy mismatch as failure; hosted evidence is not ordinary-user VM proof.
+implied. At its initial source checkpoint this increment had offline contracts
+only. Parent-retained exact3030 run42881664804 attempt1 subsequently passed25
+preflight cases with zero skips, started the genuine positive and aborted on a
+misaligned timestamp pointer at native.rs416:20; the unsigned negative was
+unreached. **Native PKI is blocked, not accepted.** The separately owned FFI
+correction is not included in this backend union. Preserve the actual crash and
+any genuine policy mismatch as failures; hosted evidence is not ordinary-user
+VM proof. See the [combined-source boundary](milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins).
 It invokes native online-enabled verification only, never registration/start,
 signing, Azure credentials or OS settings. It was **not run on macOS**.
 For a separately authorized ordinary-user Windows lab, record positive approved

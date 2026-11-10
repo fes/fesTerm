@@ -1034,7 +1034,7 @@ impl<'a> CloudHostAdapter<'a> {
                 return Err(refused("host.cloud_cleanup_scope_changed"));
             }
             let record = read(directory)?.ok_or_else(|| refused("host.cloud_not_configured"))?;
-            validate(&record, current, directory)?;
+            validate(&record, current, directory, || self.os_user())?;
             if original.is_some_and(|original| original != &record) {
                 return Err(refused("host.cloud_cleanup_scope_changed"));
             }
@@ -2128,7 +2128,7 @@ mod tests {
     async fn host_cloud_relay_final_confirm_cancellation_is_owned_not_stale_consent() {
         for cancel_confirm in [true, false] {
             let (root, store, secrets) = fixture();
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let approval = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();
@@ -2734,7 +2734,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_manual_cleanup_context_is_exact_read_only_and_epoch_fenced() {
         let (root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let approval = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2749,11 +2749,21 @@ mod tests {
         assert!(adapter
             .pending_cleanup_context(&store.snapshot().unwrap())
             .is_err());
-        crate::controller::disable(&store, &root.path().join("host")).unwrap();
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
         let before = store.snapshot().unwrap();
         let original = adapter.load().unwrap();
         let context = adapter.pending_cleanup_context(&before).unwrap();
+        let foreign = CloudHostAdapter {
+            store: &store,
+            fixture_user: Some("fixture:another-account"),
+        };
+        assert!(foreign.pending_cleanup_context(&before).is_err());
+        assert!(CloudHostAdapter::new(&store)
+            .pending_cleanup_context(&before)
+            .is_err());
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert!(adapter.load().unwrap() == original);
         let exact = original.receipt.as_ref().unwrap();
         assert_eq!(context.installation, before.installation);
         assert_eq!(context.epoch, before.epoch);
@@ -2817,7 +2827,7 @@ mod tests {
             "cancel",
         ] {
             let (root, store, secrets) = fixture();
-            let adapter = CloudHostAdapter::new(&store);
+            let adapter = CloudHostAdapter::fixture(&store);
             let approval = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
             let cancel = CancellationToken::new();
@@ -2829,7 +2839,7 @@ mod tests {
                 .provision_with(&approval, &cancel, &network, &secrets)
                 .await
                 .unwrap();
-            crate::controller::disable(&store, &root.path().join("host")).unwrap();
+            crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
             store.request_cleanup().unwrap();
             match refusal {
                 "offline" => network.state.borrow_mut().observe_error = Some(AccountError::Network),
@@ -2920,7 +2930,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn host_cloud_manual_cleanup_never_displays_raw_receipt_urls() {
         let (root, store, secrets) = fixture();
-        let adapter = CloudHostAdapter::new(&store);
+        let adapter = CloudHostAdapter::fixture(&store);
         let approval = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
         let cancel = CancellationToken::new();
@@ -2932,7 +2942,7 @@ mod tests {
             .provision_with(&approval, &cancel, &network, &secrets)
             .await
             .unwrap();
-        crate::controller::disable(&store, &root.path().join("host")).unwrap();
+        crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
         store
             .with_locked(|directory, snapshot| {
