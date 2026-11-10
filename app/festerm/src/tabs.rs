@@ -2393,6 +2393,12 @@ pub struct SshProfileDraftSeed {
 /// copy of these operations.
 #[derive(Debug)]
 pub enum AppCommand {
+    /// Offline recipe metadata only; never connects or changes a host grant.
+    #[allow(
+        dead_code,
+        reason = "metadata-only seam; host UI waits for the reviewed ADR 0084 endpoint (#681)"
+    )]
+    HostRecipe(festerm_config::host_recipes::MetadataCommand),
     #[cfg(feature = "experimental-dev-tunnels")]
     ImportPublicDevTunnelProfile {
         import: crate::tunnel_profile_import::PublicProfileImport,
@@ -4531,6 +4537,7 @@ impl AppState {
                 self.retry_sftp_file_manager_connection(tab_id, target, context)
             }
             AppCommand::RetryTerminalFontDownload
+            | AppCommand::HostRecipe(_)
             | AppCommand::StartStoredPasswordSshProfile { .. }
             | AppCommand::StartStoredPasswordSftpProfile { .. }
             | AppCommand::StartStoredSftpFileManagerProfile { .. }

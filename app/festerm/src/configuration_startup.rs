@@ -129,6 +129,10 @@ pub(crate) enum ConfigurationStartupStatus {
     KnownHostTrustSaveFailure(ConfigurationLoadFailure),
     ProfileSaved,
     ProfileSaveFailure(ConfigurationLoadFailure),
+    HostRecipeSaved,
+    HostRecipeExported,
+    HostRecipeCommandFailure(festerm_config::host_recipes::RecipeError),
+    HostRecipeSaveFailure(ConfigurationLoadFailure),
     ProfileDeleted,
     ProfileDeleteFailure(ConfigurationLoadFailure),
     ProfilesReordered,
@@ -145,6 +149,7 @@ impl ConfigurationStartupStatus {
                 | Self::InterfaceSettingsSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
                 | Self::KnownHostTrustSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
                 | Self::ProfileSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
+                | Self::HostRecipeSaveFailure(ConfigurationLoadFailure::OutcomeUnknown)
                 | Self::ProfileDeleteFailure(ConfigurationLoadFailure::OutcomeUnknown)
                 | Self::ProfilesReorderFailure(ConfigurationLoadFailure::OutcomeUnknown)
         )
@@ -168,6 +173,7 @@ impl ConfigurationStartupStatus {
                         ConfigurationLoadFailure::ReconciliationRequired
                     )
                     | Self::ProfileSaveFailure(ConfigurationLoadFailure::ReconciliationRequired)
+                    | Self::HostRecipeSaveFailure(ConfigurationLoadFailure::ReconciliationRequired)
                     | Self::ProfileDeleteFailure(ConfigurationLoadFailure::ReconciliationRequired)
                     | Self::ProfilesReorderFailure(
                         ConfigurationLoadFailure::ReconciliationRequired
@@ -184,6 +190,7 @@ impl ConfigurationStartupStatus {
                 | Self::InterfaceSettingsSaveFailure(ConfigurationLoadFailure::SaveBusy)
                 | Self::KnownHostTrustSaveFailure(ConfigurationLoadFailure::SaveBusy)
                 | Self::ProfileSaveFailure(ConfigurationLoadFailure::SaveBusy)
+                | Self::HostRecipeSaveFailure(ConfigurationLoadFailure::SaveBusy)
                 | Self::ProfileDeleteFailure(ConfigurationLoadFailure::SaveBusy)
                 | Self::ProfilesReorderFailure(ConfigurationLoadFailure::SaveBusy)
         )
@@ -209,6 +216,7 @@ impl ConfigurationStartupStatus {
                 | Self::InterfaceSettingsSaved
                 | Self::KnownHostTrustSaved
                 | Self::ProfileSaved
+                | Self::HostRecipeSaved
                 | Self::ProfileDeleted
                 | Self::ProfilesReordered
         )
@@ -301,6 +309,28 @@ impl ConfigurationStartupStatus {
             }
             Self::ProfileSaveFailure(_) => {
                 "The profile was not saved because configuration could not be written."
+            }
+            Self::HostRecipeSaved => {
+                "Public recipe metadata was saved locally. No connection or remote session was changed."
+            }
+            Self::HostRecipeExported => {
+                "Public recipe metadata was exported. No configuration or remote session was changed."
+            }
+            Self::HostRecipeCommandFailure(error) => error.message(),
+            Self::HostRecipeSaveFailure(ConfigurationLoadFailure::OutcomeUnknown) => {
+                "The public recipe save outcome is unknown. Reconcile configuration before saving again."
+            }
+            Self::HostRecipeSaveFailure(ConfigurationLoadFailure::ReconciliationRequired) => {
+                "Public recipe saving is blocked until configuration is reconciled."
+            }
+            Self::HostRecipeSaveFailure(ConfigurationLoadFailure::SaveBusy) => {
+                "Public recipe saving is busy. Try again after the current save finishes."
+            }
+            Self::HostRecipeSaveFailure(ConfigurationLoadFailure::Invalid) => {
+                "Public recipe metadata was not saved because configuration is invalid."
+            }
+            Self::HostRecipeSaveFailure(_) => {
+                "Public recipe metadata could not be saved. No in-memory change was published."
             }
             Self::ProfileDeleted => "The profile was deleted.",
             Self::ProfileDeleteFailure(_) => {
@@ -654,6 +684,19 @@ impl ConfigurationReloader {
             Ok(saved) => (ConfigurationStartupStatus::ProfileSaved, Some(saved)),
             Err(failure) => (
                 ConfigurationStartupStatus::ProfileSaveFailure(failure),
+                None,
+            ),
+        }
+    }
+
+    pub(crate) fn save_host_recipes(
+        &self,
+        configuration: &Configuration,
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
+        match self.save_configuration(configuration) {
+            Ok(saved) => (ConfigurationStartupStatus::HostRecipeSaved, Some(saved)),
+            Err(failure) => (
+                ConfigurationStartupStatus::HostRecipeSaveFailure(failure),
                 None,
             ),
         }
@@ -1045,6 +1088,7 @@ mod tests {
             ConfigurationStartupStatus::InterfaceSettingsSaved,
             ConfigurationStartupStatus::KnownHostTrustSaved,
             ConfigurationStartupStatus::ProfileSaved,
+            ConfigurationStartupStatus::HostRecipeSaved,
             ConfigurationStartupStatus::ProfileDeleted,
             ConfigurationStartupStatus::ProfilesReordered,
         ] {
@@ -1067,6 +1111,11 @@ mod tests {
                 ConfigurationLoadFailure::Invalid,
             ),
             ConfigurationStartupStatus::ProfileSaveFailure(ConfigurationLoadFailure::Invalid),
+            ConfigurationStartupStatus::HostRecipeExported,
+            ConfigurationStartupStatus::HostRecipeCommandFailure(
+                festerm_config::host_recipes::RecipeError::NotFound,
+            ),
+            ConfigurationStartupStatus::HostRecipeSaveFailure(ConfigurationLoadFailure::Invalid),
             ConfigurationStartupStatus::ProfileDeleteFailure(ConfigurationLoadFailure::Invalid),
             ConfigurationStartupStatus::ProfilesReorderFailure(ConfigurationLoadFailure::Invalid),
         ] {

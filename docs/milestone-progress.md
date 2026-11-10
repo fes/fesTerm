@@ -20,6 +20,27 @@ Existing artifact names/consumers remain compatible; host CLI inclusion,
 native installer/executable publication, service switching/rollback,
 migration and native signing evidence remain #681 gates. ADR 0084 stays Proposed.
 
+## Saving host recipes without creating shells
+
+ADR 0084 separates a reusable client recipe from a running remote shell.
+The [#681](https://github.com/fes/fesTerm/issues/681) foundation now shares
+strict public metadata, duplication identity policy and offline commands
+between desktop, iOS and Android without a desktop dependency in mobile.
+Saving/importing/deleting cannot connect, sign in, install a host or end a
+shell. Existing generation-pinned profiles remain separate.
+
+Portable serialization, actual desktop save outcomes, mobile restart/failure
+handling and explicit browsing intent are tested. Verified endpoint wiring,
+authorized resume/create, native UI and physical-device lifecycle evidence
+remain prerequisites; this is not stage 6 end-to-end acceptance.
+
+Reliability review found that one malformed mobile recipe could discard the
+entire collection on the next save. Loading now retains valid unique entries
+within the shared limit and reports/quarantines rejected entries. Typed adapter
+errors distinguish conflicts and portable-input failures, while desktop export
+has its own status rather than claiming a save. Focused regressions exercise
+recovery across an unrelated save and the actual experimental CI feature path.
+
 ## Stabilizing SSH-agent test startup
 
 The vendored SSH tests could connect between the agent creating its Unix

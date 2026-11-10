@@ -2517,9 +2517,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-client-recipes"
+version = "0.16.0"
+dependencies = [
+ "festerm-host-protocol",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "festerm-config"
 version = "0.16.0"
 dependencies = [
+ "festerm-client-recipes",
  "festerm-pty",
  "festerm-secret-store",
  "festerm-serial",
@@ -2739,6 +2750,7 @@ dependencies = [
 name = "festerm-mobile-profiles"
 version = "0.16.0"
 dependencies = [
+ "festerm-client-recipes",
  "festerm-secret-store",
  "festerm-ssh",
  "russh",

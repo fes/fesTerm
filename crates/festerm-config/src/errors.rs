@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::SCHEMA_VERSION;
+use crate::{host_recipes::RecipeError, SCHEMA_VERSION};
 
 pub(crate) fn parse_error(error: toml::de::Error) -> ConfigError {
     let location = error.span().map(|span| SourceLocation {
@@ -40,6 +40,7 @@ pub enum ConfigErrorKind {
     InvalidLocalTunnelHosting,
     InvalidSshProfile,
     InvalidDevTunnelProfile,
+    HostRecipe(RecipeError),
     InvalidPowerShellProfile,
     InvalidSshPortForwardConfiguration,
     DuplicateSshPortForward,
@@ -96,6 +97,12 @@ impl ConfigError {
     }
 }
 
+impl From<RecipeError> for ConfigError {
+    fn from(error: RecipeError) -> Self {
+        Self::new(ConfigErrorKind::HostRecipe(error))
+    }
+}
+
 impl fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
@@ -125,6 +132,9 @@ impl fmt::Display for ConfigError {
             ConfigErrorKind::UnknownProfileReference => formatter.write_str(
                 "profile_usage[].profile must name a profile defined in profiles[]",
             ),
+            ConfigErrorKind::HostRecipe(error) => {
+                write!(formatter, "public client-local recipe: {error}")
+            }
             ConfigErrorKind::InvalidLocalProfile => formatter.write_str(
                 "local profile metadata must use non-empty, control-character-free executable, arguments, and working_directory values without secret-bearing options",
             ),

@@ -5469,18 +5469,17 @@
     },
     {
       "id": "host-protocol-owner-contracts",
-      "edges": [
-        "HOST-01",
-        "HOST-02",
-        "HOST-03"
-      ],
+      "edges": ["HOST-01", "HOST-02", "HOST-03"],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#decision",
-        "docs/host-protocol.md"
+        "docs/host-protocol.md",
+        "docs/configuration.md#public-host-recipes-adr-0084-foundation",
+        "docs/gui-design.md#profile-editing",
+        "docs/application-command-model.md#required-properties",
+        "docs/adr/0084-host-based-dev-tunnels.md#5-local-profiles-and-resume-or-create",
+        "docs/adr/0084-host-based-dev-tunnels.md#6-client-ui-and-explicit-discovery"
       ],
-      "decisions": [
-        "ADR-0084"
-      ],
+      "decisions": ["ADR-0084", "ADR-0054"],
       "automated_tests": [
         "host_wire_fixture_is_canonical_and_not_legacy_protocol",
         "host_wire_rejects_malformed_oversized_and_version_mismatched_input",
@@ -5508,13 +5507,35 @@
         "native_owner_reference_reopens_only_exact_approved_binding",
         "native_owner_vault_failure_never_creates_a_fallback_key",
         "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",
-        "encrypted_transport_refuses_changed_host_key_before_authentication"
+        "encrypted_transport_refuses_changed_host_key_before_authentication",
+        "public_recipe_serialization_preserves_launch_and_four_behaviors",
+        "invalid_recipe_ids_launch_and_protected_fields_are_refused",
+        "metadata_commands_edit_future_recipe_without_mutating_previous_snapshot",
+        "duplicate_allocates_logical_identity_unless_explicit_generation_shortcut",
+        "book_deserialization_rejects_duplicate_and_invalid_candidates",
+        "local_browser_requires_explicit_scoped_requests_and_fences_stale_results",
+        "host_recipe_toml_round_trip_keeps_legacy_profiles_separate",
+        "host_recipe_commands_preserve_legacy_account_and_hosting_references",
+        "host_recipe_invalid_commands_and_documents_do_not_replace_configuration",
+        "dev_tunnel_host_recipe_app_commands_persist_metadata_only_and_publish_after_save",
+        "host_recipe_config_adapter_preserves_typed_command_failures",
+        "mobile_host_recipe_adapter_preserves_typed_command_failures",
+        "mobile_host_recipe_recovery_retains_valid_entries_across_unrelated_save",
+        "mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation",
+        "mobile_recipe_commands_preserve_legacy_generation_and_account_binding",
+        "mobile_host_recipe_failed_write_keeps_previous_metadata_and_invalid_load_is_quarantined",
+        "dev_tunnel_import_defaults_take_over_and_never_replaces"
       ],
-      "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
+      "manual_scenarios": ["DT-05", "DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
       "status": "partial",
       "prerequisites": [
         "Issue #681 stages 1/3: protected local enrollment/native-vault APIs implemented, no HOST endpoint or GUI controls. Existing real pinned SSH stream gates refuse owner authentication because shared connection/channel transcript export is missing; implement and independently review role-bound anti-relay/reflection signing adapter before exposure",
         "Native vault locked/unavailable/restart qualification, protected policy interrupted-commit reconciliation and first-connect foreground public-key consent UX remain deferred under HOSTAUTH-01; no portable config adoption, bearer auto-enrollment or plaintext seed fallback",
+        "Issue #681: reviewed pinned/encrypted host endpoint and enrolled-key verified principal/account binding; public account/host IDs are metadata hints, never authorization",
+        "Issue #681: bounded authorized inventory and authoritative absence/atomic ensure, exact-generation attach, idempotent reconciliation/cancellation and real desktop/iOS/Android UI wiring; no Connect executor or legacy fallback exists in this foundation",
+        "Issue #681: before first execution of an imported recipe, require explicit UI review/reconfirmation of shell/argv/cwd, lifetime and connection behavior bound to verified host/account/principal identity. Import/save/portable approval fields are never execution consent; qualify cancellation and no-execution-before-approval with later Connect wiring",
+        "Issue #681: native network-free opening/render/save, explicit find/single-host refresh, sign-in/trust/denial/offline behavior, reboot/recreation notice, shell-preserving deletion and physical mobile lease/lifecycle qualification remain deferred; existing DT/CP/MOB native, manual and usability evidence remains required",
+        "Issue #681: contract primitives only; no HOST endpoint or GUI control is exposed. Independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
         "Implement durable authoritative ensure/reservations, recipe conflicts and temporary lease supervision independently of bridge lifetime; reconcile uncertain outcomes, never infer absence from denial/offline/partial inventory",
         "Implement authenticated multi-session routing, fair output/control scheduling, aggregate permit/deadline integration and legacy adapter without grant expansion",
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth fixtures do not qualify it"
@@ -5581,7 +5602,8 @@
       "prerequisites": [
         "Issue #681: headless CLI release package inclusion and consuming new endpoint installer integration; private authenticated staging exists but does not switch services",
         "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
-        "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence"
+        "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence",
+        "Issue #681 / ADR 0084 section 11: migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow, including stale-generation refusal, before migration exposure"
       ]
     }
   ]

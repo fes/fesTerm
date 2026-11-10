@@ -1563,11 +1563,14 @@ branch silently.
 
 ## Proposed host-based Dev Tunnels (ADR 0084)
 
-The stage-1 [HOST contracts](host-protocol.md) provide codec, identity,
-authorization and budget evidence for HOST-01–03; their end-to-end UI/remote
-transitions remain deferred behind endpoint/session-control and security review
-in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
-Existing TUNNEL edges retain their current coverage until implementation migrates them.
+The [HOST contracts](host-protocol.md) provide codec, identity, authorization
+and budget evidence for `HOST-01`–`HOST-03`. Client-local metadata/commands and
+explicit-browse state add evidence for `HOST-01`/`HOST-02`. Their end-to-end
+UI/remote transitions remain deferred behind endpoint/session-control and
+security review in [#681](https://github.com/fes/fesTerm/issues/681), not accepted
+behavior. No host UI/endpoint executor is provided. Existing TUNNEL edges
+retain their current coverage until explicit migration. The single
+`host-protocol-owner-contracts` trace group combines these evidence sets.
 
 HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
 Actual verified SSH client/server streams explicitly refuse owner authentication
@@ -1577,12 +1580,12 @@ qualification remain deferred.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
-| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy tests; H,N deferred |
-| `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P; partial codec/absence/admission tests; H,N deferred |
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state tests; UI/endpoint/H,N deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Offline save/edit/duplicate/import/export/delete; separate future Connect with atomic resume-or-create or strict attach | Public metadata; stable host/account/logical IDs and fresh duplicates; future-only edits; deletion preserves shell; authoritative absence/current creation permission; exact generation; no input replay | Failed saves retain state; mobile skips/reports invalid entries without losing valid recipes; typed conflicts and export-specific outcomes; legacy remains exact-generation; reconcile uncertain live ensure; no duplicate spawn | P; partial metadata/command/recovery/codec/absence/admission tests; live execution/H,N deferred |
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; partial lifetime/generation schemas; supervisor/H,N deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings boundary; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings; recover persisted ticket; preserve draft and exact late cleanup identity, never re-enable | P,H,N; partial boundary, native/UI deferred |
 | `HOST-05` | Headless package → configured service | Configure/status/pinned CLI and authenticated helper staging; setup/run/update/uninstall refuse | Shared disabled settings and exact-owned receipt policy; no shell/service changes; pre-login unavailable | Busy/corrupt/foreign state fails closed; retain cleanup and signed artifact evidence | P,H,N; partial boundary, endpoint/headless package/native deferred |
-| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; old daemons preserved; no grant expansion or automatic legacy recreation | Compatible rollback; no revoked-state resurrection | P: manifest/verifier foundation; H,N: switching/migration deferred |
+| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: manifest/verifier foundation; H,N: switching/migration deferred |
 
 HOST-06 currently has only the independently testable
 [helper authenticity boundary](host-release-artifacts.md): signed exact-target
