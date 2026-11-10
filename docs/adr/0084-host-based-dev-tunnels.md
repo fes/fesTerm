@@ -4,7 +4,7 @@
 - **Date:** 2026-11-09
 - **Supersedes:** On adoption, the one-exported-generation-per-tunnel restriction of ADR 0053, the primary script-copy setup experience of ADRs 0062/0063, automatic launcher discovery in ADR 0064, and per-profile tunnel provisioning in ADR 0072 for the new host protocol. Legacy protocol behavior remains unchanged.
 - **Extends:** ADRs 0025, 0038, 0057, 0061, 0066, 0067, 0070 and 0071.
-- **Scope:** Owner-requested implementation design and Copilot handoff; not a claim of implementation or platform acceptance.
+- **Scope:** Owner-requested staged implementation and Copilot handoff; stage-1 contract primitives exist, not platform or whole-ADR acceptance.
 
 ## Context
 
@@ -95,6 +95,16 @@ explicit trust flow. Friendly-name matches cannot silently rebind profiles.
 Shell creation grants execution as the configured OS user; it is not sandboxing.
 Creation neither enables rooted file access, observation, MCP nor broader ACLs.
 Those capabilities retain separate grants and generation/source bindings.
+
+Stage 1 chooses the additional authentication path: explicitly enrolled,
+per-host owner Ed25519 keys, protected local consent and native-vault/private-file
+seed boundaries, with a fresh consumed challenge on the same host-key-pinned
+channel. Host/key/principal/connection/nonces and monotonic epochs are signed;
+current protected session grants are checked separately at admission. This is
+proof of the configured enrolled owner, **not** an asserted GitHub identity or
+per-person isolation. See [the concrete protocol/admission contract](../host-protocol.md)
+and optional bridge `owner_auth` primitives. Enrollment/vault/channel integration
+and independent security review remain mandatory before exposing new controls.
 
 ### 3. Host settings and state
 
@@ -364,6 +374,11 @@ continue working through the legacy adapter. Do not silently add creation
 permission, convert a strict legacy attachment into resume-or-create, or merge
 tunnels by display name.
 
+Any hosted-runtime migration must preserve protected state and account binding.
+It must not stop a live legacy session without a separate, default-No
+confirmation for that exact generation; manual deferral remains available.
+Host setup or sharing consent alone is not consent to restart a session.
+
 Provide an explicit owned-installation migration: inventory, preview mapping,
 verify account/key/ownership, reserve new host records, bind selected existing
 daemons without frontend takeover, then switch and retain rollback evidence.
@@ -402,6 +417,18 @@ Use small reviewable implementation PRs. This ADR does not mark any slice comple
 or waive existing native/service acceptance. Do not implement unrelated SSH,
 Entra, cloud synchronization, terminal multiplexing UI or privilege escalation.
 
+### Stage-1 progress (#681)
+
+`festerm-host-protocol` now supplies the versioned bounded codec, validated
+identities, recipe/lifetime/control representations, owner-filtered pagination,
+aggregate reservation permits and admission fences. The bridge's non-default
+`owner-auth` feature adds signature verification and separate default-deny
+owner/session admission. [Protocol details and limits](../host-protocol.md)
+are normative for downstream integration. No endpoint, detached atomic ensure,
+durable lease supervisor, GUI/installer or cloud modification is implemented by
+this slice; no legacy migration or native acceptance is claimed. Stage 1 is not
+whole-ADR acceptance; the ADR stays Proposed pending all gates and review.
+
 ## Alternatives considered
 
 - One tunnel per session: retains the setup and discoverability restriction.
@@ -429,7 +456,7 @@ generation pins; they do not replace them.
 The existing external service eligibility and experimental/native qualification
 limits remain. Existing successful fixtures do not establish new multi-session,
 boot-start, temporary-lease or upgrade behavior. No live credentials or service
-changes are introduced by this design or the client-local metadata foundation.
+changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
@@ -438,12 +465,29 @@ changes are introduced by this design or the client-local metadata foundation.
   recipes; no implicit launcher network; shared setup and independent daemon
   lifetime. Legacy exact-generation behavior, single-writer ownership, bounded
   work, protected consent and secret boundaries remain.
-- **GUI/action edges affected:** `HOST-01`/`HOST-02` have an implemented
-  client-local metadata/command and explicit-browse state foundation under
-  [#681](https://github.com/fes/fesTerm/issues/681). Their live UI/endpoint
-  transitions and `HOST-03`–`HOST-06` remain deferred contracts. Existing
-  `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation
-  coverage until explicit migration.
+- **GUI/action edges affected:** `HOST-01` through `HOST-03` have partial
+  contract/owner-auth evidence, with additional client-local metadata/command
+  and explicit-browse state evidence for `HOST-01`/`HOST-02` under
+  [#681](https://github.com/fes/fesTerm/issues/681). Their endpoint/UI/native
+  transitions and `HOST-04`–`HOST-06` remain deferred. Existing
+  `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation coverage
+  until explicit migration.
+- **Automated evidence (stage 1):**
+  `host_wire_fixture_is_canonical_and_not_legacy_protocol`,
+  `host_wire_rejects_malformed_oversized_and_version_mismatched_input`,
+  `host_operations_roundtrip_without_conflating_detach_end_or_absence`,
+  `host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values`,
+  `host_response_correlation_rejects_wrong_target_operation_and_temporary_lease`,
+  `host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors`,
+  `host_aggregate_budgets_refuse_saturation_and_release_exact_permits`,
+  `host_admission_fence_rejects_revocation_replacement_and_operation_change`,
+  `host_owner_authentication_matches_domain_bound_signature_fixture`,
+  `host_owner_proof_rejects_foreign_key_tampering_and_cross_connection_replay`,
+  `host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed`,
+  `host_owner_admission_requires_current_shared_exact_generation_and_absence`,
+  `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
+  The acceptance matrix below remains required later-stage evidence, not
+  coverage claimed by these codec/authentication primitives.
 - **Automated tests implemented for the client-local foundation:**
   `public_recipe_serialization_preserves_launch_and_four_behaviors`,
   `invalid_recipe_ids_launch_and_protected_fields_are_refused`,
@@ -467,7 +511,8 @@ changes are introduced by this design or the client-local metadata foundation.
   Migration must preserve protected state/account binding and separately qualify
   default-No exact-generation stop confirmation and manual deferral; setup or
   sharing consent is never restart consent.
-- **Coverage superseded:** None by the client-local foundation. Retire legacy
+- **Coverage superseded:** None by the contract or client-local foundations.
+  Retire legacy
   coverage only when its replacement is implemented and traced.
 
 ### Acceptance matrix

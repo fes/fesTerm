@@ -3336,6 +3336,12 @@ These gates belong to the owner-authorized `feat/powershell` work under
 Backend/CLI fixtures do not establish a finished GUI workflow, corporate
 authorization, broker support, or enrolled-phone acceptance.
 
+Remote-session discovery and Enterprise GUI entry points are deliberately
+hidden pending explicit owner approval. CP-24 and CP-21 retain their backend
+and internal-surface evidence, but public native-GUI qualification is deferred
+until that exposure is authorized. PowerShell profiles and local Running
+Sessions remain exposed and retain their existing gates.
+
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
 | CP-24 | Query helper capabilities and current-user discovery using an isolated registry. Native SSH exec pins host/account/source and an exact live generation; explicit takeover, binary snapshot adoption and detach preserve the daemon. In the desktop picker, change endpoints, cancel discovery, reject stale selection, confirm takeover, use the normal terminal, and close/move tabs while work is pending. No workspace restores credentials, inventories or selected remote generations. | Automated helper, native loopback SSH/daemon and desktop routing contracts; cross-host/platform and native GUI usability remain separate | #256. The SSH path does not implement PSRP attachment or enterprise authorization. Windows OpenSSH/named-pipe and cross-host macOS/Linux interoperability need separate native records; existing CP-11 local policy remains unchanged. |
@@ -3357,6 +3363,30 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
 | CP-22 | On macOS, Windows and Linux with multiple local addresses, exercise Automatic, fixed source and Ask on first connection for SSH/SFTP and the native PSRP fixed-source CLI. Observe the source at an authorized server. Cancel before connection; choose an unavailable address; disconnect its VPN/interface before reconnect; confirm no unbound fallback. Open SFTP from the live SSH session and exercise a separate transfer connection. Confirm profile edits do not alter the live session, new Ask sessions prompt again, and workspace restore does not persist a prompted source. | Deterministic config/UI/socket regressions plus native network and usability evidence; partial | Requires authorized IPv4/IPv6 endpoints and a controlled multi-adapter/VPN environment per platform. Adapter labels aid address selection only. DNS, proxy policy, strict interface binding and VPN-only enforcement are not established by socket source binding. IPv6 link-local scope selection is unsupported. No corporate interfaces, routes or policies are changed automatically. |
+
+## Host-based Dev Tunnels stage-1 classification (#681)
+
+[ADR 0084](adr/0084-host-based-dev-tunnels.md) remains Proposed.
+[HOST contract primitives](host-protocol.md) have automated codec, canonical
+signature, default-deny owner/session admission, revocation/replay, privacy/
+pagination and budget evidence. This is not a native host endpoint, installation,
+owner-enrollment ceremony, actual pinned-channel proof or temporary supervisor.
+No live credentials/services were used or installed by this slice.
+
+HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
+enrollment/vault/channel/admission integration, authoritative journal/reboot
+reconciliation, simultaneous sessions and leases, fair output/control scheduling
+and physical mobile disconnect/reconnect. Later slices must extend DT-07/DT-08,
+CP-11 and MOB-03/MOB-06 with actual platform evidence before claiming acceptance.
+Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
+HOST-04–06 setup/update/migration remain deferred behind their implementations;
+there is no new completed manual or usability scenario.
+Migration qualification must preserve protected state/account binding, retain
+manual deferral and prove that setup/sharing consent cannot stop/restart a live
+legacy session. Such a stop requires separate default-No confirmation of the
+exact live generation, revalidated before the effect; stale confirmation must
+not stop a replacement. No such local confirmation UI or native evidence is
+claimed by the stage-1 protocol refusal fixture.
 
 ## Intake rule for new work
 

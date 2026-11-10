@@ -1413,7 +1413,7 @@
       "decisions": ["ADR-0014", "ADR-0038", "ADR-0082"],
       "automated_tests": [
         "discovery_surfaces_open_without_workers_and_never_enter_workspace_metadata",
-        "remote_and_enterprise_cards_route_to_typed_discovery_actions",
+        "unreleased_discovery_cards_are_hidden_at_narrow_and_wide_tab_sizes",
         "remote_picker_target_opens_normal_terminal_adopts_snapshot_and_stays_ephemeral",
         "closing_discovery_tabs_retains_cleanup_until_worker_exit",
         "discovery_action_guard_rejects_stale_owners_and_caps_only_new_workers",
@@ -1423,6 +1423,7 @@
       "manual_scenarios": ["CP-24", "CP-21"],
       "status": "partial",
       "prerequisites": [
+        "owner approval to expose remote-session and enterprise discovery in the GUI; entry points are deliberately hidden",
         "native desktop focus/accessibility and real remote Windows OpenSSH/named-pipe qualification",
         "approved enterprise tenant/application registration and policy-authorized Dev Center access",
         "broker/device claims and enrolled-phone workflow remain separate implementation and qualification"
@@ -5467,9 +5468,11 @@
       ]
     },
     {
-      "id": "host-client-local-recipes",
-      "edges": ["HOST-01", "HOST-02"],
+      "id": "host-protocol-owner-contracts",
+      "edges": ["HOST-01", "HOST-02", "HOST-03"],
       "requirements": [
+        "docs/adr/0084-host-based-dev-tunnels.md#decision",
+        "docs/host-protocol.md",
         "docs/configuration.md#public-host-recipes-adr-0084-foundation",
         "docs/gui-design.md#profile-editing",
         "docs/application-command-model.md#required-properties",
@@ -5478,6 +5481,19 @@
       ],
       "decisions": ["ADR-0084", "ADR-0054"],
       "automated_tests": [
+        "host_wire_fixture_is_canonical_and_not_legacy_protocol",
+        "host_wire_rejects_malformed_oversized_and_version_mismatched_input",
+        "host_operations_roundtrip_without_conflating_detach_end_or_absence",
+        "host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values",
+        "host_response_correlation_rejects_wrong_target_operation_and_temporary_lease",
+        "host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors",
+        "host_aggregate_budgets_refuse_saturation_and_release_exact_permits",
+        "host_admission_fence_rejects_revocation_replacement_and_operation_change",
+        "host_owner_authentication_matches_domain_bound_signature_fixture",
+        "host_owner_proof_rejects_foreign_key_tampering_and_cross_connection_replay",
+        "host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed",
+        "host_owner_admission_requires_current_shared_exact_generation_and_absence",
+        "host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys",
         "public_recipe_serialization_preserves_launch_and_four_behaviors",
         "invalid_recipe_ids_launch_and_protected_fields_are_refused",
         "metadata_commands_edit_future_recipe_without_mutating_previous_snapshot",
@@ -5498,13 +5514,16 @@
       "prerequisites": [
         "Issue #681: reviewed pinned/encrypted host endpoint and enrolled-key verified principal/account binding; public account/host IDs are metadata hints, never authorization",
         "Issue #681: bounded authorized inventory and authoritative absence/atomic ensure, exact-generation attach, idempotent reconciliation/cancellation and real desktop/iOS/Android UI wiring; no Connect executor or legacy fallback exists in this foundation",
-        "Issue #681: native network-free opening/render/save, explicit find/single-host refresh, sign-in/trust/denial/offline behavior, reboot/recreation notice, shell-preserving deletion and physical mobile lease/lifecycle qualification remain deferred; existing DT/CP/MOB native, manual and usability evidence remains required"
+        "Issue #681: native network-free opening/render/save, explicit find/single-host refresh, sign-in/trust/denial/offline behavior, reboot/recreation notice, shell-preserving deletion and physical mobile lease/lifecycle qualification remain deferred; existing DT/CP/MOB native, manual and usability evidence remains required",
+        "Issue #681: contract primitives only; no HOST endpoint or GUI control is exposed. Independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
+        "Implement durable authoritative ensure/reservations, recipe conflicts and temporary lease supervision independently of bridge lifetime; reconcile uncertain outcomes, never infer absence from denial/offline/partial inventory",
+        "Implement authenticated multi-session routing, fair output/control scheduling, aggregate permit/deadline integration and legacy adapter without grant expansion",
+        "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth fixtures do not qualify it"
       ]
     },
     {
       "id": "host-based-dev-tunnels-design",
       "edges": [
-        "HOST-03",
         "HOST-04",
         "HOST-05",
         "HOST-06"
@@ -5520,10 +5539,10 @@
       "manual_scenarios": [],
       "status": "deferred",
       "prerequisites": [
-        "Implement ADR 0084's seven staged slices, including verified principal binding and atomic generation reservation",
+        "Issue #681: implement the remaining ADR 0084 setup, headless, desktop-hosting and release/migration slices after reviewed endpoint/session-control integration",
         "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
         "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect",
-        "Issue #681 / ADR 0084 section 11: preserve protected state and account binding; separately qualify default-No exact-generation live legacy stop confirmation, stale-generation refusal and manual deferral; setup/sharing consent does not authorize restart"
+        "Issue #681 / ADR 0084 section 11: migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow, including stale-generation refusal, before migration exposure"
       ]
     }
   ]

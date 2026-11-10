@@ -1,6 +1,6 @@
 use crate::{
-    ContractError, Epoch, HostId, LogicalSessionId, OperationId, PrincipalId, Target,
-    CONTROL_FRAME_BYTES, MAX_SESSIONS,
+    ConnectionId, ContractError, Epoch, GenerationId, HostId, LogicalSessionId, OperationId,
+    PrincipalId, Target, CONTROL_FRAME_BYTES, MAX_SESSIONS,
 };
 use std::sync::{Arc, Mutex};
 
@@ -50,7 +50,47 @@ pub struct BudgetPermit {
     amount: usize,
 }
 
+pub struct ClientBudget {
+    budgets: Budgets,
+    bytes: Arc<Mutex<usize>>,
+    client: Arc<BudgetPermit>,
+}
+
+pub struct ClientBytesPermit {
+    bytes: Arc<Mutex<usize>>,
+    amount: usize,
+    _global: BudgetPermit,
+    _client: Arc<BudgetPermit>,
+}
+
+/// Protected local authorization metadata, not client-supplied inventory.
+/// Absent means the authoritative journal has reconciled the logical record.
+/// Private/revoked/uncertain records must never be treated as an absent grant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogicalState {
+    Running(GenerationId),
+    Absent,
+    Unknown,
+    Revoked,
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionGrant {
+    pub logical: LogicalSessionId,
+    pub owner: PrincipalId,
+    pub remote_access: bool,
+    pub state: LogicalState,
+}
+
 impl Budgets {
+    pub fn admit_client(&self) -> Result<ClientBudget, ContractError> {
+        Ok(ClientBudget {
+            budgets: self.clone(),
+            bytes: Arc::new(Mutex::new(0)),
+            client: Arc::new(self.reserve(Resource::Client, 1)?),
+        })
+    }
+
     /// Refuse immediately instead of queueing tasks waiting for capacity.
     pub fn reserve(
         &self,
@@ -78,6 +118,35 @@ impl Budgets {
     }
 }
 
+impl ClientBudget {
+    pub fn reserve_terminal_bytes(
+        &self,
+        amount: usize,
+    ) -> Result<ClientBytesPermit, ContractError> {
+        let mut bytes = self.bytes.lock().map_err(|_| ContractError::Denied)?;
+        let next = bytes.checked_add(amount).ok_or(ContractError::Busy)?;
+        if next > MAX_BYTES_PER_CLIENT {
+            return Err(ContractError::Busy);
+        }
+        let global = self.budgets.reserve(Resource::TerminalBytes, amount)?;
+        *bytes = next;
+        Ok(ClientBytesPermit {
+            bytes: self.bytes.clone(),
+            amount,
+            _global: global,
+            _client: self.client.clone(),
+        })
+    }
+}
+
+impl Drop for ClientBytesPermit {
+    fn drop(&mut self) {
+        if let Ok(mut bytes) = self.bytes.lock() {
+            *bytes -= self.amount;
+        }
+    }
+}
+
 impl Drop for BudgetPermit {
     fn drop(&mut self) {
         if let Ok(mut state) = self.state.lock() {
@@ -92,6 +161,7 @@ impl Drop for BudgetPermit {
 pub struct AdmissionFence {
     pub host: HostId,
     pub principal: PrincipalId,
+    pub connection: ConnectionId,
     pub connection_epoch: Epoch,
     pub host_epoch: Epoch,
     pub grant_epoch: Epoch,

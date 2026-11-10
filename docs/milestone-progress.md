@@ -14,6 +14,25 @@ handling and explicit browsing intent are tested. Verified endpoint wiring,
 authorized resume/create, native UI and physical-device lifecycle evidence
 remain prerequisites; this is not stage 6 end-to-end acceptance.
 
+## Stabilizing SSH-agent test startup
+
+The vendored SSH tests could connect between the agent creating its Unix
+socket and listening on it, producing intermittent connection refusals in CI.
+Their shared startup helper now waits for an actual connection, reports an
+early agent exit or a bounded timeout, and cleans up the child on failure.
+Focused tests cover a socket that exists but is not listening and an exited
+agent; production SSH behavior is unchanged.
+
+## Withholding remote and enterprise discovery entry points
+
+The experimental remote-session picker and Enterprise sign-in/discovery were
+appearing alongside ordinary connection types before their public GUI exposure
+was wanted. Their New Session cards are now removed, with no alternate menu,
+shortcut or palette entry. The internal commands, tabs and backend tests remain
+intact, so development can continue without advertising those workflows.
+Restoring public entry points requires explicit owner approval; PowerShell
+profiles and local Running Sessions are unchanged.
+
 ## Investigating Windows inherited stdout
 
 A separate, job-supervised native probe measures inherited stdout pipe mode
@@ -8639,3 +8658,22 @@ instead of requiring a second state message after the server has removed the
 command. Failed signals still fail, and transports that need a later state
 event retain that requirement. The native oracle still requires the same
 runspace's marker to survive cancellation.
+
+### ADR 0084 starts with contracts, not a remotely callable shell service
+
+The host-oriented tunnel design ([#681](https://github.com/fes/fesTerm/issues/681))
+cannot safely promote today's scoped bearer connection into a person. Stage 1
+therefore separates the bounded, versioned HOST contract from the legacy bridge
+and adds explicit enrolled-owner signature/challenge primitives using existing
+repository crypto and secret boundaries. Typed logical/generation identities,
+authoritative-absence representations, owner-filtered pagination and aggregate
+reservation permits give later session-control work a shared foundation without
+inventing a sessiond-to-network dependency.
+
+Real codec and security-sensitive fixtures exercise replay, revocation,
+generation changes, default-deny creation and privacy before any listener
+advertises the protocol. Protected enrollment, native vault/channel integration,
+durable ensure/leases and endpoint routing remain gated work, not simulated
+success. No services or cloud resources changed. ADR 0084 remains Proposed;
+independent antagonist/security review and platform acceptance still govern
+exposure and completion.

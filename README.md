@@ -33,6 +33,12 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 ## Status
 
+[Host protocol contracts](docs/host-protocol.md) provide the first ADR 0084
+foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
+messages and opt-in owner-key authentication primitives. No HOST endpoint or
+remote creation is exposed; security review and later implementation/native
+gates remain open. Legacy Dev Tunnels behavior is unchanged.
+
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),
 [ADR 0078](docs/adr/0078-desktop-split-pane-presentation.md)). The live
