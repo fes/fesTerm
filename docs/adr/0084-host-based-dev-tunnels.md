@@ -596,12 +596,18 @@ refuse; rollback releases only exact operation claims and cannot revive exposure
 No live stop operation is added; separate default-No exact-generation consent
 remains mandatory for any future stop. The
 [migration contract and source limits](../owned-installation-migration.md)
-identify the actual missing authenticated daemon bind/retained-root routing API.
-Ordinary legacy daemons are explicitly unsupported, not silently restarted or
-reported bound. Native fixture preservation is current-source local evidence,
-not supported binding, an exposure switch, old-release or signed cross-platform
-migration acceptance. `HOSTMIG-01` remains deferred until that API, fresh protected
-owner/issuer admission, real binding/switch/rollback and native acceptance exist.
+document the authenticated current-daemon binding/retained-root routing API.
+Separate zero-grant owner initialization and explicit fingerprint approval precede
+private binding and an explicitly journaled switch. Fresh anchored owner/source/
+claim/account/principal/namespace/issuer admission surrounds durable publication,
+never native IPC. Per-frame source fencing, one-way native revocation/release and
+same-operation recovery preserve original issued evidence without recreate/end
+authority. The Disabled master gate stays off until ordinary separately consented
+setup. Older helpers without startup capability remain explicitly deferred.
+The controlled live fixture exercises actual bind/defer/switch/resume/revocation/
+release/rollback and original PTY I/O with unchanged PID/generation/frontend.
+This is not old-release, signed installed-platform, provider, vault or GUI
+acceptance; those `HOSTMIG-01` gates remain open.
 
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation

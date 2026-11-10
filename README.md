@@ -75,11 +75,11 @@ It requires real authenticated release inputs and existing native credentials;
 uninstall removes only exact stopped native resources and retains unqualified
 cloud deletion as unsuccessful CleanupPending; update remains unavailable.
 The legacy installer is unchanged.
-Explicit [owned-installation migration reservation](docs/owned-installation-migration.md)
-now has protected inventory/preview, exact-source claims, stable new host-identity
-reservation, resume/defer and local rollback. Actual authenticated live-daemon
-binding and exposure switching remain blocked; unsupported helpers are preserved,
-never restarted or attached by migration.
+Explicit [owned-installation migration](docs/owned-installation-migration.md)
+adds protected reservation, authenticated current-daemon bind/switch, retained-root
+routing, same-operation resume and exact release/rollback without acquiring a
+frontend. Older helpers remain deferred and usable. A local switch is not cloud
+enable or installed cross-platform migration acceptance.
 An opt-in shared library adds foreground native-vault GitHub authentication and
 zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;
 generation-atomic cloud deletion remains an explicit qualification blocker.

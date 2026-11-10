@@ -1028,19 +1028,27 @@ strict `client,owner-auth` lib clippy step disables default features to preserve
 the portable client-only boundary. This is
 portable regression coverage, not native enrollment/channel/service acceptance.
 
-There is no legacy daemon binding or exposure switch: existing profiles/protocol/
-host-key/vault/grants remain unchanged. The separate
-[owned-installation reservation](owned-installation-migration.md) implements
-protected explicit inventory/preview, destination identity/source claims,
-resume/defer and local rollback, not a fabricated live-binding receipt.
-No legacy import acquires an owner enrollment,
-creation permission or HOST marker. Codec refusal is not migration acceptance.
+The separate local [owned-migration boundary](owned-installation-migration.md#authenticated-binding-and-retained-root-boundary)
+authenticates explicitly selected capability-enabled current daemons over their
+original native endpoint, without entering frontend admission. Its `FSB1`
+nonce/MAC exchange is local binding control, not a HOST client request or proof
+of owner role. Anchored owner approval is separate from original source metadata;
+bind/switch consume fresh protected owner/account/key/principal/claim/namespace/
+epoch guards and actual native generation proof. Imported persistent records
+route existing inventory, strict attachment and frame authorization to their
+exact retained root; ensure/recreate/end/retirement are denied. Source revocation
+seals remote access without stopping the ordinary shell or replacing its local
+frontend. Release retains an exact one-way receipt before claims rollback.
+The disabled lifecycle remains master-gated until normal separately consented
+setup; older helpers without startup capability defer. Neither source grants nor
+imported metadata mint owner/create authority. Codec refusal and controlled
+current-source binding are not installed migration acceptance.
 Migration must preserve protected state/account binding and offer manual
 deferral. Stopping a live legacy session requires a **separate, default-No**
 confirmation for that exact generation; setup/sharing consent never authorizes
 restart. The existing codec fixture also refuses a purported remote migration/
 restart request carrying setup/sharing assertions. It does not implement or
-qualify the future local confirmation flow. Migration reservation adds no stop
+qualify the future local confirmation flow. Owned migration adds no stop
 operation; its CLI rejects stop/restart/takeover flags.
 
 Independent security review must evaluate enrollment/storage/revocation, domain

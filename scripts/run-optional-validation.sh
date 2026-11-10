@@ -121,9 +121,9 @@ fi
 if [ "${FESTERM_RUN_OWNED_MIGRATION_NATIVE:-}" = 1 ]; then
     if [ -n "${FESTERM_ADR84_MIGRATION_HELPER:-}" ] &&
         [ -n "${FESTERM_ADR84_MIGRATION_HOST:-}" ] &&
-        cargo test --locked -p festerm-host-setup --features lifecycle --lib \
-            owned_migration::tests::owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existing_frontend \
-            -- --ignored --exact --nocapture --test-threads=1; then
+        cargo test --locked -p festerm-host-setup --features owner-enrollment --lib \
+            owned_migration::tests::owned_migration_native_ \
+            -- --ignored --nocapture --test-threads=1; then
         printf 'suite=owned-migration-native status=pass\n' >>"$result_path"
     else
         printf 'suite=owned-migration-native status=fail\n' >>"$result_path"

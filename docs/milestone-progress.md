@@ -1,5 +1,37 @@
 # Milestone Progress Narrative
 
+## Authenticating current-daemon migration without taking its frontend
+
+The frozen reservation foundation correctly refused ordinary-daemon adoption:
+there was no authenticated bind or retained-root routing seam. The explicitly
+authorized follow-up supplies that seam, not an `ensure` workaround. Current
+ordinary daemons create a private generation capability before publication;
+bounded nonce/MAC exchanges authenticate the actual process while its existing
+writer and PTY remain untouched. Migration independently rechecks original
+source/account/key/claim and anchored owner/principal/epoch/namespace authority,
+without holding broad store locks through IPC.
+
+Binding prepares a revoked persistent lease. Explicit switch journals its intent
+and activates only that preparation; per-frame source fencing and one-way native
+revocation/release prevent rollback from reviving exposure. Imported records
+retain their exact native root and forbid ensure/recreate/end. Rollback revokes,
+authenticates release and only then releases claims. Separate owner approval
+grants no create/end/temporary permission and never bypasses Disabled or normal
+provider setup consent. Older helpers without startup capability still defer.
+
+The new controlled current-source live fixture executes actual bind, defer,
+switch, resume, revocation, release and rollback with original frontend PTY I/O,
+unchanged PID/generation and no duplicate identity. Foreign/stale descriptors and
+held native leases refuse without disturbing that frontend. This is executable
+local evidence with a pre-existing unticketed **remote legacy** frontend, including
+lost binding/release checkpoint recovery and exact retained-root inventory. The
+separate ticketed HOST retirement fence survives native release without treating
+ordinary legacy remote clients as HOST clients. This remains
+current-source evidence, not installed Windows/macOS/Linux, old-release, native-vault,
+provider or GUI acceptance. `HOSTMIG-01` retains those gates and separate
+default-No exact-generation consent for any future live stop. No service/account/
+OS/provider operations, VM access, releases or signing were performed.
+
 ## Reserving owned migration without inventing daemon adoption
 
 ADR 0084 §11 previously had no executable owned-migration transaction. The new

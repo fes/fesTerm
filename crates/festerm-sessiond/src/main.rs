@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc,
     },
     thread,
@@ -78,13 +78,19 @@ fn sessiond_trace(message: impl std::fmt::Display) {
 
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 static DAEMON_GENERATION: OnceLock<u128> = OnceLock::new();
-static DAEMON_HOST_WATCH: OnceLock<std::sync::Mutex<festerm_sessiond::host_lease::DaemonWatch>> =
+static DAEMON_HOST_WATCH: OnceLock<
+    std::sync::Mutex<Option<festerm_sessiond::host_lease::DaemonWatch>>,
+> = OnceLock::new();
+static HOST_CLIENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+static DAEMON_BINDING: OnceLock<std::sync::Mutex<festerm_sessiond::native_binding::DaemonBinding>> =
     OnceLock::new();
 
 fn host_daemon_should_stop() -> bool {
-    DAEMON_HOST_WATCH
-        .get()
-        .is_some_and(|watch| watch.lock().map_or(true, |mut watch| watch.should_stop()))
+    DAEMON_HOST_WATCH.get().is_some_and(|watch| {
+        watch.lock().map_or(true, |mut watch| {
+            watch.as_mut().is_some_and(|watch| watch.should_stop())
+        })
+    })
 }
 static DAEMON_LOG: OnceLock<(PathBuf, festerm_sessiond::NativeSessionIdentity)> = OnceLock::new();
 
@@ -101,9 +107,11 @@ fn host_allows_attachment(
     kind: AttachKind,
 ) -> bool {
     match DAEMON_HOST_WATCH.get() {
-        Some(watch) => watch
-            .lock()
-            .is_ok_and(|watch| watch.allows_attachment(ticket, kind == AttachKind::Remote)),
+        Some(watch) => watch.lock().is_ok_and(|watch| {
+            watch.as_ref().map_or(ticket.is_none(), |watch| {
+                watch.allows_attachment(ticket, kind == AttachKind::Remote)
+            })
+        }),
         None => ticket.is_none(),
     }
 }
@@ -113,10 +121,15 @@ fn host_commit_attachment(
     kind: AttachKind,
 ) -> io::Result<()> {
     match DAEMON_HOST_WATCH.get() {
-        Some(watch) => watch
+        Some(watch) => match watch
             .lock()
             .map_err(|_| io::Error::other("host lease unavailable"))?
-            .commit_attachment(ticket, kind == AttachKind::Remote),
+            .as_mut()
+        {
+            Some(watch) => watch.commit_attachment(ticket, kind == AttachKind::Remote),
+            None if ticket.is_none() => Ok(()),
+            None => Err(io::Error::other("host lease unavailable")),
+        },
         None if ticket.is_none() => Ok(()),
         None => Err(io::Error::other("host lease unavailable")),
     }
@@ -128,7 +141,9 @@ fn host_attachment_cancelled(
 ) -> bool {
     match DAEMON_HOST_WATCH.get() {
         Some(watch) => watch.lock().map_or(true, |watch| {
-            watch.attachment_cancelled(ticket, kind == AttachKind::Remote)
+            watch.as_ref().map_or(ticket.is_some(), |watch| {
+                watch.attachment_cancelled(ticket, kind == AttachKind::Remote)
+            })
         }),
         None => ticket.is_some(),
     }
@@ -1229,7 +1244,7 @@ fn run_daemon(
         if watch.should_stop() {
             return Err("host lease already ended before shell launch".into());
         }
-        let _ = DAEMON_HOST_WATCH.set(std::sync::Mutex::new(watch));
+        let _ = DAEMON_HOST_WATCH.set(std::sync::Mutex::new(Some(watch)));
     }
     let mut record = generation_record(
         &runtime_root,
@@ -1264,7 +1279,7 @@ fn run_daemon(
         created_at_unix_ms: generation,
         endpoint: record.socket.clone(),
     };
-    let _ = DAEMON_LOG.set((runtime_root.clone(), identity));
+    let _ = DAEMON_LOG.set((runtime_root.clone(), identity.clone()));
     lifecycle_event(LifecycleEvent::Starting);
     #[cfg(windows)]
     match env::var("FESTERM_SESSIOND_BREAKAWAY").as_deref() {
@@ -1280,6 +1295,16 @@ fn run_daemon(
     #[cfg(unix)]
     session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
     let result = with_daemon_generation(&runtime_root, &record, |socket_owned| {
+        if DAEMON_HOST_WATCH.get().is_none() {
+            if let Some(fingerprint) = &record.spawn_fingerprint {
+                let binding = festerm_sessiond::native_binding::DaemonBinding::create(
+                    &runtime_root,
+                    identity.clone(),
+                    fingerprint.clone(),
+                )?;
+                let _ = DAEMON_BINDING.set(std::sync::Mutex::new(binding));
+            }
+        }
         #[cfg(unix)]
         {
             let socket_path = Path::new(&record.socket);
@@ -2183,6 +2208,19 @@ fn admit_client(
             Err(error) => return Err(error),
         }
     }
+    if offset == request.len() && &request[..4] == b"FSB1" {
+        if let Some(binding) = DAEMON_BINDING.get() {
+            if let (Ok(mut binding), Ok(mut watch)) = (
+                binding.lock(),
+                DAEMON_HOST_WATCH
+                    .get_or_init(|| std::sync::Mutex::new(None))
+                    .lock(),
+            ) {
+                let _ = binding.serve(&request, stream, &mut watch);
+            }
+        }
+        return Ok(None);
+    }
     let ticket = if offset == request.len() && &request[..4] == b"FSA5" {
         let mut bytes = [0; 36];
         let mut offset = 0;
@@ -2390,6 +2428,14 @@ fn poll_replacement(
     let candidate = pending.candidate.take().expect("checked candidate");
     retire_active(active, retired, true);
     pending.staged = candidate.delta;
+    HOST_CLIENT_GENERATION.store(
+        if candidate.ticket.is_some() {
+            candidate.client.generation
+        } else {
+            0
+        },
+        Ordering::Release,
+    );
     *active = Some(candidate.client);
     if candidate.activate.try_send(()).is_err() {
         retire_active(active, retired, false);
@@ -2432,12 +2478,30 @@ fn retire_active_if_finished(
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
 ) {
-    if active
-        .as_ref()
-        .is_some_and(|client| client.thread.is_finished())
-    {
+    if active.as_ref().is_some_and(|client| {
+        client.thread.is_finished()
+            || ticketed_host_client(
+                client.kind,
+                client.generation,
+                HOST_CLIENT_GENERATION.load(Ordering::Acquire),
+            ) && (DAEMON_BINDING.get().is_some_and(|binding| {
+                binding
+                    .lock()
+                    .map_or(true, |binding| binding.imported_remote_revoked())
+            }) || DAEMON_HOST_WATCH.get().is_some_and(|watch| {
+                watch.lock().map_or(true, |watch| {
+                    watch.as_ref().is_some_and(
+                        festerm_sessiond::host_lease::DaemonWatch::imported_remote_revoked,
+                    )
+                })
+            }))
+    }) {
         retire_active(active, retired_clients, false);
     }
+}
+
+fn ticketed_host_client(kind: AttachKind, generation: u64, ticketed_generation: u64) -> bool {
+    kind == AttachKind::Remote && ticketed_generation != 0 && generation == ticketed_generation
 }
 
 fn send_to_active(
@@ -4979,6 +5043,14 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_binding_release_targets_only_ticketed_host_frontend_not_legacy_remote_or_local() {
+        assert!(ticketed_host_client(AttachKind::Remote, 7, 7));
+        assert!(!ticketed_host_client(AttachKind::Remote, 7, 0));
+        assert!(!ticketed_host_client(AttachKind::Remote, 8, 7));
+        assert!(!ticketed_host_client(AttachKind::Local, 7, 7));
+    }
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 

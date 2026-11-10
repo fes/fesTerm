@@ -14,8 +14,8 @@ be created under the existing trusted ancestor policy.
 
 Removing those two checks alone is insufficient: non-admitting native launch
 also requires private registry, launch-journal and spawn-fingerprint evidence.
-An already-running legacy daemon cannot acquire that startup evidence through
-a bridge update. Rewriting permissions or registry files underneath it would
+An older already-running daemon without startup capability cannot acquire that
+evidence through a bridge update. Rewriting permissions or registry files underneath it would
 also affect unrelated live sessions.
 
 Enabling hosting for a running legacy session must retain it and defer
@@ -183,6 +183,17 @@ There is no new reboot policy, shell hot-upgrade, automatic credential change or
 script-tunnel migration.
 
 ## Validation impact
+
+ADR 0084 owned migration additionally permits explicitly selected current
+ordinary daemons that already created authenticated binding capability under
+their original lifetime lease before publication. Its protected owner/source/
+claim/namespace/epoch-bound handshake installs/releases a persistent watch and
+routes the exact retained root without frontend admission, startup evidence
+fabrication, restart or stop. Source revocation seals remote access, not the
+existing shell. Older helpers still defer, and the separate default-No
+exact-generation stop decision below is unchanged; setup/share/migration consent
+never authorizes stop. See [the executable boundary](../owned-installation-migration.md#authenticated-binding-and-retained-root-boundary)
+and its controlled native fixture, distinct from installed/old-release acceptance.
 
 - **Invariants introduced or changed:** additive private hosted runtime and
   root-aware local attachment; manual legacy-session migration;

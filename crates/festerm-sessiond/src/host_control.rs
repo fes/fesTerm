@@ -31,6 +31,9 @@ use std::{
 
 const STATE_LIMIT: usize = 4 * 1024 * 1024;
 const STATE_FILE: &str = "host-sessions.json";
+#[path = "host_binding.rs"]
+mod binding;
+pub use binding::ImportedBinding;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlError {
@@ -136,6 +139,8 @@ pub struct PendingAttachment {
 #[derive(Clone, Debug)]
 pub struct AttachmentAuthority {
     root: PathBuf,
+    native_root: PathBuf,
+    binding: Option<crate::native_binding::Binding>,
     target: Target,
     identity: NativeSessionIdentity,
     grant: SessionGrant,
@@ -245,9 +250,16 @@ struct Record {
     phase: Phase,
     identity: Option<Identity>,
     artifacts_retired: bool,
+    #[serde(default)]
+    binding: Option<ImportedBinding>,
 }
 
 impl Record {
+    fn root<'a>(&'a self, root: &'a Path) -> &'a Path {
+        self.binding
+            .as_ref()
+            .map_or(root, |binding| binding.binding.runtime_root.as_path())
+    }
     fn grant(&self) -> SessionGrant {
         SessionGrant {
             logical: self.logical.clone(),
@@ -328,6 +340,8 @@ struct State {
     sessions: BTreeMap<LogicalSessionId, Record>,
     operations: BTreeMap<OperationId, Operation>,
     last_generation: u128,
+    #[serde(default)]
+    namespace: Option<OperationId>,
 }
 
 impl Default for State {
@@ -338,6 +352,7 @@ impl Default for State {
             sessions: BTreeMap::new(),
             operations: BTreeMap::new(),
             last_generation: 0,
+            namespace: Some(OperationId::new()),
         }
     }
 }
@@ -346,6 +361,11 @@ struct Transaction {
     directory: File,
     _lock: File,
     state: State,
+}
+
+struct NativeAdmission<G> {
+    _policy: G,
+    _source: Option<crate::native_binding::SourceFence>,
 }
 
 impl Transaction {
@@ -378,6 +398,18 @@ pub struct SessionControl {
 }
 
 impl SessionControl {
+    /// Binding/observation only: this handle cannot create or recreate shells.
+    pub fn existing_only(root: &Path) -> Result<Self, ControlError> {
+        if !root.is_absolute() {
+            return Err(ControlError::Invalid);
+        }
+        detached::prepare_native_runtime(root).map_err(|_| ControlError::Storage)?;
+        Ok(Self {
+            root: root.into(),
+            helper: PathBuf::new(),
+        })
+    }
+
     pub fn open(root: &Path) -> Result<Self, ControlError> {
         let helper =
             crate::daemon_executable_for_root(Some(root)).map_err(|_| ControlError::Storage)?;
@@ -445,6 +477,19 @@ impl SessionControl {
             }
             Err(error) => return Err(storage_error(error)),
         };
+        match storage::read_private(&directory, Path::new("host-binding-namespace.json"), 256) {
+            Ok(bytes)
+                if state.namespace.as_ref().is_some_and(|namespace| {
+                    serde_json::from_slice::<OperationId>(&bytes).ok().as_ref() == Some(namespace)
+                }) => {}
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && !state
+                        .sessions
+                        .values()
+                        .any(|record| record.binding.is_some()) => {}
+            _ => return Err(ControlError::Storage),
+        }
         if state.version != 2
             || state.sessions.len() > MAX_SESSIONS
             || state.operations.len() > MAX_IDEMPOTENCY_RECORDS
@@ -454,7 +499,27 @@ impl SessionControl {
         }
         for (logical, record) in &state.sessions {
             if logical != &record.logical
-                || !(0..MAX_SESSIONS).any(|slot| record.name == native_slot(slot))
+                || (record.binding.is_none()
+                    && !(0..MAX_SESSIONS).any(|slot| record.name == native_slot(slot)))
+                || record.binding.as_ref().is_some_and(|binding| {
+                    binding.binding.validate().is_err()
+                        || binding.binding.logical != record.logical
+                        || Some(&binding.binding.namespace) != state.namespace.as_ref()
+                        || binding.binding.control_root != self.root
+                        || binding.binding.principal != record.owner
+                        || binding.binding.operation != record.launch
+                        || binding.binding.spawn_fingerprint != record.fingerprint
+                        || binding.binding.issuance_epoch.get() > state.issuance_epoch.get()
+                        || binding.acknowledged && !binding.lease_reserved
+                        || binding.activated && !binding.acknowledged
+                        || binding.released && !record.revoked
+                        || !binding.activated && !record.revoked
+                        || !record.revoked && record.epoch.get() < 2
+                        || binding.binding.identity.name != record.name
+                        || binding.binding.identity.created_at_unix_ms != record.generation.get()
+                        || record.native().as_ref() != Some(&binding.binding.identity)
+                        || record.lifetime != (Lifetime::Persistent {})
+                })
                 || record.recipe.validate().is_err()
                 || record.effective_recipe.validate().is_err()
                 || record.lifetime.validate().is_err()
@@ -467,14 +532,14 @@ impl SessionControl {
             if state
                 .sessions
                 .values()
-                .map(|record| &record.name)
+                .map(|record| (record.root(&self.root), &record.name))
                 .collect::<std::collections::BTreeSet<_>>()
                 .len()
                 != state.sessions.len()
                 || state
                     .sessions
                     .values()
-                    .map(|record| record.generation.get())
+                    .map(|record| (record.root(&self.root), record.generation.get()))
                     .collect::<std::collections::BTreeSet<_>>()
                     .len()
                     != state.sessions.len()
@@ -513,10 +578,14 @@ impl SessionControl {
         owner: &PrincipalId,
         effect: Effect,
         admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
-    ) -> Result<G, ControlError> {
+    ) -> Result<NativeAdmission<G>, ControlError> {
         if record.is_some_and(|record| &record.owner != owner) {
             return Err(ControlError::Denied);
         }
+        let source = record
+            .and_then(|record| record.binding.as_ref())
+            .map(|imported| Self::binding_source(&imported.binding))
+            .transpose()?;
         let state = AdmissionState {
             grant: record.map(Record::grant),
             grant_epoch: record.map(|record| record.epoch),
@@ -527,17 +596,67 @@ impl SessionControl {
         if record.is_some_and(|record| record.revoked) {
             return Err(ControlError::Revoked);
         }
-        Ok(guard)
+        Ok(NativeAdmission {
+            _policy: guard,
+            _source: source,
+        })
+    }
+
+    fn binding_source(
+        binding: &crate::native_binding::Binding,
+    ) -> Result<crate::native_binding::SourceFence, ControlError> {
+        match binding.source_fence() {
+            Ok(guard) => Ok(guard),
+            Err(error) if crate::lock_is_contended(&error) => Err(ControlError::Busy),
+            Err(_) => {
+                let generation = GenerationId::new(binding.identity.created_at_unix_ms)
+                    .map_err(|_| ControlError::Invalid)?;
+                let guard = LeaseGuard::acquire(&binding.runtime_root, generation)
+                    .map_err(storage_error)?;
+                let mut lease = guard.read().map_err(storage_error)?;
+                if lease.name != binding.identity.name
+                    || lease.native_pid != Some(binding.identity.pid)
+                    || lease.grant.logical != binding.logical
+                    || lease.grant.owner != binding.principal
+                {
+                    return Err(ControlError::Unknown);
+                }
+                if !lease.remote_revoked || lease.grant.revision.get() == 1 {
+                    lease.remote_revoked = true;
+                    lease.pending = None;
+                    lease.grant.remote_access = false;
+                    lease.grant.state = LogicalState::Revoked;
+                    lease.grant.revision = lease
+                        .grant
+                        .revision
+                        .next()
+                        .map_err(|_| ControlError::Storage)?;
+                    guard.replace(&mut lease).map_err(storage_error)?;
+                }
+                Err(ControlError::Revoked)
+            }
+        }
     }
 
     fn reconcile(&self, record: &mut Record) -> Result<(), ControlError> {
         if record.revoked || record.artifacts_retired {
             return Ok(());
         }
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let lease = guard.read().map_err(|_| ControlError::Unknown)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
+        }
+        if record
+            .binding
+            .as_ref()
+            .is_some_and(|binding| binding.activated)
+            && !record.revoked
+            && lease.remote_revoked
+            && lease.grant.revision.get() == 1
+        {
+            return Err(ControlError::Busy);
         }
         if lease.remote_revoked {
             record.revoked = true;
@@ -555,7 +674,8 @@ impl SessionControl {
     }
 
     fn sync_grant(&self, record: &mut Record) -> Result<(), ControlError> {
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
@@ -582,6 +702,24 @@ impl SessionControl {
             return Ok(());
         }
         let previous = record.phase.clone();
+        if let Some(binding) = &record.binding {
+            if binding.released {
+                return Err(ControlError::Revoked);
+            }
+            if !detached::host_generation_state(
+                record.root(&self.root),
+                &binding.binding.identity,
+                &record.fingerprint,
+            )
+            .map_err(|_| ControlError::Unknown)?
+            {
+                record.phase = Phase::Absent;
+            }
+            if record.phase != previous {
+                record.epoch = record.epoch.next().map_err(|_| ControlError::Storage)?;
+            }
+            return Ok(());
+        }
         // A pending reservation can only adopt its exact journaled incarnation.
         // It must never enter the spawning path again after restart/lost reply.
         if matches!(record.phase, Phase::Launching | Phase::Ending) && record.identity.is_none() {
@@ -762,10 +900,21 @@ impl SessionControl {
         cancelled: &AtomicBool,
         admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<EnsureResult, ControlError> {
+        if self.helper.as_os_str().is_empty() {
+            return Err(ControlError::Denied);
+        }
         creation.validate().map_err(|_| ControlError::Invalid)?;
         let mut tx = self.transaction()?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
         let logical = &creation.logical;
+        if tx
+            .state
+            .sessions
+            .get(logical)
+            .is_some_and(|record| record.binding.is_some())
+        {
+            return Err(ControlError::Denied);
+        }
         Self::admission(
             tx.state.sessions.get(logical),
             owner,
@@ -943,6 +1092,7 @@ impl SessionControl {
                 .ok_or(ControlError::Busy)?,
         };
         let record = Record {
+            binding: None,
             owner: owner.clone(),
             logical: logical.clone(),
             display_name: creation
@@ -1054,7 +1204,7 @@ impl SessionControl {
 
     fn summary(&self, record: &Record) -> Result<SessionSummary, ControlError> {
         let identity = record.native().ok_or(ControlError::Unknown)?;
-        let attached = detached::host_generation_attached(&self.root, &identity)
+        let attached = detached::host_generation_attached(record.root(&self.root), &identity)
             .map_err(|_| ControlError::Unknown)?;
         Ok(SessionSummary {
             target: record.target(),
@@ -1115,7 +1265,7 @@ impl SessionControl {
         target: &Target,
         effect: Effect,
         admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
-    ) -> Result<(&'a mut Record, G), ControlError> {
+    ) -> Result<(&'a mut Record, NativeAdmission<G>), ControlError> {
         let record = tx
             .state
             .sessions
@@ -1202,8 +1352,48 @@ impl SessionControl {
         if authority.root != self.root {
             return Err(ControlError::Denied);
         }
-        let guard =
-            LeaseGuard::acquire(&self.root, authority.target.generation).map_err(storage_error)?;
+        if let Some(binding) = &authority.binding {
+            let tx = self.transaction()?;
+            let record = tx
+                .state
+                .sessions
+                .get(&binding.logical)
+                .ok_or(ControlError::Unknown)?;
+            if tx.state.namespace.as_ref() != Some(&binding.namespace)
+                || record.revoked
+                || record.binding.as_ref().is_none_or(|current| {
+                    current.binding != *binding || !current.activated || current.released
+                })
+            {
+                return Err(ControlError::Revoked);
+            }
+            let directory =
+                storage::private_directory(&binding.runtime_root, false).map_err(storage_error)?;
+            let bytes = storage::read_private(
+                &directory,
+                Path::new(&format!(
+                    "native-binding-{}-{}.json",
+                    binding.identity.pid, binding.identity.created_at_unix_ms
+                )),
+                16 * 1024,
+            )
+            .map_err(storage_error)?;
+            let receipt: crate::native_binding::Receipt =
+                serde_json::from_slice(&bytes).map_err(|_| ControlError::Storage)?;
+            if receipt.version != 1
+                || receipt.binding != *binding
+                || receipt.phase != crate::native_binding::BindingPhase::Active
+            {
+                return Err(ControlError::Revoked);
+            }
+        }
+        let _source = authority
+            .binding
+            .as_ref()
+            .map(Self::binding_source)
+            .transpose()?;
+        let guard = LeaseGuard::acquire(&authority.native_root, authority.target.generation)
+            .map_err(storage_error)?;
         let lease = guard.read().map_err(storage_error)?;
         if lease.remote_revoked {
             return Err(ControlError::Revoked);
@@ -1224,7 +1414,7 @@ impl SessionControl {
             return Err(ControlError::Ended);
         }
         if !(allow_stopped_receipt && lease.stopped)
-            && !detached::host_generation_lease_live(&self.root, &authority.identity)
+            && !detached::host_generation_lease_live(&authority.native_root, &authority.identity)
                 .map_err(|_| ControlError::Unknown)?
         {
             return Err(ControlError::Ended);
@@ -1258,7 +1448,8 @@ impl SessionControl {
         let mut tx = self.transaction()?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
         let (record, admission) = self.exact(&mut tx, owner, target, Effect::Attach, &mut admit)?;
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         if lease.expired() {
             return Err(ControlError::Ended);
@@ -1297,6 +1488,11 @@ impl SessionControl {
         let identity = record.native().ok_or(ControlError::Unknown)?;
         let authority = AttachmentAuthority {
             root: self.root.clone(),
+            native_root: record.root(&self.root).into(),
+            binding: record
+                .binding
+                .as_ref()
+                .map(|imported| imported.binding.clone()),
             target: record.target(),
             identity: identity.clone(),
             grant: record.grant(),
@@ -1312,7 +1508,7 @@ impl SessionControl {
         let connected = match &ticket {
             Some(ticket) => PersistentSession::resume_host_reserved_in(
                 &identity,
-                &self.root,
+                record.root(&self.root),
                 takeover,
                 maximum_recovery_bytes,
                 ticket,
@@ -1320,7 +1516,7 @@ impl SessionControl {
             ),
             None => PersistentSession::resume_remote_in(
                 &identity,
-                &self.root,
+                record.root(&self.root),
                 takeover,
                 maximum_recovery_bytes,
                 notifier,
@@ -1330,7 +1526,7 @@ impl SessionControl {
             Ok(session) => session,
             Err(_) => {
                 if let Some(ticket) = &ticket {
-                    let guard = LeaseGuard::acquire(&self.root, record.generation)
+                    let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
                         .map_err(|_| ControlError::CommittedButNotPublished)?;
                     let mut lease = guard
                         .read()
@@ -1513,7 +1709,11 @@ impl SessionControl {
         let mut tx = self.transaction()?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
         let (record, _admission) = self.exact(&mut tx, owner, target, Effect::End, &mut admit)?;
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        if record.binding.is_some() {
+            return Err(ControlError::Denied);
+        }
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
@@ -1596,7 +1796,8 @@ impl SessionControl {
             record.revoked = true;
             return tx.save();
         }
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         lease.pending = None;
         lease.remote_revoked = true;
@@ -1618,6 +1819,9 @@ impl SessionControl {
         logical: &LogicalSessionId,
     ) -> Result<(), ControlError> {
         let record = tx.state.sessions.get(logical).ok_or(ControlError::Denied)?;
+        if record.binding.is_some() {
+            return Err(ControlError::Denied);
+        }
         let _start = detached::lock_native_start_in(&self.root, &record.name)
             .map_err(|_| ControlError::Busy)?;
         let mut native_pid = record.identity.as_ref().map(|identity| identity.pid);
@@ -1810,6 +2014,9 @@ impl SessionControl {
         }
         if record.generation != target.generation {
             return Err(ControlError::Stale);
+        }
+        if record.binding.is_some() {
+            return Err(ControlError::Denied);
         }
         if matches!(record.phase, Phase::Absent) {
             return Err(ControlError::Ended);

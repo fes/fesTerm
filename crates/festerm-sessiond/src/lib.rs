@@ -4,6 +4,7 @@ mod detached;
 pub mod host_control;
 pub mod host_lease;
 pub mod lifecycle;
+pub mod native_binding;
 pub mod private_storage;
 mod remote;
 pub use detached::{
@@ -393,7 +394,8 @@ pub struct UnattachedSession {
 /// Read-only identity of the registry generation actually connected.
 /// Display metadata may use these existing facts without changing attach
 /// policy or storing launch instructions in the daemon.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeSessionIdentity {
     pub name: String,
     pub pid: u32,

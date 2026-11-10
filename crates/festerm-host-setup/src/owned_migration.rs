@@ -24,6 +24,12 @@ const HOST_IDENTITY: &str = "host-identity";
 const LIMIT: usize = 4 * 1024 * 1024;
 const SOURCE_LIMIT: usize = 64 * 1024;
 const MAX_SOURCES: usize = 8;
+#[cfg(feature = "owner-enrollment")]
+mod binding;
+#[cfg(feature = "owner-enrollment")]
+pub use binding::{approve_migration_owner, binding_status, has_bindings, BindingJournal};
+#[cfg(feature = "owner-enrollment")]
+pub(crate) use binding::{check_migration_owner, check_owner_initialization};
 
 fn refused(code: &'static str) -> io::Error {
     io::Error::other(code)
@@ -139,12 +145,14 @@ fn selections(values: &[Selection]) -> io::Result<()> {
     Ok(())
 }
 
-/// This release has no authenticated live legacy-to-HOST daemon binding API.
-/// A verified native generation is necessary evidence, not that capability.
+/// Native generation evidence alone is not binding capability. Display-only
+/// negotiation never replaces the immutable protected reservation or fresh admission.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Availability {
     AuthenticatedBindingUnavailable,
+    AuthenticatedBindingAvailable,
+    AlreadyBound,
     NativeGenerationUnavailable,
     CleanupPending,
     RevokedOrIncomplete,
@@ -207,6 +215,8 @@ pub enum Phase {
     Reserving,
     AwaitingNativeBinding,
     Deferred,
+    Bound,
+    Switched,
     RollbackPending,
     RolledBack,
 }
@@ -323,6 +333,14 @@ pub struct Inventory {
 type NativeProbe = fn(&profile_hosting::Target, Option<&String>) -> io::Result<bool>;
 
 impl Inventory {
+    #[cfg(feature = "owner-enrollment")]
+    fn negotiate_preview(&self, rows: &mut [InventoryRow]) -> io::Result<bool> {
+        #[cfg(test)]
+        if self.native_evidence.is_some() {
+            return Ok(false);
+        }
+        binding::preview_native(rows)
+    }
     pub fn current_user() -> io::Result<Self> {
         Ok(Self {
             desktop: profile_hosting::namespace()?,
@@ -596,12 +614,19 @@ impl Inventory {
     }
 
     pub fn inventory(&self, values: &[Selection], account: &str) -> io::Result<Vec<InventoryRow>> {
-        self.load_all(values, account).map(|sources| {
+        let rows = self.load_all(values, account).map(|sources| {
             sources
                 .into_iter()
                 .map(|source| source.retained.row)
-                .collect()
-        })
+                .collect::<Vec<_>>()
+        })?;
+        #[cfg(feature = "owner-enrollment")]
+        let rows = {
+            let mut rows = rows;
+            self.negotiate_preview(&mut rows)?;
+            rows
+        };
+        Ok(rows)
     }
 
     pub fn preview(
@@ -611,7 +636,7 @@ impl Inventory {
         account: &str,
     ) -> io::Result<Preview> {
         let sources = self.load_all(values, account)?;
-        destination.with_locked(|_, snapshot| {
+        let preview = destination.with_locked(|_, snapshot| {
             reservable(snapshot)?;
             let plan = plan(snapshot, account, &sources);
             Ok(Preview {
@@ -624,7 +649,15 @@ impl Inventory {
                     .collect(),
                 daemon_binding_supported: false,
             })
-        })
+        })?;
+        drop(sources);
+        #[cfg(feature = "owner-enrollment")]
+        let preview = {
+            let mut preview = preview;
+            preview.daemon_binding_supported = self.negotiate_preview(&mut preview.mappings)?;
+            preview
+        };
+        Ok(preview)
     }
 
     /// Explicit reservation only: no provisioning, enrollment, frontend, stop or
@@ -711,6 +744,10 @@ impl Inventory {
     }
 
     pub fn defer(&self, destination: &Store) -> io::Result<Journal> {
+        #[cfg(feature = "owner-enrollment")]
+        if binding::has_bindings(destination)? {
+            return binding::defer_existing(destination);
+        }
         let expected = self.resume(destination)?;
         destination.with_locked(|directory, snapshot| {
             let intent: Intent = read(directory, INTENT, LIMIT)?;
@@ -731,6 +768,12 @@ impl Inventory {
         destination.with_locked(|directory, snapshot| {
             let intent: Intent = read(directory, INTENT, LIMIT)?;
             validate_intent_identity(&intent, snapshot)?;
+            #[cfg(feature = "owner-enrollment")]
+            binding::all_released(directory, &intent)?;
+            #[cfg(not(feature = "owner-enrollment"))]
+            if optional::<serde_json::Value>(directory, "host-migration-bindings.json")?.is_some() {
+                return Err(refused("host.migration_exact_native_release_required"));
+            }
             if !matches!(
                 snapshot.phase,
                 HostPhase::Disabled | HostPhase::StopRequested | HostPhase::CleanupPending
@@ -1088,11 +1131,15 @@ fn read_journal(directory: &File, intent: &Intent) -> io::Result<Journal> {
         })
         || matches!(
             journal.phase,
-            Phase::Reserving | Phase::AwaitingNativeBinding | Phase::Deferred
+            Phase::Reserving
+                | Phase::AwaitingNativeBinding
+                | Phase::Deferred
+                | Phase::Bound
+                | Phase::Switched
         ) && (!journal.released_sources.is_empty() || identity.is_none())
         || matches!(
             journal.phase,
-            Phase::AwaitingNativeBinding | Phase::Deferred
+            Phase::AwaitingNativeBinding | Phase::Deferred | Phase::Bound | Phase::Switched
         ) && journal.claimed_sources.len() != intent.plan.sources.len()
         || journal.phase == Phase::RolledBack
             && journal.released_sources.len() != intent.plan.sources.len()
@@ -1231,7 +1278,13 @@ pub(crate) fn admit_enable(directory: &File, snapshot: &Snapshot) -> io::Result<
     match optional::<Intent>(directory, INTENT)? {
         Some(intent) => {
             validate_intent_identity(&intent, snapshot)?;
-            if read_journal(directory, &intent)?.phase != Phase::RolledBack {
+            let phase = read_journal(directory, &intent)?.phase;
+            #[cfg(feature = "owner-enrollment")]
+            if phase == Phase::Switched {
+                binding::require_switched(directory, &intent)?;
+                return Ok(());
+            }
+            if phase != Phase::RolledBack {
                 return Err(refused(
                     "host.migration_native_binding_required_or_rollback",
                 ));

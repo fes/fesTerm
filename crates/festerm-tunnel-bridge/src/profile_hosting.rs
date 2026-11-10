@@ -394,6 +394,10 @@ pub struct Store {
     installation: String,
 }
 
+pub struct HostingPermit {
+    _lock: File,
+}
+
 pub struct HostedPreparation<'a> {
     pub installation: &'a str,
     pub consent: &'a str,
@@ -846,7 +850,47 @@ impl Store {
         spawn_fingerprint: &str,
         action: impl FnOnce() -> io::Result<T>,
     ) -> io::Result<T> {
-        let _lock = self.lock()?;
+        let _permit = self.hosting_permit_until(
+            consent,
+            target,
+            qualified_id,
+            ownership_label,
+            spawn_fingerprint,
+            std::time::Instant::now() + std::time::Duration::from_secs(2),
+        )?;
+        action()
+    }
+
+    /// Owned short-lived guard for native publication callbacks. Drop it before
+    /// IPC or any startup/network wait; contention never queues migration.
+    pub fn try_hosting_permit(
+        &self,
+        consent: &str,
+        target: &Target,
+        qualified_id: &str,
+        ownership_label: &str,
+        spawn_fingerprint: &str,
+    ) -> io::Result<HostingPermit> {
+        self.hosting_permit_until(
+            consent,
+            target,
+            qualified_id,
+            ownership_label,
+            spawn_fingerprint,
+            std::time::Instant::now(),
+        )
+    }
+
+    fn hosting_permit_until(
+        &self,
+        consent: &str,
+        target: &Target,
+        qualified_id: &str,
+        ownership_label: &str,
+        spawn_fingerprint: &str,
+        deadline: std::time::Instant,
+    ) -> io::Result<HostingPermit> {
+        let lock = self.lock_until(deadline)?;
         let record = self.load()?;
         require_active(&record)?;
         if record.consent != consent
@@ -865,7 +909,7 @@ impl Store {
         {
             return Err(refused("profile_host.stale_binding"));
         }
-        action()
+        Ok(HostingPermit { _lock: lock })
     }
 
     /// This durable fence precedes disabling/removing configuration or stopping

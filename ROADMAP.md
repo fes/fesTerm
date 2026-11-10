@@ -30,10 +30,12 @@ listener starts from compilation/import. Combined-source review, real release/
 cloud/vault/service/device qualification and foreground client trust/session
 chooser evidence remain open. This source is not a native Ready/acceptance claim.
 Owned migration now has protected explicit inventory/preview, identity/claim
-reservation, resume/deferral and local rollback. The
-[authenticated live-binding/routing contract](docs/owned-installation-migration.md#concrete-missing-binding-boundary),
-real switch and native/old-release migration acceptance remain open; no
-reservation grants authority or restarts a legacy shell.
+reservation, authenticated current-daemon bind/switch, retained-root routing,
+resume/deferral and exact release/rollback. The
+[binding boundary](docs/owned-installation-migration.md#authenticated-binding-and-retained-root-boundary)
+retains separate owner approval and disabled lifecycle gating. Installed/native,
+old-release, cloud/vault and GUI migration acceptance remain open; no migration
+command takes a frontend, restarts or stops a legacy shell.
 
 Issue #65 is owner-authorized desktop split-pane work (ADR 0078).
 The presentation slice adds live composition, bounded layouts, focused input,

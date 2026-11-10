@@ -884,9 +884,13 @@ desktop/script source inventory and exact account/key/receipt/generation preview
 immutable operation intent, disabled destination host-identity reservation,
 cross-installation claims, recovery/deferral and local rollback. It imports no
 owner/session permissions and invokes no frontend, service or cloud API. Enable
-refuses an outstanding migration reservation. Native daemon binding and retained
-runtime routing are not supported by the current ordinary-daemon API; unsupported
-rows stay usable as legacy sessions, never fabricated HOST records. See the
+refuses until all selected bindings are switched. `SessionControl` authenticates
+capability-enabled current daemons in place, fences their exact protected retained
+root/namespace and routes existing authorization/adoption without recreate/end
+authority. Every source receipt/key/claim remains fenced. Release revokes only
+the imported grant/watch, preserving the ordinary persistent shell and frontend;
+older helpers remain deferred. Separate owner consent does not bypass the disabled
+lifecycle master gate or authorize provider setup. See the
 [bounded migration contract](docs/owned-installation-migration.md).
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
