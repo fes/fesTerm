@@ -1,5 +1,55 @@
 # Milestone Progress Narrative
 
+## Qualifying the corrected local session-control integration
+
+The November 10 ADR 0084 correction normally integrates main `8ac8070d`,
+contracts `7b61af7b`, lifecycle `b0e5bff3`, enrollment `e893cdb1` and signed
+channel `6c795246`. ADR 0085 and native checkpoint staging cleanup are preserved.
+The parallel lifecycle publication helper remains delegated to shared atomic
+no-replace storage, with both interrupted-write and delegated-wrapper regressions.
+HOST reserved adoption additionally requires its own exact native launch journal.
+Attachment test observers now report actual recovery adoption/writer activation,
+not merely an accepted candidate. Unix socket/generation unit fixtures use
+private checkout roots.
+
+On installed Homebrew stable Rust/Cargo 1.97.1, the committed source passed:
+
+```sh
+cargo build -q -p festerm-pty-test-child
+cargo test -q -p festerm-sessiond --lib --bins --test host_control --test native_daemon --test detached_native -- --test-threads=2
+cargo test -q -p festerm-host-protocol --test contracts
+cargo test -q -p festerm-tunnel-bridge --features owner-auth --lib host_owner -- --test-threads=2
+cargo test -q -p festerm-tunnel-bridge --features owner-auth --lib native_owner
+cargo test -q -p festerm-tunnel-bridge --features owner-auth --lib interrupted_private_publication -- --test-threads=2
+cargo test -q -p festerm-host-setup --features owner-enrollment --lib -- --test-threads=2
+cargo clippy -q -p festerm-sessiond -p festerm-host-protocol -p festerm-tunnel-bridge -p festerm-host-setup --all-targets --features festerm-tunnel-bridge/owner-auth,festerm-host-setup/owner-enrollment -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py
+git diff --check
+```
+
+The runs used an exclusive per-worktree `CARGO_TARGET_DIR`, two build jobs,
+zero dev/test debug info and disabled incremental compilation. Native integration
+selected a fresh private in-checkout `FESTERM_SESSIOND_TEST_RUNTIME_ROOT`; scratch
+`TMPDIR` also remained inside that checkout. No production service or credentials
+were used. Counts: sessiond library 109, binary 70, detached native 1, host control
+25, native daemon 17 passed/7 existing ignored; protocol 13; owner/channel 13 and
+native-owner-reference 2; interrupted publication 1; setup 38 passed/1 existing
+signer ignored. Total: 289 passed, eight existing ignores. Traceability: 311
+edges, zero broken references. Strict affected all-target clippy passed; the
+vendored Dev Tunnels dependency still emits its existing dead-code warning.
+
+Initial attempts retained real failures: Homebrew Cargo does not accept
+`+stable`; an unbuilt fixture child caused the expected 25 setup failures before
+its explicit build; the complete unit run exposed a premature attachment event.
+The new reserved-journal test was additionally proved RED with unowned adoption
+restored, then GREEN with the strict policy. Neither assertion/deadline nor
+existing ignore was weakened. Remaining gates are independent integrated
+security/reliability/scope review, Linux/Windows native qualification (the host
+control integration suite is Unix-only), ignored native smoke/churn, installed
+service/reboot/job/breakaway behavior and physical mobile reconnect grace.
+No endpoint, native-service, GUI or whole-ADR acceptance is claimed.
+
 ## Separating owner consent from the current host issuer
 
 The ADR 0084 contract correctly refuses Ensure/Create advertisements without
