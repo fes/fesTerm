@@ -1579,7 +1579,7 @@ branch silently.
 The [HOST contracts](host-protocol.md) provide codec, identity, authorization
 and budget evidence for `HOST-01`–`HOST-03`. Client-local metadata/commands and
 explicit-browse state add evidence for `HOST-01`/`HOST-02`. Their end-to-end
-UI/remote transitions remain deferred behind endpoint/session-control and
+native GUI/mobile acceptance remains deferred behind endpoint/session-control and
 security review in [#681](https://github.com/fes/fesTerm/issues/681), not accepted
 behavior. Experimental desktop Profiles manages saved recipe metadata offline
 and now exposes a separate foreground review path described below. Existing TUNNEL edges
@@ -1589,8 +1589,8 @@ retain their current coverage until explicit migration. The single
 The portable selected-host `host_client` executor adds actual native-vault/
 relay/role-proof composition, bounded inventory and frontend-confirmed
 existing-generation adoption. Its executed `selected_host_*` tests are not
-desktop/mobile GUI coverage; the updated ignored owned SSH/two-daemon fixture
-still requires client-head execution. The protected remote-client approval receipt
+desktop/mobile GUI coverage; the updated owned SSH/two-daemon fixture requires
+separate qualification of the exact client/core union. The protected remote-client approval receipt
 loader now derives only from an explicitly reviewed host-local full binding and
 independently confirmed pin, with a private local pending-reference journal and
 separate native-key preparation. Host-local owner approval is still a distinct
@@ -1605,8 +1605,16 @@ foreground consent, exact account confirmation, HOST-only selected resolution an
 authorized inventory selection. Rendering/save/import remain offline. The
 original twelve selected-host tests and subsequent protected receipt, selector,
 reachable-button and foreground fencing regressions are headless evidence, not
-native acceptance. Diagnostic desktop qualification uses
-`--ignore-rust-version`, not a supported release toolchain.
+native acceptance. The prior Rust 1.97.1 desktop qualification used
+`--ignore-rust-version` and remains diagnostic. Named Rust 1.98.0 union
+qualification is recorded separately in `milestone-progress.md`, without
+changing the global default, package versions or these acceptance boundaries.
+
+### Historical runtime component checkpoints
+
+The following component results retain their original fixed-source boundaries;
+they are not automatically qualification of the later client/core union.
+
 HOST-01–03 additionally have an opt-in source implementation of actual
 SSH-stream owner challenge/proof framing and control/terminal dispatch
 (`host_runtime`). Four passing native TCP SSH tests cover control inventory,
@@ -1614,9 +1622,6 @@ terminal negotiation, revoked policy, cross-connection proof replay and aggregat
 admission/frame bounds. The qualified session correction, consuming
 protected enrollment and actual multi-session daemon round trips remain pending;
 this adds no GUI transition or installed endpoint and does not change P/H/N status.
-
-These edges are design contracts, not overall implemented behavior or acceptance.
-Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
 HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
 Actual pinned SSH proof helpers bind the signed connection and role-ordered
@@ -1658,6 +1663,18 @@ Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
 HOST-06 currently has only the independently testable
 [helper authenticity boundary](host-release-artifacts.md): signed exact-target
 metadata, immutable verified bytes and bounded archive allowlists. It does not
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state/framed dispatcher tests; UI/endpoint/H,N deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Offline save/edit/duplicate/import/export/delete; separate future Connect with atomic resume-or-create or strict attach | Public metadata; stable host/account/logical IDs and fresh duplicates; future-only edits; deletion preserves shell; authoritative absence/current creation permission; exact generation; no input replay | Failed saves retain state; mobile skips/reports invalid entries without losing valid recipes; typed conflicts and export-specific outcomes; legacy remains exact-generation; reconcile uncertain live ensure; no duplicate spawn | P; partial metadata/command/recovery/codec/absence/admission and real-daemon ensure/crash/conflict/cancellation/issuance/retirement/Unknown inventory fixtures; live execution/H,N deferred |
+| `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; lifetime/generation schemas, framed native detach/revocation, expiry/stale takeover, authority/heartbeat, stopped-detach and revoked-live reconsent fixtures; sharing/endpoint/H,N deferred |
+| `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings/account/OS-user scope; in-process foreground auth/zero-shell cloud adapter and same-user native component; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings and preserve draft; proven no-send recovery or explicit unbound-uncertainty acknowledgement retaining reservation; separate new consent reuses it; authoritative GET pins late receipt without re-enabling; pinned absence requires exact native stop | P,H,N; partial boundary/cloud/native fixtures, native/UI deferred |
+| `HOST-05` | Headless package → configured service | Configure/status/acquisition/staging/native qualification; explicit setup → public owner context → host-local approve-owner → run/run-status; service-status/disable/cleanup-local, explicit uninstall and read-only recover-cleanup; update refuses | Shared origin/account/exact-owned receipt policy; disabled default configuration, initial setup zero shells/access off; separate reviewed owner-key consent with default-No creation/end/temporary, temporary never grants creation; run reauthenticates signed bundle/helper and existing scoped cloud token/key; fresh vault-anchored policy per admission; watchdog retries transient installation contention, never cached permission; history/native Running/cloud presence are not Ready; Linux UserSignIn awaits current-logon fence | Revoke before exact native stop and foreground runtime-lease release; timeout/foreign evidence is not absence; retain independent daemon, uncertain submission and authoritative cleanup-adoption receipt; native removal alone leaves unsuccessful cloud CleanupPending; generation-atomic delete unqualified | P,H,N; actual controller-core tests use typed fake native/network/credentials, not signed endpoint/native acceptance; separate client foreground full-binding/pin review, protected receipt/index/session chooser, first bootstrap and deletion remain gates |
+| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: manifest/verifier/private executable-publication component; H,N: native acceptance/switching/migration deferred |
+
+HOST-06 currently has the independently testable
+[helper authenticity boundary](host-release-artifacts.md) and separate
+[private executable-publication component](native-host-services.md):
+signed exact-target metadata, immutable verified bytes and bounded archive
+allowlists. It does not
 implement service switching, rollback or migration; the legacy Linux script
 path is not promoted to authenticated setup.
 
@@ -1665,3 +1682,28 @@ HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after
 recovery adoption/writer activation; abandoned candidates are not Attached.
 These remain local automated evidence, not endpoint or native-platform acceptance.
+The runtime/session union also passes the actual two-daemon signed-SSH
+input-isolation, independent attached inventory and persistent-detach route;
+additional actual signed-SSH cases pass for original-issued creation/end,
+creation-disabled resume versus denied virgin execution, adoption-gated takeover,
+and per-frame key/host/session revocation preserving persistent/local shells.
+A real 65-second active temporary terminal and subsequent 60-second transport-loss
+grace prove the bridge's 20-second heartbeat and daemon-owned expiry. This does
+not qualify physical mobile suspension, native credentials or installed services.
+
+The component's macOS admission pins the release Developer ID team/runtime;
+Windows promotion refuses pending authoritative publisher policy.
+Windows registration/start and running-task stop also
+refuse until authenticated graceful stop can preserve independent daemons.
+Those are native prerequisites, not enabled headless/desktop controls.
+
+The persistent-host local unticketed attach fixture observes recovery adoption
+before Local activation and preserves the exact shell after detach; a Unix
+lease regression still refuses temporary unticketed admission/commit.
+The native binary bridge fixture batches its 96 pending input lines and verifies
+all echoes before adoption and all ordered deltas afterward, rather than spending
+the unchanged adoption deadline on serialized ConPTY round trips. Deterministic
+unit coverage, not native PTY chunking, proves the more-than-64-chunk boundary.
+Both observed native buffers require all 96 child-output markers exactly once in
+increasing byte order, then the final marker exactly once; matcher fixtures reject
+reordering, duplicates/replay and missing chunks or final marker.

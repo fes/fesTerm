@@ -35,12 +35,11 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 [Host protocol contracts](docs/host-protocol.md) provide the first ADR 0084
 foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
-messages, opt-in owner-key authentication primitives and an unexposed bounded
+messages, protected owner-key authentication and a bounded
 dispatcher/paired framed-client core. Stage 2 adds a local
 durable session-control backend with real detached daemons and daemon-enforced
-temporary leases. Contract types alone expose no HOST endpoint or creation authority; independent
-review, enrollment/channel integration and later implementation/native
-gates remain open. Legacy Dev Tunnels behavior is unchanged.
+temporary leases. Contract types alone confer no creation authority; independent
+combined review and native/cloud/vault/service/device gates remain open.
 Experimental desktop Profiles also manages public host/session recipe metadata
 offline (add/edit/copy/delete and reviewed JSON import/export). A separate
 **Review and connect…** action enters foreground protected owner approval;
@@ -55,24 +54,46 @@ separate host-local approval, explicitly resolve one HOST endpoint and choose an
 authorized existing session. It never silently enrolls a key, falls back to a
 legacy bridge or creates a shell. Mobile installation, account-wide Find hosts,
 creation and native acceptance remain open; this is not stage-6 completion.
+The default headless build now has explicit authenticated
+setup/owner approval/run; no listener or permission is enabled merely by
+compilation/configuration. Independent combined review and native/cloud/vault/
+service/device gates remain open. Desktop first-connect/choice qualification and
+mobile UI remain separate work, not supplied by host-local key approval.
+Legacy Dev Tunnels behavior is unchanged.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
 coverage (file mode has weaker whole-store rollback protection and is never a
 native failure fallback). Optional owner proof helpers now bind the actual pinned
 inner SSH connection/channel and transfer server authority with that exact
-stream; independent review, endpoint integration and native acceptance remain open.
+stream; independent combined review and native/first-connect acceptance remain open.
 An opt-in `host_runtime` now supplies the actual SSH-stream owner handshake and
 control/terminal dispatcher composition. Four focused native TCP SSH tests pass
 for encrypted request routing, stream-bound proof rejection and bounds.
-Owned-daemon end-to-end testing, protected enrollment composition and the final
-session correction remain pending. No installed endpoint or Ready state is enabled.
+The qualified session correction and protected lease-backed policy adapter are
+integrated. Owned native routes include actual two-daemon SSH input isolation
+and persistent detach. The paired runtime supports protected Ensure/Create/end
+with the original backend-issued operation; standalone control stays inventory-only.
+Independent consumer/native qualification remains pending.
+Explicit headless run consumes this source; no native Ready/acceptance is claimed.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
-GUI-free disabled configuration, journal status, offline pinned-CLI staging and
-authenticated helper-artifact staging without execution.
-New host setup/run/update/uninstall remain unavailable pending endpoint and
-authenticated-package integration ([#681](https://github.com/fes/fesTerm/issues/681));
-the legacy installer is unchanged.
+GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition
+and authenticated schema-2 headless/helper staging without execution.
+The optional library [same-user native service component](docs/native-host-services.md),
+included by the default headless binary, adds receipt-bound control APIs, not
+native qualification.
+Headless `service-status`, `disable`, `cleanup-local`, `recover-cleanup` and
+`qualify-package` now expose their supported management boundaries without
+claiming endpoint readiness or successful cloud deletion.
+Explicit headless setup/owner approval/run composition is implemented in source,
+not yet qualified as an installed native host ([#681](https://github.com/fes/fesTerm/issues/681)).
+It requires real authenticated release inputs and existing native credentials;
+uninstall removes only exact stopped native resources and retains unqualified
+cloud deletion as unsuccessful CleanupPending; update remains unavailable.
+The legacy installer is unchanged.
+An opt-in shared library adds foreground native-vault GitHub authentication and
+zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;
+generation-atomic cloud deletion remains an explicit qualification blocker.
 
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),
@@ -171,8 +192,9 @@ remains [#27](https://github.com/fes/fesTerm/issues/27).
 [Authenticated helper manifests and an offline verifier](docs/host-release-artifacts.md)
 reuse the updater trust root for all six standalone helper targets
 ([#681](https://github.com/fes/fesTerm/issues/681), proposed ADR 0084).
-Headless CLI inclusion, installer integration, service switching/rollback and
-legacy migration remain separate gates; existing Linux scripts are not upgraded
+Schema 2 includes the headless CLI; native executable/installer integration,
+service switching/rollback and legacy migration remain separate gates.
+Existing Linux scripts are not upgraded
 to publisher authentication by merely publishing these additive manifests.
 
 An optional, fesTerm-owned local session-persistence daemon

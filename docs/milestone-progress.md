@@ -1,6 +1,97 @@
 # Milestone Progress Narrative
 
+## Client/core union on the named supported toolchain
+
+This normal two-parent integration consumes only fixed client `3620f6de` and
+core `e49bb89a`. Native stopped-update `c75d03d7` and moving session/client
+branches are not consumed. The two-daemon test now combines the actual bounded
+inventory collector, original scope, snapshot-before-adopt acknowledgment and
+confirmed activation with stored frontend snapshots, actual output ingestion,
+expected-text/foreign-text exclusion, independent inventory and correlated
+persistent detach. No existing assertion was removed. Production
+`host_runtime.rs` and the original-issued lost-reply control-test source remain
+byte-identical to the fixed core, including original-deadline authentication Busy.
+
+The official named minimal Rust 1.98.0 toolchain plus rustfmt/clippy is installed
+privately under `target/adr84-rustup`. Homebrew cargo is not a rustup proxy, so
+the exact named dispatch is `rustup run 1.98.0 cargo`, not an MSRV bypass.
+The private toolchain bin directory and explicit `RUSTC`/`RUSTDOC` are also
+required: Homebrew's independent compiler otherwise remains discoverable on
+PATH even when the cargo executable was selected through rustup.
+The global stable/default remains 1.97.1; no override, manifest/lock version or
+dependency downgrade was changed. Toolchain identity and installation logs are
+`target/adr84-clients-198-toolchain-identity.log` and
+`target/adr84-clients-rust198-install.log`.
+
+All commands below use the following private resource boundary, with no GUI,
+native-vault, cloud, production credentials, service, signing or install effect:
+
+```sh
+export RUSTUP_HOME="$PWD/target/adr84-rustup"
+export PATH="$RUSTUP_HOME/toolchains/1.98.0-aarch64-apple-darwin/bin:$PATH"
+export RUSTC="$RUSTUP_HOME/toolchains/1.98.0-aarch64-apple-darwin/bin/rustc"
+export RUSTDOC="$RUSTUP_HOME/toolchains/1.98.0-aarch64-apple-darwin/bin/rustdoc"
+export RUSTFMT="$RUSTUP_HOME/toolchains/1.98.0-aarch64-apple-darwin/bin/rustfmt"
+export TMPDIR="$PWD/target/adr84-toolchain-work"
+export CARGO_TARGET_DIR="$PWD/target/adr84-clients-rust198-verified"
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0
+export FESTERM_HOST_TEST_HELPER="$CARGO_TARGET_DIR/debug/festerm-sessiond"
+rustup run 1.98.0 cargo build --locked -p festerm-sessiond -p festerm-pty-test-child --bins
+rustup run 1.98.0 cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib
+rustup run 1.98.0 cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored --test-threads=1
+rustup run 1.98.0 cargo test --locked -p festerm-tunnel-client --lib service::tests
+rustup run 1.98.0 cargo test --locked -p festerm --features experimental-dev-tunnels --bin festerm -- selected_host_ dev_tunnel_host_recipe_
+```
+
+Initial dispatch retained cargo 1.98.0 but PATH-selected rustc 1.97.1, exposed by
+the actual desktop MSRV refusal. Its **132 library passes/14 explicit ignores,
+14 actual native passes/zero ignored (164.77 seconds), and nine service passes**
+are retained diagnostic evidence, not supported-toolchain qualification.
+The exact native proof includes the combined collector/frontend adoption/
+isolation test and original-issued lost-reply, creation, revocation, takeover
+and real heartbeat/transport-loss-grace cases. The corrected explicit compiler
+selection uses a separate fresh `-verified` target and logs; supported-toolchain
+qualification is pending at this source-only merge boundary.
+Logs use `target/adr84-clients-198-*.log`.
+These are local automated fixtures, not signed/native-manager, development-wrapper
+GUI, VM, native-vault, cross-platform or physical-mobile acceptance.
+
+### Next concrete execution slices, not claimed implemented
+
+1. **Explicit creation/ensure worker:** extend the existing `host_client`
+   operation/result path, not a second transport. Handshake advertised
+   permissions first; retain the actual `IssuedControlOperation` and one
+   immutable `Creation` (including its future attachment) across uncertain
+   results/reconnection. AlwaysCreate allocates its fresh logical identity once
+   for that explicit action; ResumeOrCreate uses host-authoritative `Ensure`,
+   never an inventory/timeout/denial-to-absence decision. Preserve independent
+   temporary grants, actual lifetime, cancellation and original editor/account
+   scope. Attach the returned exact target using the reserved attachment after
+   actual frontend adoption. Add actual native positive creation/resume and
+   lost-reply same-operation tests, plus unsupported/denied/Busy/revoked/cancelled
+   negatives before exposing the creation confirmation UI.
+2. **Mobile installation and approval:** reuse `HostSession`, `Scope` and
+   snapshot acknowledgment in the existing mobile `LiveSsh`/terminal composition;
+   do not reuse legacy `tunnel_lost` automatic reconnect for HOST. Provide a
+   platform-selected protected receipt root without importing desktop
+   relay/sessiond simply for persistence. Register HOST-specific cancellation
+   with `SuspensionHandle`/content-lock native callbacks so no UI frame is needed
+   to cancel a worker/live transport or fence late results. Preserve existing
+   legacy healthy-attachment behavior. Verify fake-native callback, account
+   rotation, stale request, no-input-before-activation and no-replay cases, then
+   request separate iOS/Android toolchain/device windows.
+3. **Account-scoped Find hosts:** add explicit HOST-only listing under the
+   selected native account using the existing service client. Preserve failed
+   detail lookups and unknown/denied states rather than reporting absence.
+   Discovery rows never authorize a connection; selected-host foreground
+   approval and the actual worker remain mandatory.
+
 ## Reaching protected foreground approval from saved host recipes
+
+This section records the earlier fixed `3620f6de` checkpoint. Its diagnostic
+toolchain limitation is superseded only by the separately recorded union gates
+above; its results are retained with their original boundary.
 
 The fixed #691 editor is actual ancestry of the client lane, not an assumed UI
 producer inherited from native core. Its **Review and connect…** button now emits
@@ -131,18 +222,75 @@ and native qualification remain open; ADR 0084 is still Proposed and stage 6
 is incomplete.
 
 ## Saving host recipes without creating shells
+## Proving native pending-output order rather than presence
 
-ADR 0084 separates a reusable client recipe from a running remote shell.
-The [#681](https://github.com/fes/fesTerm/issues/681) foundation now shares
-strict public metadata, duplication identity policy and offline commands
-between desktop, iOS and Android without a desktop dependency in mobile.
-Saving/importing/deleting cannot connect, sign in, install a host or end a
-shell. Existing generation-pinned profiles remain separate.
+Review of `28e0391a` caught that its native assertions still checked only marker
+presence, so the ordered-output claim was not yet established. Both the
+old-writer pre-adoption buffer and new-writer post-snapshot delta now use the same
+matcher: all 96 child-output markers must occur exactly once, in increasing byte
+order, followed by the final marker exactly once. Raw terminal input echo does
+not count as child output. Duplicate/replay detection covers the observed buffer,
+not later unread output. No cap, deadline, adoption or ownership policy changes.
 
-Portable serialization, actual desktop save outcomes, mobile restart/failure
-handling and explicit browsing intent are tested. Verified endpoint wiring,
-authorized resume/create, native UI and physical-device lifecycle evidence
-remain prerequisites; this is not stage 6 end-to-end acceptance.
+On macOS, with the private warm target, one build job, zero dev/test debug info
+and incremental compilation off, these selectors passed:
+
+```sh
+cargo test --locked -p festerm-sessiond --test native_daemon pending_marker_order_ -- --nocapture --test-threads=1
+cargo test --locked -p festerm-sessiond --test native_daemon native_bridge_ -- --nocapture --test-threads=1
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+The matcher ran four tests: ordered terminal/child bytes passed; reordered chunks/
+early final marker, duplicated chunks/replayed final marker and missing chunks/
+missing final marker were rejected. All three native bridge cases listed below
+passed with the stronger matcher, zero ignored; the 96-line pending backlog was
+observed in 38 ms. Native runtime and trace remained in this worktree.
+Format, traceability (311 edges) and diff checks pass. The original `8ebbaf29`
+Windows failures remain retained; actual corrected x64 Windows proof is pending,
+and any Windows ARM diagnostic would not substitute for it.
+
+## Correcting the Windows session-control CI regressions
+
+The `8ebbaf29` Windows jobs exposed real failures after the macOS qualification:
+strict Clippy rejected `PreparedCheckpoint.staging`, and the binary bridge test
+failed its adoption write with Win32 232 after approximately 27 seconds. The
+checkpoint now retains a staging pathname only on Unix; Windows publication and
+abort cleanup still use its exact retained handle. A regression checks aborted
+and refused publication cleanup without deleting the original or a refused target.
+
+The bridge fixture performed 96 serialized old-writer input/echo round trips
+inside the unchanged 15-second adoption window; Windows client reads can each
+wait 250 ms. It now submits those lines together, observes every old-writer echo
+before adopting, then checks every ordered post-snapshot delta. No product
+deadline, admission, writer-epoch or takeover check changes. Native PTY framing
+is not a deterministic chunk-count test; existing unit tests retain that boundary.
+A real persistent-host local unticketed attachment test complements Unix
+persistent admission/temporary refusal coverage.
+
+The targeted macOS bridge run executes three tests (including both tests selected
+with `--ignored` on Windows), not zero: `native_bridge_drains_exit_and_takeover_final_frames_before_success`,
+`native_bridge_preserves_binary_protocol_and_takeover_is_adoption_gated` and
+`native_bridge_rejects_stale_generation_and_missing_takeover_without_touching_session`.
+Original Windows failures remain recorded under the manual qualification entry;
+fresh exact-head Windows native/Clippy proof and independent review remain open.
+With one warm-target build job, zero debug info and incremental compilation off,
+the correction passed these macOS selectors:
+
+```sh
+cargo test -p festerm-sessiond --test native_daemon native_bridge_ -- --nocapture --test-threads=1
+cargo test -p festerm-sessiond --lib private_storage::tests -- --test-threads=1
+cargo test -p festerm-sessiond --lib unticketed_local_attachment_requires_persistent_lifetime -- --test-threads=1
+cargo test -p festerm-sessiond --test host_control persistent_host_shell_accepts_ordinary_local_unticketed_attachment -- --exact --test-threads=1
+cargo test -p festerm-sessiond --test host_control temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease -- --exact --test-threads=1
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+Counts are respectively 3, 3, 1, 1 and 1 passed, zero ignored for these selectors;
+the original 289-test qualification below remains historical evidence, not a
+fresh full-suite claim. Format, traceability (311 edges) and diff checks pass.
+The first attempted unit selector used `--exact` without its module prefix and
+ran zero tests; the corrected selector above executed the named regression.
 
 Reliability review found that one malformed mobile recipe could discard the
 entire collection on the next save. Loading now retains valid unique entries
@@ -200,6 +348,43 @@ control integration suite is Unix-only), ignored native smoke/churn, installed
 service/reboot/job/breakaway behavior and physical mobile reconnect grace.
 No endpoint, native-service, GUI or whole-ADR acceptance is claimed.
 
+## Making headless cleanup observable without granting access again
+
+The native lane normally integrates current main, reviewed packaging/enrollment
+and the frozen cloud adapter rather than replacing their account/storage rules.
+The moved atomic publication helper retains its shared interrupted-write test;
+the setup wrapper additionally checks no-replace behavior.
+
+Headless management now separates journal intent, exact native observations and
+unavailable endpoint readiness. Disable fences before native stop; local cleanup
+cannot manufacture cloud removal. Acknowledged uncertain cloud creation can be
+adopted for cleanup by read-only authenticated observation without enabling
+access or requesting another create. Authoritative receipts precede lifecycle
+binding and survive epoch races; absence remains uncertain. Signed native
+admission has a standalone no-registration command.
+
+A feature-gated, ignored disposable-guest test exercises real user-manager
+install/start/stop/removal and an independently surviving bounded child without
+shells, credentials or cloud. Source/portable fixture evidence is kept separate
+from native execution and release-signer qualification. Windows still requires
+approved publisher/rotation/revocation policy and graceful exact-host stop;
+endpoint startup and safe update switching remain explicit dependencies.
+
+## Preserving published helper ABI while adding bounded host acquisition
+
+The GUI-free host now has its own schema-2 `festerm-host` identity and
+`fesTerm-host-*` release assets. Existing `fesTerm-tunnel-*` archives keep their
+exact legacy entries, because already-published installers reject extra files.
+Release production signs and verifies both identities independently. Dependency
+notices recognize actual Cargo workspace membership, including `app/festerm-host`,
+and CI validates the real metadata closure rather than only synthetic paths.
+Pinned Microsoft acquisition uses cancellable async HTTP/DNS under one absolute
+request-and-body deadline; slow-body fixtures prevent per-read timeout refresh.
+macOS raw-asset smoke retains exact hashing and native codesign qualification.
+The new native-only acquisition selector refuses Windows ARM without removing
+legacy x64-emulation hosting/verification. These remain acquisition/data-staging
+boundaries, not native endpoint readiness or first-bootstrap qualification.
+
 ## Separating owner consent from the current host issuer
 
 The ADR 0084 contract correctly refuses Ensure/Create advertisements without
@@ -238,6 +423,50 @@ Ancestor refusal now has a content-free diagnostic rather than an unexplained
 PermissionDenied. Native startup/service acceptance remains separately gated.
 The shared multi-command helper validation step explicitly uses fail-fast Bash
 on all platforms, so a later successful clippy cannot hide failed Windows tests.
+Native socket fixtures can request an explicit Unix parent with a short random
+name; they retain the same storage policy and Windows vetted-root selection
+without changing process-wide cwd.
+The acquisition deadline/refusal fixtures, host-versus-helper cache-separation
+fixture and acquisition-only CLI fixture also use this shared validated factory.
+Pure archive producer/verifier fixtures remain project-local; fresh Windows CI
+must still confirm the protected-storage paths.
+
+## Separating native host control from endpoint readiness
+
+The [#681](https://github.com/fes/fesTerm/issues/681) stage-4 follow-up now has
+an off-default [same-user service component](native-host-services.md), rather
+than teaching desktop and headless callers separate setup policy. A sealed
+receipt admits only current-target updater-authenticated host-package bytes;
+ordinary staging paths cannot authorize launch. Private exact-owned definitions
+and creation-epoch receipts precede native effects, with current-epoch fences
+and observed process state instead of Ready-shaped command success.
+
+Deterministic native-runner/filesystem fixtures cover Windows tasks, macOS
+LaunchAgents and Linux user units without changing services or reading secrets.
+Late task creation retains its observed identity after revocation, so cleanup
+does not lose ownership evidence. At this historical stage CLI setup/run remained
+unavailable. The later explicit headless composition below supersedes that source
+limitation, not native signing/startup/cleanup, cloud/vault, daemon-lifetime or
+client first-connect qualification. ADR 0084 stays Proposed.
+
+The native component now treats historical systemd exit identity separately
+from current `MainPID`, journals definition retirement for crash-safe scoped
+failed-unit cleanup, and bounds transition reconciliation under one native
+budget. Task registration reserves immutable marker/configuration/ACL evidence
+before submission and can recover matching late observations without restoring
+consent. Windows registration/start and running-task stop explicitly refuse
+until an authenticated graceful-stop path preserves independent daemons.
+macOS admission now pins the actual release environment's Developer ID team
+and requires Apple's chain and hardened runtime, rather than learning trust
+from an artifact or arbitrary app. Windows promotion refuses pending its
+authoritative publisher/certificate and revocation policy; any trusted signer
+is not that policy.
+
+Cargo emits UTF-8 metadata independently of the Windows console code page.
+The host notice check now decodes that transport explicitly as UTF-8. A portable
+subprocess regression preserves non-ASCII dependency metadata while forcing a
+CP1252 default decoder; no lossy decoding or production locale override is used.
+
 
 ## Capturing issuance before remote shell creation
 
@@ -288,9 +517,31 @@ normal-CI job uses pinned cargo-packager 0.11.8 with a generated throwaway key,
 so signer-format/mode incompatibilities are caught before protected publication.
 The [bootstrap and staging contract](host-release-artifacts.md) deliberately
 does not claim that downloading both verifier and key establishes trust.
-Existing artifact names/consumers remain compatible; host CLI inclusion,
-native installer/executable publication, service switching/rollback,
+Existing artifact names/consumers remain compatible; host CLI inclusion is in
+separate authenticated host assets. Remaining native installer/executable
+publication, service switching/rollback,
 migration and native signing evidence remain #681 gates. ADR 0084 stays Proposed.
+
+## Saving host recipes without creating shells
+
+ADR 0084 separates a reusable client recipe from a running remote shell.
+The [#681](https://github.com/fes/fesTerm/issues/681) foundation now shares
+strict public metadata, duplication identity policy and offline commands
+between desktop, iOS and Android without a desktop dependency in mobile.
+Saving/importing/deleting cannot connect, sign in, install a host or end a
+shell. Existing generation-pinned profiles remain separate.
+
+Portable serialization, actual desktop save outcomes, mobile restart/failure
+handling and explicit browsing intent are tested. Verified endpoint wiring,
+authorized resume/create, native UI and physical-device lifecycle evidence
+remain prerequisites; this is not stage 6 end-to-end acceptance.
+
+Reliability review found that one malformed mobile recipe could discard the
+entire collection on the next save. Loading now retains valid unique entries
+within the shared limit and reports/quarantines rejected entries. Typed adapter
+errors distinguish conflicts and portable-input failures, while desktop export
+has its own status rather than claiming a save. Focused regressions exercise
+recovery across an unrelated save and the actual experimental CI feature path.
 
 ## Stabilizing SSH-agent test startup
 
@@ -9171,6 +9422,65 @@ lease from an abandoned recordless directory. Protected cache comparisons now
 classify oversized entries as the same specific mismatch as other changed
 bytes, keeping bounded reads and refusing overwrite for CLI and helper staging.
 
+### A distributable headless command, without pretending it is an installer
+
+The bounded ADR 0084 stage-7 slice publishes separate authenticated
+`fesTerm-host-*` assets for all six targets, with native signing paths and
+dependency notices. Their schema-2 manifests require `festerm-host`; the legacy
+`fesTerm-tunnel-*` helper archives retain schema 1 and their unchanged payloads,
+including during old-tag recovery. Real Python producers, the pinned
+cargo-packager signer and Rust admission now interoperate for both packages
+across all six targets with synthetic keys and no release secrets.
+
+`acquire-cli` connects the existing reviewed Microsoft executable hashes to
+versioned official HTTPS URLs, bounded receiving and the same protected atomic
+staging policy. It rejects redirects, mutable aliases, unsupported Windows ARM
+and provenance overrides. Local HTTP fixtures exercise failures without fetching
+or executing dependency binaries. This is acquisition only: native Microsoft
+publisher qualification, executable publication, independently authenticated
+first delivery and working endpoint/service management remain explicit gates.
+
+The integration pass preserves the legacy Windows ARM64 x64-emulation selector
+for existing hosting and verification; only new acquisition requires an exact
+native target. It also updates the actual two-architecture macOS prerequisite
+smoke to consume the new raw executable pins, retaining exact hash and strict
+native codesign checks instead of leaving the former ZIP consumer behind.
+
+## Zero-shell cloud setup without borrowing a profile or trusting a CLI path
+
+The next ADR 0084 setup slice reuses the native GitHub account/device-flow
+primitives and official Dev Tunnels contracts in process. Foreground approval
+binds the exact lifecycle ticket/settings, origin, OS user and verified numeric
+account. Native credentials stay behind pre-reserved opaque references; the
+protected receipt pins the one submitted tunnel ID, cluster, ownership label,
+port and incarnation. Lost replies are reconciled, not retried as another
+resource, and late cancellation retains cleanup truth without restoring access.
+This provisions no shell and starts no endpoint or service; observed cloud
+presence is explicitly not Ready.
+
+Recovery now distinguishes local preflight/no-send/definitive rejection from
+uncertain transport outcomes. Only explicit still-active foreground intent plus
+authenticated exact absence can retry the identical unpinned conditional
+reservation/body; background reconciliation never creates. Equivalent service
+timestamp precision is normalized. A disappeared pinned resource retains its
+binding and requires exact native stop before cleanup, never silent recreation.
+Unbound uncertainty after revoked consent now has a named foreground recovery:
+an exact ticket/account/current-epoch acknowledgement releases pending intent
+to Disabled while retaining possible submission, credentials and the identical
+reservation. It is not absence/removal or renewed creation consent; bound or
+pinned/native-stop state forbids it. A later explicit enable observes late
+creation using that same identity. Successful PUTs pin only a follow-up
+authoritative GET, including late cancelled receipts, never PUT-only precision.
+
+Research also found a destructive-operation boundary that cannot honestly be
+papered over: the official API offers ID-only deletion without a documented
+incarnation-atomic precondition. The adapter verifies exact ownership, but refuses
+to delete a found resource rather than race a replacement. It can commit exact
+authenticated absence; otherwise CleanupPending retains its receipt and names
+the qualification blocker. Private HTTP/lifecycle fixtures prove these policies,
+not real cloud/native acceptance. Desktop/headless command composition, normal
+first-connect UX and runtime/service health remain separate work.
+
 The stage-3 core review found that advertising inventory-only was not enough:
 both peers now enforce operation flags, and native effect tests use a test-only
 advertisement instead of silently bypassing the production boundary. Idle time
@@ -9181,35 +9491,6 @@ stays reserved through publication, so competing work cannot steal a committed
 reply's allocation. Owned duplex and real-daemon fixtures prove these fixes;
 terminal adoption, encrypted endpoint integration and dependency reviews remain
 separate gates under #681.
-
-Independent antagonist review (#687) caught a dangerous fallthrough: reconciling a
-reservation with no native launch journal could still execute the helper before
-fresh admission. The read-only path now stops before every fresh reservation,
-and revoked records do no native work. Active, non-stopped lease regressions
-cover the original failure rather than relying on prior termination to hide it.
-
-The same review exposed historical bookkeeping masquerading as active capacity.
-An initial archive-based remedy was rejected because disk still grew forever.
-Captured authenticated issuance scopes now retire old operation namespaces
-atomically, keeping a bounded compact ledger without archives. Old requests
-stay Stale; new explicit operations can keep their logical ID and get fresh
-generations. Fixed native slots bound name locks/lifecycle history, while exact
-generation cleanup requires sealed helpers and positive absence proof.
-Reclamation never sweeps other owners or revoked fences. Revoked live shells
-remain accounted and locally manageable until exact end and new local consent.
-Transient observations no longer turn Running into Launching.
-
-The full native takeover test then exposed the actual registry contention:
-durable checkpoint staging and directory synchronization held the same lock
-used by discovery/admission readers. Instrumented owned runs held it for
-105–426 ms even when passing, close to the unchanged 500-ms refusal deadline.
-Checkpoints now prepare and synchronize outside that lock, then revalidate and
-atomically publish under a short lock. Disjoint updates rebase without replaying
-effects; same-name replacements refuse. Directory synchronization follows
-unlock. Read-only/no-op operations no longer checkpoint, and exact-generation
-bridge admission performs native IPC outside the registry lock. Deterministic
-stalled-preparation/disjoint-writer and conflicting-generation regressions cover
-the boundary rather than increasing deadlines.
 
 The paired terminal slice now has separate bounded HOST binary framing rather
 than an unbounded multiplexer. The client exposes immutable connection bindings,
@@ -9267,6 +9548,141 @@ Historical nine-of-nine evidence is not qualification of this new union.
 
 ### ADR 0084 authenticated stream composition source checkpoint
 
+The later actual-runtime lane normally integrates native policy `7e27edd5` at
+`9a6f24e8` and fixed session `28e0391a` at `64415e65`; no moving native branch
+or ancestry-only merge is consumed. ADR 0085 and the corrected shared-registry
+publication/adoption contracts are preserved. `HostRuntime` now privately pairs
+native control with the actual adopted terminal route before advertising current
+protected lifecycle capabilities and the backend-reserved issuer. Standalone
+control remains inventory-only; control Attach/Detach cannot acquire a frontend.
+Actual SSH creation retains its original issued operation, supports unchanged
+retry/resume, distinguishes creation-disabled resume from denied virgin execution,
+and observes authoritative absence before recreation after exact end.
+
+The owned signed-SSH/native tests additionally exercise adopted frontend snapshots,
+two-session input isolation, correlated persistent detach, stale generations,
+pending takeover without stalling the old writer and per-frame key/host/session
+revocation. Revoked remote input never reaches the recovery snapshot; persistent
+shells survive and accept ordinary unticketed local input afterward. Exact local
+end cleans only these owned revoked fixtures. One early failed fixture retained
+its root; its exact PID/generation/endpoint was stopped using `kill-unattached`,
+exit was positively observed, and its state was preserved under
+`.runtime-validation/retained-revoked-fixture-490b3ad7`.
+
+The real temporary case first passed in 126.29 seconds: 65 seconds active beyond
+the initial connected deadline, with 20-second renewals, then abrupt actual SSH
+stream closure, original-authority TransportLost and the real 60-second grace
+before daemon expiry. The next concurrent aggregate run retained 13 passes and
+one real native cancellation failure in `final-native-routes.log`: one-shot
+cleanup returned Busy, leaving its pending ticket until expiry. The fix retries
+only Busy within the existing 15-second deadline, reacquiring original current
+authority on every attempt with no lock during sleeps/network. Denied/stale/
+revoked cleanup never retries. The deterministic native pending-cancel fixture
+holds policy for 200 ms and passes with this fix; the actual SSH loss case now
+holds policy too and requires TransportLost after release, not abandonment.
+Failure logs and corrected runs remain separate; no refusal, assertion,
+production deadline or existing ignore was weakened.
+
+Fresh final corrected-union qualification (macOS, jobs 1, private
+`.runtime-target`, dev/test debug 0, incremental 0):
+
+```sh
+cargo build -p festerm-sessiond -p festerm-pty-test-child
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored
+cargo test --locked -p festerm-host-protocol --test contracts
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing --lib
+cargo test --locked -p festerm-host-setup --features host-runtime --lib protected_owner_
+cargo clippy --locked -p festerm-tunnel-bridge -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py
+git diff --check
+```
+
+The native command sets `FESTERM_HOST_TEST_HELPER` to the exact rebuilt
+`.runtime-target/debug/festerm-sessiond`. Results: bridge library **110 passed,
+14 explicitly ignored**, followed by **all 14 explicitly selected native routes
+passed** in 127.96 seconds, including the real policy-contention transport-loss
+case; protocol **13 passed**; protected-owner adapter **14 passed** (29 unrelated
+library tests filtered, not newly qualified). Portable check, strict affected
+all-target clippy, fmt, traceability (311 edges, zero broken references) and diff
+checks passed. Logs are retained separately as
+`.runtime-validation/final-corrected-*.log`. The vendored Dev Tunnels unused
+proxy warning remains; no dependency was edited to suppress it.
+Unix CI now selects `native_`, including the actual SSH and real deadline cases,
+instead of only the earlier duplex fixture modules. That workflow change has not
+itself run in remote CI. No native-vault ceremony, installed service, Dev Tunnels
+cloud, Windows/Linux guest, physical mobile suspension or exact-head independent
+consumer acceptance is claimed. Next product slice is explicit approved client
+context/imported-execution consent into real selected-host Ensure/Create and
+adopted frontend presentation over these unchanged runtime APIs, alongside the
+separately owned verified-helper/native setup/run composition.
+
+The compiled runtime checkpoint is `366b4943`. The fixed test-only session
+matcher follow-up `9d521174` then normally integrates at `a0899965`; production
+runtime APIs and session behavior are unchanged. Fresh combined-head selectors
+`cargo test --locked -p festerm-sessiond --test native_daemon pending_marker_order -- --test-threads=1`
+and
+`cargo test --locked -p festerm-sessiond --test native_daemon native_bridge -- --test-threads=1`
+pass four deterministic marker fixtures and three actual native adoption/bridge
+cases respectively (the native cases take 5.03 seconds).
+`FESTERM_SESSIOND_TEST_RUNTIME_ROOT` uses the owned checkout's short `s` root,
+and `FESTERM_SESSIOND_TRACE_FILE` retains exact native events under
+`.runtime-validation/ordered-union-native-trace.log`. Other combined-head
+checks retain separate `ordered-union-*.log` evidence, rather than relabelling
+the preceding checkpoint's counts as new-head proof.
+The first ordered-union aggregate retained 13 passes and one lost-reply fixture
+failure: the unchanged issued retry safely returned correlated Busy while the
+fixture incorrectly required immediate Ensured. Its corrected oracle deliberately
+holds policy to observe that Busy, then explicitly retries only the same captured
+issued operation within eight seconds. Inventory likewise retains one operation
+through bounded read-only Busy retry; exact one-generation assertions remain.
+This changes no production admission, operation namespace or refusal semantics.
+The failed run remains `ordered-union-native-routes.log`, separate from
+`ordered-corrected-*.log`.
+Fresh corrected ordered-union qualification repeats the bridge library,
+explicit native, protocol, protected-owner and portable commands above:
+**110 library passes/14 explicit ignores**, **14 actual native passes/zero
+ignored in 128.19 seconds**, **13 protocol passes** and **14 protected-owner
+passes** (29 unrelated tests filtered). The native group again proves actual
+two-daemon SSH isolation/adoption/detach, original-issued creation/end,
+takeover/revocation and the unchanged real heartbeat/grace deadlines.
+Strict clippy additionally covers the merged session crate:
+
+```sh
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+```
+
+Portable check, that strict all-target clippy, fmt, traceability (311 edges)
+and diff checks pass. These fresh logs are `ordered-corrected-*.log`; the
+preceding four matcher/three session bridge results remain separately recorded.
+Only fixture reconciliation and its documentation change after the normal
+session merge; production APIs and the qualified runtime source remain unchanged.
+This bounded macOS qualification is neither a fresh workspace-wide/remote-CI
+claim nor installed/native-vault/cloud/product acceptance.
+
+Recovery normally merged corrected session `8ebbaf29` into runtime at
+`ae1ef27a`. A fresh owned helper/fixture-child build and actual two-daemon SSH
+round trip passed. Fresh integrated checks: bridge library 108 passed/10
+explicitly ignored; explicitly selected owned native routes 10 passed; protocol
+contracts 13 passed; portable client-only check, strict bridge all-target clippy,
+fmt, traceability (311 edges) and diff checks passed. Commands used the private
+`.runtime-target`, jobs 1, dev/test debug 0 and incremental 0:
+`cargo build -p festerm-sessiond -p festerm-pty-test-child`,
+`cargo test -p festerm-tunnel-bridge --features host-routing --lib`,
+`cargo test -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored`,
+`cargo test -p festerm-host-protocol --test contracts`,
+`cargo check -p festerm-tunnel-bridge --no-default-features --features host-routing --lib`,
+and `cargo clippy -p festerm-tunnel-bridge --features host-routing --all-targets -- -D warnings`.
+Native commands set `FESTERM_HOST_TEST_HELPER` to the exact owned rebuilt helper.
+The first concurrent native run retained nine passes and an independent
+inventory Busy assertion failure in `.runtime-validation/integrated-native-routes.log`;
+the corrected fixture retains its inventory operation, retries only correlated
+Busy within eight seconds and requires both sessions attached. Production policy
+contention and native assertions remain unchanged. The rerun is separately
+retained in `integrated-native-routes-corrected.log`. This does not transfer
+historical session counts or claim protected-vault, installed or product acceptance.
+
 The earlier routing core could accept opaque owner authorities but did not
 consume the actual SSH owner proof into a dispatcher. The opt-in runtime now
 owns bounded challenge/proof exchange on the signed original SSH stream, then
@@ -9297,3 +9713,294 @@ The earlier protocol `--lib` invocation selected zero tests and is not evidence;
 the explicit contracts command above supplies that evidence. These results
 precede consumption of the qualified final session head and do not transfer to
 that combined tree without rerunning the affected checks.
+
+### ADR 0084 protected runtime policy adapter recovery
+
+The interrupted native adapter wiring left runtime trait implementations nested
+inside an inherent implementation. The first actual Rust build reproduced that
+compiler failure; recovery moved the implementations to module scope without
+replacing the preserved enrollment source. The setup-owned adapter now supplies
+the actual installation lease through the runtime policy traits, reacquires
+selected-store authority for each admission and keeps Busy distinct from denial.
+The app remains a thin delegator with native vault as its default and explicit
+headless file selection only. A generic trait regression exercises lease retention
+and fresh revocation; native endpoint/service acceptance remains separately gated.
+
+### ADR 0084 same-bundle runnable-host artifact dependency
+
+A registered host could retain its own executable receipt but had no trusted
+same-version executable sessiond or way to recover release authority after
+restart. Native publication now qualifies every executable in the signed host
+bundle before promoting fresh bytes, retains file identities, and exposes only
+the exact revalidated daemon helper. Registration also retains signed provenance;
+restart must reauthenticate that provenance rather than promote a cache marker
+or journal digest into trust. Legacy receipt-only registrations remain removable.
+This closes an artifact-composition prerequisite, not the remaining scoped relay
+credential, foreground enrollment, runnable controller or native acceptance gates.
+
+### ADR 0084 explicit runnable-host composition
+
+The shared controller now composes authenticated release restart provenance,
+the exact same-bundle daemon helper, the existing protected host identity and an
+exact-resource host-only relay token with the actual authenticated runtime.
+Setup is explicitly foreground and registers zero shells; initial owner context
+is public review material with no key/access grant. Separate host-local approval
+checks the reviewed public-key fingerprint and independent permissions.
+Run never prompts, enrolls, generates an identity or falls back to files.
+It reacquires native-vault authority, closes hosting on cancellation or lifecycle
+change and leaves the independent daemon alone. A separate runtime lease and
+typed durable last-run history distinguish failures from liveness/Ready claims.
+
+The first test compile exposed a boolean-versus-unit fixture arm and a forbidden
+Debug assertion on protected cloud records; a subsequent missing-identity case
+correctly refused rereading that record. Tests now compare retained raw private
+bytes without exposing protected record contents. The changed packages passed
+132 tests with one existing ignored native case; strict affected-package Clippy
+and targeted relay/runtime/epoch/CLI checks also pass. This does not qualify
+signed native install/service operation or client first-connect UX. Update and
+generation-atomic cloud deletion remain separate incomplete transactions.
+
+### ADR 0084 coherent runtime/native-core integration
+
+The runtime lane normally merges exact compiled native checkpoint `62fa2b53`
+into qualified runtime `9b488311` at `9bade364`. Both histories and ADR 0085
+remain intact. The original-issued Busy reconciliation oracle is unchanged;
+native CLI/setup/cloud/helper/token bodies are byte-identical to the fixed
+native checkpoint. No moving disable/cleanup or client source is consumed.
+The only source delta from `62fa2b53` is the previously qualified lost-reply
+test oracle; stories and evidence remain additive.
+
+Combined qualification uses the same private `.runtime-target`, jobs 1,
+dev/test debug 0, incremental 0 and exact owned helper as above. It repeats
+the helper build, bridge library, fourteen explicitly selected native routes
+and portable check, with these default CLI/setup selectors:
+
+```sh
+cargo test --locked -p festerm-host --all-targets
+cargo test --locked -p festerm-host-setup --features host-runtime --lib protected_owner_
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib controller::tests
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-tunnel-client -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+```
+
+Logs are separately retained as `.runtime-validation/combined-62fa-*.log`.
+Fresh results: **110 bridge library passes/14 explicit ignores**, **all 14
+explicitly selected actual native routes pass in 127.56 seconds**, **12 default
+host CLI passes** (four unit/eight integration), **15 protected-owner passes**
+and **three controller passes**. Portable check, the five-package strict
+all-target clippy above, fmt, traceability (311 edges) and diff checks pass.
+The first controller selector enabled only `host-runtime` and selected zero
+tests; it is not evidence. The corrected three-feature selector above runs
+all three, retained in `combined-62fa-controller-enabled.log`.
+Independent reliability review still blocks publication qualification on
+handshake policy Busy handling and the separately owned native controller
+watch-loop contention behavior; these green tests do not dismiss either gap.
+This is bounded combined-head publication evidence, not a transfer of the
+native checkpoint's 132-test result or installed/native-vault/cloud/product
+acceptance. Independent exact-head reviews, required cross-platform CI and
+the previously named native/client prerequisites remain gates.
+
+### ADR 0084 handshake policy-contention correction
+
+Independent review of the fixed native/runtime composition found that each
+authentication phase tried protected policy only once. Ordinary competing
+policy leases therefore dropped the actual SSH stream without a Busy frame.
+The host now retries only Busy against one captured 15-second deadline shared
+by challenge and proof verification. Every attempt reacquires current policy;
+no verifier/lease survives the wait. The original signed SSH session/channel
+and pending proof are retained rather than replayed or replaced.
+
+A 100-ms portion of that same deadline is reserved for bounded publication of
+the authentication `refused` frame with the existing protocol Busy reason.
+Both portable-client read phases surface `Error::Refused(Refusal::Busy)`;
+there is no client reconnect, proof retry, invented absence or success.
+Reserved aggregate client permits remain charged through blocking work even
+after async cancellation. Denial/stale policy never retries.
+
+Four actual signed-SSH regressions exercise first-three Busy and a real held
+policy guard at both phases, successful exact-channel authentication, fresh
+revocation while proof waits, original shared-deadline exhaustion at either
+phase, persistent Busy under the real 15-second deadline, and cancellation
+followed by recovery of all four single-unit client permits. The first compile
+errors and the fixture's initially invalid multi-unit permit oracle remain
+separately retained, as does strict clippy's large-error-state failure.
+Refusal state is now boxed only on exit under the already reserved charge,
+not allocated per Busy attempt. No production limit or assertion is weakened.
+
+Fresh delta qualification: **114 bridge library passes/14 explicit ignores**
+in 15.16 seconds, **12 default host CLI passes** (four unit/eight integration),
+**13 protocol contract passes**, portable client-only check and strict affected
+five-package all-target clippy pass. The four new contention cases are included
+in those 114 passes; their separate focused run also passes all four.
+The actual two-daemon SSH isolation/adoption/detach case is additionally rerun
+against this fix and passes in 3.56 seconds:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib authenticated_runtime_policy_
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input -- --ignored
+```
+
+Final green evidence is `auth-busy-boxed-*.log` and
+`auth-busy-two-daemon.log`. Fmt, traceability (311 edges) and diff checks pass.
+The preceding coherent checkpoint `73f9b3d` separately owns the fourteen-case
+127.56-second native aggregate; that full aggregate is not relabelled as a
+fresh run of this delta. The separately owned native controller watch-loop and
+other review corrections are not consumed here. Independent review follow-up,
+required cross-platform CI and native/client/product gates remain open.
+
+### ADR 0084 revoke-first owned removal composition
+
+Native manager stop alone cannot prove a manually invoked host has exited.
+The shared disable controller now revokes first, validates the exact native
+stop observation and waits boundedly for the separate foreground runtime lease
+without holding the installation/policy lock. Only then can it confirm Disabled.
+Foreign evidence, contention and uncertain cloud submission retain StopRequested
+or Reconciling rather than authorizing cleanup. Explicit uninstall composes that
+stop with exact native registration cleanup and authenticated cloud observation:
+absence may commit Removed, but an existing generation keeps unsuccessful
+CleanupPending without sending an unqualified ID-only DELETE. Existing removed
+tombstones report history without pretending to reobserve availability.
+
+The production foreground setup path already initializes `HostIdentity` under
+the current installation ticket; a new regression starts from a genuinely absent
+key, calls that public production initializer, reuses it through zero-shell
+provision and relay authorization and proves missing keys are never regenerated
+under existing records. No fixture injects the initial host identity for this
+test. Linux runnable setup/run also now refuses UserSignIn: `default.target` under
+an already lingering user manager is not proof of a current logon. Manual hosting
+remains implemented; no host linger/permission setting is changed.
+
+Before the subsequent review corrections, the private jobs1/debug0/incremental0
+warm target passed:
+
+- `cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_runtime_` — 9 passed.
+- `cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_cloud_foreground_initializes_real_identity` — 1 passed.
+- `cargo test --locked -p festerm-host -p festerm-host-setup` — 106 passed, one existing ignored native case.
+- `cargo test --locked -p festerm-host --no-default-features` — 10 passed.
+- `cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings` — passed.
+
+Owned logs remain under `target/adr84-native-evidence/disable-*.log`.
+Packaging metadata, 59 focused Python packaging tests (7 skipped), fmt,
+traceability311 and diff checks pass. These are isolated fixtures/source checks,
+not positive real release/native-vault/cloud/service evidence. Authenticated
+stopped-version replacement remains active incomplete work, not an accepted
+update operation or an excuse to treat unqualified cloud deletion as success.
+
+### ADR 0084 native controller review corrections
+
+The production run watchdog no longer mistakes the installation lock held by a
+normal current-policy guard for revocation. WouldBlock is currently unobservable:
+it keeps serving and retries bounded one-second ticks without asserting consent,
+absence or success. Real snapshot changes and nonbusy errors still close hosting;
+each actual runtime admission continues to require fresh authority. The regression
+holds the real Store lease across four pending serving ticks, checks Listening,
+then releases and revokes to observe ConsentChanged, never InstallationBusy.
+
+`approve-owner --temporary allow|deny` is independent explicit foreground
+permission, default No, and never grants creation. Creation still requires both
+configured permission and owner consent. Public setup/approval use the same
+controller core as six new deterministic boundary tests; only crate-private typed
+native/network/credential dependencies are substituted. Those tests cover actual
+identity→sign-in→zero-shell provision→owner initialization→install order, approved
+key reuse, fingerprint/Provisioned/creation/issuer/account fences, late revocation,
+failed-install retry and no effects after missing/cancelled account consent.
+An initial fixture-parent RED was fixed in test support. The late-revocation test
+then exposed owner-provider invocation before the final epoch fence; production
+ordering was corrected rather than weakening the assertion. Both RED logs remain.
+
+Canonical architecture/protocol/headless/ADR/readme/roadmap descriptions now
+distinguish the default headless build's explicit signed setup/approval/run from
+optional library features and disabled configuration, and paired lifecycle from
+standalone inventory-only control. Historical milestones remain historical.
+UserSignIn registration arms next-login activation; runnable Linux still refuses
+until a current-logon fence exists. Bounded cloud-operation serialization may span
+network; installation/policy/journal guards do not. Host-local key approval is
+not the separate client foreground trust/context/receipt/index/session chooser.
+
+The final default host/setup union passes **114 tests, one existing ignored
+native case** (101 setup-library, 5 CLI units and 8 CLI integrations).
+Focused review runs passed watch1, controller6 and temporary1. Logs:
+`target/adr84-native-evidence/review-{watch-busy,controller-first,controller-green1,controller-green2,temporary,final-packages}.log`.
+Final commands used the private warm `target/adr84-native`, jobs1, dev/test debug0,
+incremental0 and repository-owned fixture root:
+
+- `cargo test --locked -p festerm-host -p festerm-host-setup` — 114 passed / 1 existing ignored.
+- `cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings` — passed.
+- `cargo test --locked -p festerm-host --no-default-features` — 10 passed.
+- `cargo check --locked -p festerm-host-setup --no-default-features --features native-services --lib` — passed.
+- `python3 scripts/check_packaging.py` — passed.
+- `python3 -m unittest scripts.tests.test_check_packaging scripts.tests.test_host_manifest scripts.tests.test_tunnel_bundle` — 66 run, 59 passed / 7 skipped.
+
+The existing vendored proxy-helper warning and optional-feature transport-helper
+warning remain, without weakening strict affected-package Clippy or changing
+dependencies. Final strict/compatibility/library/packaging logs use
+`target/adr84-native-evidence/review-final-*.log`.
+These are real controller/source boundary regressions, not production cloud,
+native-vault, signed install/start/stop or cross-platform acceptance. Remaining
+reliability lifecycle review and independent combined-source gates are not cleared.
+Authenticated stopped-version replacement/update remains active incomplete work;
+unqualified cloud deletion remains unsuccessful CleanupPending.
+The qualified native review-correction source is fixed at `3d18fff1`; subsequent
+documentation does not change those tested bytes. Runtime's separate
+`1b5987ec` authentication Busy correction is not consumed here. A future normal
+integration must retain its original authentication deadline and both
+same-issued-operation/lost-reply and actual two-daemon adoption/detach oracles,
+then qualify the new combined head independently.
+
+### ADR 0084 fixed native-review/runtime publication union
+
+The runtime lane normally merges exact native `48fd53037bb576af619eba83db61c84a03fda469`
+into `1b5987ec20142901d9f9bf24d20d3277c722865d` at
+`25d5bc6b7f990ce13e7f4f5475ce7cf33644fd7d`. The native tip is documentation-only
+above tested source `3d18fff1`. Only additive milestone prose and one traceability
+prerequisite conflicted; both evidence histories and the current native wording
+are retained. Native CLI/setup/client bodies match exact `48fd5303`; runtime
+authentication, two-daemon adoption/isolation and original-issued lost-reply
+oracle bodies match exact `1b5987ec`. No moving update/client/session branch,
+production lifecycle rewrite, ancestry shortcut or ADR 0085 removal is included.
+
+Fresh qualification uses the private `.runtime-target`, jobs1, dev/test debug0,
+incremental0 and exact owned helper, with logs under
+`.runtime-validation/combined-48fd-*.log`:
+
+```sh
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/.runtime-target"
+export FESTERM_HOST_TEST_HELPER="$PWD/.runtime-target/debug/festerm-sessiond"
+cargo build --locked -p festerm-sessiond -p festerm-pty-test-child
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored
+cargo test --locked -p festerm-host --all-targets
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib controller::tests
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_controller_
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_cloud_foreground_initializes_real_identity
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing --lib
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-tunnel-client -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9d5211745c126c2cdc417062d153c324d024b188
+git diff --check
+```
+
+Actual combined-source results: **114 bridge library passes/14 explicit ignores**
+(15.18 seconds), then **all 14 actual native SSH routes pass with zero ignored**
+(127.73 seconds), including original-issued lost-reply reconciliation,
+two-daemon isolation/adoption/correlated detach, takeover, live revocation and
+the real heartbeat/transport-loss lifetime. The library run includes all four
+original-15-second authentication Busy regressions. Default host tests pass
+**13** (five units/eight integrations, including independent temporary consent);
+focused setup tests pass **10 controller**, **six shared setup/approval-core**
+and **one real identity initialization**. No selector is empty. Portable check,
+strict five-package all-target Clippy, fmt, range-aware traceability
+(311 edges/zero broken or unclassified) and diff checks pass. The unchanged
+vendored proxy-helper warning is retained without dependency edits.
+
+The native lane's separate 114-pass/one-ignore host/setup aggregate and ten
+compatibility tests remain attributed to `3d18fff1`, not relabelled as fresh
+combined runs. This bounded publication checkpoint does not clear independent
+combined reliability/scope/full-lifecycle reviews or required primary-platform
+CI. The separately owned session correction `d7d2d94d`, Windows legacy fixture
+correction, client producer checkpoint and native authenticated update are not
+consumed here. Original CI failures remain failures; Linux's unsafe staged
+checkout remains a lab prerequisite, not runtime acceptance. No GUI, production
+cloud, native-vault, installed service, signed bundle, guest/device or mobile
+acceptance was performed. Parent owns Draft publication; this is not Ready or
+ADR completion.

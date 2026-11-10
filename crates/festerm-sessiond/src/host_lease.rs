@@ -483,6 +483,36 @@ mod tests {
     }
 
     #[test]
+    fn unticketed_local_attachment_requires_persistent_lifetime() {
+        let fixture = Fixture::new();
+        let generation = fixture.lease(1, now_ms() + 60_000);
+        let mut watch = DaemonWatch::open(&fixture.0, "fixture", 1).unwrap();
+        assert!(!watch.allows_attachment(None, false));
+        assert!(watch.attachment_cancelled(None, false));
+        assert!(watch.commit_attachment(None, false).is_err());
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        let original_writer = lease.writer_epoch;
+        assert_eq!(lease.writer_epoch.get(), 1);
+        assert!(lease.temporary.is_some());
+        lease.lifetime = Lifetime::Persistent {};
+        lease.temporary = None;
+        lease.deadline_ms = None;
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        assert!(watch.allows_attachment(None, false));
+        assert!(!watch.attachment_cancelled(None, false));
+        watch.commit_attachment(None, false).unwrap();
+        let lease = LeaseGuard::acquire(&fixture.0, generation)
+            .unwrap()
+            .read()
+            .unwrap();
+        assert_eq!(lease.writer_epoch, original_writer.next().unwrap());
+        assert!(lease.temporary.is_none());
+        assert!(lease.deadline_ms.is_none());
+    }
+
+    #[test]
     fn lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace() {
         let fixture = Fixture::new();
         fixture.lease(1, now_ms() - 1);

@@ -20,9 +20,15 @@ fn read_bounded(path: &Path, bound: usize) -> Result<Vec<u8>, Box<dyn std::error
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    let package = if args.first().is_some_and(|arg| arg == "--host") {
+        args.remove(0);
+        Package::Host
+    } else {
+        Package::Helpers
+    };
     if args.len() != 4 {
-        return Err("usage: festerm-verify-artifact VERSION linux|macos|windows x86_64|aarch64 ARCHIVE (no extraction/execution)".into());
+        return Err("usage: festerm-verify-artifact [--host] VERSION linux|macos|windows x86_64|aarch64 ARCHIVE (no extraction/execution)".into());
     }
     let version = args[0].to_str().ok_or("invalid version")?;
     let platform = match args[1].to_str() {
@@ -40,7 +46,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         version,
         platform,
         architecture,
-        package: Package::Helpers,
+        package,
     };
     let archive_path = Path::new(&args[3]);
     if archive_path.file_name() != Some(std::ffi::OsStr::new(&artifacts::filename(&expected))) {

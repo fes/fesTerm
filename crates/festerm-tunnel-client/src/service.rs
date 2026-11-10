@@ -388,7 +388,7 @@ fn management_error(error: HttpError) -> Error {
     error
 }
 
-fn wipe_tokens(tunnel: &mut Tunnel) {
+pub(crate) fn wipe_tokens(tunnel: &mut Tunnel) {
     if let Some(tokens) = tunnel.access_tokens.as_mut() {
         for token in tokens.values_mut() {
             token.zeroize();

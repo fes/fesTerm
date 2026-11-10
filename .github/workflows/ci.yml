@@ -207,22 +207,23 @@ jobs:
       - name: Validate authenticated helper artifacts without desktop dependencies
         shell: bash
         run: |
-          cargo test --locked -p festerm-host-setup --features artifacts
-          cargo clippy --locked -p festerm-host-setup --features artifacts --all-targets -- -D warnings
-          cargo test --locked -p festerm-host-setup --features owner-enrollment --lib
-          cargo clippy --locked -p festerm-host-setup --features owner-enrollment --all-targets -- -D warnings
+          cargo test --locked -p festerm-host-setup --features acquisition,native-services -p festerm-host
+          cargo clippy --locked -p festerm-host-setup --features acquisition,native-services -p festerm-host --all-targets -- -D warnings
+          python scripts/check_host_notices.py
+          cargo test --locked -p festerm-host-setup -p festerm-tunnel-client --features festerm-host-setup/owner-enrollment,festerm-host-setup/cloud --lib
+          cargo clippy --locked -p festerm-host-setup -p festerm-tunnel-client --features festerm-host-setup/owner-enrollment,festerm-host-setup/cloud --all-targets -- -D warnings
       - name: Check the experimental Dev Tunnels feature
         run: cargo clippy -p festerm -p festerm-tunnel-bridge -p festerm-host --all-targets --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/relay,festerm-tunnel-bridge/host-routing,festerm-host/owner-routing -- -D warnings
       - name: Test the experimental bridge protocol, relay and unexposed owner routing
         run: cargo test -p festerm-tunnel-bridge --features relay,host-routing
-      - name: Test owned native HOST control and terminal routing fixtures
+      - name: Test owned native HOST control, terminal and actual SSH lifecycle
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           cargo build --locked -p festerm-sessiond -p festerm-pty-test-child --bins
           FESTERM_HOST_TEST_HELPER="$CARGO_TARGET_DIR/debug/festerm-sessiond" \
             cargo test --locked -p festerm-tunnel-bridge --features host-routing \
-              native_routes --lib -- --ignored --test-threads=1
+              native_ --lib -- --ignored --test-threads=1
       - name: Check portable enrolled-owner client without host dependencies
         run: cargo clippy --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
       - name: Test Dev Tunnel profiles and account isolation

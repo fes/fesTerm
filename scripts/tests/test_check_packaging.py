@@ -1,7 +1,6 @@
 import copy
 import hashlib
 import importlib.util
-import io
 import json
 import os
 import re
@@ -13,7 +12,6 @@ import tempfile
 import textwrap
 import time
 import unittest
-import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -205,8 +203,8 @@ class PackagingMetadataTests(unittest.TestCase):
                 self.assertIn("runtime signature prerequisite", "\n".join(errors))
 
     def _run_macos_cli_smoke(
-        self, archive_bytes, *, archive_digest=None, executable_digest=None,
-        fail_architecture=None,
+        self, executable_bytes, *, archive_digest=None, executable_digest=None,
+        fail_architecture=None, status="200",
     ):
         workflow = (packaging.ROOT / ".github/workflows/package-smoke.yml").read_text(
             encoding="utf-8"
@@ -216,9 +214,12 @@ class PackagingMetadataTests(unittest.TestCase):
         script = script.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
         manifest = {"pins": [
             {
-                "platform": "macos", "architecture": architecture, "format": "zip",
-                "download": f"https://example.invalid/{architecture}",
-                "archive_sha256": archive_digest or hashlib.sha256(archive_bytes).hexdigest(),
+                "platform": "macos", "architecture": architecture, "format": "executable",
+                "download": (
+                    "https://tunnelsassetsprod.blob.core.windows.net/cli/1.0.2115+e16833f284/"
+                    f"osx-{'arm64' if architecture == 'aarch64' else 'x64'}-devtunnel"
+                ),
+                "archive_sha256": archive_digest or hashlib.sha256(b"reviewed-cli").hexdigest(),
                 "executable_sha256": executable_digest or hashlib.sha256(b"reviewed-cli").hexdigest(),
             }
             for architecture in ("x86_64", "aarch64")
@@ -226,14 +227,17 @@ class PackagingMetadataTests(unittest.TestCase):
         calls = []
         directories = set()
 
-        def run(args, *, check, timeout):
+        def run(args, *, check, timeout, **kwargs):
             self.assertEqual(check, "-dv" not in args)
             self.assertLessEqual(timeout, 100)
             calls.append(args)
             if args[0] == "curl":
+                self.assertNotIn("--location", args)
+                self.assertEqual(kwargs, {"capture_output": True, "text": True})
                 output = Path(args[args.index("--output") + 1])
                 directories.add(output.parent.parent)
-                output.write_bytes(archive_bytes)
+                output.write_bytes(executable_bytes)
+                return subprocess.CompletedProcess(args, 0, stdout=status)
             elif check and fail_architecture == Path(args[-1]).parent.name:
                 raise subprocess.CalledProcessError(1, args)
 
@@ -249,23 +253,23 @@ class PackagingMetadataTests(unittest.TestCase):
                 failure = str(error)
             else:
                 failure = None
-        self.assertTrue(directories)
         self.assertTrue(all(not directory.exists() for directory in directories))
         return calls, failure
 
     def test_macos_cli_smoke_checks_both_architectures_and_exact_runtime_signature(self):
-        archive = io.BytesIO()
-        with zipfile.ZipFile(archive, "w") as source:
-            source.writestr("devtunnel", b"reviewed-cli")
         for fail_architecture in (None, "x86_64"):
             with self.subTest(fail_architecture=fail_architecture):
                 calls, failure = self._run_macos_cli_smoke(
-                    archive.getvalue(), fail_architecture=fail_architecture
+                    b"reviewed-cli", fail_architecture=fail_architecture
                 )
                 self.assertEqual(failure is None, fail_architecture is None)
                 self.assertEqual(
                     [args[-1] for args in calls if args[0] == "curl"],
-                    ["https://example.invalid/x86_64", "https://example.invalid/aarch64"],
+                    [
+                        "https://tunnelsassetsprod.blob.core.windows.net/cli/1.0.2115+e16833f284/"
+                        f"osx-{architecture}-devtunnel"
+                        for architecture in ("x64", "arm64")
+                    ],
                 )
                 signatures = [args for args in calls if args[0] == "/usr/bin/codesign"]
                 self.assertEqual(len(signatures), 4)
@@ -276,26 +280,19 @@ class PackagingMetadataTests(unittest.TestCase):
                         ["--verify", "--strict", "-R=anchor apple generic"],
                     )
 
-    def test_macos_cli_smoke_rejects_unsafe_archives_and_hash_mismatches(self):
-        symlink = zipfile.ZipInfo("devtunnel")
-        symlink.create_system = 3
-        symlink.external_attr = 0o120777 << 16
-        for entries, digests in (
-            ([("../devtunnel", b"reviewed-cli")], {}),
-            ([(symlink, b"reviewed-cli")], {}),
-            ([("devtunnel", b"reviewed-cli"), ("extra", b"extra")], {}),
-            ([("devtunnel", b"reviewed-cli")], {"archive_digest": "0" * 64}),
-            ([("devtunnel", b"reviewed-cli")], {"executable_digest": "0" * 64}),
+    def test_macos_cli_smoke_rejects_raw_hash_mismatches_empty_bytes_and_redirects(self):
+        for data, options, downloads in (
+            (b"tampered", {}, 2),
+            (b"", {}, 2),
+            (b"reviewed-cli", {"archive_digest": "0" * 64}, 0),
+            (b"reviewed-cli", {"archive_digest": "0" * 64, "executable_digest": "0" * 64}, 2),
+            (b"reviewed-cli", {"status": "302"}, 2),
         ):
-            with self.subTest(entries=entries, digests=digests):
-                archive = io.BytesIO()
-                with zipfile.ZipFile(archive, "w") as source:
-                    for name, data in entries:
-                        source.writestr(name, data)
-                calls, failure = self._run_macos_cli_smoke(archive.getvalue(), **digests)
+            with self.subTest(data=data, options=options):
+                calls, failure = self._run_macos_cli_smoke(data, **options)
                 self.assertIsNotNone(failure)
                 self.assertFalse(any(args[0] == "/usr/bin/codesign" for args in calls))
-                self.assertEqual(sum(args[0] == "curl" for args in calls), 2)
+                self.assertEqual(sum(args[0] == "curl" for args in calls), downloads)
 
     def test_linux_automation_helper_is_built_and_probed_for_both_packages(self):
         helper = {"path": "festerm-automation-js-worker", "main": False}

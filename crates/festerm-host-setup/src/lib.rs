@@ -5,14 +5,26 @@
 
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "acquisition")]
+pub mod acquisition;
 #[cfg(feature = "artifacts")]
 pub mod artifacts;
+#[cfg(feature = "cloud")]
+pub mod cloud;
+#[cfg(all(
+    feature = "cloud",
+    feature = "host-runtime",
+    feature = "native-services"
+))]
+pub mod controller;
 #[cfg(feature = "owner-enrollment")]
 pub mod enrollment;
 #[cfg(feature = "lifecycle")]
 pub mod lifecycle;
 #[cfg(feature = "lifecycle")]
 mod protected_state;
+#[cfg(feature = "native-services")]
+pub mod services;
 #[cfg(feature = "lifecycle")]
 pub mod staging;
 

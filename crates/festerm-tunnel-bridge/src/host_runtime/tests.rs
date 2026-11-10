@@ -108,6 +108,460 @@ impl Drop for Fixture {
     }
 }
 
+struct BusyPolicy {
+    inner: Arc<Policy>,
+    remaining: std::sync::atomic::AtomicUsize,
+    simulated_busy: std::sync::atomic::AtomicUsize,
+    locked_busy: std::sync::atomic::AtomicUsize,
+}
+
+impl ProtectedPolicySource for BusyPolicy {
+    type Guard = <Policy as ProtectedPolicySource>::Guard;
+
+    fn current_policy(&self) -> Result<Self::Guard, ContractError> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self
+            .remaining
+            .fetch_update(SeqCst, SeqCst, |remaining| remaining.checked_sub(1))
+            .is_ok()
+        {
+            self.simulated_busy.fetch_add(1, SeqCst);
+            return Err(ContractError::Busy);
+        }
+        let current = self.inner.current_policy();
+        if matches!(current, Err(ContractError::Busy)) {
+            self.locked_busy.fetch_add(1, SeqCst);
+        }
+        current
+    }
+}
+
+fn busy_runtime(
+    fixture: &Fixture,
+    remaining: usize,
+) -> (Arc<HostRuntime<BusyPolicy>>, Arc<BusyPolicy>) {
+    let source = Arc::new(BusyPolicy {
+        inner: fixture.source.clone(),
+        remaining: remaining.into(),
+        simulated_busy: 0.into(),
+        locked_busy: 0.into(),
+    });
+    let sessions =
+        SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+    (Arc::new(HostRuntime::new(sessions, source.clone())), source)
+}
+
+async fn wait_for_busy(counter: &std::sync::atomic::AtomicUsize, minimum: usize) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while counter.load(std::sync::atomic::Ordering::SeqCst) < minimum {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("authentication did not reach protected-policy contention");
+}
+
+fn client_budget_drained(runtime: &HostRuntime<BusyPolicy>) -> bool {
+    let permits: Result<Vec<_>, _> = (0..MAX_CLIENTS)
+        .map(|_| {
+            runtime
+                .budgets
+                .reserve(festerm_host_protocol::Resource::Client, 1)
+        })
+        .collect();
+    permits.is_ok()
+}
+
+#[tokio::test]
+async fn authenticated_runtime_policy_busy_retries_both_phases_and_rechecks_actual_guard() {
+    use std::sync::atomic::Ordering::SeqCst;
+    for revoke in [false, true] {
+        let fixture = Fixture::new();
+        let (runtime, source) = busy_runtime(&fixture, 3);
+        let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+        let held = fixture.source.0.clone().lock_owned().await;
+        let (mut client, stream, ssh) = fixture.pair().await;
+        let host = runtime.clone();
+        let server =
+            tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+        wait_for_busy(&source.locked_busy, 1).await;
+        drop(held);
+        let frame = read_frame(&mut client, permit.budgets()).await.unwrap();
+        let Authentication::Challenge { challenge } = frame.decode().unwrap() else {
+            panic!("contention must not replace the original SSH challenge");
+        };
+        drop(frame);
+        let proof = client
+            .prove_owner_fixture(
+                fixture.vault.as_ref(),
+                &fixture.key,
+                &fixture.approved,
+                &challenge,
+            )
+            .unwrap();
+        let mut held = fixture.source.0.clone().lock_owned().await;
+        source.remaining.store(3, SeqCst);
+        write_frame(
+            &mut client,
+            permit.budgets(),
+            &Authentication::Proof { proof },
+        )
+        .await
+        .unwrap();
+        wait_for_busy(&source.locked_busy, 2).await;
+        if revoke {
+            let mut changed = fixture.policy.clone();
+            changed.remote_access = false;
+            *held = OwnerVerifier::from_protected_permissions(changed, &[fixture.key.public_key()])
+                .unwrap();
+        }
+        drop(held);
+        let frame = read_frame(&mut client, permit.budgets()).await.unwrap();
+        let response: Authentication = frame.decode().unwrap();
+        drop(frame);
+        if revoke {
+            assert!(matches!(response, Authentication::Denied {}));
+        } else {
+            assert!(matches!(response, Authentication::Accepted {}));
+            client.write_u8(0).await.unwrap();
+            client.flush().await.unwrap();
+        }
+        drop(client);
+        drop(permit);
+        let result = tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        if revoke {
+            assert!(matches!(
+                result,
+                Err(Error::Contract(ContractError::Denied))
+            ));
+        }
+        assert!(source.simulated_busy.load(SeqCst) >= 6);
+        assert!(client_budget_drained(&runtime));
+        ssh.abort();
+        let _ = ssh.await;
+    }
+}
+
+#[tokio::test]
+async fn authenticated_runtime_policy_busy_refusal_uses_one_deadline_for_both_phases() {
+    use std::sync::atomic::Ordering::SeqCst;
+    for after_challenge in [false, true] {
+        let fixture = Fixture::new();
+        let (runtime, source) =
+            busy_runtime(&fixture, if after_challenge { 0 } else { usize::MAX });
+        let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+        let (client, stream, ssh) = fixture.pair().await;
+        let host = runtime.clone();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+        let host_permit = Arc::new(ConnectionPermit::reserve(&host.budgets).unwrap());
+        let server = tokio::spawn(async move {
+            tokio::time::timeout_at(
+                deadline,
+                host.authenticate(stream, host_permit, deadline, CancellationToken::new()),
+            )
+            .await
+            .expect("policy contention restarted or exhausted the authentication deadline")
+        });
+        let vault = fixture.vault.clone();
+        let key = fixture.key.clone();
+        let approved = fixture.approved.clone();
+        let result = authenticate_client_using(
+            client,
+            permit,
+            StreamRole::Control,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                if after_challenge {
+                    std::thread::sleep(Duration::from_millis(200));
+                    source.remaining.store(usize::MAX, SeqCst);
+                }
+                stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+        ));
+        assert!(matches!(
+            server.await.unwrap(),
+            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+        ));
+        assert!(client_budget_drained(&runtime));
+        ssh.abort();
+        let _ = ssh.await;
+    }
+}
+
+#[tokio::test]
+async fn authenticated_runtime_policy_persistent_busy_is_framed_before_real_auth_deadline() {
+    let fixture = Fixture::new();
+    let (runtime, source) = busy_runtime(&fixture, usize::MAX);
+    let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+    let (client, stream, ssh) = fixture.pair().await;
+    let host = runtime.clone();
+    let started = tokio::time::Instant::now();
+    let server =
+        tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+    let vault = fixture.vault.clone();
+    let key = fixture.key.clone();
+    let approved = fixture.approved.clone();
+    let result = authenticate_client_using(
+        client,
+        permit,
+        StreamRole::Control,
+        CancellationToken::new(),
+        move |stream, challenge| {
+            stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)
+        },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+    ));
+    assert!(matches!(
+        server.await.unwrap(),
+        Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+    ));
+    assert!(started.elapsed() >= AUTH_DEADLINE - AUTH_REFUSAL_RESERVE);
+    assert!(started.elapsed() < AUTH_DEADLINE + Duration::from_secs(1));
+    assert!(
+        source
+            .simulated_busy
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 1
+    );
+    assert!(client_budget_drained(&runtime));
+    ssh.abort();
+    let _ = ssh.await;
+}
+
+#[tokio::test]
+async fn authenticated_runtime_policy_busy_cancellation_drains_charged_work() {
+    let fixture = Fixture::new();
+    let (runtime, source) = busy_runtime(&fixture, usize::MAX);
+    let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+    let (client, stream, ssh) = fixture.pair().await;
+    let cancel = CancellationToken::new();
+    let host = runtime.clone();
+    let host_cancel = cancel.clone();
+    let server = tokio::spawn(async move { host.serve_stream(stream, host_cancel).await });
+    let vault = fixture.vault.clone();
+    let key = fixture.key.clone();
+    let approved = fixture.approved.clone();
+    let client_cancel = cancel.clone();
+    let client = tokio::spawn(authenticate_client_using(
+        client,
+        permit,
+        StreamRole::Control,
+        client_cancel,
+        move |stream, challenge| {
+            stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)
+        },
+    ));
+    wait_for_busy(&source.simulated_busy, 1).await;
+    cancel.cancel();
+    assert!(matches!(client.await.unwrap(), Err(Error::Cancelled)));
+    assert!(matches!(server.await.unwrap(), Err(Error::Cancelled)));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !client_budget_drained(&runtime) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("cancelled Busy work retained an unbounded client charge");
+    ssh.abort();
+    let _ = ssh.await;
+}
+
+#[cfg(unix)]
+struct NativeRuntimeFixture {
+    auth: Fixture,
+    native: crate::host_control::tests::native_routes::NativeFixture,
+    runtime: Arc<HostRuntime<Policy>>,
+    servers: Vec<tokio::task::JoinHandle<Result<(), Error>>>,
+    connections: Vec<tokio::task::JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl NativeRuntimeFixture {
+    fn new() -> Self {
+        let mut auth = Fixture::new();
+        let mut native = crate::host_control::tests::native_routes::NativeFixture::new(true);
+        auth.policy.capabilities = Capabilities {
+            inventory: true,
+            ensure: true,
+            create: true,
+            attach: true,
+            detach: true,
+            explicit_end: true,
+            temporary: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        };
+        *auth.source.0.try_lock().unwrap() = OwnerVerifier::from_protected_permissions(
+            auth.policy.clone(),
+            &[auth.key.public_key()],
+        )
+        .unwrap();
+        native.policy = auth.policy.clone();
+        let runtime = Arc::new(HostRuntime::new(native.control(), auth.source.clone()));
+        Self {
+            auth,
+            native,
+            runtime,
+            servers: Vec::new(),
+            connections: Vec::new(),
+        }
+    }
+
+    fn binding(&self) -> Binding {
+        Binding::new(
+            self.auth.approved.host.host.clone(),
+            self.auth.approved.account.clone(),
+            "owned-native-runtime".into(),
+        )
+        .unwrap()
+    }
+
+    async fn stream(&mut self, role: StreamRole) -> (ClientConnection, ConnectionPermit) {
+        let (client, stream, ssh) = self.auth.pair().await;
+        let runtime = self.runtime.clone();
+        self.servers.push(tokio::spawn(async move {
+            runtime.serve_stream(stream, CancellationToken::new()).await
+        }));
+        self.connections.push(ssh);
+        self.auth.authenticate(client, role).await
+    }
+
+    async fn control(&mut self) -> ControlClient<ClientConnection> {
+        let (client, permit) = self.stream(StreamRole::Control).await;
+        let mut control = ControlClient::on_authenticated_stream(client, self.binding(), permit);
+        let capabilities = control.handshake(&CancellationToken::new()).await.unwrap();
+        assert!(capabilities.ensure && capabilities.create && capabilities.explicit_end);
+        assert!(capabilities.attach && capabilities.detach && capabilities.temporary);
+        assert!(capabilities.issuance_epoch.is_some());
+        control
+    }
+
+    async fn pending(
+        &mut self,
+        target: festerm_host_protocol::Target,
+        attachment: festerm_host_protocol::AttachmentId,
+        takeover: bool,
+    ) -> crate::host_terminal::PendingTerminal<ClientConnection> {
+        let (client, permit) = self.stream(StreamRole::Terminal).await;
+        crate::host_terminal::establish(
+            client,
+            permit,
+            self.binding(),
+            OperationId::new(),
+            target,
+            attachment,
+            takeover,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap()
+    }
+
+    fn lease(&self, target: &festerm_host_protocol::Target) -> serde_json::Value {
+        // Observation of this exact owned fixture only, never runtime authority.
+        serde_json::from_slice(
+            &std::fs::read(
+                self.native
+                    .root
+                    .join(format!("host-daemon-{}.json", target.generation.get())),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    async fn shutdown(self) {
+        for server in self.servers {
+            let _ = tokio::time::timeout(Duration::from_secs(8), server)
+                .await
+                .expect("owned runtime stream did not close")
+                .expect("owned runtime stream panicked");
+        }
+        for ssh in self.connections {
+            ssh.abort();
+            let _ = ssh.await;
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn issued_request(
+    control: &mut ControlClient<ClientConnection>,
+    issued: &festerm_tunnel_client::host_control::IssuedControlOperation,
+    request: Request,
+) -> Response {
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let response = control
+                .request_issued(issued, request.clone(), &CancellationToken::new())
+                .await
+                .unwrap()
+                .body;
+            if matches!(
+                response,
+                Response::Refused {
+                    reason: festerm_host_protocol::Refusal::Busy
+                }
+            ) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            } else {
+                break response;
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[cfg(unix)]
+async fn create_remote(
+    control: &mut ControlClient<ClientConnection>,
+    creation: festerm_host_protocol::Creation,
+) -> festerm_host_protocol::Target {
+    let issued = control.issue_operation().unwrap();
+    match issued_request(control, &issued, Request::Create { creation }).await {
+        Response::Ensured { session, .. } => session.target,
+        response => panic!("remote create failed: {response:?}"),
+    }
+}
+
+#[cfg(unix)]
+async fn terminal_output_until(
+    terminal: &mut crate::host_terminal::TerminalHandle,
+    expected: &[u8],
+) -> Vec<u8> {
+    tokio::time::timeout(Duration::from_secs(8), async {
+        let mut output = Vec::new();
+        loop {
+            let frame = terminal.next_event().await.unwrap();
+            if frame.kind() == crate::protocol::OUTPUT {
+                output.extend_from_slice(frame.payload());
+                assert!(output.len() <= festerm_host_protocol::MAX_BYTES_PER_CLIENT);
+                if output
+                    .windows(expected.len())
+                    .any(|bytes| bytes == expected)
+                {
+                    break output;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn selected_host_signed_ssh_inventory_uses_the_authenticated_control_stream() {
     let fixture = Fixture::new();
@@ -160,7 +614,8 @@ async fn authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation
     let cancel = CancellationToken::new();
     let caps = client.handshake(&cancel).await.unwrap();
     assert!(caps.inventory);
-    assert!(!caps.attach && !caps.ensure && !caps.create);
+    assert!(caps.attach && caps.detach);
+    assert!(!caps.ensure && !caps.create);
     let inventory = client
         .request(OperationId::new(), Request::List { cursor: None }, &cancel)
         .await
@@ -252,6 +707,7 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
     assert!(page.sessions.iter().all(|session| !session.attached));
 
     let mut live = Vec::new();
+    let mut frontends = Vec::new();
     let mut servers = Vec::new();
     let mut connections = Vec::new();
     for target in targets {
@@ -293,6 +749,7 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
         let crate::host_client::Outcome::Attached(handle) = worker.await.unwrap().unwrap() else {
             panic!("actual host activation must confirm attachment")
         };
+        frontends.push(presented);
         live.push(handle);
     }
     live[0].input(b"alpha\n").unwrap();
@@ -306,6 +763,7 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
             loop {
                 let frame = live[index].next_event().await.unwrap();
                 if frame.kind() == crate::protocol::OUTPUT {
+                    frontends[index].ingest(frame.payload());
                     observed.extend_from_slice(frame.payload());
                     assert!(observed.len() <= festerm_host_protocol::MAX_BYTES_PER_CLIENT);
                     if observed
@@ -322,15 +780,37 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
         assert!(!observed
             .windows(foreign.len())
             .any(|bytes| bytes == foreign));
+        let text = frontends[index].text_snapshot();
+        assert!(text.text().contains(std::str::from_utf8(expected).unwrap()));
+        assert!(!text.text().contains(std::str::from_utf8(foreign).unwrap()));
     }
-    assert!(matches!(
-        control
-            .request(OperationId::new(), Request::List { cursor: None }, &cancel)
-            .await
-            .unwrap()
-            .body,
-        Response::Inventory { .. }
-    ));
+    let inventory_operation = OperationId::new();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match control
+                .request(
+                    inventory_operation.clone(),
+                    Request::List { cursor: None },
+                    &cancel,
+                )
+                .await
+                .unwrap()
+                .body
+            {
+                Response::Inventory { page } => {
+                    assert_eq!(page.sessions.len(), 2);
+                    assert!(page.sessions.iter().all(|session| session.attached));
+                    break;
+                }
+                Response::Refused {
+                    reason: festerm_host_protocol::Refusal::Busy,
+                } => tokio::time::sleep(Duration::from_millis(10)).await,
+                response => panic!("independent inventory failed: {response:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
     for terminal in &mut live {
         let operation = terminal.request_detach().unwrap();
         tokio::time::timeout(Duration::from_secs(8), async {
@@ -407,6 +887,480 @@ async fn authenticated_runtime_terminal_role_uses_separate_bounded_framing() {
     assert!(server.await.unwrap().is_err());
     ssh.abort();
     let _ = ssh.await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority() {
+    use festerm_host_protocol::{EnsureDisposition, Refusal};
+
+    let mut fixture = NativeRuntimeFixture::new();
+    let mut control = fixture.control().await;
+    let creation = fixture.native.creation();
+    let issued = control.issue_operation().unwrap();
+    assert!(control
+        .request(
+            OperationId::new(),
+            Request::Create {
+                creation: creation.clone(),
+            },
+            &CancellationToken::new(),
+        )
+        .await
+        .is_err());
+    assert!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .is_empty()
+    );
+    let created = issued_request(
+        &mut control,
+        &issued,
+        Request::Create {
+            creation: creation.clone(),
+        },
+    )
+    .await;
+    let Response::Ensured { session, .. } = created else {
+        panic!("remote create: {created:?}")
+    };
+    let target = session.target;
+    let Response::Ensured { session, .. } = issued_request(
+        &mut control,
+        &issued,
+        Request::Create {
+            creation: creation.clone(),
+        },
+    )
+    .await
+    else {
+        panic!("unchanged issued retry must resolve the committed generation")
+    };
+    assert_eq!(session.target, target);
+    let resume = control.issue_operation().unwrap();
+    assert!(matches!(
+        issued_request(
+            &mut control,
+            &resume,
+            Request::Ensure {
+                creation: creation.clone(),
+            },
+        )
+        .await,
+        Response::Ensured {
+            disposition: EnsureDisposition::Resumed,
+            ..
+        }
+    ));
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .len(),
+        1
+    );
+    let mut stale = target.clone();
+    stale.generation =
+        festerm_host_protocol::GenerationId::new(target.generation.get() + 1).unwrap();
+    assert!(matches!(
+        control
+            .request(
+                OperationId::new(),
+                Request::ExplicitEnd { target: stale },
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .body,
+        Response::Refused {
+            reason: Refusal::Stale
+        }
+    ));
+    assert!(matches!(
+        control
+            .request(
+                OperationId::new(),
+                Request::ExplicitEnd {
+                    target: target.clone(),
+                },
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .body,
+        Response::Refused {
+            reason: Refusal::OutcomeUncertain
+        }
+    ));
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while !festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let response = control
+                .request(
+                    OperationId::new(),
+                    Request::Lookup {
+                        logical: target.logical.clone(),
+                    },
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            if matches!(
+                response.body,
+                Response::Lookup {
+                    result: festerm_host_protocol::LookupResult::Absent { .. }
+                }
+            ) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let recreate = control.issue_operation().unwrap();
+    let response = issued_request(
+        &mut control,
+        &recreate,
+        Request::Ensure {
+            creation: creation.clone(),
+        },
+    )
+    .await;
+    let Response::Ensured { session, .. } = response else {
+        panic!("known native absence must permit explicit unchanged ensure: {response:?}")
+    };
+    assert_eq!(session.target.logical, target.logical);
+    assert_ne!(session.target.generation, target.generation);
+    drop(control);
+    fixture.auth.policy.capabilities.creation_allowed = false;
+    fixture.auth.policy.grant_epoch = fixture.auth.policy.grant_epoch.next().unwrap();
+    *fixture.auth.source.0.lock().await = OwnerVerifier::from_protected_permissions(
+        fixture.auth.policy.clone(),
+        &[fixture.auth.key.public_key()],
+    )
+    .unwrap();
+    let mut control = fixture.control().await;
+    let resume = control.issue_operation().unwrap();
+    assert!(matches!(
+        issued_request(&mut control, &resume, Request::Ensure { creation }).await,
+        Response::Ensured {
+            disposition: EnsureDisposition::Resumed,
+            ..
+        }
+    ));
+    let virgin = fixture.native.creation();
+    for request in [
+        Request::Create {
+            creation: virgin.clone(),
+        },
+        Request::Ensure { creation: virgin },
+    ] {
+        let denied = control.issue_operation().unwrap();
+        assert!(matches!(
+            issued_request(&mut control, &denied, request).await,
+            Response::Refused {
+                reason: Refusal::Denied
+            }
+        ));
+    }
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .len(),
+        1,
+        "creation-disabled resume must not authorize virgin execution"
+    );
+    drop(control);
+    fixture.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_authenticated_runtime_takeover_waits_for_adoption_and_fences_old_generation() {
+    use festerm_host_protocol::{AttachmentId, GenerationId, Refusal};
+
+    let mut fixture = NativeRuntimeFixture::new();
+    let mut control = fixture.control().await;
+    let mut creation = fixture.native.creation();
+    creation.recipe.args = vec![
+        "read-line".into(),
+        "echo:old-writer".into(),
+        "read-line".into(),
+        "echo:new-writer".into(),
+        "spin".into(),
+    ];
+    let attachment = creation.attachment.clone();
+    let target = create_remote(&mut control, creation).await;
+    let mut pending = fixture.pending(target.clone(), attachment, false).await;
+    pending.take_snapshot().unwrap();
+    let mut old = pending
+        .adopt(&CancellationToken::new())
+        .await
+        .unwrap()
+        .spawn()
+        .unwrap();
+    let (client, permit) = fixture.stream(StreamRole::Terminal).await;
+    let mut stale = target.clone();
+    stale.generation = GenerationId::new(target.generation.get() + 1).unwrap();
+    assert!(matches!(
+        crate::host_terminal::establish(
+            client,
+            permit,
+            fixture.binding(),
+            OperationId::new(),
+            stale,
+            AttachmentId::new(),
+            false,
+            &CancellationToken::new(),
+        )
+        .await,
+        Err(Error::Refused(Refusal::Stale))
+    ));
+    let mut candidate = fixture.pending(target, AttachmentId::new(), true).await;
+    candidate.take_snapshot().unwrap();
+    old.input(b"before-adoption\n").unwrap();
+    terminal_output_until(&mut old, b"old-writer:before-adoption").await;
+    let mut current = candidate
+        .adopt(&CancellationToken::new())
+        .await
+        .unwrap()
+        .spawn()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while old.next_event().await.is_ok() {}
+    })
+    .await
+    .unwrap();
+    assert!(old.input(b"must-not-replay\n").is_err());
+    current.input(b"after-adoption\n").unwrap();
+    let output = terminal_output_until(&mut current, b"new-writer:after-adoption").await;
+    assert!(!output
+        .windows(b"must-not-replay".len())
+        .any(|bytes| bytes == b"must-not-replay"));
+    drop((old, current, control));
+    fixture.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires owned native helper and real 60-second heartbeat/grace deadlines"]
+async fn native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned() {
+    let mut fixture = NativeRuntimeFixture::new();
+    let mut control = fixture.control().await;
+    let mut creation = fixture.native.creation();
+    creation.lifetime = festerm_host_protocol::Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    };
+    let attachment = creation.attachment.clone();
+    let target = create_remote(&mut control, creation).await;
+    let mut pending = fixture.pending(target.clone(), attachment, false).await;
+    assert!(fixture.lease(&target)["pending"].is_object());
+    pending.take_snapshot().unwrap();
+    let terminal = pending
+        .adopt(&CancellationToken::new())
+        .await
+        .unwrap()
+        .spawn()
+        .unwrap();
+    assert!(terminal.binding().lease.is_some());
+    let initial = fixture.lease(&target);
+    assert_eq!(initial["connected"], true);
+    assert!(initial["pending"].is_null());
+    let initial_deadline = initial["deadline_ms"].as_u64().unwrap();
+    tokio::time::sleep(Duration::from_secs(65)).await;
+    let renewed = fixture.lease(&target);
+    assert_eq!(renewed["connected"], true);
+    assert!(renewed["deadline_ms"].as_u64().unwrap() > initial_deadline + 40_000);
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .len(),
+        1
+    );
+    let held_policy = fixture.auth.source.0.clone().lock_owned().await;
+    drop(terminal);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(fixture.lease(&target)["connected"], true);
+    drop(held_policy);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while fixture.lease(&target)["connected"] != false {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let lost = fixture.lease(&target);
+    assert_eq!(lost["stopped"], false);
+    assert_eq!(lost["temporary"], renewed["temporary"]);
+    assert_eq!(lost["writer_epoch"], renewed["writer_epoch"]);
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .len(),
+        1,
+        "transport loss must preserve the real reconnect grace"
+    );
+    tokio::time::timeout(Duration::from_secs(65), async {
+        while !festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(control);
+    fixture.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_authenticated_runtime_live_policy_fences_actions_without_stopping_shells() {
+    use festerm_session::{Session, SessionEvent, TerminalSize};
+
+    for revocation in ["key", "host", "session"] {
+        let mut fixture = NativeRuntimeFixture::new();
+        let mut control = fixture.control().await;
+        let mut creation = fixture.native.creation();
+        creation.recipe.args = vec![
+            "read-line".into(),
+            "echo:forbidden-input".into(),
+            "spin".into(),
+        ];
+        let attachment = creation.attachment.clone();
+        let target = create_remote(&mut control, creation).await;
+        let mut pending = fixture.pending(target.clone(), attachment, false).await;
+        pending.take_snapshot().unwrap();
+        let mut terminal = pending
+            .adopt(&CancellationToken::new())
+            .await
+            .unwrap()
+            .spawn()
+            .unwrap();
+        match revocation {
+            "session" => fixture
+                .native
+                .control()
+                .revoke_local(&fixture.auth.policy.principal, &target.logical)
+                .unwrap(),
+            _ => {
+                let mut policy = fixture.auth.policy.clone();
+                policy.grant_epoch = policy.grant_epoch.next().unwrap();
+                if revocation == "host" {
+                    policy.remote_access = false;
+                }
+                let keys = if revocation == "key" {
+                    vec![crate::owner_auth::OwnerSigningKey::from_seed(&[29; 32]).public_key()]
+                } else {
+                    vec![fixture.auth.key.public_key()]
+                };
+                *fixture.auth.source.0.lock().await =
+                    OwnerVerifier::from_protected_permissions(policy, &keys).unwrap();
+            }
+        }
+        let _ = terminal.input(b"must-not-execute\n");
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while let Ok(frame) = terminal.next_event().await {
+                assert_ne!(frame.kind(), crate::protocol::OUTPUT);
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+                .unwrap()
+                .len(),
+            1,
+            "{revocation} must not stop a persistent daemon"
+        );
+        let observed = fixture
+            .native
+            .control()
+            .observe_local(&fixture.auth.policy.principal, &target)
+            .unwrap();
+        assert_eq!(observed.revoked, revocation == "session");
+        // Persistent local unticketed attachment remains permitted. It is not
+        // remote admission and cannot grant a new proof or temporary lease.
+        let selected = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(selected) =
+                    festerm_sessiond::list_unattached_sessions_in(&fixture.native.root)
+                        .unwrap()
+                        .into_iter()
+                        .find(|session| session.created_at_unix_ms == target.generation.get())
+                {
+                    break selected;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let local = festerm_sessiond::PersistentSession::resume_discovered_in(
+            &selected,
+            &fixture.native.root,
+            festerm_session::noop_session_event_notifier(),
+        );
+        assert!(local.is_ok(), "{revocation}: local persistent attachment");
+        let local = local.unwrap();
+        let snapshot = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(snapshot) = local.take_recovered_terminal_deferred() {
+                    break snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!snapshot.text_snapshot().text().contains("must-not-execute"));
+        local.acknowledge_recovery_adoption();
+        let size = TerminalSize::new(81, 25).unwrap();
+        local.try_resize(size).unwrap();
+        local.try_send_input(b"local-approved\n").unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut observed = Vec::new();
+            loop {
+                match local.try_recv_event() {
+                    Ok(SessionEvent::Output(bytes)) => {
+                        observed.extend_from_slice(&bytes);
+                        if observed.windows(b"forbidden-input:local-approved".len()).any(|bytes| bytes == b"forbidden-input:local-approved") {
+                            assert!(!observed.windows(b"must-not-execute".len()).any(|bytes| bytes == b"must-not-execute"));
+                            break;
+                        }
+                    }
+                    Ok(SessionEvent::Lifecycle(state)) if state.is_terminal() => {
+                        panic!("{revocation}: local writer activation failed: {state:?}");
+                    }
+                    _ => {}
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{revocation}: local activation timed out, lifecycle={:?}, lease={:?}, sessions={:?}", local.lifecycle(), fixture.lease(&target), festerm_sessiond::list_running_sessions_in(&fixture.native.root)));
+        drop(local);
+        fixture
+            .native
+            .control()
+            .end_local(&fixture.auth.policy.principal, &target)
+            .unwrap();
+        drop((terminal, control));
+        fixture.shutdown().await;
+    }
 }
 
 #[tokio::test]

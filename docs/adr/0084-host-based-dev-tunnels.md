@@ -340,14 +340,20 @@ The first downloaded verifier/package needs a documented authenticity path too;
 an unauthenticated bootstrap cannot establish its own trust.
 
 The implemented independent [existing-helper authenticity slice](../host-release-artifacts.md)
-uses strict per-archive schema-1 metadata signed by pinned cargo-packager with
-the embedded existing updater key. The GUI-free shared verifier binds all
+uses strict per-archive schema-1 legacy/schema-2 host metadata signed by pinned
+cargo-packager with the embedded existing updater key. The GUI-free shared verifier binds all
 identity fields and returns bounded immutable regular-file entries, not an
 archive path to reopen. No auto key discovery, unsigned fallback or downgrade
 is permitted; source-reviewed updater-key rotation and installation-owner
-version/rollback policy remain explicit. Headless host CLI inclusion, consuming
-native installer/executable publication and service switching are not
-claimed by this foundation. Legacy scripts and old-tag recovery retain their
+version/rollback policy remain explicit. Schema 2 requires the GUI-free host CLI
+alongside the helpers in separate `fesTerm-host-*` assets; legacy `fesTerm-tunnel-*`
+archives keep their exact published allowlists. Both are built and native-signed
+in the existing six-target release matrix. Acquisition-only `acquire-cli` uses the existing reviewed raw
+executable hashes with versioned official HTTPS URLs, no redirects/proxy or
+provenance overrides, bounded length/time and protected non-executable staging.
+Microsoft native-publisher qualification/redistribution rights, consuming
+native installer/executable publication and service switching are not claimed.
+Legacy scripts and old-tag recovery retain their
 old contracts, without a new Linux authentication claim (#681).
 
 Desktop updates stage compatible helpers in immutable versioned private paths and
@@ -382,7 +388,10 @@ support requires additional aggregate limits on clients, sessions, pending
 creates, control operations and bytes; per-session limits alone are insufficient.
 Specify concrete constants in the protocol implementation review. Fair scheduling
 must prevent one busy shell starving others/control/revocation. Saturation refuses
-boundedly; no unbounded task/thread creation or lock held over network I/O.
+boundedly; no unbounded task/thread creation. Installation, policy and journal
+guards are never held over network I/O. A separate bounded cloud-operation
+serialization lease may span its network operation without blocking revocation
+or becoming current installation/policy authority.
 
 Version mismatch and unsupported capabilities produce clear refusal. Changed
 generation retires pending input, file reads, observation, selection and recovery
@@ -506,6 +515,24 @@ missing/foreign journals and wrong generations without displacing an attachment.
 `second_client_replaces_first_client_and_first_receives_stolen_notice` now
 observes attachment only after actual recovery adoption/writer activation;
 abandoned candidates emit no successful attachment event.
+Windows CI subsequently exposed an unused retained staging pathname: checkpoint
+publication and abort cleanup there use the exact open handle, whereas Unix
+requires the directory-relative name. The representation now reflects that
+distinction; abort/failed-publication coverage preserves existing private targets
+and refuses directory replacement without leaking owned staging.
+The native bridge fixture's 96 serialized input/echo round trips can exceed the
+unchanged 15-second adoption deadline with Windows' 250-ms client read polling.
+It now batches the same lines and observes every old-writer echo before adoption,
+then verifies every ordered delta afterward. Actual Windows baseline/corrected
+trace remains a qualification gate, not inferred from macOS results.
+Both observed buffers require each child-output marker `pending-chunk-00` through
+`pending-chunk-95` exactly once in increasing byte order, followed by the final
+`before-candidate-adopts` marker exactly once. Deterministic matcher fixtures
+reject reordered, duplicated/replayed or missing markers, including the final
+marker; ordinary terminal input echo is not mistaken for child output.
+Persistent host shells additionally have a real ordinary local unticketed attach/
+adoption/detach regression; Unix lease coverage preserves temporary unticketed
+refusal and advances the persistent writer epoch only at commit.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
@@ -544,6 +571,13 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+### Historical constituent checkpoints
+
+The following results retain their original source/toolchain boundaries. The
+supported-toolchain client/core union is qualified separately in the current
+client integration entry in `milestone-progress.md`; earlier diagnostic results
+and peer runtime results are not transferred automatically.
+
 The foreground client follow-up makes the fixed #691 recipe editor reachable
 through **Review and connect…**, with a typed untrusted review intent distinct
 from the protected attachment command. Independent full-binding/pin review and
@@ -575,7 +609,8 @@ The selected-host suite (twelve tests), existing terminal suite (six passed,
 four explicit-native ignored) and two memory-vault binding/failure tests pass on
 the owned macOS host; strict affected bridge clippy and no-default-feature
 `host-routing` compilation pass.
-Supported-toolchain desktop compilation is blocked by pre-existing PowerShell
+At the prior client checkpoint, supported-toolchain desktop compilation was
+blocked by existing PowerShell
 dependencies requiring Rust 1.98 while the installed toolchain is 1.97.1;
 `--ignore-rust-version` desktop checks are explicitly diagnostic, not release
 qualification. Diagnostic desktop check, strict bin/test clippy and both new
@@ -592,12 +627,69 @@ revision drift and frontend snapshot installation before acknowledgement.
 `selected_host_signed_ssh_inventory_uses_the_authenticated_control_stream`
 uses the real signed SSH dispatcher. The existing ignored owned-native two-shell
 runtime fixture now routes inventory and frontend adoption through this executor.
-The portable selected-host tests are now executed as recorded above; the changed
-ignored owned-native fixture still needs its client-head execution. Previous
+At that checkpoint the portable selected-host tests were executed as recorded
+above; the changed ignored owned-native fixture still needed client-head
+execution. Previous
 fixed-head backend results do not qualify that changed fixture. The later
 foreground receipt/chooser source does not establish native or physical-mobile
 acceptance. Mobile installation, account-wide discovery and creation remain
 incomplete; this original executor checkpoint alone enabled no public recipe UI.
+The authentication contention follow-up adds actual signed-SSH regressions for
+first-N Busy and held protected guards at both policy phases, fresh revocation
+during proof, one original authentication deadline, framed persistent Busy and
+cancelled-work client-charge recovery. These preserve original SSH/channel/role
+binding and add no cached authority or client proof retry; native-vault,
+installed endpoint and product acceptance remain independently gated.
+
+The actual-runtime/session union normally integrates qualified session head
+`8ebbaf29` at `ae1ef27a`, preserving ADR 0085. Fresh macOS owned-helper evidence
+passes ten native bridge routes, including two separately authenticated SSH
+terminal streams, exact input isolation, independent attached inventory and
+correlated persistent detach. The concurrent first run retained nine passes and
+one inventory-contention failure; a bounded same-operation read-only Busy retry
+then passed all ten, without changing production contention behavior. This is
+local automated runtime evidence, not installed/native or whole-ADR acceptance.
+Fixed native policy head `7e27edd5` and session correction `28e0391a` are also
+normally integrated. Additional actual signed-SSH/native cases pass individually:
+`native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority`,
+`native_authenticated_runtime_live_policy_fences_actions_without_stopping_shells`,
+`native_authenticated_runtime_takeover_waits_for_adoption_and_fences_old_generation`
+and `native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned`.
+The temporary case uses real time (126.29 seconds): an active terminal outlives
+the initial 60-second deadline through 20-second native heartbeats; abrupt
+stream closure retains the original lease/writer authority, records TransportLost
+and preserves the real 60-second grace before independent daemon expiry. Key,
+host and session revocation reject actual live input, close remote/native
+attachment and preserve a persistent shell that still accepts local unticketed
+input. These constrained vault/policy fixtures do not qualify native credential
+storage, installed services, physical mobile suspension or cross-platform lifecycle.
+
+The native/headless management follow-up adds actual functions
+`headless_disable_fences_unbound_intent_without_touching_native_services`,
+`headless_native_and_vault_diagnostics_are_specific_and_sanitized`,
+`headless_native_management_refuses_missing_receipts_without_ready_or_cleanup_claims`,
+`headless_native_publication_rejects_untrusted_inputs_without_service_effects`,
+`host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create`
+and `host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts`.
+`host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource`
+adds cancellation, missing credentials and wrong account/resource refusal cases.
+`protected_owner_policy_source_reacquires_selected_storage_and_fresh_revocation_lease`
+covers the lease-backed selected-store runtime authority seam (fresh consent,
+Busy, revocation and corrupt-state refusal).
+`protected_owner_runtime_trait_retains_lease_and_reloads_revocation` exercises
+the production `ProtectedPolicySource`/`PolicyGuard` implementations through
+generic runtime trait calls, retaining the actual enrollment lease until guard
+drop and observing the next revocation epoch. The opt-in setup `host-runtime`
+feature owns these implementations; the app adapter only delegates and keeps
+native-vault storage as its default. Listener/startup qualification remains
+dependent on the separately gated runtime source.
+These cover HOST-04/HOST-05 revocation, actionable unavailable credentials,
+native management/publication refusals and read-only cleanup adoption, not
+successful endpoint startup or cloud deletion.
+`native_service_live_exact_owned_lifecycle_preserves_independent_child` is
+ignored by default and requires an explicitly authorized disposable Unix guest.
+Its synthetic executable/native-manager evidence is not release publisher,
+native vault, real sessiond or whole-ADR qualification.
 
 **Authenticated runtime source checkpoint (#681):** the non-default bridge
 `host_runtime` consumes only actual `HostStream`s, reserves aggregate admission
@@ -614,15 +706,22 @@ The source adds `authenticated_runtime_routes_actual_ssh_control_and_rechecks_re
 and `authenticated_runtime_bounds_proof_frames_and_client_admission`.
 The opt-in
 `native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input`
-adds actual owned-daemon input/isolation, inventory and persistent detach over
-native TCP SSH, without widening the inventory-only remote control capability.
-The four focused tests passed on macOS; the owned-daemon case remains unrun
-pending the qualified session correction. They use
-real native TCP encrypted signed SSH channels and local inventory, not native-vault/service
-acceptance or an end-to-end multi-session shell claim. Native capabilities remain
-inventory-only; creation is not widened. Protected enrollment composition,
-qualified session correction, actual daemon round trips and independent gates
-remain prerequisites before native exposure. No installed endpoint is enabled.
+adds actual owned-daemon input/isolation, frontend snapshot adoption, inventory
+and persistent detach over native TCP SSH and passes after normal corrected-session
+integration. The paired runtime now supplies adopted terminal routes and advertises
+current protected Ensure/Create/end/temporary capabilities with the actual
+backend-reserved issuer. Original issued operations survive retry; bare IDs
+cannot create, denied virgin execution never becomes absence, and end remains
+OutcomeUncertain until observed native absence. Standalone control stays
+inventory-only; Attach/Detach use independently proven terminal channels.
+The four focused tests and additional real-daemon lifecycle/current-policy cases
+use actual native TCP encrypted signed SSH, not native-vault/service acceptance.
+The fixed protected adapter is integrated; exact-head independent consumer review,
+client first-connect approval and real release/native qualification remain
+prerequisites. The default headless build now composes
+explicit signed setup/foreground consent, separate owner-key/permission approval
+and authenticated run; configuration remains disabled by default. This is source
+integration, not native endpoint acceptance or client first-connect completion.
 
 **Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
 protected lifecycle journal; the separate GUI-free `festerm-host` supports
@@ -631,10 +730,45 @@ authenticated helper staging through the shared verifier, retaining exact signed
 provenance and comparing immutable cache entries without execution.
 Epoch fencing retains late provisioned identity for exact stop/cleanup, preserves
 identity on re-enable and refuses desktop/headless origin adoption. These are
-local boundary operations, not a working endpoint installer. Setup/run/update/
-uninstall explicitly fail until real endpoint, sign-in/native adapters and
-authenticated-package integration exist. No Ready or native acceptance is claimed.
+local boundary operations, not native endpoint acceptance. Shared source now
+composes explicit setup, separate local owner approval and authenticated run;
+disable/owned native uninstall retain unqualified cloud deletion as CleanupPending;
+update remains unavailable. No Ready or native acceptance is claimed.
 See [API/dependencies](../headless-host.md); the ADR remains Proposed.
+
+**Native service component progress (#681):** Off-default `native-services`
+now supplies actual same-user task/LaunchAgent/user-unit control behind the
+shared lifecycle. Sealed current-native updater-authenticated executable
+receipts, private atomic definitions, exact installation/origin/creation-epoch
+ownership and current-epoch fences precede observed manager status/control.
+Late task creation preserves observed normalized identity after revocation.
+CLI setup/run now invoke this component through the shared controller, and process
+Running is not Ready. Signed native install/start/cleanup and persistent
+daemon/startup qualification remain gates; see
+[native component boundaries](../native-host-services.md).
+
+**Bounded stage 7 progress (#681):** Separate host package schema 2 requires `festerm-host` on
+all six existing targets. Optional shared HTTP acquisition and headless
+`acquire-cli` stage only the pinned official Microsoft executable, never execute
+it or modify account/service state. New Windows ARM dependency acquisition is
+explicitly unavailable, without x64 fallback; legacy hosting/verification keeps
+its existing x64-emulation selector. Native publisher qualification,
+trusted first delivery and executable/service qualification remain blocked;
+signed/staged bytes alone are not Ready or a trusted launch receipt.
+
+The next opt-in stage-4 library slice adds shared foreground GitHub account
+authentication, native credential references and in-process zero-shell HOST
+cloud reservation/create/reconciliation/status. It uses exact lifecycle
+tickets/settings, OS user/origin and verified numeric account binding, not
+profile identity or an independent grant. HTTP fixtures cover actual private
+ACL/port requests and response ownership parsing; lifecycle fixtures cover
+late cancellation, lost replies, credential recovery and identity-preserving
+re-enable. Cloud presence is explicitly endpoint-unqualified, never Ready.
+Found-resource deletion remains fail-closed: official ID-only delete has no
+documented incarnation-atomic precondition, so cleanup retains its receipt and
+reports `GenerationConditionalDeleteUnavailable`; only authenticated exact
+absence can commit removal. This is a genuine qualification prerequisite,
+not successful uninstall. See the [cloud adapter contract](../headless-host.md#in-process-cloud-adapter-library-only).
 
 - **Invariants introduced or changed:** One host endpoint can expose multiple
   authorized sessions; explicit remote creation and client-local resume-or-create
@@ -644,9 +778,10 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 - **GUI/action edges affected:** `HOST-01` through `HOST-03` have partial
   contract/owner-auth evidence, with additional client-local metadata/command
   and explicit-browse state evidence for `HOST-01`/`HOST-02` under
-  [#681](https://github.com/fes/fesTerm/issues/681). Their endpoint/UI/native
-  transitions remain deferred except experimental desktop Profiles metadata
-  management under `HOST-02`. `HOST-04`/`HOST-05` have partial shared boundary
+  [#681](https://github.com/fes/fesTerm/issues/681). Experimental desktop Profiles
+  now has the reachable foreground review and authorized existing-session
+  selection route described above. End-to-end native GUI/mobile acceptance
+  remains deferred. `HOST-04`/`HOST-05` have partial shared boundary
   coverage. `HOST-06` has partial authenticity-foundation coverage only. Existing
   `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation coverage
   until explicit migration.
@@ -801,12 +936,73 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
   `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
   `headless_package_staging_refuses_unauthenticated_input_before_writing`.
+  Acquisition-only coverage adds
+  `bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache`,
+  `bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation`,
+  `bounded_http_acquisition_deadline_and_production_origin_fail_closed`,
+  `headless_acquisition_rejects_provenance_overrides_without_network_or_state`
+  and `reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback`.
+  `legacy_cli_selector_preserves_windows_arm_x64_emulation` and
+  `new_acquisition_refuses_windows_arm_before_network_or_staging` distinguish
+  retained legacy behavior from native-only acquisition. Portable macOS
+  package-smoke fixtures check raw-pin hashes and native codesign wiring without
+  downloads. The native CI smoke downloads both pinned architectures and verifies
+  their hashes and signatures without executing either binary.
+  Additional cloud/account adapter evidence:
+  `host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port`,
+  `host_cloud_response_refuses_foreign_resources_and_non_authoritative_absence`,
+  `host_cloud_foreground_sign_in_is_ticket_account_user_scoped_and_cancel_fenced`,
+  `host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable`,
+  `host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker`,
+  `host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty`,
+  `host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity`,
+  `host_cloud_create_distinguishes_preflight_not_sent_rejection_conflict_and_uncertainty`,
+  `host_cloud_local_no_send_and_rejection_resolve_without_widening_consent`,
+  `host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation`,
+  `host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create`,
+  `host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup`,
+  `host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource`,
+  `host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states`,
+  `host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt`.
   Windows configuration/journal/staging fixtures share the existing
   policy-validated private-storage fixture-root selection, not an assumption
   that checkout ancestors are safe. The native
   `staging_parent_rejects_a_dacl_that_allows_child_substitution` regression
   retains strict ancestor refusal; fixture selection does not qualify startup
   or service behavior.
+  Native-component fixtures add
+  `native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs`,
+  `native_service_locked_vault_failed_start_and_foreign_definitions_fail_closed`,
+  `native_service_late_start_after_revocation_retains_exact_cleanup_receipt_without_success`,
+  `native_service_late_task_creation_retains_normalized_identity_for_exact_cleanup`,
+  `native_service_outstanding_effect_retains_cross_instance_exclusion_after_timeout`,
+  `native_service_status_rejects_manager_overrides_ambiguous_properties_and_cross_origin`,
+  `authenticated_executable_publication_keeps_data_private_and_refuses_changed_cache`
+  and `failed_native_qualification_never_adds_execute_permission`.
+  `authenticated_runtime_bundle_qualifies_every_helper_and_fences_changed_sessiond`,
+  `authenticated_runtime_bundle_helper_rejection_never_promotes_fresh_host` and
+  `native_service_restart_requires_signed_provenance_without_adopting_cached_receipts`
+  cover the same-bundle daemon executable dependency, all-helper publisher
+  qualification before fresh promotion, and restart refusal of unsigned or
+  provenance-free receipt authority. Positive signed native restart/run remains
+  a separate prerequisite; synthetic fixture keys are never shipping trust.
+  `host_cloud_scoped_host_token_requires_exact_receipt_and_never_uses_management_token`
+  and `host_cloud_scoped_host_token_refuses_replacement_account_absence_and_cancellation`
+  cover official host-only scoped-token requests against an exact pinned
+  account/resource/incarnation, not owner enrollment or client trust approval.
+  These cover manual/sign-in definitions, no install-time launch, failed
+  observations, native-vault refusal and late exact-owned reconciliation using
+  fake managers/private filesystem fixtures, not actual installed services.
+  Additional regressions cover current systemd `MainPID`/`Result` rather than
+  historical exit PID, journaled interrupted definition retirement and
+  exact-unit failed-state reset, bounded asynchronous start reconciliation,
+  immutable pre-submission task reservation recovery and rejection of foreign
+  task ACL/configuration. Windows running-task stop/registration/start remain
+  unavailable pending authenticated graceful stop; macOS enforces the pinned
+  release Developer ID team/runtime and Windows promotion refuses pending
+  authoritative native publisher policy. Generic
+  native signature validity is not publisher acceptance. These refusal gates
+  and native-independent fixtures do not qualify real native services.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic
@@ -824,10 +1020,33 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   signer job runs the otherwise-ignored
   `pinned_cargo_packager_signatures_authenticate_python_produced_manifest`
   using cargo-packager 0.11.8, a generated throwaway key and the private test
-  verifier seam; it proves the real signing mode without release secrets.
+  verifier seam for all six host-containing bundles; it proves the real signing
+  mode without release secrets.
   Python `test_host_manifest.py`, `test_tunnel_bundle.py` and
   `test_recover_desktop_release.py` cover producer compatibility and release
   wiring/recovery. The remaining matrix is planned, not implemented evidence.
+- **Automated tests implemented for the client-local foundation:**
+  `public_recipe_serialization_preserves_launch_and_four_behaviors`,
+  `invalid_recipe_ids_launch_and_protected_fields_are_refused`,
+  `duplicate_allocates_logical_identity_unless_explicit_generation_shortcut`,
+  `host_recipe_toml_round_trip_keeps_legacy_profiles_separate`,
+  `dev_tunnel_host_recipe_app_commands_persist_metadata_only_and_publish_after_save`,
+  `mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation`,
+  and `local_browser_requires_explicit_scoped_requests_and_fences_stale_results`.
+  The trace registry includes transactional failure/quarantine and compatibility
+  tests as well, including
+  `host_recipe_commands_preserve_legacy_account_and_hosting_references` and
+  `mobile_recipe_commands_preserve_legacy_generation_and_account_binding`.
+  Reliability regressions
+  `host_recipe_config_adapter_preserves_typed_command_failures`,
+  `mobile_host_recipe_adapter_preserves_typed_command_failures` and
+  `mobile_host_recipe_recovery_retains_valid_entries_across_unrelated_save`
+  cover typed failures and per-entry recovery/reporting across later saves.
+  The desktop command regression also checks export-specific outcomes and
+  runs under the experimental CI `dev_tunnel` selector.
+  These do not prove protected-state migration, a live-shell stop confirmation,
+  network execution, actual shell creation
+  or stage 6 end-to-end acceptance; the remaining matrix is still required.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and
   MOB-03/MOB-06 during implementation with host setup, principal isolation,
   reboot, update and physical-device disconnect evidence. The new trace entries
@@ -839,6 +1058,16 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `HOSTSETUP-01` registers stage-4 native prerequisites explicitly; deterministic
   boundary fixtures are not service/startup qualification.
 - **Coverage superseded:** None by the contract or client-local foundations. Retire legacy
+  retain deferred end-to-end gates behind reviewed endpoint/identity integration
+  and actual native
+  desktop/iOS/Android UI wiring. Existing native/manual evidence remains required.
+  `HOSTSETUP-01` registers stage-4 native prerequisites explicitly; deterministic
+  boundary/native-adapter fixtures are not service/startup qualification.
+  Migration must preserve protected state/account binding and separately qualify
+  default-No exact-generation stop confirmation and manual deferral; setup or
+  sharing consent is never restart consent.
+- **Coverage superseded:** None by these foundations.
+  Retire legacy
   coverage only when its replacement is implemented and traced.
 
 ### Acceptance matrix
@@ -848,16 +1077,18 @@ Stage-3 core evidence adds real-proof owned-duplex dispatcher tests
 `revision_or_generation_change_while_pending_fences_publication`,
 `protected_revocation_during_work_never_publishes_inventory_or_absence`, and
 paired transport deadline/cancellation/correlation/legacy-refusal tests in
-`festerm-tunnel-client::host_control`. These qualify only the unexposed bounded
-core, not native endpoint or whole-ADR acceptance. Consuming the reviewed inner
-SSH session/channel owner proof and fair adopted terminal routing remain
-prerequisites. Real native-control/scoped-policy adapters add
+`festerm-tunnel-client::host_control`. Those tests qualified the then-unexposed
+bounded core, not native endpoint or whole-ADR acceptance. At that checkpoint,
+inner-SSH owner proof and fair adopted terminal routing were downstream
+prerequisites; the current explicit headless composition consumes those sources
+but does not qualify native/first-connect acceptance. Real native-control/scoped-policy adapters add
 `native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`,
 `native_creation_denial_does_not_register_virgin_identity_or_claim_absence`, and
 `native_lost_reply_disconnect_retry_and_independent_control_never_duplicate_spawn`.
 These explicitly invoked owned Unix fixtures qualify local control routing,
 not actual encrypted owner-channel proof, terminal attachment or native service
-acceptance. No listener advertises HOST; the partial adapter reports only
+acceptance. At that historical core checkpoint no listener advertised HOST; the
+standalone adapter still reports only
 inventory capability and enforces it for every operation: unadvertised
 ensure/create/attach/detach/end refuse before backend effects. Native control
 fixtures explicitly opt into a cfg(test)-only advertisement seam. Additional
@@ -878,10 +1109,11 @@ candidate-adoption fix: the old writer progresses while a bounded candidate
 waits, then post-snapshot deltas reach the adopted replacement. The assertion
 and deadlines are unchanged. This is not endpoint acceptance: the backend
 hotpath/issuance-history replacement and consuming owner-channel integration
-remain pending. Cross-platform/native service and physical-device gates remain
-separate; the terminal server/scheduler are still fixture-only.
-That prior result does not qualify the current main/enrollment/opaque-authority
-union: its native-nine/clippy rerun and cross-family antagonist remain pending.
+were subsequently integrated and qualified locally through the actual owner-channel
+runtime. Cross-platform/native service and physical-device gates remain separate;
+the terminal server/scheduler are opt-in, not installed.
+That prior result did not itself qualify the current union; fresh combined checks
+are recorded separately, and independent exact-head consumer review remains open.
 
 The paired control API binds each issued creation operation to its original
 account/endpoint/host and negotiated namespace, including reconnect and local
@@ -905,7 +1137,7 @@ publication; these interfaces do not enable a product endpoint.
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
 | Profiles | Metadata-only save, serialization, duplicate/shortcut identity and compatibility tests above; first create, later resume, post-reboot replacement toast and actual second-client attachment remain deferred |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
-| Integrity | Implemented: authenticated `stage-package`, pinned official-CLI offline staging, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, actual Python producer interop and pinned signer's throwaway-key mode check in normal CI. Deferred: network acquisition, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
+| Integrity | Implemented: schema-2 authenticated `stage-package` including the GUI-free host CLI, pinned official-CLI offline staging and bounded HTTPS acquisition, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, six-target Python producer/actual signer/Rust verifier interop; separate authenticated executable-publication component. Deferred: Microsoft native-publisher qualification/redistribution review, endpoint installer integration, trusted first-verifier delivery and signed native executable/install/update evidence |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 

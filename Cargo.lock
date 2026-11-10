@@ -2595,6 +2595,8 @@ dependencies = [
  "festerm-tunnel-bridge",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -2617,17 +2619,22 @@ dependencies = [
  "festerm-secret-store",
  "festerm-sessiond",
  "festerm-tunnel-bridge",
+ "festerm-tunnel-client",
  "festerm-unix-security",
  "festerm-windows-security",
  "flate2",
  "fs2",
  "minisign-verify",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tar",
  "tempfile",
+ "tokio",
+ "tokio-util",
  "uuid",
+ "zeroize",
  "zip",
 ]
 
@@ -3124,6 +3131,7 @@ version = "0.16.0"
 dependencies = [
  "festerm-windows-job",
  "tracing",
+ "windows",
  "windows-sys 0.61.2",
 ]
 

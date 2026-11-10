@@ -2,15 +2,20 @@
 
 Stages 1–2 of [ADR 0084](adr/0084-host-based-dev-tunnels.md), tracked by
 [#681](https://github.com/fes/fesTerm/issues/681). The ADR remains **Proposed**.
-These are usable contracts and a local durable session-control backend,
-**not a running endpoint**. No listener advertises HOST, routes these requests,
-changes an ACL or migrates an existing bridge. Trusted local callers can use
-the stage-2 API to create actual detached daemons after protected admission.
-Independent antagonist/security review is required before exposure.
+These contracts and the local durable backend are now consumed by the default
+headless build's explicit signed setup/foreground consent, separate owner-key/
+permission approval and authenticated run. Configure defaults disabled; compiled
+features and imported recipes confer no listener/ACL/migration authority.
+Paired runtime lifecycle and terminal routing use fresh protected admission;
+standalone control remains inventory-only. This is runnable source, **not native
+endpoint acceptance**. Independent combined-source review, real release/cloud/
+vault/service and client first-connect/device gates remain open.
 
 ## Dependency and API boundary
 
-### Authenticated runtime composition (source checkpoint)
+<a id="authenticated-runtime-composition-uninstalled-integration"></a>
+
+### Authenticated runtime composition (explicit headless integration)
 
 The bridge's opt-in `host_runtime` module provides these concrete APIs:
 
@@ -31,24 +36,58 @@ The bridge's opt-in `host_runtime` module provides these concrete APIs:
   `Arc<HostRuntime>::serve(&mut HostConnection, CancellationToken)` consumes the
   existing relay listener; `serve_stream(HostStream, CancellationToken)` handles
   one actual SSH stream. Raw sockets, verified-owner arguments and asserted
-  principals are intentionally absent. Control remains inventory-only.
+  principals are intentionally absent. This paired composition advertises only
+  current protected capabilities and the backend's current issuance namespace:
+  Ensure/Create/ExplicitEnd execute on control; Attach/Detach execute only on
+  independently authenticated terminal streams. Standalone `NativeControl::new`
+  remains inventory-only, so a control-only consumer cannot imply terminal support.
 
 The whole proof exchange and role admission have bounded deadlines; blocking
 protected-policy/vault work retains its aggregate client permit even if its
 waiter cancels. No policy guard spans network I/O. Existing frame/byte budgets,
 per-operation current-policy checks, native authorities, receipt-only detach
 publication and FIFO terminal output scheduling remain unchanged.
+Both host-side policy acquisitions retry only Busy against the same original
+15-second authentication deadline, reacquiring protected state each time.
+The host reserves 100 ms within that deadline for a bounded authentication
+`{"message":"refused","reason":"busy"}` frame; the portable client returns
+`Error::Refused(Refusal::Busy)` at either phase rather than treating contention
+as denial, absence or a successful authentication. The client never reconnects
+or retries the proof. Cancelled blocking work retains its reserved client charge
+until it drains; no verifier or lease is cached across a Busy wait.
 
 Authored tests use signed SSH over exact-owned native loopback sockets,
 including queued rekey with original-binding preservation and cross-connection
 proof rejection. The opt-in native case additionally routes two owned daemon
 terminals and verifies exact input isolation, independent inventory and
 persistent detach. The four focused native TCP SSH tests pass on macOS; the
-owned-daemon case awaits the qualified session correction.
-Constrained test policy/vault state is not production enrollment, native vault,
-Dev Tunnels service/rekey qualification or installed readiness. Consume the
-qualified final session correction and protected enrollment adapter before
-native end-to-end exposure; installation/CLI activation remains separate.
+owned-daemon case passes after normal integration of the qualified session
+correction (`8ebbaf29`) at `ae1ef27a`. Both independent terminal streams route
+exact input, live control inventory remains available, and correlated detach
+preserves both persistent daemons. Under concurrent native routes the read-only
+inventory may return correlated Busy; its bounded fixture retry retains the
+operation and requires eventual exact attached inventory, not a weakened refusal.
+Additional actual signed-SSH/owned-daemon cases exercise original-issued
+Create retries, Ensure, exact end and authoritative absence before recreation;
+stale generation and adoption-gated takeover; key, host and session revocation
+on live input while persistent local attachment remains usable; and real
+temporary heartbeat/transport-loss deadlines. The native actor checks fresh
+protected attachment authority on every frame/action and before output/replies,
+not only at authentication or its periodic liveness check. Its 20-second
+heartbeat renews the daemon-owned 60-second connected deadline; unexpected
+closure records TransportLost under the original authority, never intentional
+detach success. The daemon owns the subsequent 60-second grace/expiry. Transient cleanup Busy
+retries only within the existing 15-second deadline, always reacquiring current
+policy and original authority; denial, stale authority or revocation never retry.
+Pending cancellation and lost-transport fixtures deliberately hold policy for
+200 ms to prove cleanup survives contention rather than abandoning its ticket.
+
+The fixed setup adapter (`7e27edd5`) and session correction (`28e0391a`) are
+normally integrated. Production `CurrentOwnerPolicySource` retains the actual
+selected-store enrollment lease and verifier. Constrained runtime test
+policy/vault state is not native-vault, Dev Tunnels service/rekey or installed
+qualification; first-connect approval, verified helper provenance and exact-head
+independent review remain prerequisites. Installation/CLI activation is separate.
 
 `festerm-host-protocol` contains transport-independent serde/UUID contracts.
 It has no sessiond, PTY, GUI, native-store, cloud or async dependency. A separate
@@ -102,9 +141,10 @@ tagged variants are Rust struct variants (`Request::Capabilities {}`,
 `Lifetime::Persistent {}`, and the non-running lookup results), preserving the
 same JSON while rejecting extra authority/lifetime fields.
 
-The future transport must read a four-byte big-endian payload length and refuse
+The transport reads a four-byte big-endian payload length and refuses
 zero or more than 65,536 bytes **before allocating/reading the body**. One body
-is one JSON object. No framing/SSH listener is installed by this stage.
+is one JSON object. The initial codec stage alone installed no listener; the
+current explicit headless runtime consumes the authenticated framed transport.
 Authentication uses the same bounded codec for `OwnerChallenge`/`OwnerProof`.
 Terminal bytes never enter this control codec; the existing bounded
 snapshot/input/output protocol and explicit recovery adoption remain unchanged.
@@ -423,7 +463,9 @@ keys** in addition to the existing private service ACL and host-key trust.
 There is no new identity provider, borrowed OAuth token, anonymous ACL or
 management-token authentication.
 
-### Enrollment and secret boundary (transport integration still gated)
+<a id="enrollment-and-secret-boundary-transport-integration-still-gated"></a>
+
+### Enrollment and secret boundary (native/first-connect qualification gated)
 
 1. A foreground local setup operation authenticates the configured OS user
    through existing protected setup/consent boundaries and selects the intended
@@ -450,8 +492,9 @@ management-token authentication.
 4. Account IDs remain public provisioning hints. Public keys map to the
    configured owner only, not an asserted GitHub user or creator-specific ACL.
    Permission/key changes advance protected host/grant epochs before publication.
-   Removing a device invalidates its live/pending admission. A future endpoint
-   must close the affected streams; no endpoint is implemented here.
+   Removing a device invalidates its live/pending admission. The authenticated
+   runtime closes affected streams using fresh policy; the local enrollment
+   helper itself owns neither transport nor client first-connect UX.
 
 The opt-in `festerm-host-setup/owner-enrollment` feature now implements protected
 local persistence through `Store::owner_enrollment() -> OwnerEnrollment`.
@@ -472,7 +515,9 @@ masks effective creation without invalidating the stored record or blocking
 revocation/permission removal. New creation approval still requires settings
 consent. Remote
 admission additionally requires the lifecycle's Provisioned phase (not a Ready
-claim). No CLI/UI enrollment controls are exposed by this backend slice.
+claim). The default headless controller consumes this API through separate
+foreground `approve-owner`; there is no remote/implicit enrollment. Client
+foreground approved-context/key/index and UI qualification remain separate.
 
 The private installation journal lease serializes enrollment, lifecycle and
 fresh admission. `current_policy() -> CurrentOwnerPolicy` owns that short lease
@@ -586,7 +631,6 @@ A new advertised issuer applies to newly captured operations only. Never
 refresh an uncertain client's original `IssuedOperation` or mutate its request;
 older issuances remain the durable ledger's decision.
 
-### Concrete transport blocker — no owner signing adapter yet
 
 Protected enrollment stores permission templates, not a runtime issuance
 namespace. `Capabilities::validate_permissions()` checks their logical flag
@@ -738,8 +782,13 @@ JSON; this slice chooses neither new controls nor a pairing service.
   though their requests do not carry a generation pin. Revalidate against fresh
   authoritative state under the **same admission/journal boundary as the
   disclosure or daemon IPC**. Checking two copies of a captured fence is not
-  revalidation. Never hold that lock across network I/O; revoke/cancel first,
+  revalidation. Never hold installation, policy or admission/journal guards
+  across network I/O; revoke/cancel first,
   then reconcile late work. Connection retirement invalidates all its captures.
+
+The separate bounded cloud-operation serialization lease may span its network
+operation. It prevents duplicate cloud work, is not current policy/installation
+authority, and does not retain those short-lived guards or prevent revocation.
 
 ## Aggregate admission and fairness
 
@@ -859,31 +908,40 @@ leases or turns a partial result into authoritative absence.
 `StopRequested` returns `OutcomeUncertain`, not fabricated `Ended`; a caller can
 reconcile the actual later absence through Lookup.
 
-The headless composition library's **off-by-default** `owner-routing` feature
+The headless binary's **default-enabled** `owner-routing` feature
 adapts the real `Store::owner_enrollment().current_policy()`/`CurrentOwnerPolicy`
-to these traits (`EnrollmentPolicy`/`EnrollmentGuard`). It adds no command,
-vault write, authentication bypass, listener or Ready state. Production native
-vault/channel/service acceptance is not inferred from compilation.
+to these traits (`EnrollmentPolicy`/`EnrollmentGuard`) and selects the explicit
+controller/CLI setup, owner approval and run. The adapter itself is thin
+delegation, not a vault write, authentication bypass or Ready state. Configure
+remains disabled; the compatibility no-default build refuses setup/run.
+Production native vault/channel/service acceptance is not inferred from compilation.
 
 Five explicitly invoked Unix owned-daemon duplex fixtures prove actual
 ensure/create replies and lost-reply retry without duplicate native generations,
 nonattaching inventory, denied virgin creation without false absence, exact
 generation end, and independent control while a committed reply is withheld.
-They also prove production inventory-only enforcement and current-policy
+They also prove standalone inventory-only enforcement and current-policy
 contention after an actual native commit without losing the connection or
 duplicating the shell. Native effects use a **cfg(test)-only** backend capability
 override, not a bypass in production framing or authorization.
+The lost-reply case deliberately forces correlated Busy on an original-issued
+retry, then explicitly retries that same opaque operation with an eight-second
+fixture bound and still requires exactly one native generation. This does not
+add automatic client retries or substitute a new issuance namespace.
 CI builds the repository helper/fixture child and runs these fixtures explicitly
 on Linux/macOS; they use a newly created project-local private root and verify
 owned daemons stop before removing it. They do not use installed/user sessions.
 
-**Partial adapter boundary:** native capabilities advertise and enforce inventory
-only. Ensure/Create/Attach/Detach/ExplicitEnd return correlated Unsupported
-rather than executing an unadvertised operation or claiming an adopted frontend or
-lease exists. Ensure/Create handlers are exercised through the low-level framed
-core with real protected authorization, but are not advertised while the
-terminal attachment path remains incomplete. The legacy exact-generation bridge
-continues unchanged; it is not silently selected as a HOST default session.
+**Composition boundary:** standalone `NativeControl::new` advertises/enforces
+inventory only. `HostRuntime::new` additionally supplies the real adopted terminal
+route, so its private control construction advertises current protected lifecycle
+capabilities plus the issuer captured inside the native reservation. An issued
+operation remains bound to its original account/endpoint/host/namespace on retries;
+no client-provided epoch can advance current authority. Bare IDs cannot create.
+Attach/Detach on control still return Unsupported; only their exact authenticated
+terminal stream may acquire or release a frontend lease. ExplicitEnd returns
+OutcomeUncertain until Lookup proves actual absence. None of these operations
+installs/enables a listener. The legacy exact-generation bridge remains unchanged.
 
 #### Unexposed paired terminal transport
 
@@ -903,7 +961,7 @@ The portable `TerminalHandle` uses eight command/four event slots, immutable
 account/endpoint/host/generation bindings, and no reconnect or input replay.
 Detach returns an operation ID only; its validated reply establishes success.
 
-The fixture-only native adapter admits a bounded blocking actor before allocating its
+The opt-in native adapter admits a bounded blocking actor before allocating its
 one-slot work queue. Every action obtains fresh protected authorization under
 the actual backend guard. Notification-driven output uses bounded FIFO turns
 released before network I/O; independent authorization supervision can retire
@@ -917,13 +975,13 @@ freshly reauthorizes that receipt immediately before replying, even after a
 temporary stop. That receipt never authorizes terminal input or renewal.
 Stale takeover cleanup cannot renew or stop the replacement.
 
-The native server/scheduler are compiled only in tests, not exported as a
-production stream-plus-proof API. The portable client is framing, not authority.
-This is low-level, unexposed composition, not authenticated endpoint readiness.
-The consuming actual pinned-channel owner-proof adapter, independently reviewed
-backend hotpath/history fixes, cross-platform native qualification and fair
-control-under-load evidence remain integration gates. Control capabilities
-remain inventory-only; no listener, automatic fallback, file/observation/MCP
+The native server/scheduler are consumed by `HostRuntime` only after proof on
+the exact pinned channel. The portable client is framing, not authority.
+The bridge/library features are opt-in; the default headless build composes them
+through explicit authenticated run. This is not native endpoint readiness.
+Independent exact-head consumer review, cross-platform native qualification and
+fair control-under-load evidence remain gates. No automatic listener,
+fallback, file/observation/MCP
 grant, setup authority or remote sharing/enrollment operation is added.
 
 At the prior `1a66a935` milestone, all nine explicitly invoked owned native
@@ -933,11 +991,14 @@ bytes, temporary cancellation/detach and independent control during slow-output
 revocation. Unix CI selects both control and terminal fixture modules. This is
 local bounded fixture evidence, not production endpoint or native-service
 acceptance.
-The current main/enrollment/opaque-authority source union still requires its
-own native-nine/clippy rerun and different-source-family antagonist validation.
+That historical checkpoint did not qualify the later combined source. Current
+fixed-head owned-runtime qualification and independent review are recorded in
+[milestone progress](milestone-progress.md); native acceptance remains separate.
 
-**Exposure remains blocked:** these dispatcher/native consumers are not yet
-wired to the reviewed inner-SSH channel binding and enrolled-owner stream.
+**Historical stage-3 boundary:** at that checkpoint these consumers were not yet
+wired to the inner-SSH binding/enrolled-owner stream. Current explicit headless
+run consumes that binding and the protected policy source; first-connect,
+native-service/vault and independent combined-review gates remain open.
 A host-key pin alone cannot supply the required same-channel non-forwardable
 owner proof. Integration must consume that actual binding; no asserted principal, bearer,
 arbitrary trusted boolean or random substitute is acceptable. Separate terminal attachment routing and

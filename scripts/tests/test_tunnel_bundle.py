@@ -2,6 +2,7 @@ import copy
 import hashlib
 import importlib.util
 import io
+import json
 import shutil
 import stat
 import subprocess
@@ -35,7 +36,7 @@ class TunnelBundleTests(unittest.TestCase):
         self.binaries = self.root / "bin"
         self.binaries.mkdir()
         for platform in bundle.PLATFORMS:
-            for name in bundle.binary_names(platform):
+            for name in bundle.binary_names(platform, host=True):
                 (self.binaries / name).write_bytes(f"mock binary {name}".encode())
         dependency = self.root / "dependency"
         dependency.mkdir()
@@ -46,9 +47,9 @@ class TunnelBundleTests(unittest.TestCase):
             "packages": [
                 {
                     "id": name, "name": name, "version": VERSION, "license": "MIT",
-                    "manifest_path": str(self.root / "crates" / name / "Cargo.toml"),
+                    "manifest_path": str(self.root / ("app" if name == "festerm-host" else "crates") / name / "Cargo.toml"),
                 }
-                for name in bundle.BINARIES[:2]
+                for name in bundle.HOST_PACKAGES
             ] + [{
                 "id": "dependency", "name": "dependency", "version": "2.0.0",
                 "license": "MIT", "license_file": None,
@@ -59,8 +60,9 @@ class TunnelBundleTests(unittest.TestCase):
                     "id": name, "deps": [{
                         "pkg": "dependency", "dep_kinds": [{"kind": None}],
                     }],
-                } for name in bundle.BINARIES[:2]
+                } for name in bundle.HOST_PACKAGES
             ] + [{"id": "dependency", "deps": []}]},
+            "workspace_members": list(bundle.HOST_PACKAGES),
         }
 
     def build(self, platform="linux", arch="x86_64", output="dist", **kwargs):
@@ -107,6 +109,8 @@ class TunnelBundleTests(unittest.TestCase):
                     )
                     contents = self.contents(archive, platform)
                     self.assertEqual(set(contents), set(bundle.entry_names(platform)))
+                    host = "festerm-host.exe" if platform == "windows" else "festerm-host"
+                    self.assertNotIn(host, contents)
                     self.assertEqual(contents["VERSION"][0], b"1.2.3\n")
                     for name, (content, mode) in contents.items():
                         self.assertTrue(content)
@@ -166,6 +170,63 @@ class TunnelBundleTests(unittest.TestCase):
                     self.build()
                 self.assertFalse((self.root / "dist").exists())
 
+    def test_separate_host_payload_preserves_exact_legacy_installer_abi(self):
+        for platform in bundle.PLATFORMS:
+            with self.subTest(platform=platform):
+                host = "festerm-host.exe" if platform == "windows" else "festerm-host"
+                archive = self.build(platform, output=f"legacy-{platform}")
+                self.assertNotIn(host, self.contents(archive, platform))
+                bundle.verify_bundle(archive, VERSION, platform)
+                hosted = self.build(platform, output=f"host-{platform}", host=True)
+                self.assertIn(host, self.contents(hosted, platform))
+                self.assertTrue(hosted.name.startswith("fesTerm-host-"))
+                bundle.verify_bundle(hosted, VERSION, platform, host=True)
+                with self.assertRaisesRegex(ValueError, "exactly"):
+                    bundle.verify_bundle(hosted, VERSION, platform)
+                (self.binaries / host).unlink(missing_ok=True)
+                with self.assertRaisesRegex(ValueError, host):
+                    self.build(platform, output=f"current-{platform}", host=True)
+                (self.binaries / host).write_bytes(b"synthetic host")
+
+    def test_host_notices_use_actual_workspace_membership_for_app_package(self):
+        notices = bundle.third_party_notices(self.metadata, VERSION, self.root, host=True)
+        self.assertIn(b"actual upstream license", notices)
+        metadata = copy.deepcopy(self.metadata)
+        metadata["workspace_members"].remove("festerm-host")
+        with self.assertRaisesRegex(ValueError, "missing dependency license"):
+            bundle.third_party_notices(metadata, VERSION, self.root, host=True)
+
+    def test_native_notice_check_decodes_utf8_metadata_under_non_utf8_transport_locale(self):
+        with mock.patch.dict(sys.modules, {"build_tunnel_bundle": bundle}):
+            from scripts import check_host_notices as checker
+
+        metadata = copy.deepcopy(self.metadata)
+        metadata["packages"][-1]["repository"] = "https://example.invalid/Łódź"
+        fixture = self.root / "metadata.json"
+        fixture.write_bytes(json.dumps(metadata, ensure_ascii=False).encode("utf-8"))
+        check_output = subprocess.check_output
+
+        def output(command, **kwargs):
+            if command == ["rustc", "-vV"]:
+                return "host: x86_64-pc-windows-msvc\n"
+            self.assertEqual(command, [
+                "cargo", "metadata", "--locked", "--format-version", "1",
+                "--filter-platform", "x86_64-pc-windows-msvc",
+            ])
+            return check_output([
+                sys.executable, "-c",
+                "import pathlib,sys; sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())",
+                str(fixture),
+            ], **kwargs)
+
+        with mock.patch.object(checker, "ROOT", self.root), \
+                mock.patch.object(checker.subprocess, "check_output", side_effect=output), \
+                mock.patch("subprocess._text_encoding", return_value="cp1252"), \
+                mock.patch.object(checker, "third_party_notices", wraps=bundle.third_party_notices) as render, \
+                mock.patch("builtins.print"):
+            checker.main()
+        self.assertEqual(render.call_args.args[0], metadata)
+
     def test_invalid_or_mismatched_versions_fail_closed(self):
         for version in ("", "v1.2.3", "01.2.3", "1.2", "1.2.3\n", "1.2.4",
                         "../1.2.3", "1.2.3-rc.1", "1.2.3+build"):
@@ -174,15 +235,17 @@ class TunnelBundleTests(unittest.TestCase):
                     self.build(version=version)
                 self.assertFalse((self.root / "dist").exists())
 
-    def test_package_metadata_must_match_both_helper_packages(self):
-        for change in ("missing", "version"):
-            metadata = copy.deepcopy(self.metadata)
-            if change == "missing":
-                metadata["packages"].pop(0)
-            else:
-                metadata["packages"][0]["version"] = "9.0.0"
-            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "package metadata"):
-                self.build(metadata=metadata)
+    def test_package_metadata_must_match_all_helper_packages(self):
+        for name in bundle.PACKAGES:
+            for change in ("missing", "version"):
+                metadata = copy.deepcopy(self.metadata)
+                package = next(p for p in metadata["packages"] if p["name"] == name)
+                if change == "missing":
+                    metadata["packages"].remove(package)
+                else:
+                    package["version"] = "9.0.0"
+                with self.subTest(name=name, change=change), self.assertRaisesRegex(ValueError, "package metadata"):
+                    self.build(metadata=metadata)
 
     def test_notices_follow_helper_closure_and_retain_nested_notices(self):
         metadata = copy.deepcopy(self.metadata)
@@ -325,7 +388,7 @@ class TunnelBundleTests(unittest.TestCase):
                 for name, content in contents.items():
                     info = zipfile.ZipInfo(name)
                     info.create_system = 3
-                    mode = 0o755 if name in names[:3] else 0o644
+                    mode = 0o755 if name in bundle.binary_names(platform) else 0o644
                     info.external_attr = (stat.S_IFREG | mode) << 16
                     if change == "symlink" and name == names[0]:
                         info.external_attr = (stat.S_IFLNK | 0o777) << 16
@@ -338,7 +401,7 @@ class TunnelBundleTests(unittest.TestCase):
             with tarfile.open(path, "w:gz") as archive:
                 for name, content in contents.items():
                     info = tarfile.TarInfo(name)
-                    info.mode = 0o755 if name in names[:3] else 0o644
+                    info.mode = 0o755 if name in bundle.binary_names(platform) else 0o644
                     info.size = len(content)
                     if change == "symlink" and name == names[0]:
                         info.type = tarfile.SYMTYPE

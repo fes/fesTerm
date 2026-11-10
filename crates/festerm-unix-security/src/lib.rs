@@ -352,6 +352,27 @@ mod imp {
         target_os = "ios"
     ))]
     pub fn is_current_user_only(file: &File, directory: bool) -> io::Result<bool> {
+        current_user_only(file, directory, false)
+    }
+
+    /// Validates a privately published executable without chmod or ACL repair.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    pub fn is_current_user_only_executable(file: &File) -> io::Result<bool> {
+        current_user_only(file, false, true)
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    fn current_user_only(file: &File, directory: bool, executable: bool) -> io::Result<bool> {
         let metadata = file.metadata()?;
         let security = security_metadata(file)?;
         let acl = {
@@ -369,10 +390,15 @@ mod imp {
         Ok(private_storage_owner_and_mode(
             metadata.uid(),
             nix::unistd::Uid::effective().as_raw(),
-            security.mode,
+            if executable && security.mode == 0o700 {
+                0o600
+            } else {
+                security.mode
+            },
             directory,
         ) && metadata.is_dir() == directory
             && (directory || (metadata.is_file() && metadata.nlink() == 1))
+            && (!executable || security.mode == 0o700)
             && !acl)
     }
 
@@ -384,6 +410,16 @@ mod imp {
     )))]
     pub fn is_current_user_only(_file: &File, _directory: bool) -> io::Result<bool> {
         Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    )))]
+    pub fn is_current_user_only_executable(_file: &File) -> io::Result<bool> {
+        Err(io::ErrorKind::Unsupported.into())
     }
 
     #[cfg(any(
@@ -1110,9 +1146,9 @@ mod imp {
 #[cfg(unix)]
 pub use imp::{
     create_private_directory, current_user_home, current_user_id, is_current_user_only,
-    make_private, make_private_directory, open_directory_read_nofollow,
-    open_directory_search_nofollow, open_file_nofollow, open_private_file,
-    preserve_security_metadata, remove_private_staging_file, rename_noreplace,
+    is_current_user_only_executable, make_private, make_private_directory,
+    open_directory_read_nofollow, open_directory_search_nofollow, open_file_nofollow,
+    open_private_file, preserve_security_metadata, remove_private_staging_file, rename_noreplace,
     reopen_directory_read, replace_private_file, secure_staging_parent, security_metadata,
     security_metadata_matches, staging_parent_matches, trusted_packaged_executable_ancestor,
     trusted_private_storage_ancestor, writable_directory, SecurityMetadata, StagingParentSecurity,
