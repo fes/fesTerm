@@ -205,6 +205,7 @@ jobs:
         run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Validate authenticated helper artifacts without desktop dependencies
+        shell: bash
         run: |
           cargo test --locked -p festerm-host-setup --features acquisition -p festerm-host
           cargo clippy --locked -p festerm-host-setup --features acquisition -p festerm-host --all-targets -- -D warnings

@@ -25,6 +25,8 @@ dev-dependency-only test-support feature, with owned cleanup. No production
 ACL, reparse-point, ownership or atomic-publication check is relaxed.
 Ancestor refusal now has a content-free diagnostic rather than an unexplained
 PermissionDenied. Native startup/service acceptance remains separately gated.
+The shared multi-command helper validation step explicitly uses fail-fast Bash
+on all platforms, so a later successful clippy cannot hide failed Windows tests.
 
 ## Establishing helper publisher authenticity without a second trust root
 

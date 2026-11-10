@@ -184,7 +184,13 @@ class HostManifestTests(unittest.TestCase):
 
     def test_normal_ci_runs_cross_language_and_real_pinned_signer_checks(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertIn("cargo test --locked -p festerm-host-setup --features acquisition -p festerm-host", workflow)
+        step = workflow.split(
+            "      - name: Validate authenticated helper artifacts without desktop dependencies\n", 1
+        )[1].split("      - name:", 1)[0]
+        self.assertIn("\n        shell: bash\n", "\n" + step)
+        self.assertIn("cargo test --locked -p festerm-host-setup --features acquisition -p festerm-host", step)
+        self.assertIn("cargo clippy --locked -p festerm-host-setup --features acquisition -p festerm-host", step)
+        self.assertIn("python scripts/check_host_notices.py", step)
         job = workflow.split("  helper-signature-compatibility:\n", 1)[1]
         job = job.split("  conformance:\n", 1)[0]
         self.assertIn("runs-on: ubuntu-latest", job)
