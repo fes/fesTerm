@@ -121,6 +121,9 @@ pub(crate) fn show(
                     Operation::Uninstall => {
                         ui.label("Fence and remove only this exact native registration. Cloud cleanup can remain pending and require independent manual provider review. No unconditional DELETE is issued.");
                     }
+                    Operation::Share(_) => {
+                        ui.label("Use the exact-session sharing review below. This installation review cannot authorize sharing.");
+                    }
                     _ => {
                         ui.label("A running process or successful command is not proof of endpoint readiness.");
                     }
@@ -161,16 +164,67 @@ pub(crate) fn show(
                     target.identity.created_at_unix_ms,
                     target.lifecycle_generation
                 ));
-                ui.label(Failure::ShareCapability.message());
-                if ui.button("Check explicit Share capability").clicked() {
-                    action = Some(Action::Share(target.clone()));
+                if target.source.is_none() {
+                    ui.label(Failure::ShareCapability.message());
+                } else {
+                    ui.small("Bind authenticates this exact live generation and remains PRIVATE. Only a separate explicit Switch exposes it through the current host. The original frontend and PTY remain untouched.");
+                    if ui.button("Confirm Bind privately · no exposure").clicked() {
+                        action = Some(Action::Share(target.clone()));
+                    }
                 }
-                if ui.button("Check exact Unshare capability").clicked() {
+                let mut original = view.share_operation_input.clone();
+                field(ui, "Recover ORIGINAL sharing operation · optional", &mut original);
+                if original != view.share_operation_input {
+                    action = Some(Action::RecoverShare(original));
+                }
+                if !view.share_operation_input.is_empty()
+                    && ui.button("Resume original protected status · no switch").clicked()
+                {
+                    action = Some(Action::ResumeShare);
+                }
+                if view.sharing.as_ref().is_some_and(|sharing| &sharing.target == target)
+                    && ui.button("Release this reviewed generation · keep shell").clicked()
+                {
                     action = Some(Action::Unshare(target.clone()));
                 }
                 if ui.button("Set up host first · still private…").clicked() {
                     action = Some(Action::Review(Operation::Enable));
                 }
+            });
+        }
+        if let Some(sharing) = &view.sharing {
+            ui.group(|ui| {
+                ui.monospace(format!(
+                    "Original sharing operation {}\nSession {} · PID {} · created {}",
+                    sharing.operation,
+                    sharing.target.identity.name,
+                    sharing.target.identity.pid,
+                    sharing.target.identity.created_at_unix_ms,
+                ));
+                ui.label(format!(
+                    "Last protected response: {:?}. Not endpoint readiness or cached permission.",
+                    sharing.phase
+                ));
+                if sharing.phase == SharePhase::Prepared {
+                    ui.small("PRIVATE: explicitly review the same session and current owner context before Switch.");
+                    if ui.button("Confirm Switch · expose this exact generation").clicked() {
+                        action = Some(Action::SwitchShare);
+                    }
+                }
+                if sharing.phase == SharePhase::Uncertain {
+                    ui.small("Outcome uncertain. Keep this ORIGINAL operation. Do not retry with a replacement session or operation.");
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Resume original status · no switch").clicked() {
+                        action = Some(Action::ResumeShare);
+                    }
+                    if ui.button("Confirm Release · keep shell/frontend").clicked() {
+                        action = Some(Action::ReleaseShare);
+                    }
+                    if ui.button("Confirm Rollback · irreversible unshare only").clicked() {
+                        action = Some(Action::RollbackShare);
+                    }
+                });
             });
         }
     });

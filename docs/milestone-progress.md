@@ -1,5 +1,41 @@
 # Milestone Progress Narrative
 
+## Staging the protected private-session sharing caller
+
+The published primary Setup head `6614c990` and all prior receipts remain
+frozen. A separate application child first examined exact migration pin
+`e44a004c`: its real Local-frontend proof still uses synthetic legacy-owned
+installation authority, while ordinary private sessions have no such receipts.
+The existing migration adapter also requires a fresh Disabled destination.
+Its owner confirmed the missing current-host/private-source boundary. That
+owned merge was aborted rather than manufacturing legacy receipts, resetting
+the current host or using a PID-only lower-level admission closure.
+
+The parent subsequently authorized the backend owner to supply a separate
+protected private-source adapter and actual connected-local provenance
+accessor. The application now stages its agreed typed Bind/Switch/status-Resume/
+Release/irreversible-rollback caller, **SOURCE-ONLY, UNQUALIFIED and
+compile-pending**. No moving backend source was consumed, no substitute/stub
+authority is implemented, and no build, test, source gate, native process or
+vault/provider/OS operation has been run for this caller.
+
+Only explicit private Bind mints an operation; subsequent actions retain it.
+Switch is separately explicit, and status Resume never grants or switches.
+All effects delegate the native-vault current-host adapter, with full reviewed
+snapshot/account/revision and exact connected native target. A window-local
+central-command epoch is a negative fence before application state mutation.
+Workers retain actual admission until exit; cancellation uses independent
+exact-operation release, including a result queued just before cancellation,
+never generic Disable or original-frontend acquisition/End/restart. Opaque
+provenance is not reconstructed from environment, endpoint or recipe metadata.
+
+Six written model/render tests cover unsupported metadata, stale review,
+negative selection fencing, original-operation reduction after frontend loss,
+queued-result cancellation and bounded recovery input. They have not been
+executed. The new immutable qualified core pin is required before normal merge,
+compilation and focused qualification. Existing migration macOS 13/1 remains
+unresolved/unknown; neither this caller nor the new adapter is its presumed fix.
+
 ## Integrating the qualified cleanup-fixture child into primary Setup
 
 The separate final CI child preserves frozen desktop head `9a2d6db2` and its

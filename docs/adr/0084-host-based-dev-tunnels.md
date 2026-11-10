@@ -705,6 +705,19 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+### Private-session current-host sharing caller — source-only
+
+The separate desktop child stages `HOST-03` Bind/Switch/status-Resume/exact
+Release/irreversible rollback against the agreed protected private-source core
+adapter, not legacy installation migration. **UNQUALIFIED/compile-pending:**
+the new immutable core prerequisite has not been consumed or tested. Written
+model/headless-render oracles cover missing provenance, central-command denial
+fences, same-operation reduction, queued-result cancellation and bounded recovery
+input; none constructs a native capability or claims native binding acceptance.
+The existing frontend/independent PTY, metadata-only profile boundary and separate
+ADR 0085 default-No legacy-stop consent are unchanged. The retained migration
+macOS 13/1 failure remains unresolved/unknown, not fixed by these caller paths.
+
 ### Client-safe owner-key fingerprint boundary
 
 The selected-host desktop review formats the approved public key through the

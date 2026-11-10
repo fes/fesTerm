@@ -47,6 +47,24 @@ these commands return an actionable capability refusal without session effects.
 No portable profile save/import, ordinary launch, PID or display metadata can
 produce a HOST grant.
 
+The private-session sharing child stages an additional typed worker flow against
+the agreed `private_session_sharing` contract. It is **source-only,
+UNQUALIFIED/compile-pending** until the parent provides a separately qualified
+immutable core pin. Bind remains private; Switch requires separate explicit
+confirmation. Resume reads the original protected operation without switching;
+retrying Bind retains that same operation. Release and irreversible rollback
+reopen the exact protected receipt, including after the original tab closes.
+Neither action stops or acquires its frontend/PTY.
+
+The connected-local provenance accessor is distinct from display identity and
+default runtime discovery. The application never constructs its capability,
+legacy receipts or a policy verifier. A window-local central-command epoch
+invalidates pending sharing review before state mutation; this is only a
+negative fence, never authorization. Cancellation retains real worker admission
+and sends independent exact-operation release, not generic host Disable, so a
+reply queued just before cancellation cannot escape reduction. Native/source
+admission remains entirely in the shared protected adapter.
+
 ## Command Responsibilities
 
 Application commands represent product-level intent, for example:

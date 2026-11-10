@@ -10,6 +10,7 @@ fn request(root: &Path, operation: Operation, expected: Scope) -> Request {
         cancel_fence: false,
         owned: Arc::new(Mutex::new(None)),
         owner_revision: None,
+        sharing: None,
     }
 }
 

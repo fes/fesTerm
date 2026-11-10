@@ -4151,6 +4151,19 @@ bind-existing/retained-root and exact-receipt release seam; successful host setu
 alone must not show sharing success. Automatic verified-package delivery and
 the short primary setup flow still need native usability evidence.
 
+**Private-session sharing caller child — source-only, UNQUALIFIED/compile-pending:**
+written model/render oracles and typed worker calls do not qualify the new core
+adapter. After its separately qualified immutable pin and focused execution,
+review one actual connected-local generation with the already Provisioned
+Desktop/native-vault host. Confirm Bind remains private, separate explicit
+Switch exposes only that generation, status Resume retains the original
+operation without switching, and Release/irreversible rollback preserve the
+original frontend, PID/start/generation, PTY and independent lifetime. Exercise
+queued/late cancellation, same-operation uncertain recovery, account/revision/
+epoch change, native-vault lock/refusal and unsupported old helpers. These
+native/usability gates remain unrun; the earlier migration macOS 13/1 failure is
+still unresolved/unknown. Do not substitute legacy receipts or a fresh host.
+
 **HOSTSETUP-01 explicit manual cleanup fallback (owner-approved):** Automated
 generation-atomic DELETE remains unavailable, not a prerequisite to choosing
 manual provider review/removal. On a disposable, separately authorized real

@@ -207,6 +207,7 @@ fn desktop_remote_access_share_and_unshare_never_substitute_pid_or_metadata_auth
         panic!("no daemon binding API")
     })));
     let target = ShareTarget {
+        source: None,
         tab: crate::tabs::TabId::next_for_test(),
         profile: Some("private-profile".into()),
         lifecycle_generation: 7,
@@ -222,9 +223,220 @@ fn desktop_remote_access_share_and_unshare_never_substitute_pid_or_metadata_auth
     controller.action(Action::Share(target.clone()), &context);
     assert_eq!(controller.view.failure, Some(Failure::ShareCapability));
     controller.action(Action::Unshare(target), &context);
-    assert_eq!(controller.view.failure, Some(Failure::ShareCapability));
+    assert_eq!(controller.view.failure, Some(Failure::Reconciliation));
     assert!(!controller.view.busy);
     assert!(!controller.view.owner_approved);
+}
+
+fn private_share_target() -> ShareTarget {
+    ShareTarget {
+        tab: crate::tabs::TabId::next_for_test(),
+        profile: Some("private-sharing-fixture".into()),
+        lifecycle_generation: 9,
+        identity: festerm_sessiond::NativeSessionIdentity {
+            name: "private-sharing".into(),
+            pid: 123,
+            created_at_unix_ms: 456,
+            endpoint: "fixture-local-endpoint".into(),
+        },
+        source: None,
+    }
+}
+
+#[test]
+fn desktop_remote_access_sharing_review_edit_and_missing_provenance_never_dispatch() {
+    let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+        panic!("no native capability or consent")
+    })));
+    let context = egui::Context::default();
+    let target = private_share_target();
+    controller.action(Action::ReviewShare(target.clone()), &context);
+    controller.action(Action::Edit(Draft::default()), &context);
+    assert!(controller.view.share_review.is_none());
+    controller.action(Action::Share(target), &context);
+    assert_eq!(controller.view.failure, Some(Failure::ShareCapability));
+    controller.action(
+        Action::Review(Operation::Share(ShareStep::Switch)),
+        &context,
+    );
+    assert_eq!(controller.view.failure, Some(Failure::InvalidDraft));
+    controller.action(Action::Confirm, &context);
+    assert!(!controller.view.busy);
+    assert!(controller.view.sharing.is_none());
+}
+
+#[test]
+fn desktop_remote_access_sharing_selection_witness_is_only_a_negative_fence() {
+    let mut app = super::super::FesTermApp::for_test_with_configuration(
+        festerm_config::Configuration::empty(),
+    );
+    let target = private_share_target();
+    let epoch = app.state.local_share_epoch();
+    let current = Arc::new(Mutex::new(vec![target.clone()]));
+    let task = ShareTask {
+        target,
+        operation: uuid::Uuid::new_v4().to_string(),
+        current: current.clone(),
+        epoch: Some((epoch.clone(), epoch.load(Ordering::Acquire))),
+    };
+    let cancel = CancellationToken::new();
+    assert!(task.is_current(&cancel));
+    assert!(task.target.source.is_none());
+    app.state.dispatch(
+        crate::tabs::AppCommand::OpenSettings,
+        &egui::Context::default(),
+    );
+    assert!(!task.is_current(&cancel));
+    current.lock().unwrap().clear();
+    assert!(!task.is_current(&cancel));
+    assert!(app.state.local_share_targets().is_empty());
+}
+
+#[test]
+fn desktop_remote_access_sharing_reduction_retains_original_operation_without_frontend() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            let task = request.sharing.unwrap();
+            assert!(matches!(
+                request.operation,
+                Operation::Share(ShareStep::Release | ShareStep::Rollback)
+            ));
+            recorded.lock().unwrap().push(task.operation.clone());
+            Ok(Report {
+                scope: Scope::Absent,
+                sharing: Some(ShareStatus {
+                    target: task.target,
+                    operation: task.operation,
+                    phase: SharePhase::Released,
+                }),
+                ..Report::default()
+            })
+        },
+    )));
+    let original = uuid::Uuid::new_v4().to_string();
+    controller.view.sharing = Some(ShareStatus {
+        target: private_share_target(),
+        operation: original.clone(),
+        phase: SharePhase::Active,
+    });
+    let context = egui::Context::default();
+    controller.action(Action::ReleaseShare, &context);
+    drain(&mut controller, &context);
+    controller.action(Action::RollbackShare, &context);
+    drain(&mut controller, &context);
+    assert_eq!(*calls.lock().unwrap(), [original.clone(), original]);
+    assert_eq!(
+        controller.view.sharing.as_ref().unwrap().phase,
+        SharePhase::Released
+    );
+    assert!(!controller.view.owner_approved);
+}
+
+#[test]
+fn desktop_remote_access_sharing_cancel_queued_result_uses_exact_release_not_disable() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let mut controller = fixture(Arc::new(Fake(
+        move |request: Request, _: &CancellationToken| {
+            let task = request.sharing.unwrap();
+            recorded
+                .lock()
+                .unwrap()
+                .push((request.operation, task.operation.clone()));
+            let phase = match request.operation {
+                Operation::Share(ShareStep::Bind) => SharePhase::Active,
+                Operation::Share(ShareStep::Release) => {
+                    assert!(request.cancel_fence);
+                    SharePhase::Released
+                }
+                _ => panic!("sharing cancellation must not disable the host"),
+            };
+            Ok(Report {
+                scope: Scope::Absent,
+                sharing: Some(ShareStatus {
+                    target: task.target,
+                    operation: task.operation,
+                    phase,
+                }),
+                ..Report::default()
+            })
+        },
+    )));
+    let target = private_share_target();
+    let original = uuid::Uuid::new_v4().to_string();
+    let epoch = Arc::new(AtomicU64::new(0));
+    controller.observe_share_targets(vec![target.clone()]);
+    controller.view.sharing = Some(ShareStatus {
+        target: target.clone(),
+        operation: original.clone(),
+        phase: SharePhase::Uncertain,
+    });
+    // This is a worker-plumbing fixture, never a constructed native capability.
+    controller.share_request = Some(ShareTask {
+        target,
+        operation: original.clone(),
+        current: controller.share_targets.clone(),
+        epoch: Some((epoch, 0)),
+    });
+    let context = egui::Context::default();
+    controller.start(Operation::Share(ShareStep::Bind), false, &context);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while controller.slots.load(Ordering::Acquire) & 1 != 0 {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    controller.action(Action::Cancel, &context);
+    drain(&mut controller, &context);
+    assert_eq!(
+        *calls.lock().unwrap(),
+        [
+            (Operation::Share(ShareStep::Bind), original.clone()),
+            (Operation::Share(ShareStep::Release), original),
+        ]
+    );
+    assert_eq!(
+        controller.view.sharing.as_ref().unwrap().phase,
+        SharePhase::Released
+    );
+    assert_eq!(controller.slots.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn desktop_remote_access_sharing_recovery_input_is_bounded_and_never_switches() {
+    let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+        panic!("unselected recovery never reaches native authority")
+    })));
+    let context = egui::Context::default();
+    controller.action(Action::RecoverShare("x".repeat(129)), &context);
+    assert_eq!(controller.view.failure, Some(Failure::InvalidDraft));
+    controller.action(Action::RecoverShare("private\ncontrol".into()), &context);
+    assert_eq!(controller.view.failure, Some(Failure::InvalidDraft));
+    controller.action(Action::RecoverShare("original-operation".into()), &context);
+    controller.action(Action::ResumeShare, &context);
+    assert_eq!(controller.view.failure, Some(Failure::SessionChanged));
+    assert!(!controller.view.busy);
+    assert!(!ShareStep::Resume.grants());
+}
+
+#[test]
+fn desktop_remote_access_sharing_phase_render_is_metadata_only() {
+    let context = egui::Context::default();
+    let view = View {
+        sharing: Some(ShareStatus {
+            target: private_share_target(),
+            operation: "original-operation".into(),
+            phase: SharePhase::Prepared,
+        }),
+        ..View::default()
+    };
+    let _ = context.run(egui::RawInput::default(), |context| {
+        egui::CentralPanel::default().show(context, |ui| {
+            assert!(show(ui, &view, &[]).is_none());
+        });
+    });
+    assert!(!view.owner_approved);
 }
 
 #[test]

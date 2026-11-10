@@ -10,6 +10,9 @@ use festerm_host_setup::{
 };
 use std::{io, path::Path};
 
+#[path = "sharing.rs"]
+mod sharing;
+
 pub(super) struct Native;
 
 fn acquisition_failure(error: HostBundleError) -> Failure {
@@ -250,6 +253,9 @@ impl Backend for Native {
         cancel: &CancellationToken,
         progress: SyncSender<Progress>,
     ) -> Result<Report, Failure> {
+        if let Operation::Share(step) = request.operation {
+            return sharing::execute(request, step, cancel);
+        }
         self.execute_with(request, cancel, progress, acquire, |artifact, root| {
             TrustedStage::publish(&artifact, root).map_err(|_| Failure::SignedBundle)
         })
@@ -361,6 +367,7 @@ impl Native {
         stage: Option<&TrustedStage>,
     ) -> Result<Report, Failure> {
         match request.operation {
+            Operation::Share(_) => Err(Failure::InvalidDraft),
             Operation::ObserveNative => {
                 let Scope::Present(expected) = &request.expected else {
                     return Err(Failure::ScopeChanged);

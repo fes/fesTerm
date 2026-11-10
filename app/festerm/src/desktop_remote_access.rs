@@ -16,7 +16,7 @@ use festerm_host_setup::{
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicU64, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError},
         Arc, Mutex, OnceLock,
     },
@@ -84,6 +84,60 @@ pub struct ShareTarget {
     pub profile: Option<String>,
     pub lifecycle_generation: u64,
     pub identity: festerm_sessiond::NativeSessionIdentity,
+    pub source: Option<festerm_sessiond::LocalSessionTarget>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShareStep {
+    Bind,
+    Switch,
+    Resume,
+    Release,
+    Rollback,
+}
+
+impl ShareStep {
+    fn grants(self) -> bool {
+        matches!(self, Self::Bind | Self::Switch)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SharePhase {
+    Prepared,
+    Active,
+    Revoked,
+    Released,
+    Uncertain,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShareStatus {
+    pub target: ShareTarget,
+    pub operation: String,
+    pub phase: SharePhase,
+}
+
+#[derive(Clone)]
+struct ShareTask {
+    target: ShareTarget,
+    operation: String,
+    current: Arc<Mutex<Vec<ShareTarget>>>,
+    epoch: Option<(Arc<AtomicU64>, u64)>,
+}
+
+impl ShareTask {
+    fn is_current(&self, cancel: &CancellationToken) -> bool {
+        !cancel.is_cancelled()
+            && self
+                .epoch
+                .as_ref()
+                .is_some_and(|(epoch, expected)| epoch.load(Ordering::Acquire) == *expected)
+            && self
+                .current
+                .lock()
+                .is_ok_and(|targets| targets.contains(&self.target))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,6 +151,7 @@ pub enum Operation {
     Start,
     Disable,
     Uninstall,
+    Share(ShareStep),
 }
 
 impl Operation {
@@ -119,6 +174,11 @@ pub enum Action {
     ReviewShare(ShareTarget),
     Share(ShareTarget),
     Unshare(ShareTarget),
+    SwitchShare,
+    ResumeShare,
+    ReleaseShare,
+    RollbackShare,
+    RecoverShare(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -159,7 +219,7 @@ impl Failure {
             Self::OwnerApproval => "Review the public owner key and its independently confirmed fingerprint. Access and creation permissions require separate approval.",
             Self::PlatformPrerequisite => "The signed native helper or selected startup policy is not qualified on this platform. Do not bypass admission or enable a different OS service.",
             Self::Reconciliation => "Cleanup or revocation is incomplete. Keep access fenced; refresh and retry the exact installation. Do not delete resources from an uncertain receipt.",
-            Self::ShareCapability => "This shell remains unchanged. Exact-generation authenticated local binding and receipt-fenced unsharing are not supported by this backend yet; metadata, a PID or a lookup is not authority.",
+            Self::ShareCapability => "This shell has no authenticated connected-local source capability. Older or remote helpers remain unsupported; metadata, a PID or a guessed runtime directory cannot grant sharing.",
             Self::SessionChanged => "The selected profile, native session or generation changed. Nothing was shared, stopped or restarted.",
             Self::NoNativeObservation => "No native registration receipt was published. Status has no manager observation; this is not fabricated native absence.",
             Self::InvalidDraft => "A field exceeds its bounded input limit. Shorten it before review.",
@@ -184,6 +244,8 @@ pub struct View {
     pub cleanup_verified_for_manual_review: bool,
     pub device_code: Option<DeviceCode>,
     pub share_review: Option<ShareTarget>,
+    pub sharing: Option<ShareStatus>,
+    pub share_operation_input: String,
     pub bundle_status: BundleStatus,
 }
 
@@ -246,6 +308,7 @@ struct Request {
     cancel_fence: bool,
     owned: Arc<Mutex<Option<Snapshot>>>,
     owner_revision: Option<u64>,
+    sharing: Option<ShareTask>,
 }
 
 #[derive(Default)]
@@ -258,6 +321,7 @@ struct Report {
     cleanup: Option<CleanupContext>,
     cleanup_verified_for_manual_review: bool,
     failure: Option<Failure>,
+    sharing: Option<ShareStatus>,
 }
 
 #[derive(Clone)]
@@ -312,6 +376,7 @@ struct Pending {
     cancel: CancellationToken,
     result: Receiver<Result<Report, Failure>>,
     progress: Receiver<Progress>,
+    sharing: Option<ShareTask>,
 }
 
 pub(crate) struct Controller {
@@ -324,6 +389,9 @@ pub(crate) struct Controller {
     fence: Option<Pending>,
     owned: Arc<Mutex<Option<Snapshot>>>,
     draft_edited: bool,
+    share_targets: Arc<Mutex<Vec<ShareTarget>>>,
+    share_request: Option<ShareTask>,
+    share_epoch: Option<Arc<AtomicU64>>,
 }
 
 impl Controller {
@@ -349,6 +417,9 @@ impl Controller {
             fence: None,
             owned: Arc::new(Mutex::new(None)),
             draft_edited: false,
+            share_targets: Arc::new(Mutex::new(Vec::new())),
+            share_request: None,
+            share_epoch: None,
         }
     }
 
@@ -359,6 +430,28 @@ impl Controller {
     pub fn reject_changed_session(&mut self) {
         self.view.failure = Some(Failure::SessionChanged);
         self.view.share_review = None;
+    }
+
+    pub fn observe_share_targets(&mut self, targets: Vec<ShareTarget>) {
+        let changed = self.view.sharing.as_ref().is_some_and(|sharing| {
+            !targets.contains(&sharing.target)
+                && self.pending.as_ref().is_some_and(
+                    |pending| matches!(pending.operation, Operation::Share(step) if step.grants()),
+                )
+        });
+        *self
+            .share_targets
+            .lock()
+            .expect("healthy sharing selection") = targets;
+        if changed {
+            if let Some(pending) = &self.pending {
+                pending.cancel.cancel();
+            }
+        }
+    }
+
+    pub fn observe_share_epoch(&mut self, epoch: Arc<AtomicU64>) {
+        self.share_epoch = Some(epoch);
     }
 
     pub fn action(&mut self, action: Action, context: &egui::Context) {
@@ -391,11 +484,17 @@ impl Controller {
                 self.view.draft = draft;
                 self.draft_edited = true;
                 self.view.review = None;
+                self.view.share_review = None;
             }
-            Action::Dismiss => self.view.review = None,
+            Action::Dismiss => {
+                self.view.review = None;
+                self.view.share_review = None;
+            }
             Action::Refresh => self.start(Operation::Refresh, false, context),
             Action::Review(operation) => {
-                if matches!(self.view.scope, Scope::Unobserved) {
+                if matches!(operation, Operation::Share(_)) {
+                    self.view.failure = Some(Failure::InvalidDraft);
+                } else if matches!(self.view.scope, Scope::Unobserved) {
                     self.view.failure = Some(Failure::RefreshFirst);
                 } else {
                     self.view.review = Some(operation);
@@ -406,13 +505,102 @@ impl Controller {
                     self.start(operation, false, context);
                 }
             }
-            Action::ReviewShare(target) => self.view.share_review = Some(target),
-            Action::Share(_) | Action::Unshare(_) => {
-                // SessionControl has neither authenticated bind-existing nor
-                // expected-generation revoke. Never substitute lookup + revoke.
-                self.view.failure = Some(Failure::ShareCapability);
+            Action::ReviewShare(target) => {
+                self.view.review = None;
+                self.view.share_review = Some(target);
+            }
+            Action::Share(target) => self.start_share(ShareStep::Bind, Some(target), context),
+            Action::Unshare(target) => self.start_share(ShareStep::Release, Some(target), context),
+            Action::SwitchShare => self.start_share(ShareStep::Switch, None, context),
+            Action::ResumeShare => self.start_share(ShareStep::Resume, None, context),
+            Action::ReleaseShare => self.start_share(ShareStep::Release, None, context),
+            Action::RollbackShare => self.start_share(ShareStep::Rollback, None, context),
+            Action::RecoverShare(operation) => {
+                if operation.len() > 128 || operation.chars().any(char::is_control) {
+                    self.view.failure = Some(Failure::InvalidDraft);
+                } else {
+                    self.view.share_operation_input = operation;
+                }
             }
             Action::Cancel => unreachable!(),
+        }
+
+        fn start_share(
+            &mut self,
+            step: ShareStep,
+            selected: Option<ShareTarget>,
+            context: &egui::Context,
+        ) {
+            let target = match selected
+                .or_else(|| {
+                    self.view
+                        .sharing
+                        .as_ref()
+                        .map(|sharing| sharing.target.clone())
+                })
+                .or_else(|| self.view.share_review.clone())
+            {
+                Some(target) => target,
+                None => {
+                    self.view.failure = Some(Failure::SessionChanged);
+                    return;
+                }
+            };
+            if step.grants() {
+                if target.source.is_none() {
+                    self.view.failure = Some(Failure::ShareCapability);
+                    return;
+                }
+                if self.view.share_review.as_ref() != Some(&target) {
+                    self.view.failure = Some(Failure::SessionChanged);
+                    return;
+                }
+                if self.view.owner_revision.is_none()
+                    || !matches!(&self.view.scope, Scope::Present(snapshot) if snapshot.phase == Phase::Provisioned)
+                {
+                    self.view.failure = Some(Failure::OwnerApproval);
+                    return;
+                }
+            }
+            let retained = self.view.sharing.as_ref().filter(|sharing| {
+                sharing.target == target
+                    && (step != ShareStep::Bind || sharing.phase != SharePhase::Released)
+            });
+            let operation = if let Some(sharing) = retained {
+                sharing.operation.clone()
+            } else if step == ShareStep::Bind && self.view.share_operation_input.is_empty() {
+                if self
+                    .view
+                    .sharing
+                    .as_ref()
+                    .is_some_and(|sharing| sharing.phase != SharePhase::Released)
+                {
+                    self.view.failure = Some(Failure::Reconciliation);
+                    return;
+                }
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                if self.view.share_operation_input.is_empty() {
+                    self.view.failure = Some(Failure::Reconciliation);
+                    return;
+                }
+                self.view.share_operation_input.clone()
+            };
+            self.view.sharing = Some(ShareStatus {
+                target: target.clone(),
+                operation: operation.clone(),
+                phase: SharePhase::Uncertain,
+            });
+            self.share_request = Some(ShareTask {
+                target,
+                operation,
+                current: self.share_targets.clone(),
+                epoch: self
+                    .share_epoch
+                    .as_ref()
+                    .map(|epoch| (epoch.clone(), epoch.load(Ordering::Acquire))),
+            });
+            self.start(Operation::Share(step), false, context);
         }
     }
 
@@ -437,12 +625,13 @@ impl Controller {
             cancel_fence: fence,
             owned: self.owned.clone(),
             owner_revision: self.view.owner_revision,
+            sharing: self.share_request.take(),
         };
         self.view.cleanup_verified_for_manual_review = false;
         if operation == Operation::Enable {
             self.view.bundle_status = BundleStatus::Acquiring;
         }
-        if !fence {
+        if !fence && !matches!(operation, Operation::Share(_)) {
             *self.owned.lock().expect("healthy owned scope") = None;
         }
         let (sender, result) = mpsc::sync_channel(1);
@@ -460,6 +649,7 @@ impl Controller {
             cancel,
             result,
             progress,
+            sharing: request.sharing.clone(),
         };
         match std::thread::Builder::new()
             .name("desktop-remote-access".into())
@@ -491,6 +681,7 @@ impl Controller {
         };
         pending.cancel.cancel();
         let needs_fence = pending.operation.needs_cancel_fence();
+        let share_grant = matches!(pending.operation, Operation::Share(step) if step.grants());
         self.generation = self.generation.wrapping_add(1);
         self.view.cancelling = true;
         self.view.device_code = None;
@@ -500,12 +691,34 @@ impl Controller {
         }
         if needs_fence && self.fence.is_none() {
             self.start(Operation::Disable, true, context);
+        } else if share_grant && self.fence.is_none() {
+            if let Some(sharing) = &mut self.view.sharing {
+                sharing.phase = SharePhase::Uncertain;
+                self.share_request = Some(ShareTask {
+                    target: sharing.target.clone(),
+                    operation: sharing.operation.clone(),
+                    current: self.share_targets.clone(),
+                    epoch: None,
+                });
+                self.start(Operation::Share(ShareStep::Release), true, context);
+            }
         }
         // Admission remains held until the actual worker exits. A cancellation
         // token or a UI deadline is not evidence that native work stopped.
     }
 
     pub fn poll(&mut self, context: &egui::Context) {
+        if !self.view.cancelling
+            && self.pending.as_ref().is_some_and(|pending| {
+                matches!(pending.operation, Operation::Share(step) if step.grants())
+                    && pending
+                        .sharing
+                        .as_ref()
+                        .is_none_or(|task| !task.is_current(&pending.cancel))
+            })
+        {
+            self.cancel(context);
+        }
         for fence in [false, true] {
             let slot = if fence {
                 &mut self.fence
@@ -567,6 +780,9 @@ impl Controller {
                             self.view.cleanup_verified_for_manual_review =
                                 report.cleanup_verified_for_manual_review;
                             self.view.failure = report.failure;
+                            if let Some(sharing) = report.sharing {
+                                self.view.sharing = Some(sharing);
+                            }
                         }
                         Err(error) => self.view.failure = Some(error),
                     }
@@ -597,10 +813,14 @@ impl super::FesTermApp {
             }
             _ => None,
         };
-        if target.is_some_and(|target| !self.state.local_share_targets().contains(target)) {
+        let targets = self.state.local_share_targets();
+        if target.is_some_and(|target| !targets.contains(target)) {
             self.local_remote_access.reject_changed_session();
             return;
         }
+        self.local_remote_access.observe_share_targets(targets);
+        self.local_remote_access
+            .observe_share_epoch(self.state.local_share_epoch());
         self.local_remote_access.action(action, context);
     }
 }

@@ -3546,6 +3546,8 @@ pub struct AppState {
     configuration: Configuration,
     inspector_open: bool,
     input_ownership_epoch: u64,
+    #[cfg(feature = "local-host-settings")]
+    local_sharing_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
     chip_layout: ChipLayout,
     status_bar_visible: bool,
     show_session_details: bool,
@@ -3700,6 +3702,8 @@ impl AppState {
             configuration,
             inspector_open: false,
             input_ownership_epoch: 0,
+            #[cfg(feature = "local-host-settings")]
+            local_sharing_epoch: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             chip_layout: chip_layout_from_preference(settings.chip_layout()),
             status_bar_visible: settings.status_bar_visible(),
             show_session_details: settings.show_session_details(),
@@ -3988,6 +3992,11 @@ impl AppState {
     }
 
     #[cfg(feature = "local-host-settings")]
+    pub(crate) fn local_share_epoch(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+        self.local_sharing_epoch.clone()
+    }
+
+    #[cfg(feature = "local-host-settings")]
     pub(crate) fn local_share_targets(
         &self,
     ) -> Vec<crate::app::desktop_remote_access::ShareTarget> {
@@ -3998,11 +4007,17 @@ impl AppState {
                 let ApplicationSession::Persistent(native) = session.controller.session()? else {
                     return None;
                 };
+                let source = native.local_session_target();
+                let identity = source
+                    .as_ref()
+                    .map(|source| source.identity().clone())
+                    .or_else(|| native.native_identity())?;
                 Some(crate::app::desktop_remote_access::ShareTarget {
                     tab: tab.id,
                     profile: session.profile_identifier.clone(),
                     lifecycle_generation: session.controller.lifecycle_generation(),
-                    identity: native.native_identity()?,
+                    identity,
+                    source,
                 })
             })
             .collect()
@@ -4714,6 +4729,11 @@ impl AppState {
     /// every invocation surface must converge here rather than implementing
     /// independent tab/session policy.
     pub fn dispatch(&mut self, command: AppCommand, context: &egui::Context) {
+        // A new central command invalidates pending sharing review before state
+        // mutation. This window-local fence can only deny, never authorize.
+        #[cfg(feature = "local-host-settings")]
+        self.local_sharing_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         let previous_owner = (self.active, self.inspector_open);
         if let Some(profile_id) = command.launched_profile_id() {
             self.pending_profile_usage = Some(profile_id.to_owned());

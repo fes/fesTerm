@@ -7073,7 +7073,13 @@ impl FesTermApp {
 
     pub(crate) fn frame_logic(&mut self, context: &egui::Context) {
         #[cfg(feature = "local-host-settings")]
-        self.local_remote_access.poll(context);
+        {
+            self.local_remote_access
+                .observe_share_epoch(self.state.local_share_epoch());
+            self.local_remote_access
+                .observe_share_targets(self.state.local_share_targets());
+            self.local_remote_access.poll(context);
+        }
         #[cfg(feature = "experimental-dev-tunnels")]
         {
             self.poll_native_tunnel(context);
