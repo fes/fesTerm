@@ -927,6 +927,12 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   old/new-frontend, End refusal/cancellation/original-operation regressions and
   two selected actual native SSH/PTY routes cover this increment, not physical
   app suspension, native vault or the entire earlier sixteen-case matrix.
+  The dependent CI compatibility repair uses the existing checked weak-CAS
+  pattern, preserving privacy Acquire/AcqRel ordering, saturation and cancellation
+  without adopting a post-MSRV atomic API. Concurrent epoch/cancellation tests
+  supplement the existing original-action fences. Its test-only native worker
+  factory follows its Unix consumers while explicit `testing` stays portable;
+  actual Windows required CI remains a separate gate.
   Combined fixed source `c5f2d024` passes all
   sixteen separately selected actual-helper SSH/native-PTY routes, including
   mobile adoption, original-operation replay and both collector/frontend

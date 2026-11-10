@@ -5534,6 +5534,7 @@
         "mobile_host_open_is_offline_and_lock_callback_cancels_without_another_frame",
         "mobile_host_suspend_fences_pending_work_and_never_arms_automatic_creation",
         "mobile_host_private_generation_exhaustion_refuses_new_work",
+        "mobile_host_private_generation_concurrent_invalidation_preserves_cancellation_and_saturates",
         "mobile_host_native_privacy_handle_is_shared_with_suspension_owner",
         "mobile_host_installed_frontend_adopts_before_running_and_lock_never_detaches_or_replays",
         "mobile_host_close_retires_correlated_attachment_without_end_or_late_frontend_mutation",

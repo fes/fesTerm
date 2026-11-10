@@ -54,11 +54,18 @@ impl Privacy {
     }
 
     pub(super) fn invalidate(&self) {
-        let _ = self
-            .epoch
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
-                value.checked_add(1)
-            });
+        let mut current = self.epoch.load(Ordering::Acquire);
+        while let Some(next) = current.checked_add(1) {
+            match self.epoch.compare_exchange_weak(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
         let mut owners = self
             .owners
             .lock()

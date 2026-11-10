@@ -72,6 +72,41 @@ fn mobile_host_private_generation_exhaustion_refuses_new_work() {
 }
 
 #[test]
+fn mobile_host_private_generation_concurrent_invalidation_preserves_cancellation_and_saturates() {
+    for initial in [7, u64::MAX - 4] {
+        let privacy = Arc::new(Privacy::default());
+        privacy.epoch.store(initial, Ordering::Release);
+        let token = privacy.token(initial);
+        assert!(!token.is_cancelled());
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let privacy = privacy.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let mut previous = privacy.epoch();
+                    for _ in 0..64 {
+                        privacy.invalidate();
+                        let current = privacy.epoch();
+                        assert!(current > previous || current == u64::MAX);
+                        previous = current;
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let expected = initial.saturating_add(8 * 64);
+        assert_eq!(privacy.epoch(), expected);
+        assert!(token.is_cancelled());
+        assert!(privacy.token(initial).is_cancelled());
+        assert_eq!(privacy.token(expected).is_cancelled(), expected == u64::MAX);
+    }
+}
+
+#[test]
 fn mobile_host_save_and_reviewed_import_are_metadata_only_not_execution_approval() {
     let profiles = crate::profiles::testing::profiles();
     let store = profiles.store_handle();

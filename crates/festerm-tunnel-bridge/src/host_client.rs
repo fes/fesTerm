@@ -465,7 +465,7 @@ impl Worker {
         )
     }
 
-    #[cfg(any(all(test, feature = "relay"), feature = "testing"))]
+    #[cfg(any(all(test, feature = "relay", unix), feature = "testing"))]
     pub(crate) fn spawn<F, Fut>(
         scope: Scope,
         wake: Arc<dyn Fn() + Send + Sync>,

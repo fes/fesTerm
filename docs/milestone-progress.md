@@ -121,6 +121,48 @@ Rust1.99 mobile atomic deprecation failures require a separate dependent
 minimal compatibility repair before publication; they are not erased by this
 private1.98 lifecycle qualification.
 
+### Dependent required-CI compatibility repair
+
+A minimal normal child of lifecycle evidence head `2c5bb2c5` addresses the
+parent's two actual published194 CI failures, without another lifecycle feature.
+The affected function fragments were byte-identical from194 through lifecycle
+sourcefa; both original parent CI logs/hashes are retained in the handoff.
+All five direct native `Worker::spawn` consumers are Unix-guarded. Its
+test-plus-relay factory now follows that guard, while the existing explicit
+`testing` factory stays cross-platform. Production worker admission is unchanged.
+
+Mobile privacy invalidation uses the bridge's existing checked weak-CAS pattern
+instead of the atomic update deprecated in1.99. Acquire load/failure and AcqRel
+success ordering, no-wrap saturation, retry on contention/spurious failure and
+the subsequent cancellation drains are preserved. No new atomic API, lint
+waiver, dependency/toolchain/MSRV change or operation-ID replacement is added.
+The new eight-thread regression makes512 invalidations per scenario, verifies
+the exact ordinary count and near-maximum saturation, cancels the old token and
+refuses stale/exhausted admissions. Existing original-End/creation/cancellation
+and correlated-retirement cases remain in the same **15 pass/0 fail/0 ignored**
+focused mobile selector (208 filtered), exit0 on actual private1.98.
+
+Actual1.98 strict mobile HOST, default/host-routing bridge and non-default
+`client,testing` bridge all-target profiles each exit0. Actual existing1.99.1
+strict mobile HOST and default/host-routing bridge all-target profiles also each
+exit0, using absolute tools under
+`/Users/fes/.rustup/toolchains/stable-aarch64-apple-darwin/bin`
+(`rustc 58cf8f9c35b3`, Cargo `5f94df4789f0`), with separately owned cloned warm
+target, jobs1/debug0/incremental0 and no installation/default mutation. Selected
+strict success does not erase retained vendor or objcopy/libLLVM warnings.
+Fresh changed-source private1.98 arm64 Simulator check/link both exit0; its
+separately preserved executable SHA-256 is
+`d73e332040f321391d23c0aedf958ca8ff53c568787c2bae6ae66a63e53f533c`.
+The lifecycle sourcefa executable and all older artifacts remain untouched.
+
+The handoff's named production-diff check proves only the privacy increment and
+the test-only Unix guard changed after lifecycle sourcefa; native End/retirement
+and helper bodies are otherwise identical. The two actual native runs remain
+attributed to their lifecycle inputs, not rerun or relabeled as a new-head
+aggregate. Rust1.95 itself, actual Windows required CI, actual1.99 iOS-target CI,
+changed-source Android, physical lifecycle/native vault, GUI, sharing and durable
+cold-restart reconciliation remain separate gates.
+
 ## Keeping the portable receipt crash regressions in mandatory CI
 
 The retained reliability review found that default bridge tests enable relay
