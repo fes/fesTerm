@@ -1627,6 +1627,11 @@ owner validation precedes login admission and is refreshed before retry.
 Disabled/StopRequested/CleanupPending, missing/revoked/changed consent and
 cloud/bundle/other failures never authorize automatic retry. HOSTSETUP-01 must
 still verify real-manager behavior and OS logout/cgroup survival independently.
+The ignored Linux-only `linux_login_native_read_only_logind_proof` prepares
+direct production login1 observation under explicit ordinary-UID/expectation
+inputs and an exact-one selection guard. Query errors are never negative
+evidence; source/portable checks and Linux compilation are not native execution.
+This read-only smoke leaves transport/manager/logout/daemon-survival gates open.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |

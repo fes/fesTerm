@@ -65,6 +65,24 @@ if [ "$(uname -s)" = Linux ] && [ "${FESTERM_RUN_LINUX_RECORDING_VALIDATION:-}" 
 else
     printf 'suite=linux-recording-export status=skipped reason=linux-and-explicit-opt-in-required\n' >>"$result_path"
 fi
+if [ "${FESTERM_ADR84_LOGIND_READ_ONLY:-}" = 1 ]; then
+    logind_test=controller::linux_login::tests::linux_login_native_read_only_logind_proof
+    if [ "$(uname -s)" = Linux ] &&
+        logind_listing=$(cargo test --locked -p festerm-host-setup \
+        --features host-runtime,native-services,cloud --lib "$logind_test" \
+        -- --exact --ignored --list) &&
+        [ "$(printf '%s\n' "$logind_listing" | grep -Fxc "$logind_test: test")" = 1 ] &&
+        cargo test --locked -p festerm-host-setup \
+            --features host-runtime,native-services,cloud --lib "$logind_test" \
+            -- --exact --ignored --nocapture --test-threads=1; then
+        printf 'suite=linux-logind-read-only status=pass\n' >>"$result_path"
+    else
+        printf 'suite=linux-logind-read-only status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=linux-logind-read-only status=skipped reason=explicit-opt-in-required\n' >>"$result_path"
+fi
 # Exit status 3 from the UI-flow runner means Maestro is not installed.
 record_ui_flows() {
     case "$1" in

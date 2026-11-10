@@ -618,6 +618,14 @@ and three `host_runtime_login_retry_snapshot_` regressions for lease release,
 bounded persistent Busy/non-Busy refusal and revoked/changed consent.
 Only the post-login-loss current snapshot read waits briefly for contention;
 fresh bundle and owner validation remains mandatory before the login-only exit.
+The source-only `linux_login_native_read_only_logind_proof` is ignored and
+Linux-only, with explicit opt-in/current ordinary UID/expected eligibility
+inputs. Its direct production query distinguishes authoritative `Ok(false)`
+from unknown/error; fixed exact-one registration guards prohibit zero-test
+native passes. Portable checks and Linux compilation are not native execution.
+The read-only [operator contract](../native-host-services.md#read-only-linux-logind-smoke-opt-in-native-execution-pending)
+does not qualify activation, transport/last-logout or daemon/cgroup survival;
+those HOSTSETUP-01 gates remain pending. No production behavior changes.
 
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation

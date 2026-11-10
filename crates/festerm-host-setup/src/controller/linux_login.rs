@@ -401,6 +401,35 @@ mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "read-only real logind proof: explicit ordinary-user Linux lab inputs required"]
+    async fn linux_login_native_read_only_logind_proof() {
+        assert_eq!(
+            std::env::var("FESTERM_ADR84_LOGIND_READ_ONLY").as_deref(),
+            Ok("1"),
+            "explicit FESTERM_ADR84_LOGIND_READ_ONLY=1 is required"
+        );
+        let expected_uid = std::env::var("FESTERM_ADR84_LOGIND_EXPECT_UID")
+            .expect("FESTERM_ADR84_LOGIND_EXPECT_UID is required")
+            .parse::<u32>()
+            .expect("expected UID must be numeric");
+        let actual_uid = festerm_unix_security::current_user_id()
+            .expect("real/effective UID must match an ordinary non-root caller");
+        assert_eq!(expected_uid, actual_uid, "expected UID must be the caller");
+        let expected = match std::env::var("FESTERM_ADR84_LOGIND_EXPECT").as_deref() {
+            Ok("eligible") => true,
+            Ok("ineligible") => false,
+            _ => panic!("FESTERM_ADR84_LOGIND_EXPECT must be eligible or ineligible"),
+        };
+        let observed = Logind
+            .eligible(&CancellationToken::new())
+            .await
+            .expect("production logind query failed: unknown is never ineligibility evidence");
+        assert_eq!(observed, expected, "verified current-login proof differs");
+        println!("read-only production logind proof: uid={actual_uid} eligible={observed}");
+    }
+
     fn session(class: &str, kind: &str, state: &str) -> Vec<u8> {
         format!("(uo) 1000 \"/org/freedesktop/login1/user/_1000\"\ns \"c1\"\ns \"{class}\"\ns \"{kind}\"\ns \"{state}\"\n").into_bytes()
     }

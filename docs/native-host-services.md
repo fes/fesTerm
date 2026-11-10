@@ -219,6 +219,68 @@ An OS configuration that terminates the user-manager/session cgroup on logout
 may kill daemons independently; this is an unresolved native prerequisite, not
 fixture-proven survival or authorization to change OS policy.
 
+### Read-only Linux logind smoke (opt-in; native execution pending)
+
+The ignored Linux-only test
+`controller::linux_login::tests::linux_login_native_read_only_logind_proof`
+calls unchanged production `Logind.eligible` directly, not the admission wrapper
+that intentionally collapses query errors and ineligibility. It uses the actual
+system bus, fixed trusted root-owned `busctl`, pinned unique login1 owner/UID,
+actual caller UID and session Class/Type/State checks, including final issuer and
+inventory rechecks. There is no fake adapter or alternate bus/tool selector.
+
+All three environment inputs are mandatory when explicitly selecting the test:
+
+| Variable | Required value |
+| --- | --- |
+| `FESTERM_ADR84_LOGIND_READ_ONLY` | Exactly `1` |
+| `FESTERM_ADR84_LOGIND_EXPECT_UID` | Expected ordinary caller's numeric UID; must match both real and effective UID, never root |
+| `FESTERM_ADR84_LOGIND_EXPECT` | Predeclared `eligible` or `ineligible` |
+
+Use the following fixed selector only in a separately authorized Linux window,
+with those inputs exported. The platform and registration guards prevent a
+cfg-excluded or mistyped zero-test result from being called a pass:
+
+```sh
+(
+    set -eu
+    [ "$(uname -s)" = Linux ] || { echo "Linux required" >&2; exit 1; }
+    : "${FESTERM_ADR84_LOGIND_READ_ONLY:?explicit opt-in required}"
+    : "${FESTERM_ADR84_LOGIND_EXPECT_UID:?expected ordinary UID required}"
+    : "${FESTERM_ADR84_LOGIND_EXPECT:?predeclared eligibility required}"
+    selector=controller::linux_login::tests::linux_login_native_read_only_logind_proof
+    listing=$(cargo test --locked -p festerm-host-setup \
+        --features host-runtime,native-services,cloud --lib "$selector" \
+        -- --exact --ignored --list)
+    [ "$(printf '%s\n' "$listing" | grep -Fxc "$selector: test")" = 1 ]
+    cargo test --locked -p festerm-host-setup \
+        --features host-runtime,native-services,cloud --lib "$selector" \
+        -- --exact --ignored --nocapture --test-threads=1
+)
+```
+
+Acceptance requires **one passed, zero failed, zero ignored**, the fixed source
+head/compiler, raw listing/run logs and exits, and printed observed UID/result.
+Missing/invalid inputs, root/effective-UID mismatch and query errors fail.
+`ineligible` accepts only production `Ok(false)` after a complete stable proof.
+A missing login1 user object, missing bus/tool, timeout or unknown metadata is
+an error, **not** negative evidence. Do not change settings to make it pass.
+
+The existing optional-suite shell aggregator discovers this test only with
+its global opt-in plus `FESTERM_ADR84_LOGIND_READ_ONLY=1`; an explicitly requested
+non-Linux run or missing exact registration fails instead of passing zero tests.
+That umbrella executes other suites: use the bounded command above for this
+read-only acceptance, not the whole umbrella.
+
+Source preparation/portable checks and Linux compilation are not native proof;
+the Linux-only test body is cfg-excluded on macOS. A future VM window may open
+and close only owned interactive SSH PTY sessions. Other eligible baseline
+sessions, including an eligible observer session, block the negative scenario:
+never log out unrelated sessions or choose expectations after seeing a result.
+This smoke does not qualify manager activation, host transport retirement,
+last-logout retry/load, or persistent daemon/helper/grant/cgroup survival.
+No service, linger, account, permission, startup or OS-setting changes are made.
+
 ## Shared lifecycle API
 
 `services::Services::current_user(&Store, state_dir)` binds the actual protected
