@@ -420,6 +420,13 @@ fn validate_archive(
             let mode = entry.header().mode().map_err(|_| ArtifactError::Archive)?;
             read_entry(entry, &name, size, mode, manifest, &mut entries)?;
         }
+        let cursor = tar.into_inner();
+        if cursor.get_ref()[cursor.position() as usize..]
+            .iter()
+            .any(|byte| *byte != 0)
+        {
+            return Err(ArtifactError::Archive);
+        }
     }
     if entries.len() != allowed_names(manifest.platform).len() {
         return Err(ArtifactError::Archive);
@@ -855,6 +862,18 @@ mod tests {
         trailing.extend_from_slice(b"trailing junk");
         assert_eq!(
             verify_fixture(&manifest(&trailing, &expected), &trailing, &expected).unwrap_err(),
+            ArtifactError::Archive
+        );
+        let mut hidden = Vec::new();
+        flate2::read::GzDecoder::new(archive(expected.platform).as_slice())
+            .read_to_end(&mut hidden)
+            .unwrap();
+        hidden.extend_from_slice(b"hidden record beyond tar end marker");
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&hidden).unwrap();
+        let hidden = encoder.finish().unwrap();
+        assert_eq!(
+            verify_fixture(&manifest(&hidden, &expected), &hidden, &expected).unwrap_err(),
             ArtifactError::Archive
         );
     }
