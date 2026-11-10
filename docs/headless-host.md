@@ -183,7 +183,10 @@ origin isolation, stale completions, exact stop/removal receipts, immutable
 identity, pre-login refusal, private/corrupt/busy state, pin mismatch and refusal
 exit codes. They also cover foreground settings changing before consent commit,
 publish-time drift, recovered in-flight tickets and interrupted atomic writes.
-Tests use synthetic data and policy-qualified private fixture directories.
+Tests use synthetic data. Private fixture directories live under the checkout on
+Unix; on Windows they use a user or system Temp parent that passes the
+private-storage policy. The fixture guard attempts cleanup of only its own
+directory when dropped.
 They do not access accounts, secrets, cloud resources, installed applications or
 native services. Native/service/package qualification remains in `HOSTSETUP-01`
 in [manual validation](manual-validation.md).
