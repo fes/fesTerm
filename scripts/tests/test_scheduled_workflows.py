@@ -1,7 +1,10 @@
 from pathlib import Path
 import importlib.util
+import os
 import re
+import subprocess
 import tempfile
+import textwrap
 import unittest
 
 
@@ -13,6 +16,64 @@ SPEC = importlib.util.spec_from_file_location(
 headless_vulkan = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(headless_vulkan)
+
+
+@unittest.skipIf(os.name == "nt", "Linux CI registration uses a Unix Bash shell")
+class LogindRegistrationWorkflowTests(unittest.TestCase):
+    SELECTOR = (
+        "controller::linux_login::tests::linux_login_native_read_only_logind_proof"
+    )
+    STEP = "Compile and list the Linux read-only logind proof without executing it"
+
+    def step(self):
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        quality = ci.split("\n  quality:\n", 1)[1]
+        step = quality.split(f"      - name: {self.STEP}\n", 1)[1].split(
+            "\n      - ", 1
+        )[0]
+        return quality, step, textwrap.dedent(step.split("        run: |\n", 1)[1])
+
+    def test_linux_registration_is_explicit_and_precedes_workspace_work(self):
+        quality, step, script = self.step()
+        self.assertIn("        if: matrix.os == 'ubuntu-latest'\n", step)
+        self.assertIn("        shell: bash\n", step)
+        self.assertLess(quality.index(self.STEP), quality.index("cargo clippy --workspace"))
+        self.assertLess(quality.index(self.STEP), quality.index("cargo test --workspace"))
+        self.assertIn(f"selector={self.SELECTOR}", script)
+        self.assertEqual(script.count("cargo test"), 1)
+        self.assertIn("cargo test --locked -p festerm-host-setup", script)
+        self.assertIn('--features host-runtime,native-services,cloud --lib "$selector"', script)
+        self.assertIn("-- --exact --ignored --list", script)
+        self.assertNotRegex(step, r"env:|continue-on-error:|FESTERM_|optional-validation")
+        subprocess.run(["bash", "-n"], input=script, text=True, check=True)
+
+    def test_exact_one_guard_refuses_zero_duplicates_and_preserves_cargo_failure(self):
+        _, _, script = self.step()
+        mock = (
+            'cargo() { printf "%s" "$FIXTURE_LISTING"; return "$FIXTURE_EXIT"; }\n'
+        )
+        line = f"{self.SELECTOR}: test\n"
+        for listing, cargo_exit, expected_exit in (
+            (line, 0, 0),
+            ("", 0, 1),
+            (line + line, 0, 1),
+            (f"{self.SELECTOR}_other: test\n", 0, 1),
+            (line, 42, 42),
+        ):
+            with self.subTest(listing=listing, cargo_exit=cargo_exit):
+                result = subprocess.run(
+                    ["bash", "-c", mock + script],
+                    env=dict(
+                        os.environ,
+                        FIXTURE_LISTING=listing,
+                        FIXTURE_EXIT=str(cargo_exit),
+                    ),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, expected_exit, result.stderr)
+                if cargo_exit == 0:
+                    self.assertEqual(result.stdout, listing.rstrip("\n") + "\n")
 
 
 class HeadlessVulkanWorkflowTests(unittest.TestCase):
