@@ -2525,6 +2525,12 @@ pub enum AppCommand {
     )]
     HostRecipe(festerm_config::host_recipes::MetadataCommand),
     #[cfg(feature = "experimental-dev-tunnels")]
+    HostRecipeFromProfiles {
+        tab_id: TabId,
+        request: egui::Id,
+        command: festerm_config::host_recipes::MetadataCommand,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
     ImportPublicDevTunnelProfile {
         import: crate::tunnel_profile_import::PublicProfileImport,
     },
@@ -4734,6 +4740,8 @@ impl AppState {
             AppCommand::RetrySftpFileManagerConnection { tab_id, target } => {
                 self.retry_sftp_file_manager_connection(tab_id, target, context)
             }
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::HostRecipeFromProfiles { .. } => {}
             AppCommand::RetryTerminalFontDownload
             | AppCommand::HostRecipe(_)
             | AppCommand::StartStoredPasswordSshProfile { .. }

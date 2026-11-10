@@ -65,7 +65,13 @@ Persistence publishes the replacement/outcome only on success; export does
 not write. No command in this vocabulary can sign in, create/end a remote
 shell, grant host access or install a host. `HostBrowser` independently plans
 explicit find/single-host/refresh requests with stale-result fencing; it is
-not a network executor. The actual host UI/connection path is deferred under
+not a network executor. The experimental desktop Profiles recipe manager uses
+`HostRecipeFromProfiles { tab_id, request, command }` as an identified invocation
+of that same handler. The coordinator refuses obsolete editors before any
+effect and reports the transactional result only to the submitting editor.
+Preview uses the shared portable parser; import confirmation only saves metadata.
+Export returns JSON to the view for explicit clipboard copy and never saves.
+The actual host connection path is deferred under
 [#681](https://github.com/fes/fesTerm/issues/681), not delegated to legacy
 `SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
 

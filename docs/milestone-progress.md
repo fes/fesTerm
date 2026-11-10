@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Managing saved host recipes without a live executor
+
+The ADR 0084 metadata foundation now has a small experimental desktop home in
+Profiles. Public host/account/logical/exact identities remain distinct; edits
+retain argument-vector boundaries, ordinary copies get new logical IDs, and
+exact-session shortcuts are deliberate. Import requires inspection but never
+records execution approval. Identified commands retain failed drafts and export
+JSON without pretending it was saved. No interaction starts sign-in, a shell,
+sharing or migration. Live host inventory, protected trust/Connect, mobile UI
+and native qualification remain open; ADR 0084 is still Proposed and stage 6
+is incomplete.
+
 ## Saving host recipes without creating shells
 
 ADR 0084 separates a reusable client recipe from a running remote shell.

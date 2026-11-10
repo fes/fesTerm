@@ -38,6 +38,9 @@ foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
 messages and opt-in owner-key authentication primitives. No HOST endpoint or
 remote creation is exposed; security review and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
+Experimental desktop Profiles also manages public host/session recipe metadata
+offline (add/edit/copy/delete and reviewed JSON import/export); it exposes no
+live HOST connection or execution approval.
 
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),

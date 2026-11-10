@@ -67,6 +67,20 @@ distinguish export from saving. The desktop regression includes `dev_tunnel`
 in its name so the existing experimental CI selector runs its no-tunnel/browser
 assertions with the feature enabled; this does not replace native network evidence.
 
+The experimental desktop **Profiles → Host/session recipes** panel has
+deterministic interaction coverage for network-free navigation, typed editing,
+import preview/inspection before save, content-free validation errors, fresh
+versus exact-target copies, export and confirmed deletion. Identified request
+tests retain failed drafts and refuse stale results; the actual application
+save regression covers the identified handler with unavailable credential storage
+and no tunnel/browser start. No new snapshots or native screenshots are claimed.
+Signed Windows/macOS/Linux checks remain **manual/native and usability**:
+keyboard/focus traversal and screen-reader labels at narrow sizes, clipboard
+export, explicit error recovery and network/service/vault instrumentation while
+opening, editing, saving, copying, importing and deleting. Confirm legacy account
+selection, generation pins and manual-migration UI remain unchanged. The panel
+must not display an enabled Connect/Create/Review Trust action.
+
 Before future stage 6 execution is exposed, qualify explicit first-execution
 review/reconfirmation of imported shell/argv/cwd, lifetime and resume/create
 behavior against verified host/account/principal identity. Import, save or a
@@ -82,7 +96,7 @@ Cancel/stale-generation refusal and manual deferral. Setup/sharing approval
 must not authorize restart. This remains deferred under #681/ADR 0084 section
 11; no dialog or live migration acceptance is claimed here.
 
-The new host card/launcher, verified-principal/trust binding, authorized
+The new live host card/launcher, verified-principal/trust binding, authorized
 inventory, resume-or-create/always-new execution and temporary leases remain
 **deferred behind the reviewed host endpoint and UI wiring**, not passed.
 Extend DT-05/DT-07/DT-08, CP-11 and MOB-03/MOB-06 once those prerequisites

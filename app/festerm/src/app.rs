@@ -2214,6 +2214,25 @@ impl FesTermApp {
     }
 
     #[cfg(feature = "experimental-dev-tunnels")]
+    fn apply_host_recipe_editor_command(
+        &mut self,
+        tab_id: TabId,
+        request: egui::Id,
+        command: festerm_config::host_recipes::MetadataCommand,
+        context: &egui::Context,
+    ) {
+        if !screens::host_recipe_request_is_current(context, tab_id, request) {
+            return;
+        }
+        self.apply_host_recipe_command(command);
+        let outcome = self
+            .host_recipe_outcome
+            .clone()
+            .ok_or(self.configuration_status.settings_message());
+        screens::report_host_recipe_outcome(context, tab_id, request, outcome);
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
     pub(crate) fn import_public_tunnel_profile(
         &mut self,
         import: crate::tunnel_profile_import::PublicProfileImport,
@@ -7838,6 +7857,14 @@ impl FesTermApp {
         if let Some(command) = screen_command {
             match command {
                 AppCommand::HostRecipe(command) => self.apply_host_recipe_command(command),
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::HostRecipeFromProfiles {
+                    tab_id,
+                    request,
+                    command,
+                } => {
+                    self.apply_host_recipe_editor_command(tab_id, request, command, ui.ctx());
+                }
                 command @ (AppCommand::OpenRecording
                 | AppCommand::OpenRecordingSettings
                 | AppCommand::OpenRecordingLibrary) => self.dispatch_recording_command(command),
@@ -8941,7 +8968,31 @@ mod tests {
             Recipe::default(),
         )
         .unwrap();
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
         app.apply_host_recipe_command(MetadataCommand::Save(recipe.clone()));
+        #[cfg(feature = "experimental-dev-tunnels")]
+        {
+            let context = egui::Context::default();
+            let tab = app.state.active();
+            let request = egui::Id::new("recipe-editor-save");
+            screens::install_host_recipe_request_for_test(&context, tab, request);
+            app.apply_host_recipe_editor_command(
+                tab,
+                egui::Id::new("stale-recipe-editor-save"),
+                MetadataCommand::Save(recipe.clone()),
+                &context,
+            );
+            assert!(app.state.configuration().host_recipes().is_empty());
+            app.apply_host_recipe_editor_command(
+                tab,
+                request,
+                MetadataCommand::Save(recipe.clone()),
+                &context,
+            );
+            assert!(!screens::host_recipe_request_is_current(
+                &context, tab, request
+            ));
+        }
         assert_eq!(
             app.host_recipe_outcome,
             Some(MetadataOutcome::Saved(recipe.id.clone()))

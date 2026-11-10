@@ -46,11 +46,15 @@ mod profiles;
 use destination::{DestinationFields, DestinationPane, FieldOptions, FieldStyle, DEFAULT_SSH_PORT};
 use path_autocomplete::{local_executable_field, local_working_directory_field};
 pub(crate) use profiles::clear_profiles_screen_state;
+#[cfg(all(test, feature = "experimental-dev-tunnels"))]
+pub(crate) use profiles::install_host_recipe_request_for_test;
 pub(crate) use profiles::report_dev_tunnel_save_outcome;
 pub(crate) use profiles::report_local_profile_save_outcome;
 pub(crate) use profiles::show_profiles;
 #[cfg(test)]
 pub(crate) use profiles::{has_profile_screen_state_for_test, install_profile_secret_for_test};
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use profiles::{host_recipe_request_is_current, report_host_recipe_outcome};
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use profiles::{
     local_host_account_request, profiles_has_open_editor, report_local_host_account,

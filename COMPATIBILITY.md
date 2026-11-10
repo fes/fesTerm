@@ -70,6 +70,9 @@ portable codec/identity/owner-proof/privacy/budget tests only. No listener
 advertises HOST or provides inventory/create/end, no legacy profile is converted,
 and no native/service/migration qualification is added. Enrollment and encrypted
 channel integration require independent security review before exposure.
+Desktop Profiles includes experimental offline recipe metadata management,
+with deterministic interaction/transaction tests. This is not live host
+inventory/Connect, protected trust approval or stage 6/native acceptance.
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 

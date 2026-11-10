@@ -1880,11 +1880,22 @@ For private-key and certificate authentication:
 ![Profile editor target](images/gui-mockups/profile-editor.png)
 
 For ADR 0084's new host flow, [public host recipes](configuration.md#public-host-recipes-adr-0084-foundation)
-currently have shared offline metadata commands/persistence only
+have an experimental desktop **Profiles → Host/session recipes** surface over
+shared offline metadata commands/persistence
 ([#681](https://github.com/fes/fesTerm/issues/681)). They are separate from
 legacy Dev Tunnel forms and the installed Local-profile exposure flow below.
 No new working Connect control, online indicator or sign-in-on-save is implied.
-The eventual desktop/iOS/Android UI must use those shared commands: Save,
+The desktop surface lists public host/account/logical identity and exact
+generation targets, with add/edit, duplicate, confirmed delete, reviewed JSON
+import and explicit JSON export/copy. Arguments use a JSON string vector so
+quoting and empty arguments survive edits. Host/logical IDs cannot be retargeted
+by editing. Failed writes retain the draft; results are bound to its tab/request.
+Import review is metadata inspection only, never persisted execution approval.
+All rows say execution review is required; this slice neither records provenance
+nor claims any recipe has a verified host or approval. No Connect, Create,
+Find hosts or Review Trust control is exposed. The existing experimental
+Dev Tunnels feature gate controls this desktop-only surface.
+The eventual iOS/Android UI must also use those shared commands: Save,
 edit, duplicate, import/export and delete do not create or end a shell.
 Default duplication means a fresh logical session; saving another shortcut
 to an existing session is deliberate and generation-pinned.

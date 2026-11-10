@@ -480,7 +480,8 @@ changes are introduced by the contract or client-local metadata foundations.
   contract/owner-auth evidence, with additional client-local metadata/command
   and explicit-browse state evidence for `HOST-01`/`HOST-02` under
   [#681](https://github.com/fes/fesTerm/issues/681). Their endpoint/UI/native
-  transitions and `HOST-04`/`HOST-05` remain deferred. `HOST-06` has partial
+  transitions remain deferred except experimental desktop Profiles metadata
+  management under `HOST-02`. `HOST-04`/`HOST-05` remain deferred. `HOST-06` has partial
   authenticity-foundation coverage only. Existing
   `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation coverage
   until explicit migration.
@@ -534,6 +535,15 @@ changes are introduced by the contract or client-local metadata foundations.
   These do not prove protected-state migration, a live-shell stop confirmation,
   network execution, actual shell creation
   or stage 6 end-to-end acceptance; the remaining matrix is still required.
+- **Desktop metadata UI evidence:** `host_recipe_profiles_navigation_is_metadata_only`,
+  `host_recipe_editor_routes_typed_save_and_retains_failed_draft`,
+  `host_recipe_import_requires_review_and_reports_content_free_errors`,
+  `host_recipe_duplicate_routes_fresh_or_deliberate_exact_identity` and
+  `host_recipe_export_and_confirmed_delete_route_without_ui_mutation`.
+  The existing desktop persistence regression now also exercises identified
+  editor requests and stale-request refusal. Import inspection is not protected
+  execution/trust approval. Live inventory/Connect/ensure, native accessibility
+  and stage 6 desktop/mobile/runtime acceptance remain incomplete.
 - **Automated tests implemented (authenticity foundation only):**
   `authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes`,
   `rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing`,
