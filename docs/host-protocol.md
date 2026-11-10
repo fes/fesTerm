@@ -89,8 +89,10 @@ An operation ID identifies a journaled request/result; retries must compare
 the entire owner/logical/recipe/lifetime intent and return conflict if it
 changed. This stage supplies representations, not the journal/spawn algorithm.
 
-The unreleased HOST envelope additionally carries optional `issuance_epoch`;
-Ensure/Create require it. `IssuedOperation { id, epoch }` captures the current
+The unreleased HOST envelope additionally carries `issuance_epoch` on
+Ensure/Create requests, which require it. All other requests must omit it;
+otherwise validation returns Malformed. `IssuedOperation { id, epoch }` captures
+the current
 protected namespace from authenticated capabilities for a **new explicit
 action**. `Envelope::issued` constructs that request; the server obtains the
 same pair with `issued_operation`. Responses echo the epoch and correlation
@@ -101,8 +103,17 @@ intent; reconnect, capability refresh, Stale or Unknown must never automatically
 replace its epoch. A retired namespace yields Stale/Unknown, never a new create.
 Only host-local journal serialization can rotate the namespace and safely retire
 its operation ledger. Rotation cannot discard active generations or revocation
-fences. Exact-target lifecycle operations remain generation/lease fenced and do
-not require a creation-issuance epoch. Legacy daemon/bridge wire is unchanged.
+fences. Exact-target lifecycle requests remain generation/lease fenced and must
+omit the creation-issuance epoch. Legacy daemon/bridge wire is unchanged.
+
+A capability policy enabling Ensure or Create must advertise its protected
+issuance epoch, including when constructing or replacing an owner verifier.
+For Ensure/Create, owner admission returns Stale if the policy has no advertised
+epoch or the request's epoch is newer; older epochs remain unchanged for the
+durable ledger to decide.
+Verifier replacement retains the highest observed issuance epoch even while
+creation is disabled, and refuses a lower replacement. This in-memory guard
+does not replace durable journal/rollback protection across process restarts.
 
 Inventory pages contain bounded per-target `unknown` metadata, repeated across
 pages alongside the healthy session page. `capture_with_unknowns` filters both
