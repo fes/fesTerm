@@ -223,6 +223,8 @@ jobs:
           FESTERM_HOST_TEST_HELPER="$CARGO_TARGET_DIR/debug/festerm-sessiond" \
             cargo test --locked -p festerm-tunnel-bridge --features host-routing \
               native_routes --lib -- --ignored --test-threads=1
+      - name: Check portable enrolled-owner client without host dependencies
+        run: cargo clippy --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
       - name: Test Dev Tunnel profiles and account isolation
         run: cargo test -p festerm --features experimental-dev-tunnels dev_tunnel
       - name: Test shared remote file routing

@@ -359,7 +359,6 @@ impl Capabilities {
         if (self.ensure || self.create || self.temporary) && !self.attach
             || self.temporary && !self.detach
             || self.creation_allowed && !(self.ensure || self.create)
-            || (self.ensure || self.create) && self.issuance_epoch.is_none()
         {
             return Err(ContractError::Malformed);
         }

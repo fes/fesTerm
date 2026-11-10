@@ -9,21 +9,22 @@ an explicitly creation-enabled local owner invalid before runtime composition.
 Permission-shape validation is now separate from strict wire validation;
 enrollment never persists the runtime issuer, and an unscoped verifier masks
 creation advertisements. The server projects only the actual protected
-reservation epoch without changing owner keys or permission epochs, retaining
-the issuer rollback fence. New scopes do not refresh uncertain client requests.
+reservation epoch without changing owner keys or permission epochs. Its issuer
+watermark survives within one projection chain, not fresh enrollment reloads;
+the protected durable backend guards rollback across reservations.
+New scopes do not refresh uncertain client requests.
 This closes a source composition prerequisite, not endpoint/native acceptance.
 
-## Capturing issuance before remote shell creation
-
-Operation IDs alone cannot safely outlive a bounded host journal. The
-[#681](https://github.com/fes/fesTerm/issues/681) HOST contract now pairs
-creation intent with an authenticated issuance epoch; uncertain retries retain
-that pair rather than silently acquiring a new namespace. Owner admission
-refuses future epochs, lifecycle requests omit them, and local policy
-replacement retains its issuance high-water mark even while creation is off.
-Focused codec and real-proof tests are registered with ADR 0084 evidence.
-These are contract/authentication primitives: durable native retirement,
-endpoint integration and end-to-end qualification remain separate gates.
+Qualification of frozen source `91cf2880`: protocol contracts 13/13, focused
+bridge owner/channel fixtures 15/15 and protected-enrollment fixtures 12/12 pass.
+Strict release-profile clippy passes for protocol all-targets, bridge
+relay/owner-auth all-targets, portable client/owner-auth library and enrollment
+all-targets. Formatting, trace311, workflow5 and headless/portable plus
+iOS/Android default/live-SSH dependency checks pass. Only diagnosed foreign
+russh dev metadata missing the unchanged channel exporter was invalidated
+(26 files, 37.5 MiB); this is not evidence about native startup failures.
+Native actual-current reservation/rotation composition, vault/device and
+first-connect qualification remain required.
 
 ## Keeping Windows host fixtures inside the real storage policy
 
@@ -37,6 +38,18 @@ Ancestor refusal now has a content-free diagnostic rather than an unexplained
 PermissionDenied. Native startup/service acceptance remains separately gated.
 The shared multi-command helper validation step explicitly uses fail-fast Bash
 on all platforms, so a later successful clippy cannot hide failed Windows tests.
+
+## Capturing issuance before remote shell creation
+
+Operation IDs alone cannot safely outlive a bounded host journal. The
+[#681](https://github.com/fes/fesTerm/issues/681) HOST contract now pairs
+creation intent with an authenticated issuance epoch; uncertain retries retain
+that pair rather than silently acquiring a new namespace. Owner admission
+refuses future epochs, lifecycle requests omit them, and local policy
+replacement retains its issuance high-water mark even while creation is off.
+Focused codec and real-proof tests are registered with ADR 0084 evidence.
+These are contract/authentication primitives: durable native retirement,
+endpoint integration and end-to-end qualification remain separate gates.
 
 ## Enabling desktop hosting without disturbing legacy sessions
 
@@ -8837,13 +8850,29 @@ trusted composition-root obligation, with no GUI/default caller added and a
 named future desktop/mobile/headless-CLI acceptance gate under `HOSTAUTH-01`.
 
 The transport investigation also found a real stop condition: pinned inner SSH
-verifies its host key, but the handed-off streams do not expose a shared
-connection-and-channel transcript. Both real endpoints now explicitly refuse
-owner authentication at that gate. Contract crypto fixtures and local protected
-storage tests are useful evidence, not permission to invent a verified boolean
-or expose HOST. A reviewed exporter/adapter, native vault qualification,
-foreground first-connect consent and routing integration remain prerequisites;
-no services, cloud resources, normal setup controls or legacy capabilities change.
+verified its host key, but handed-off streams did not expose a shared
+connection-and-channel transcript. A separate narrow vendor patch now derives
+that immutable binding from the actual signed original SSH session identifier
+and role-ordered channel IDs, excluding the anonymous outer relay. Client proof
+compares its private verified pin/exporter capture against the current stream;
+server success transfers the actual stream with its owner and lifetime guard.
+Real encrypted fixtures exercise relay/replay, unbound signatures, foreign
+credentials, expiry/revocation and swapped streams. Strict release-profile
+Clippy passes for host/all-target and portable client-only builds; normal/build
+iOS, Android and headless graphs exclude inappropriate desktop dependencies and
+production test-support. Final merged-source validation passes all 11 selected
+owner/paired-channel/sibling/publication tests and the vendored exporter
+regression. This is not permission to
+expose HOST: independent review, native qualification, foreground first-connect
+consent and endpoint routing integration remain prerequisites. No services,
+cloud resources, normal setup controls or legacy capabilities change.
+
+The bounded channel review follow-up retains the exact unauthenticated stream
+and typed error after failed authentication, consuming the challenge without
+returning authority. The caller can send a bounded Denied/Stale reply under its
+deadline and then close; real SSH fixtures cover both reasons. Portable
+client-only owner clippy is now separately required by CI. Challenge expiry is
+host-local monotonic state, not a signed TTL field.
 
 ## A headless host boundary without pretending the endpoint exists
 

@@ -1583,10 +1583,11 @@ in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
 HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
-The dispatcher/native consumers still require the reviewed actual
-connection-and-channel exporter and enrolled-owner stream, not just a host-key
-pin; primitive channel fixtures are not endpoint coverage. First-connect controls/native vault
-qualification remain deferred.
+Actual pinned SSH proof helpers bind the signed connection and role-ordered
+channel IDs, transferring authority only with that exact stream. Failure retains
+the unauthenticated stream for bounded denial and close. These are tested
+helpers, not authenticated endpoint coverage; first-connect controls/native
+vault qualification remain deferred.
 
 The unexposed dispatcher/client now enforce negotiated operation flags,
 preserve correlated Busy/uncertain refusals, separate idle/exchange deadlines

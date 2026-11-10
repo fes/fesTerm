@@ -1632,6 +1632,11 @@ impl Session {
                 };
 
                 if let Some(channel) = self.channels.get(&local_id) {
+                    channel.window_size().set_channel_binding(
+                        self.common.encrypted.as_ref().and_then(|enc| {
+                            enc.channel_binding(msg.sender_channel, local_id.0)
+                        }),
+                    );
                     channel
                         .send(ChannelMsg::Open {
                             id: local_id,
@@ -2123,6 +2128,11 @@ impl Session {
             self.common.config.channel_buffer_size,
         );
 
+        channel_ref.window_size().set_channel_binding(
+            self.common.encrypted.as_ref().and_then(|enc| {
+                enc.channel_binding(msg.recipient_channel, sender_channel.0)
+            }),
+        );
         let pending = PendingChannelOpen {
             recipient_channel: msg.recipient_channel,
             sender_channel,

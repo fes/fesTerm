@@ -1420,6 +1420,21 @@ mod tests {
                 .capabilities
                 .creation_allowed
         );
+        assert!(state.capabilities.issuance_epoch.is_none());
+        let advertised = enrollment
+            .current_policy()
+            .unwrap()
+            .verifier()
+            .capabilities();
+        advertised.validate().unwrap();
+        assert!(!advertised.create && !advertised.ensure && !advertised.creation_allowed);
+        assert!(advertised.issuance_epoch.is_none());
+        let mut runtime = state.capabilities;
+        runtime.issuance_epoch = Some(Epoch::new(7).unwrap());
+        assert!(enrollment
+            .approve_permissions(state.revision, true, runtime)
+            .is_err());
+        assert_eq!(enrollment.snapshot().unwrap(), state);
         configure(&store, false);
         let masked = enrollment.snapshot().unwrap();
         assert!(masked.capabilities.creation_allowed);

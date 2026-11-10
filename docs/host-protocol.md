@@ -142,8 +142,10 @@ its operation ledger. Rotation cannot discard active generations or revocation
 fences. Exact-target lifecycle requests remain generation/lease fenced and must
 omit the creation-issuance epoch. Legacy daemon/bridge wire is unchanged.
 
-A capability policy enabling Ensure or Create must advertise its protected
-issuance epoch, including when constructing or replacing an owner verifier.
+A runtime capability advertisement enabling Ensure or Create must carry its
+current protected issuance epoch. Protected enrollment templates omit it;
+project the actual runtime issuer under reservation before advertising or
+admitting creation.
 For Ensure/Create, owner admission returns Stale if the policy has no advertised
 epoch or the request's epoch is newer; older epochs remain unchanged for the
 durable ledger to decide.
@@ -500,8 +502,14 @@ capabilities; that is the protected permission template.
 Inside the protected backend composition/admission reservation,
 `OwnerVerifier::with_issuance_epoch(actual)` creates an owned projection from
 the current protected runtime issuer, retaining enrolled keys, owner/session
-permission epochs and the private issuer high-water fence. It must reject a
-lower issuer even after a permission replacement stopped publishing an epoch.
+permission epochs and any issuer high-water mark already held by its receiver.
+It rejects an issuer below that mark, including after a replacement stopped
+publishing an epoch. Projection is immutable: it does not update the original
+template. Each fresh enrollment/current-policy reload starts without an issuer
+watermark, so this check applies only within one retained projection chain.
+Rollback protection across reservations and process restarts belongs to the
+protected durable backend. Never cache old enrollment as current authority just
+to retain the in-memory check.
 Only the issuer field changes; this is not a permission transition or owner
 revocation. Never supply a request header, guessed/default epoch or cached
 advertisement. A `None` hotpath state uses the original verifier and must not
@@ -517,21 +525,59 @@ A new advertised issuer applies to newly captured operations only. Never
 refresh an uncertain client's original `IssuedOperation` or mutate its request;
 older issuances remain the durable ledger's decision.
 
-### Concrete transport integration gate
+### Real pinned SSH channel owner proof
 
-These consumers still need the reviewed actual connection-and-channel exporter
-and enrolled-owner stream integration; a host-key pin alone is not enough.
-The existing inner SSH `VerifiedHost` verifies the exact approved host key and
-its encrypted fixtures reject changed keys before authentication.
+The original blocker was concrete: vendored russh 0.62.5 kept its signed KEX
+session identifier private and neither stream exported a shared connection
+**and channel** binding. The narrow vendor patch now mints nonconstructible
+`russh::ChannelBinding` values from that original session identifier and
+role-labelled actual client/server channel numbers at authenticated open/
+confirmation paths. The original identifier survives rekey; anonymous/no-KEX
+outer relay streams never receive a binding. Exporter bytes are not a credential.
 
-Both real stream types therefore expose `require_owner_channel_binding`, which
-returns the actionable `ChannelBindingUnavailable` error, even after genuine
-host-key verification. No seed is retrieved and no challenge is signed/admitted
-by this gate. A reviewed role/domain-separated transport exporter carried
-immutably with both stream endpoints, plus anti-relay/reflection/cross-channel
-integration tests, is prerequisite to a production signing/verification adapter.
-The lower-level `OwnerSigningKey::prove` remains a contract primitive, not that
-adapter; fixture proofs do not qualify the missing seam.
+`VerifiedHost` still approves the exact SSH host key before the inner connection
+can open channels. `ClientConnection` privately captures that actual pin and
+channel binding; replacing its public stream invalidates owner signing. Server
+`HostStream` retains its actual loaded stable `HostIdentity` binding, not a
+client-supplied identity. Neither side accepts public trust booleans or caller-
+constructed exporter bytes.
+
+The portable `client,owner-auth` build includes client challenge/proof helpers;
+server pending and authenticated-stream types additionally require `relay`.
+The API is:
+
+1. `HostStream::challenge_owner(&OwnerVerifier)` returns noncloneable
+   `PendingChannelOwnerChallenge`; transmit its `challenge()` as bounded JSON.
+2. `ClientConnection::prove_owner(&ClientOwnerKey, &OwnerBinding, &ChannelOwnerChallenge)`
+   opens only native credentials with the exact current locally approved
+   installation/host/key/account/owner. Explicit headless file credentials use
+   `prove_owner_headless(&ExplicitHeadlessFileStore, ...)`, never native failure
+   fallback. The challenge must match this actual pinned channel.
+3. `HostStream::authenticate_owner(self, pending, &proof, &current_verifier)`
+   consumes the exact stream/pending value and verifies current enrollment,
+   epochs, nonce and monotonic expiry. Every result consumes the challenge.
+   Success returns sealed `OwnerAuthenticatedStream`; `into_parts()` transfers
+   the **same actual stream**, `VerifiedOwner` and `OwnerConnectionGuard`
+   together. Keep the guard through shutdown; freshly authorize every operation
+   under the protected policy lease. Do not combine authority with another stream.
+   Failure returns opaque `OwnerAuthenticationFailure`; its `into_parts()`
+   returns the same unauthenticated stream and typed reason, never owner
+   authority. Send a bounded typed Denied/Stale reply under the endpoint's
+   deadline, then close; the pending challenge remains consumed.
+
+The signed message starts with
+`fesTerm HOST owner client-to-host SSH channel proof v1\0`, the actual exporter,
+then the existing canonical challenge (host/key, owner, connection, epochs
+and nonce). Expiry is enforced by the host's monotonic pending-challenge
+deadline; no TTL or expiry field is signed. This rejects relay/reflection,
+different channels/connections,
+old unbound signatures and replay. `require_owner_channel_binding()` remains
+fail-closed for absent/mismatched bindings. Lower-level `OwnerSigningKey::prove`
+is still only the legacy contract primitive, not a production stream adapter.
+The helpers implement no listener or automatic challenge/framing loop; pending
+slots, frame bounds, timeout/cancellation and real endpoint composition remain
+the routing owner's responsibility. Independent review and native qualification
+are required before exposing HOST.
 
 First-connect UX is also deferred: use explicit advanced host-local public-key
 import/fingerprint confirmation or an integrated foreground setup handoff, never
@@ -805,7 +851,9 @@ generation and revision changes, version-first refusal of actual legacy/future
 shapes, strict zero-field variants and non-progressing pagination.
 The three-platform CI quality matrix explicitly enables `owner-auth` in its
 bridge relay test and Dev Tunnels clippy combinations, so these optional
-security proofs compile, run and lint on Linux, macOS and Windows. This is
+security proofs compile, run and lint on Linux, macOS and Windows. A separate
+strict `client,owner-auth` lib clippy step disables default features to preserve
+the portable client-only boundary. This is
 portable regression coverage, not native enrollment/channel/service acceptance.
 
 There is no actual legacy migration: existing profiles/protocol/host-key/vault/

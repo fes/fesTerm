@@ -5595,6 +5595,8 @@
         "protected_owner_observed_epoch_commit_recovers_only_forward_after_disk_failure",
         "reserved_secret_creation_never_replaces_existing_authority",
         "protected_owner_interrupted_initialization_cannot_switch_credential_storage",
+        "host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority",
+        "host_owner_authentication_failure_retains_stream_for_bounded_denial",
         "native_owner_reference_reopens_only_exact_approved_binding",
         "native_owner_vault_failure_never_creates_a_fallback_key",
         "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",
@@ -5637,7 +5639,7 @@
       "prerequisites": [
         "Issue #681: contracts and unexposed framed dispatcher/paired transport core only; no HOST endpoint or GUI control is exposed. Consumers still require reviewed actual inner SSH session/channel owner proof and local enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
         "Local native-control and scoped protected-enrollment adapters implemented with owned-daemon framed fixtures; native capabilities remain inventory-only until adopted terminal Attach/Detach, fair scheduling and actual owner-channel integration. Unbound uncertain reservations remain Unknown, never infer absence from denial/offline/partial inventory",
-        "Issue #681 stages 1/3: protected local enrollment/native-vault APIs implemented, no HOST endpoint or GUI controls. Integrate and independently review the actual pinned SSH role-bound anti-relay/reflection owner-authenticated stream at the dispatcher boundary before exposure",
+        "Issue #681 stages 1/3: protected enrollment and actual signed inner-SSH connection/channel exporter + role-bound proof helpers implemented. Server success transfers the exact stream with owner/lifetime guard; native defaults unchanged. Independent review, bounded endpoint composition and native/first-connect qualification remain mandatory before exposure; no listener or GUI controls",
         "Native vault/private-path/restart qualification and first-connect foreground public-key consent UX remain deferred under HOSTAUTH-01. Explicit validated forward policy reconciliation is implemented; headless-only protected-file storage requires deliberate origin-bound selection and has weaker whole-store/home rollback protection; no portable config adoption, bearer auto-enrollment or automatic seed fallback",
         "Unexposed paired terminal framing, bounded actor/client queues and FIFO output turns implemented; all nine owned native routes passed at prior milestone 1a66a935 with unchanged old-writer/control-progress assertions. The current main/enrollment/opaque-authority union requires its own native-nine/clippy rerun and different-source-family antagonist. Consuming actual owner-channel integration remains gated; native serving is fixture-only",
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth and Unix owned daemon fixtures do not qualify it",
