@@ -5782,6 +5782,7 @@
         "headless_temporary_permission_is_explicit_and_never_grants_creation",
         "headless_update_is_explicit_stopped_signed_transaction_and_status_is_not_readiness",
         "host_update_authenticated_stopped_transaction_preserves_identity_binding_grants_and_complete_helpers",
+        "host_update_admission_revalidates_full_scope_and_cancellation_before_effects",
         "host_update_rejects_live_phase_runtime_lease_downgrade_and_changed_helper_before_native_effects",
         "host_update_unknown_reload_retains_both_receipts_and_retries_only_original_target",
         "host_update_partial_new_registration_remains_exact_owned_cleanup_after_revocation",

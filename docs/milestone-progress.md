@@ -42,6 +42,19 @@ acceptance is claimed. Its separately owned FFI correction/security assessment
 and any moving child are excluded from this fan-in.
 
 Combined-source Rust/native validation is pending at this source checkpoint.
+The first combined full-feature command at `6ce107369e96c7341e6b31d2d31b4979f3579ec8`
+is retained with exit101/raw SHA-256
+`ae31987ca50eb483ca4c3192ffb48e6db1da37df0dfa89e4fd511606b18e855c`:
+compilation failed with E0308/E0277, **zero tests executed**. Stopped update still
+called the former synchronous platform/startup refusal after Linux920 replaced
+that function with its approved asynchronous current-login admission. The
+correction awaits that same policy through the CLI's existing current-thread
+runtime/shutdown lane, never removes the gate. Before native effects it refuses
+cancellation and revalidates the whole captured snapshot/identity under lock.
+The private admission seam permits deterministic unavailable-proof, cancellation
+before/after admission, revocation and same-epoch settings-change fixtures;
+none calls logind, a native manager, cloud or sign-in. No policy change or
+Windows replacement enablement is inferred: that existing refusal remains.
 All earlier61/3d commands, results, unknown Linux replies and helper-lifecycle
 qualifications below remain attributed to those sources. The existing be8
 ignored logind test is Linux-only and is not executed or called a zero-test

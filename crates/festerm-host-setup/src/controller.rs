@@ -534,14 +534,35 @@ fn read_run_record(
 
 /// Use the independently delivered new release's updater after explicit disable.
 /// No sign-in, owner approval, grant reconstruction or automatic reenable.
-pub fn update(
+pub async fn update(
     store: &Store,
     state: &Path,
     stage: &TrustedStage,
     from_version: &str,
+    cancel: &CancellationToken,
+) -> io::Result<crate::services::ReplacementReport> {
+    update_with_admission(store, state, stage, from_version, cancel, |startup| {
+        startup_admission(startup, cancel)
+    })
+    .await
+}
+
+async fn update_with_admission<A: std::future::Future<Output = io::Result<()>>>(
+    store: &Store,
+    state: &Path,
+    stage: &TrustedStage,
+    from_version: &str,
+    cancel: &CancellationToken,
+    admission: impl FnOnce(Startup) -> A,
 ) -> io::Result<crate::services::ReplacementReport> {
     let snapshot = store.snapshot()?;
-    startup_admission(std::env::consts::OS, snapshot.settings.startup)?;
+    if cancel.is_cancelled() {
+        return Err(refused("host.cloud_cancelled"));
+    }
+    admission(snapshot.settings.startup).await?;
+    if cancel.is_cancelled() {
+        return Err(refused("host.cloud_cancelled"));
+    }
     if snapshot.phase != Phase::Disabled || snapshot.binding.is_none() {
         return Err(refused("host.update_confirmed_stop_required"));
     }
@@ -892,6 +913,94 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn host_update_admission_revalidates_full_scope_and_cancellation_before_effects() {
+        for action in [
+            "denied",
+            "cancel-before",
+            "cancel-after",
+            "revoked",
+            "same-epoch-settings",
+        ] {
+            let (root, store) = fixture();
+            let state = root.path().join("host");
+            provision(&store);
+            fixture_disable(&store, &state).unwrap();
+            let before = store.snapshot().unwrap();
+            assert_eq!(before.phase, Phase::Disabled);
+            let stage = crate::services::fixture_stage(&root.path().join("candidate"));
+            let cancel = CancellationToken::new();
+            if action == "cancel-before" {
+                cancel.cancel();
+            }
+            let calls = std::cell::Cell::new(0);
+            let admitted = std::cell::RefCell::new(before.clone());
+            let error =
+                update_with_admission(&store, &state, &stage, "0.15.0", &cancel, |startup| {
+                    assert_eq!(startup, Startup::Manual);
+                    async {
+                        calls.set(calls.get() + 1);
+                        match action {
+                            "cancel-after" => cancel.cancel(),
+                            "revoked" => {
+                                store.revoke().unwrap();
+                            }
+                            "same-epoch-settings" => {
+                                store
+                                    .with_locked(|directory, current| {
+                                        let mut changed = current.clone();
+                                        changed.settings.friendly_name.push_str("-changed");
+                                        storage::replace_private(
+                                            directory,
+                                            Path::new("host-lifecycle.json"),
+                                            &serde_json::to_vec(&changed).unwrap(),
+                                        )
+                                    })
+                                    .unwrap();
+                            }
+                            _ => {}
+                        }
+                        *admitted.borrow_mut() = store.snapshot().unwrap();
+                        if action == "denied" {
+                            return Err(io::Error::other(crate::run_exit::LoginProofUnavailable));
+                        }
+                        Ok(())
+                    }
+                })
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(calls.get(), usize::from(action != "cancel-before"));
+            assert_eq!(store.snapshot().unwrap(), *admitted.borrow());
+            if action == "denied" {
+                assert_eq!(
+                    crate::run_exit::error_exit_code(&error),
+                    crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
+                );
+            } else {
+                assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+                assert_eq!(
+                    error.to_string(),
+                    if action.starts_with("cancel") {
+                        "host.cloud_cancelled"
+                    } else {
+                        "host.runtime_consent_changed"
+                    }
+                );
+            }
+            for name in [
+                "native-service.json",
+                "native-service-update.json",
+                "host-runtime.json",
+                "host-cloud.json",
+                "daemon",
+                "host-identity",
+            ] {
+                assert!(!state.join(name).exists(), "{action}: {name}");
+            }
+        }
     }
 
     #[test]

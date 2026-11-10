@@ -256,7 +256,14 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 &path("--archive")?,
                 &path("--cache-root")?,
             )?;
-            let report = festerm_host_setup::controller::update(&store, &state, &stage, from)?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let report = runtime.block_on(with_shutdown(
+                festerm_host_setup::controller::update(&store, &state, &stage, from, &cancel),
+                cancel.clone(),
+            ))?;
             serde_json::to_string_pretty(&report)
                 .map(|report| format!("{report}\n"))
                 .map_err(|_| io::Error::other("host.status_serialization"))

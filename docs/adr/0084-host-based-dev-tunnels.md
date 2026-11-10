@@ -658,6 +658,15 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The bounded backend fan-in awaits the existing Linux current-login gate for
+stopped update rather than calling its removed synchronous predecessor.
+`host_update_admission_revalidates_full_scope_and_cancellation_before_effects`
+uses controlled admission to require cancellation, unavailable-proof, revoked
+and same-epoch changed-snapshot refusal before any native/identity effects.
+This is not real logind/native-manager evidence or Windows replacement enablement.
+The first compile RED and known actual Windows PKI crash remain in the
+[combined-source record](../milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins).
+
 The owner-approved Linux current-login slice adds portable eligibility/hostile
 metadata tests, `linux_login_proof_pins_root_owner_uid_and_refuses_inventory_or_issuer_race`,
 `linux_login_last_logout_or_uncertainty_cancels_and_drains_only_host`, query-budget/
