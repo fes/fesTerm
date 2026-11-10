@@ -8684,3 +8684,12 @@ durable ensure/leases and endpoint routing remain gated work, not simulated
 success. No services or cloud resources changed. ADR 0084 remains Proposed;
 independent antagonist/security review and platform acceptance still govern
 exposure and completion.
+
+Independent stage-1 review found why comparing only request identity was
+insufficient: an Ensure admitted while absent could later see a running
+generation without changing its capture. Admission now records protected
+logical state and monotonic record revision, with regressions using real
+current reauthorization rather than copied fences. The same review tightened
+version-first refusal, zero-field schemas and cursor progress. Optional owner
+proofs are explicitly enabled in every platform's CI test/lint combinations;
+this closes a coverage gap, not the remaining native/exposure gates.

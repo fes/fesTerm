@@ -353,17 +353,17 @@ impl VerifiedOwner {
         }
         let caps = current.policy.capabilities;
         let allowed = match &request.body {
-            Request::Capabilities => true,
+            Request::Capabilities {} => true,
             Request::List { .. } | Request::Lookup { .. } => caps.inventory,
             Request::Ensure { creation } => {
                 caps.ensure
-                    && (creation.lifetime == festerm_host_protocol::Lifetime::Persistent
+                    && (creation.lifetime == (festerm_host_protocol::Lifetime::Persistent {})
                         || caps.temporary)
             }
             Request::Create { creation } => {
                 caps.create
                     && caps.creation_allowed
-                    && (creation.lifetime == festerm_host_protocol::Lifetime::Persistent
+                    && (creation.lifetime == (festerm_host_protocol::Lifetime::Persistent {})
                         || caps.temporary)
             }
             Request::Attach { .. } => caps.attach,
@@ -385,7 +385,7 @@ impl VerifiedOwner {
             }
             _ => (None, None),
         };
-        if let Some(logical) = &logical {
+        let (logical_state, logical_revision) = if let Some(logical) = &logical {
             let grant = session_grant.ok_or(ContractError::Denied)?;
             if grant.owner != self.challenge.principal
                 || grant.logical != *logical
@@ -412,7 +412,10 @@ impl VerifiedOwner {
             {
                 return Err(ContractError::Busy);
             }
-        }
+            (Some(grant.state), Some(grant.revision))
+        } else {
+            (None, None)
+        };
         Ok(AdmissionFence {
             host: request.host.clone(),
             principal: self.challenge.principal.clone(),
@@ -423,6 +426,8 @@ impl VerifiedOwner {
             operation_epoch,
             operation: request.operation.clone(),
             logical,
+            logical_state,
+            logical_revision,
             target,
         })
     }
@@ -447,7 +452,7 @@ fn unhex<const N: usize>(value: &str) -> Result<[u8; N], ContractError> {
         return Err(ContractError::Malformed);
     }
     let mut output = [0; N];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let digit = |byte: u8| {
             if byte <= b'9' {
                 byte - b'0'
@@ -536,7 +541,7 @@ mod tests {
         assert!(owner
             .authorize(
                 &verifier,
-                &request(Request::Capabilities),
+                &request(Request::Capabilities {}),
                 Epoch::new(1).unwrap(),
                 None
             )
@@ -545,7 +550,7 @@ mod tests {
         assert!(owner
             .authorize(
                 &verifier,
-                &request(Request::Capabilities),
+                &request(Request::Capabilities {}),
                 Epoch::new(1).unwrap(),
                 None
             )
@@ -608,7 +613,7 @@ mod tests {
         assert!(owner
             .authorize(
                 &verifier,
-                &request(Request::Capabilities),
+                &request(Request::Capabilities {}),
                 Epoch::new(1).unwrap(),
                 None
             )
@@ -645,6 +650,7 @@ mod tests {
             owner: id(7),
             remote_access: true,
             state: LogicalState::Running(target.generation),
+            revision: Epoch::new(1).unwrap(),
         };
         let epoch = Epoch::new(1).unwrap();
         let admitted = owner
@@ -671,7 +677,7 @@ mod tests {
             attachment: id(4),
             name: None,
             recipe: Recipe::default(),
-            lifetime: Lifetime::Persistent,
+            lifetime: Lifetime::Persistent {},
         };
         let create = request(Request::Create {
             creation: creation.clone(),
@@ -723,7 +729,7 @@ mod tests {
                 attachment: id(4),
                 name: None,
                 recipe: Recipe::default(),
-                lifetime: Lifetime::Persistent,
+                lifetime: Lifetime::Persistent {},
             },
         });
         grant.state = LogicalState::Running(target.generation);
@@ -765,5 +771,83 @@ mod tests {
             .unwrap()
             .challenge()
             .is_err());
+    }
+
+    #[test]
+    fn host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        let mut allowed = policy();
+        allowed.capabilities = Capabilities {
+            inventory: true,
+            attach: true,
+            ensure: true,
+            create: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        };
+        let verifier = OwnerVerifier::new(allowed, &[key.public_key()]).unwrap();
+        let (pending, proof) = signed(&verifier, &key);
+        let (owner, _connection) = pending.verify(&proof, &verifier).unwrap();
+        let creation = Creation {
+            logical: id(2),
+            attachment: id(4),
+            name: None,
+            recipe: Recipe::default(),
+            lifetime: Lifetime::Persistent {},
+        };
+        let epoch = Epoch::new(1).unwrap();
+        for body in [
+            Request::Ensure {
+                creation: creation.clone(),
+            },
+            Request::Lookup { logical: id(2) },
+        ] {
+            let request = request(body);
+            let mut grant = SessionGrant {
+                logical: id(2),
+                owner: id(7),
+                remote_access: true,
+                state: LogicalState::Absent,
+                revision: epoch,
+            };
+            let absent = owner
+                .authorize(&verifier, &request, epoch, Some(&grant))
+                .unwrap();
+            grant.state = LogicalState::Running(GenerationId::new(42).unwrap());
+            let running = owner
+                .authorize(&verifier, &request, epoch, Some(&grant))
+                .unwrap();
+            assert_eq!(absent.revalidate(&running), Err(ContractError::Stale));
+            grant.state = LogicalState::Running(GenerationId::new(43).unwrap());
+            let replacement = owner
+                .authorize(&verifier, &request, epoch, Some(&grant))
+                .unwrap();
+            assert_eq!(running.revalidate(&replacement), Err(ContractError::Stale));
+            grant.state = LogicalState::Absent;
+            grant.revision = grant.revision.next().unwrap();
+            let returned_absent = owner
+                .authorize(&verifier, &request, epoch, Some(&grant))
+                .unwrap();
+            assert_eq!(
+                absent.revalidate(&returned_absent),
+                Err(ContractError::Stale)
+            );
+        }
+        let create = request(Request::Create { creation });
+        let mut grant = SessionGrant {
+            logical: id(2),
+            owner: id(7),
+            remote_access: true,
+            state: LogicalState::Absent,
+            revision: epoch,
+        };
+        owner
+            .authorize(&verifier, &create, epoch, Some(&grant))
+            .unwrap();
+        grant.state = LogicalState::Running(GenerationId::new(42).unwrap());
+        assert!(matches!(
+            owner.authorize(&verifier, &create, epoch, Some(&grant)),
+            Err(ContractError::Busy)
+        ));
     }
 }

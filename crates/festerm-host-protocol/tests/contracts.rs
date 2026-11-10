@@ -18,7 +18,7 @@ fn session(n: u32) -> SessionSummary {
             generation: GenerationId::new(u128::from(n) + 1).unwrap(),
         },
         name: format!("Shell {n}"),
-        lifetime: Lifetime::Persistent,
+        lifetime: Lifetime::Persistent {},
         attached: false,
     }
 }
@@ -33,7 +33,7 @@ fn creation() -> Creation {
             args: vec!["-l".into()],
             cwd: Some("/work".into()),
         },
-        lifetime: Lifetime::Persistent,
+        lifetime: Lifetime::Persistent {},
     }
 }
 
@@ -100,12 +100,12 @@ fn host_wire_rejects_malformed_oversized_and_version_mismatched_input() {
     recipe["body"]["creation"]["recipe"]["args"] = json!(["x\u{0}"]);
     assert!(decode::<Envelope<Request>>(&serde_json::to_vec(&recipe).unwrap()).is_err());
     let valid =
-        String::from_utf8(encode(&Envelope::new(id(1), id(3), Request::Capabilities)).unwrap())
+        String::from_utf8(encode(&Envelope::new(id(1), id(3), Request::Capabilities {})).unwrap())
             .unwrap();
     let duplicate = valid.replace("\"version\":1", "\"version\":1,\"version\":1");
     assert!(decode::<Envelope<Request>>(duplicate.as_bytes()).is_err());
     assert!(decode::<Envelope<Request>>(&vec![b' '; CONTROL_FRAME_BYTES + 1]).is_err());
-    let mut trailing = encode(&Envelope::new(id(1), id(3), Request::Capabilities)).unwrap();
+    let mut trailing = encode(&Envelope::new(id(1), id(3), Request::Capabilities {})).unwrap();
     trailing.extend_from_slice(b"{}");
     assert!(decode::<Envelope<Request>>(&trailing).is_err());
     for generation in [
@@ -124,7 +124,7 @@ fn host_wire_rejects_malformed_oversized_and_version_mismatched_input() {
 fn host_operations_roundtrip_without_conflating_detach_end_or_absence() {
     let target = session(2).target;
     let requests = [
-        Request::Capabilities,
+        Request::Capabilities {},
         Request::List { cursor: None },
         Request::Lookup { logical: id(2) },
         Request::Ensure {
@@ -162,16 +162,81 @@ fn host_operations_roundtrip_without_conflating_detach_end_or_absence() {
             logical: id(2),
             authorization_epoch: Epoch::new(1).unwrap(),
         },
-        LookupResult::Denied,
-        LookupResult::Offline,
-        LookupResult::Unknown,
-        LookupResult::Busy,
-        LookupResult::Incompatible,
+        LookupResult::Denied {},
+        LookupResult::Offline {},
+        LookupResult::Unknown {},
+        LookupResult::Busy {},
+        LookupResult::Incompatible {},
     ] {
         let frame = Envelope::new(id(1), id(3), Response::Lookup { result });
         assert_eq!(
             decode::<Envelope<Response>>(&encode(&frame).unwrap()).unwrap(),
             frame
+        );
+    }
+}
+
+#[test]
+fn host_version_header_precedes_future_or_real_legacy_body_decoding() {
+    for bytes in [
+        br#"{"protocol":"festerm-host-v1","version":2,"host":"future-host","body":{"kind":"future_operation","new_field":true}}"#.as_slice(),
+        br#"{"protocol":"festerm-bridge-v1","version":1,"body":{"kind":"legacy_operation"}}"#.as_slice(),
+        br#"{"version":4,"snapshot_schema":4,"target":{"name":"legacy","pid":42,"generation":"43"},"files":{"read":false,"windows_paths":false},"takeover":false}"#.as_slice(),
+    ] {
+        assert_eq!(decode::<Envelope<Request>>(bytes), Err(ContractError::UnsupportedVersion));
+    }
+    let mut current =
+        serde_json::to_value(Envelope::new(id(1), id(3), Request::Capabilities {})).unwrap();
+    current["body"] = json!({ "kind": "future_operation" });
+    assert_eq!(
+        decode::<Envelope<Request>>(&serde_json::to_vec(&current).unwrap()),
+        Err(ContractError::Malformed)
+    );
+    assert_eq!(
+        decode::<Envelope<Request>>(
+            br#"{"protocol":"festerm-host-v1","version":2,"version":1,"body":{}}"#
+        ),
+        Err(ContractError::Malformed)
+    );
+}
+
+#[test]
+fn host_zero_field_variants_reject_embedded_authority_and_lifetime_fields() {
+    let mut capabilities =
+        serde_json::to_value(Envelope::new(id(1), id(3), Request::Capabilities {})).unwrap();
+    capabilities["body"]["creation_allowed"] = json!(true);
+    assert_eq!(
+        decode::<Envelope<Request>>(&serde_json::to_vec(&capabilities).unwrap()),
+        Err(ContractError::Malformed)
+    );
+    let mut persistent = serde_json::to_value(Envelope::new(
+        id(1),
+        id(3),
+        Request::Ensure {
+            creation: creation(),
+        },
+    ))
+    .unwrap();
+    persistent["body"]["creation"]["lifetime"]["reconnect_grace_seconds"] = json!(60);
+    assert_eq!(
+        decode::<Envelope<Request>>(&serde_json::to_vec(&persistent).unwrap()),
+        Err(ContractError::Malformed)
+    );
+    for result in [
+        LookupResult::Denied {},
+        LookupResult::Offline {},
+        LookupResult::Unknown {},
+        LookupResult::Busy {},
+        LookupResult::Incompatible {},
+    ] {
+        let frame = Envelope::new(id(1), id(3), Response::Lookup { result });
+        decode::<Envelope<Response>>(&encode(&frame).unwrap()).unwrap();
+        let mut asserted = serde_json::to_value(&frame).unwrap();
+        asserted["body"]["result"]["logical"] = json!(id::<LogicalSessionId>(9));
+        asserted["body"]["result"]["authorization_epoch"] = json!(1);
+        assert_eq!(
+            decode::<Envelope<Response>>(&serde_json::to_vec(&asserted).unwrap()),
+            Err(ContractError::Malformed)
         );
     }
 }
@@ -307,6 +372,64 @@ fn host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursor
 }
 
 #[test]
+fn host_inventory_response_requires_exact_forward_cursor_progression() {
+    let request = Envelope::new(
+        id(1),
+        id(3),
+        Request::List {
+            cursor: Some(Cursor {
+                snapshot: id(8),
+                offset: 16,
+            }),
+        },
+    );
+    let page = InventoryPage {
+        snapshot: id(8),
+        authorization_epoch: Epoch::new(1).unwrap(),
+        sessions: (1..=16).map(session).collect(),
+        next: Some(Cursor {
+            snapshot: id(8),
+            offset: 32,
+        }),
+    };
+    let response = Envelope::new(id(1), id(3), Response::Inventory { page: page.clone() });
+    response.validate_for(&request).unwrap();
+    for offset in [0, 16, 48] {
+        let mut invalid = page.clone();
+        invalid.next.as_mut().unwrap().offset = offset;
+        assert!(
+            Envelope::new(id(1), id(3), Response::Inventory { page: invalid })
+                .validate_for(&request)
+                .is_err()
+        );
+    }
+    let backward_request = Envelope::new(
+        id(1),
+        id(3),
+        Request::List {
+            cursor: Some(Cursor {
+                snapshot: id(8),
+                offset: 32,
+            }),
+        },
+    );
+    let mut backward = page.clone();
+    backward.next.as_mut().unwrap().offset = 16;
+    assert!(
+        Envelope::new(id(1), id(3), Response::Inventory { page: backward })
+            .validate_for(&backward_request)
+            .is_err()
+    );
+    let first = Envelope::new(id(1), id(3), Request::List { cursor: None });
+    assert!(response.validate_for(&first).is_err());
+    let mut first_page = page;
+    first_page.next.as_mut().unwrap().offset = 16;
+    Envelope::new(id(1), id(3), Response::Inventory { page: first_page })
+        .validate_for(&first)
+        .unwrap();
+}
+
+#[test]
 fn host_aggregate_budgets_refuse_saturation_and_release_exact_permits() {
     let budget = Budgets::default();
     let creates = (0..MAX_PENDING_CREATES)
@@ -381,6 +504,8 @@ fn host_admission_fence_rejects_revocation_replacement_and_operation_change() {
         operation_epoch: Epoch::new(4).unwrap(),
         operation: id(8),
         logical: Some(id(2)),
+        logical_state: Some(LogicalState::Running(GenerationId::new(3).unwrap())),
+        logical_revision: Some(Epoch::new(1).unwrap()),
         target: Some(session(2).target),
     };
     fence.revalidate(&fence).unwrap();

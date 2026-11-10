@@ -180,9 +180,9 @@ jobs:
         run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Check the experimental Dev Tunnels feature
-        run: cargo clippy -p festerm -p festerm-tunnel-bridge --all-targets --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/relay -- -D warnings
-      - name: Test the experimental bridge protocol and relay
-        run: cargo test -p festerm-tunnel-bridge --features relay
+        run: cargo clippy -p festerm -p festerm-tunnel-bridge --all-targets --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/relay,festerm-tunnel-bridge/owner-auth -- -D warnings
+      - name: Test the experimental bridge protocol, relay and owner authentication
+        run: cargo test -p festerm-tunnel-bridge --features relay,owner-auth
       - name: Test Dev Tunnel profiles and account isolation
         run: cargo test -p festerm --features experimental-dev-tunnels dev_tunnel
       - name: Test shared remote file routing

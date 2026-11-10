@@ -44,6 +44,26 @@ impl<T: Validate> Validate for Envelope<T> {
         }
         self.body.validate()
     }
+
+    fn validate_wire_header(bytes: &[u8]) -> Result<(), ContractError> {
+        #[derive(Deserialize)]
+        struct Header {
+            protocol: Option<String>,
+            version: Option<u64>,
+        }
+        // Unknown bodies are skipped without constructing typed values. The
+        // second pass still enforces the complete schema and unknown fields.
+        let header: Header = serde_json::from_slice(bytes).map_err(|_| ContractError::Malformed)?;
+        if header.protocol.is_none() && header.version.is_none() {
+            return Err(ContractError::Malformed);
+        }
+        if header.protocol.as_deref() != Some(HOST_MARKER)
+            || header.version != Some(u64::from(HOST_VERSION))
+        {
+            return Err(ContractError::UnsupportedVersion);
+        }
+        Ok(())
+    }
 }
 
 /// Payload is one complete JSON object, carried by a length-prefixed channel.
@@ -52,6 +72,7 @@ pub fn decode<T: DeserializeOwned + Validate>(bytes: &[u8]) -> Result<T, Contrac
     if bytes.is_empty() || bytes.len() > CONTROL_FRAME_BYTES {
         return Err(ContractError::Limit);
     }
+    T::validate_wire_header(bytes)?;
     let value: T = serde_json::from_slice(bytes).map_err(|_| ContractError::Malformed)?;
     value.validate()?;
     Ok(value)
@@ -119,7 +140,7 @@ impl Validate for Recipe {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Lifetime {
-    Persistent,
+    Persistent {},
     Temporary { reconnect_grace_seconds: u16 },
 }
 
@@ -132,7 +153,7 @@ impl Lifetime {
 impl Validate for Lifetime {
     fn validate(&self) -> Result<(), ContractError> {
         match self {
-            Self::Persistent => Ok(()),
+            Self::Persistent {} => Ok(()),
             Self::Temporary {
                 reconnect_grace_seconds,
             } if *reconnect_grace_seconds == RECONNECT_GRACE_SECONDS => Ok(()),
@@ -203,7 +224,7 @@ pub enum DetachKind {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
-    Capabilities,
+    Capabilities {},
     List {
         cursor: Option<Cursor>,
     },
@@ -309,11 +330,11 @@ pub enum LookupResult {
         logical: LogicalSessionId,
         authorization_epoch: Epoch,
     },
-    Denied,
-    Offline,
-    Unknown,
-    Busy,
-    Incompatible,
+    Denied {},
+    Offline {},
+    Unknown {},
+    Busy {},
+    Incompatible {},
 }
 
 impl Validate for LookupResult {
@@ -423,10 +444,19 @@ impl Envelope<Response> {
         }
         let matches = match (&request.body, &self.body) {
             (_, Response::Refused { .. }) => true,
-            (Request::Capabilities, Response::Capabilities { .. }) => true,
-            (Request::List { cursor }, Response::Inventory { page }) => cursor
-                .as_ref()
-                .is_none_or(|cursor| cursor.snapshot == page.snapshot),
+            (Request::Capabilities {}, Response::Capabilities { .. }) => true,
+            (Request::List { cursor }, Response::Inventory { page }) => {
+                let offset = cursor
+                    .as_ref()
+                    .map_or(0, |cursor| usize::from(cursor.offset));
+                cursor
+                    .as_ref()
+                    .is_none_or(|cursor| cursor.snapshot == page.snapshot)
+                    && page
+                        .next
+                        .as_ref()
+                        .is_none_or(|next| usize::from(next.offset) == offset + PAGE_SIZE)
+            }
             (Request::Lookup { logical }, Response::Lookup { result }) => match result {
                 LookupResult::Running { session } => session.target.logical == *logical,
                 LookupResult::Absent {

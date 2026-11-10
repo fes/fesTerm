@@ -185,7 +185,7 @@ impl PublicRecipe {
             host,
             logical_session: LogicalSessionId::new(),
             launch,
-            lifetime: Lifetime::Persistent,
+            lifetime: Lifetime::Persistent {},
             behavior: ConnectionBehavior::ResumeOrCreate,
         };
         recipe.validate()?;
