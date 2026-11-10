@@ -51,6 +51,14 @@ impl From<ContractError> for io::Error {
 pub trait Validate {
     fn validate(&self) -> Result<(), ContractError>;
 
+    fn issuance_epoch_required(&self) -> bool {
+        false
+    }
+
+    fn issuance_epoch_allowed(&self) -> bool {
+        true
+    }
+
     /// Versioned envelopes inspect bounded headers before decoding a body
     /// whose schema may belong to a newer or legacy protocol.
     fn validate_wire_header(_bytes: &[u8]) -> Result<(), ContractError>

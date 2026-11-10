@@ -13,6 +13,18 @@ PermissionDenied. Native startup/service acceptance remains separately gated.
 The shared multi-command helper validation step explicitly uses fail-fast Bash
 on all platforms, so a later successful clippy cannot hide failed Windows tests.
 
+## Capturing issuance before remote shell creation
+
+Operation IDs alone cannot safely outlive a bounded host journal. The
+[#681](https://github.com/fes/fesTerm/issues/681) HOST contract now pairs
+creation intent with an authenticated issuance epoch; uncertain retries retain
+that pair rather than silently acquiring a new namespace. Owner admission
+refuses future epochs, lifecycle requests omit them, and local policy
+replacement retains its issuance high-water mark even while creation is off.
+Focused codec and real-proof tests are registered with ADR 0084 evidence.
+These are contract/authentication primitives: durable native retirement,
+endpoint integration and end-to-end qualification remain separate gates.
+
 ## Enabling desktop hosting without disturbing legacy sessions
 
 Older Windows installations could not enable profile hosting because shared

@@ -252,6 +252,7 @@ impl PendingOwnerChallenge {
 pub struct OwnerVerifier {
     policy: OwnerPolicy,
     keys: Vec<VerifyingKey>,
+    highest_issuance_epoch: Option<Epoch>,
 }
 
 impl OwnerVerifier {
@@ -274,6 +275,7 @@ impl OwnerVerifier {
             verified.push(key);
         }
         Ok(Self {
+            highest_issuance_epoch: policy.capabilities.issuance_epoch,
             policy,
             keys: verified,
         })
@@ -287,12 +289,20 @@ impl OwnerVerifier {
             || policy.principal != self.policy.principal
             || policy.host_epoch.get() < self.policy.host_epoch.get()
             || policy.grant_epoch.get() < self.policy.grant_epoch.get()
+            || matches!(
+                (self.highest_issuance_epoch, policy.capabilities.issuance_epoch),
+                (Some(previous), Some(next)) if next.get() < previous.get()
+            )
             || (policy.host_epoch == self.policy.host_epoch
                 && policy.grant_epoch == self.policy.grant_epoch)
         {
             return Err(ContractError::Stale);
         }
-        *self = Self::new(policy, keys)?;
+        let mut replacement = Self::new(policy, keys)?;
+        replacement.highest_issuance_epoch = replacement
+            .highest_issuance_epoch
+            .or(self.highest_issuance_epoch);
+        *self = replacement;
         Ok(())
     }
 
@@ -394,6 +404,19 @@ impl VerifiedOwner {
         if !allowed {
             return Err(ContractError::Denied);
         }
+        // Older epochs remain the durable ledger's decision. A client cannot
+        // claim an epoch the protected host has never advertised.
+        if request.body.issuance_epoch_required() {
+            let current_epoch = caps.issuance_epoch.ok_or(ContractError::Stale)?;
+            if request
+                .issuance_epoch
+                .ok_or(ContractError::Malformed)?
+                .get()
+                > current_epoch.get()
+            {
+                return Err(ContractError::Stale);
+            }
+        }
         let (logical, target) = match &request.body {
             Request::Lookup { logical } => (Some(logical.clone()), None),
             Request::Ensure { creation } | Request::Create { creation } => {
@@ -446,6 +469,8 @@ impl VerifiedOwner {
             grant_epoch: self.challenge.grant_epoch,
             operation_epoch,
             operation: request.operation.clone(),
+            intent: (&request.body).into(),
+            issuance_epoch: request.issuance_epoch,
             logical,
             logical_state,
             logical_revision,
@@ -519,7 +544,11 @@ mod tests {
     }
 
     fn request(body: Request) -> Envelope<Request> {
-        Envelope::new(id(1), id::<OperationId>(8), body)
+        let mut envelope = Envelope::new(id(1), id::<OperationId>(8), body);
+        if envelope.body.issuance_epoch_required() {
+            envelope.issuance_epoch = Some(Epoch::new(1).unwrap());
+        }
+        envelope
     }
 
     fn signed(
@@ -532,6 +561,135 @@ mod tests {
             .prove(pending.challenge(), &verifier.policy.host)
             .unwrap();
         (pending, proof)
+    }
+
+    #[test]
+    fn host_owner_creation_epoch_refuses_future_without_refreshing_older_requests() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        let mut allowed = policy();
+        allowed.capabilities = Capabilities {
+            issuance_epoch: Some(Epoch::new(2).unwrap()),
+            ensure: true,
+            create: true,
+            attach: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        };
+        let mut verifier = OwnerVerifier::new(allowed, &[key.public_key()]).unwrap();
+        let (pending, proof) = signed(&verifier, &key);
+        let (owner, _connection) = pending.verify(&proof, &verifier).unwrap();
+        let grant = SessionGrant {
+            logical: id(2),
+            owner: id(7),
+            remote_access: true,
+            state: LogicalState::Absent,
+            revision: Epoch::new(1).unwrap(),
+        };
+        let creation = Creation {
+            logical: id(2),
+            attachment: id(4),
+            name: None,
+            recipe: Recipe::default(),
+            lifetime: Lifetime::Persistent {},
+        };
+        for body in [
+            Request::Ensure {
+                creation: creation.clone(),
+            },
+            Request::Create {
+                creation: creation.clone(),
+            },
+        ] {
+            let mut request = request(body);
+            let original = request.issuance_epoch;
+            let fence = owner
+                .authorize(&verifier, &request, Epoch::new(1).unwrap(), Some(&grant))
+                .unwrap();
+            assert_eq!(fence.issuance_epoch, original);
+            request.issuance_epoch = Some(Epoch::new(2).unwrap());
+            owner
+                .authorize(&verifier, &request, Epoch::new(1).unwrap(), Some(&grant))
+                .unwrap();
+            request.issuance_epoch = Some(Epoch::new(3).unwrap());
+            assert!(matches!(
+                owner.authorize(&verifier, &request, Epoch::new(1).unwrap(), Some(&grant)),
+                Err(ContractError::Stale)
+            ));
+        }
+        verifier.policy.capabilities.issuance_epoch = None;
+        assert!(matches!(
+            owner.authorize(
+                &verifier,
+                &request(Request::Ensure { creation }),
+                Epoch::new(1).unwrap(),
+                Some(&grant)
+            ),
+            Err(ContractError::Stale)
+        ));
+    }
+
+    #[test]
+    fn host_owner_policy_replacement_retains_issuance_high_water_mark() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        let mut allowed = policy();
+        allowed.capabilities = Capabilities {
+            issuance_epoch: Some(Epoch::new(5).unwrap()),
+            ensure: true,
+            attach: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        };
+        let mut verifier = OwnerVerifier::new(allowed.clone(), &[key.public_key()]).unwrap();
+        allowed.grant_epoch = allowed.grant_epoch.next().unwrap();
+        allowed.capabilities.issuance_epoch = Some(Epoch::new(3).unwrap());
+        assert_eq!(
+            verifier.replace(allowed.clone(), &[key.public_key()]),
+            Err(ContractError::Stale)
+        );
+        assert_eq!(
+            verifier.policy.capabilities.issuance_epoch,
+            Some(Epoch::new(5).unwrap())
+        );
+
+        let mut disabled = allowed.clone();
+        disabled.capabilities = Capabilities::default();
+        verifier.replace(disabled, &[key.public_key()]).unwrap();
+        allowed.grant_epoch = allowed.grant_epoch.next().unwrap();
+        allowed.capabilities.issuance_epoch = Some(Epoch::new(4).unwrap());
+        assert_eq!(
+            verifier.replace(allowed.clone(), &[key.public_key()]),
+            Err(ContractError::Stale)
+        );
+        allowed.capabilities.issuance_epoch = Some(Epoch::new(6).unwrap());
+        verifier.replace(allowed, &[key.public_key()]).unwrap();
+    }
+
+    #[test]
+    fn host_owner_mutating_policy_requires_advertised_issuance_epoch() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        for create in [false, true] {
+            let mut invalid = policy();
+            invalid.capabilities = Capabilities {
+                ensure: !create,
+                create,
+                attach: true,
+                ..Capabilities::default()
+            };
+            assert_eq!(invalid.validate(), Err(ContractError::Malformed));
+            assert!(matches!(
+                OwnerVerifier::new(invalid.clone(), &[key.public_key()]),
+                Err(ContractError::Malformed)
+            ));
+            let mut verifier = OwnerVerifier::new(policy(), &[key.public_key()]).unwrap();
+            invalid.grant_epoch = invalid.grant_epoch.next().unwrap();
+            assert_eq!(
+                verifier.replace(invalid.clone(), &[key.public_key()]),
+                Err(ContractError::Malformed)
+            );
+            invalid.capabilities.issuance_epoch = Some(Epoch::new(1).unwrap());
+            invalid.validate().unwrap();
+            OwnerVerifier::new(invalid, &[key.public_key()]).unwrap();
+        }
     }
 
     #[test]
@@ -647,6 +805,7 @@ mod tests {
         let key = OwnerSigningKey::from_seed(&[7; 32]);
         let mut allowed = policy();
         allowed.capabilities = Capabilities {
+            issuance_epoch: Some(Epoch::new(1).unwrap()),
             inventory: true,
             attach: true,
             ensure: true,
@@ -799,6 +958,7 @@ mod tests {
         let key = OwnerSigningKey::from_seed(&[7; 32]);
         let mut allowed = policy();
         allowed.capabilities = Capabilities {
+            issuance_epoch: Some(Epoch::new(1).unwrap()),
             inventory: true,
             attach: true,
             ensure: true,
@@ -870,5 +1030,80 @@ mod tests {
             owner.authorize(&verifier, &create, epoch, Some(&grant)),
             Err(ContractError::Busy)
         ));
+    }
+
+    #[test]
+    fn host_owner_fence_rejects_changed_intent_for_the_same_operation() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        let mut allowed = policy();
+        allowed.capabilities = Capabilities {
+            issuance_epoch: Some(Epoch::new(1).unwrap()),
+            attach: true,
+            ensure: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        };
+        let verifier = OwnerVerifier::new(allowed, &[key.public_key()]).unwrap();
+        let (pending, proof) = signed(&verifier, &key);
+        let (owner, _connection) = pending.verify(&proof, &verifier).unwrap();
+        let target = Target {
+            logical: id(2),
+            generation: GenerationId::new(42).unwrap(),
+        };
+        let mut grant = SessionGrant {
+            logical: id(2),
+            owner: id(7),
+            remote_access: true,
+            state: LogicalState::Running(target.generation),
+            revision: Epoch::new(1).unwrap(),
+        };
+        let epoch = Epoch::new(1).unwrap();
+        let attach = |takeover| {
+            request(Request::Attach {
+                target: target.clone(),
+                attachment: id(4),
+                takeover,
+            })
+        };
+        let original = owner
+            .authorize(&verifier, &attach(false), epoch, Some(&grant))
+            .unwrap();
+        let changed = owner
+            .authorize(&verifier, &attach(true), epoch, Some(&grant))
+            .unwrap();
+        assert_eq!(original.revalidate(&changed), Err(ContractError::Stale));
+
+        grant.state = LogicalState::Absent;
+        let creation = Creation {
+            logical: id(2),
+            attachment: id(4),
+            name: None,
+            recipe: Recipe::default(),
+            lifetime: Lifetime::Persistent {},
+        };
+        let original = owner
+            .authorize(
+                &verifier,
+                &request(Request::Ensure {
+                    creation: creation.clone(),
+                }),
+                epoch,
+                Some(&grant),
+            )
+            .unwrap();
+        let mut changed_creation = creation;
+        changed_creation.recipe.shell = Some("/different-shell".into());
+        let changed = owner
+            .authorize(
+                &verifier,
+                &request(Request::Ensure {
+                    creation: changed_creation,
+                }),
+                epoch,
+                Some(&grant),
+            )
+            .unwrap();
+        assert_eq!(original.revalidate(&changed), Err(ContractError::Stale));
+        assert!(!format!("{changed:?}").contains("/different-shell"));
     }
 }
