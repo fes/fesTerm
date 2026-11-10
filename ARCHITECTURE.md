@@ -202,6 +202,7 @@ change, but the responsibilities should remain distinct.
     festerm-pty/           # implemented M5 local PTY/ConPTY backend
     festerm-pty-test-child/ # implemented M6 deterministic PTY test child
     festerm-sessiond/      # ADR-0025 local persistence daemon and Session client
+    festerm-host-setup/    # GUI-free embedded setup and authenticated helper artifacts
     festerm-ssh/
     festerm-config/
     festerm-ui-egui/       # implemented M4 presentation layer
@@ -321,6 +322,21 @@ relative `conpty.dll` name. Missing or invalid sidecars use inbox Kernel32
 ConPTY; an unverified module loaded before selection is an error. This preserves
 the `Session` byte/event contract while making the Windows runtime decision
 explicit and safe.
+
+### `festerm-host-setup`
+
+Owns embedded legacy installer bytes and the GUI-free authenticated helper
+release boundary (`artifacts`, ADR 0084 §9). Its strict signed manifest binds
+package/version/platform/architecture/filename/length/hash to the existing
+embedded updater key. Only its verifier constructs an immutable
+`VerifiedArtifact` containing exact bounded allowlisted regular file bytes;
+setup consumers must stage those bytes privately/atomically rather than
+reopening an archive path. No desktop/updater/GUI dependency, downloaded trust
+key, service mutation or unsigned fallback is introduced. The offline
+`festerm-verify-artifact` command verifies without extraction/execution.
+See [the wire/staging/bootstrap contract](docs/host-release-artifacts.md).
+New headless CLI inclusion, service switching and migration remain separate
+implementation gates; this is not full stage-7 acceptance.
 
 ### `festerm-sessiond`
 
@@ -686,6 +702,22 @@ Performance benchmarks should initially report trends rather than block every co
 
 ## Experimental remote session bridge
 
+ADR 0084 stage 4 adds the opt-in `festerm-host-setup::lifecycle` policy and
+standalone `app/festerm-host` composition root without GUI/graphics dependencies.
+Both desktop and headless callers can use its protected, origin-scoped
+configuration/consent journal, operation epochs and exact-owned cleanup receipts.
+Consent commits the exact foreground-approved settings under the journal lease;
+persisted operation tickets remain recoverable after interruption. Initial
+journals and staged CLI/helper files share atomic no-replace publication.
+It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
+the shared authenticated-artifact verifier. Verified helper entries and their
+exact signed provenance are staged immutably without execution;
+default legacy/mobile installer-review dependencies remain unchanged.
+No new endpoint, native service adapter, Ready result or shell-launch ownership
+is implied. Current CLI configuration/status/staging are local-only; service
+operations explicitly refuse until new endpoint/native integration. See the
+[headless boundary and adapter contract](docs/headless-host.md).
+
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
 adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
 The opt-in bridge `host-routing` module and paired
@@ -718,6 +750,16 @@ recovery adoption; a pending attachment is not an Attached success. Persistent
 shells never acquire temporary cleanup merely through attachment. Endpoint
 routing, protected enrollment/channel integration, migration and native
 reboot/device qualification remain gated; this is not remote exposure.
+The non-default
+`festerm-host-setup/owner-enrollment` feature persists exact-installation
+owner/key/account policy under the lifecycle lease, with native-vault rollback
+fencing and monotonic revocation revisions. Bridge `ClientOwnerKey` uses native
+opaque references only; enrollment does not enable access or creation.
+The real pinned SSH stream lacks a shared connection/channel transcript
+exporter, so both client/server owner-channel gates explicitly refuse.
+Pinned-channel integration and independent security review are mandatory before
+new remote capabilities; all new capabilities default denied. No remote endpoint
+or migration is enabled by these local foundations.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

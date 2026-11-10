@@ -1,0 +1,20 @@
+[package]
+name = "festerm-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Headless host lifecycle configuration and diagnostics (ADR 0084)."
+publish = false
+
+[dependencies]
+festerm-host-setup = { path = "../../crates/festerm-host-setup", features = ["lifecycle"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+festerm-sessiond = { path = "../../crates/festerm-sessiond" }
+
+[lints]
+workspace = true

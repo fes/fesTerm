@@ -1569,11 +1569,23 @@ transitions remain deferred behind endpoint integration and independent review
 in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
+HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
+Actual verified SSH client/server streams explicitly refuse owner authentication
+until a shared connection-and-channel exporter exists; this is a tested blocker,
+not authenticated endpoint coverage. First-connect controls/native vault
+qualification remain deferred.
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy and framed duplex dispatcher tests; real pinned-channel exporter/native endpoint H,N deferred |
 | `HOST-02` | Local recipe → resumed/new remote shell | Explicit Connect; atomic resume-or-create or strict attach | Authoritative absence, creation permission, stable logical ID and exact generation; no input replay | Reconcile uncertain creation; no duplicate spawn | P; contracts + local durable real-daemon ensure/crash/conflict/cancellation tests; endpoint/H,N deferred |
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; real daemon-owned expiry, adopted takeover/stale lease and end tests; sharing/endpoint/H,N deferred |
-| `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared typed setup, no default shell, protected consent, no outgoing-client install | Preserve draft; report partial setup; revoke before cleanup | P,H,N; deferred |
-| `HOST-05` | Headless package → configured service | Setup/status/configure/update/uninstall | Same setup policy; correct OS user; boot versus sign-in explicit; no JSON transfer required | Journal/reconcile exact owned resources | P,H,N; deferred |
-| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected state/account preserved; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P,H,N; deferred |
+| `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings boundary; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings; recover persisted ticket; preserve draft and exact late cleanup identity, never re-enable | P,H,N; partial boundary, native/UI deferred |
+| `HOST-05` | Headless package → configured service | Configure/status/pinned CLI and authenticated helper staging; setup/run/update/uninstall refuse | Shared disabled settings and exact-owned receipt policy; no shell/service changes; pre-login unavailable | Busy/corrupt/foreign state fails closed; retain cleanup and signed artifact evidence | P,H,N; partial boundary, endpoint/headless package/native deferred |
+| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; old daemons preserved; no grant expansion or automatic legacy recreation | Compatible rollback; no revoked-state resurrection | P: manifest/verifier foundation; H,N: switching/migration deferred |
+
+HOST-06 currently has only the independently testable
+[helper authenticity boundary](host-release-artifacts.md): signed exact-target
+metadata, immutable verified bytes and bounded archive allowlists. It does not
+implement service switching, rollback or migration; the legacy Linux script
+path is not promoted to authenticated setup.

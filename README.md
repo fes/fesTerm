@@ -41,6 +41,16 @@ durable session-control backend with real detached daemons and daemon-enforced
 temporary leases. No HOST endpoint or remote creation is exposed; independent
 review, enrollment/channel integration and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
+Protected local owner enrollment and native-vault references now have fixture
+coverage; real pinned SSH streams still refuse owner authentication until a
+shared connection/channel binding exporter is implemented and reviewed.
+
+ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
+GUI-free disabled configuration, journal status, offline pinned-CLI staging and
+authenticated helper-artifact staging without execution.
+New host setup/run/update/uninstall remain unavailable pending endpoint and
+authenticated-package integration ([#681](https://github.com/fes/fesTerm/issues/681));
+the legacy installer is unchanged.
 
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),
@@ -130,6 +140,13 @@ handling across all supported targets) remains tracked in
 [#62](https://github.com/fes/fesTerm/issues/62), now scoped to that remaining
 evidence rather than to producing the first release itself. Custom terminfo
 remains [#27](https://github.com/fes/fesTerm/issues/27).
+
+[Authenticated helper manifests and an offline verifier](docs/host-release-artifacts.md)
+reuse the updater trust root for all six standalone helper targets
+([#681](https://github.com/fes/fesTerm/issues/681), proposed ADR 0084).
+Headless CLI inclusion, installer integration, service switching/rollback and
+legacy migration remain separate gates; existing Linux scripts are not upgraded
+to publisher authentication by merely publishing these additive manifests.
 
 An optional, fesTerm-owned local session-persistence daemon
 (`festerm-sessiond`, [ADR 0025](docs/adr/0025-native-local-session-persistence-daemon.md))

@@ -21,8 +21,19 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+mod vault;
+pub use vault::{ClientOwnerKey, OwnerBinding, OwnerKeyError};
+
 const DOMAIN: &[u8] = b"fesTerm HOST owner authentication v1\0";
 pub const MAX_OWNER_KEYS: usize = 4;
+
+pub fn validate_owner_public_key(bytes: &[u8; 32]) -> Result<(), ContractError> {
+    let key = VerifyingKey::from_bytes(bytes).map_err(|_| ContractError::Malformed)?;
+    if key.is_weak() {
+        return Err(ContractError::Malformed);
+    }
+    Ok(())
+}
 
 /// Public binding approved by existing fingerprint-first host trust. This
 /// value alone does not establish that the current transport matches it.
@@ -69,7 +80,7 @@ impl Validate for OwnerPolicy {
 }
 
 /// No Debug/Serialize/Clone; private seed bytes belong only in the native vault
-/// (SecretBytes/opaque reference) or an existing owner-only private file.
+/// (SecretBytes/opaque reference), never a plaintext/private-file fallback.
 pub struct OwnerSigningKey(SigningKey);
 
 impl OwnerSigningKey {
@@ -239,6 +250,10 @@ pub struct OwnerVerifier {
 }
 
 impl OwnerVerifier {
+    pub fn policy(&self) -> &OwnerPolicy {
+        &self.policy
+    }
+
     pub fn new(policy: OwnerPolicy, keys: &[[u8; 32]]) -> Result<Self, ContractError> {
         policy.validate()?;
         if keys.is_empty() || keys.len() > MAX_OWNER_KEYS {
@@ -246,8 +261,9 @@ impl OwnerVerifier {
         }
         let mut verified = Vec::new();
         for bytes in keys {
+            validate_owner_public_key(bytes)?;
             let key = VerifyingKey::from_bytes(bytes).map_err(|_| ContractError::Malformed)?;
-            if key.is_weak() || verified.contains(&key) {
+            if verified.contains(&key) {
                 return Err(ContractError::Malformed);
             }
             verified.push(key);

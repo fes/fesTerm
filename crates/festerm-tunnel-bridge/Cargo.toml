@@ -12,7 +12,7 @@ default = ["relay"]
 client = ["dep:uuid", "dep:tunnels", "dep:russh", "dep:tokio", "dep:tokio-util", "dep:reqwest", "dep:flume", "dep:zeroize"]
 # Contract primitives only. No listener advertises or routes HOST until the
 # separate security/admission gate and endpoint implementation are complete.
-owner-auth = ["dep:ed25519-dalek", "dep:getrandom", "dep:zeroize"]
+owner-auth = ["dep:ed25519-dalek", "dep:getrandom", "dep:zeroize", "dep:festerm-secret-store"]
 host-routing = ["owner-auth", "client", "dep:festerm-tunnel-client"]
 relay = ["client", "dep:festerm-sessiond", "dep:fs2", "dep:uuid", "dep:rpassword", "dep:festerm-unix-security", "dep:festerm-windows-security", "dep:cap-std", "dep:cap-fs-ext", "dep:notify", "dep:sha2"]
 
@@ -21,6 +21,7 @@ festerm-core = { path = "../festerm-core" }
 festerm-session = { path = "../festerm-session" }
 festerm-host-protocol = { path = "../festerm-host-protocol" }
 festerm-tunnel-client = { path = "../festerm-tunnel-client", optional = true }
+festerm-secret-store = { path = "../festerm-secret-store", optional = true }
 festerm-sessiond = { path = "../festerm-sessiond", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

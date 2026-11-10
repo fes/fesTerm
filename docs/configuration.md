@@ -1,5 +1,19 @@
 # Configuration Foundation
 
+ADR 0084's headless host settings are **host-local**, not portable profile TOML.
+See [headless lifecycle configuration](headless-host.md): `festerm-host configure`
+saves disabled intent with creation denied and manual startup by default. It
+does not enable access, register startup or create a shell. Existing desktop and
+headless origin journals cannot adopt each other.
+
+Owner enrollment is separately protected host-local policy
+([authentication API and blockers](host-protocol.md#enrollment-and-secret-boundary-transport-integration-still-gated)).
+Public-key import requires exact fingerprint confirmation; it never grants
+remote access or creation. Revocation revisions and the native-vault policy
+anchor cannot be reconstructed from TOML/startup/rollback metadata. Client owner
+seeds and approved bindings live in the native vault behind opaque references,
+not portable profiles, recipes or connection JSON; no plaintext fallback exists.
+
 `festerm-config` owns versioned, strict TOML parsing, explicit file I/O, and
 in-memory transactional load state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one

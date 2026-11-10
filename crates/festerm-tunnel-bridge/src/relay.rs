@@ -192,6 +192,15 @@ pub struct ClientConnection {
     pub(crate) observation_expiry: Option<tokio::time::Instant>,
 }
 
+#[cfg(feature = "owner-auth")]
+impl ClientConnection {
+    /// Key pinning is real, but not a shared per-stream transcript exporter.
+    /// Never sign an owner challenge on this transport until that seam exists.
+    pub fn require_owner_channel_binding(&self) -> Result<(), crate::owner_auth::OwnerKeyError> {
+        Err(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable)
+    }
+}
+
 impl tokio::io::AsyncRead for ClientConnection {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
