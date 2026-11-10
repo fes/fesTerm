@@ -1,5 +1,31 @@
 # Milestone Progress Narrative
 
+## Recording redacted first-Ensure failure classifications
+
+Parent-retained PR #706 exact7fa Linux job `130101987441` again reports
+13 passed / one failed in 164.60s at the first Ensure assertion of
+`native_committed_creation_policy_contention_is_uncertain_not_disconnect`.
+Its raw SHA-256 is
+`58d89588434170cd2f6e9c53b401ad7c9aa495e02ced0e61478cead4bda4acf4`;
+the actual response was unprinted and remains **UNKNOWN**, not proven the same
+root cause as another fixture failure or fixed by the earlier local14 passes.
+
+A diagnostic-only child of exact20c exhaustively classifies the eight public
+response variants into static names and, only for Refused, copies the fieldless
+public `Refusal` code. The first-Ensure mismatch and deadline assertions print
+only that pair, never the response envelope, ticket, identifiers, session data,
+paths or secrets. No existing suitable classifier was found at this boundary;
+the match is local to these two messages, not a new protocol/helper framework.
+Both assertion predicates, test names/counts, ignores, deadlines, existing waits
+and all production code remain unchanged.
+
+Bounded actual macOS Rust/Cargo1.99.1 compiles the affected native fixture and
+strict-checks the test target with the private jobs1/debug0/incremental0 target.
+Exact-one listing is discovery only, **not an executed native pass**. Neither
+this case nor the native14 aggregate is rerun, and no new native/helper build
+provenance or Linux runtime result is claimed. New CI failure output, if any,
+must supply the concrete classification before a behavioral fix is inferred.
+
 ## Matching replacement test helpers to their Unix-only consumers
 
 Required Windows CI for backend PR #707 at exact
