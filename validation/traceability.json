@@ -5585,6 +5585,7 @@
         "pending_candidate_many_small_chunks_preserves_writer_and_ordered_delta",
         "pending_candidate_delta_overflow_preserves_current_writer",
         "host_reservation_requires_its_exact_native_launch_journal",
+        "protected_publication_preserves_shared_no_replace_boundary",
         "second_client_replaces_first_client_and_first_receives_stolen_notice",
         "protected_owner_enrollment_is_explicit_persistent_and_not_creation_consent",
         "protected_owner_rotation_revokes_pending_and_live_admission_and_stale_results",

@@ -185,6 +185,10 @@ reads remain locked. Native admission still fences exact generation and writer.
 HOST reserved launches retain ADR 0085's owned-journal policy: matching native
 metadata alone cannot adopt a generation whose exact launch journal is missing.
 The ordinary detached-launch compatibility path keeps its existing policy.
+The parallel lifecycle/enrollment foundation uses one shared staged,
+fsynced, no-replace publication helper. Its interrupted-write regression remains
+at the shared storage boundary; setup additionally tests its delegated wrapper,
+so integration does not restore a divergent publication algorithm.
 Uncertain pending reservations count against the two-create bound until safely
 adopted or explicitly abandoned locally. `issuance_epoch(owner, admit)` durably
 publishes the current namespace; a caller captures it once in `IssuedOperation`.

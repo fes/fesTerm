@@ -601,6 +601,7 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `current_absence_requires_fresh_create_permission_but_live_resume_does_not`,
   `failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create`,
   `host_reservation_requires_its_exact_native_launch_journal`,
+  `protected_publication_preserves_shared_no_replace_boundary`,
   `second_client_replaces_first_client_and_first_receives_stolen_notice`,
   `cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner`,
   `lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace` and

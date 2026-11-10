@@ -62,3 +62,28 @@ pub(crate) fn publish_immutable(
         Err(error) => Err(error),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protected_publication_preserves_shared_no_replace_boundary() {
+        let root = storage::private_test_directory();
+        for name in ["host-lifecycle.json", "devtunnel"] {
+            let path = root.path().join(format!("{name}-stage"));
+            let directory = storage::private_directory(&path, true).unwrap();
+            let name = Path::new(name);
+            assert_eq!(std::fs::read_dir(&path).unwrap().count(), 0);
+            publish_new(&directory, name, b"complete").unwrap();
+            assert!(publish_new(&directory, name, b"replacement").is_err());
+            assert_eq!(
+                storage::read_private(&directory, name, 32)
+                    .unwrap()
+                    .as_slice(),
+                b"complete"
+            );
+            assert_eq!(std::fs::read_dir(&path).unwrap().count(), 1);
+        }
+    }
+}
