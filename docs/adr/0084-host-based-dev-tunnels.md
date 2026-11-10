@@ -637,7 +637,13 @@ prerequisites. Real native-control/scoped-policy adapters add
 These explicitly invoked owned Unix fixtures qualify local control routing,
 not actual encrypted owner-channel proof, terminal attachment or native service
 acceptance. No listener advertises HOST; the partial adapter reports only
-inventory capability and refuses unsupported attachment/detach.
+inventory capability and enforces it for every operation: unadvertised
+ensure/create/attach/detach/end refuse before backend effects. Native control
+fixtures explicitly opt into a cfg(test)-only advertisement seam. Additional
+duplex tests cover idle-versus-exchange deadlines, typed handshake refusals,
+correlated resource/policy Busy, retained reply allocation through publication
+and post-commit policy contention. These are PR688 core reliability/scope
+remediations, not endpoint or dependency qualification.
 
 | Area | Required evidence (planned test names are illustrative) |
 | --- | --- |

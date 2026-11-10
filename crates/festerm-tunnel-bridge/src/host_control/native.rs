@@ -21,11 +21,50 @@ use std::{
 pub struct NativeControl<A: ProtectedPolicySource> {
     sessions: SessionControl,
     policy: Arc<A>,
+    #[cfg(test)]
+    test_capabilities: bool,
 }
 
 impl<A: ProtectedPolicySource> NativeControl<A> {
     pub fn new(sessions: SessionControl, policy: Arc<A>) -> Self {
-        Self { sessions, policy }
+        Self {
+            sessions,
+            policy,
+            #[cfg(test)]
+            test_capabilities: false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_test_capabilities(sessions: SessionControl, policy: Arc<A>) -> Self {
+        Self {
+            sessions,
+            policy,
+            test_capabilities: true,
+        }
+    }
+
+    fn advertised(&self, current: Capabilities) -> Capabilities {
+        #[cfg(test)]
+        if self.test_capabilities {
+            return current;
+        }
+        Capabilities {
+            inventory: current.inventory,
+            ..Capabilities::default()
+        }
+    }
+
+    fn supports(&self, request: &Request) -> bool {
+        #[cfg(test)]
+        if self.test_capabilities {
+            return true;
+        }
+        Capabilities {
+            inventory: true,
+            ..Capabilities::default()
+        }
+        .supports(request)
     }
 
     fn admit(
@@ -170,6 +209,11 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
         request: &Envelope<Request>,
         admission: &OperationAdmission,
     ) -> Result<Response, Refusal> {
+        // Defense in depth for direct backend composition: executable code is
+        // not an advertisement. Production remains inventory-only.
+        if !self.supports(&request.body) {
+            return Err(Refusal::Unsupported);
+        }
         match &request.body {
             Request::Capabilities {} => {
                 let guard = self
@@ -185,10 +229,7 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
                     )
                     .map_err(|error| refusal(control_error(error)))?;
                 Ok(Response::Capabilities {
-                    capabilities: Capabilities {
-                        inventory: guard.verifier().policy().capabilities.inventory,
-                        ..Capabilities::default()
-                    },
+                    capabilities: self.advertised(guard.verifier().policy().capabilities),
                 })
             }
             Request::List { cursor } => self.inventory(request, admission, cursor.as_ref()),

@@ -8796,3 +8796,14 @@ The incremental reliability pass also distinguishes an initializer holding its
 lease from an abandoned recordless directory. Protected cache comparisons now
 classify oversized entries as the same specific mismatch as other changed
 bytes, keeping bounded reads and refusing overwrite for CLI and helper staging.
+
+The stage-3 core review found that advertising inventory-only was not enough:
+both peers now enforce operation flags, and native effect tests use a test-only
+advertisement instead of silently bypassing the production boundary. Idle time
+no longer consumes an operation's execution deadline. Protected policy I/O runs
+off the async executor; ordinary contention returns a correlated Busy, while
+contention after a possible commit preserves OutcomeUncertain. Reply capacity
+stays reserved through publication, so competing work cannot steal a committed
+reply's allocation. Owned duplex and real-daemon fixtures prove these fixes;
+terminal adoption, encrypted endpoint integration and dependency reviews remain
+separate gates under #681.

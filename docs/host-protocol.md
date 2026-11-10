@@ -371,6 +371,7 @@ JSON; this slice chooses neither new controls nor a pairing service.
 | Authorized inventory page / snapshot | 16 / at most 64 entries |
 | Pending inventory snapshots | One per admitted client; retire on 15-second control deadline/epoch change |
 | Authentication / control deadline | 15 seconds each |
+| Control idle / partial-frame deadline | 300 seconds before first byte / 15 seconds after first byte |
 | Owner public keys / temporary reconnect grace | 4 / 60 seconds |
 
 Permits are non-cloneable and release exact charges on drop. A per-client byte
@@ -404,7 +405,10 @@ backward or skipped cursors refuse rather than trapping the client in a loop.
 `festerm-tunnel-client::host_control` implements the four-byte big-endian
 framing, length-before-allocation refusal, aggregate connection/control/byte
 permits, immutable account/endpoint/host binding and sequential RPC correlation.
-Capabilities must complete before other requests. Each exchange has one
+Capabilities must complete before other requests. Both client and server enforce
+the negotiated operation flags; unadvertised operations return correlated
+`Unsupported` without executing the backend. The client preserves typed refusal
+reasons even during handshake. Each client exchange has one
 15-second deadline including writes; cancellation, dropped futures, invalid
 correlation, incompatible versions and transport failures permanently retire
 the stream. Replies preserve refusal/uncertain states; no failure becomes
@@ -416,7 +420,18 @@ allocation. It consumes a real `VerifiedOwner` and connection guard, checks the
 current protected host gate before work/publication, and dispatches through the
 minimal `SessionBackend`/`OperationAdmission` reservation seam. Workers retain
 aggregate control/create charges after timeout/disconnect until blocking work
-finishes reconciliation; disconnect drops the owner's guard and cancels late
+finishes reconciliation; reply-byte capacity also survives worker completion
+through publication, without a release/re-reserve race. A fixed 512-byte refusal
+reservation per connection preserves correlated `Busy` replies when operation,
+create or normal reply capacity is saturated after decoding a request.
+Protected file/vault policy checks run in the client-bounded blocking worker,
+not the async executor. Policy contention before execution returns `Busy`;
+after execution it returns `OutcomeUncertain`, because an effect may already
+have committed. Denied/stale host gates retire the connection.
+The server's explicit idle deadline is 300 seconds. A first byte starts a
+15-second frame-read deadline; a decoded request starts a fresh 15-second
+execution/publication deadline. Idle time does not consume startup time.
+Disconnect drops the owner's guard and cancels late
 admission. Pipelining is refused rather than queued. The backend must use fresh
 protected grants/revisions under its reservation, not two copies of a fence.
 
@@ -451,16 +466,21 @@ to these traits (`EnrollmentPolicy`/`EnrollmentGuard`). It adds no command,
 vault write, authentication bypass, listener or Ready state. Production native
 vault/channel/service acceptance is not inferred from compilation.
 
-Three explicitly invoked Unix owned-daemon duplex fixtures prove actual
+Five explicitly invoked Unix owned-daemon duplex fixtures prove actual
 ensure/create replies and lost-reply retry without duplicate native generations,
 nonattaching inventory, denied virgin creation without false absence, exact
 generation end, and independent control while a committed reply is withheld.
+They also prove production inventory-only enforcement and current-policy
+contention after an actual native commit without losing the connection or
+duplicating the shell. Native effects use a **cfg(test)-only** backend capability
+override, not a bypass in production framing or authorization.
 CI builds the repository helper/fixture child and runs these fixtures explicitly
 on Linux/macOS; they use a newly created project-local private root and verify
 owned daemons stop before removing it. They do not use installed/user sessions.
 
-**Partial adapter boundary:** native capabilities advertise inventory only.
-Attach/Detach return Unsupported rather than claiming an adopted frontend or
+**Partial adapter boundary:** native capabilities advertise and enforce inventory
+only. Ensure/Create/Attach/Detach/ExplicitEnd return correlated Unsupported
+rather than executing an unadvertised operation or claiming an adopted frontend or
 lease exists. Ensure/Create handlers are exercised through the low-level framed
 core with real protected authorization, but are not advertised while the
 terminal attachment path remains incomplete. The legacy exact-generation bridge

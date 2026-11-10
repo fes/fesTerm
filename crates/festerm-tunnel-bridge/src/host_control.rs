@@ -5,16 +5,16 @@
 
 use crate::owner_auth::{OwnerConnectionGuard, OwnerVerifier, VerifiedOwner};
 use festerm_host_protocol::{
-    AdmissionFence, ContractError, Envelope, Epoch, Refusal, Request, Resource, Response,
-    SessionGrant, CONTROL_DEADLINE_SECONDS, CONTROL_FRAME_BYTES,
+    AdmissionFence, BudgetPermit, Capabilities, ContractError, Envelope, Epoch, Refusal, Request,
+    Resource, Response, SessionGrant, CONTROL_DEADLINE_SECONDS, CONTROL_FRAME_BYTES,
 };
 pub use festerm_tunnel_client::host_control::ConnectionPermit;
-use festerm_tunnel_client::host_control::{read_frame, write_frame, Error};
+use festerm_tunnel_client::host_control::{read_frame_started, Error};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "relay")]
@@ -175,6 +175,87 @@ impl Drop for CancelOperation {
     }
 }
 
+pub const CONTROL_IDLE_SECONDS: u64 = 300;
+const REFUSAL_BYTES: usize = 512;
+
+struct Publication {
+    body: Response,
+    // Retained by blocking work, then by publication, including after a lost
+    // reply. Never release/reacquire the reply allocation around a commit.
+    _operation: Option<BudgetPermit>,
+    bytes: Option<BudgetPermit>,
+    _create: Option<BudgetPermit>,
+}
+
+impl Publication {
+    fn refused(reason: Refusal) -> Self {
+        Self {
+            body: Response::Refused { reason },
+            _operation: None,
+            bytes: None,
+            _create: None,
+        }
+    }
+}
+
+fn execute(
+    backend: &dyn SessionBackend,
+    admission: &OperationAdmission,
+    permit: &ConnectionPermit,
+    capabilities: Option<Capabilities>,
+) -> Result<Publication, Error> {
+    match admission.check_host() {
+        Ok(()) => {}
+        Err(ContractError::Denied | ContractError::Stale) => {
+            return Err(ContractError::Denied.into())
+        }
+        Err(ContractError::Busy) => return Ok(Publication::refused(Refusal::Busy)),
+        Err(_) => return Ok(Publication::refused(Refusal::Unknown)),
+    }
+    if capabilities.is_some_and(|caps| !caps.supports(&admission.request.body)) {
+        return Ok(Publication::refused(Refusal::Unsupported));
+    }
+    let mut publication = Publication::refused(Refusal::Busy);
+    let reservations = (|| {
+        publication._operation = Some(permit.budgets().reserve(Resource::Control, 1)?);
+        publication.bytes = Some(
+            permit
+                .budgets()
+                .reserve(Resource::ControlBytes, CONTROL_FRAME_BYTES)?,
+        );
+        if matches!(
+            admission.request.body,
+            Request::Ensure { .. } | Request::Create { .. }
+        ) {
+            publication._create = Some(permit.budgets().reserve(Resource::PendingCreate, 1)?);
+        }
+        Ok::<_, ContractError>(())
+    })();
+    if let Err(error) = reservations {
+        if error == ContractError::Busy {
+            return Ok(publication);
+        }
+        return Err(error.into());
+    }
+    publication.body = backend
+        .execute(&admission.request, admission)
+        .unwrap_or_else(|reason| Response::Refused { reason });
+    match admission.check_host() {
+        Ok(()) => {}
+        Err(ContractError::Denied | ContractError::Stale) => {
+            return Err(ContractError::Denied.into())
+        }
+        // The backend may already have committed. Contention is not denial,
+        // cancellation, or authoritative absence.
+        Err(_) => {
+            publication.body = Response::Refused {
+                reason: Refusal::OutcomeUncertain,
+            }
+        }
+    }
+    Ok(publication)
+}
+
 /// Test/integration core only: `owner` and `guard` must come from consumed proof
 /// on this exact pinned stream. There is deliberately no constructor accepting
 /// a principal, bearer token, or `trusted: bool`.
@@ -191,11 +272,17 @@ pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
     shutdown: CancellationToken,
 ) -> Result<(), Error> {
     let owner = Arc::new(owner);
+    let permit = Arc::new(permit);
+    // A fixed-shape correlated refusal remains writable when operation or
+    // normal reply capacity is saturated. Reserved before receiving requests.
+    let _refusal_bytes = permit
+        .budgets()
+        .reserve(Resource::ControlBytes, REFUSAL_BYTES)?;
     #[cfg(feature = "relay")]
     let inventory = Arc::new(std::sync::Mutex::new(None));
     #[cfg(feature = "relay")]
     let _inventory_lifetime = InventoryLifetime(inventory.clone());
-    let mut handshaken = false;
+    let mut capabilities = None;
     loop {
         #[cfg(feature = "relay")]
         {
@@ -207,29 +294,25 @@ pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
                 *retained = None;
             }
         }
-        let deadline = tokio::time::Instant::now()
-            + std::time::Duration::from_secs(u64::from(CONTROL_DEADLINE_SECONDS));
+        let duration = std::time::Duration::from_secs(u64::from(CONTROL_DEADLINE_SECONDS));
+        let first = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return Err(Error::Cancelled),
+            result = tokio::time::timeout(std::time::Duration::from_secs(CONTROL_IDLE_SECONDS), stream.read_u8()) =>
+                result.map_err(|_| Error::Deadline)??,
+        };
         let frame = tokio::select! {
             biased;
             _ = shutdown.cancelled() => return Err(Error::Cancelled),
-            result = tokio::time::timeout_at(deadline, read_frame(&mut stream, permit.budgets())) =>
+            result = tokio::time::timeout(duration, read_frame_started(&mut stream, permit.budgets(), first)) =>
                 result.map_err(|_| Error::Deadline)??,
         };
         let request: Envelope<Request> = frame.decode()?;
         drop(frame);
-        if !handshaken && !matches!(request.body, Request::Capabilities {}) {
+        let deadline = tokio::time::Instant::now() + duration;
+        if capabilities.is_none() && !matches!(request.body, Request::Capabilities {}) {
             return Err(ContractError::UnsupportedVersion.into());
         }
-        let operation = permit.budgets().reserve(Resource::Control, 1)?;
-        let bytes = permit
-            .budgets()
-            .reserve(Resource::ControlBytes, CONTROL_FRAME_BYTES)?;
-        let create = matches!(
-            request.body,
-            Request::Ensure { .. } | Request::Create { .. }
-        )
-        .then(|| permit.budgets().reserve(Resource::PendingCreate, 1))
-        .transpose()?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let _cancel = CancelOperation(cancelled.clone());
         let admission = Arc::new(OperationAdmission {
@@ -240,15 +323,18 @@ pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
             #[cfg(feature = "relay")]
             inventory: inventory.clone(),
         });
-        admission.check_host()?;
         let worker_admission = admission.clone();
         let worker_backend = backend.clone();
-        let worker_request = request.clone();
+        let worker_permit = permit.clone();
         let worker = tokio::task::spawn_blocking(move || {
-            // Charges live in the worker: timeout/disconnect must not release
-            // capacity while blocking IPC is still reconciling.
-            let _charges = (operation, bytes, create);
-            worker_backend.execute(&worker_request, &worker_admission)
+            // Protected file/vault I/O also belongs here. The aggregate client
+            // permit bounds workers even when normal operation capacity is full.
+            execute(
+                worker_backend.as_ref(),
+                &worker_admission,
+                &worker_permit,
+                capabilities,
+            )
         });
         let result = tokio::select! {
             biased;
@@ -256,21 +342,34 @@ pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
             // Any EOF/error retires the owner; data is forbidden pipelining.
             _ = stream.read_u8() => return Err(Error::Closed),
             result = tokio::time::timeout_at(deadline, worker) =>
-                result.map_err(|_| Error::Deadline)?.map_err(|_| Error::Closed)?,
+                result.map_err(|_| Error::Deadline)?.map_err(|_| Error::Closed)??,
         };
-        admission.check_host()?;
         let response = Envelope::new(
             request.host.clone(),
             request.operation.clone(),
-            result.unwrap_or_else(|reason| Response::Refused { reason }),
+            result.body.clone(),
         );
         response.validate_for(&request)?;
+        let encoded = festerm_host_protocol::encode(&response)?;
+        if result.bytes.is_none() && encoded.len() > REFUSAL_BYTES {
+            return Err(ContractError::Limit.into());
+        }
+        let publish = async {
+            stream.write_u32(encoded.len() as u32).await?;
+            stream.write_all(&encoded).await?;
+            stream.flush().await
+        };
         tokio::select! {
             biased;
             _ = shutdown.cancelled() => return Err(Error::Cancelled),
-            result = tokio::time::timeout_at(deadline, write_frame(&mut stream, permit.budgets(), &response)) =>
+            result = tokio::time::timeout_at(deadline, publish) =>
                 result.map_err(|_| Error::Deadline)??,
         }
-        handshaken = matches!(response.body, Response::Capabilities { .. }) || handshaken;
+        if let Response::Capabilities {
+            capabilities: supported,
+        } = response.body
+        {
+            capabilities = Some(supported);
+        }
     }
 }

@@ -349,6 +349,396 @@ fn connection_admission_is_aggregate_and_released_by_raii() {
     assert!(ConnectionPermit::reserve(&budgets).is_ok());
 }
 
+async fn raw_connection(
+    policy: &OwnerPolicy,
+    backend: Arc<dyn SessionBackend>,
+    source: Arc<Policy>,
+    budgets: &Budgets,
+) -> (
+    tokio::io::DuplexStream,
+    tokio::task::JoinHandle<Result<(), Error>>,
+) {
+    let (owner, guard, _) = verified(policy);
+    let (mut stream, peer) = duplex(4096);
+    let server = tokio::spawn(serve_control(
+        peer,
+        ConnectionPermit::reserve(budgets).unwrap(),
+        owner,
+        guard,
+        source,
+        backend,
+        CancellationToken::new(),
+    ));
+    let response = raw_request(&mut stream, policy, Request::Capabilities {}).await;
+    assert!(matches!(response.body, Response::Capabilities { .. }));
+    (stream, server)
+}
+
+async fn raw_request(
+    stream: &mut tokio::io::DuplexStream,
+    policy: &OwnerPolicy,
+    body: Request,
+) -> Envelope<Response> {
+    use festerm_tunnel_client::host_control::{read_frame, write_frame};
+    let request = Envelope::new(policy.host.host.clone(), OperationId::new(), body);
+    let budgets = Budgets::default();
+    write_frame(stream, &budgets, &request).await.unwrap();
+    let response: Envelope<Response> = read_frame(stream, &budgets)
+        .await
+        .unwrap()
+        .decode()
+        .unwrap();
+    response.validate_for(&request).unwrap();
+    response
+}
+
+struct Counted {
+    capabilities: Capabilities,
+    effects: std::sync::atomic::AtomicUsize,
+}
+impl SessionBackend for Counted {
+    fn execute(
+        &self,
+        request: &Envelope<Request>,
+        admission: &OperationAdmission,
+    ) -> Result<Response, Refusal> {
+        if matches!(request.body, Request::Capabilities {}) {
+            admission
+                .capture(None, Epoch::new(1).unwrap())
+                .map_err(refuse)?;
+            return Ok(Response::Capabilities {
+                capabilities: self.capabilities,
+            });
+        }
+        self.effects.fetch_add(1, Ordering::AcqRel);
+        Err(Refusal::Unknown)
+    }
+}
+
+fn all_capabilities() -> Capabilities {
+    Capabilities {
+        inventory: true,
+        ensure: true,
+        create: true,
+        attach: true,
+        detach: true,
+        explicit_end: true,
+        temporary: true,
+        creation_allowed: true,
+    }
+}
+
+fn creation() -> festerm_host_protocol::Creation {
+    festerm_host_protocol::Creation {
+        logical: LogicalSessionId::new(),
+        attachment: festerm_host_protocol::AttachmentId::new(),
+        name: None,
+        recipe: festerm_host_protocol::Recipe::default(),
+        lifetime: Lifetime::Persistent {},
+    }
+}
+
+#[tokio::test]
+async fn server_refuses_every_unadvertised_operation_before_backend_execution() {
+    let mut policy = policy();
+    policy.capabilities = all_capabilities();
+    let (_, _, source) = verified(&policy);
+    let backend = Arc::new(Counted {
+        capabilities: Capabilities::default(),
+        effects: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let (mut stream, server) =
+        raw_connection(&policy, backend.clone(), source, &Budgets::default()).await;
+    let target = Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(1).unwrap(),
+    };
+    for request in [
+        Request::List { cursor: None },
+        Request::Lookup {
+            logical: target.logical.clone(),
+        },
+        Request::Ensure {
+            creation: creation(),
+        },
+        Request::Create {
+            creation: creation(),
+        },
+        Request::Attach {
+            target: target.clone(),
+            attachment: festerm_host_protocol::AttachmentId::new(),
+            takeover: false,
+        },
+        Request::Detach {
+            target: target.clone(),
+            attachment: festerm_host_protocol::AttachmentId::new(),
+            lease: None,
+            lease_epoch: None,
+            reason: festerm_host_protocol::DetachKind::Intentional,
+        },
+        Request::ExplicitEnd { target },
+    ] {
+        assert_eq!(
+            raw_request(&mut stream, &policy, request).await.body,
+            Response::Refused {
+                reason: Refusal::Unsupported
+            }
+        );
+    }
+    assert_eq!(backend.effects.load(Ordering::Acquire), 0);
+    drop(stream);
+    assert!(server.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn saturation_returns_correlated_busy_and_preserves_connection() {
+    for resource in [
+        Resource::Control,
+        Resource::ControlBytes,
+        Resource::PendingCreate,
+    ] {
+        let mut policy = policy();
+        policy.capabilities = all_capabilities();
+        let (_, _, source) = verified(&policy);
+        let backend = Arc::new(Counted {
+            capabilities: all_capabilities(),
+            effects: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let budgets = Budgets::default();
+        let (mut stream, server) = raw_connection(&policy, backend.clone(), source, &budgets).await;
+        let occupied = match resource {
+            Resource::ControlBytes => vec![budgets
+                .reserve(
+                    resource,
+                    festerm_host_protocol::MAX_CONTROL_BYTES - REFUSAL_BYTES - 1024,
+                )
+                .unwrap()],
+            _ => (0..if resource == Resource::Control {
+                festerm_host_protocol::MAX_CONTROL_OPERATIONS
+            } else {
+                festerm_host_protocol::MAX_PENDING_CREATES
+            })
+                .map(|_| budgets.reserve(resource, 1).unwrap())
+                .collect(),
+        };
+        assert_eq!(
+            raw_request(
+                &mut stream,
+                &policy,
+                Request::Ensure {
+                    creation: creation()
+                }
+            )
+            .await
+            .body,
+            Response::Refused {
+                reason: Refusal::Busy
+            }
+        );
+        assert_eq!(backend.effects.load(Ordering::Acquire), 0);
+        drop(occupied);
+        assert_eq!(
+            raw_request(
+                &mut stream,
+                &policy,
+                Request::Ensure {
+                    creation: creation()
+                }
+            )
+            .await
+            .body,
+            Response::Refused {
+                reason: Refusal::Unknown
+            }
+        );
+        assert_eq!(backend.effects.load(Ordering::Acquire), 1);
+        drop(stream);
+        assert!(server.await.unwrap().is_err());
+    }
+}
+
+#[tokio::test]
+async fn two_connections_policy_contention_returns_busy_not_denial_or_eof() {
+    let policy = policy();
+    let (_, _, source) = verified(&policy);
+    let backend = Fixture::new(vec![], false);
+    let budgets = Budgets::default();
+    let (mut a, a_server) =
+        raw_connection(&policy, backend.clone(), source.clone(), &budgets).await;
+    let (mut b, b_server) = raw_connection(&policy, backend, source.clone(), &budgets).await;
+    let held = source.0.clone().try_lock_owned().unwrap();
+    for stream in [&mut a, &mut b] {
+        assert_eq!(
+            raw_request(stream, &policy, Request::List { cursor: None })
+                .await
+                .body,
+            Response::Refused {
+                reason: Refusal::Busy
+            }
+        );
+    }
+    drop(held);
+    for stream in [&mut a, &mut b] {
+        assert!(matches!(
+            raw_request(stream, &policy, Request::List { cursor: None })
+                .await
+                .body,
+            Response::Inventory { .. }
+        ));
+    }
+    drop((a, b));
+    assert!(a_server.await.unwrap().is_err());
+    assert!(b_server.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn idle_time_does_not_consume_fresh_exchange_deadline() {
+    let policy = policy();
+    let owned = grant(&policy.principal, true);
+    let fixture = Fixture::new(vec![owned.clone()], true);
+    let (mut client, server, _) = client(&policy, fixture.clone(), None).await;
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(20)).await;
+    tokio::time::resume();
+    let request = tokio::spawn(async move {
+        client
+            .request(
+                OperationId::new(),
+                Request::Lookup {
+                    logical: owned.logical,
+                },
+                &CancellationToken::new(),
+            )
+            .await
+    });
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        fixture.captured.notified(),
+    )
+    .await
+    .unwrap();
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(12)).await;
+    tokio::task::yield_now().await;
+    assert!(!request.is_finished());
+    tokio::time::resume();
+    fixture.release();
+    assert!(matches!(
+        request.await.unwrap().unwrap().body,
+        Response::Lookup {
+            result: LookupResult::Running { .. }
+        }
+    ));
+    assert!(server.await.unwrap().is_err());
+}
+
+struct PostGate {
+    policy: Arc<Policy>,
+    armed: AtomicBool,
+    reached: tokio::sync::Notify,
+    paused: Mutex<bool>,
+    release: Condvar,
+}
+impl AuthorizationSource for PostGate {
+    fn with_current(
+        &self,
+        check: &mut dyn FnMut(&OwnerVerifier) -> Result<(), ContractError>,
+    ) -> Result<(), ContractError> {
+        self.policy.with_current(check)?;
+        if self.armed.swap(false, Ordering::AcqRel) {
+            self.reached.notify_one();
+            let paused = self.paused.lock().unwrap();
+            let _paused = self
+                .release
+                .wait_timeout_while(paused, std::time::Duration::from_secs(3), |paused| *paused)
+                .unwrap();
+        }
+        Ok(())
+    }
+}
+struct ChargedReply {
+    gate: Arc<PostGate>,
+    budgets: Budgets,
+    held: Mutex<Option<festerm_host_protocol::BudgetPermit>>,
+}
+impl SessionBackend for ChargedReply {
+    fn execute(
+        &self,
+        request: &Envelope<Request>,
+        admission: &OperationAdmission,
+    ) -> Result<Response, Refusal> {
+        admission
+            .capture(None, Epoch::new(1).unwrap())
+            .map_err(refuse)?;
+        if matches!(request.body, Request::Capabilities {}) {
+            return Ok(Response::Capabilities {
+                capabilities: Capabilities {
+                    inventory: true,
+                    ..Capabilities::default()
+                },
+            });
+        }
+        *self.held.lock().unwrap() = Some(
+            self.budgets
+                .reserve(
+                    Resource::ControlBytes,
+                    festerm_host_protocol::MAX_CONTROL_BYTES - REFUSAL_BYTES - CONTROL_FRAME_BYTES,
+                )
+                .unwrap(),
+        );
+        self.gate.armed.store(true, Ordering::Release);
+        Err(Refusal::OutcomeUncertain)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reply_charge_survives_worker_completion_and_postauthorization() {
+    let policy = policy();
+    let (owner, guard, source) = verified(&policy);
+    let gate = Arc::new(PostGate {
+        policy: source,
+        armed: AtomicBool::new(false),
+        reached: tokio::sync::Notify::new(),
+        paused: Mutex::new(true),
+        release: Condvar::new(),
+    });
+    let budgets = Budgets::default();
+    let backend = Arc::new(ChargedReply {
+        gate: gate.clone(),
+        budgets: budgets.clone(),
+        held: Mutex::new(None),
+    });
+    let (mut stream, peer) = duplex(4096);
+    let server = tokio::spawn(serve_control(
+        peer,
+        ConnectionPermit::reserve(&budgets).unwrap(),
+        owner,
+        guard,
+        gate.clone(),
+        backend.clone(),
+        CancellationToken::new(),
+    ));
+    raw_request(&mut stream, &policy, Request::Capabilities {}).await;
+    let request = tokio::spawn(async move {
+        raw_request(&mut stream, &policy, Request::List { cursor: None }).await
+    });
+    gate.reached.notified().await;
+    assert!(matches!(
+        budgets.reserve(Resource::ControlBytes, CONTROL_FRAME_BYTES),
+        Err(ContractError::Busy)
+    ));
+    *gate.paused.lock().unwrap() = false;
+    gate.release.notify_all();
+    assert_eq!(
+        request.await.unwrap().body,
+        Response::Refused {
+            reason: Refusal::OutcomeUncertain
+        }
+    );
+    backend.held.lock().unwrap().take();
+    assert!(server.await.unwrap().is_err());
+}
+
 #[cfg(all(feature = "relay", unix))]
 mod native_routes {
     use super::*;
@@ -425,7 +815,10 @@ mod native_routes {
         fn backend(&self) -> (Arc<native::NativeControl<Policy>>, Arc<Policy>) {
             let (_, _, source) = verified(&self.policy);
             (
-                Arc::new(native::NativeControl::new(self.control(), source.clone())),
+                Arc::new(native::NativeControl::with_test_capabilities(
+                    self.control(),
+                    source.clone(),
+                )),
                 source,
             )
         }
@@ -463,7 +856,7 @@ mod native_routes {
             );
             let caps = client.handshake(&CancellationToken::new()).await.unwrap();
             assert!(caps.inventory);
-            assert!(!caps.attach && !caps.create && !caps.ensure);
+            assert!(caps.attach && caps.create && caps.ensure);
             (client, server)
         }
     }
@@ -519,8 +912,8 @@ mod native_routes {
                 }
             };
             let operation = OperationId::new();
-            // Deliberate low-level core test: creation is not advertised until
-            // terminal routing and channel proof integration are complete.
+            // Explicit cfg(test)-only backend advertisement exercises native
+            // effects without weakening production capability enforcement.
             let first = client
                 .request(operation.clone(), body.clone(), &cancel)
                 .await
@@ -707,6 +1100,108 @@ mod native_routes {
             }
             result
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicitly built owned native helper and fixture child"]
+    async fn native_production_inventory_only_refuses_unadvertised_creation() {
+        let fixture = NativeFixture::new(true);
+        let (_, _, source) = verified(&fixture.policy);
+        let backend = Arc::new(native::NativeControl::new(
+            fixture.control(),
+            source.clone(),
+        ));
+        let (mut stream, server) =
+            raw_connection(&fixture.policy, backend, source, &Budgets::default()).await;
+        assert_eq!(
+            raw_request(
+                &mut stream,
+                &fixture.policy,
+                Request::Ensure {
+                    creation: fixture.creation()
+                }
+            )
+            .await
+            .body,
+            Response::Refused {
+                reason: Refusal::Unsupported
+            }
+        );
+        assert!(festerm_sessiond::list_running_sessions_in(&fixture.root)
+            .unwrap()
+            .is_empty());
+        drop(stream);
+        assert!(server.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicitly built owned native helper and fixture child"]
+    async fn native_committed_creation_policy_contention_is_uncertain_not_disconnect() {
+        let fixture = NativeFixture::new(true);
+        let (native, source) = fixture.backend();
+        let backend = Arc::new(LostReply {
+            native,
+            first: AtomicBool::new(true),
+            committed: tokio::sync::Notify::new(),
+            release: Condvar::new(),
+            paused: Mutex::new(true),
+        });
+        let budgets = Budgets::default();
+        let (mut first, first_server) = fixture
+            .connect(backend.clone(), source.clone(), &budgets)
+            .await;
+        let (mut second, second_server) = fixture
+            .connect(backend.clone(), source.clone(), &budgets)
+            .await;
+        let creation = fixture.creation();
+        let operation = OperationId::new();
+        let cancel = CancellationToken::new();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            let request = first.request(
+                operation.clone(),
+                Request::Ensure {
+                    creation: creation.clone(),
+                },
+                &cancel,
+            );
+            tokio::pin!(request);
+            tokio::select! {
+                result = &mut request => {
+                    let response = result.unwrap();
+                    assert!(matches!(response.body, Response::Refused { reason: Refusal::Busy | Refusal::Unknown | Refusal::OutcomeUncertain }), "{response:?}");
+                    assert!(Instant::now() < deadline, "{response:?}");
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                _ = backend.committed.notified() => {
+                    let held = source.0.clone().try_lock_owned().unwrap();
+                    *backend.paused.lock().unwrap() = false;
+                    backend.release.notify_all();
+                    assert_eq!(request.await.unwrap().body, Response::Refused { reason: Refusal::OutcomeUncertain });
+                    assert_eq!(second.request(OperationId::new(), Request::List { cursor: None }, &cancel).await.unwrap().body,
+                        Response::Refused { reason: Refusal::Busy });
+                    drop(held);
+                    break;
+                }
+            }
+        }
+        assert!(matches!(
+            first
+                .request(operation, Request::Ensure { creation }, &cancel)
+                .await
+                .unwrap()
+                .body,
+            Response::Ensured { .. }
+        ));
+        assert_eq!(
+            festerm_sessiond::list_running_sessions_in(&fixture.root)
+                .unwrap()
+                .len(),
+            1
+        );
+        drop((first, second));
+        assert!(first_server.await.unwrap().is_err());
+        assert!(second_server.await.unwrap().is_err());
     }
 
     #[tokio::test]

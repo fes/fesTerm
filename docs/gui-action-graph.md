@@ -1575,6 +1575,12 @@ until a shared connection-and-channel exporter exists; this is a tested blocker,
 not authenticated endpoint coverage. First-connect controls/native vault
 qualification remain deferred.
 
+The unexposed dispatcher/client now enforce negotiated operation flags,
+preserve correlated Busy/uncertain refusals, separate idle/exchange deadlines
+and retain reply capacity through publication. HOST-01–03 retain the same
+partial status; native effect fixtures use an explicit cfg(test)-only backend
+advertisement, not production capability widening.
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy and framed duplex dispatcher tests; real pinned-channel exporter/native endpoint H,N deferred |

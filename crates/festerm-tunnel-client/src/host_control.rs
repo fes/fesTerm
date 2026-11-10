@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
     Contract(ContractError),
+    Refused(festerm_host_protocol::Refusal),
     Closed,
     Deadline,
     Cancelled,
@@ -27,6 +28,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Contract(_) => "invalid or refused host control message",
+            Self::Refused(_) => "host operation refused",
             Self::Closed => "host control connection closed",
             Self::Deadline => "host control deadline exceeded",
             Self::Cancelled => "host control cancelled",
@@ -67,7 +69,19 @@ pub async fn read_frame(
     stream: &mut (impl AsyncRead + Unpin),
     budgets: &Budgets,
 ) -> Result<Frame, Error> {
-    let length = stream.read_u32().await? as usize;
+    let first = stream.read_u8().await?;
+    read_frame_started(stream, budgets, first).await
+}
+
+/// Finish a frame after separately admitting its first byte (idle deadline).
+pub async fn read_frame_started(
+    stream: &mut (impl AsyncRead + Unpin),
+    budgets: &Budgets,
+    first: u8,
+) -> Result<Frame, Error> {
+    let mut prefix = [first, 0, 0, 0];
+    stream.read_exact(&mut prefix[1..]).await?;
+    let length = u32::from_be_bytes(prefix) as usize;
     if length == 0 || length > CONTROL_FRAME_BYTES {
         return Err(ContractError::Limit.into());
     }
@@ -192,6 +206,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
                 self.capabilities = Some(capabilities);
                 Ok(capabilities)
             }
+            Response::Refused { reason } => {
+                self.usable = false;
+                Err(Error::Refused(reason))
+            }
             _ => {
                 self.usable = false;
                 Err(ContractError::Denied.into())
@@ -213,6 +231,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         }
         let request = Envelope::new(self.binding.host.clone(), operation, body);
         request.validate()?;
+        if self
+            .capabilities
+            .is_some_and(|caps| !caps.supports(&request.body))
+        {
+            return Ok(Envelope::new(
+                request.host,
+                request.operation,
+                Response::Refused {
+                    reason: festerm_host_protocol::Refusal::Unsupported,
+                },
+            ));
+        }
         let _operation = self.permit.budgets.reserve(Resource::Control, 1)?;
         // Poison before the first await: dropping/cancelling this future can
         // leave a partial frame or a late reply on the stream.
@@ -280,7 +310,10 @@ mod tests {
             reply(
                 &mut server,
                 Response::Capabilities {
-                    capabilities: Capabilities::default(),
+                    capabilities: Capabilities {
+                        inventory: true,
+                        ..Capabilities::default()
+                    },
                 },
             )
             .await;
@@ -303,7 +336,10 @@ mod tests {
         let cancel = CancellationToken::new();
         assert_eq!(
             client.handshake(&cancel).await.unwrap(),
-            Capabilities::default()
+            Capabilities {
+                inventory: true,
+                ..Capabilities::default()
+            }
         );
         let response = client
             .request(
@@ -337,6 +373,74 @@ mod tests {
                 reason: Refusal::OutcomeUncertain
             }
         ));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn handshake_preserves_typed_refusals() {
+        for reason in [
+            Refusal::Busy,
+            Refusal::Offline,
+            Refusal::Unknown,
+            Refusal::Incompatible,
+            Refusal::Revoked,
+            Refusal::OutcomeUncertain,
+        ] {
+            let (stream, mut peer) = duplex(1024);
+            let server = tokio::spawn(async move {
+                reply(&mut peer, Response::Refused { reason }).await;
+            });
+            let mut client = ControlClient::on_authenticated_stream(stream, binding(), permit());
+            assert_eq!(
+                client.handshake(&CancellationToken::new()).await,
+                Err(Error::Refused(reason))
+            );
+            assert_eq!(
+                client.handshake(&CancellationToken::new()).await,
+                Err(Error::Closed)
+            );
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn unadvertised_operation_is_correlated_unsupported_without_transport_work() {
+        let (stream, mut peer) = duplex(1024);
+        let server = tokio::spawn(async move {
+            reply(
+                &mut peer,
+                Response::Capabilities {
+                    capabilities: Capabilities::default(),
+                },
+            )
+            .await;
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), peer.read_u8())
+                    .await
+                    .is_err()
+            );
+        });
+        let mut client = ControlClient::on_authenticated_stream(stream, binding(), permit());
+        let cancel = CancellationToken::new();
+        client.handshake(&cancel).await.unwrap();
+        let operation = OperationId::new();
+        let response = client
+            .request(
+                operation.clone(),
+                Request::Lookup {
+                    logical: LogicalSessionId::new(),
+                },
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.operation, operation);
+        assert_eq!(
+            response.body,
+            Response::Refused {
+                reason: Refusal::Unsupported
+            }
+        );
         server.await.unwrap();
     }
 

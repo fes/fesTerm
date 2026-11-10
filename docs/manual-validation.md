@@ -3361,13 +3361,17 @@ framing, deadline/cancellation/correlation, real owner-proof fixture, protected
 revocation and pending logical-revision/generation tests. No native endpoint
 acceptance is added: the actual inner SSH session/channel exporter is absent,
 so same-channel proof integration must fail closed. Real sessiond/control and
-owned scoped-policy adapters now compile, with three explicitly invoked Unix
+owned scoped-policy adapters now compile, with five explicitly invoked Unix
 owned-daemon duplex fixtures for ensure/create/retry, nonattaching inventory,
 denied creation and exact-generation end reconciliation. The protected native
 enrollment composition is off by default; no real user vault is changed by
 these tests. Adopted terminal routing/detach and fair output/control scheduling
 remain prerequisites, not fixture claims. Native capabilities advertise
-inventory only; incomplete operations never claim an attachment or Ended result.
+inventory only and enforce those flags on both peers and the native backend.
+Additional automated fixtures cover independent idle/exchange deadlines,
+correlated resource/policy saturation, reply-capacity retention and post-commit
+native policy contention. Real native effects require a cfg(test)-only backend
+advertisement; there is no production bypass or new manual acceptance.
 
 Stage 2 adds **automated local Unix** evidence: real detached owned daemons and
 repository fixture children prove concurrent ensure, crash/lost-reply
