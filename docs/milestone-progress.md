@@ -1,5 +1,54 @@
 # Milestone Progress Narrative
 
+## Normally integrating the exact retirement correction into frozen core
+
+The separate `work/adr0084-core-session-fanin-nov10` worktree starts at exact
+core `9b1d2a688e35cad8dead2afa4b228c152c2cadb9` and normally merges exact session
+`918815ac88f25075204e818741a6ffe68fae2432`. Only additive milestone prose
+conflicted; the complete core story and incoming retirement story are retained.
+The only Rust delta from core is the two retirement source/test files, both
+byte-identical to `918815ac`. All other Rust and manifests retain core bytes.
+No new API, native update, client, Linux-logon, publisher or migration behavior
+is introduced. Session, root-runtime and the manual-cleanup actor's source
+worktrees are not edited.
+
+Qualification dispatches the installed rustup stable **Rust/Cargo 1.99.1 and
+Clippy 0.1.99**, with absolute `RUSTC`/`RUSTDOC` and the matching toolchain bin
+directory first on PATH, not Homebrew plus a version flag. It exclusively
+reuses the released session owner's private
+`/Users/fes/src/fesTerm-adr84-session-nov10/target`, jobs1, dev/test debug0 and
+incremental0; root runtime's active `.runtime-target` is never used.
+`FESTERM_SESSIOND_TEST_RUNTIME_ROOT` is unset. Exact invocation/exit, compiler
+path and source-hash receipts are retained in the integration worktree's
+`target/adr84-core-fanin-evidence/`.
+
+Fresh combined-source macOS selections pass **30 tests**: the three retained
+session commands below yield **4 retirement + 1 ensure + 1 capacity**; bridge
+controls yield **10 passes/five existing native-helper ignores**; setup yields
+**10 controller + 3 no-registration Services + 1 real-controller/cloud-adapter**
+passes. All executed cases have zero failures; no ignore was added or changed.
+The additional selected invocations are:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib host_control::tests -- --test-threads=2
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib -- controller::tests services::tests::native_service_unpublished_receipt_ services::tests::native_service_invalid_receipt_never_becomes_owned_absence cloud::tests::host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup --test-threads=2
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host-setup/acquisition,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/host-runtime --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9
+git diff --check
+```
+
+Three-package strict all-target Clippy, format, base-`9b` traceability
+(311 edges/zero broken references) and diff checks pass. Existing dependency
+and tool warnings remain in raw logs; no lint waiver or build-source change
+was needed.
+
+The original Linux CI error remains **unknown**, separate from the controlled
+Busy counterexample. No fourteen-native-route aggregate, broad workspace,
+Windows/Linux execution or VM operation is rerun or relabeled. Typed fake
+manager/network/credential fixtures do not establish native-manager/cloud/vault
+acceptance. Parent retains publication, exact-head reviews and platform gates.
+
 ## Aligning the frozen core's Windows cfg boundaries
 
 Fresh Windows primary CI for `b5e3bead` found two strict-build failures:
@@ -304,6 +353,52 @@ native/cloud/vault/device acceptance remain open. This frozen source handoff
 does not claim Ready or ADR completion. Parent owns the new stacked Draft
 publication; no push, force update, administrative merge or service operation
 is performed by this lane.
+
+## Keeping local retirement denial ahead of journal contention
+
+Linux primary job `129964171286` at `dbe998d0` retained 25 host-control passes
+and a failed foreign-principal Denied assertion in
+`local_pending_retirement_requires_positive_native_absence_and_fences_old_scopes`.
+The original assertion did **not** print the returned error; its actual variant
+remains unrecorded, not retrospectively labeled Busy. The journal still showed
+an unbound Launching reservation, null identity/native PID and Unknown grant.
+The raw `adr84-sessiondbe-linux-primary-failed.log` remains unchanged. One
+unchanged local macOS selector passed; it does not erase this CI failure.
+
+A deterministic held-journal/start/registry control against unchanged product
+code then failed with **actual `Err(Busy)` versus required `Err(Denied)`**.
+`retire_local` attempted the nonblocking global journal transaction before
+checking ownership. The correction handles only journal Busy: a bounded atomic
+private checkpoint may deny a foreign/missing owner, but can never authorize
+an action; a matching owner still receives Busy. Any retirement still needs the
+original fully validated locked transaction and positive native absence proof.
+A malformed checkpoint returns Storage, not a guessed ownership decision.
+
+The controlled test independently proves journal/native-start Busy and native
+registry Unknown. Denied/Busy leave the lease, launch journal, PID, generation
+and issued ledger unchanged. Native-Unknown may seal the lease stopped, but
+preserves its PID/generation/grant plus the complete logical/issued journal and
+launch evidence. The original corrupt-registry/positive-absence/old-scope test
+now also checks unchanged journals and prints exact unexpected errors. No
+retry, sleep, deadline, skip, fresh operation or assertion relaxation was added.
+
+With one warm-target job, zero dev/test debug info and incremental compilation
+off, the corrected macOS source passed:
+
+```sh
+cargo test --locked -p festerm-sessiond --test host_control retirement -- --nocapture --test-threads=2
+cargo test --locked -p festerm-sessiond --test host_control concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon -- --exact --test-threads=1
+cargo test --locked -p festerm-sessiond --test host_control logical_capacity_retires_absent_records_but_never_erases_revocation_or_generation_fences -- --exact --test-threads=1
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+Counts are **4 + 1 + 1 passed, zero failed/ignored**, not a full-suite claim.
+Strict affected Clippy, format, traceability (311 edges) and diff checks pass.
+Baseline, controlled RED and corrected logs remain under
+`target/adr84-windows-correction/retirement-*.log`.
+The reported `dbe998d0` macOS primary success and Linux VM `181eb572` 26-pass
+result remain attributed to those exact heads. Fresh corrected Linux CI is
+required; no VM execution or new native/platform acceptance is claimed.
 
 ## Selecting policy-compliant roots for Windows registry fixtures
 

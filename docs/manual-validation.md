@@ -3586,6 +3586,15 @@ policy-checked helper, with handle-safe fixture lifetime; production checkout
 refusal/DACL checks and all publication-lock/rebase assertions remain unchanged.
 Local macOS registry/storage selectors passed 6/3 respectively. This is a fixture
 correction, not Windows acceptance; fresh exact-head Windows CI remains required.
+Linux primary job `129964171286` at `dbe998d0` later retained 25 host-control
+passes and a foreign-retirement denial mismatch; the actual returned error was
+not printed. A held-journal control independently reproduced Busy before the
+owner check. Retirement now permits only a deny-only bounded protected checkpoint
+read on that contention path; matching owners still get Busy and all effects
+retain full locked authorization/positive native-absence proof. Controlled
+journal/start Busy, registry Unknown, corrupt-checkpoint Storage and foreign
+Denied preserve exact PID/generation/issued evidence. Six selected macOS
+retirement/ensure/capacity cases pass; this is not fresh Linux/native acceptance.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot

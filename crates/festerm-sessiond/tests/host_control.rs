@@ -527,6 +527,132 @@ fn issuance_rotation_reauthorizes_actual_epoch_before_durable_publication() {
 }
 
 #[test]
+fn local_pending_retirement_denies_foreign_owner_under_journal_and_native_contention() {
+    let fixture = Fixture::new();
+    let (control, _) = fixture.failing_control();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let operation = fixture.issued();
+    assert!(matches!(
+        control.ensure(
+            &fixture.owner,
+            &operation,
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Unknown)
+    ));
+    let before = fixture.state();
+    let record = &before["sessions"][creation.logical.as_str()];
+    let target = Target {
+        logical: creation.logical.clone(),
+        generation: serde_json::from_value(record["generation"].clone()).unwrap(),
+    };
+    assert_eq!(record["phase"], "Launching");
+    assert!(record["identity"].is_null());
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let lease_name = PathBuf::from(format!("host-daemon-{}.json", target.generation.get()));
+    let lease_before = storage::read_private(&directory, &lease_name, 4096).unwrap();
+    let lease: serde_json::Value = serde_json::from_slice(&lease_before).unwrap();
+    assert!(lease["native_pid"].is_null());
+    let launch_name = PathBuf::from(format!("launch-{}.json", operation.id.as_str()));
+    let launch_before = storage::read_private(&directory, &launch_name, 4096).unwrap();
+    let start =
+        festerm_sessiond::lock_native_start_in(&fixture.root, record["name"].as_str().unwrap())
+            .unwrap();
+    let registry =
+        storage::open_private_file(&directory, Path::new("registry.lock"), false).unwrap();
+    fs2::FileExt::try_lock_exclusive(&registry).unwrap();
+    let journal =
+        storage::open_private_file(&directory, Path::new("host-sessions.lock"), false).unwrap();
+    fs2::FileExt::try_lock_exclusive(&journal).unwrap();
+    let foreign = PrincipalId::new();
+    assert_eq!(
+        control.retire_local(&foreign, &target),
+        Err(ControlError::Denied),
+        "readable protected ownership must deny before any retirement effect"
+    );
+    assert_eq!(
+        control.retire_local(&fixture.owner, &target),
+        Err(ControlError::Busy)
+    );
+    assert_eq!(
+        control.retire_local(
+            &foreign,
+            &Target {
+                logical: LogicalSessionId::new(),
+                generation: target.generation,
+            },
+        ),
+        Err(ControlError::Denied)
+    );
+    assert_eq!(fixture.state(), before);
+    assert_eq!(
+        storage::read_private(&directory, &lease_name, 4096).unwrap(),
+        lease_before
+    );
+    assert_eq!(
+        storage::read_private(&directory, &launch_name, 4096).unwrap(),
+        launch_before
+    );
+    let checkpoint =
+        storage::read_private(&directory, Path::new("host-sessions.json"), 4 * 1024 * 1024)
+            .unwrap();
+    storage::replace_private(&directory, Path::new("host-sessions.json"), b"invalid").unwrap();
+    for owner in [&foreign, &fixture.owner] {
+        assert_eq!(
+            control.retire_local(owner, &target),
+            Err(ControlError::Storage),
+            "a corrupt checkpoint cannot supply an ownership decision"
+        );
+    }
+    assert_eq!(
+        &**storage::read_private(&directory, Path::new("host-sessions.json"), 7).unwrap(),
+        b"invalid"
+    );
+    assert_eq!(
+        storage::read_private(&directory, &lease_name, 4096).unwrap(),
+        lease_before
+    );
+    storage::replace_private(&directory, Path::new("host-sessions.json"), &checkpoint).unwrap();
+    drop(journal);
+    assert_eq!(
+        control.retire_local(&foreign, &target),
+        Err(ControlError::Denied)
+    );
+    assert_eq!(
+        control.retire_local(&fixture.owner, &target),
+        Err(ControlError::Busy),
+        "native start ownership is not positive absence"
+    );
+    assert_eq!(fixture.state(), before);
+    assert_eq!(
+        storage::read_private(&directory, &lease_name, 4096).unwrap(),
+        lease_before
+    );
+    drop(start);
+    assert_eq!(
+        control.retire_local(&fixture.owner, &target),
+        Err(ControlError::Unknown),
+        "unreadable native registry is not positive absence"
+    );
+    assert_eq!(fixture.state(), before);
+    let sealed: serde_json::Value =
+        serde_json::from_slice(&storage::read_private(&directory, &lease_name, 4096).unwrap())
+            .unwrap();
+    assert_eq!(sealed["native_pid"], lease["native_pid"]);
+    assert_eq!(sealed["generation"], lease["generation"]);
+    assert_eq!(sealed["grant"], lease["grant"]);
+    assert_eq!(sealed["stopped"], true);
+    assert_eq!(
+        storage::read_private(&directory, &launch_name, 4096).unwrap(),
+        launch_before
+    );
+    drop(registry);
+}
+
+#[test]
 fn local_pending_retirement_requires_positive_native_absence_and_fences_old_scopes() {
     use festerm_host_protocol::MAX_PENDING_CREATES;
     let fixture = Fixture::new();
@@ -574,10 +700,11 @@ fn local_pending_retirement_requires_positive_native_absence_and_fences_old_scop
     };
     let directory = storage::private_directory(&fixture.root, false).unwrap();
     storage::replace_private(&directory, Path::new("registry.json"), b"invalid").unwrap();
-    assert!(matches!(
+    assert_eq!(
         control.retire_local(&fixture.owner, &first_target),
         Err(ControlError::Unknown)
-    ));
+    );
+    assert_eq!(fixture.state(), interrupted);
     assert_eq!(
         fixture.state()["sessions"].as_object().unwrap().len(),
         MAX_PENDING_CREATES
@@ -588,10 +715,18 @@ fn local_pending_retirement_requires_positive_native_absence_and_fences_old_scop
             logical: creation.logical.clone(),
             generation: *generation,
         };
-        assert!(matches!(
+        let before_denial = fixture.state();
+        let lease_name = PathBuf::from(format!("host-daemon-{}.json", generation.get()));
+        let lease_before = storage::read_private(&directory, &lease_name, 4096).unwrap();
+        assert_eq!(
             control.retire_local(&PrincipalId::new(), &target),
             Err(ControlError::Denied)
-        ));
+        );
+        assert_eq!(fixture.state(), before_denial);
+        assert_eq!(
+            storage::read_private(&directory, &lease_name, 4096).unwrap(),
+            lease_before
+        );
         control.retire_local(&fixture.owner, &target).unwrap();
         assert!(DaemonWatch::open(
             &fixture.root,

@@ -548,6 +548,12 @@ Private-registry reader/rebase fixture roots use the existing policy-checked
 test directory rather than assuming Windows checkout ancestors are trusted.
 Production ancestor/DACL refusal and actual publication-lock/once-only-effect
 assertions remain unchanged; corrected Windows CI remains a separate gate.
+Local retirement's contended-journal checkpoint is deny-only: it can refuse a
+foreign/missing owner, never admit an action. Matching owners remain Busy and
+all effects retain locked owner/generation/revocation validation plus positive
+native absence. Controlled journal/start/registry barriers preserve exact
+PID/generation/issued state under refusal; the original Linux mismatch did not
+record its error variant and is not retrospectively classified as Busy.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,

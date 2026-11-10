@@ -5601,6 +5601,7 @@
         "issuance_rotation_reauthorizes_actual_epoch_before_durable_publication",
         "logical_capacity_retires_absent_records_but_never_erases_revocation_or_generation_fences",
         "local_pending_retirement_requires_positive_native_absence_and_fences_old_scopes",
+        "local_pending_retirement_denies_foreign_owner_under_journal_and_native_contention",
         "interrupted_retirement_keeps_original_operation_noncreating_after_artifact_removal",
         "incomplete_inventory_preserves_healthy_sessions_and_noncreating_unknown_targets",
         "per_generation_actions_and_heartbeats_do_not_take_global_journal_or_other_generation_locks",

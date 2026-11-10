@@ -311,8 +311,14 @@ then the caller retries Busy with its original unchanged operation and scope.
 not a wire operation. It can retire a known-Absent identity or abandon an
 ambiguous Launching reservation. Abandonment seals its generation lease under
 the native start lock, then must acquire the lifetime daemon lock and positively
-verify exact registry/generation absence. Contention is Busy; malformed/missing
-required evidence is Unknown, never absence. A durable artifacts-retired
+verify exact registry/generation absence. On journal contention, a bounded
+read-only protected checkpoint can only return Denied for a foreign/missing
+logical owner; a matching owner still receives Busy, never authority from that
+snapshot. A corrupt checkpoint fails closed as Storage. The locked transaction
+revalidates every ownership/generation/revocation check before any effect.
+Owner journal/native-start contention is Busy; unavailable native registry
+evidence (including its contended lock) or malformed/missing required evidence
+is Unknown, never absence. A durable artifacts-retired
 checkpoint precedes deletion, so crash recovery completes cleanup idempotently.
 Delayed helpers cannot recreate removed old generation locks or obtain a live
 lease. Only successful proof restores capacity and permits later same-ID creation;
