@@ -51,6 +51,10 @@ pub(crate) use profiles::report_local_profile_save_outcome;
 pub(crate) use profiles::show_profiles;
 #[cfg(test)]
 pub(crate) use profiles::{has_profile_screen_state_for_test, install_profile_secret_for_test};
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use profiles::{
+    local_host_account_request, profiles_has_open_editor, report_local_host_account,
+};
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use profiles::{set_local_host_views, LocalHostView};
@@ -77,7 +81,7 @@ enum LauncherItemKind<'a> {
     SftpProfile(&'a str),
     SerialProfile(&'a str),
     PowerShellProfile(&'a str),
-    ResumeSession(&'a festerm_sessiond::UnattachedSession),
+    ResumeSession(&'a crate::discovery::NativeSession),
     /// A locally running tmux or GNU screen session offered from its own
     /// quick-connect widget (feature request: local tmux/screen quick
     /// connect). `provider` is `Tmux` or `Screen`; `display_name` is the
@@ -1388,6 +1392,29 @@ impl Default for LauncherState {
 
 fn launcher_state_id(tab_id: TabId) -> egui::Id {
     egui::Id::new(("launcher_state", tab_id))
+}
+
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) fn launcher_has_open_form(context: &egui::Context, tab_id: TabId) -> bool {
+    context
+        .data(|data| data.get_temp::<LauncherState>(launcher_state_id(tab_id)))
+        .is_some_and(|state| {
+            state.local_open
+                || state.ssh_open
+                || state.sftp_open
+                || state.serial_open
+                || state.tunnel_open
+                || state.pending_form.is_some()
+        })
+}
+
+#[cfg(all(test, feature = "experimental-dev-tunnels"))]
+pub(crate) fn install_launcher_form_for_test(context: &egui::Context, tab_id: TabId) {
+    let state = LauncherState {
+        local_open: true,
+        ..LauncherState::default()
+    };
+    context.data_mut(|data| data.insert_temp(launcher_state_id(tab_id), state));
 }
 
 pub(crate) fn reset_connection_form(context: &egui::Context, tab_id: TabId) {
@@ -3429,8 +3456,11 @@ fn show_session_group(
                 let identity = match item.kind {
                     LauncherItemKind::ResumeSession(session) => {
                         format!(
-                            "native:{}:{}:{}",
-                            session.endpoint, session.pid, session.created_at_unix_ms
+                            "native:{}:{}:{}:{}",
+                            session.runtime_root.display(),
+                            session.endpoint,
+                            session.pid,
+                            session.created_at_unix_ms
                         )
                     }
                     LauncherItemKind::ResumeMultiplexerSession(provider, session) => {
@@ -3530,11 +3560,17 @@ fn show_session_row(
 
 fn show_native_session_menu(
     ui: &mut Ui,
-    session: &festerm_sessiond::UnattachedSession,
+    session: &crate::discovery::NativeSession,
 ) -> Option<AppCommand> {
     if ui.button("Reattach").clicked() {
         ui.close();
         return Some(AppCommand::ResumeUnattachedSession {
+            session: session.clone(),
+        });
+    }
+    if ui.button("Take over session...").clicked() {
+        ui.close();
+        return Some(AppCommand::TakeOverDiscoveredSession {
             session: session.clone(),
         });
     }
@@ -3713,7 +3749,7 @@ pub fn show_launcher(
     native_store_available: bool,
     secure_storage_status: Option<&str>,
     compact_cards: bool,
-    resumable_sessions: &[festerm_sessiond::UnattachedSession],
+    resumable_sessions: &[crate::discovery::NativeSession],
     tmux_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
     screen_sessions: &[crate::multiplexer_sessions::MultiplexerSession],
     running_tunnels: &[RunningTunnelRow],
@@ -3774,7 +3810,7 @@ pub fn show_launcher(
     // Reconnect/Inspector Resume), unlike tmux/screen below.
     items.extend(resumable_sessions.iter().map(|session| {
         let mut item = LauncherItem::untabulated(
-            session.name.clone(),
+            session.display_name(),
             session
                 .working_directory
                 .as_deref()
@@ -5222,6 +5258,19 @@ mod tests {
         width: f32,
         resumable_sessions: Vec<festerm_sessiond::UnattachedSession>,
     ) -> Harness<'static, LauncherHarnessState> {
+        let resumable_sessions: Vec<_> = resumable_sessions
+            .into_iter()
+            .map(crate::discovery::NativeSession::fixture)
+            .collect();
+        harness_with_native_sessions(profiles, compact_launcher_grid, width, resumable_sessions)
+    }
+
+    fn harness_with_native_sessions(
+        profiles: Vec<Profile>,
+        compact_launcher_grid: bool,
+        width: f32,
+        resumable_sessions: Vec<crate::discovery::NativeSession>,
+    ) -> Harness<'static, LauncherHarnessState> {
         let configuration = Configuration::new(profiles).expect("test configuration is valid");
         Harness::builder()
             .with_size(egui::vec2(width, 880.0))
@@ -5505,8 +5554,8 @@ mod tests {
                 .expect("review profile is valid"),
             ]);
         }
-        let native =
-            ["dev-work", "build-process"].map(|name| festerm_sessiond::UnattachedSession {
+        let native = ["dev-work", "build-process"].map(|name| {
+            crate::discovery::NativeSession::fixture(festerm_sessiond::UnattachedSession {
                 pid: 123,
                 endpoint: String::new(),
                 name: name.to_owned(),
@@ -5518,7 +5567,8 @@ mod tests {
                         .expect("review clock is after the Unix epoch")
                         .saturating_sub(2 * 60 * 60),
                 ) * 1000,
-            });
+            })
+        });
         let tmux = [MultiplexerSession {
             name: "research".to_owned(),
             match_key: "research".to_owned(),
@@ -6708,6 +6758,57 @@ mod tests {
     }
 
     #[test]
+    fn same_name_hosted_session_actions_retain_the_selected_root() {
+        let make = |hosted| crate::discovery::NativeSession {
+            session: festerm_sessiond::UnattachedSession {
+                pid: if hosted { 124 } else { 123 },
+                endpoint: if hosted { "hosted" } else { "legacy" }.into(),
+                name: "shared".into(),
+                shell: "shell".into(),
+                arguments: Vec::new(),
+                working_directory: None,
+                created_at_unix_ms: 456,
+            },
+            runtime_root: std::env::temp_dir().join(if hosted { "hosted" } else { "legacy" }),
+            source: if hosted {
+                crate::discovery::NativeSource::Hosted
+            } else {
+                crate::discovery::NativeSource::Default
+            },
+        };
+        let expected = make(true);
+        for terminate in [false, true] {
+            let mut harness = harness_with_native_sessions(
+                Vec::new(),
+                false,
+                1240.0,
+                vec![make(false), make(true)],
+            );
+            harness.run();
+            if terminate {
+                harness
+                    .get_by_label("More actions for native session shared · Hosted")
+                    .click();
+                harness.run();
+                harness.run();
+                harness.get_by_label("Terminate session...").click();
+            } else {
+                harness.get_by_label("Reattach shared · Hosted").click();
+            }
+            harness.run();
+            match &harness.state().command {
+                Some(AppCommand::ResumeUnattachedSession { session }) if !terminate => {
+                    assert_eq!(session, &expected);
+                }
+                Some(AppCommand::TerminateUnattachedSession { session }) if terminate => {
+                    assert_eq!(session, &expected);
+                }
+                _ => panic!("the selected hosted session action was not dispatched"),
+            }
+        }
+    }
+
+    #[test]
     fn native_session_overflow_and_right_click_dispatch_generation_pinned_termination() {
         for right_click in [false, true] {
             let selected = festerm_sessiond::UnattachedSession {
@@ -6747,7 +6848,7 @@ mod tests {
             harness.run();
             assert!(matches!(
                 &harness.state().command,
-                Some(AppCommand::TerminateUnattachedSession { session }) if session == &selected
+                Some(AppCommand::TerminateUnattachedSession { session }) if session.session == selected
             ));
         }
     }

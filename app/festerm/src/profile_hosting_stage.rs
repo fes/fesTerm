@@ -22,19 +22,19 @@ pub(super) struct Helpers {
 
 pub(super) fn initialize() -> io::Result<PathBuf> {
     let root = profile_hosting::namespace()?;
-    let runtime = festerm_sessiond::runtime_root()
+    initialize_in(&root, &profile_hosting::hosted_runtime()?)?;
+    Ok(root)
+}
+
+fn initialize_in(root: &Path, runtime: &Path) -> io::Result<()> {
+    let _root = festerm_sessiond::prepare_native_runtime(root)
         .map_err(|_| io::Error::other("profile_host.runtime_namespace"))?;
-    let _runtime = festerm_sessiond::prepare_native_runtime(&runtime)
+    let _runtime = festerm_sessiond::prepare_native_runtime(runtime)
         .map_err(|_| io::Error::other("profile_host.runtime_namespace"))?;
-    let product = root
-        .parent()
-        .ok_or_else(|| io::Error::other("profile_host.runtime_namespace"))?;
-    let _product = setup_storage::private_directory(product, true)?;
-    let _root = setup_storage::private_directory(&root, true)?;
     for leaf in ["installations", "releases", "requests"] {
         setup_storage::private_directory(&root.join(leaf), true)?;
     }
-    Ok(root)
+    Ok(())
 }
 
 fn cache(root: &Path) -> PathBuf {
@@ -349,6 +349,138 @@ fn verify_signature(path: &Path, app: Option<&Path>) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[cfg(windows)]
+    #[test]
+    fn hosting_initialization_keeps_inherited_windows_acls_and_legacy_registry() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        fn powershell(path: &Path, script: &str) -> Vec<u8> {
+            let mut command = Command::new("powershell.exe");
+            command.args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                script,
+            ]);
+            command.env("FESTERM_ACL_FIXTURE", path);
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "isolated ACL fixture failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
+        }
+        let parents = [
+            Some(std::env::temp_dir()),
+            std::env::var_os("SystemRoot").map(|root| PathBuf::from(root).join("Temp")),
+        ];
+        let fixture = parents
+            .into_iter()
+            .flatten()
+            .find_map(|parent| {
+                let path = parent.join(format!("festerm-host-acl-{}", uuid::Uuid::new_v4()));
+                match festerm_sessiond::prepare_native_runtime(&path) {
+                    Ok(_) => Some(Fixture(path)),
+                    Err(_) => {
+                        let _ = std::fs::remove_dir(&path);
+                        None
+                    }
+                }
+            })
+            .expect("a trusted temporary parent is required");
+        powershell(
+            &fixture.0,
+            r#"
+            $ErrorActionPreference = 'Stop'
+            $user = [Security.Principal.WindowsIdentity]::GetCurrent().User
+            $acl = [Security.AccessControl.DirectorySecurity]::new()
+            $acl.SetOwner($user)
+            $acl.SetAccessRuleProtection($true, $false)
+            foreach ($sid in @($user, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'), [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))) {
+                $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+            }
+            [IO.Directory]::SetAccessControl($env:FESTERM_ACL_FIXTURE, $acl)
+            $product = Join-Path $env:FESTERM_ACL_FIXTURE 'fesTerm'
+            $legacy = Join-Path $product 'sessiond'
+            [IO.Directory]::CreateDirectory($legacy) | Out-Null
+            foreach ($path in @($product, $legacy)) {
+                $inherited = [IO.Directory]::GetAccessControl($path)
+                $inherited.SetOwner($user)
+                [IO.Directory]::SetAccessControl($path, $inherited)
+                if ($inherited.AreAccessRulesProtected -or @($inherited.Access | Where-Object { -not $_.IsInherited }).Count -ne 0) {
+                    throw 'Fixture did not retain inherited access rules.'
+                }
+            }
+        "#,
+        );
+        let product = fixture.0.join("fesTerm");
+        let legacy = product.join("sessiond");
+        let snapshot = "[IO.Directory]::GetAccessControl($env:FESTERM_ACL_FIXTURE).GetSecurityDescriptorSddlForm('All')";
+        let product_acl = powershell(&product, snapshot);
+        let legacy_acl = powershell(&legacy, snapshot);
+        assert!(setup_storage::private_directory(&product, false).is_err());
+        assert!(setup_storage::private_directory(&legacy, false).is_err());
+        std::fs::write(legacy.join("registry.json"), b"legacy evidence").unwrap();
+        let root = product.join("profile-hosts");
+        let runtime = root.join("runtime").join("fesTerm").join("sessiond");
+        initialize_in(&root, &runtime).unwrap();
+        assert!(
+            product_acl == powershell(&product, snapshot),
+            "product ACL changed"
+        );
+        assert!(
+            legacy_acl == powershell(&legacy, snapshot),
+            "legacy ACL changed"
+        );
+        assert_eq!(
+            std::fs::read(legacy.join("registry.json")).unwrap(),
+            b"legacy evidence"
+        );
+        assert_eq!(std::fs::read_dir(&legacy).unwrap().count(), 1);
+        setup_storage::private_directory(&root, false).unwrap();
+        setup_storage::private_directory(&runtime, false).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hosting_initialization_keeps_legacy_permissions_and_session_files_unchanged() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = tempfile::Builder::new()
+            .prefix("festerm-legacy-host-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let product = fixture.path().join("festerm");
+        let legacy = product.join("sessiond");
+        std::fs::create_dir_all(&legacy).unwrap();
+        for directory in [&product, &legacy] {
+            std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(legacy.join("registry.json"), b"legacy evidence").unwrap();
+        let root = product.join("profile-hosts");
+        let runtime = root.join("runtime").join("festerm").join("sessiond");
+        initialize_in(&root, &runtime).unwrap();
+        for directory in [&product, &legacy] {
+            assert_eq!(
+                std::fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+        }
+        assert_eq!(
+            std::fs::read(legacy.join("registry.json")).unwrap(),
+            b"legacy evidence"
+        );
+        setup_storage::private_directory(&root, false).unwrap();
+        setup_storage::private_directory(&runtime, false).unwrap();
+        assert_eq!(std::fs::read_dir(&legacy).unwrap().count(), 1);
+    }
 
     #[cfg(unix)]
     #[test]

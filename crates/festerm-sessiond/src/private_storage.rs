@@ -42,6 +42,16 @@ fn ancestor(directory: &File) -> io::Result<()> {
 /// component. Only the final directory may be created; its parent must exist.
 /// Existing permissions are verified, never repaired.
 pub fn private_directory(path: &Path, create: bool) -> io::Result<File> {
+    open_directory(path, create, true)
+}
+
+/// Opens a directory whose entries cannot be replaced by an untrusted user.
+/// Existing permissions are verified, never repaired.
+pub fn trusted_directory(path: &Path, create: bool) -> io::Result<File> {
+    open_directory(path, create, false)
+}
+
+fn open_directory(path: &Path, create: bool, require_private: bool) -> io::Result<File> {
     if !path.is_absolute() {
         return Err(invalid());
     }
@@ -117,7 +127,11 @@ pub fn private_directory(path: &Path, create: bool) -> io::Result<File> {
         }
         Err(error) => return Err(error),
     };
-    private(&directory, true)?;
+    if require_private {
+        private(&directory, true)?;
+    } else {
+        ancestor(&directory)?;
+    }
     Ok(directory)
 }
 
@@ -134,6 +148,41 @@ fn file_name(name: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Opens an existing legacy lock without changing its permissions, or creates
+/// a private lock in a verified trusted directory.
+pub fn open_trusted_lock(directory: &File, name: &Path) -> io::Result<File> {
+    file_name(name)?;
+    ancestor(directory)?;
+    #[cfg(unix)]
+    fn existing(directory: &File, name: &Path) -> io::Result<File> {
+        festerm_unix_security::open_file_nofollow(directory, name)
+    }
+    #[cfg(windows)]
+    fn existing(directory: &File, name: &Path) -> io::Result<File> {
+        let file =
+            festerm_windows_security::open_lock_no_reparse_without_delete_sharing(directory, name)?;
+        festerm_windows_security::trusted_legacy_lock_file(&file)?;
+        Ok(file)
+    }
+    match existing(directory, name) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            #[cfg(unix)]
+            let created = festerm_unix_security::open_private_file(directory, name, true);
+            #[cfg(windows)]
+            let created =
+                festerm_windows_security::create_current_user_only_file_exclusive(directory, name);
+            match created {
+                Ok(file) => drop(file),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+            existing(directory, name)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Opens a private regular file read/write, without truncation. `create_new`
