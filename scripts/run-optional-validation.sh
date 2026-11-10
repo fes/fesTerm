@@ -21,6 +21,18 @@ emoji_result_path=native-emoji-smoke-result.txt
 status=pass
 
 printf 'status=running\n' >"$result_path"
+if { [ "$(uname -s)" = Linux ] || [ "$(uname -s)" = Darwin ]; } &&
+    [ -n "${FESTERM_ADR84_UPDATE_HELPER:-}" ]; then
+    if cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud \
+        --lib native_host_update_preserves_actual -- --ignored; then
+        printf 'suite=host-update-owned-daemon status=pass\n' >>"$result_path"
+    else
+        printf 'suite=host-update-owned-daemon status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=host-update-owned-daemon status=skipped reason=unix-and-explicit-owned-helper-required\n' >>"$result_path"
+fi
 printf 'suite=six-session-aging status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"

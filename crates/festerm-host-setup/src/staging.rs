@@ -40,6 +40,27 @@ pub(crate) fn verify_release_files(
     signature: &Path,
     archive: &Path,
 ) -> io::Result<VerifiedArtifact> {
+    verify_release_version(
+        manifest,
+        signature,
+        archive,
+        crate::VERSION,
+        artifacts::verify,
+    )
+}
+
+pub(crate) fn verify_release_version(
+    manifest: &Path,
+    signature: &Path,
+    archive: &Path,
+    version: &str,
+    verify: impl FnOnce(
+        &[u8],
+        &[u8],
+        &[u8],
+        &ExpectedArtifact<'_>,
+    ) -> Result<VerifiedArtifact, artifacts::ArtifactError>,
+) -> io::Result<VerifiedArtifact> {
     let platform = match std::env::consts::OS {
         "linux" => Platform::Linux,
         "macos" => Platform::Macos,
@@ -54,12 +75,12 @@ pub(crate) fn verify_release_files(
     let manifest = read_input(manifest, artifacts::MAX_MANIFEST_BYTES)?;
     let signature = read_input(signature, artifacts::MAX_SIGNATURE_BYTES)?;
     let archive = read_input(archive, artifacts::MAX_ARCHIVE_BYTES)?;
-    artifacts::verify(
+    verify(
         &manifest,
         &signature,
         &archive,
         &ExpectedArtifact {
-            version: crate::VERSION,
+            version,
             platform,
             architecture,
             package: Package::Host,

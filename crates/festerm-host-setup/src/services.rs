@@ -2,7 +2,9 @@
 //! CLI management never treats a native process observation as endpoint readiness.
 mod definitions;
 pub mod native;
+mod replacement;
 mod trusted;
+pub use replacement::{ReplacementReport, ReplacementState};
 pub use trusted::TrustedStage;
 
 #[cfg(all(test, feature = "cloud", feature = "host-runtime"))]
@@ -201,14 +203,16 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             let file = match storage::open_private_file(directory, Path::new(LOCK), false) {
                 Ok(file) => file,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    match storage::open_private_file(directory, Path::new(RECORD), false) {
-                        Ok(_) => {
-                            return Err(refused(
-                                "host.service_lock_missing_reconciliation_required",
-                            ))
+                    for record in [RECORD, replacement::JOURNAL] {
+                        match storage::open_private_file(directory, Path::new(record), false) {
+                            Ok(_) => {
+                                return Err(refused(
+                                    "host.service_lock_missing_reconciliation_required",
+                                ))
+                            }
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                            Err(error) => return Err(error),
                         }
-                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                        Err(error) => return Err(error),
                     }
                     storage::open_private_file(directory, Path::new(LOCK), true)?
                 }
@@ -230,8 +234,17 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         };
         let record: Registration =
             serde_json::from_slice(&bytes).map_err(|_| refused("host.service_invalid_receipt"))?;
-        let resource = definitions::resource(snapshot, record.epoch);
-        if record.version != 2
+        self.validate_registration(&record, snapshot)?;
+        Ok(Some(record))
+    }
+
+    fn validate_registration(&self, record: &Registration, snapshot: &Snapshot) -> io::Result<()> {
+        let mut resource = definitions::resource(snapshot, record.epoch);
+        if record.version == 3 {
+            resource.push('-');
+            resource.push_str(&record.reservation);
+        }
+        if !matches!(record.version, 2 | 3)
             || record.installation != snapshot.installation
             || record.origin != snapshot.origin
             || snapshot.binding.as_ref() != Some(&record.binding)
@@ -241,8 +254,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             || record.state != self.state
             || record.user != self.context.user
             || record.platform != self.context.platform
-            || record.definition != definitions::render(&record)?
+            || record.definition != definitions::render(record)?
             || uuid::Uuid::parse_str(&record.reservation).is_err()
+            || (record.version == 3 && record.platform == Platform::Windows)
             || (record.platform == Platform::Windows
                 && (record.native_expected.as_ref().is_none_or(|xml| {
                     !xml.contains(&format!("fesTerm-host-reservation:{}", record.reservation))
@@ -259,7 +273,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         {
             return Err(refused("host.service_foreign_receipt"));
         }
-        Ok(Some(record))
+        Ok(())
     }
 
     fn registration(&self) -> io::Result<(Snapshot, Option<Registration>)> {
@@ -311,6 +325,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         expected: &Snapshot,
         _operation: &native::OperationGuard,
     ) -> io::Result<Observation> {
+        self.require_no_replacement_history()?;
         self.with_record(|directory, current| {
             if current != expected || self.read_registration(directory, current)?.is_some() {
                 return Err(refused(
@@ -486,6 +501,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
 
     pub fn status(&self) -> io::Result<Observation> {
         let _lease = self.lease()?;
+        self.require_replacement_settled()?;
         let (snapshot, registration) = self.reconciled_registration()?;
         let process = match registration {
             Some(record) => self.observe(&record)?,
@@ -498,6 +514,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     /// Older receipt-only registrations remain removable, not executable trust.
     pub fn reopen_stage(&self, epoch: u64) -> io::Result<TrustedStage> {
         let _lease = self.lease()?;
+        self.require_replacement_settled()?;
         let snapshot = self.fence(epoch, Phase::Provisioned)?;
         let (current, record) = self.reconciled_registration()?;
         if current != snapshot {
@@ -525,7 +542,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
         Ok(stage)
     }
 
-    /// Registers only; never starts the incomplete host endpoint.
+    /// Registers only; activation requires explicit current-consent run/start.
     pub fn install(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
         if self.context.platform == Platform::Windows {
             return Err(refused(
@@ -537,6 +554,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
 
     fn install_reserved(&self, stage: &TrustedStage, epoch: u64) -> io::Result<Observation> {
         let _lease = self.lease()?;
+        self.require_replacement_settled()?;
         let snapshot = self.fence(epoch, Phase::Provisioned)?;
         stage.revalidate()?;
         let (_, prior) = self.reconciled_registration()?;
@@ -695,6 +713,7 @@ impl<'a, R: CommandRunner> Services<'a, R> {
             ));
         }
         let _lease = self.lease()?;
+        self.require_replacement_settled()?;
         let snapshot = self.fence(epoch, Phase::Provisioned)?;
         credentials()?;
         stage.revalidate()?;
@@ -758,6 +777,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     pub fn stop(&self, epoch: u64) -> io::Result<Observation> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::StopRequested)?;
+        if let Some(result) = self.stop_replacement(epoch)? {
+            return Ok(result);
+        }
         let (_, record) = self.reconciled_registration()?;
         let Some(record) = record else {
             return self.unregistered_observation(&snapshot, &_lease);
@@ -794,6 +816,9 @@ impl<'a, R: CommandRunner> Services<'a, R> {
     pub fn cleanup(&self, epoch: u64) -> io::Result<Observation> {
         let _lease = self.lease()?;
         let snapshot = self.fence(epoch, Phase::CleanupPending)?;
+        if let Some(result) = self.cleanup_replacement(epoch)? {
+            return Ok(result);
+        }
         let (_, record) = self.reconciled_registration()?;
         let Some(mut record) = record else {
             return self.unregistered_observation(&snapshot, &_lease);

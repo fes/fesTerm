@@ -3762,6 +3762,46 @@ all-target Clippy and the setup library's standalone `native-services` check.
 Packaging metadata and Python66 (59 passed / 7 skipped), fmt, trace311 and diff
 checks pass. These do not replace the real native prerequisites above.
 
+The authenticated stopped-update slice adds deterministic transaction-core
+coverage for signed old/new complete helpers, preserved identity/account/resource/
+grants, stopped/runtime-lease admission, version/downgrade refusal, native reload
+unknowns, same-target retry, epoch revocation, candidate/provenance tamper,
+post-receipt interruption, missing mutex/corrupt journal and exact cleanup of
+both reservations. Synthetic archives use a cfg(test)-only signer/qualifier and
+typed fake native manager; no real service or credential store is touched.
+The explicitly selected owned-daemon regression now launches **the authenticated
+old stage's sessiond entry**, populated with the exact current-source helper
+before test-key signing/publication. It uses this installation's `state/daemon`
+namespace/control record and adopts a real frontend. The actual replacement
+transaction must preserve PID/generation/endpoint, frontend attachment authority,
+control-record bytes and the exact old cached helper path/bytes. Bounded PTY
+input/echo round trips prove the same frontend remains usable; that cached
+helper also executes its read-only capabilities command afterwards. The same
+oracle rejects a deleted/replaced old cached helper and an explicitly ended
+daemon, with restoration rechecked between controls. Earlier runs launched an
+unrelated external helper/namespace and did **not** prove old-cache preservation.
+Synthetic 0.15.0 metadata around a current binary, test signatures/qualifier and
+a fake Linux manager are not genuine older-release compatibility, publisher
+qualification or positive native manager switching.
+The integrated no-registration correction does not bypass update recovery.
+Missing active receipts with either interrupted reload state still reconcile
+both journal-owned targets at the current revoked epoch; stale epochs refuse.
+Cleanup cannot finalize Aborted without a retained active receipt, even after
+retiring both definitions. Corrupt or foreign crash journals refuse stop/cleanup
+before manager effects and remain byte-identical. These are deterministic
+transaction/typed-manager fixtures, not additional native-manager acceptance.
+The additional settled-history regression first reproduced false absence after
+a committed update's receipt was lost; stop and cleanup now refuse that uncertain
+ownership without effects or changed journal/definition/lifecycle.
+HOSTSETUP-01 remains partial/native; Windows policy and Linux current-logon
+eligibility decisions are specified in native-host-services, not accepted or
+bypassed. Client first-connect/mobile/GPU/live cloud evidence is unchanged.
+Final source qualification: 124 host/setup tests passed with 2 explicit ignores;
+the actual owned-daemon case was separately selected and passed (0 ignored).
+Compatibility CLI10, strict affected all-target Clippy, standalone native-services
+check, Python59/7skipped, packaging/fmt/trace311/diff and optional POSIX syntax pass.
+The broad optional/GUI suite and PowerShell runner execution were not performed.
+
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;
 that needs separate default-No confirmation for its exact generation. That

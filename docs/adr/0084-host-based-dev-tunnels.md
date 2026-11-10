@@ -370,6 +370,34 @@ silently. Keep referenced binaries and rollback information. Rollback must not
 restore revoked grants or incompatible state. A failed update leaves the working
 version usable where safe and reports repair-required accurately.
 
+The shared stopped-version transaction is now implemented through explicit
+headless `update --consent replace --from-version ...` and `update-status`.
+The independently trusted new release updater admits only its compiled current
+bundle and strictly newer stable version, reauthenticates all retained old/new
+executables against signed provenance, and preserves protected HostIdentity/
+account/resource/grants plus independent persistent daemon state. A protected
+old/new native reservation journals Prepared/Applying/Committed/Aborted; native
+unknowns and interrupted receipt commit are reconciled only against that same
+intent. No background sign-in, automatic reenable/rollback, grant reconstruction
+or daemon/child kill is added. Revoke-first stop/cleanup covers both pending native
+resources, leaving cloud CleanupPending separate. Deterministic failure-injection
+and the owned-daemon regression are source/fixture evidence: the daemon launches
+the authenticated old cached sessiond entry in the installation's daemon
+namespace. Replacement preserves its PID/generation/endpoint, adopted frontend/
+control authority and exact old helper path/bytes; helper deletion/replacement
+and daemon end are negative controls. The helper is a current-source binary in
+a test-key-signed synthetic old-version package, with a test qualifier and fake
+Linux manager, not a genuine older release. Real publisher qualification,
+signed manager switching, cross-version compatibility and native acceptance
+remain open.
+
+Replacement reconciliation precedes the core's never-published-receipt absence
+path. Missing active receipts with pending old/new journals require both targets
+to reconcile and cannot finalize Aborted cleanup from `None`. Stale epochs and
+corrupt/foreign crash journals refuse. Even settled update history proves prior
+registration, so a lost receipt refuses rather than manufacturing absence.
+These coupled negative fixtures retain the native/cloud/vault qualifications.
+
 ### 10. Protocol, resource and failure contract
 
 Introduce an explicitly versioned host marker/capability handshake distinct from

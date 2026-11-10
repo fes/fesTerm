@@ -1,5 +1,47 @@
 use std::process::Command;
 
+#[cfg(feature = "owner-routing")]
+#[test]
+fn headless_update_is_explicit_stopped_signed_transaction_and_status_is_not_readiness() {
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let state = root.path().join("state");
+    let binary = env!("CARGO_BIN_EXE_festerm-host");
+    assert!(Command::new(binary)
+        .args(["configure", "--name", "Update", "--state-dir"])
+        .arg(&state)
+        .status()
+        .unwrap()
+        .success());
+    let output = Command::new(binary)
+        .args(["update-status", "--state-dir"])
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::Value::Null
+    );
+    assert_eq!(std::fs::read_dir(&state).unwrap().count(), 2);
+    let output = Command::new(binary)
+        .args(["update", "--state-dir"])
+        .arg(&state)
+        .args(["--consent", "replace", "--from-version", "0.15.0"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    assert!(!diagnostic.contains("endpoint_adapter_unavailable"));
+    assert!(!state.join("native-service-update.json").exists());
+    assert!(Command::new(binary)
+        .args(["status", "--state-dir"])
+        .arg(&state)
+        .output()
+        .unwrap()
+        .status
+        .success());
+}
+
 #[test]
 fn headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments() {
     for operation in ["setup", "run", "update", "uninstall"] {
@@ -11,7 +53,7 @@ fn headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments() 
         assert!(output.stdout.is_empty());
         let error = String::from_utf8(output.stderr).unwrap();
         let expected = if cfg!(feature = "owner-routing")
-            && matches!(operation, "setup" | "run" | "uninstall")
+            && matches!(operation, "setup" | "run" | "uninstall" | "update")
         {
             "invalid_arguments"
         } else {
@@ -59,6 +101,7 @@ fn headless_setup_and_owner_approval_require_explicit_foreground_confirmation() 
         ("setup", vec!["--account-id", "42"]),
         ("approve-owner", vec!["--public-key", "fixture-do-not-echo"]),
         ("uninstall", vec!["--state-dir", "fixture-do-not-echo"]),
+        ("update", vec!["--from-version", "fixture-do-not-echo"]),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
             .arg(command)

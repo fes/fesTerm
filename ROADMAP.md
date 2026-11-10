@@ -25,7 +25,14 @@ The contracts, local durable session control, protected enrollment and bounded
 framed/native-control adapters have focused evidence, including actual signed
 SSH owner proof and adopted terminal routing/detach. The default headless build
 now composes explicit signed setup, foreground account consent, separate
-owner-key/permission approval and run. Configuration defaults disabled; no
+owner-key/permission approval, run and authenticated stopped-version update.
+The update transaction has a coupled old-cache daemon regression preserving
+identity/grants, PID/generation/endpoint, adopted frontend/control and exact
+cached helper path/bytes, with helper-loss/replacement and daemon-end controls.
+The helper is current source in a synthetic old-version package, with test
+signatures/qualifier and a fake manager; real older-release compatibility,
+publisher qualification and native signed switching remain unqualified.
+Configuration defaults disabled; no
 listener starts from compilation/import. Combined-source review, real release/
 cloud/vault/service/device qualification and foreground client trust/session
 chooser evidence remain open. This source is not a native Ready/acceptance claim.

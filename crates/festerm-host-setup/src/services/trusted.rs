@@ -20,6 +20,8 @@ pub struct TrustedStage {
     _directory: File,
     _staged: StagedArtifact,
     helpers: Vec<TrustedExecutable>,
+    release_version: String,
+    bundle_digest: String,
 }
 
 struct TrustedExecutable {
@@ -61,6 +63,15 @@ impl TrustedStage {
         root: &Path,
         mut signature: impl FnMut(&File, &Path) -> io::Result<()>,
     ) -> io::Result<Self> {
+        Self::publish_version_with(artifact, root, crate::VERSION, &mut signature)
+    }
+
+    fn publish_version_with(
+        artifact: &VerifiedArtifact,
+        root: &Path,
+        version: &str,
+        mut signature: impl FnMut(&File, &Path) -> io::Result<()>,
+    ) -> io::Result<Self> {
         let platform = match std::env::consts::OS {
             "linux" => Platform::Linux,
             "macos" => Platform::Macos,
@@ -75,7 +86,7 @@ impl TrustedStage {
         let manifest = artifact.manifest();
         if manifest.package != Package::Host
             || manifest.schema != 2
-            || manifest.version != crate::VERSION
+            || manifest.version != version
             || manifest.platform != platform
             || manifest.architecture != architecture
         {
@@ -152,6 +163,8 @@ impl TrustedStage {
             _directory: directory,
             _staged: staged,
             helpers,
+            release_version: manifest.version.clone(),
+            bundle_digest: manifest.sha256.clone(),
         };
         receipt.revalidate()?;
         Ok(receipt)
@@ -243,6 +256,32 @@ pub(super) fn fixture(root: &Path) -> TrustedStage {
     .unwrap()
 }
 
+#[cfg(test)]
+pub(super) fn version_fixture(root: &Path, version: &str) -> TrustedStage {
+    TrustedStage::publish_version_with(
+        &crate::artifacts::host_version_fixture(version),
+        &root.join("artifacts"),
+        version,
+        |_, _| Ok(()),
+    )
+    .unwrap()
+}
+
+#[cfg(all(test, unix))]
+pub(super) fn version_fixture_with_sessiond(
+    root: &Path,
+    version: &str,
+    sessiond: &[u8],
+) -> TrustedStage {
+    TrustedStage::publish_version_with(
+        &crate::artifacts::host_version_fixture_with_sessiond(version, sessiond),
+        &root.join("artifacts"),
+        version,
+        |_, _| Ok(()),
+    )
+    .unwrap()
+}
+
 #[cfg(all(test, feature = "native-service-fixtures", unix))]
 pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
     use std::os::unix::fs::PermissionsExt;
@@ -263,12 +302,95 @@ pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
         _directory: directory,
         _staged: staged,
         helpers: Vec::new(),
+        release_version: crate::VERSION.into(),
+        bundle_digest: artifact.manifest().sha256.clone(),
     }
 }
 
 impl TrustedStage {
+    pub fn version(&self) -> &str {
+        &self.release_version
+    }
+
+    pub(super) fn bundle_digest(&self) -> &str {
+        &self.bundle_digest
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(super) fn authenticate_registered(
+        record: &super::Registration,
+        version: &str,
+    ) -> io::Result<()> {
+        Self::authenticate_registered_with(
+            record,
+            version,
+            crate::artifacts::verify,
+            native_publisher_qualification,
+        )
+    }
+
+    fn authenticate_registered_with(
+        record: &super::Registration,
+        version: &str,
+        verify: impl FnOnce(
+            &[u8],
+            &[u8],
+            &[u8],
+            &crate::artifacts::ExpectedArtifact<'_>,
+        ) -> Result<VerifiedArtifact, crate::artifacts::ArtifactError>,
+        mut qualify: impl FnMut(&File, &Path) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let provenance = record
+            .provenance
+            .as_ref()
+            .ok_or_else(|| refused("host.service_signed_provenance_required"))?;
+        let artifact = staging::verify_release_version(
+            &provenance.join(".manifest.json"),
+            &provenance.join(".manifest.json.sig"),
+            &provenance.join(".archive"),
+            version,
+            verify,
+        )?;
+        let directory = record
+            .executable
+            .parent()
+            .ok_or_else(|| refused("host.service_executable_path"))?;
+        if directory.file_name().and_then(|name| name.to_str())
+            != Some(format!("executable-{}", artifact.manifest().sha256).as_str())
+        {
+            return Err(refused("host.service_authenticated_bundle_changed"));
+        }
+        let name = format!("festerm-host{}", std::env::consts::EXE_SUFFIX);
+        if record.executable.file_name().and_then(|name| name.to_str()) != Some(name.as_str()) {
+            return Err(refused("host.service_authenticated_host_entry_required"));
+        }
+        for entry in artifact.entries().iter().filter(|entry| entry.executable()) {
+            let path = directory.join(entry.name());
+            let file = open(&path)?;
+            let expected = digest(entry.bytes());
+            check(&file, entry.bytes().len() as u64, &expected)?;
+            if entry.name() == name && expected != record.digest {
+                return Err(refused("host.service_authenticated_bundle_changed"));
+            }
+            qualify(&file, &path)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn authenticate_fixture_registered(
+        record: &super::Registration,
+        version: &str,
+    ) -> io::Result<()> {
+        Self::authenticate_registered_with(
+            record,
+            version,
+            crate::artifacts::verify_staging_fixture,
+            |_, _| Ok(()),
+        )
     }
 
     /// Retained signed provenance, not executable authority by itself.

@@ -490,8 +490,42 @@ pub fn last_run(store: &Store) -> io::Result<Option<RunRecord>> {
         {
             return Err(refused("host.invalid_runtime_journal"));
         }
+
         Ok(Some(record))
     })
+}
+
+/// Use the independently delivered new release's updater after explicit disable.
+/// No sign-in, owner approval, grant reconstruction or automatic reenable.
+pub fn update(
+    store: &Store,
+    state: &Path,
+    stage: &TrustedStage,
+    from_version: &str,
+) -> io::Result<crate::services::ReplacementReport> {
+    let snapshot = store.snapshot()?;
+    startup_admission(std::env::consts::OS, snapshot.settings.startup)?;
+    if snapshot.phase != Phase::Disabled || snapshot.binding.is_none() {
+        return Err(refused("host.update_confirmed_stop_required"));
+    }
+    store.with_locked(|directory, current| {
+        if current != &snapshot {
+            return Err(refused("host.runtime_consent_changed"));
+        }
+        let identity =
+            festerm_tunnel_bridge::host_identity::HostIdentity::load_from_private_directory(
+                directory,
+                Path::new(HOST_IDENTITY_FILE),
+            )?;
+        let binding = current.binding.as_ref().unwrap();
+        if identity.host_id() != binding.host_id
+            || identity.fingerprint()? != binding.host_key_fingerprint
+        {
+            return Err(refused("host.cloud_identity_changed"));
+        }
+        Ok(())
+    })?;
+    Services::current_user(store, state)?.replace_stopped(stage, from_version, snapshot.epoch)
 }
 
 fn refused(reason: &'static str) -> io::Error {

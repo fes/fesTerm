@@ -30,6 +30,7 @@ refuse. `service-status` deliberately keeps its missing-receipt no-observation
 error. The controller still revokes first and requires released foreground
 runtime ownership (missing runtime lock plus existing history refuses) before
 Disabled; cloud cleanup remains independent and never uses an unqualified DELETE.
+Pending replacement journals take precedence over this absence path.
 
 `recover-cleanup` performs authenticated read-only adoption of an acknowledged
 uncertain cloud submission without an enable ticket or another create. Present
@@ -141,6 +142,21 @@ No daemon or shell stop is implied. This requires implementation and ordinary-
 user named-pipe/process-identity qualification; there is no approved destructive
 fallback. These Windows decisions do not block Linux source/fixture progress.
 
+Concrete owner approval input still required, not a candidate-derived pin:
+approve a public certificate/profile-policy export from the existing
+`fesLabs-CodeSign` / `fesTermPublicTrust` release authority, naming the exact
+canonical publisher DN/organization, allowed Microsoft public-trust chain/policy
+and code-signing EKU. Proposed compiled policy permits leaf renewal only within
+that stable approved tuple; changing the tuple requires source review. Proposal:
+require a trusted RFC3161 timestamp and native chain/revocation verification;
+offline cached CRL/OCSP must be authenticated and within thisUpdate/nextUpdate,
+with a proposed maximum age of 24 hours, otherwise refuse. The owner must approve
+that maximum/offline refusal, not merely supply a successful signature sample.
+No proposed subject, certificate hash, policy OID or revocation exception is
+invented/accepted here. The exact-host stop proposal additionally requires
+named-pipe client/server OS-user verification and PID **plus process-creation
+identity**, rather than a PID/name/command-line substring or whole-job kill.
+
 The receipt retains verified file/directory handles; registration/start reopens
 no-follow and rechecks file identity, ownership, permissions and exact bytes.
 Changed or foreign cache entries are refused, never overwritten or repaired.
@@ -156,6 +172,25 @@ user manager may start before login. UserSignIn setup/run therefore refuses with
 activation is implemented and qualified. Manual Linux hosting remains available;
 no linger, service-manager or OS permission setting is modified to qualify it.
 
+**Current-logon owner decision proposal (unfinished, not implementation):**
+define whether UserSignIn includes interactive PAM tty/SSH sessions as well as
+local/remote graphical sessions. Proposed contract includes login1 Class=user
+sessions of Type=tty/x11/wayland, verified for the actual OS UID and current
+Active/State, excluding background/manager existence; confirm whether locked or
+inactive fast-user-switched sessions retain hosting. A verified logind subscriber
+on the fixed native system bus (verified login1 OS-service owner, never an
+environment-selected bus or asserted session ID)
+would activate the exact receipt-owned host only on an eligible session event,
+bind an owner-only activation receipt to installation/origin/epoch/run ID and the
+specific session, and freshly revalidate login1 before run. Session removal would
+close only that host relay, never persistent daemons. Environment session IDs or
+`default.target` are not proof. A graphical-only decision can instead use the
+existing graphical-session target with the same fresh logind fence; that target
+cannot silently stand in for tty/SSH semantics. The missing owner input is these
+two eligibility/lifetime decisions, followed by a separately allocated ordinary-
+user VM logon/logout/linger-already-enabled test window; no linger/permission
+change or fabricated activation receipt is authorized.
+
 ## Shared lifecycle API
 
 `services::Services::current_user(&Store, state_dir)` binds the actual protected
@@ -168,11 +203,26 @@ consent/revocation lease to advance during an outstanding native effect.
 | `install(&TrustedStage, epoch)` | Provisioned, exact current epoch | Publish/register the approved definition; do not start a process; Windows refuses until authenticated graceful stop exists |
 | `status()` | Existing exact-owned receipt | Query native manager state; missing receipt is an explicit no-observation error |
 | `start(&TrustedStage, epoch)` | Provisioned, exact current epoch | Require current protected enrollment/vault policy, revalidate executable, explicitly start and boundedly reconcile Running/Transitioning; Windows refuses |
-| `stop(epoch)` | StopRequested, exact current epoch | Stop only the exact owned resource and require stopped/failed/absent observation, or fenced own absence when no registration receipt was published |
-| `cleanup(epoch)` | CleanupPending, exact current epoch | Remove only the exact owned native registration/definition and require observed absence, or fenced own absence when no registration receipt was published |
+| `stop(epoch)` | StopRequested, exact current epoch | Reconcile pending replacement first; otherwise stop only the exact owned resource and require stopped/failed/absent observation, or fenced own absence when no registration receipt was published |
+| `cleanup(epoch)` | CleanupPending, exact current epoch | Reconcile both pending replacement resources first; otherwise remove only the exact owned native registration/definition and require observed absence, or fenced own absence when no registration receipt was published |
+| `replace_stopped(&TrustedStage, from_version, epoch)` | Disabled, exact current epoch, free foreground-runtime lease | Authenticate complete old/new signed bundles, reserve/journal, retire old and commit observed stopped new registration without enabling access |
+| `replacement_status()` | Valid private update journal, if present | Report Prepared/Applying/Committed/Aborted history and exact cached provenance, never availability |
 
 On macOS, install can observe Absent because the private LaunchAgent definition
 is published without bootstrapping it; it does not manufacture a loaded job.
+
+The unpublished-receipt absence path remains under the exclusive Services lease,
+current phase/epoch/full snapshot and state-directory identity fences. It neither
+queries a manager nor fabricates a receipt; status still reports no observation.
+A pending old/new update journal is never bypassed by a missing active receipt:
+stop reconciles both targets, and cleanup retains Applying/refuses if ownership
+cannot be finalized. Corrupt or foreign journal evidence refuses before effects,
+never inferring Aborted or absence from `None`. The outer controller must acquire
+the run-exclusive lease before Disabled; prior foreground run history alone is
+not a denial condition. Missing runtime lock with retained history still requires
+reconciliation; Services does not add a blanket no-run-history precondition.
+Even settled update history proves prior registration: a lost active receipt
+therefore refuses rather than claiming never-published absence.
 
 `Observation` carries installation, origin, current epoch and
 `ProcessState::{Absent,Stopped,Running,Failed,Transitioning}`. Running is **not**
@@ -304,21 +354,22 @@ refusals. They do not relax production ordinary-user authorization or qualify
 Windows token/Task Scheduler behavior. See the core9b failure analysis in
 [milestone progress](milestone-progress.md).
 
-The remediation source bundle is frozen before Rust validation, under the
-coordinator's exclusive shared-target queue. Added/updated Rust fixtures and
-Windows API types remain **unexecuted/unqualified** until that window and fresh
-native CI. Source/static checks and the read-only macOS foreign-binary rejection
-must not be reported as a passing Rust suite or positive fesTerm native signing
-qualification.
+At the historical remediation checkpoint the source bundle was frozen before
+Rust validation. The current affected Unix source/fixtures now have the bounded
+Rust qualification recorded in milestone progress; Windows API types still
+require their own actual Windows window and fresh native CI. Source/static checks
+and read-only macOS foreign-binary rejection are not positive fesTerm native
+signing qualification.
 
 `HOSTSETUP-01` in [manual validation](manual-validation.md) still requires signed
 Windows/macOS/Linux install/start/stop/remove, unavailable-manager/vault behavior,
 interrupted registration/cleanup, real same-user identity, persistent daemon
 survival and login/reboot observations. Fixtures and native CI compilation do
 not qualify those behaviors. Endpoint integration, foreground sign-in/consent,
-update/rollback and migration remain separate gates; the
+real native update/rollback qualification and migration remain separate gates; the
 [headless CLI](headless-host.md) now has shared explicit setup/owner-approval/run
 source, plus revoke-first disable/exact native removal with cloud CleanupPending
-retention; update remains unavailable. This source is not signed
+retention, and an authenticated stopped-version replacement journal/core/CLI.
+There is no automatic access restoration or downgrade. This source is not signed
 native acceptance; real release input, native-vault/service qualification and
 client protected first-connect approval remain prerequisites.
