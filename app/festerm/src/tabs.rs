@@ -1335,19 +1335,144 @@ impl SessionTab {
         )
     }
 
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn start_hosted_profile(
+        profile: &festerm_config::Profile,
+        context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
+        scrollback_limit: ScrollbackLimitPreference,
+        allow_start: bool,
+    ) -> (Self, bool) {
+        let local = profile.as_local().expect("local hosted profile");
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
+        let size = terminal_size(dimensions).expect("default dimensions fit PTY limits");
+        let native = crate::environment::with_corrected_local_path(local.to_local_profile());
+        let (result, bound) = crate::app::profile_hosting::connect_profile(
+            profile,
+            size,
+            scrollback_limit.bytes(),
+            make_notifier(context),
+            allow_start,
+        );
+        (
+            Self::hosted_profile_result(profile, dimensions, &native, result),
+            bound,
+        )
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn start_hosted_takeover(
+        profile: &festerm_config::Profile,
+        target: &festerm_tunnel_bridge::profile_hosting::Target,
+        context: &egui::Context,
+        window_dimensions: Option<Dimensions>,
+        configuration_valid: &std::sync::atomic::AtomicBool,
+    ) -> Self {
+        let local = profile.as_local().expect("local hosted profile");
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
+        let native = crate::environment::with_corrected_local_path(local.to_local_profile());
+        let result = crate::app::profile_hosting::take_over_profile(
+            profile,
+            target,
+            make_notifier(context),
+            configuration_valid,
+        );
+        Self::hosted_profile_result(profile, dimensions, &native, result)
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn hosted_profile_result(
+        profile: &festerm_config::Profile,
+        dimensions: Dimensions,
+        native: &LocalProfile,
+        result: Result<PersistentSession, String>,
+    ) -> Self {
+        let local = profile.as_local().expect("local hosted profile");
+        Self::from_local_session_result(
+            result.map(ApplicationSession::Persistent),
+            dimensions,
+            profile.identifier(),
+            local_profile_secondary(native),
+            Some(profile.identifier().to_owned()),
+            local.persistence().map(|persistence| InspectorPersistence {
+                provider_label: persistence.provider().label(),
+                session_name: persistence.session_name().to_owned(),
+            }),
+        )
+    }
+
+    fn local_profile_unavailable(
+        profile_id: &str,
+        persistence: Option<&PersistenceConfiguration>,
+        window_dimensions: Option<Dimensions>,
+        message: impl Into<String>,
+    ) -> Self {
+        let dimensions = window_dimensions
+            .unwrap_or_else(|| Dimensions::new(80, 24).expect("default dimensions are valid"));
+        Self::from_local_session_result(
+            Err::<ApplicationSession, _>(message.into()),
+            dimensions,
+            profile_id,
+            None,
+            Some(profile_id.to_owned()),
+            persistence.map(|persistence| InspectorPersistence {
+                provider_label: persistence.provider().label(),
+                session_name: persistence.session_name().to_owned(),
+            }),
+        )
+    }
+
+    #[cfg(not(feature = "experimental-dev-tunnels"))]
+    fn hosted_profile_unavailable(
+        profile_id: &str,
+        persistence: Option<&PersistenceConfiguration>,
+        window_dimensions: Option<Dimensions>,
+    ) -> Self {
+        Self::local_profile_unavailable(
+            profile_id,
+            persistence,
+            window_dimensions,
+            "This build cannot open a Dev Tunnel hosted profile. Use a build with Dev Tunnel hosting support; no replacement shell was started.",
+        )
+    }
+
     /// Attaches to an already-running, unattached `festerm-sessiond` session
     /// discovered on the Launcher's "Resume" list (feature request #70),
     /// without going through any saved profile's start-if-missing logic.
     fn start_resumed_session(
-        selected: &festerm_sessiond::UnattachedSession,
+        selected: &crate::discovery::NativeSession,
         context: &egui::Context,
+        takeover: bool,
     ) -> Self {
         let name = &selected.name;
         let dimensions = Dimensions::new(80, 24).expect("default dimensions are valid");
-        let result =
-            PersistentSession::resume_discovered_with_notifier(selected, make_notifier(context))
-                .map(ApplicationSession::Persistent)
-                .map_err(|error| error.to_string());
+        let result = if takeover {
+            let identity = festerm_sessiond::NativeSessionIdentity {
+                name: selected.name.clone(),
+                pid: selected.pid,
+                created_at_unix_ms: selected.created_at_unix_ms,
+                endpoint: selected.endpoint.clone(),
+            };
+            festerm_sessiond::session_correlation_in(&selected.runtime_root, &identity).and_then(
+                |_| {
+                    PersistentSession::take_over_discovered_in(
+                        &selected.session,
+                        &selected.runtime_root,
+                        make_notifier(context),
+                    )
+                },
+            )
+        } else {
+            PersistentSession::resume_discovered_in(
+                &selected.session,
+                &selected.runtime_root,
+                make_notifier(context),
+            )
+        }
+        .map(ApplicationSession::Persistent)
+        .map_err(|error| error.to_string());
         let inspector_persistence = Some(InspectorPersistence {
             provider_label: PersistenceProviderKind::FestermSessiond.label(),
             session_name: name.to_owned(),
@@ -2937,7 +3062,11 @@ pub enum AppCommand {
     /// name, surfaced via the Launcher's "Resume" list (feature request
     /// #70). The composition root attaches to it and opens a new tab.
     ResumeUnattachedSession {
-        session: festerm_sessiond::UnattachedSession,
+        session: crate::discovery::NativeSession,
+    },
+    /// Requires explicit confirmation before displacing another client.
+    TakeOverDiscoveredSession {
+        session: crate::discovery::NativeSession,
     },
     /// Attaches only to the selected locally running tmux or GNU screen session,
     /// surfaced via the Launcher's "tmux sessions"/"GNU Screen sessions"
@@ -2953,7 +3082,7 @@ pub enum AppCommand {
     RefreshRunningSessions,
     /// The composition root confirms before dispatching this destructive action.
     TerminateUnattachedSession {
-        session: festerm_sessiond::UnattachedSession,
+        session: crate::discovery::NativeSession,
     },
     /// Resets chip layout and status-bar visibility to their defaults after
     /// explicit confirmation (`docs/gui-design.md` "Wrapping must remain
@@ -2974,6 +3103,12 @@ pub enum AppCommand {
         profile: festerm_config::Profile,
         expose: bool,
         explicit_enable: bool,
+        account_selection: Option<egui::Id>,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
+    BeginLocalHostAccount {
+        tab_id: TabId,
+        request: egui::Id,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
     LocalTunnelHost {
@@ -3028,6 +3163,7 @@ pub enum LocalHostAction {
     CancelSignIn,
     RecreateMissing,
     NewShell,
+    TakeOver,
     RevokeUnreferenced,
 }
 
@@ -3218,7 +3354,10 @@ struct PendingResume {
     requires_running_sessions: bool,
     recording_auto_enrollment: Option<festerm_recording::RecordingId>,
     target: TabId,
-    receiver: std::sync::mpsc::Receiver<Result<SessionTab, String>>,
+    source_profile: Option<festerm_config::Profile>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    takeover_configuration_valid: Option<Arc<std::sync::atomic::AtomicBool>>,
+    receiver: std::sync::mpsc::Receiver<(Result<SessionTab, String>, bool)>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -3242,6 +3381,10 @@ pub struct AppState {
     pub discovery: crate::discovery::Discovery,
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    completed_hosted_profile: Option<festerm_config::Profile>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    hosted_open_error: Option<(Option<TabId>, String)>,
     recording_auto_enrollment: Option<festerm_recording::SharedRecording>,
     pending_native_termination: Option<PendingNativeTermination>,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -3398,6 +3541,10 @@ impl AppState {
             discovery: Default::default(),
             resume_error: None,
             pending_resume: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            completed_hosted_profile: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            hosted_open_error: None,
             recording_auto_enrollment: None,
             pending_native_termination: None,
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -3563,18 +3710,54 @@ impl AppState {
                 WorkspaceTab::Settings(_) => TabContent::Settings,
                 WorkspaceTab::Profiles(_) => TabContent::Profiles,
                 WorkspaceTab::LocalSession(tab) => {
-                    let local = configuration
+                    let profile = configuration
                         .profile(tab.profile_id())
-                        .and_then(festerm_config::Profile::as_local)
                         .expect("validated workspace local profile reference");
-                    TabContent::Session(Box::new(SessionTab::start_local_profile(
-                        local.to_local_profile(),
-                        local.identifier(),
-                        local.persistence(),
-                        context,
-                        None,
-                        configuration.interface_settings().scrollback_limit(),
-                    )))
+                    let local = profile
+                        .as_local()
+                        .expect("validated workspace local profile reference");
+                    if let Err(error) = configuration.validate_hosted_session_name(
+                        Some(profile.identifier()),
+                        profile,
+                        false,
+                    ) {
+                        TabContent::Session(Box::new(SessionTab::local_profile_unavailable(
+                            local.identifier(),
+                            local.persistence(),
+                            None,
+                            format!("{error}. No session was attached or started."),
+                        )))
+                    } else {
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        let hosted = local.tunnel_hosting().map(|_| {
+                            SessionTab::start_hosted_profile(
+                                profile,
+                                context,
+                                None,
+                                configuration.interface_settings().scrollback_limit(),
+                                false,
+                            )
+                            .0
+                        });
+                        #[cfg(not(feature = "experimental-dev-tunnels"))]
+                        let hosted = local.tunnel_hosting().map(|_| {
+                            SessionTab::hosted_profile_unavailable(
+                                local.identifier(),
+                                local.persistence(),
+                                None,
+                            )
+                        });
+                        TabContent::Session(Box::new(hosted.unwrap_or_else(|| {
+                            SessionTab::start_local_profile(
+                                local.to_local_profile(),
+                                local.identifier(),
+                                local.persistence(),
+                                context,
+                                None,
+                                configuration.interface_settings().scrollback_limit(),
+                            )
+                        })))
+                    }
                 }
                 WorkspaceTab::SshSession(tab) => {
                     let ssh = configuration
@@ -3715,6 +3898,21 @@ impl AppState {
     /// Launcher choices. Existing session tabs retain their live transports
     /// and are never stopped or reconfigured.
     pub fn replace_configuration(&mut self, configuration: Configuration) {
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if let Some(pending) = &self.pending_resume {
+            if let (Some(profile), Some(valid)) = (
+                &pending.source_profile,
+                &pending.takeover_configuration_valid,
+            ) {
+                if configuration.profile(profile.identifier()) != Some(profile)
+                    || configuration
+                        .validate_hosted_session_name(Some(profile.identifier()), profile, false)
+                        .is_err()
+                {
+                    valid.store(false, Ordering::Release);
+                }
+            }
+        }
         for tab in &mut self.tabs {
             if let TabContent::PowerShell(powershell) = &mut tab.content {
                 if let Some(profile) = configuration
@@ -4841,8 +5039,11 @@ impl AppState {
             }
             AppCommand::TerminateUnattachedSession { session } => {
                 self.begin_native_termination(context, move || {
-                    let command = festerm_sessiond::terminate_unattached_session_command(&session)
-                        .map_err(|error| error.to_string())?;
+                    let command = festerm_sessiond::terminate_unattached_session_command_in(
+                        &session.session,
+                        &session.runtime_root,
+                    )
+                    .map_err(|error| error.to_string())?;
                     let output =
                         crate::local_command::output(command, std::time::Duration::from_secs(8))?
                             .ok_or("fesTerm session helper is unavailable")?;
@@ -4856,7 +5057,13 @@ impl AppState {
             AppCommand::ResumeUnattachedSession { session } => {
                 let context = context.clone();
                 self.begin_resume(move || {
-                    Ok(SessionTab::start_resumed_session(&session, &context))
+                    Ok(SessionTab::start_resumed_session(&session, &context, false))
+                });
+            }
+            AppCommand::TakeOverDiscoveredSession { session } => {
+                let context = context.clone();
+                self.begin_resume(move || {
+                    Ok(SessionTab::start_resumed_session(&session, &context, true))
                 });
             }
             AppCommand::ResumeMultiplexerSession { provider, session } => {
@@ -4966,7 +5173,7 @@ impl AppState {
             | AppCommand::DeleteProfile { .. }
             | AppCommand::ReorderProfiles { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
-            AppCommand::LocalTunnelHost { .. } => {}
+            AppCommand::LocalTunnelHost { .. } | AppCommand::BeginLocalHostAccount { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::LocalTunnelCleanup { .. } => {}
         }
@@ -6022,6 +6229,19 @@ impl AppState {
         require_running_sessions: bool,
         recording_auto_enrollment: Option<festerm_recording::RecordingId>,
     ) {
+        self.begin_attach_with_outcome(
+            move || (start(), false),
+            require_running_sessions,
+            recording_auto_enrollment,
+        );
+    }
+
+    fn begin_attach_with_outcome(
+        &mut self,
+        start: impl FnOnce() -> (Result<SessionTab, String>, bool) + Send + 'static,
+        require_running_sessions: bool,
+        recording_auto_enrollment: Option<festerm_recording::RecordingId>,
+    ) {
         if self.pending_resume.is_some()
             || self.pending_native_termination.is_some()
             || (require_running_sessions && !self.show_resumable_sessions)
@@ -6033,14 +6253,15 @@ impl AppState {
         let handle = std::thread::Builder::new()
             .name("running-session-reattach".into())
             .spawn(move || {
-                let result = start().and_then(|session| {
+                let (result, bound) = start();
+                let result = result.and_then(|session| {
                     if let Some(error) = session.controller.start_error() {
                         Err(error.to_string())
                     } else {
                         Ok(session)
                     }
                 });
-                let _ = sender.send(result);
+                let _ = sender.send((result, bound));
             });
         match handle {
             Ok(handle) => {
@@ -6048,6 +6269,9 @@ impl AppState {
                     requires_running_sessions: require_running_sessions,
                     recording_auto_enrollment,
                     target: self.active,
+                    source_profile: None,
+                    #[cfg(feature = "experimental-dev-tunnels")]
+                    takeover_configuration_valid: None,
                     receiver,
                     handle: Some(handle),
                 })
@@ -6178,13 +6402,64 @@ impl AppState {
             let still_requested = (!pending.requires_running_sessions
                 || self.show_resumable_sessions)
                 && self.active == pending.target
-                && matches!(self.active_tab().content, TabContent::Launcher);
-            match pending.receiver.try_recv().unwrap_or_else(|_| Err("Reattach worker failed".into())) {
+                && (pending.source_profile.is_some()
+                    || matches!(self.active_tab().content, TabContent::Launcher))
+                && pending.source_profile.as_ref().is_none_or(|profile| {
+                    self.configuration.profile(profile.identifier()) == Some(profile)
+                });
+            let (result, bound) = pending
+                .receiver
+                .try_recv()
+                .unwrap_or_else(|_| (Err("Reattach worker failed".into()), false));
+            #[cfg(feature = "experimental-dev-tunnels")]
+            if bound {
+                if let Some(profile) = pending.source_profile.as_ref().filter(|profile| {
+                    self.configuration.profile(profile.identifier()) == Some(*profile)
+                }) {
+                    self.completed_hosted_profile = Some(profile.clone());
+                }
+            }
+            #[cfg(not(feature = "experimental-dev-tunnels"))]
+            let _ = bound;
+            match result {
                 Ok(session) if still_requested => {
+                    if pending.source_profile.is_some() {
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        let preserve_surface = match self.active_tab().content {
+                            TabContent::Profiles => self.pending_profile_create.is_some()
+                                || self.pending_profile_edit.is_some()
+                                || crate::screens::profiles_has_open_editor(context, pending.target),
+                            TabContent::Launcher => crate::screens::launcher_has_open_form(
+                                context, pending.target,
+                            ),
+                            _ => false,
+                        };
+                        #[cfg(not(feature = "experimental-dev-tunnels"))]
+                        let preserve_surface = false;
+                        if preserve_surface {
+                            let recording = self.recording_auto_enrollment.clone();
+                            self.place_session_with_recording_on_surface(
+                                session,
+                                recording.as_ref(),
+                                false,
+                            );
+                        } else {
+                            self.place_user_session(session);
+                        }
+                    } else {
                     let recording = self.recording_auto_enrollment.as_ref().filter(|recording| {
                         Some(recording.id()) == pending.recording_auto_enrollment
                     }).cloned();
                     self.place_session_with_recording(session, recording.as_ref());
+                    }
+                }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                Err(error) if pending.source_profile.is_some() => {
+                    let target = self.tabs.iter().find(|tab| tab.id == pending.target)
+                        .filter(|tab| matches!(tab.content, TabContent::Launcher | TabContent::Profiles))
+                        .map(|tab| tab.id);
+                    self.hosted_open_error =
+                        Some((target, format!("Could not open the hosted profile: {error}")));
                 }
                 Err(error) if still_requested => self.resume_error = Some(format!("Could not reattach: {error} No replacement shell was started. Refresh Running Sessions and try again.")),
                 _ => {},
@@ -6220,6 +6495,67 @@ impl AppState {
             return;
         };
         let dimensions = self.current_session_dimensions();
+        #[cfg(feature = "experimental-dev-tunnels")]
+        {
+            self.hosted_open_error = None;
+        }
+        if let Err(error) =
+            self.configuration
+                .validate_hosted_session_name(Some(profile_id), profile, false)
+        {
+            let message = format!("{error}. No session was attached or started.");
+            #[cfg(feature = "experimental-dev-tunnels")]
+            {
+                self.hosted_open_error = Some((Some(self.active), message));
+            }
+            #[cfg(not(feature = "experimental-dev-tunnels"))]
+            self.place_user_session(SessionTab::local_profile_unavailable(
+                local.identifier(),
+                local.persistence(),
+                dimensions,
+                message,
+            ));
+            return;
+        }
+        #[cfg(not(feature = "experimental-dev-tunnels"))]
+        if local.tunnel_hosting().is_some() {
+            self.place_user_session(SessionTab::hosted_profile_unavailable(
+                local.identifier(),
+                local.persistence(),
+                dimensions,
+            ));
+            return;
+        }
+        #[cfg(feature = "experimental-dev-tunnels")]
+        if local.tunnel_hosting().is_some() {
+            if self.pending_resume.is_some() || self.pending_native_termination.is_some() {
+                self.hosted_open_error = Some((
+                    Some(self.active),
+                    "Another session operation is in progress. Try again when it finishes.".into(),
+                ));
+                return;
+            }
+            let profile = profile.clone();
+            let guard = profile.clone();
+            let context = context.clone();
+            let scrollback = self.scrollback_limit;
+            self.begin_attach_with_outcome(
+                move || {
+                    let (session, bound) = SessionTab::start_hosted_profile(
+                        &profile, &context, dimensions, scrollback, true,
+                    );
+                    (Ok(session), bound)
+                },
+                false,
+                None,
+            );
+            if let Some(pending) = &mut self.pending_resume {
+                pending.source_profile = Some(guard);
+            } else if let Some(error) = self.resume_error.take() {
+                self.hosted_open_error = Some((Some(self.active), error));
+            }
+            return;
+        }
         self.place_user_session(SessionTab::start_local_profile(
             local.to_local_profile(),
             local.identifier(),
@@ -6228,6 +6564,69 @@ impl AppState {
             dimensions,
             self.scrollback_limit,
         ));
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn start_hosted_takeover(
+        &mut self,
+        profile: festerm_config::Profile,
+        target: festerm_tunnel_bridge::profile_hosting::Target,
+        context: &egui::Context,
+    ) -> Result<(), &'static str> {
+        if self.pending_resume.is_some() || self.pending_native_termination.is_some() {
+            return Err("Another session operation is in progress. No client was disconnected.");
+        }
+        if self.configuration.profile(profile.identifier()) != Some(&profile)
+            || self
+                .configuration
+                .validate_hosted_session_name(Some(profile.identifier()), &profile, false)
+                .is_err()
+        {
+            return Err(
+                "The profile changed or its session name is ambiguous. No client was disconnected.",
+            );
+        }
+        let valid = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let worker_valid = Arc::clone(&valid);
+        let guard = profile.clone();
+        let context = context.clone();
+        let dimensions = self.current_session_dimensions();
+        self.hosted_open_error = None;
+        self.begin_attach_with_outcome(
+            move || {
+                let session = SessionTab::start_hosted_takeover(
+                    &profile,
+                    &target,
+                    &context,
+                    dimensions,
+                    &worker_valid,
+                );
+                (Ok(session), false)
+            },
+            false,
+            None,
+        );
+        if let Some(pending) = &mut self.pending_resume {
+            pending.source_profile = Some(guard);
+            pending.takeover_configuration_valid = Some(valid);
+            Ok(())
+        } else {
+            Err("Could not start the takeover. No client was disconnected.")
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn take_completed_hosted_profile(&mut self) -> Option<festerm_config::Profile> {
+        self.completed_hosted_profile.take()
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    pub(crate) fn hosted_open_error(&self, tab: TabId) -> Option<&str> {
+        let (target, error) = self.hosted_open_error.as_ref()?;
+        (target.is_none_or(|target| {
+            target == tab || !self.tabs.iter().any(|entry| entry.id == target)
+        }))
+        .then_some(error.as_str())
     }
 
     fn start_serial_session(&mut self, settings: LineSettings, context: &egui::Context) {
@@ -6902,8 +7301,17 @@ impl AppState {
 
     fn place_session_with_recording(
         &mut self,
+        session: SessionTab,
+        recording: Option<&festerm_recording::SharedRecording>,
+    ) {
+        self.place_session_with_recording_on_surface(session, recording, true);
+    }
+
+    fn place_session_with_recording_on_surface(
+        &mut self,
         mut session: SessionTab,
         recording: Option<&festerm_recording::SharedRecording>,
+        replace_surface: bool,
     ) {
         session.apply_frontend_terminal_configuration(self.scrollback_limit);
         if let Some(recording) = recording {
@@ -6916,7 +7324,12 @@ impl AppState {
         // authentication-required tab replaces that surface in place (same
         // position, same identity) rather than leaving it behind alongside
         // a new session tab.
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == self.active) {
+        if let Some(tab) = self
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == self.active)
+            .filter(|_| replace_surface)
+        {
             if (session.profile_identifier.is_some()
                 && session.controller.start_error().is_none()
                 && matches!(tab.content, TabContent::Profiles))
@@ -10246,6 +10659,313 @@ mod tests {
     }
 
     #[test]
+    fn loaded_duplicate_hosted_names_refuse_open_and_workspace_restore() {
+        let hosted = festerm_config::Profile::local("hosted", "shell", Vec::new(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "shared")
+            .unwrap()
+            .with_local_tunnel_hosting(Some(
+                festerm_config::LocalTunnelHosting::new(
+                    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    true,
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let ordinary = festerm_config::Profile::local("ordinary", "shell", Vec::new(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "shared")
+            .unwrap();
+        let workspace = WorkspaceConfiguration::new(
+            vec![
+                WorkspaceTab::local_session("saved-hosted", "hosted").unwrap(),
+                WorkspaceTab::local_session("saved-ordinary", "ordinary").unwrap(),
+            ],
+            Some("saved-hosted".to_owned()),
+        )
+        .unwrap();
+        let configuration =
+            Configuration::new_with_workspace(vec![hosted, ordinary], workspace.clone()).unwrap();
+        let context = egui::Context::default();
+        let restored =
+            AppState::with_restored_workspace(&context, configuration.clone(), &workspace);
+        for tab in &restored.tabs {
+            let TabContent::Session(session) = &tab.content else {
+                panic!("restored local profile should display an error");
+            };
+            assert!(session.controller.session().is_none());
+            assert!(session
+                .controller
+                .start_error()
+                .unwrap()
+                .contains("unique native persistent session name"));
+        }
+        let (saved_tabs, _) = restored.capture_window_workspace_tabs(&mut 0).unwrap();
+        assert_eq!(saved_tabs.len(), 2);
+
+        for profile_id in ["hosted", "ordinary"] {
+            let mut opened = AppState::for_test_with_configuration(configuration.clone());
+            let origin = opened.active;
+            opened.dispatch(
+                AppCommand::StartConfiguredLocalProfile {
+                    profile_id: profile_id.to_owned(),
+                },
+                &context,
+            );
+            #[cfg(feature = "experimental-dev-tunnels")]
+            assert!(opened
+                .hosted_open_error(origin)
+                .unwrap()
+                .contains("unique native persistent session name"));
+            #[cfg(not(feature = "experimental-dev-tunnels"))]
+            {
+                let _ = origin;
+                let TabContent::Session(session) = &opened.active_tab().content else {
+                    panic!("open should display an error session");
+                };
+                assert!(session.controller.session().is_none());
+                assert!(session
+                    .controller
+                    .start_error()
+                    .unwrap()
+                    .contains("unique native persistent session name"));
+            }
+        }
+    }
+
+    #[cfg(not(feature = "experimental-dev-tunnels"))]
+    #[test]
+    fn hosted_profiles_refuse_open_and_restore_without_hosting_support() {
+        const CHILD: &str = "FESTERM_HOSTED_PROFILE_NO_FEATURE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let directory = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tabs::tests::hosted_profiles_refuse_open_and_restore_without_hosting_support",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env(
+                    "FESTERM_SESSIOND_RUNTIME_ROOT",
+                    directory.path().join("sessiond"),
+                )
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated test failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let context = egui::Context::default();
+        for enabled in [false, true] {
+            let binding = festerm_config::LocalTunnelHosting::new(
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                enabled,
+            )
+            .unwrap();
+            let profile = festerm_config::Profile::local(
+                "hosted",
+                "festerm-hosted-profile-test-command-that-does-not-exist",
+                Vec::new(),
+                None,
+            )
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "hosted-shell")
+            .unwrap()
+            .with_local_tunnel_hosting(Some(binding))
+            .unwrap();
+            let workspace = WorkspaceConfiguration::new(
+                vec![WorkspaceTab::local_session("saved", "hosted").unwrap()],
+                Some("saved".to_owned()),
+            )
+            .unwrap();
+            let configuration =
+                Configuration::new_with_workspace(vec![profile], workspace.clone()).unwrap();
+
+            let restored =
+                AppState::with_restored_workspace(&context, configuration.clone(), &workspace);
+            let TabContent::Session(session) = &restored.active_tab().content else {
+                panic!("hosted restoration should display an error session");
+            };
+            assert!(session.controller.session().is_none());
+            assert!(session
+                .controller
+                .start_error()
+                .unwrap()
+                .contains("Dev Tunnel hosting support"));
+            let (saved_tabs, _) = restored.capture_window_workspace_tabs(&mut 0).unwrap();
+            assert!(matches!(
+                &saved_tabs[..],
+                [WorkspaceTab::LocalSession(saved)] if saved.profile_id() == "hosted"
+            ));
+
+            let mut opened = AppState::for_test_with_configuration(configuration);
+            opened.dispatch(
+                AppCommand::StartConfiguredLocalProfile {
+                    profile_id: "hosted".to_owned(),
+                },
+                &context,
+            );
+            let TabContent::Session(session) = &opened.active_tab().content else {
+                panic!("hosted open should display an error session");
+            };
+            assert!(session.controller.session().is_none());
+            assert!(session
+                .controller
+                .start_error()
+                .unwrap()
+                .contains("Dev Tunnel hosting support"));
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn hosted_open_test_profile() -> festerm_config::Profile {
+        festerm_config::Profile::local("hosted", "shell", Vec::new(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "hosted-shell")
+            .unwrap()
+            .with_local_tunnel_hosting(Some(
+                festerm_config::LocalTunnelHosting::new(
+                    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    true,
+                )
+                .unwrap(),
+            ))
+            .unwrap()
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn finish_hosted_open(state: &mut AppState, context: &egui::Context) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while state.pending_resume.is_some() {
+            state.update_running_sessions(context);
+            assert!(std::time::Instant::now() < deadline, "hosted open stalled");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn hosted_open_preserves_an_editor_started_while_waiting() {
+        for profiles in [false, true] {
+            let context = egui::Context::default();
+            let profile = hosted_open_test_profile();
+            let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+            let mut state = AppState::for_test_with_configuration(configuration);
+            if profiles {
+                state.dispatch(AppCommand::OpenProfiles, &context);
+            }
+            let origin = state.active();
+            let (release, wait) = std::sync::mpsc::channel();
+            state.begin_attach_with_outcome(
+                move || {
+                    wait.recv().unwrap();
+                    let mut session = SessionTab::for_test_ssh(
+                        crate::session_controller::fake::FakeSshSession::new([]),
+                        "user",
+                        "host.example.test",
+                        22,
+                    );
+                    session.profile_identifier = Some("hosted".to_owned());
+                    (Ok(session), true)
+                },
+                false,
+                None,
+            );
+            state.pending_resume.as_mut().unwrap().source_profile = Some(profile.clone());
+            if profiles {
+                crate::screens::install_profile_secret_for_test(&context, origin);
+            } else {
+                crate::screens::install_launcher_form_for_test(&context, origin);
+            }
+            release.send(()).unwrap();
+            finish_hosted_open(&mut state, &context);
+
+            assert_ne!(state.active(), origin);
+            assert!(matches!(state.active_tab().content, TabContent::Session(_)));
+            let old = state.tabs().iter().find(|tab| tab.id == origin).unwrap();
+            if profiles {
+                assert!(matches!(old.content, TabContent::Profiles));
+                assert!(crate::screens::profiles_has_open_editor(&context, origin));
+            } else {
+                assert!(matches!(old.content, TabContent::Launcher));
+                assert!(crate::screens::launcher_has_open_form(&context, origin));
+            }
+            assert_eq!(state.take_completed_hosted_profile(), Some(profile));
+        }
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn pending_hosted_takeover_is_invalidated_by_configuration_replacement() {
+        let context = egui::Context::default();
+        let profile = hosted_open_test_profile();
+        let mut state = AppState::for_test_with_configuration(
+            Configuration::new(vec![profile.clone()]).unwrap(),
+        );
+        let (release, wait) = std::sync::mpsc::channel();
+        state.begin_attach_with_outcome(
+            move || {
+                wait.recv().unwrap();
+                (Err("cancelled for test".to_owned()), false)
+            },
+            false,
+            None,
+        );
+        let valid = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let pending = state.pending_resume.as_mut().unwrap();
+        pending.source_profile = Some(profile);
+        pending.takeover_configuration_valid = Some(Arc::clone(&valid));
+
+        state.replace_configuration(Configuration::new(Vec::new()).unwrap());
+        let was_invalidated = !valid.load(std::sync::atomic::Ordering::SeqCst);
+        release.send(()).unwrap();
+        finish_hosted_open(&mut state, &context);
+        assert!(was_invalidated);
+    }
+
+    #[cfg(feature = "experimental-dev-tunnels")]
+    #[test]
+    fn hosted_open_failure_is_retained_and_bound_targets_reconcile_after_navigation() {
+        for bound in [false, true] {
+            let context = egui::Context::default();
+            let profile = hosted_open_test_profile();
+            let configuration = Configuration::new(vec![profile.clone()]).unwrap();
+            let mut state = AppState::for_test_with_configuration(configuration);
+            state.dispatch(AppCommand::OpenProfiles, &context);
+            let origin = state.active();
+            let (release, wait) = std::sync::mpsc::channel();
+            state.begin_attach_with_outcome(
+                move || {
+                    wait.recv().unwrap();
+                    (Err("attachment failed after native work".into()), bound)
+                },
+                false,
+                None,
+            );
+            state.pending_resume.as_mut().unwrap().source_profile = Some(profile.clone());
+            state.dispatch(AppCommand::OpenSettings, &context);
+            release.send(()).unwrap();
+            finish_hosted_open(&mut state, &context);
+
+            let error = state.hosted_open_error(origin).unwrap();
+            assert!(error.contains("attachment failed after native work"));
+            assert!(!error.contains("No replacement shell was started"));
+            assert_eq!(
+                state.take_completed_hosted_profile(),
+                bound.then_some(profile)
+            );
+        }
+    }
+
+    #[test]
     fn restored_sftp_tab_requires_fresh_authentication_without_starting_a_session() {
         let context = egui::Context::default();
         let workspace = WorkspaceConfiguration::new(
@@ -12622,15 +13342,17 @@ mod tests {
         let original = state.active();
         state.dispatch(
             AppCommand::ResumeUnattachedSession {
-                session: festerm_sessiond::UnattachedSession {
-                    name: "nonexistent-resumable-session".to_owned(),
-                    shell: String::new(),
-                    arguments: Vec::new(),
-                    working_directory: None,
-                    created_at_unix_ms: 0,
-                    pid: 0,
-                    endpoint: String::new(),
-                },
+                session: crate::discovery::NativeSession::fixture(
+                    festerm_sessiond::UnattachedSession {
+                        name: "nonexistent-resumable-session".to_owned(),
+                        shell: String::new(),
+                        arguments: Vec::new(),
+                        working_directory: None,
+                        created_at_unix_ms: 0,
+                        pid: 0,
+                        endpoint: String::new(),
+                    },
+                ),
             },
             &context,
         );
