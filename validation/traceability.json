@@ -5498,7 +5498,8 @@
         "host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed",
         "host_owner_admission_requires_current_shared_exact_generation_and_absence",
         "host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys",
-        "host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes"
+        "host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes",
+        "host_owner_fence_rejects_changed_intent_for_the_same_operation"
       ],
       "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
       "status": "partial",

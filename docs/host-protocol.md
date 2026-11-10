@@ -197,9 +197,12 @@ Until installed/reviewed, an owner grant must not be reconstructed from config.
   intent under the manager's journal lock; absence cannot be inferred by deleting
   a denied/uncertain record. Manager integration must compare recipes and
   serialize reservations before effects.
-- Capture connection/host/grant/operation epochs, host/principal/logical/
-  generation/operation IDs and admitted logical state/record revision in
-  `AdmissionFence`. `SessionGrant.revision` is a protected nonzero `Epoch` that
+- Capture the complete admitted request, connection/host/grant/operation epochs,
+  host/principal/logical/generation/operation IDs and admitted logical
+  state/record revision in `AdmissionFence`. Request contents are redacted from
+  its debug output. A reused operation ID cannot change a recipe, attachment,
+  takeover flag or other intent during reauthorization. The durable journal
+  must still compare the entire intent on retries. `SessionGrant.revision` is a protected nonzero `Epoch` that
   advances on every record transition, including Absent → Running → Absent.
   Ensure/Lookup captures must change on a running-generation replacement even
   though their requests do not carry a generation pin. Revalidate against fresh
@@ -254,7 +257,7 @@ fixture, malformed/version/legacy refusal, real operation/absence roundtrips,
 recipes/lifetimes, privacy/pagination fences, concurrent aggregate budgets and
 epoch/generation/operation changes. Bridge `owner_auth::tests` covers a pinned
 signature fixture, foreign-key/tampered/cross-connection proof, deadlines,
-revocation/rollback, exact shared-generation grants, default deny and
+revocation/rollback, exact shared-generation grants, request-intent fencing, default deny and
 creation-disabled resume. Fixture seed `[7; 32]` is synthetic test-only material.
 Review regressions exercise real current reauthorization across logical-state,
 generation and revision changes, version-first refusal of actual legacy/future
