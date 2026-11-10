@@ -729,14 +729,23 @@ impl SessionControl {
     pub fn issuance_epoch<G>(
         &self,
         owner: &PrincipalId,
-        admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+        mut admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<Epoch, ControlError> {
         let mut tx = self.transaction()?;
-        let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
-        let _admission = Self::admission(None, owner, Effect::Lookup, &mut admit)?;
-        if tx.state.operations.len() >= MAX_IDEMPOTENCY_RECORDS {
-            tx.rotate_issuance()?;
+        {
+            let mut scoped = scoped_issuance(tx.state.issuance_epoch, &mut admit);
+            let _admission = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
         }
+        if tx.state.operations.len() >= MAX_IDEMPOTENCY_RECORDS {
+            tx.state.issuance_epoch = tx
+                .state
+                .issuance_epoch
+                .next()
+                .map_err(|_| ControlError::Storage)?;
+            tx.state.operations.clear();
+        }
+        let mut scoped = scoped_issuance(tx.state.issuance_epoch, &mut admit);
+        let _publication = Self::admission(None, owner, Effect::Lookup, &mut scoped)?;
         // Even a fresh empty namespace must become durable before publication.
         tx.save()?;
         Ok(tx.state.issuance_epoch)

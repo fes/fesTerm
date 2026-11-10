@@ -465,6 +465,17 @@ Healthy inventory survives bounded per-target Unknown. Missing/unsupported
 journals fail closed; there is no automatic prerelease-state migration.
 Pending daemon ownership commit retries contention within its bounded deadline;
 candidate adoption no longer stalls the old writer or replays terminal input.
+Post-snapshot staging is byte bounded, including allocation headroom, rather
+than limited to the live client's 64 frames; delayed adoption preserves ordered
+small output chunks. Closed/rejected clients cannot terminate the daemon/PTY.
+Namespace rotation reauthorizes the actual resulting epoch before publication
+and holds that fresh policy guard through the durable checkpoint. Capacity Busy
+may require authorized inventory/inspection reconciliation before unchanged retry.
+Owned concurrent runs also reproduced native startup refusal when a read-only
+checkpoint reader held the shared registry lock beyond the unchanged 500-ms
+mutation deadline. Private atomic snapshot readers no longer pin that lock;
+mutations keep serialized CAS and retained-directory protections. Deterministic
+stalled-reader and directory-replacement tests cover those boundaries.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,

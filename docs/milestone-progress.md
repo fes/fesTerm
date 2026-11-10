@@ -8734,3 +8734,23 @@ available beside authorized per-target Unknown. Owned-daemon tests cover churn,
 concurrent generations, cancellation, revocation and interrupted cleanup; no
 installed services, accounts or user sessions were touched. Endpoint integration,
 independent gates and native/device qualification remain open.
+
+Further native review caught two different ways a harmless pending attachment
+could hurt the current shell: a closed client's setup/refusal error escaped into
+daemon shutdown, and a 64-frame pre-adoption queue rejected small output bursts
+far below the byte budget. Refusals are now connection-local; byte-charged staging
+retains ordered delta until actual ownership commit without enlarging the live
+queue. Owned child tests exercise closed candidates and more than 64 delayed
+output chunks while the old writer remains usable. Issuer publication also
+reauthorizes the actual post-rotation namespace under the durable reservation,
+rather than advertising a namespace its policy callback never observed.
+
+Concurrent owned runs subsequently captured the remaining startup refusal:
+a starter's read-only file/ACL inspection held the shared native registry lock
+for 635–812 ms while the daemon's unchanged 500-ms publication lock expired.
+Retaining the validated directory alone did not solve it. Private atomic
+checkpoint snapshots now read without pinning the mutation lock; mutations keep
+serialized fresh CAS and handle-relative publication, and nonprivate legacy
+reads retain locking. A deliberately stalled reader regression proves mutation
+can progress, while a path-replacement regression prevents cross-directory
+publication. This is native lock evidence, not a build-cache attribution.

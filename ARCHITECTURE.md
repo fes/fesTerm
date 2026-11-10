@@ -702,6 +702,9 @@ Its local `host_control::SessionControl` journals owner/logical identity,
 immutable launch intent, reserved generations, operation results and revocation
 revisions through the existing private no-follow/atomic storage boundary. It
 uses the real detached native launcher and single-writer daemon admission.
+Read-only private native checkpoint snapshots do not hold the mutation lock
+during file/ACL I/O; serialized mutation CAS retains its validated directory
+handle across publication. Legacy nonprivate reads remain locked.
 Read-only reconciliation cannot create a fresh reservation. A durable issuance
 namespace bounds the entire 128-entry operation ledger without receipt archives;
 old captured scopes become Stale, never fresh creation. The 64 logical records
@@ -710,6 +713,10 @@ sealed supervision and positive native absence proof. Capacity reclamation takes
 only one requesting-owner known-Absent record, never another owner's or a revoked
 fence. Revoked live shells remain accounted and locally manageable; exact local
 end and new explicit consent are required before retiring their fence.
+Namespace publication reauthorizes the actual post-rotation epoch under the
+same reservation and retains that policy guard through the durable checkpoint.
+At capacity, authorized inventory/inspection may first reconcile owned dead
+Running/Ending records, followed by retry of Busy with the original operation.
 Opaque attachment authorities retain current policy and per-generation
 grant/writer/liveness guards across nonblocking local actions, without parsing or
 locking the global journal. Intentional detach yields a publication-only receipt,
@@ -722,7 +729,10 @@ recovery adoption; a pending attachment is not an Attached success. Persistent
 shells never acquire temporary cleanup merely through attachment. Endpoint
 routing must not stall an existing writer while a candidate adopts: the native
 daemon queues one candidate, bounds its post-snapshot output/control delta to
-512 KiB, and cancels only that candidate on saturation. The candidate's input
+512 KiB including queue allocation headroom, independently of the live 64-frame
+queue, and cancels only that candidate on saturation. Committed delta drains
+before newer output. New-client admission/refusal errors cannot terminate the
+daemon or persistent PTY; listener errors still propagate. The candidate's input
 worker waits for the daemon's actual writer commit before accepting commands.
 The existing writer remains usable until that commit. Endpoint
 routing, protected enrollment/channel integration, migration and native

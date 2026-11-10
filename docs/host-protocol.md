@@ -144,10 +144,16 @@ synchronization protections apply. No credentials are serialized.
 The private journal try-lock serializes owners/logical IDs without queued
 workers. Native starts additionally use the existing per-name start lock shared
 with ordinary launch/managed repair. Saturation is Busy, never another launch.
+Read-only native snapshots use complete private atomic checkpoints without
+holding the mutation lock across file/ACL I/O. Mutations retain the validated
+directory handle and serialize fresh CAS checks/publication; legacy nonprivate
+reads remain locked. Native admission still fences exact generation and writer.
 Uncertain pending reservations count against the two-create bound until safely
 adopted or explicitly abandoned locally. `issuance_epoch(owner, admit)` durably
 publishes the current namespace; a caller captures it once in `IssuedOperation`.
 At operation capacity, atomic namespace rotation clears the compact ledger.
+Before publishing a rotated namespace, a fresh admission callback receives that
+actual new epoch under the same reservation; its guard spans durable publication.
 There are no per-request receipts or per-logical tombstone archives. A captured
 retired/future scope is Stale before reconciliation or effects, never refreshed
 into creation. Within the current scope, full immutable intent includes owner,
@@ -163,6 +169,9 @@ The durable generation high-water survives retirement and clock rollback.
 Exactly 64 private physical native names bound permanent name locks and
 per-name bounded lifecycle logs. These are implementation slots, not logical IDs.
 Generation launch/lease/socket artifacts are removed only after positive proof.
+At capacity, stored Running/Ending records are not automatically treated as
+Absent: an authorized inventory/inspection can reconcile owned dead generations,
+then the caller retries Busy with its original unchanged operation and scope.
 
 `retire_local(owner, exact_target)` is supported protected **local maintenance**,
 not a wire operation. It can retire a known-Absent identity or abandon an
@@ -244,10 +253,15 @@ at physical delivery and retire revoked connections/attachments.
   persistent/legacy daemon attachment and takeover remain unchanged.
   Recovery waiting is nonblocking for the daemon loop: the current writer keeps
   handling input/output while the one candidate adopts. Post-snapshot terminal
-  and control output is staged in a bounded queue (at most 512 KiB); saturation
+  and control output is staged by bytes (at most 512 KiB, including allocation
+  headroom), not by the live client's 64-frame queue. More than 64 small chunks
+  can therefore survive delayed adoption and drain in order before newer output.
+  Saturation
   cancels the candidate without stealing the current writer. After ADOPTED, the
   candidate worker still waits for actual daemon ownership commit before
-  accepting terminal commands. No native wire or recovery deadline changes.
+  accepting terminal commands. A new client's configuration, admission or refusal
+  write failure is local to that client, never daemon/PTY shutdown; listener
+  failures remain errors. No native wire or recovery deadline changes.
 - `with_attachment_authorized(authority, admit, action)` holds current policy and
   per-generation lease guards across one nonblocking local action. Exact grant
   revision, native PID/generation liveness, writer epoch, ticket and optional

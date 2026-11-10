@@ -3363,6 +3363,12 @@ generation revocation, stopped-detach publication-only receipts, initial
 temporary cancellation and revoked-live local end/reconsent. Missing/unsupported
 journals never reset issuance. These are local fixture evidence, not endpoint
 readiness or complete disk-fault/native lifecycle qualification.
+Additional regressions cover actual-current post-rotation publication admission,
+stalled private snapshot readers without a pinned mutation lock, retained-directory
+CAS across path replacement, closed pending clients and ordered adoption of more
+than 64 small output chunks. The native fixture waits for its real child's READY
+output before obtaining the asserted recovery snapshot; no assertion, timeout or
+native acceptance requirement is weakened.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
