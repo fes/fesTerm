@@ -5,6 +5,14 @@
 #[cfg(windows)]
 pub mod named_pipe;
 
+/// Whether this process has an associated console window (including a hidden
+/// pseudoconsole window). This does not describe the validity of stdio handles.
+#[cfg(windows)]
+pub fn has_console_window() -> bool {
+    // SAFETY: this process-local query takes no arguments or ownership.
+    !unsafe { windows_sys::Win32::System::Console::GetConsoleWindow() }.is_null()
+}
+
 #[cfg(windows)]
 mod imp {
     use std::{

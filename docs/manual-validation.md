@@ -204,6 +204,19 @@ disappears while the tunnel, host fingerprint and exact daemon generation stay
 unchanged; no existing live installation was upgraded by these local tests.
 This does not qualify daemon survival after the originating job closes.
 
+Required Windows x64 CI at `9d521174` (run `42793362331`, job `129752154452`)
+failed the setup console probe and the read-only native argv/CIM creation-time
+fixtures. The console probe now self-executes a repository-owned child and calls
+the same native `GetConsoleWindow`, without starting PowerShell/C# merely to
+query console absence. The other fixtures retain native argv decoding, exact
+ownership and microsecond-precision assertions; bounded test-only capture now
+distinguishes timeout, exit failure and output overflow and preserves escaped
+stdout/stderr. Their original opaque errors do not establish which phase failed.
+Fresh execution of all three exact selectors in
+[the progress record](milestone-progress.md#retaining-evidence-for-legacy-windows-setup-ci-failures)
+remains required; source checks, macOS runs or a Windows ARM64 diagnostic do not
+establish corrected required-Windows-x64 CI or live-service acceptance.
+
 Opt-in daemon replacement (ADR 0066) adds deterministic journal, persistent
 crash-budget, exact-generation reconciliation, watchdog-lease and honest iOS
 refusal coverage. DT-05 still requires signed-host tests for abrupt daemon
