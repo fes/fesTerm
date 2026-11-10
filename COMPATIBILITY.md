@@ -64,6 +64,13 @@ and included in default builds; actual service acceptance remains pending
 build override reports sign-in unavailable. This is not a
 production, mobile or multi-account service-qualification claim.
 
+[HOST v1 stage-1 primitives](docs/host-protocol.md)
+([#681](https://github.com/fes/fesTerm/issues/681), ADR 0084 Proposed) have
+portable codec/identity/owner-proof/privacy/budget tests only. No listener
+advertises HOST or provides inventory/create/end, no legacy profile is converted,
+and no native/service/migration qualification is added. Enrollment and encrypted
+channel integration require independent security review before exposure.
+
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 
 The sourced implementation references and cross-project lessons that guide this

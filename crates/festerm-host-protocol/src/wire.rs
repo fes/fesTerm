@@ -152,6 +152,9 @@ pub struct Target {
 #[serde(deny_unknown_fields)]
 pub struct Creation {
     pub logical: LogicalSessionId,
+    /// Future attaching tab; a temporary lease must be reserved for this
+    /// attachment before spawning, even if the create reply is lost.
+    pub attachment: AttachmentId,
     pub name: Option<String>,
     pub recipe: Recipe,
     pub lifetime: Lifetime,
@@ -259,12 +262,16 @@ pub struct Capabilities {
     pub detach: bool,
     pub explicit_end: bool,
     pub temporary: bool,
+    /// Independent protected execution grant. Ensure may still resume a live
+    /// authorized session while this is false.
+    pub creation_allowed: bool,
 }
 
 impl Validate for Capabilities {
     fn validate(&self) -> Result<(), ContractError> {
         if (self.ensure || self.create || self.temporary) && !self.attach
             || self.temporary && !self.detach
+            || self.creation_allowed && !(self.ensure || self.create)
         {
             return Err(ContractError::Malformed);
         }
@@ -364,6 +371,7 @@ pub enum Response {
     Ensured {
         session: SessionSummary,
         disposition: EnsureDisposition,
+        lease: Option<TemporaryLease>,
     },
     Attached {
         target: Target,
@@ -387,7 +395,13 @@ impl Validate for Response {
             Self::Capabilities { capabilities } => capabilities.validate(),
             Self::Inventory { page } => page.validate(),
             Self::Lookup { result } => result.validate(),
-            Self::Ensured { session, .. } => session.validate(),
+            Self::Ensured { session, lease, .. } => {
+                session.validate()?;
+                if matches!(session.lifetime, Lifetime::Temporary { .. }) != lease.is_some() {
+                    return Err(ContractError::Malformed);
+                }
+                Ok(())
+            }
             Self::Attached {
                 attachment,
                 lease: Some(lease),
@@ -395,5 +409,67 @@ impl Validate for Response {
             } if *attachment != lease.attachment => Err(ContractError::Malformed),
             _ => Ok(()),
         }
+    }
+}
+
+impl Envelope<Response> {
+    /// Correlates a decoded response to the captured request before adopting
+    /// a target/lease. This is not host authentication or authorization.
+    pub fn validate_for(&self, request: &Envelope<Request>) -> Result<(), ContractError> {
+        self.validate()?;
+        request.validate()?;
+        if self.host != request.host || self.operation != request.operation {
+            return Err(ContractError::Stale);
+        }
+        let matches = match (&request.body, &self.body) {
+            (_, Response::Refused { .. }) => true,
+            (Request::Capabilities, Response::Capabilities { .. }) => true,
+            (Request::List { cursor }, Response::Inventory { page }) => cursor
+                .as_ref()
+                .is_none_or(|cursor| cursor.snapshot == page.snapshot),
+            (Request::Lookup { logical }, Response::Lookup { result }) => match result {
+                LookupResult::Running { session } => session.target.logical == *logical,
+                LookupResult::Absent {
+                    logical: actual, ..
+                } => actual == logical,
+                _ => true,
+            },
+            (
+                Request::Ensure { creation } | Request::Create { creation },
+                Response::Ensured {
+                    session,
+                    disposition,
+                    lease,
+                },
+            ) => {
+                session.target.logical == creation.logical
+                    && lease
+                        .as_ref()
+                        .is_none_or(|lease| lease.attachment == creation.attachment)
+                    && (*disposition == EnsureDisposition::Resumed
+                        || session.lifetime == creation.lifetime)
+                    && (!matches!(request.body, Request::Create { .. })
+                        || *disposition != EnsureDisposition::Resumed)
+            }
+            (
+                Request::Attach {
+                    target, attachment, ..
+                },
+                Response::Attached {
+                    target: actual,
+                    attachment: actual_attachment,
+                    ..
+                },
+            ) => target == actual && attachment == actual_attachment,
+            (Request::Detach { target, .. }, Response::Detached { target: actual })
+            | (Request::ExplicitEnd { target }, Response::Ended { target: actual }) => {
+                target == actual
+            }
+            _ => false,
+        };
+        if !matches {
+            return Err(ContractError::Stale);
+        }
+        Ok(())
     }
 }

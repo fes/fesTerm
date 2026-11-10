@@ -688,6 +688,16 @@ Performance benchmarks should initially report trends rather than block every co
 
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
 adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
+The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small
+`festerm-host-protocol` serde/UUID crate for shared HOST identities, bounded
+messages, authorized pagination and reservation/freshness helpers. This avoids
+a sessiond-to-bridge dependency cycle; it has no PTY, GUI, cloud or native-store
+dependency. The bridge's non-default `owner-auth` feature provides enrolled-owner
+Ed25519 challenge/admission primitives, not provider identity or a listener.
+Legacy bearer connectivity is not principal proof. Protected enrollment,
+pinned-channel integration and independent security review are mandatory before
+new remote capabilities; all new capabilities default denied. No session routing,
+creation, migration or lifetime-supervisor implementation is claimed by this slice.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

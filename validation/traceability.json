@@ -5467,11 +5467,46 @@
       ]
     },
     {
-      "id": "host-based-dev-tunnels-design",
+      "id": "host-protocol-owner-contracts",
       "edges": [
         "HOST-01",
         "HOST-02",
-        "HOST-03",
+        "HOST-03"
+      ],
+      "requirements": [
+        "docs/adr/0084-host-based-dev-tunnels.md#decision",
+        "docs/host-protocol.md"
+      ],
+      "decisions": [
+        "ADR-0084"
+      ],
+      "automated_tests": [
+        "host_wire_fixture_is_canonical_and_not_legacy_protocol",
+        "host_wire_rejects_malformed_oversized_and_version_mismatched_input",
+        "host_operations_roundtrip_without_conflating_detach_end_or_absence",
+        "host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values",
+        "host_response_correlation_rejects_wrong_target_operation_and_temporary_lease",
+        "host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors",
+        "host_aggregate_budgets_refuse_saturation_and_release_exact_permits",
+        "host_admission_fence_rejects_revocation_replacement_and_operation_change",
+        "host_owner_authentication_matches_domain_bound_signature_fixture",
+        "host_owner_proof_rejects_foreign_key_tampering_and_cross_connection_replay",
+        "host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed",
+        "host_owner_admission_requires_current_shared_exact_generation_and_absence",
+        "host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys"
+      ],
+      "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #681: contract primitives only; no HOST endpoint or GUI control is exposed. Independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
+        "Implement durable authoritative ensure/reservations, recipe conflicts and temporary lease supervision independently of bridge lifetime; reconcile uncertain outcomes, never infer absence from denial/offline/partial inventory",
+        "Implement authenticated multi-session routing, fair output/control scheduling, aggregate permit/deadline integration and legacy adapter without grant expansion",
+        "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth fixtures do not qualify it"
+      ]
+    },
+    {
+      "id": "host-based-dev-tunnels-design",
+      "edges": [
         "HOST-04",
         "HOST-05",
         "HOST-06"
@@ -5487,7 +5522,7 @@
       "manual_scenarios": [],
       "status": "deferred",
       "prerequisites": [
-        "Implement ADR 0084's seven staged slices, including verified principal binding and atomic generation reservation",
+        "Issue #681: implement the remaining ADR 0084 setup, headless, desktop-hosting and release/migration slices after reviewed endpoint/session-control integration",
         "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
         "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect"
       ]

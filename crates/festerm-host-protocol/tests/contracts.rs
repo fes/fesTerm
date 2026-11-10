@@ -26,6 +26,7 @@ fn session(n: u32) -> SessionSummary {
 fn creation() -> Creation {
     Creation {
         logical: id(2),
+        attachment: id(4),
         name: Some("Build".into()),
         recipe: Recipe {
             shell: Some("/bin/sh".into()),
@@ -73,6 +74,7 @@ fn host_wire_rejects_malformed_oversized_and_version_mismatched_input() {
         ("version", json!(2)),
         ("protocol", json!("festerm-host-v2")),
         ("host", json!("00000001-0000-4000-8000-00000000000A")),
+        ("host", json!("550e8400-e29b-41d4-0716-446655440000")),
         ("operation", json!("00000000-0000-0000-0000-000000000000")),
         ("unrecognized", json!(true)),
     ] {
@@ -85,7 +87,11 @@ fn host_wire_rejects_malformed_oversized_and_version_mismatched_input() {
     assert!(decode::<Envelope<Request>>(&serde_json::to_vec(&recipe).unwrap()).is_err());
     recipe["body"]["creation"]["recipe"]["args"] = json!(["x\u{0}"]);
     assert!(decode::<Envelope<Request>>(&serde_json::to_vec(&recipe).unwrap()).is_err());
-    assert!(decode::<Envelope<Request>>(br#"{"version":1,"version":1}"#).is_err());
+    let valid =
+        String::from_utf8(encode(&Envelope::new(id(1), id(3), Request::Capabilities)).unwrap())
+            .unwrap();
+    let duplicate = valid.replace("\"version\":1", "\"version\":1,\"version\":1");
+    assert!(decode::<Envelope<Request>>(duplicate.as_bytes()).is_err());
     assert!(decode::<Envelope<Request>>(&vec![b' '; CONTROL_FRAME_BYTES + 1]).is_err());
     let mut trailing = encode(&Envelope::new(id(1), id(3), Request::Capabilities)).unwrap();
     trailing.extend_from_slice(b"{}");
@@ -185,6 +191,67 @@ fn host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values() {
 }
 
 #[test]
+fn host_response_correlation_rejects_wrong_target_operation_and_temporary_lease() {
+    let mut creation = creation();
+    creation.lifetime = Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    };
+    let request = Envelope::new(
+        id(1),
+        id(3),
+        Request::Ensure {
+            creation: creation.clone(),
+        },
+    );
+    let mut summary = session(2);
+    summary.lifetime = creation.lifetime;
+    let response = Envelope::new(
+        id(1),
+        id(3),
+        Response::Ensured {
+            session: summary,
+            disposition: EnsureDisposition::Created,
+            lease: Some(TemporaryLease {
+                lease: id(5),
+                epoch: Epoch::new(1).unwrap(),
+                attachment: creation.attachment.clone(),
+            }),
+        },
+    );
+    let encoded = encode(&response).unwrap();
+    let decoded: Envelope<Response> = decode(&encoded).unwrap();
+    decoded.validate_for(&request).unwrap();
+    for changed in 0..5 {
+        let mut wrong = response.clone();
+        match changed {
+            0 => wrong.host = id(9),
+            1 => wrong.operation = id(9),
+            _ => {
+                let Response::Ensured { session, lease, .. } = &mut wrong.body else {
+                    unreachable!()
+                };
+                match changed {
+                    2 => session.target.logical = id(9),
+                    3 => lease.as_mut().unwrap().attachment = id(9),
+                    _ => *lease = None,
+                }
+            }
+        }
+        assert!(wrong.validate_for(&request).is_err());
+    }
+    let attach = Envelope::new(
+        id(1),
+        id(3),
+        Request::Attach {
+            target: session(2).target,
+            attachment: id(4),
+            takeover: false,
+        },
+    );
+    assert!(response.validate_for(&attach).is_err());
+}
+
+#[test]
 fn host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors() {
     let epoch = Epoch::new(2).unwrap();
     let entries = (1..=35).rev().map(|n| InventoryEntry {
@@ -267,6 +334,27 @@ fn host_aggregate_budgets_refuse_saturation_and_release_exact_permits() {
     assert_eq!(held.len(), MAX_CLIENTS);
     drop(held);
     assert!(budget.reserve(Resource::Client, 1).is_ok());
+    let client = budget.admit_client().unwrap();
+    let client_bytes = client.reserve_terminal_bytes(MAX_BYTES_PER_CLIENT).unwrap();
+    assert!(matches!(
+        client.reserve_terminal_bytes(1),
+        Err(ContractError::Busy)
+    ));
+    let other = budget.admit_client().unwrap();
+    assert!(other.reserve_terminal_bytes(1).is_ok());
+    drop(client_bytes);
+    assert!(client.reserve_terminal_bytes(1).is_ok());
+    let isolated = Budgets::default();
+    let connection = isolated.admit_client().unwrap();
+    let queued = connection.reserve_terminal_bytes(1).unwrap();
+    drop(connection);
+    let others = (1..MAX_CLIENTS)
+        .map(|_| isolated.admit_client().unwrap())
+        .collect::<Vec<_>>();
+    assert!(matches!(isolated.admit_client(), Err(ContractError::Busy)));
+    drop(queued);
+    assert!(isolated.admit_client().is_ok());
+    drop(others);
 }
 
 #[test]
@@ -274,6 +362,7 @@ fn host_admission_fence_rejects_revocation_replacement_and_operation_change() {
     let fence = AdmissionFence {
         host: id(1),
         principal: id(7),
+        connection: id(6),
         connection_epoch: Epoch::new(1).unwrap(),
         host_epoch: Epoch::new(2).unwrap(),
         grant_epoch: Epoch::new(3).unwrap(),
@@ -283,7 +372,7 @@ fn host_admission_fence_rejects_revocation_replacement_and_operation_change() {
         target: Some(session(2).target),
     };
     fence.revalidate(&fence).unwrap();
-    for changed in 0..9 {
+    for changed in 0..10 {
         let mut current = fence.clone();
         match changed {
             0 => current.host = id(9),
@@ -294,6 +383,7 @@ fn host_admission_fence_rejects_revocation_replacement_and_operation_change() {
             5 => current.operation_epoch = current.operation_epoch.next().unwrap(),
             6 => current.operation = id(9),
             7 => current.logical = Some(id(9)),
+            8 => current.connection = id(9),
             _ => current.target.as_mut().unwrap().generation = GenerationId::new(99).unwrap(),
         }
         assert_eq!(fence.revalidate(&current), Err(ContractError::Stale));

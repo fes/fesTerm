@@ -15,6 +15,8 @@ pub mod observation;
 #[cfg(feature = "client")]
 pub mod observation_client;
 pub mod observation_protocol;
+#[cfg(feature = "owner-auth")]
+pub mod owner_auth;
 #[cfg(feature = "relay")]
 pub mod profile_hosting;
 pub mod protocol;

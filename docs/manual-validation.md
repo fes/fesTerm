@@ -3326,6 +3326,24 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 | --- | --- | --- | --- |
 | CP-22 | On macOS, Windows and Linux with multiple local addresses, exercise Automatic, fixed source and Ask on first connection for SSH/SFTP and the native PSRP fixed-source CLI. Observe the source at an authorized server. Cancel before connection; choose an unavailable address; disconnect its VPN/interface before reconnect; confirm no unbound fallback. Open SFTP from the live SSH session and exercise a separate transfer connection. Confirm profile edits do not alter the live session, new Ask sessions prompt again, and workspace restore does not persist a prompted source. | Deterministic config/UI/socket regressions plus native network and usability evidence; partial | Requires authorized IPv4/IPv6 endpoints and a controlled multi-adapter/VPN environment per platform. Adapter labels aid address selection only. DNS, proxy policy, strict interface binding and VPN-only enforcement are not established by socket source binding. IPv6 link-local scope selection is unsupported. No corporate interfaces, routes or policies are changed automatically. |
 
+## Host-based Dev Tunnels stage-1 classification (#681)
+
+[ADR 0084](adr/0084-host-based-dev-tunnels.md) remains Proposed.
+[HOST contract primitives](host-protocol.md) have automated codec, canonical
+signature, default-deny owner/session admission, revocation/replay, privacy/
+pagination and budget evidence. This is not a native host endpoint, installation,
+owner-enrollment ceremony, actual pinned-channel proof or temporary supervisor.
+No live credentials/services were used or installed by this slice.
+
+HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
+enrollment/vault/channel/admission integration, authoritative journal/reboot
+reconciliation, simultaneous sessions and leases, fair output/control scheduling
+and physical mobile disconnect/reconnect. Later slices must extend DT-07/DT-08,
+CP-11 and MOB-03/MOB-06 with actual platform evidence before claiming acceptance.
+Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
+HOST-04–06 setup/update/migration remain deferred behind their implementations;
+there is no new completed manual or usability scenario.
+
 ## Intake rule for new work
 
 Every implemented GUI or platform slice must state which of these applies:

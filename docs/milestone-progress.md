@@ -8625,3 +8625,22 @@ instead of requiring a second state message after the server has removed the
 command. Failed signals still fail, and transports that need a later state
 event retain that requirement. The native oracle still requires the same
 runspace's marker to survive cancellation.
+
+### ADR 0084 starts with contracts, not a remotely callable shell service
+
+The host-oriented tunnel design ([#681](https://github.com/fes/fesTerm/issues/681))
+cannot safely promote today's scoped bearer connection into a person. Stage 1
+therefore separates the bounded, versioned HOST contract from the legacy bridge
+and adds explicit enrolled-owner signature/challenge primitives using existing
+repository crypto and secret boundaries. Typed logical/generation identities,
+authoritative-absence representations, owner-filtered pagination and aggregate
+reservation permits give later session-control work a shared foundation without
+inventing a sessiond-to-network dependency.
+
+Real codec and security-sensitive fixtures exercise replay, revocation,
+generation changes, default-deny creation and privacy before any listener
+advertises the protocol. Protected enrollment, native vault/channel integration,
+durable ensure/leases and endpoint routing remain gated work, not simulated
+success. No services or cloud resources changed. ADR 0084 remains Proposed;
+independent antagonist/security review and platform acceptance still govern
+exposure and completion.
