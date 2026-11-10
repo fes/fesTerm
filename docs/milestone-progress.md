@@ -46,6 +46,58 @@ GUI/cloud, sharing/end/restart and runtime-owned desktop Settings gates remain
 open. No package/tool install, OS/device/provider/release operation or push
 is involved.
 
+### Fixed-source receipt qualification
+
+Source `90d3354db94040b57003d88b4530a05137aee108` is the normal child of
+`0747f13b9c75b1c5be536e32df2a453b0b6088d9`. Fresh exact-source commands use
+the same absolute private Rust/Cargo1.98 binaries documented below, with the
+separate `target/receipt-rust198`, jobs1/debug0/incremental0 and
+`TMPDIR=$PWD/target/work`. No tool/package install or global override occurred.
+`target/receipt-evidence/toolchain.log` records full-vV, compiler/Cargo/Clippy
+paths and the explicitly unset-private-variables global stable/default list.
+
+The retained `target/receipt-qualify.sh` and individual raw logs show:
+
+- `cargo test --locked --offline -p festerm-tunnel-bridge
+  --no-default-features --features host-routing --lib host_client::approvals::
+  -- --test-threads=1`: **12 pass/0 fail/0 ignored**, exit0. This is the actual
+  non-relay mobile storage path, not relay feature unification.
+- Mobile `--features host-clients --lib`: **213 pass/4 existing ignores**,
+  exit0; default offline `--lib`: **134 pass/1 existing ignore**, exit0.
+- Bridge strict all-target profiles `host-routing`, `client`, and
+  `client,owner-auth`, each `--no-default-features`, plus mobile
+  `host-clients --all-targets`: **all exit0**. The client/owner-auth union is
+  also the existing primary CI portable-owner feature selection (tested here
+  with all targets rather than just CI's library).
+- Actual `aarch64-apple-ios-sim` library check and mobile executable link,
+  `--features host-clients`, **both exit0**, using existing SDK/std. The new
+  arm64 Mach-O executable is measured as
+  `e6bba8735daf6c011faab2f60e7eb0103a3ecb5c5822e435b993cac7c87ef21d`;
+  it was not launched/bundled/signed. This is new source proof, not reassignment
+  of the original bc936 binary.
+- fmt, diff and base#700 trace (**311 edges/0 broken**) **exit0**.
+
+An **additional, non-CI `owner-auth`-alone strict diagnostic remains RED**:
+exit101 for pre-existing unused `Capabilities::validate` and
+`Metadata::validate` in `observation_protocol.rs:242/269`. The exact same
+command also failed exit101 against read-only frozen0747, using only this
+child's private target. That profile excludes the changed receipt module.
+`owner-auth-strict.log` and `owner-auth-only-frozen-baseline.log` retain both
+outputs; the existing CI `client,owner-auth` profile passes. No warning waiver,
+unrelated source fix or aggregate-green claim hides this baseline limitation.
+
+The mobile feature-tree receipt contains bridge client/owner-auth/host-routing,
+**not relay**; no manifest/lock/dependency changes were made. Scoped hashes in
+`named-source-inputs.json` identify the two changed files and selected unchanged
+inputs, not an immutable executable seal or complete dependency attestation.
+`raw-hashes.sha256` records raw evidence bytes and `command-exits.json` records
+numeric command exits. Existing vendor and rust-objcopy/LLVM stripping warnings
+remain disclosed. Recorded qualification stages had43–52% free memory.
+The original Simulator and both original helper hashes still match; c5f's
+sixteen native passes, prior a13a RED, and all their raw logs are preserved
+without native reruns or reattribution. Source reviews/required CI and the
+manual gates above remain open.
+
 ## Qualifying the combined executable mobile HOST client
 
 Qualified source is normal two-parent merge
