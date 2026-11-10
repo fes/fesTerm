@@ -3418,23 +3418,94 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 | --- | --- | --- | --- |
 | CP-22 | On macOS, Windows and Linux with multiple local addresses, exercise Automatic, fixed source and Ask on first connection for SSH/SFTP and the native PSRP fixed-source CLI. Observe the source at an authorized server. Cancel before connection; choose an unavailable address; disconnect its VPN/interface before reconnect; confirm no unbound fallback. Open SFTP from the live SSH session and exercise a separate transfer connection. Confirm profile edits do not alter the live session, new Ask sessions prompt again, and workspace restore does not persist a prompted source. | Deterministic config/UI/socket regressions plus native network and usability evidence; partial | Requires authorized IPv4/IPv6 endpoints and a controlled multi-adapter/VPN environment per platform. Adapter labels aid address selection only. DNS, proxy policy, strict interface binding and VPN-only enforcement are not established by socket source binding. IPv6 link-local scope selection is unsupported. No corporate interfaces, routes or policies are changed automatically. |
 
-## Host-based Dev Tunnels stage-1 classification (#681)
+## Host-based Dev Tunnels stages 1–2 classification (#681)
+
+The opt-in authenticated runtime source checkpoint adds an actual signed SSH
+stream handshake and control/terminal dispatch, with authored encrypted-channel
+tests for inventory/terminal negotiation, revocation, replay and frame/client
+bounds. These tests are not yet run on this head. They use constrained test
+policy/vault state and do not qualify protected production enrollment or an
+actual multi-session shell host. HOSTAUTH-01, DT-07/DT-08, CP-11 and mobile gates
+remain manual/native or deferred behind the qualified final session correction,
+protected enrollment adapter and consuming native endpoint. No service is
+installed or Ready state asserted; legacy qualification is unchanged.
 
 [ADR 0084](adr/0084-host-based-dev-tunnels.md) remains Proposed.
 [HOST contract primitives](host-protocol.md) have automated codec, canonical
 signature, default-deny owner/session admission, revocation/replay, privacy/
 pagination and budget evidence. This is not a native host endpoint, installation,
-owner-enrollment ceremony, actual pinned-channel proof or temporary supervisor.
+owner-enrollment ceremony or actual pinned-channel proof.
 Protected local enrollment/revocation/rotation and opaque native-vault key APIs
 now have deterministic fixture evidence; real pinned SSH streams exercise the
 explicit missing-exporter refusal, not successful owner channel authentication.
 No live credentials/services were used or installed by this slice.
 
+The stage-3 unexposed dispatcher/paired transport adds automated owned-duplex
+framing, deadline/cancellation/correlation, real owner-proof fixture, protected
+revocation and pending logical-revision/generation tests. No native endpoint
+acceptance is added: the actual inner SSH session/channel exporter is absent,
+so same-channel proof integration must fail closed. Real sessiond/control and
+owned scoped-policy adapters now compile, with five explicitly invoked Unix
+owned-daemon duplex fixtures for ensure/create/retry, nonattaching inventory,
+denied creation and exact-generation end reconciliation. The protected native
+enrollment composition is off by default; no real user vault is changed by
+these tests. Adopted terminal routing/detach and fair output/control scheduling
+remain prerequisites, not fixture claims. Native capabilities advertise
+inventory only and enforce those flags on both peers and the native backend.
+Additional automated fixtures cover independent idle/exchange deadlines,
+correlated resource/policy saturation, reply-capacity retention and post-commit
+native policy contention. Real native effects require a cfg(test)-only backend
+advertisement; there is no production bypass or new manual acceptance.
+
+The unexposed paired terminal module adds automated portable adoption,
+correlation, strict-generation/refusal, frame/deadline, byte-budget and FIFO-turn
+fixtures. All nine owned native control/terminal fixtures passed at `1a66a935` and run
+explicitly in Unix CI. The nonblocking candidate preserves old-writer progress
+while recovery is pending; its original assertion and deadlines remain.
+Do not count this local fixture evidence as DT/CP/mobile acceptance. Actual consuming
+owner-channel integration and backend hotpath/history qualification remain
+required; no production listener or readiness state is added.
+The current main/enrollment/opaque-authority union is source-only until its own
+native-nine/clippy rerun and cross-family antagonist checks complete.
+
+Paired control fixtures also retain original issued namespaces across
+reconnects, reject account/endpoint/host changes and wrongly echoed scopes, and
+preserve privacy-filtered Unknown inventory. Native attachment consumers retain
+the original opaque authority and freshly authorize exact detach receipts.
+These do not replace any end-to-end/native gate below.
+
+Stage 2 adds **automated local Unix** evidence: real detached owned daemons and
+repository fixture children prove concurrent ensure, crash/lost-reply
+reconciliation, recipe/operation conflict, denied/revoked generations,
+post-commit cancellation, exact end, adoption-gated takeover/stale lease fencing,
+and daemon-owned expiry without bridge uptime. Expiry tests model elapsed grace
+in fixture-only private state; they are not a physical 60-second mobile timing
+qualification. Unit supervisor fixtures cover restart, monotonic expiry under
+storage contention, foreign generations and revision rollback.
+
+Antagonist regressions also cover active-lease/missing-journal reconciliation
+without helper execution, preserved Running phase after transient observation,
+128-operation issuance rotation without archive growth, minimum own-record
+64-logical reclamation without cross-owner/revoked-fence sweeping, and exact
+retired-scope rejection. Positive native absence proof gates pending abandonment;
+lock contention, malformed evidence, delayed helpers and interrupted artifact
+retirement remain fenced. Generation churn reuses a fixed slot and removes old
+artifacts. Real two-generation fixtures cover healthy-plus-Unknown inventory,
+relay/heartbeat progress while the global journal is locked, concurrent other
+generation revocation, stopped-detach publication-only receipts, initial
+temporary cancellation and revoked-live local end/reconsent. Missing/unsupported
+journals never reset issuance. These are local fixture evidence, not endpoint
+readiness or complete disk-fault/native lifecycle qualification.
+
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
-reconciliation, simultaneous sessions and leases, fair output/control scheduling
+reconciliation, Windows ConPTY/job/breakaway and Linux service startup, update/
+uninstall independence, simultaneous routed sessions, fair output/control scheduling
 and physical mobile disconnect/reconnect. Later slices must extend DT-07/DT-08,
 CP-11 and MOB-03/MOB-06 with actual platform evidence before claiming acceptance.
+Host-controlled Windows startup refuses denied breakaway instead of claiming
+persistence inside the bridge's job; both denial and successful independent
+whole-ConPTY-tree cleanup require native evidence.
 Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
 HOST-04–06 setup/update/migration retain partial foundations described below;
 there is no new completed manual or usability scenario.

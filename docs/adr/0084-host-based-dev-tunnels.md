@@ -457,6 +457,49 @@ durable lease supervisor, GUI/installer or cloud modification is implemented by
 this slice; no legacy migration or native acceptance is claimed. Stage 1 is not
 whole-ADR acceptance; the ADR stays Proposed pending all gates and review.
 
+### Stage-2 local session-control progress (#681)
+
+`festerm-sessiond::host_control` now implements durable atomic local ensure/create,
+immutable intent/idempotency checks, fresh generations, authoritative bound-dead
+absence and fail-closed unknown/revoked records using actual detached native
+launch. Scoped fresh admission guards protect reservation/publication without
+holding owner policy across startup IPC. Cancellation reconciles committed
+outcomes. Existing native start locks coordinate ordinary launch/managed repair;
+no running generation is silently replaced or terminal input replayed.
+
+The actual daemon loop enforces private generation/lease-fenced temporary
+deadlines independently of bridge/client/UI lifetime. Recovery adoption gates
+both writer replacement and lease ownership transfer; the local attach API
+truthfully returns PendingAttachment until commit. End truthfully returns a
+durable StopRequested outcome until observed absence. Persistent shells never
+inherit temporary cleanup merely through attachment. Ambiguous unbound spawn
+reservations remain Unknown, requiring local investigation rather than an
+unsafe fresh launch. See [the concrete integration API](../host-protocol.md#local-durable-session-control-stage-2).
+
+Antagonist remediation makes reconciliation structurally unable to create a
+fresh native reservation, including a missing-journal crash with an active
+persistent lease. Transient observations preserve bound Running state. Captured
+authenticated issuance scopes now bound the entire operation ledger without
+archive files: retired requests stay Stale, never automatically freshened.
+Minimum requesting-owner known-Absent reclamation preserves other owners and
+revoked fences; fixed native slots and positive-proof generation artifact cleanup
+bound historical native bookkeeping. Uncertain local abandonment must seal
+helpers and positively prove absence, not infer it from I/O failure.
+Revoked live shells remain accounted and support exact local end/observation;
+fence retirement requires known absence and explicit new local consent.
+Per-generation opaque relay authority avoids the global journal on hotpaths,
+and detach receipts authorize publication only, never stopped terminal actions.
+Healthy inventory survives bounded per-target Unknown. Missing/unsupported
+journals fail closed; there is no automatic prerelease-state migration.
+Pending daemon ownership commit retries contention within its bounded deadline;
+candidate adoption no longer stalls the old writer or replays terminal input.
+
+Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
+qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
+enrollment/channel proof or endpoint routing. No listener or installed service
+changes are included. Independent security/reliability/scope review and the
+remaining acceptance matrix still gate exposure and completion.
+
 ## Alternatives considered
 
 - One tunnel per session: retains the setup and discoverability restriction.
@@ -508,6 +551,30 @@ successful endpoint startup or cloud deletion.
 ignored by default and requires an explicitly authorized disposable Unix guest.
 Its synthetic executable/native-manager evidence is not release publisher,
 native vault, real sessiond or whole-ADR qualification.
+
+**Authenticated runtime source checkpoint (#681):** the non-default bridge
+`host_runtime` consumes only actual `HostStream`s, reserves aggregate admission
+before protected policy/proof work, bounds challenge/proof frames and deadlines,
+and consumes successful same-channel proof into either existing control framing
+or the native exact-generation terminal adapter. Every channel proves itself;
+neither bearer transport nor a sibling channel's proof grants authority.
+The portable native-vault client helper consumes an already approved pinned
+connection and existing owner key; there is no first-connect trust default,
+enrollment, new key or weaker-protocol retry.
+The source adds `authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation`,
+`authenticated_runtime_terminal_role_uses_separate_bounded_framing`,
+`authenticated_runtime_rejects_proof_replayed_on_another_actual_ssh_channel`
+and `authenticated_runtime_bounds_proof_frames_and_client_admission`.
+The opt-in
+`native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input`
+adds actual owned-daemon input/isolation, inventory and persistent detach over
+native TCP SSH, without widening the inventory-only remote control capability.
+These authored tests still require execution against this checkpoint. They use
+real encrypted signed SSH channels and local inventory, not native-vault/service
+acceptance or an end-to-end multi-session shell claim. Native capabilities remain
+inventory-only; creation is not widened. Protected enrollment composition,
+qualified session correction, actual daemon round trips and independent gates
+remain prerequisites before native exposure. No installed endpoint is enabled.
 
 **Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
 protected lifecycle journal; the separate GUI-free `festerm-host` supports
@@ -594,6 +661,20 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
   `host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes`
   additionally proves current-authorize state/generation/ABA revision fencing.
+  Stage-2 local daemon evidence includes
+  `concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon`,
+  `crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generation`,
+  `absence_denial_revocation_cancellation_and_generations_remain_distinct`,
+  `temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease`,
+  `daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor`,
+  `current_absence_requires_fresh_create_permission_but_live_resume_does_not`,
+  `failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create`,
+  `cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner`,
+  `lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace` and
+  `lease_supervisor_refuses_revision_rollback_or_foreign_generation`.
+  `protected_inventory_filters_before_labels_without_frontend_admission` and
+  `scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_committed`
+  additionally pin the routing integration boundary and scoped guard lifetime.
   `host_owner_fence_rejects_changed_intent_for_the_same_operation` covers
   takeover and recipe changes under a reused operation ID.
   The acceptance matrix below remains required later-stage evidence, not
@@ -788,6 +869,55 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   coverage only when its replacement is implemented and traced.
 
 ### Acceptance matrix
+
+Stage-3 core evidence adds real-proof owned-duplex dispatcher tests
+`real_proof_framed_inventory_filters_private_foreign_and_unknown_lookup`,
+`revision_or_generation_change_while_pending_fences_publication`,
+`protected_revocation_during_work_never_publishes_inventory_or_absence`, and
+paired transport deadline/cancellation/correlation/legacy-refusal tests in
+`festerm-tunnel-client::host_control`. These qualify only the unexposed bounded
+core, not native endpoint or whole-ADR acceptance. Consuming the reviewed inner
+SSH session/channel owner proof and fair adopted terminal routing remain
+prerequisites. Real native-control/scoped-policy adapters add
+`native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`,
+`native_creation_denial_does_not_register_virgin_identity_or_claim_absence`, and
+`native_lost_reply_disconnect_retry_and_independent_control_never_duplicate_spawn`.
+These explicitly invoked owned Unix fixtures qualify local control routing,
+not actual encrypted owner-channel proof, terminal attachment or native service
+acceptance. No listener advertises HOST; the partial adapter reports only
+inventory capability and enforces it for every operation: unadvertised
+ensure/create/attach/detach/end refuse before backend effects. Native control
+fixtures explicitly opt into a cfg(test)-only advertisement seam. Additional
+duplex tests cover idle-versus-exchange deadlines, typed handshake refusals,
+correlated resource/policy Busy, retained reply allocation through publication
+and post-commit policy contention. These are PR688 core reliability/scope
+remediations, not endpoint or dependency qualification.
+
+The unexposed paired terminal slice adds bounded binary framing, explicit
+frontend adoption/observed native writer admission, immutable client bindings,
+bounded full-duplex queues, partial-frame deadlines and non-replaying input.
+Portable fixtures cover correlated confirmation, generation/uncertainty refusal,
+legacy/file refusal, retained byte quotas and abandoned FIFO scheduling turns.
+Owned native terminal fixtures additionally exercise real routed sessions,
+pending cancellation/takeover, temporary detach and revocation under slow output.
+All nine owned native control/terminal fixtures passed at `1a66a935` after the daemon
+candidate-adoption fix: the old writer progresses while a bounded candidate
+waits, then post-snapshot deltas reach the adopted replacement. The assertion
+and deadlines are unchanged. This is not endpoint acceptance: the backend
+hotpath/issuance-history replacement and consuming owner-channel integration
+remain pending. Cross-platform/native service and physical-device gates remain
+separate; the terminal server/scheduler are still fixture-only.
+That prior result does not qualify the current main/enrollment/opaque-authority
+union: its native-nine/clippy rerun and cross-family antagonist remain pending.
+
+The paired control API binds each issued creation operation to its original
+account/endpoint/host and negotiated namespace, including reconnect and local
+refusal correlation. Bare IDs cannot create, lifecycle requests cannot carry a
+creation scope, and a wrong reply scope retires the stream. Partial inventory
+preserves authorized Unknown targets without exposing private/foreign targets.
+The native consumer uses original opaque attachment authority for both
+persistent and temporary paths and freshly checks detach receipts before
+publication; these interfaces do not enable a product endpoint.
 
 | Area | Required evidence (planned test names are illustrative) |
 | --- | --- |

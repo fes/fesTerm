@@ -8839,6 +8839,29 @@ command. Failed signals still fail, and transports that need a later state
 event retain that requirement. The native oracle still requires the same
 runspace's marker to survive cancellation.
 
+### ADR 0084's paired framed-control core stays behind the authentication gate
+
+The next #681 slice adds bounded sequential HOST RPC and an opt-in dispatcher
+that accepts actual cryptographically verified owner proof, not a principal or
+bearer assertion. Owned duplex tests cover privacy, current policy revocation,
+pending record revision/generation changes, framing/correlation and cancellation.
+Admission precedes worker allocation; late blocking work retains its resource
+charges until reconciliation. No terminal input is replayed.
+
+The core now calls real sessiond through its scoped protected-policy callbacks,
+with an off-by-default headless adapter to actual local enrollment. Three
+explicitly invoked owned Unix daemon fixtures exercise real creation/retry,
+nonattaching inventory, denial without false absence, and exact end
+reconciliation. A withheld committed reply does not block independent control
+or authorize a duplicate spawn. Attach/Detach remain Unsupported and only
+inventory is advertised until adopted terminal routing is integrated.
+
+This is deliberately not an exposed host endpoint. The actual inner SSH stream
+does not yet carry a shared session/channel exporter needed to prevent owner
+proof forwarding. Actual channel authentication and separate fair terminal
+routing remain integration prerequisites. Legacy behavior and native acceptance
+are unchanged; no credentials, services or cloud resources were modified.
+
 ### ADR 0084 starts with contracts, not a remotely callable shell service
 
 The host-oriented tunnel design ([#681](https://github.com/fes/fesTerm/issues/681))
@@ -8866,6 +8889,28 @@ current reauthorization rather than copied fences. The same review tightened
 version-first refusal, zero-field schemas and cursor progress. Optional owner
 proofs are explicitly enabled in every platform's CI test/lint combinations;
 this closes a coverage gap, not the remaining native/exposure gates.
+
+### A shell's lifetime cannot belong to its bridge (#681)
+
+ADR 0084's second slice connects the contracts to the real native daemon rather
+than a successful-looking in-memory manager. A private durable reservation binds
+owner, logical identity, operation intent and generation before spawn. Concurrent
+Connect and lost replies reuse that generation; uncertainty never authorizes
+another shell. Existing native launch/start locks preserve ordinary managed
+repair and attached sessions.
+
+Temporary cleanup moved into the actual daemon's loop, with protected deadlines
+and generation/lease epochs. The existing recovery-adoption barrier exposed a
+subtle boundary: returning a stream is not yet a completed takeover. The new
+local ticket commits lease ownership beside the sole-writer replacement only
+after adoption; callers receive PendingAttachment until then. Scoped admission
+guards are released during native startup waits, then reacquired against the
+actual committed state. Real owned child-daemon tests exercise failure,
+cancellation, stale disconnect, revocation and bridge-independent expiry.
+
+No HOST listener, enrollment shortcut, GUI, service registration or cloud action
+is introduced. Native reboot/ConPTY/service/mobile evidence and independent
+review remain prerequisites; the ADR stays Proposed.
 
 ### Protected owner enrollment without inventing authenticated transport
 
@@ -9027,3 +9072,111 @@ authenticated absence; otherwise CleanupPending retains its receipt and names
 the qualification blocker. Private HTTP/lifecycle fixtures prove these policies,
 not real cloud/native acceptance. Desktop/headless command composition, normal
 first-connect UX and runtime/service health remain separate work.
+
+The stage-3 core review found that advertising inventory-only was not enough:
+both peers now enforce operation flags, and native effect tests use a test-only
+advertisement instead of silently bypassing the production boundary. Idle time
+no longer consumes an operation's execution deadline. Protected policy I/O runs
+off the async executor; ordinary contention returns a correlated Busy, while
+contention after a possible commit preserves OutcomeUncertain. Reply capacity
+stays reserved through publication, so competing work cannot steal a committed
+reply's allocation. Owned duplex and real-daemon fixtures prove these fixes;
+terminal adoption, encrypted endpoint integration and dependency reviews remain
+separate gates under #681.
+
+Independent antagonist review (#687) caught a dangerous fallthrough: reconciling a
+reservation with no native launch journal could still execute the helper before
+fresh admission. The read-only path now stops before every fresh reservation,
+and revoked records do no native work. Active, non-stopped lease regressions
+cover the original failure rather than relying on prior termination to hide it.
+
+The same review exposed historical bookkeeping masquerading as active capacity.
+An initial archive-based remedy was rejected because disk still grew forever.
+Captured authenticated issuance scopes now retire old operation namespaces
+atomically, keeping a bounded compact ledger without archives. Old requests
+stay Stale; new explicit operations can keep their logical ID and get fresh
+generations. Fixed native slots bound name locks/lifecycle history, while exact
+generation cleanup requires sealed helpers and positive absence proof.
+Reclamation never sweeps other owners or revoked fences. Revoked live shells
+remain accounted and locally manageable until exact end and new local consent.
+Transient observations no longer turn Running into Launching.
+
+The full native takeover test then exposed the actual registry contention:
+durable checkpoint staging and directory synchronization held the same lock
+used by discovery/admission readers. Instrumented owned runs held it for
+105–426 ms even when passing, close to the unchanged 500-ms refusal deadline.
+Checkpoints now prepare and synchronize outside that lock, then revalidate and
+atomically publish under a short lock. Disjoint updates rebase without replaying
+effects; same-name replacements refuse. Directory synchronization follows
+unlock. Read-only/no-op operations no longer checkpoint, and exact-generation
+bridge admission performs native IPC outside the registry lock. Deterministic
+stalled-preparation/disjoint-writer and conflicting-generation regressions cover
+the boundary rather than increasing deadlines.
+
+The paired terminal slice now has separate bounded HOST binary framing rather
+than an unbounded multiplexer. The client exposes immutable connection bindings,
+explicit recovery adoption, bounded full-duplex queues and a correlated detach
+receipt, with no reconnect or terminal-input replay. Native routing uses the
+existing daemon/session machinery, fresh protected action guards and exact
+temporary leases; FIFO output turns release before network I/O.
+
+This remains unexposed and partial under #681. Portable fixtures qualify the
+transport boundary, not the endpoint. Owned native fixtures found that the
+existing synchronous candidate-adoption wait stops old-writer progress until a
+new snapshot is adopted or cancelled. That assertion remained in place while
+the native owner fixed the actual candidate wait, rather than weakening it.
+No listener, control-capability widening or native/manual acceptance is claimed.
+
+The focused bridge run passes 88 library cases; six new portable terminal cases
+also run without native helpers (five in client-only mode). Explicit owned
+native routing passes all five existing control cases plus two-session routing,
+temporary cancellation/detach and slow-output revocation with independent control.
+The pending-takeover case initially failed for that identified daemon wait.
+Protected short-root fixtures now
+wait for recorded daemon PIDs to exit, not merely disappear from discovery,
+before removing state; final shutdown diagnostics otherwise recreate the root.
+
+The native fix now queues one bounded candidate without blocking the old
+writer. It preserves post-snapshot terminal/control deltas and accepts candidate
+input only after actual adoption and writer commit; saturation cancels only
+the candidate. Rebuilding the owned helper and rerunning the unchanged routing
+fixtures passed all nine cases at `1a66a935`. Unix CI runs the four terminal cases with
+the five existing control cases. This resolves the local takeover regression,
+not the still-pending authority/receipt, issuance/history and consuming
+authenticated-stream integration. The terminal server remains fixture-only.
+A second real takeover regression found adoption waiting on the daemon's sole
+event loop, starving the old writer. One bounded nonblocking candidate now stages
+post-snapshot output and activates input only after actual writer commit.
+Per-generation opaque authorities remove the global session journal from relay
+and heartbeat hotpaths; intentional detach has a separate receipt-only publication
+check, never permission to act on a stopped lease. Healthy inventory remains
+available beside authorized per-target Unknown. Owned-daemon tests cover churn,
+concurrent generations, cancellation, revocation and interrupted cleanup; no
+installed services, accounts or user sessions were touched. Endpoint integration,
+independent gates and native/device qualification remain open.
+
+The paired control consumer retains an immutable destination-bound issued
+operation across reconnects, never freshens uncertain creation, and correlates
+the original namespace on every reply/refusal. New framed fixtures cover
+account/endpoint/host changes, missing/forbidden/wrongly echoed scopes and
+healthy-plus-private-filtered-Unknown inventory. Native attachment consumers
+use original opaque authorities for persistent and temporary routing and
+freshly authorize exact detach receipts before publication. This remains an
+unexposed integration milestone, not complete ADR0084 or native acceptance.
+The main/enrollment/opaque-authority union is now source-frozen only; its own
+native-nine/clippy and different-source-family antagonist checks remain pending.
+Historical nine-of-nine evidence is not qualification of this new union.
+
+### ADR 0084 authenticated stream composition source checkpoint
+
+The earlier routing core could accept opaque owner authorities but did not
+consume the actual SSH owner proof into a dispatcher. The opt-in runtime now
+owns bounded challenge/proof exchange on the signed original SSH stream, then
+routes that same stream to inventory control or adopted terminal handling.
+Each stream proves itself; aggregate client admission survives cancelled
+blocking policy work. The portable client helper preserves existing native-vault
+keys and foreground trust rather than inventing an authority or weaker fallback.
+Encrypted-channel regression tests are authored, not yet executed at this
+checkpoint. The final session correction, production protected enrollment
+adapter, actual daemon round trips and independent/native gates remain open.
+No installed host, remote creation, GUI change or acceptance is claimed.

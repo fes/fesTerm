@@ -495,6 +495,41 @@ fn ensure_with_policy(
         u128,
     ) -> Result<(), PersistentSessionError>,
 ) -> Result<NativeSessionIdentity, PersistentSessionError> {
+    ensure_reserved_with_launcher(root, request, None, true, require_owned_journal, launch)
+}
+
+pub(crate) fn ensure_host_reserved(
+    root: &Path,
+    request: DetachedSessionRequest<'_>,
+    generation: u128,
+    may_launch: bool,
+    helper: &Path,
+) -> Result<NativeSessionIdentity, PersistentSessionError> {
+    ensure_reserved_with_launcher(
+        root,
+        request,
+        Some(generation),
+        may_launch,
+        true,
+        |root, request, profile, generation| {
+            launch_with_helper_control(helper.to_owned(), root, request, profile, generation, true)
+        },
+    )
+}
+
+fn ensure_reserved_with_launcher(
+    root: &Path,
+    request: DetachedSessionRequest<'_>,
+    reserved: Option<u128>,
+    may_launch: bool,
+    require_owned_journal: bool,
+    launch: impl FnOnce(
+        &Path,
+        &DetachedSessionRequest<'_>,
+        &LocalProfile,
+        u128,
+    ) -> Result<(), PersistentSessionError>,
+) -> Result<NativeSessionIdentity, PersistentSessionError> {
     PersistentSessionName::new(request.name).map_err(|_| refused("invalid session name"))?;
     let id = uuid(request.launch_request)?;
     let profile = normalize_spawn_profile(request.profile)?;
@@ -527,6 +562,7 @@ fn ensure_with_policy(
             || journal.name != request.name
             || journal.fingerprint != fingerprint
             || journal.generation == 0
+            || reserved.is_some_and(|generation| generation != journal.generation)
         {
             return Err(refused("foreign or incompatible launch journal"));
         }
@@ -549,6 +585,14 @@ fn ensure_with_policy(
         }
         return Ok(identity);
     }
+    // Reconciliation may adopt only an existing exact reservation. In
+    // particular, absence of both metadata and a launch journal is UNKNOWN,
+    // not authorization to create a fresh reservation or invoke the helper.
+    if !may_launch {
+        return Err(refused(
+            "unconfirmed reservation; reconciliation cannot spawn",
+        ));
+    }
     if live {
         if require_owned_journal {
             return Err(refused(
@@ -556,6 +600,9 @@ fn ensure_with_policy(
             ));
         }
         let record = record.unwrap();
+        if reserved.is_some_and(|generation| generation != record.created_at_unix_ms) {
+            return Err(refused("a different native generation is running"));
+        }
         check_evidence(record, &fingerprint)?;
         let identity = NativeSessionIdentity::from_record(record);
         let mut journal = LaunchJournal {
@@ -575,7 +622,7 @@ fn ensure_with_policy(
         launch_request: request.launch_request.into(),
         name: request.name.into(),
         fingerprint,
-        generation: lifecycle::now_ms(),
+        generation: reserved.unwrap_or_else(lifecycle::now_ms),
         identity: None,
     };
     // Durable before launching, including a failure to spawn the start helper.
@@ -642,7 +689,23 @@ fn launch_with_helper(
     profile: &LocalProfile,
     generation: u128,
 ) -> Result<(), PersistentSessionError> {
+    launch_with_helper_control(helper, root, request, profile, generation, false)
+}
+
+fn launch_with_helper_control(
+    helper: PathBuf,
+    root: &Path,
+    request: &DetachedSessionRequest<'_>,
+    profile: &LocalProfile,
+    generation: u128,
+    host_control: bool,
+) -> Result<(), PersistentSessionError> {
     let mut command = Command::new(helper);
+    // Never let an inherited host lease convert an ordinary shared shell.
+    command.env_remove("FESTERM_SESSIOND_HOST_CONTROL");
+    if host_control {
+        command.env("FESTERM_SESSIOND_HOST_CONTROL", generation.to_string());
+    }
     command
         .env("FESTERM_SESSIOND_RUNTIME_ROOT", root)
         .env("FESTERM_SESSIOND_GENERATION", generation.to_string())
@@ -720,6 +783,174 @@ pub fn verify_spawn_fingerprint_in(
         return Err(refused("selected generation unavailable or replaced"));
     }
     check_evidence(record, expected)
+}
+
+/// Authoritative absence only for a previously bound incarnation. Missing
+/// metadata with a held lease remains unknown; PID reuse alone is never live.
+pub(crate) fn host_generation_state(
+    root: &Path,
+    selected: &NativeSessionIdentity,
+    expected: &str,
+) -> Result<bool, PersistentSessionError> {
+    let directory = storage::private_directory(root, false).map_err(storage_error)?;
+    let records = registry(&directory)?;
+    match matching_record(&records, &selected.name)? {
+        Some(record) if NativeSessionIdentity::from_record(record) == *selected => {
+            if !verified_live(root, &directory, record)? {
+                return Ok(false);
+            }
+            check_evidence(record, expected)?;
+            Ok(true)
+        }
+        Some(_) => Err(refused(
+            "logical generation was replaced outside its reservation",
+        )),
+        None => {
+            let name = format!("lease-{}-{}", selected.pid, selected.created_at_unix_ms);
+            match storage::open_private_file(&directory, Path::new(&name), false) {
+                Ok(lease) => match FileExt::try_lock_shared(&lease) {
+                    Ok(()) => Ok(false),
+                    Err(_) => Err(refused("native generation outcome is unknown")),
+                },
+                Err(error)
+                    if error.kind() == io::ErrorKind::NotFound && !process_alive(selected.pid) =>
+                {
+                    Ok(false)
+                }
+                Err(_) => Err(refused("native generation outcome is unknown")),
+            }
+        }
+    }
+}
+
+pub(crate) fn host_generation_attached(
+    root: &Path,
+    selected: &NativeSessionIdentity,
+) -> Result<bool, PersistentSessionError> {
+    let directory = storage::private_directory(root, false).map_err(storage_error)?;
+    let records = registry(&directory)?;
+    let record = matching_record(&records, &selected.name)?
+        .ok_or_else(|| refused("native generation unavailable"))?;
+    if NativeSessionIdentity::from_record(record) != *selected
+        || !verified_live(root, &directory, record)?
+    {
+        return Err(refused("native generation unavailable"));
+    }
+    Ok(record.attached)
+}
+
+/// Generation-scoped relay liveness: no global registry lock or parsing.
+pub(crate) fn host_generation_lease_live(
+    root: &Path,
+    selected: &NativeSessionIdentity,
+) -> Result<bool, PersistentSessionError> {
+    let directory = storage::private_directory(root, false).map_err(storage_error)?;
+    let name = format!("lease-{}-{}", selected.pid, selected.created_at_unix_ms);
+    let file =
+        storage::open_private_file(&directory, Path::new(&name), false).map_err(storage_error)?;
+    match FileExt::try_lock_shared(&file) {
+        Ok(()) => Ok(false),
+        Err(error) if crate::lock_is_contended(&error) => Ok(true),
+        Err(error) => Err(storage_error(error)),
+    }
+}
+
+pub(crate) struct HostRetirement {
+    _daemon: File,
+    pub identity: Option<NativeSessionIdentity>,
+}
+
+/// Caller retains the start lock and has sealed the host lease. Holding the
+/// lifetime daemon lock proves a delayed helper cannot already have opened its
+/// supervision lease or spawned a PTY.
+pub(crate) fn prove_host_reservation_absence(
+    root: &Path,
+    name: &str,
+    generation: u128,
+    selected: Option<&NativeSessionIdentity>,
+    native_pid: Option<u32>,
+    expected: &str,
+) -> io::Result<HostRetirement> {
+    let directory = storage::private_directory(root, false)?;
+    let daemon = open_lock(&directory, Path::new(&format!("{name}.daemon.lock")))
+        .map_err(io::Error::other)?;
+    FileExt::try_lock_exclusive(&daemon)?;
+    let records = registry(&directory).map_err(io::Error::other)?;
+    let identity = match matching_record(&records, name).map_err(io::Error::other)? {
+        Some(record) => {
+            let identity = NativeSessionIdentity::from_record(record);
+            if identity.created_at_unix_ms != generation
+                || selected.is_some_and(|selected| selected != &identity)
+                || native_pid.is_some_and(|pid| pid != identity.pid)
+            {
+                return Err(io::Error::other("retirement generation was replaced"));
+            }
+            check_evidence(record, expected).map_err(io::Error::other)?;
+            if verified_live(root, &directory, record).map_err(io::Error::other)? {
+                return Err(io::Error::other("retirement generation remains live"));
+            }
+            Some(identity)
+        }
+        None => selected.cloned().or_else(|| {
+            native_pid.map(|pid| {
+                let stem = format!("{pid}-{generation}");
+                NativeSessionIdentity {
+                    name: name.to_owned(),
+                    pid,
+                    created_at_unix_ms: generation,
+                    #[cfg(unix)]
+                    endpoint: root
+                        .join(format!("{stem}.sock"))
+                        .to_string_lossy()
+                        .into_owned(),
+                    #[cfg(windows)]
+                    endpoint: format!(r"\\.\pipe\festerm-sessiond-{stem}"),
+                }
+            })
+        }),
+    };
+    if let Some(identity) = &identity {
+        let name = format!("lease-{}-{}", identity.pid, identity.created_at_unix_ms);
+        match storage::open_private_file(&directory, Path::new(&name), false) {
+            Ok(lease) => FileExt::try_lock_shared(&lease)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(HostRetirement {
+        _daemon: daemon,
+        identity,
+    })
+}
+
+pub(crate) fn remove_host_generation_artifacts(
+    root: &Path,
+    generation: u128,
+    launch: &str,
+    retirement: &HostRetirement,
+) -> Result<(), PersistentSessionError> {
+    let id = Uuid::parse_str(launch).map_err(|_| refused("invalid launch identity"))?;
+    if id.get_version_num() != 4 || id.hyphenated().to_string() != launch {
+        return Err(refused("invalid launch identity"));
+    }
+    let directory = storage::private_directory(root, false).map_err(storage_error)?;
+    for name in [
+        format!("launch-{launch}.json"),
+        format!("launch-{launch}.lock"),
+        format!("host-daemon-{generation}.json"),
+        format!("host-daemon-{generation}.lock"),
+    ] {
+        storage::remove_private_file(&directory, Path::new(&name)).map_err(storage_error)?;
+    }
+    if let Some(identity) = &retirement.identity {
+        let stem = format!("{}-{generation}", identity.pid);
+        storage::remove_private_file(&directory, Path::new(&format!("lease-{stem}")))
+            .map_err(storage_error)?;
+        #[cfg(unix)]
+        storage::remove_private_socket(&directory, Path::new(&format!("{stem}.sock")))
+            .map_err(storage_error)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

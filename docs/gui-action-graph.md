@@ -1576,6 +1576,14 @@ branch silently.
 
 ## Proposed host-based Dev Tunnels (ADR 0084)
 
+HOST-01–03 additionally have an opt-in source implementation of actual
+SSH-stream owner challenge/proof framing and control/terminal dispatch
+(`host_runtime`). Authored encrypted-channel tests cover control inventory,
+terminal negotiation, revoked policy, cross-connection proof replay and aggregate
+admission/frame bounds. Their execution, qualified session correction, consuming
+protected enrollment and actual multi-session daemon round trips remain pending;
+this adds no GUI transition or installed endpoint and does not change P/H/N status.
+
 The [HOST contracts](host-protocol.md) provide codec, identity, authorization
 and budget evidence for `HOST-01`–`HOST-03`. Client-local metadata/commands and
 explicit-browse state add evidence for `HOST-01`/`HOST-02`. Their end-to-end
@@ -1592,11 +1600,32 @@ the unauthenticated stream for bounded denial and close. These are tested
 helpers, not authenticated endpoint coverage; first-connect controls/native
 vault qualification remain deferred.
 
+The unexposed dispatcher/client now enforce negotiated operation flags,
+preserve correlated Busy/uncertain refusals, separate idle/exchange deadlines
+and retain reply capacity through publication. HOST-01–03 retain the same
+partial status; native effect fixtures use an explicit cfg(test)-only backend
+advertisement, not production capability widening.
+
+The unexposed paired terminal module adds bounded adoption/correlation, frame
+and byte-budget, no-replay and FIFO-turn fixtures for HOST-02/03. Native
+fixtures passed all nine owned control/terminal cases at `1a66a935`, including unchanged
+old-writer progress while a takeover candidate waits and independent control
+under slow output. The bounded nonblocking candidate fixes the former native
+stall. Endpoint qualification still requires the backend hotpath/history work.
+Actual consuming owner-channel integration and all H/N gates remain deferred.
+The current source union awaits its own native-nine/clippy and cross-family
+antagonist qualification; the older result is not transferred automatically.
+
+Additional paired control fixtures bind issued creation operations across
+reconnects, refuse account/endpoint/host changes before writing, reject
+missing/forbidden or wrongly echoed scopes, and preserve privacy-filtered
+Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
-| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state tests; UI/endpoint/H,N deferred |
-| `HOST-02` | Local recipe → resumed/new remote shell | Offline save/edit/duplicate/import/export/delete; separate future Connect with atomic resume-or-create or strict attach | Public metadata; stable host/account/logical IDs and fresh duplicates; future-only edits; deletion preserves shell; authoritative absence/current creation permission; exact generation; no input replay | Failed saves retain state; mobile skips/reports invalid entries without losing valid recipes; typed conflicts and export-specific outcomes; legacy remains exact-generation; reconcile uncertain live ensure; no duplicate spawn | P; partial metadata/command/recovery/codec/absence/admission tests; live execution/H,N deferred |
-| `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; partial lifetime/generation schemas; supervisor/H,N deferred |
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state/framed dispatcher tests; UI/endpoint/H,N deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Offline save/edit/duplicate/import/export/delete; separate future Connect with atomic resume-or-create or strict attach | Public metadata; stable host/account/logical IDs and fresh duplicates; future-only edits; deletion preserves shell; authoritative absence/current creation permission; exact generation; no input replay | Failed saves retain state; mobile skips/reports invalid entries without losing valid recipes; typed conflicts and export-specific outcomes; legacy remains exact-generation; reconcile uncertain live ensure; no duplicate spawn | P; partial metadata/command/recovery/codec/absence/admission and real-daemon ensure/crash/conflict/cancellation/issuance/retirement/Unknown inventory fixtures; live execution/H,N deferred |
+| `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P; lifetime/generation schemas, framed native detach/revocation, expiry/stale takeover, authority/heartbeat, stopped-detach and revoked-live reconsent fixtures; sharing/endpoint/H,N deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings/account/OS-user scope; in-process foreground auth/zero-shell cloud adapter and same-user native component; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings and preserve draft; proven no-send recovery or explicit unbound-uncertainty acknowledgement retaining reservation; separate new consent reuses it; authoritative GET pins late receipt without re-enabling; pinned absence requires exact native stop | P,H,N; partial boundary/cloud/native fixtures, native/UI deferred |
 | `HOST-05` | Headless package → configured service | Configure/status/acquisition/staging/native qualification; service-status/disable/cleanup-local and read-only recover-cleanup; setup/run/update/uninstall refuse | Shared disabled settings/origin/account/exact-owned receipt policy; native Running/cloud presence are not Ready; no registration/start/pre-login | Revoke before exact stop; retain uncertain submission and authoritative cleanup-adoption receipt across epoch races; native cleanup does not commit cloud removal; generation-atomic delete unqualified | P,H,N; partial boundary/cloud/native fixtures; opt-in disposable manager fixture; signed endpoint/native acceptance and first bootstrap/deletion deferred |
 | `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: manifest/verifier/private executable-publication component; H,N: native acceptance/switching/migration deferred |

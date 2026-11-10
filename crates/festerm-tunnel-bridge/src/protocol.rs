@@ -265,27 +265,48 @@ pub fn decode_snapshot(bytes: &[u8]) -> io::Result<Terminal> {
 }
 
 pub fn encode_snapshot(terminal: &Terminal) -> io::Result<Vec<u8>> {
-    struct Limited(Vec<u8>);
-    impl io::Write for Limited {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            if self.0.len() + bytes.len() > SNAPSHOT_LIMIT {
-                return Err(invalid());
-            }
-            self.0.extend_from_slice(bytes);
-            Ok(bytes.len())
+    encode_snapshot_bounded(terminal, SNAPSHOT_LIMIT)
+}
+
+pub(crate) fn encode_json_bounded<T: Serialize>(value: &T, maximum: usize) -> io::Result<Vec<u8>> {
+    let mut output = LimitedJson {
+        bytes: Vec::new(),
+        maximum,
+    };
+    serde_json::to_writer(&mut output, value).map_err(|_| invalid())?;
+    Ok(output.bytes)
+}
+
+struct LimitedJson {
+    bytes: Vec<u8>,
+    maximum: usize,
+}
+
+impl io::Write for LimitedJson {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.bytes.len() + bytes.len() > self.maximum {
+            return Err(invalid());
         }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
     }
-    let mut output = Limited(vec![match terminal.semantics() {
-        TerminalSemantics::Legacy => 0,
-        TerminalSemantics::Current => 1,
-    }]);
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub(crate) fn encode_snapshot_bounded(terminal: &Terminal, maximum: usize) -> io::Result<Vec<u8>> {
+    let mut output = LimitedJson {
+        bytes: vec![match terminal.semantics() {
+            TerminalSemantics::Legacy => 0,
+            TerminalSemantics::Current => 1,
+        }],
+        maximum: maximum.min(SNAPSHOT_LIMIT),
+    };
     serde_json::to_writer(&mut output, terminal).map_err(|_| invalid())?;
     // Apply the same semantic/resource policy at both ends.
-    decode_snapshot(&output.0)?;
-    Ok(output.0)
+    decode_snapshot(&output.bytes)?;
+    Ok(output.bytes)
 }
 
 #[cfg(test)]

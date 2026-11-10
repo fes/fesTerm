@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     env,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -78,6 +78,14 @@ fn sessiond_trace(message: impl std::fmt::Display) {
 
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 static DAEMON_GENERATION: OnceLock<u128> = OnceLock::new();
+static DAEMON_HOST_WATCH: OnceLock<std::sync::Mutex<festerm_sessiond::host_lease::DaemonWatch>> =
+    OnceLock::new();
+
+fn host_daemon_should_stop() -> bool {
+    DAEMON_HOST_WATCH
+        .get()
+        .is_some_and(|watch| watch.lock().map_or(true, |mut watch| watch.should_stop()))
+}
 static DAEMON_LOG: OnceLock<(PathBuf, festerm_sessiond::NativeSessionIdentity)> = OnceLock::new();
 
 fn lifecycle_event(event: LifecycleEvent) {
@@ -85,6 +93,44 @@ fn lifecycle_event(event: LifecycleEvent) {
         if lifecycle::record(root, identity, event).is_err() {
             eprintln!("festerm-sessiond: lifecycle.record_failed");
         }
+    }
+}
+
+fn host_allows_attachment(
+    ticket: Option<&festerm_host_protocol::OperationId>,
+    kind: AttachKind,
+) -> bool {
+    match DAEMON_HOST_WATCH.get() {
+        Some(watch) => watch
+            .lock()
+            .is_ok_and(|watch| watch.allows_attachment(ticket, kind == AttachKind::Remote)),
+        None => ticket.is_none(),
+    }
+}
+
+fn host_commit_attachment(
+    ticket: Option<&festerm_host_protocol::OperationId>,
+    kind: AttachKind,
+) -> io::Result<()> {
+    match DAEMON_HOST_WATCH.get() {
+        Some(watch) => watch
+            .lock()
+            .map_err(|_| io::Error::other("host lease unavailable"))?
+            .commit_attachment(ticket, kind == AttachKind::Remote),
+        None if ticket.is_none() => Ok(()),
+        None => Err(io::Error::other("host lease unavailable")),
+    }
+}
+
+fn host_attachment_cancelled(
+    ticket: Option<&festerm_host_protocol::OperationId>,
+    kind: AttachKind,
+) -> bool {
+    match DAEMON_HOST_WATCH.get() {
+        Some(watch) => watch.lock().map_or(true, |watch| {
+            watch.attachment_cancelled(ticket, kind == AttachKind::Remote)
+        }),
+        None => ticket.is_some(),
     }
 }
 
@@ -1022,6 +1068,9 @@ fn run_start(
         {
             Ok(child) => child,
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
+                if env::var_os("FESTERM_SESSIOND_HOST_CONTROL").is_some() {
+                    return Err("host session requires independent Windows job ownership; breakaway was denied".into());
+                }
                 eprintln!(
                     "festerm-sessiond: could not break away from the current job object \
                      (it likely disallows JOB_OBJECT_LIMIT_BREAKAWAY_OK); starting session \
@@ -1167,6 +1216,17 @@ fn run_daemon(
         Err(error) => return Err(error.into()),
     };
     let _ = DAEMON_GENERATION.set(generation);
+    if let Some(expected) = env::var_os("FESTERM_SESSIOND_HOST_CONTROL") {
+        if expected.to_str() != Some(&generation.to_string()) {
+            return Err("invalid host daemon generation".into());
+        }
+        let mut watch =
+            festerm_sessiond::host_lease::DaemonWatch::open(&runtime_root, &name, generation)?;
+        if watch.should_stop() {
+            return Err("host lease already ended before shell launch".into());
+        }
+        let _ = DAEMON_HOST_WATCH.set(std::sync::Mutex::new(watch));
+    }
     let mut record = generation_record(
         &runtime_root,
         GenerationRecordSpec {
@@ -1450,6 +1510,10 @@ fn session_client_loop<R: Read + Send + 'static>(
     let mut attached_reported = None;
     let mut pending = PendingOutput::default();
     let result = loop {
+        if host_daemon_should_stop() {
+            shutdown();
+            break Ok(());
+        }
         if let Err(error) = reap_client_threads(&mut retired_clients) {
             shutdown();
             break Err(error);
@@ -1465,17 +1529,18 @@ fn session_client_loop<R: Read + Send + 'static>(
             shutdown();
             break Err(error);
         }
+        poll_replacement(&mut active, &mut retired_clients, &mut pending);
         // Output the client has not taken yet must be delivered before any more
         // is consumed from the reader channel, so delivery stays ordered.
         flush_pending_output(&mut active, &mut retired_clients, &mut pending);
         if let Err(error) = accept_unix_clients(
             &listener,
             &mut active,
-            &mut retired_clients,
             terminal,
             observer.as_ref(),
             &client_input_tx,
             &mut next_generation,
+            &mut pending,
         ) {
             shutdown();
             break Err(error);
@@ -1544,6 +1609,7 @@ fn session_client_loop<R: Read + Send + 'static>(
         }
     };
 
+    pending.cancel_replacement(&mut retired_clients);
     let result = result
         .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
     retire_active(&mut active, &mut retired_clients, false);
@@ -1579,28 +1645,36 @@ fn configure_accepted_client_stream(stream: &UnixStream) -> io::Result<()> {
 fn accept_unix_clients(
     listener: &UnixListener,
     active: &mut Option<ActiveClient>,
-    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     terminal: &Terminal,
     observer: Option<&mpsc::Sender<ClientLoopEvent>>,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
+    pending: &mut PendingOutput,
 ) -> io::Result<()> {
     loop {
+        if host_daemon_should_stop() {
+            return Ok(());
+        }
         match listener.accept() {
             Ok((mut stream, _)) => {
                 configure_accepted_client_stream(&stream)?;
-                let Some((recovery_limit, kind)) = admit_client(&mut stream, active)? else {
+                if pending.candidate.is_some() {
+                    stream.write_all(&[0])?;
+                    continue;
+                }
+                let Some((recovery_limit, kind, ticket)) = admit_client(&mut stream, active)?
+                else {
                     continue;
                 };
-                if let Err(error) = replace_active_limited(
-                    active,
-                    retired_clients,
+                if let Err(error) = begin_replacement(
                     stream,
                     terminal,
                     client_input_tx.clone(),
                     next_generation,
                     recovery_limit,
                     kind,
+                    ticket.as_ref(),
+                    pending,
                 ) {
                     eprintln!("fesTerm rejected a replacement session client: {error}");
                     return Ok(());
@@ -1685,6 +1759,10 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
     let mut shell_exited_at: Option<Instant> = None;
     let mut pending = PendingOutput::default();
     let result = loop {
+        if host_daemon_should_stop() {
+            spawned.terminate();
+            break Ok(());
+        }
         // Windows keeps the pseudoconsole open for as long as this process
         // holds the master handle, so the pseudoterminal reader never reports
         // end of file when the shell exits. Poll the child directly instead;
@@ -1734,14 +1812,15 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
             let _ = spawned.child.kill();
             break Err(error);
         }
+        poll_replacement(&mut active, &mut retired_clients, &mut pending);
         // Accept before checking backpressure so a stalled client can be replaced.
         if let Err(error) = accept_windows_clients(
             &accept_rx,
             &mut active,
-            &mut retired_clients,
             terminal,
             &client_input_tx,
             &mut next_generation,
+            &mut pending,
         ) {
             let _ = spawned.child.kill();
             break Err(error);
@@ -1814,6 +1893,7 @@ fn daemon_client_loop_windows<R: Read + Send + 'static>(
 
     accept_cancelled.store(true, Ordering::Release);
     drop(accept_rx);
+    pending.cancel_replacement(&mut retired_clients);
     sessiond_trace(format_args!("shutdown: loop ended: {result:?}"));
     let result = result
         .and_then(|()| finish_pending_output(&mut active, &mut retired_clients, &mut pending));
@@ -1928,28 +2008,32 @@ fn spawn_windows_attachment_listener(
 fn accept_windows_clients(
     accept_rx: &WindowsAttachmentInbox<Pipe>,
     active: &mut Option<ActiveClient>,
-    retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
     terminal: &Terminal,
     client_input_tx: &mpsc::SyncSender<ClientInput>,
     next_generation: &mut u64,
+    pending: &mut PendingOutput,
 ) -> io::Result<()> {
     accept_rx.process_one(|mut stream| {
         sessiond_trace("accept_windows_clients: new client");
         stream.set_read_timeout(WINDOWS_CLIENT_READ_TIMEOUT);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
-        let (recovery_limit, kind) = match admit_client(&mut stream, active) {
+        if pending.candidate.is_some() {
+            let _ = stream.write_all(&[0]);
+            return;
+        }
+        let (recovery_limit, kind, ticket) = match admit_client(&mut stream, active) {
             Ok(Some(admitted)) => admitted,
             _ => return,
         };
-        if let Err(error) = replace_active_limited(
-            active,
-            retired_clients,
+        if let Err(error) = begin_replacement(
             stream,
             terminal,
             client_input_tx.clone(),
             next_generation,
             recovery_limit,
             kind,
+            ticket.as_ref(),
+            pending,
         ) {
             eprintln!("fesTerm rejected a replacement session client: {error}");
         }
@@ -2006,7 +2090,7 @@ struct ClientInput {
     command: ClientCommand,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum ClientOutput {
     Data(Vec<u8>),
     RecoverySync(Vec<u8>),
@@ -2020,6 +2104,21 @@ struct ActiveClient {
     output: mpsc::SyncSender<ClientOutput>,
     stolen: Arc<AtomicBool>,
     thread: thread::JoinHandle<io::Result<()>>,
+}
+
+struct AdoptionHandshake {
+    adopted: mpsc::SyncSender<()>,
+    activated: mpsc::Receiver<()>,
+}
+
+struct PendingCandidate {
+    client: ActiveClient,
+    adopted: mpsc::Receiver<()>,
+    activate: mpsc::SyncSender<()>,
+    deadline: Instant,
+    ticket: Option<festerm_host_protocol::OperationId>,
+    charged: usize,
+    failed: bool,
 }
 
 #[cfg(all(test, windows))]
@@ -2043,16 +2142,22 @@ fn replace_active<S: Read + Write + Send + 'static>(
     )
 }
 
-/// This runs on the sole daemon admission loop, not an independent registry
-/// check. No other client can become active between refusal and replacement.
+/// Admission and later adoption commit run on the sole daemon loop. A pending
+/// recovery candidate never suspends the current writer.
 fn admit_client(
     stream: &mut (impl Read + Write),
     active: &Option<ActiveClient>,
-) -> io::Result<Option<(usize, AttachKind)>> {
+) -> io::Result<
+    Option<(
+        usize,
+        AttachKind,
+        Option<festerm_host_protocol::OperationId>,
+    )>,
+> {
     let mut request = [0; festerm_sessiond::ADMISSION_BYTES];
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut offset = 0;
-    while offset < request.len() && Instant::now() < deadline {
+    while offset < request.len() && Instant::now() < deadline && !host_daemon_should_stop() {
         match stream.read(&mut request[offset..]) {
             Ok(0) => return Ok(None),
             Ok(count) => offset += count,
@@ -2069,6 +2174,38 @@ fn admit_client(
             Err(error) => return Err(error),
         }
     }
+    let ticket = if offset == request.len() && &request[..4] == b"FSA5" {
+        let mut bytes = [0; 36];
+        let mut offset = 0;
+        while offset < bytes.len() && Instant::now() < deadline && !host_daemon_should_stop() {
+            match stream.read(&mut bytes[offset..]) {
+                Ok(0) => break,
+                Ok(count) => offset += count,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::TimedOut
+                            | io::ErrorKind::WouldBlock
+                            | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    continue
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let ticket = std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|value| value.parse::<festerm_host_protocol::OperationId>().ok());
+        if offset != bytes.len() || ticket.is_none() {
+            stream.write_all(&[0])?;
+            return Ok(None);
+        }
+        request[3] = b'4';
+        ticket
+    } else {
+        None
+    };
     let limit = u32::from_be_bytes(request[25..29].try_into().expect("fixed admission"));
     let header = (offset == request.len())
         .then(|| festerm_sessiond::decode_admission_header(&request))
@@ -2085,7 +2222,9 @@ fn admit_client(
     let occupied = active
         .as_ref()
         .is_some_and(|client| !client.thread.is_finished());
-    let Some((_, kind)) = admitted.filter(|&(takeover, _)| takeover || !occupied) else {
+    let Some((_, kind)) = admitted.filter(|&(takeover, kind)| {
+        (takeover || !occupied) && host_allows_attachment(ticket.as_ref(), kind)
+    }) else {
         stream.write_all(&[0])?;
         return Ok(None);
     };
@@ -2095,9 +2234,10 @@ fn admit_client(
         return Ok(None);
     }
     stream.write_all(&[1])?;
-    Ok(Some((limit.min(768 * 1024 * 1024), kind)))
+    Ok(Some((limit.min(768 * 1024 * 1024), kind, ticket)))
 }
 
+#[cfg(all(test, windows))]
 #[allow(clippy::too_many_arguments)]
 fn replace_active_limited<S: Read + Write + Send + 'static>(
     active: &mut Option<ActiveClient>,
@@ -2109,12 +2249,62 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
     recovery_limit: usize,
     kind: AttachKind,
 ) -> io::Result<()> {
+    let expected = *next_generation;
+    let mut pending = PendingOutput::default();
+    begin_replacement(
+        replacement,
+        terminal,
+        input,
+        next_generation,
+        recovery_limit,
+        kind,
+        None,
+        &mut pending,
+    )?;
+    while pending.candidate.is_some() {
+        poll_replacement(active, retired_clients, &mut pending);
+        thread::sleep(CLIENT_POLL_INTERVAL);
+    }
+    if active
+        .as_ref()
+        .is_some_and(|client| client.generation == expected)
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "replacement was not adopted",
+        ))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn begin_replacement<S: Read + Write + Send + 'static>(
+    replacement: S,
+    terminal: &Terminal,
+    input: mpsc::SyncSender<ClientInput>,
+    next_generation: &mut u64,
+    recovery_limit: usize,
+    kind: AttachKind,
+    ticket: Option<&festerm_host_protocol::OperationId>,
+    pending: &mut PendingOutput,
+) -> io::Result<()> {
+    if pending.candidate.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "recovery candidate already pending",
+        ));
+    }
     let recovery = festerm_sessiond::encode_recovery_snapshot_with_limit(terminal, recovery_limit)
         .map_err(|error| io::Error::other(error.to_string()))?;
     let generation = *next_generation;
+    *next_generation = next_generation
+        .checked_add(1)
+        .ok_or_else(|| io::Error::other("client generation exhausted"))?;
     sessiond_trace(format_args!("replace_active: generation={generation}"));
     let (output, output_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
     let (adopted_tx, adopted_rx) = mpsc::sync_channel(1);
+    let (activate_tx, activate_rx) = mpsc::sync_channel(1);
     let stolen = Arc::new(AtomicBool::new(false));
     let worker_stolen = Arc::clone(&stolen);
     let thread = thread::Builder::new()
@@ -2127,7 +2317,10 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
                 input,
                 output_rx,
                 worker_stolen,
-                Some(adopted_tx),
+                Some(AdoptionHandshake {
+                    adopted: adopted_tx,
+                    activated: activate_rx,
+                }),
             );
             if let Err(error) = &result {
                 sessiond_trace(format_args!(
@@ -2136,26 +2329,60 @@ fn replace_active_limited<S: Read + Write + Send + 'static>(
             }
             result
         })?;
-    if let Err(error) = adopted_rx.recv_timeout(ATTACH_RECOVERY_DEADLINE) {
-        stolen.store(true, Ordering::Release);
-        drop(output);
-        retired_clients.push(thread);
-        return Err(io::Error::new(
-            io::ErrorKind::ConnectionAborted,
-            format!("replacement did not adopt its recovery snapshot: {error}"),
-        ));
-    }
-    retire_active(active, retired_clients, true);
-    *next_generation = next_generation.wrapping_add(1);
-    let client = ActiveClient {
-        generation,
-        kind,
-        output,
-        stolen,
-        thread,
-    };
-    *active = Some(client);
+    pending.candidate = Some(PendingCandidate {
+        client: ActiveClient {
+            generation,
+            kind,
+            output,
+            stolen,
+            thread,
+        },
+        adopted: adopted_rx,
+        activate: activate_tx,
+        deadline: Instant::now() + ATTACH_RECOVERY_DEADLINE,
+        ticket: ticket.cloned(),
+        charged: 0,
+        failed: false,
+    });
     Ok(())
+}
+
+fn poll_replacement(
+    active: &mut Option<ActiveClient>,
+    retired: &mut Vec<thread::JoinHandle<io::Result<()>>>,
+    pending: &mut PendingOutput,
+) {
+    let Some(candidate) = pending.candidate.as_ref() else {
+        return;
+    };
+    let adopted = match candidate.adopted.try_recv() {
+        Ok(()) => true,
+        Err(mpsc::TryRecvError::Empty) => false,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            pending.cancel_replacement(retired);
+            return;
+        }
+    };
+    if candidate.failed
+        || Instant::now() >= candidate.deadline
+        || host_attachment_cancelled(candidate.ticket.as_ref(), candidate.client.kind)
+    {
+        pending.cancel_replacement(retired);
+        return;
+    }
+    if !adopted {
+        return;
+    }
+    if host_commit_attachment(candidate.ticket.as_ref(), candidate.client.kind).is_err() {
+        pending.cancel_replacement(retired);
+        return;
+    }
+    let candidate = pending.candidate.take().expect("checked candidate");
+    retire_active(active, retired, true);
+    *active = Some(candidate.client);
+    if candidate.activate.try_send(()).is_err() {
+        retire_active(active, retired, false);
+    }
 }
 
 fn retire_active(
@@ -2243,9 +2470,18 @@ struct PendingOutput {
     /// rather than delivered, because the replacement already received a fresh
     /// recovery snapshot that includes it.
     held: VecDeque<(u64, ClientOutput)>,
+    candidate: Option<PendingCandidate>,
 }
 
 impl PendingOutput {
+    fn cancel_replacement(&mut self, retired: &mut Vec<thread::JoinHandle<io::Result<()>>>) {
+        if let Some(candidate) = self.candidate.take() {
+            candidate.client.stolen.store(true, Ordering::Release);
+            drop(candidate.client.output);
+            retired.push(candidate.client.thread);
+        }
+    }
+
     fn is_pending(&self) -> bool {
         !self.held.is_empty()
     }
@@ -2255,6 +2491,23 @@ impl PendingOutput {
     }
 
     fn hold_output(&mut self, generation: Option<u64>, output: ClientOutput) {
+        if let Some(candidate) = self
+            .candidate
+            .as_mut()
+            .filter(|candidate| !candidate.failed)
+        {
+            let bytes = match &output {
+                ClientOutput::Data(bytes) | ClientOutput::RecoverySync(bytes) => bytes.len(),
+                ClientOutput::ResizeApplied(_) | ClientOutput::Exited => 16,
+            };
+            candidate.charged = candidate.charged.saturating_add(bytes);
+            if candidate.charged > 512 * 1024
+                || candidate.client.output.try_send(output.clone()).is_err()
+            {
+                candidate.failed = true;
+                candidate.client.stolen.store(true, Ordering::Release);
+            }
+        }
         let Some(generation) = generation else {
             // With no client attached the authoritative recovery terminal
             // already reflects this output, so there is nothing to deliver.
@@ -2500,7 +2753,7 @@ fn client_io_loop<S: Read + Write>(
     input: mpsc::SyncSender<ClientInput>,
     output: mpsc::Receiver<ClientOutput>,
     stolen: Arc<AtomicBool>,
-    mut adoption: Option<mpsc::SyncSender<()>>,
+    mut adoption: Option<AdoptionHandshake>,
 ) -> io::Result<()> {
     let mut parser = ClientFrameParser::default();
     let mut pending_input = None;
@@ -2544,12 +2797,23 @@ fn client_io_loop<S: Read + Write>(
                         }
                         recovery_adopted = true;
                         if let Some(adoption) = adoption.take() {
-                            adoption.send(()).map_err(|_| {
+                            adoption.adopted.send(()).map_err(|_| {
                                 io::Error::new(
                                     io::ErrorKind::BrokenPipe,
                                     "recovery candidate cancelled",
                                 )
                             })?;
+                            loop {
+                                match adoption.activated.recv_timeout(CLIENT_POLL_INTERVAL) {
+                                    Ok(()) => break,
+                                    Err(mpsc::RecvTimeoutError::Timeout)
+                                        if Instant::now() < adoption_deadline
+                                            && !stolen.load(Ordering::Acquire) => {}
+                                    Err(_) => {
+                                        return finish_disconnected_client(&mut stream, &stolen)
+                                    }
+                                }
+                            }
                         }
                         continue;
                     }
@@ -3384,27 +3648,28 @@ fn run_bridge(
     }
     let name = validate_name(name)?;
     let root = festerm_sessiond::runtime_root()?;
+    let record = with_registry_lock(|registry| {
+        validate_bridge_record(registry, &root, &name, pid, generation)
+    })?;
 
     #[cfg(unix)]
-    let stream = with_registry_lock(|registry| {
-        let record = validate_bridge_record(registry, &root, &name, pid, generation)?;
+    let stream = {
         let mut stream = UnixStream::connect(&record.socket)?;
         stream.set_read_timeout(Some(CLIENT_POLL_INTERVAL))?;
         stream.set_write_timeout(Some(CLIENT_WRITE_TIMEOUT))?;
         begin_attach_admission(&mut stream, &record, AttachKind::Remote)?;
-        Ok(stream)
-    })?;
+        stream
+    };
 
     #[cfg(windows)]
-    let stream = with_registry_lock(|registry| {
-        let record = validate_bridge_record(registry, &root, &name, pid, generation)?;
+    let stream = {
         let mut stream =
             Pipe::connect(&record.socket, WORKER_JOIN_TIMEOUT, &AtomicBool::new(false))?;
         stream.set_read_timeout(CLIENT_POLL_INTERVAL);
         stream.set_write_timeout(CLIENT_WRITE_TIMEOUT);
         begin_attach_admission(&mut stream, &record, AttachKind::Remote)?;
-        Ok(stream)
-    })?;
+        stream
+    };
 
     run_stdio_bridge(stream).map_err(Into::into)
 }
@@ -3902,10 +4167,6 @@ fn session_pipe_name(name: &str) -> String {
     format!(r"\\.\pipe\festerm-sessiond-{sanitized}")
 }
 
-fn registry_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(festerm_sessiond::runtime_root()?.join("registry.json"))
-}
-
 fn private_runtime_directory(root: &Path) -> io::Result<Option<File>> {
     match festerm_sessiond::private_storage::private_directory(root, false) {
         Ok(directory) => Ok(Some(directory)),
@@ -3975,10 +4236,6 @@ fn bounded_registry_lock(file: &File, exclusive: bool) -> io::Result<()> {
     }
 }
 
-fn registry_lock_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    Ok(festerm_sessiond::runtime_root()?.join("registry.lock"))
-}
-
 fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         if let Some(directory) = private_runtime_directory(parent)? {
@@ -4006,8 +4263,12 @@ fn read_registry_at(path: &Path) -> Result<SessionRegistry, Box<dyn std::error::
 }
 
 fn open_registry_lock_file() -> Result<(PathBuf, File), Box<dyn std::error::Error>> {
-    let path = registry_path()?;
-    let lock_path = registry_lock_path()?;
+    open_registry_lock_file_in(&festerm_sessiond::runtime_root()?)
+}
+
+fn open_registry_lock_file_in(root: &Path) -> Result<(PathBuf, File), Box<dyn std::error::Error>> {
+    let path = root.join("registry.json");
+    let lock_path = root.join("registry.lock");
     let parent = lock_path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     set_dir_mode(parent, 0o700)?;
@@ -4040,17 +4301,116 @@ fn open_registry_lock_file() -> Result<(PathBuf, File), Box<dyn std::error::Erro
 }
 
 fn with_registry_lock<T>(
-    mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
+    operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
 ) -> Result<T, Box<dyn std::error::Error>> {
-    let (path, lock_file) = open_registry_lock_file()?;
+    with_registry_lock_in(&festerm_sessiond::runtime_root()?, operation, || {})
+}
+
+fn with_registry_lock_in<T>(
+    root: &Path,
+    mut operation: impl FnMut(&mut SessionRegistry) -> Result<T, Box<dyn std::error::Error>>,
+    mut before_prepare: impl FnMut(),
+) -> Result<T, Box<dyn std::error::Error>> {
+    let (path, lock_file) = open_registry_lock_file_in(root)?;
+    let started = Instant::now();
+    sessiond_trace(format_args!("registry acquire pid={}", process::id()));
     bounded_registry_lock(&lock_file, true)?;
-    let mut registry = read_registry_at(&path)?;
+    sessiond_trace(format_args!(
+        "registry acquired pid={} after={:?}",
+        process::id(),
+        started.elapsed()
+    ));
+    let before = read_registry_at(&path)?;
+    let mut registry = before.clone();
     let result = operation(&mut registry);
-    if result.is_ok() {
-        write_registry_at(&path, &registry)?;
+    if result.is_err() || registry == before {
+        FileExt::unlock(&lock_file)?;
+        return result;
     }
+    let Some(directory) = path
+        .parent()
+        .map(private_runtime_directory)
+        .transpose()?
+        .flatten()
+    else {
+        write_registry_at(&path, &registry)?;
+        FileExt::unlock(&lock_file)?;
+        return result;
+    };
     FileExt::unlock(&lock_file)?;
-    result
+    // Slow durability barriers must not hold the discovery/admission lock.
+    // Rebase disjoint updates and check same-name lineage under that lock
+    // immediately before the atomic rename; legacy writers remain serialized.
+    let desired = registry.clone();
+    let mut base = before.clone();
+    for _ in 0..4 {
+        before_prepare();
+        let bytes = serde_json::to_vec_pretty(&registry)?;
+        if bytes.len() > 4 * 1024 * 1024 {
+            return Err("native registry exceeds metadata bound".into());
+        }
+        let mut prepared = festerm_sessiond::private_storage::PreparedCheckpoint::prepare(
+            &directory,
+            Path::new("registry.json"),
+            &bytes,
+        )?;
+        bounded_registry_lock(&lock_file, true)?;
+        let current = read_registry_at(&path)?;
+        if current == base {
+            prepared.publish()?;
+            FileExt::unlock(&lock_file)?;
+            prepared.sync()?;
+            sessiond_trace(format_args!(
+                "registry published pid={} total={:?}",
+                process::id(),
+                started.elapsed()
+            ));
+            return result;
+        }
+        let rebased = rebase_registry_change(&before, &desired, &current);
+        FileExt::unlock(&lock_file)?;
+        registry = rebased?;
+        if registry == current {
+            return result;
+        }
+        base = current;
+    }
+    Err("native registry publication contention".into())
+}
+
+fn rebase_registry_change(
+    before: &SessionRegistry,
+    desired: &SessionRegistry,
+    current: &SessionRegistry,
+) -> Result<SessionRegistry, Box<dyn std::error::Error>> {
+    let mut result = current.clone();
+    let names: BTreeSet<_> = before
+        .sessions
+        .keys()
+        .chain(before.foreign.keys())
+        .chain(desired.sessions.keys())
+        .chain(desired.foreign.keys())
+        .collect();
+    for name in names {
+        let old = (before.sessions.get(name), before.foreign.get(name));
+        let new = (desired.sessions.get(name), desired.foreign.get(name));
+        if old == new {
+            continue;
+        }
+        let actual = (current.sessions.get(name), current.foreign.get(name));
+        if actual != old && actual != new {
+            return Err("native registry generation changed during publication".into());
+        }
+        result.sessions.remove(name);
+        result.foreign.remove(name);
+        if let Some(record) = new.0 {
+            result.sessions.insert(name.clone(), record.clone());
+        }
+        if let Some(record) = new.1 {
+            result.foreign.insert(name.clone(), record.clone());
+        }
+    }
+    Ok(result)
 }
 
 fn write_registry_at(
@@ -4595,7 +4955,7 @@ mod tests {
         let mut free = io::Cursor::new(request.to_vec());
         assert_eq!(
             admit_client(&mut free, &None).unwrap(),
-            Some((1024, AttachKind::Local))
+            Some((1024, AttachKind::Local, None))
         );
         assert_eq!(free.into_inner()[festerm_sessiond::ADMISSION_BYTES], 1);
     }
@@ -6767,6 +7127,95 @@ mod tests {
         fixture.assert_removed(&record);
     }
 
+    #[test]
+    fn registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers() {
+        let root = env::current_dir()
+            .unwrap()
+            .join(format!("registry-publication-{}", uuid::Uuid::new_v4()));
+        let directory = festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let effects = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        thread::scope(|scope| {
+            let effects = Arc::clone(&effects);
+            let writer_root = &root;
+            let writer = scope.spawn(move || {
+                let mut first = true;
+                with_registry_lock_in(
+                    writer_root,
+                    |registry| {
+                        effects.fetch_add(1, Ordering::SeqCst);
+                        registry
+                            .foreign
+                            .insert("first".into(), serde_json::json!({"future": 1}));
+                        Ok(())
+                    },
+                    || {
+                        if first {
+                            first = false;
+                            ready_tx.send(()).unwrap();
+                            continue_rx.recv().unwrap();
+                        }
+                    },
+                )
+                .map_err(|error| error.to_string())
+            });
+            ready_rx.recv().unwrap();
+            let lock = festerm_sessiond::private_storage::open_private_file(
+                &directory,
+                Path::new("registry.lock"),
+                false,
+            )
+            .unwrap();
+            let readable = FileExt::try_lock_shared(&lock).is_ok();
+            if readable {
+                FileExt::unlock(&lock).unwrap();
+            }
+            let second = with_registry_lock_in(
+                &root,
+                |registry| {
+                    registry
+                        .foreign
+                        .insert("second".into(), serde_json::json!({"future": 2}));
+                    Ok(())
+                },
+                || {},
+            )
+            .map_err(|error| error.to_string());
+            continue_tx.send(()).unwrap();
+            let first = writer.join().unwrap();
+            assert!(readable, "durable preparation pinned the discovery lock");
+            first.unwrap();
+            second.unwrap();
+        });
+        assert_eq!(
+            effects.load(Ordering::SeqCst),
+            1,
+            "effects must not replay during rebase"
+        );
+        let registry = read_registry_at(&root.join("registry.json")).unwrap();
+        assert_eq!(registry.foreign.len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registry_checkpoint_rebase_refuses_same_name_replacement() {
+        let mut before = SessionRegistry::default();
+        before
+            .foreign
+            .insert("same".into(), serde_json::json!({"generation": 1}));
+        let mut desired = before.clone();
+        desired
+            .foreign
+            .insert("same".into(), serde_json::json!({"generation": 2}));
+        let mut current = before.clone();
+        current
+            .foreign
+            .insert("same".into(), serde_json::json!({"generation": 3}));
+        assert!(rebase_registry_change(&before, &desired, &current).is_err());
+        assert_eq!(current.foreign["same"]["generation"], 3);
+    }
+
     struct GenerationFixture(PathBuf);
 
     impl GenerationFixture {
@@ -7207,5 +7656,74 @@ mod tests {
         report_attach_state_change(None, &mut reported, &mut |_| {
             panic!("successful publication is not repeated")
         });
+    }
+    #[test]
+    fn pending_candidate_delta_overflow_preserves_current_writer() {
+        let worker = || {
+            let (stop, receiver) = mpsc::channel::<()>();
+            let worker = thread::spawn(move || {
+                let _ = receiver.recv();
+                Ok(())
+            });
+            (stop, worker)
+        };
+        let (old_stop, old_thread) = worker();
+        let (candidate_stop, candidate_thread) = worker();
+        let (old_output, old_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (candidate_output, _candidate_rx) = mpsc::sync_channel(CLIENT_QUEUE_CAPACITY);
+        let (_adopt, adopted) = mpsc::sync_channel(1);
+        let (activate, _activated) = mpsc::sync_channel(1);
+        let old_stolen = Arc::new(AtomicBool::new(false));
+        let mut active = Some(ActiveClient {
+            generation: 1,
+            kind: AttachKind::Local,
+            output: old_output,
+            stolen: old_stolen.clone(),
+            thread: old_thread,
+        });
+        let mut pending = PendingOutput {
+            candidate: Some(PendingCandidate {
+                client: ActiveClient {
+                    generation: 2,
+                    kind: AttachKind::Remote,
+                    output: candidate_output,
+                    stolen: Arc::new(AtomicBool::new(false)),
+                    thread: candidate_thread,
+                },
+                adopted,
+                activate,
+                deadline: Instant::now() + ATTACH_RECOVERY_DEADLINE,
+                ticket: None,
+                charged: 0,
+                failed: false,
+            }),
+            ..PendingOutput::default()
+        };
+        let mut retired = Vec::new();
+        for byte in 0..=CLIENT_QUEUE_CAPACITY {
+            let data = vec![byte as u8; 4096];
+            send_to_active(&mut active, &mut retired, &mut pending, data.clone());
+            assert_eq!(old_rx.try_recv().unwrap(), ClientOutput::Data(data));
+        }
+        poll_replacement(&mut active, &mut retired, &mut pending);
+        assert!(pending.candidate.is_none());
+        assert_eq!(active.as_ref().unwrap().generation, 1);
+        assert!(!old_stolen.load(Ordering::Acquire));
+        send_to_active(
+            &mut active,
+            &mut retired,
+            &mut pending,
+            b"still-current".to_vec(),
+        );
+        assert_eq!(
+            old_rx.try_recv().unwrap(),
+            ClientOutput::Data(b"still-current".to_vec())
+        );
+        retire_active(&mut active, &mut retired, false);
+        drop(old_stop);
+        drop(candidate_stop);
+        for worker in retired {
+            worker.join().unwrap().unwrap();
+        }
     }
 }

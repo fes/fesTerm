@@ -444,7 +444,7 @@ impl server::Handler for Port {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::relay::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -918,16 +918,43 @@ mod tests {
     }
 
     #[cfg(feature = "owner-auth")]
-    async fn owner_pair(
+    pub(crate) async fn owner_pair(
         key: russh::keys::PrivateKey,
         host: crate::owner_auth::PinnedHost,
+    ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        owner_pair_on(key, host, client_io, server_io).await
+    }
+
+    #[cfg(feature = "host-routing")]
+    pub(crate) async fn owner_network_pair(
+        key: russh::keys::PrivateKey,
+        host: crate::owner_auth::PinnedHost,
+    ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (client_io, server_io) =
+            tokio::join!(tokio::net::TcpStream::connect(address), listener.accept());
+        owner_pair_on(key, host, client_io.unwrap(), server_io.unwrap().0).await
+    }
+
+    #[cfg(feature = "owner-auth")]
+    async fn owner_pair_on<
+        C: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    >(
+        key: russh::keys::PrivateKey,
+        host: crate::owner_auth::PinnedHost,
+        client_io: C,
+        server_io: S,
     ) -> (ClientConnection, HostStream, tokio::task::JoinHandle<()>) {
         let expected = pin(&key);
         let config = Arc::new(server::Config {
             keys: vec![key],
             ..Default::default()
         });
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         let (tx, mut rx) = mpsc::channel(CHANNELS_PER_CLIENT);
         let server = tokio::spawn(async move {
             let running = server::run_stream(

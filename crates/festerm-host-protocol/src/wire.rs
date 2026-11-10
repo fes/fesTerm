@@ -333,6 +333,25 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    /// Negotiated operation support, independent of protected authorization.
+    pub fn supports(&self, request: &Request) -> bool {
+        match request {
+            Request::Capabilities {} => true,
+            Request::List { .. } | Request::Lookup { .. } => self.inventory,
+            Request::Ensure { creation } => {
+                self.ensure
+                    && (!matches!(creation.lifetime, Lifetime::Temporary { .. }) || self.temporary)
+            }
+            Request::Create { creation } => {
+                self.create
+                    && (!matches!(creation.lifetime, Lifetime::Temporary { .. }) || self.temporary)
+            }
+            Request::Attach { .. } => self.attach,
+            Request::Detach { .. } => self.detach,
+            Request::ExplicitEnd { .. } => self.explicit_end,
+        }
+    }
+
     /// Validate protected local permission shape, not runtime advertisement.
     /// Wire capabilities still require `Validate`, including a current issuer
     /// when Ensure/Create are advertised.
