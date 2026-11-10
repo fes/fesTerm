@@ -339,9 +339,5 @@ fn headless_native_publication_rejects_untrusted_inputs_without_service_effects(
     assert!(output.stdout.is_empty());
     assert!(!cache.exists());
     let diagnostic = String::from_utf8(output.stderr).unwrap();
-    assert!(diagnostic.contains(if cfg!(windows) {
-        "publisher_policy_unconfigured"
-    } else {
-        "artifact_authentication_failed"
-    }));
+    assert!(diagnostic.contains("artifact_authentication_failed"));
 }

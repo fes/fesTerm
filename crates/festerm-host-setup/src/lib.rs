@@ -5,6 +5,8 @@
 
 use sha2::{Digest, Sha256};
 
+pub mod run_exit;
+
 #[cfg(feature = "acquisition")]
 pub mod acquisition;
 #[cfg(feature = "artifacts")]
@@ -21,6 +23,8 @@ pub mod controller;
 pub mod enrollment;
 #[cfg(feature = "lifecycle")]
 pub mod lifecycle;
+#[cfg(feature = "lifecycle")]
+pub mod owned_migration;
 #[cfg(feature = "lifecycle")]
 mod protected_state;
 #[cfg(feature = "native-services")]

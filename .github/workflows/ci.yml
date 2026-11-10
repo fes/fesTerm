@@ -11,6 +11,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      windows_native_pki:
+        description: Read-only public v0.16.0 publisher PKI fixture only (requires separate owner authorization)
+        type: boolean
+        required: false
+        default: false
       windows_sampler_diagnostics:
         description: Run bounded opt-in WARP sampler and mixed-renderer diagnostics
         type: boolean
@@ -21,9 +26,55 @@ permissions:
   contents: read
 
 jobs:
+  windows-native-pki:
+    name: opt-in Windows public publisher PKI fixture
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_native_pki
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Refuse mixed native scope
+        if: inputs.windows_sampler_diagnostics
+        shell: pwsh
+        run: throw 'Read-only PKI dispatch cannot request sampler or GUI work.'
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Check public fixture and workflow contracts without native work
+        run: python -m unittest discover -s scripts/tests -p "test_windows_publisher_validation.py" -v
+      - name: Read-only native publisher fixture (never execute downloaded binary)
+        id: publisher
+        shell: pwsh
+        env:
+          FESTERM_RUN_OPTIONAL_VALIDATION: "1"
+          FESTERM_RUN_ADR84_PUBLISHER_NATIVE: "1"
+        run: .\scripts\run-optional-validation.ps1 -WindowsPublisherOnly -ResultPath windows-pki-optional-result.txt
+      - name: Preserve exact exits, source and log hashes even on failure
+        if: always() && steps.publisher.outcome != 'skipped' && steps.publisher.outcome != ''
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-public-pki-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .windows-pki-evidence/*.json
+            .windows-pki-evidence/*.log
+            windows-pki-optional-result.txt
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: true
+
   windows-sampler-diagnostics:
     name: opt-in Windows sampler diagnostics
-    if: github.event_name == 'workflow_dispatch' && inputs.windows_sampler_diagnostics
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_sampler_diagnostics && !inputs.windows_native_pki
     runs-on: windows-latest
     timeout-minutes: 75
     env:
@@ -60,6 +111,7 @@ jobs:
   # OS matrix below (formatting and these scripts do not vary by OS).
   checks:
     name: platform-independent checks
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_native_pki
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -97,6 +149,7 @@ jobs:
 
   helper-signature-compatibility:
     name: pinned helper signer compatibility
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_native_pki
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -126,6 +179,7 @@ jobs:
   # `validation/esctest2-allow.txt` and #193 - so this job is a regression
   # gate, not a scoreboard.
   conformance:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_native_pki
     name: esctest2 conformance
     runs-on: ubuntu-latest
     env:
@@ -148,6 +202,7 @@ jobs:
           if-no-files-found: ignore
 
   windows-security-privileged:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_native_pki
     name: Windows privileged security metadata
     runs-on: windows-latest
     timeout-minutes: 10
@@ -161,6 +216,7 @@ jobs:
         run: cargo test --locked -p festerm-windows-security --lib -- --ignored --nocapture
 
   quality:
+    if: github.event_name != 'workflow_dispatch' || !inputs.windows_native_pki
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
@@ -186,6 +242,12 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
+      - name: Require exact Windows timestamp alignment memory regression
+        if: matrix.os == 'windows-latest'
+        env:
+          CARGO_BUILD_JOBS: "1"
+          CARGO_INCREMENTAL: "0"
+        run: python scripts/run_windows_timestamp_alignment_test.py
       - name: Install a software Vulkan renderer for headless wgpu snapshot tests
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -203,6 +265,17 @@ jobs:
       - name: Select the software Vulkan driver for headless tests
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
+      - name: Compile and list the Linux read-only logind proof without executing it
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          selector=controller::linux_login::tests::linux_login_native_read_only_logind_proof
+          listing=$(cargo test --locked -p festerm-host-setup \
+              --features host-runtime,native-services,cloud --lib "$selector" \
+              -- --exact --ignored --list)
+          printf '%s\n' "$listing"
+          [ "$(printf '%s\n' "$listing" | grep -Fxc "$selector: test")" = 1 ]
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Validate authenticated helper artifacts without desktop dependencies
         shell: bash

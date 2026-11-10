@@ -77,6 +77,24 @@ if [ "$(uname -s)" = Linux ] && [ "${FESTERM_RUN_LINUX_RECORDING_VALIDATION:-}" 
 else
     printf 'suite=linux-recording-export status=skipped reason=linux-and-explicit-opt-in-required\n' >>"$result_path"
 fi
+if [ "${FESTERM_ADR84_LOGIND_READ_ONLY:-}" = 1 ]; then
+    logind_test=controller::linux_login::tests::linux_login_native_read_only_logind_proof
+    if [ "$(uname -s)" = Linux ] &&
+        logind_listing=$(cargo test --locked -p festerm-host-setup \
+        --features host-runtime,native-services,cloud --lib "$logind_test" \
+        -- --exact --ignored --list) &&
+        [ "$(printf '%s\n' "$logind_listing" | grep -Fxc "$logind_test: test")" = 1 ] &&
+        cargo test --locked -p festerm-host-setup \
+            --features host-runtime,native-services,cloud --lib "$logind_test" \
+            -- --exact --ignored --nocapture --test-threads=1; then
+        printf 'suite=linux-logind-read-only status=pass\n' >>"$result_path"
+    else
+        printf 'suite=linux-logind-read-only status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=linux-logind-read-only status=skipped reason=explicit-opt-in-required\n' >>"$result_path"
+fi
 # Exit status 3 from the UI-flow runner means Maestro is not installed.
 record_ui_flows() {
     case "$1" in
@@ -128,6 +146,21 @@ if cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture;
 else
     printf 'suite=sessiond-native status=fail\n' >>"$result_path"
     status=fail
+fi
+
+if [ "${FESTERM_RUN_OWNED_MIGRATION_NATIVE:-}" = 1 ]; then
+    if [ -n "${FESTERM_ADR84_MIGRATION_HELPER:-}" ] &&
+        [ -n "${FESTERM_ADR84_MIGRATION_HOST:-}" ] &&
+        cargo test --locked -p festerm-host-setup --features lifecycle --lib \
+            owned_migration::tests::owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existing_frontend \
+            -- --ignored --exact --nocapture --test-threads=1; then
+        printf 'suite=owned-migration-native status=pass\n' >>"$result_path"
+    else
+        printf 'suite=owned-migration-native status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=owned-migration-native status=skipped reason=explicit-current-source-binaries-required\n' >>"$result_path"
 fi
 
 if python3 scripts/check_running_sessions.py; then

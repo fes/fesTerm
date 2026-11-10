@@ -1,11 +1,11 @@
 # Same-user native host service component
 
 ADR [0084](adr/0084-host-based-dev-tunnels.md), stage 4, remains partial under
-[#681](https://github.com/fes/fesTerm/issues/681). The off-default
-`festerm-host-setup` feature `native-services` supplies actual native control
-adapters, not a complete installer or a readiness gate. Headless management
-can observe, revoke/stop and retire already receipt-owned native resources.
-It cannot install/start the incomplete endpoint or claim Ready.
+[#681](https://github.com/fes/fesTerm/issues/681). The `festerm-host-setup`
+feature `native-services`, included by the default headless binary, supplies
+actual native control adapters consumed by explicit shared setup/run.
+Headless management can observe, revoke/stop and retire receipt-owned resources;
+registration or a running process is not native qualification or Ready.
 
 ## Headless management and recovery
 
@@ -107,40 +107,103 @@ Generic codesign validity or comparison with an arbitrary installed app is
 insufficient. Positive metadata-policy fixtures and rejection of Apple's own
 foreign-publisher system binary are not positive fesTerm release qualification.
 
-**Windows public executable promotion refuses before writing any cache** with
-`host.service_windows_release_publisher_policy_unconfigured`. An authoritative
-publisher/certificate identity, rotation and explicit revocation policy remain
-required; any trusted Authenticode chain or candidate-derived signer is not
-fesTerm publisher proof. There is no generic-signature or plaintext fallback.
-The coordinator must supply a maintainer-approved expected publisher/certificate
-identity (or approved public-key pins and rotation rules) for the existing
-Microsoft Artifact Signing account/profile
-`fesLabs-CodeSign` / `fesTermPublicTrust`, plus chain/EKU and explicit revocation
-freshness/offline-failure policy. Account/profile names alone are not a signer
-pin; neither a downloaded artifact nor its manifest may supply this authority.
+**Windows publisher admission implements the independently owner-approved native
+PKI policy**, not host-owner/client authorization. Account/profile
+`fesLabs-CodeSign` / `fesTermPublicTrust` is descriptive, not candidate-supplied
+authority. The compiled policy requires:
 
-Proposed narrow owner policy, **not approved or implemented**: pin the exact
-maintainer-confirmed publisher subject/organization and approved Microsoft
-Artifact Signing profile chain/EKU, rather than a short-lived leaf certificate.
-Permit automatic leaf rotation only within that exact approved publisher/profile
-policy; publisher/chain changes require a reviewed compiled-policy update.
-Require native chain/code-signing EKU and trusted RFC3161 timestamp verification
-(the release workflow already requests SHA256 and
-`timestamp.acs.microsoft.com`). Revoked, unknown, stale or unavailable revocation
-status must refuse; valid cached CRL/OCSP may be used only within its authenticated
-freshness interval, never by disabling revocation. Missing verified inputs are
-the owner's independently supplied exact publisher/profile certificate policy,
-the approved rotation rules and the decision on strict offline refusal. Existing
-workflow `Get-AuthenticodeSignature.Status == Valid` is not that publisher pin.
+- Subject `C=US, ST=wa, L=Seattle, O=Frank Swiderski, CN=Frank Swiderski`
+  (CryptoAPI X.500 spelling uses `S=wa`).
+- CodeSigning EKU `1.3.6.1.5.5.7.3.3`, PublicTrust marker
+  `1.3.6.1.4.1.311.97.1.0`, and profile-specific EKU
+  `1.3.6.1.4.1.311.97.303022872.891206086.435023656.127014475`.
+- OS-trusted Microsoft ID Verified CS AOC CA 03 → Microsoft ID Verified Code
+  Signing PCA 2021 → Microsoft Identity Verification Root Certificate Authority
+  2020, additionally pinned to the authoritative Microsoft public certificates
+  in [release artifacts](host-release-artifacts.md#windows-native-publisher-policy).
+- Native Authenticode signature/file-digest verification, a cryptographically
+  verified RFC3161 message imprint over that exact signature, and the same
+  OS-trusted timestamp signer/time used by WinTrust. An attribute or untrusted
+  timestamp alone is insufficient.
+- Online-enabled current-time revocation for both verified signer and timestamp
+  chains (excluding roots); revoked, unknown,
+  unavailable or stale status refuses. Only OS-authenticated currently valid
+  CRL/OCSP cache freshness applies, with **no custom 24-hour offline grace** and
+  no cache-only/no-revocation mode.
 
-For Windows stop, the proposed missing transaction is a current-user-protected
-local control channel bound to installation/origin/current epoch/run ID and the
-exact retained host-process identity. The host drains its own relay/workers,
-acknowledges and exits; the controller separately observes that exact process
-absent. A timeout is unknown/pending, never scheduler-wide/job-tree termination.
-No daemon or shell stop is implied. This requires implementation and ordinary-
-user named-pipe/process-identity qualification; there is no approved destructive
-fallback. These Windows decisions do not block Linux source/fixture progress.
+Automatic leaf renewal is allowed only within this exact subject/profile/approved
+chain. The long EKU is stable only for this profile's lifetime, not the account;
+profile recreation changes it and requires review. Publisher/profile/chain
+changes require a reviewed compiled-policy update. A 72-hour leaf's expiry alone
+does not expire a binary properly RFC3161-timestamped within its validity.
+Generic `Get-AuthenticodeSignature.Status == Valid` is not publisher acceptance.
+The retained-file native worker is bounded to one in-flight verification and a
+15-second caller budget; timeout retains its file until native completion.
+Failure never returns an executable receipt or bypasses updater provenance.
+
+The existing ignored native publisher test has a default-false, separately
+authorized [public-fixture workflow](host-release-artifacts.md#opt-in-windows-public-pki-fixture).
+It never executes its pinned legacy binary or changes this policy. Source-only
+offline contracts are not native evidence; any later hosted pass is PKI-only,
+not ordinary-user VM, task/runtime/daemon or new-host/bundle qualification.
+
+**Windows native PKI qualification is blocked, not accepted.** Historical
+[run 42881664804, attempt 1](https://github.com/fes/fesTerm/actions/runs/42881664804)
+at exact `3030bcd7008e300a90b67fa6c6bc6c0a37ce88c1` passed 25 preflight
+contracts, including both real PowerShell first-only exit-0/37 fixtures with
+zero skips, and acquired the exact pinned ZIP/member. One genuine signed-positive
+test **started / completed 0 / aborted 1**, with native exit `3221226505`
+(`0xc0000409`): an unaligned timestamp-info pointer caused a non-unwinding
+panic at the `ftTime` read. The unsigned negative was not reached. This is
+neither a completed assertion failure nor a publisher-policy verdict/pass.
+
+The source-only correction uses the existing `windows-sys 0.61.2` C layout:
+[`CRYPT_TIMESTAMP_CONTEXT.pTimeStamp`](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/ns-wincrypt-crypt_timestamp_context)
+points to [`CRYPT_TIMESTAMP_INFO.ftTime`](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/ns-wincrypt-crypt_timestamp_info),
+a `FILETIME`. After the unchanged success/null guards, `addr_of!` projects
+only that field's raw address and `read_unaligned` copies its eight bytes into
+an aligned local value; it never creates an aligned parent value/reference.
+No custom packed struct, whole-structure reinterpretation or panic catching
+is used. The existing `TimestampProof` retains the allocation through the copy
+and timestamp checks, then frees the context/signer/store with the
+[documented API-specific release functions](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-cryptverifytimestampsignature).
+Imprint verification, trusted-TSA fingerprint, exact low/high time equality,
+leaf-time validity and current signer/TSA revocation are unchanged.
+
+The co-located Windows alignment regression initializes actual SDK structs at
+every offset 0–7 in aligned owned storage, including 4-mod-8 and the observed
+5-mod-8 case, and compares two exact low/high bit patterns. The x64 facade-only
+cross-check compiles this test and its C-layout assertions (context size 24,
+pointer offset 16; info size 144/alignment 8, time offset 72). It does not execute
+it on macOS, reproduce the old expression in a Windows child, or qualify PKI.
+Both historical run failures remain retained; their grants are consumed.
+Three exact-source reviews and a separate new native-attempt grant are required.
+
+Ordinary Windows `quality` now pins this non-ignored memory unit through
+`scripts/run_windows_timestamp_alignment_test.py`, immediately after Python
+setup and before workspace work. It uses `--locked`, `host-service`, `--lib`
+and the full `--exact` selector, requires exactly one listed test, then executes
+once and requires one pass / zero ignored. List/execution errors are retained,
+never retried or converted to success. This is only the 16 owned-byte vectors;
+the unit invokes no WinTrust, network, signed fixture or publisher policy.
+The CI-only route leaves all `8556` production/app/manifest bytes unchanged and
+has mocked-Cargo contract evidence only locally. Successful ordinary Windows
+alignment evidence at the reviewed source is required before a separately
+authorized future genuine PKI run. It is not itself PKI/runtime acceptance or
+an execution/dispatch grant; required three-platform CI remains separate.
+
+Windows stop reuses the existing protected lifecycle channel, not new IPC or
+name/PID authority. Revoke commits the installation/origin/current snapshot first;
+the reserved host runtime watches that exact snapshot, cancels and awaits only
+its serving future, persists its terminal record and releases its exclusive
+run lease. New reservations refuse StopRequested. Services requires that exact
+revoked snapshot, valid run history (never liveness authority), released protected
+run lease and independently observed exact XML/owner+SYSTEM-ACL task quiescence.
+Missing lock with history, foreign/corrupt state or stale epochs refuse.
+The 10-second reconciliation deadline returns pending/unknown, never confirmed
+stopped. Native workers retain existing late-completion leases/fences.
+No daemon or shell stop is implied; real Windows runtime/daemon evidence remains
+required, and pure fixtures do not establish it.
 
 Concrete owner approval input still required, not a candidate-derived pin:
 approve a public certificate/profile-policy export from the existing
@@ -165,31 +228,137 @@ This admits authenticated bytes, not a functioning endpoint. Actual protected
 release/native signing and independently trusted first-verifier delivery remain
 qualification gates.
 
-The runnable Linux controller admits Manual startup only. The existing user-unit
-definition's `WantedBy=default.target` is not a logon proof: an already lingering
-user manager may start before login. UserSignIn setup/run therefore refuses with
-`host.linux_sign_in_session_fence_required` until verified current-user logon
-activation is implemented and qualified. Manual Linux hosting remains available;
-no linger, service-manager or OS permission setting is modified to qualify it.
+### Linux current-login fence
 
-**Current-logon owner decision proposal (unfinished, not implementation):**
-define whether UserSignIn includes interactive PAM tty/SSH sessions as well as
-local/remote graphical sessions. Proposed contract includes login1 Class=user
-sessions of Type=tty/x11/wayland, verified for the actual OS UID and current
-Active/State, excluding background/manager existence; confirm whether locked or
-inactive fast-user-switched sessions retain hosting. A verified logind subscriber
-on the fixed native system bus (verified login1 OS-service owner, never an
-environment-selected bus or asserted session ID)
-would activate the exact receipt-owned host only on an eligible session event,
-bind an owner-only activation receipt to installation/origin/epoch/run ID and the
-specific session, and freshly revalidate login1 before run. Session removal would
-close only that host relay, never persistent daemons. Environment session IDs or
-`default.target` are not proof. A graphical-only decision can instead use the
-existing graphical-session target with the same fresh logind fence; that target
-cannot silently stand in for tty/SSH semantics. The missing owner input is these
-two eligibility/lifetime decisions, followed by a separately allocated ordinary-
-user VM logon/logout/linger-already-enabled test window; no linger/permission
-change or fabricated activation receipt is authorized.
+The owner approved these two policy choices on 2026-11-10: eligible logins are
+verified graphical plus interactive TTY/SSH logind sessions for the actual UID,
+`Class=user`; hosting remains authorized through lock, idle and inactive
+fast-user switching until the **last eligible logout**. The implemented eligible
+types are `tty`, `x11` and `wayland`, with logind State `active` or `online`.
+`closing` is no longer an eligible login. Active/LockedHint are not permission
+conditions. An unspecified/noninteractive SSH connection, background class,
+user manager or lingering service alone never supplies login proof.
+
+Linux UserSignIn setup/run now require this proof rather than unconditionally
+refusing. A read-only adapter uses only root-owned, non-writable
+`/usr/bin/busctl` and the fixed `/run/dbus/system_bus_socket`, refusing redirected
+paths. It clears inherited environment, disables service auto-start, resolves
+login1's unique bus owner and verifies that owner's OS UID is zero. Session reads
+target that unique owner, verify each actual user/object/ID/class/type/state,
+then recheck inventory and issuer. Changed ownership/inventory, malformed,
+unknown or over-limit metadata, missing bus/login1 and failed queries refuse
+with `host.linux_current_login_proof_required`; no environment session assertion,
+cached proof or file fallback grants access.
+
+Each snapshot has one absolute two-second budget, at most 64 sessions and 64 KiB
+aggregate output. A per-run watcher checks every second and closes/cancels the
+host relay on missing or uncertain proof, including during relay acquisition.
+Proof is refreshed again before Listening; revocation/current-epoch checks remain
+independent. Logout detection is bounded polling (up to one interval plus a
+snapshot budget), not a claim of atomic D-Bus event delivery. Cancellation drops
+only that run's watcher and exact read-only query child; it never ends a session
+daemon, edits an owner grant or confirms native/cloud absence.
+
+For UserSignIn only, the receipt-owned unit is enabled with `--now` so an already
+running/lingering user manager can observe the current and later eligible logins.
+Its `Restart=no` plus `RestartForceExitStatus=75`, two-second delay and per-unit
+start-limit exemption retry **only** typed login-proof unavailability. Reserved
+exit 75 is shared by the runtime/CLI and unit renderer; all other errors exit 1,
+normal stop exits 0. No error-text match or cached run history grants retry.
+Signed helper provenance and current owner consent are checked before login
+admission and rechecked before a login-loss error can authorize retry.
+Only that post-login-loss snapshot read tolerates short installation-lock
+contention: the existing 25-ms WouldBlock-only deadline pattern is bounded to
+250 ms here. Each attempt reacquires current protected state; no guard spans
+the async wait. A successful read must still match the original full snapshot,
+then pass fresh bundle/helper and owner-policy validation before exit75.
+Persistent Busy, any non-Busy error or failed validation refuses retry.
+Disabled/StopRequested/CleanupPending, missing or revoked owner consent, changed
+consent, bundle, cloud, Busy and other errors never request automatic restart.
+Draining preserves non-login hosting errors; only an exact typed cloud
+cancellation induced by the login watcher is normalized within its owned run.
+This includes cancellation after final cloud account confirmation but before
+the locked relay-identity read; a changed snapshot remains a non-cancellation
+failure with the same diagnostic. No provisioning or cloud operation is retried.
+No listener is admitted without current proof and owner consent.
+This is automatic current-logon activation,
+not Manual startup or pre-login exposure. Manual retains `Restart=no` and no
+enable/start effect. No linger, root/system-wide setting or permission is changed.
+Existing differently rendered sign-in receipts require explicit owned
+reconciliation, not silent definition replacement.
+
+Portable parser/proof-race/watcher and fake-manager fixtures do **not** qualify
+real Linux startup/logout or cgroup survival. A separately granted ordinary-user
+window must exercise graphical and PAM TTY/SSH login, lock/idle/switch, multiple
+logins with one remaining, last logout, bus/manager loss and an already lingering
+manager without changing its settings. Observe real relay retirement and retained
+identity/grants plus exact persistent daemon PID/generation, continued child I/O,
+old helpers and actual cgroup membership across host exit and last logout.
+An OS configuration that terminates the user-manager/session cgroup on logout
+may kill daemons independently; this is an unresolved native prerequisite, not
+fixture-proven survival or authorization to change OS policy.
+
+### Read-only Linux logind smoke (opt-in; native execution pending)
+
+The ignored Linux-only test
+`controller::linux_login::tests::linux_login_native_read_only_logind_proof`
+calls unchanged production `Logind.eligible` directly, not the admission wrapper
+that intentionally collapses query errors and ineligibility. It uses the actual
+system bus, fixed trusted root-owned `busctl`, pinned unique login1 owner/UID,
+actual caller UID and session Class/Type/State checks, including final issuer and
+inventory rechecks. There is no fake adapter or alternate bus/tool selector.
+
+All three environment inputs are mandatory when explicitly selecting the test:
+
+| Variable | Required value |
+| --- | --- |
+| `FESTERM_ADR84_LOGIND_READ_ONLY` | Exactly `1` |
+| `FESTERM_ADR84_LOGIND_EXPECT_UID` | Expected ordinary caller's numeric UID; must match both real and effective UID, never root |
+| `FESTERM_ADR84_LOGIND_EXPECT` | Predeclared `eligible` or `ineligible` |
+
+Use the following fixed selector only in a separately authorized Linux window,
+with those inputs exported. The platform and registration guards prevent a
+cfg-excluded or mistyped zero-test result from being called a pass:
+
+```sh
+(
+    set -eu
+    [ "$(uname -s)" = Linux ] || { echo "Linux required" >&2; exit 1; }
+    : "${FESTERM_ADR84_LOGIND_READ_ONLY:?explicit opt-in required}"
+    : "${FESTERM_ADR84_LOGIND_EXPECT_UID:?expected ordinary UID required}"
+    : "${FESTERM_ADR84_LOGIND_EXPECT:?predeclared eligibility required}"
+    selector=controller::linux_login::tests::linux_login_native_read_only_logind_proof
+    listing=$(cargo test --locked -p festerm-host-setup \
+        --features host-runtime,native-services,cloud --lib "$selector" \
+        -- --exact --ignored --list)
+    [ "$(printf '%s\n' "$listing" | grep -Fxc "$selector: test")" = 1 ]
+    cargo test --locked -p festerm-host-setup \
+        --features host-runtime,native-services,cloud --lib "$selector" \
+        -- --exact --ignored --nocapture --test-threads=1
+)
+```
+
+Acceptance requires **one passed, zero failed, zero ignored**, the fixed source
+head/compiler, raw listing/run logs and exits, and printed observed UID/result.
+Missing/invalid inputs, root/effective-UID mismatch and query errors fail.
+`ineligible` accepts only production `Ok(false)` after a complete stable proof.
+A missing login1 user object, missing bus/tool, timeout or unknown metadata is
+an error, **not** negative evidence. Do not change settings to make it pass.
+
+The existing optional-suite shell aggregator discovers this test only with
+its global opt-in plus `FESTERM_ADR84_LOGIND_READ_ONLY=1`; an explicitly requested
+non-Linux run or missing exact registration fails instead of passing zero tests.
+That umbrella executes other suites: use the bounded command above for this
+read-only acceptance, not the whole umbrella.
+
+Source preparation/portable checks and Linux compilation are not native proof;
+the Linux-only test body is cfg-excluded on macOS. A future VM window may open
+and close only owned interactive SSH PTY sessions. Other eligible baseline
+sessions, including an eligible observer session, block the negative scenario:
+never log out unrelated sessions or choose expectations after seeing a result.
+This smoke does not qualify manager activation, host transport retirement,
+last-logout retry/load, or persistent daemon/helper/grant/cgroup survival.
+No service, linger, account, permission, startup or OS-setting changes are made.
 
 ## Shared lifecycle API
 
@@ -209,11 +378,11 @@ consent/revocation lease to advance during an outstanding native effect.
 
 | API | Required journal state | Meaning |
 | --- | --- | --- |
-| `install(&TrustedStage, epoch)` | Provisioned, exact current epoch | Publish/register the approved definition; do not start a process; Windows refuses until authenticated graceful stop exists |
+| `install(&TrustedStage, epoch)` | Provisioned, exact current epoch | Publish/register the approved definition; Manual does not start a process; Linux UserSignIn activates only its guarded launcher; Windows requires the compiled cloud/runtime controller |
 | `status()` | Existing exact-owned receipt | Query native manager state; missing receipt is an explicit no-observation error |
-| `start(&TrustedStage, epoch)` | Provisioned, exact current epoch | Require current protected enrollment/vault policy, revalidate executable, explicitly start and boundedly reconcile Running/Transitioning; Windows refuses |
-| `stop(epoch)` | StopRequested, exact current epoch | Reconcile pending replacement first; otherwise stop only the exact owned resource and require stopped/failed/absent observation, or fenced own absence when no registration receipt was published |
-| `cleanup(epoch)` | CleanupPending, exact current epoch | Reconcile both pending replacement resources first; otherwise remove only the exact owned native registration/definition and require observed absence, or fenced own absence when no registration receipt was published |
+| `start(&TrustedStage, epoch)` | Provisioned, exact current epoch | Require current protected enrollment/vault policy, revalidate the whole executable bundle, explicitly start and boundedly reconcile Running/Transitioning; Windows requires the compiled cloud/runtime controller |
+| `stop(epoch)` | StopRequested, exact current epoch | Reconcile pending replacement first; otherwise stop only the exact owned resource and require stopped/failed/absent observation; Windows additionally proves protected run-lease release without Scheduler Stop; unpublished absence is allowed only with full fences and no replacement history |
+| `cleanup(epoch)` | CleanupPending, exact current epoch | Reconcile both pending replacement resources first; otherwise remove only the exact owned native registration/definition and require observed absence; unpublished absence requires full fences and no replacement history, including Committed/Aborted |
 | `replace_stopped(&TrustedStage, from_version, epoch)` | Disabled, exact current epoch, free foreground-runtime lease | Authenticate complete old/new signed bundles, reserve/journal, retire old and commit observed stopped new registration without enabling access |
 | `replacement_status()` | Valid private update journal, if present | Report Prepared/Applying/Committed/Aborted history and exact cached provenance, never availability |
 
@@ -266,7 +435,7 @@ prototype receipt versions require manual reconciliation, not silent adoption.
 | --- | --- | --- | --- |
 | Linux | systemd **user** unit, explicit start, no enable | Enable only this unit in the existing user manager | System services, lingering changes, boot/pre-login availability |
 | macOS | Private LaunchAgent; pinned Developer ID/team/runtime admission | RunAtLoad, subject to the same admission | Actual signed release/service qualification, LaunchDaemon/elevation, pre-login availability |
-| Windows | Registration/start refused; least-privilege interactive-token definition model only | No enabled logon registration until safe stop exists | Native publisher policy, authenticated graceful stop/daemon independence, SYSTEM/password tasks, elevation, pre-login availability |
+| Windows | Ordinary configured SID, InteractiveToken/LeastPrivilege, explicit start; requires compiled cloud/runtime controller | Same-SID logon trigger, same authenticated runtime contract | Actual signed PKI/COM/runtime/daemon qualification; SYSTEM/password tasks, elevation, pre-login availability |
 
 Linux uses the current UID's fixed local user-manager bus, not inherited manager
 overrides. Existing user-manager/lingering policy can affect startup timing; the
@@ -277,11 +446,11 @@ Background endpoint startup must independently recheck current protected policy.
 
 Windows Task Scheduler's `AllowHardTerminate=false` permits WM_CLOSE, not a
 reliable stop for a windowless host. `RegisteredTask.Stop` is not used as a
-graceful-stop substitute. Registration/start and stopping an observed running
-Windows task fail with
+graceful-stop substitute. The full controller instead uses the protected
+revocation/run-lease/native-quiescence contract above. Without compiled
+`cloud` and `host-runtime`, registration/start and running-task stop retain
 `host.service_windows_authenticated_graceful_stop_unavailable`; no destructive
-job termination is enabled. Exact observed non-running tasks can still be
-reconciled/removed. See Microsoft's
+job termination is enabled. See Microsoft's
 [AllowHardTerminate](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-allowhardterminate)
 and [RegisteredTask.Stop](https://learn.microsoft.com/en-us/windows/win32/taskschd/registeredtask-stop)
 semantics; real endpoint stop and daemon-independence proof remain required.
@@ -345,7 +514,7 @@ This proves native-manager process ownership only, not signed publisher
 admission, actual sessiond lifetime or whole-ADR acceptance. Separately run
 `qualify-package` with real current-version schema-2 release-signed inputs:
 Linux requires the updater signature; macOS also requires Developer ID/team/
-hardened runtime; Windows must refuse until approved publisher policy exists.
+hardened runtime; Windows additionally requires the approved native PKI policy.
 Unsigned/ad-hoc/foreign/changed inputs must not register or start anything.
 
 ## Evidence and remaining prerequisites
@@ -355,6 +524,13 @@ manual/sign-in definitions, no install-time launch, authenticated publication,
 locked credentials, failed/unobserved startup, stale epochs, late creation/start,
 foreign definitions and exact-owned stop/cleanup. They never touch installed
 services, accounts, cloud resources or native vaults.
+
+Pure cloud/controller fixtures explicitly inject test-only account/native
+contexts; unpublished-registration fixtures panic on any manager request while
+retaining real Services leases, directory/receipt/epoch checks and runtime-lock
+refusals. They do not relax production ordinary-user authorization or qualify
+Windows token/Task Scheduler behavior. See the core9b failure analysis in
+[milestone progress](milestone-progress.md).
 
 At the historical remediation checkpoint the source bundle was frozen before
 Rust validation. The current affected Unix source/fixtures now have the bounded

@@ -3625,6 +3625,15 @@ policy-checked helper, with handle-safe fixture lifetime; production checkout
 refusal/DACL checks and all publication-lock/rebase assertions remain unchanged.
 Local macOS registry/storage selectors passed 6/3 respectively. This is a fixture
 correction, not Windows acceptance; fresh exact-head Windows CI remains required.
+Linux primary job `129964171286` at `dbe998d0` later retained 25 host-control
+passes and a foreign-retirement denial mismatch; the actual returned error was
+not printed. A held-journal control independently reproduced Busy before the
+owner check. Retirement now permits only a deny-only bounded protected checkpoint
+read on that contention path; matching owners still get Busy and all effects
+retain full locked authorization/positive native-absence proof. Controlled
+journal/start Busy, registry Unknown, corrupt-checkpoint Storage and foreign
+Denied preserve exact PID/generation/issued evidence. Six selected macOS
+retirement/ensure/capacity cases pass; this is not fresh Linux/native acceptance.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
@@ -3636,6 +3645,47 @@ Host-controlled Windows startup refuses denied breakaway instead of claiming
 persistence inside the bridge's job; both denial and successful independent
 whole-ConPTY-tree cleanup require native evidence.
 Legacy DT/CP evidence is unchanged and does not qualify the new protocol.
+Exact frozen core `9b1d2a68` failed its explicit fourteen-route primary checks:
+Linux job `129987309001` passed 13/failed 1; macOS job `129987309476` passed
+12/failed 2. Original hashed logs remain retained. The takeover refusal was
+OutcomeUncertain, with a secondary cleanup Storage diagnostic; macOS also
+returned actual precommit Busy where its fixture assumed durable stop intent.
+Controlled lease/commit/pending-adoption barriers correct the fixture state
+assumptions without accepting arbitrary refusals or changing production policy.
+At immutable `1947c416`, the corrected macOS source passes all fourteen actual
+routes, zero failed or
+ignored, in 166.28 seconds from one aggregate execution; portable controls pass
+16 with nine unchanged native ignores. Two focused native passes are a subset.
+The retirement CI error remains separately unknown, not labeled by these logs.
+The normal core/session/Windows-fixture fan-in initially exposed a separate
+local socket-path boundary: its first aggregate passed two/failed twelve in
+27.36 seconds. A real maximum-PID/HOST-generation socket bind is retained RED
+against the old root and GREEN after shortening only the exclusively created,
+policy-checked Unix fixture child. Production path policy and Windows selection
+are unchanged; helper construction, measurement and artifact-lifecycle limits
+are recorded in [Native helper provenance](milestone-progress.md#native-helper-provenance-core-session-correction).
+First-run Linux `920715a5`, run `42869778017`, job `130017607117`, separately
+passed 13/failed one native route in 165.00 seconds. Its committed-creation
+Ensure replay assertion did not print its actual response: it remains unknown.
+A controlled held-generation lease independently reproduces typed Busy at that
+assertion. The corrected fixture requires unchanged full journal/lease, then
+same-operation/same-generation/original-Created success within the original
+deadline; other replies fail with their actual typed values. This neither
+identifies that CI error nor qualifies a new Linux run.
+At source `61f67fc5`, the bounded core/session/Windows-fixture union passed one
+complete macOS native aggregate: 14 passed/zero failed/zero ignored in 178.74
+seconds, using the earlier default-feature helper under the
+[build, runner-measurement and mutable-artifact qualifications](milestone-progress.md#native-helper-provenance-core-session-correction),
+not a helper freshly rebuilt at that source or new evidence from this
+documentation correction.
+Selected macOS groups additionally pass six session cases, four storage cases,
+31 Windows-derived/new setup cases, 12 standalone-cloud cases and 16 portable
+bridge cases with nine existing native ignores; the focused replay pass and
+maximum-socket pass are subsets, not extra native/storage cases. Both affected
+strict feature configurations pass. Exact source/commands/names and retained
+first-failure/RED evidence are in `target/adr84-core-fanin-evidence/`.
+Corrected owned Unix route evidence does not establish Windows, native-manager,
+installed service, cloud/vault or whole-ADR acceptance.
 HOST-04–06 setup/update/migration retain partial foundations described below;
 there is no new completed manual or usability scenario.
 Migration qualification must preserve protected state/account binding, retain
@@ -3675,8 +3725,9 @@ with strict affected-package Clippy. None of these fixtures contacts production,
 opens a native credential store or qualifies positive signed service startup.
 Linux ordinary-user real-release setup/run/disable/daemon-survival remains
 `HOSTSETUP-01`; native client pin/key approval and its protected local index remain
-`HOSTAUTH-01`. Windows still requires the explicit publisher/revocation and
-exact-host graceful-stop decisions below.
+`HOSTAUTH-01`. Windows now has the explicit owner-approved publisher/revocation
+policy and protected revocation-driven stop implementation below; real native
+PKI/COM/runtime/daemon qualification remains required.
 The shared disable/removal fixtures cover revoke-before-stop, exact
 foreground runtime-lease exclusion, refusal of foreign observations/uncertainty
 and cancelled/history-only uninstall without native/cloud calls. They do not
@@ -3695,6 +3746,17 @@ absence still cannot bypass an active runtime lease or missing runtime lock with
 existing run history. Present cloud generations retain CleanupPending; only
 authenticated absence may complete Removed. No real manager, native vault or
 cloud operation was performed, so HOSTSETUP-01 remains open.
+The core9b Windows primary failure (run `42861153896`, job `129987309097`)
+exposed native account discovery inside these otherwise pure fixtures, not a
+private-root creation error. Explicit per-adapter test accounts and typed fake
+Windows context now isolate them; any manager request panics. Real Services,
+private state identity, epoch/runtime-lock and foreign-receipt checks remain.
+At immutable `34db0136`, macOS-only results are 110 library passes with one
+existing ignore,
+12 standalone-cloud passes and two strict feature checks; all 26 original
+failing names pass locally. See milestone progress for raw-log SHA and commands.
+This is not fresh Windows execution; Windows primary CI and native ordinary-user
+token/task/daemon-preservation acceptance remain required.
 The coupled CI build correction has fresh pinned Rust/Cargo 1.99.1 and Clippy
 0.1.99 host/no-host checks, portable snapshot tests and strict
 `aarch64-apple-ios` bridge compilation. The host JSON helper is absent without
@@ -3718,8 +3780,52 @@ passed 106 tests with one existing native ignore, compatibility CLI passed 10 an
 strict affected-package Clippy passed. The real initializer is invoked from an
 absent key through production `CloudHostAdapter::foreground`, not preseeded by a
 fixture. Identity loss under an existing cloud record refuses regeneration.
-Linux UserSignIn remains blocked on current-logon activation (an already lingering
-user manager is not sign-in proof); Manual setup/run remains available in source.
+Linux UserSignIn has source-level bounded current-logon admission and per-run
+supervision under the owner's explicit graphical/interactive TTY/SSH and
+retain-until-last-eligible-logout approval. HOSTSETUP-01 must verify that only typed login-proof
+exit 75 triggers `RestartForceExitStatus=75` under `Restart=no`, while exits
+0/1, disabled/stopping/cleanup, missing/revoked/changed owner consent and
+bundle/cloud failures do not loop. Portable disposition/unit-text and protected
+lifecycle fixtures cover those refusals, not genuine manager execution.
+Portable final-account-confirmation cancellation and held-real-Store-lease
+fixtures now cover the two narrow login-recovery races. The post-loss snapshot
+read waits at most 250 ms for WouldBlock only; success still requires fresh
+bundle and owner proof. Persistent contention, malformed state, revocation and
+changed consent refuse retry. These tests are not OS timing/load or native
+credential/manager acceptance.
+Repeated no-login probe load under an already lingering manager remains a native
+evidence boundary; do not enable linger or change OS policy to qualify it.
+An already lingering user manager is
+not proof; Manual setup/run remains unchanged. HOSTSETUP-01 still requires a
+separately granted ordinary-user real-manager/logind window: actual eligible
+graphical/PAM TTY/SSH sessions, lock/idle, multiple logins, last logout, missing/
+restarted bus and logind, and existing linger without configuration changes.
+Observe actual relay retirement and continued persistent child I/O with identical
+daemon PID/generation, helpers, grants and cgroup membership. A user-manager or
+session cgroup terminated by OS logout policy may kill those daemons; no synthetic
+manager/parser/watcher test proves otherwise or authorizes policy repair.
+The source-only ignored Linux test
+`controller::linux_login::tests::linux_login_native_read_only_logind_proof`
+prepares a bounded, real production logind query under the
+[fixed read-only operator contract](native-host-services.md#read-only-linux-logind-smoke-opt-in-native-execution-pending).
+Explicit opt-in, expected ordinary real/effective UID and a predeclared eligible/
+ineligible expectation are required; missing inputs and query errors fail.
+Only production `Ok(false)` is a negative observation; a disappeared login1
+user object is unknown/failure, never successful absence. Platform/exact-one
+registration guards prevent cfg-excluded zero-test passes. Source preparation,
+portable fixtures and Linux CI compilation do not establish native execution.
+In a separately granted VM window, open/close only owned interactive SSH PTY
+sessions; other eligible baseline/observer sessions block the negative case.
+Never log out unrelated sessions, enable linger or alter OS policy. Real manager,
+transport retirement, repeated-probe load and daemon/cgroup/logout survival
+remain independent pending acceptance even after this read-only smoke passes.
+The exact-core Linux follow-up attempted the real
+`x86_64-unknown-linux-gnu` library check after installing only its missing
+official standard-library target in the existing user-owned stable toolchain.
+It remains blocked in `aws-lc-sys 0.47.0`: `x86_64-linux-gnu-gcc` is absent
+(os error 2; Cargo 101/build-script 1). Portable checks are not successful
+Linux-target compilation; no cfg/C-toolchain workaround or native proof is
+inferred. See the opening milestone entry for pinned compiler paths/raw logs.
 The review-correction union passes 114 host/setup tests with one existing native
 ignore: 101 setup-library, 5 headless unit and 8 CLI integration cases. The new
 production-supervision regression holds the actual Store installation lease
@@ -3872,13 +3978,64 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
 | HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/schema-2 host packaging, bounded pin acquisition/staging and native-control/executable-publication fixtures; actual signed native service/executable acceptance and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, integration/qualification of the [same-user native component](native-host-services.md), trusted first-verifier delivery and native publisher/executable acceptance. Windows/macOS/Linux startup, interrupted registration/cleanup, unavailable-manager/vault behavior and daemon independence require real platform evidence; fixture success is not that evidence. |
+| HOSTMIG-01 | Explicitly select owned desktop/script installations; review exact account/key/source/generation mapping; reserve once, interrupt/resume/defer/rollback without duplicate host/shell or restored revocation. Prove supported existing-daemon binding and exposure switch without frontend takeover/PID change, narrow original grants and protected rollback. Older helpers must remain usable/deferred; any live stop needs a separate exact-generation default-No confirmation. Pending cloud cleanup stays locally disabled until authenticated verified absence. | Partial deterministic protected reservation/claim/recovery and opt-in current-source native frontend-preservation fixtures; real binding/switch, old-release and Windows/macOS/Linux installed migration acceptance deferred | #681 / ADR 0084 §11 and ADR 0085: [missing authenticated bind/retained-root routing contract](owned-installation-migration.md#concrete-missing-binding-boundary), fresh owner/principal/issuer admission, exact switch/rollback and independent native/security/GUI qualification. Reservation is not a binding or migration-complete claim; no stop, OS/account/vault/service change or cloud operation is authorized by these fixtures. |
 
 The shared native service component requires signed-release qualification of
-its pinned macOS Developer ID/team/runtime gate. Windows promotion remains
-blocked pending authoritative publisher identity and revocation policy.
-Windows registration/start and running-task stop additionally require
-authenticated graceful stop and daemon-independence qualification; generic
-signature validity or Task Scheduler termination is not acceptance evidence.
+its pinned macOS Developer ID/team/runtime gate. Windows promotion now implements
+the independently owner-approved subject/profile/Microsoft chain and requires
+native digest, genuine trusted RFC3161 and online-enabled fail-closed revocation.
+Windows registration/start require the compiled runtime watcher; stop reconciles
+protected lifecycle revocation, exclusive run-lease release and exact task
+quiescence, never Scheduler Stop. The x64 MSVC check/strict Clippy cover only
+`festerm-windows-security --features host-service`, not the Windows host-setup
+integration; the prior broader attempts failed on missing SDK `assert.h`.
+See the [exact commands and source provenance](milestone-progress.md#windows-native-admission-without-destructive-stop).
+Pure fixtures and facade cross-compilation are not native PKI/task/runtime/daemon
+qualification. The portable supervision test covers serving shutdown and
+run-lease release only, not independent daemon survival.
+
+The read-only ignored Windows PKI fixture
+`windows_publisher_native_opt_in_approved_signed_host_and_unsigned_rejection`
+requires an independently authenticated current signed host pathname in
+`FESTERM_ADR84_SIGNED_HOST_FIXTURE` and
+`cargo test -p festerm-windows-security --features host-service windows_publisher_native_opt_in -- --ignored --nocapture`.
+The repository-owned public-fixture route is included in
+`scripts/run-optional-validation.ps1` only when
+`FESTERM_RUN_ADR84_PUBLISHER_NATIVE=1` is explicitly selected (in addition to the
+aggregate's normal opt-in); otherwise its result is skipped.
+`-WindowsPublisherOnly` selects only the bounded fixed-v0.16.0 acquisition/PKI
+route, never other optional suites. The existing CI's default-false
+`windows_native_pki` dispatch runs it on hosted Windows only after exact-source
+review/three gates and a separate one-run owner authorization. See
+[the fixed inputs, evidence and operator contract](host-release-artifacts.md#opt-in-windows-public-pki-fixture).
+Public ZIP/member hashes establish integrity, not independent publisher/updater
+authentication; the existing compiled policy/native OS trust must pass.
+The legacy binary is never executed, and no new-host/whole-bundle acceptance is
+implied. Historical exact-`3030` run `42881664804`/attempt 1 passed 25
+preflight tests with no skips (including both real PowerShell 0/37 fixtures)
+and acquired both pinned hashes, then its genuine signed-positive test
+**started 1 / completed 0 / aborted 1** at an unaligned timestamp `ftTime`
+read, native exit `3221226505`. The unsigned negative was not reached.
+The [raw-field source correction and alignment regression](native-host-services.md)
+at exact5d now have three independent source gates and historical x64-facade
+cross-compilation, not executed Windows-fix or PKI evidence;
+the old-pattern isolated Windows RED was not run locally. Both historical
+attempt grants are consumed. Three fresh exact-source gates and a separate
+new run grant precede further native qualification. The exact5d source-only
+normal follow-up preserves both mandatory platform CI steps; its Windows-only
+Rust delta is absent from the actual Mac artifact inputs, so the one14-route
+result remains attributed to exact28c, not rerun or relabeled. Preserve any genuine
+policy mismatch as failure; hosted evidence is not ordinary-user VM proof.
+See the [combined-source boundary](milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins).
+It invokes native online-enabled verification only, never registration/start,
+signing, Azure credentials or OS settings. It was **not run on macOS**.
+For a separately authorized ordinary-user Windows lab, record positive approved
+release verification after leaf expiry with a valid timestamp, and refusal of
+wrong subject/profile/chain/EKUs, altered bytes, missing/untrusted/non-RFC3161
+timestamps and revoked/unknown/stale revocation. Independently qualify exact
+InteractiveToken XML/owner+SYSTEM ACL recovery, watcher-driven running/transitioning
+stop, active run-lease/foreign/timeout refusal and unchanged persistent daemon/
+shell identity. No VM/OS execution grant or genuine native result is implied.
 
 The November 10 Task Scheduler XML binding correction is cross-compilation
 evidence only: `x86_64-pc-windows-msvc` library/test checking and strict Clippy
@@ -3894,6 +4051,22 @@ later enable observing exact late creation, and rejection of stale/bound recover
 Successful PUT receipts are pinned only after authoritative GET, including late
 cancelled results. Live-service incarnation stability across repeated GETs still
 requires qualification; these fixtures perform no real cloud or vault mutations.
+
+**Bounded backend fan-in qualification:** Exacte157 full-feature host/setup
+passes162 with four existing ignores; CI-only35 normally merged at28c leaves
+all1055 Rust/native/build inputs identical. At28c, one actual local native
+aggregate passes14/0/0 in172.56s using freshly compiled default helpers copied
+into a new owned0700 directory with exclusive0500 executable files. Both
+digests match after the run. These are file measurements, not per-child exec
+audit/sealed retention, installed-manager or real-provider proof. See
+[fresh build/source/lifecycle and complete command evidence](milestone-progress.md#fresh-helper-provenance-backend-normal-fan-in).
+Existing ignored native fixtures and the cfg-excluded be8 Linux opt-in were not
+executed. Windows native PKI remains unqualified after the actual3030 timestamp
+crash; exact5d's source-only fix and mandatory16-vector unit have not been
+executed on Windows. The [effective Mac input-equivalent follow-up](milestone-progress.md#exact-source-only-windows-timestamp-follow-up)
+does not rerun or relabel the actual28c aggregate;
+ordinary Windows services, genuine cross-version switching, OS logout/cgroup
+survival, migration binding and full ADR acceptance remain deferred.
 
 **HOSTSETUP-01 cleanup recovery:** `recover-cleanup` can now bind an
 acknowledged uncertain exact resource through read-only observation, without

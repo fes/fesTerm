@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch] $MarkdownScrollingOnly,
+    [switch] $WindowsPublisherOnly,
     [string] $ResultPath = $(if ($env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH) {
         $env:FESTERM_OPTIONAL_VALIDATION_RESULT_PATH
     } else {
@@ -68,6 +69,43 @@ function Invoke-MarkdownScrollingValidation {
         -AllowGlobalPointer:($env:FESTERM_MARKDOWN_SCROLL_ALLOW_POINTER -eq '1')
 }
 
+function Invoke-WindowsPublisherValidation {
+    $python = (Get-Command python -CommandType Application -ErrorAction Stop |
+        Select-Object -First 1).Source
+    Invoke-NativeCommand { & $python "$PSScriptRoot\run_windows_publisher_validation.py" }
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Read-only Windows publisher validation failed; retain its report and logs.'
+    }
+}
+
+if ($WindowsPublisherOnly) {
+    if ($MarkdownScrollingOnly -or $ProvisionPsRpRunner) {
+        throw 'Read-only publisher validation cannot request another optional suite.'
+    }
+    $resultFullPath = [IO.Path]::GetFullPath($ResultPath)
+    if (Test-Path -LiteralPath $resultFullPath) {
+        throw 'ResultPath already exists; optional validation evidence is never overwritten.'
+    }
+    Write-OptionalResultLocation $resultFullPath
+    $resultStream = [IO.File]::Open(
+        $resultFullPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    $resultWriter = [IO.StreamWriter]::new($resultStream, [Text.UTF8Encoding]::new($false))
+    $resultWriter.AutoFlush = $true
+    try {
+        $resultWriter.WriteLine('status=running')
+        Invoke-WindowsPublisherValidation
+        $resultWriter.WriteLine('suite=windows-host-publisher status=pass native_task_runtime_qualification=false')
+        $resultWriter.WriteLine('status=pass')
+    } catch {
+        $resultWriter.WriteLine('suite=windows-host-publisher status=fail native_task_runtime_qualification=false')
+        $resultWriter.WriteLine('status=fail')
+        throw
+    } finally {
+        $resultWriter.Dispose()
+    }
+    return
+}
+
 if ($MarkdownScrollingOnly) {
     $resultFullPath = [IO.Path]::GetFullPath($ResultPath)
     if (Test-Path -LiteralPath $resultFullPath) {
@@ -128,7 +166,20 @@ function Write-OptionalResult {
     $resultWriter.Write($Text)
 }
 Write-OptionalResult 'status=running'
+Write-OptionalResult "`nsuite=owned-migration-native status=skipped reason=unix-fixture-only-not-windows-acceptance"
 try {
+
+if ($env:FESTERM_RUN_ADR84_PUBLISHER_NATIVE -eq '1') {
+    try {
+        Invoke-WindowsPublisherValidation
+        Write-OptionalResult "`nsuite=windows-host-publisher status=pass native_task_runtime_qualification=false"
+    } catch {
+        Write-OptionalResult "`nsuite=windows-host-publisher status=fail native_task_runtime_qualification=false"
+        $status = 'fail'
+    }
+} else {
+    Write-OptionalResult "`nsuite=windows-host-publisher status=skipped prerequisite=explicit-public-fixture-pki-opt-in"
+}
 
 if ($env:OS -eq 'Windows_NT') {
     if ($env:FESTERM_RUN_WINDOWS_SECURITY_PRIVILEGED -eq '1') {

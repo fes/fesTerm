@@ -428,9 +428,13 @@ pub fn private_test_directory_in(unix_parent: &Path) -> PrivateTestDirectory {
     #[cfg(unix)]
     {
         let nonce = uuid::Uuid::new_v4().simple().to_string();
-        let path = unix_parent.join(format!("ft-{}", &nonce[..16]));
-        drop(private_directory(&path, true).expect("private fixture directory refused"));
-        PrivateTestDirectory(path)
+        let name = format!("ft-{}", &nonce[..8]);
+        let parent = trusted_directory(unix_parent, false).expect("fixture parent refused");
+        drop(
+            festerm_unix_security::create_private_directory(&parent, Path::new(&name))
+                .expect("fresh private fixture directory refused"),
+        );
+        PrivateTestDirectory(unix_parent.join(name))
     }
     #[cfg(windows)]
     {
@@ -446,9 +450,19 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn private_fixture_short_unix_parent_supports_native_socket_and_owned_cleanup() {
-        let root = private_test_directory_in(&std::env::current_dir().unwrap());
+        let parent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let root = private_test_directory_in(parent);
         let path = root.path().to_owned();
-        let socket = std::os::unix::net::UnixListener::bind(path.join("host.sock")).unwrap();
+        let socket = std::os::unix::net::UnixListener::bind(path.join(format!(
+            "{}-{}.sock",
+            u32::MAX,
+            u64::MAX
+        )))
+        .unwrap();
         drop(socket);
         drop(root);
         assert!(!path.exists());

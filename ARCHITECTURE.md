@@ -749,9 +749,11 @@ headless binary, adds a
 sealed updater-authenticated executable receipts, protected exact-owned
 registration and epoch-fenced native observations/control.
 macOS admission pins the release Developer ID team and hardened runtime; Windows
-publisher admission remains fail-closed pending authoritative policy.
-Windows registration/start require authenticated
-graceful-stop support rather than destructive task termination. The native
+admission pins the owner-approved Artifact Signing subject/profile and Microsoft
+chain, with trusted RFC3161 and online-enabled fail-closed revocation.
+Windows registration/start require the compiled runtime watcher; stop observes
+protected lifecycle revocation, exclusive run-lease release and exact native task
+quiescence, never destructive task termination. Native execution is unqualified. The native
 component itself owns neither endpoint readiness nor shell launch. The headless
 controller now composes explicit setup, separate owner-key/permission approval,
 run, disable, authenticated stopped-version update and exact-owned removal with
@@ -902,6 +904,15 @@ remain default denied. Independent combined-source review, real release/native
 vault/service and client first-connect/device qualification remain mandatory.
 The enrollment/channel helpers alone grant no routing, creation, migration or
 lifetime authority; those effects require the separate current protected backend.
+The lifecycle library's `owned_migration` module adds explicit canonical
+desktop/script source inventory and exact account/key/receipt/generation preview,
+immutable operation intent, disabled destination host-identity reservation,
+cross-installation claims, recovery/deferral and local rollback. It imports no
+owner/session permissions and invokes no frontend, service or cloud API. Enable
+refuses an outstanding migration reservation. Native daemon binding and retained
+runtime routing are not supported by the current ordinary-daemon API; unsupported
+rows stay usable as legacy sessions, never fabricated HOST records. See the
+[bounded migration contract](docs/owned-installation-migration.md).
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

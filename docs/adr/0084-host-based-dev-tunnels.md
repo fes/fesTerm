@@ -304,6 +304,18 @@ revoked grants. Existing legacy behavior remains separate until explicit migrati
 
 Offer accurately labeled startup choices: manual, at user sign-in, and after
 reboot before interactive login only on qualified platforms/configurations.
+The owner explicitly approved Linux graphical and interactive TTY/SSH eligibility
+for the actual UID and logind `Class=user`, retaining hosting through lock/idle
+until the last eligible logout. Source now admits `tty/x11/wayland` sessions in
+`active/online` state using bounded root-issuer-verified login1 reads and a
+per-run cancellation watcher, not a lingering manager or environment assertion.
+Unknown/missing proof closes/refuses host transport without revoking owner grants,
+ending persistent daemons or inferring native absence. Manual is unchanged.
+Receipt-owned UserSignIn activation starts/retries the guarded host under an
+already running user manager; it never enables linger or changes global settings.
+Real manager/logind/cgroup/last-logout and persistent-daemon survival remain
+explicit [native qualification gates](../native-host-services.md#linux-current-login-fence);
+portable/fake-manager evidence does not establish them.
 Do not claim that sign-in registration provides pre-login availability.
 
 The desktop-local increment now makes Settings reachable through typed
@@ -447,8 +459,9 @@ remain open.
 Replacement reconciliation precedes the core's never-published-receipt absence
 path. Missing active receipts with pending old/new journals require both targets
 to reconcile and cannot finalize Aborted cleanup from `None`. Stale epochs and
-corrupt/foreign crash journals refuse. Even settled update history proves prior
-registration, so a lost receipt refuses rather than manufacturing absence.
+corrupt/foreign crash journals refuse. Every journal, including Committed and
+Aborted, proves prior registration, so a lost receipt refuses rather than
+manufacturing absence.
 These coupled negative fixtures retain the native/cloud/vault qualifications.
 
 ### 10. Protocol, resource and failure contract
@@ -635,6 +648,12 @@ Private-registry reader/rebase fixture roots use the existing policy-checked
 test directory rather than assuming Windows checkout ancestors are trusted.
 Production ancestor/DACL refusal and actual publication-lock/once-only-effect
 assertions remain unchanged; corrected Windows CI remains a separate gate.
+Local retirement's contended-journal checkpoint is deny-only: it can refuse a
+foreign/missing owner, never admit an action. Matching owners remain Busy and
+all effects retain locked owner/generation/revocation validation plus positive
+native absence. Controlled journal/start/registry barriers preserve exact
+PID/generation/issued state under refusal; the original Linux mismatch did not
+record its error variant and is not retrospectively classified as Busy.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
@@ -773,6 +792,65 @@ fixed-head backend results do not qualify that changed fixture. The later
 foreground receipt/chooser source does not establish native or physical-mobile
 acceptance. Mobile installation, account-wide discovery and creation remain
 incomplete; this original executor checkpoint alone enabled no public recipe UI.
+The bounded backend fan-in awaits the existing Linux current-login gate for
+stopped update rather than calling its removed synchronous predecessor.
+`host_update_admission_revalidates_full_scope_and_cancellation_before_effects`
+uses controlled admission to require cancellation, unavailable-proof, revoked
+and same-epoch changed-snapshot refusal before any native/identity effects.
+This is not real logind/native-manager evidence or Windows replacement enablement.
+The first compile RED and known actual Windows PKI crash remain in the
+[combined-source record](../milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins).
+That record separately attributes162/four-existing-ignored host/setup results
+to sourcee157, zero-Rust/build-input CI-only35 integration at28c, and the fresh
+default-helper one-run14/0/0 native aggregate at28c (172.56s). These are macOS
+local fixtures, not actual logind/native-manager/Windows PKI or binding acceptance.
+
+The owner-approved Linux current-login slice adds portable eligibility/hostile
+metadata tests, `linux_login_proof_pins_root_owner_uid_and_refuses_inventory_or_issuer_race`,
+`linux_login_last_logout_or_uncertainty_cancels_and_drains_only_host`, query-budget/
+cancellation tests and exact-owned activation/revocation fixtures. HOST-04/05
+and HOSTSETUP-01 remain partial: the real logind/manager/last-logout and retained
+daemon PID/generation/child-I/O/cgroup evidence is still required. Manual remains
+inert; no synthetic fixture establishes OS logout survival.
+The retry correction adds typed CLI/unit exit-disposition coverage,
+`host_runtime_manager_restart_after_disabled_stop_or_cleanup_is_not_retryable`,
+`host_runtime_sign_in_bad_bundle_is_not_a_login_retry`,
+`linux_login_missing_initial_proof_is_typed_retryable` and
+`linux_login_loss_never_masks_non_retryable_host_failure_while_draining`.
+Only login-proof unavailability requests the reserved systemd restart code;
+other failures retain diagnostics and fail without automatic restart.
+The recovery-race follow-up adds
+`host_cloud_relay_final_confirm_cancellation_is_owned_not_stale_consent`
+and three `host_runtime_login_retry_snapshot_` regressions for lease release,
+bounded persistent Busy/non-Busy refusal and revoked/changed consent.
+Only the post-login-loss current snapshot read waits briefly for contention;
+fresh bundle and owner validation remains mandatory before the login-only exit.
+The source-only `linux_login_native_read_only_logind_proof` is ignored and
+Linux-only, with explicit opt-in/current ordinary UID/expected eligibility
+inputs. Its direct production query distinguishes authoritative `Ok(false)`
+from unknown/error; fixed exact-one registration guards prohibit zero-test
+native passes. Portable checks and Linux compilation are not native execution.
+The read-only [operator contract](../native-host-services.md#read-only-linux-logind-smoke-opt-in-native-execution-pending)
+does not qualify activation, transport/last-logout or daemon/cgroup survival;
+those HOSTSETUP-01 gates remain pending. No production behavior changes.
+
+The owned-installation increment adds executable headless protected inventory,
+exact preview mapping, destination identity/source-claim reservation, interrupted
+operation resume, deferral and journaled local rollback (`HOST-06`). Original
+account/key/installation/consent/cloud-incarnation/generation receipts are
+retained, not converted into owner/session/sharing/create authority. Stale
+destination settings/epochs, changed/revoked/foreign/missing/untrusted evidence
+refuse; rollback releases only exact operation claims and cannot revive exposure.
+No live stop operation is added; separate default-No exact-generation consent
+remains mandatory for any future stop. The
+[migration contract and source limits](../owned-installation-migration.md)
+identify the actual missing authenticated daemon bind/retained-root routing API.
+Ordinary legacy daemons are explicitly unsupported, not silently restarted or
+reported bound. Native fixture preservation is current-source local evidence,
+not supported binding, an exposure switch, old-release or signed cross-platform
+migration acceptance. `HOSTMIG-01` remains deferred until that API, fresh protected
+owner/issuer admission, real binding/switch/rollback and native acceptance exist.
+
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation
 during proof, one original authentication deadline, framed persistent Busy and
@@ -838,8 +916,13 @@ directory identity. Three service regressions prove unpublished-receipt own
 absence with zero fake-manager calls and untouched foreign definitions, lease/
 epoch/instance refusal and corrupt/foreign/non-file/missing-lock receipt refusal.
 `host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup`
-and the acknowledged-uncertainty adoption case pass through actual controller
-disable/uninstall and Services, substituting only the cloud network/credentials.
+and the acknowledged-uncertainty adoption case execute actual controller
+disable/uninstall and Services logic with explicit fake network/credentials,
+per-adapter test accounts and typed fake native context. The unpublished-only
+runner panics on any manager request. Production account admission and private
+storage policy remain unchanged; ordinary Windows process-token admission is
+not a prerequisite for pure fixtures. Account drift/native denial, foreign
+state and cleanup-denial ordering regressions retain fail-closed boundaries.
 Successful direct `confirm_stopped` shortcuts are removed from those cloud and
 controller integration fixtures; active runtime ownership and missing-lock/history
 guards still block Disabled. These tests require the explicit combined controller
@@ -1198,12 +1281,33 @@ blocked and a pending result is not successful uninstall. See the
   historical exit PID, journaled interrupted definition retirement and
   exact-unit failed-state reset, bounded asynchronous start reconciliation,
   immutable pre-submission task reservation recovery and rejection of foreign
-  task ACL/configuration. Windows running-task stop/registration/start remain
-  unavailable pending authenticated graceful stop; macOS enforces the pinned
-  release Developer ID team/runtime and Windows promotion refuses pending
-  authoritative native publisher policy. Generic
+  task ACL/configuration. Windows registration/start require the compiled runtime
+  controller; stop reconciles protected lifecycle revocation, exact run-lease
+  release and owned native task quiescence, with timeout pending and no
+  destructive Scheduler stop. macOS enforces the pinned release Developer ID
+  team/runtime; Windows promotion now implements the owner-approved Artifact
+  Signing subject/profile/Microsoft chain, trusted RFC3161 and online-enabled
+  fail-closed revocation (see the canonical native/release policy). Generic
   native signature validity is not publisher acceptance. These refusal gates
   and native-independent fixtures do not qualify real native services.
+  The existing ignored Windows native publisher test also has a separately
+  authorized, default-false hosted PKI-only dispatch with fixed public v0.16.0
+  legacy fixture acquisition and retained command/exit/log-hash provenance.
+  Its binary is never executed; integrity hashes are not updater authentication.
+  Source contracts do not establish native evidence, and a later hosted pass
+  would not qualify ordinary-user VM, tasks, daemons, GUI or whole-bundle release
+  acceptance. Genuine policy mismatches remain failures without waivers.
+  Historical exact-`3030` run `42881664804`/attempt 1 passed 25 preflight
+  tests (including both PowerShell 0/37 fixtures, no skips) and pinned
+  acquisition, but one genuine signed-positive test started / completed 0 /
+  aborted 1 at the unaligned timestamp `ftTime` read, exit `3221226505`;
+  unsigned rejection was unreached. The source-only bounded SDK raw-field
+  copy preserves all timestamp/ownership/revocation checks. Its
+  `windows_timestamp_filetime_copies_exact_bits_from_misaligned_sdk_storage`
+  regression and x64 C-layout assertions are facade-only cross-compiled,
+  not executed Windows or positive PKI evidence. Native qualification remains
+  blocked pending three fresh exact-source gates and a separately granted
+  new attempt; neither failed grant permits a retry.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic
@@ -1297,6 +1401,23 @@ duplex tests cover idle-versus-exchange deadlines, typed handshake refusals,
 correlated resource/policy Busy, retained reply allocation through publication
 and post-commit policy contention. These are PR688 core reliability/scope
 remediations, not endpoint or dependency qualification.
+
+Frozen-core native fixture qualification now distinguishes precommit Busy
+(held exact generation lease, unchanged PID/generation/issued state) from a
+durable StopRequested commit paused before reply publication. A competing
+attachment is checked once behind an actual unadopted takeover reservation,
+not by repeatedly retrying an intentional occupied-writer refusal. Real old
+writer I/O, unchanged pending/committed authority, exactly one adoption epoch,
+stale generation and no input replay remain mandatory. No production refusal,
+admission or native transport behavior changes in this fixture correction.
+The committed-creation publication fixture additionally holds the real exact
+generation lease during original-operation replay: Busy must preserve the whole
+journal/lease, then the same original operation must publish its original Created
+result within the existing deadline. Other refusals remain typed failures.
+The Unix fixture-root regression binds the maximum HOST generation/PID socket
+identity, with exclusive private creation and unchanged production path policy.
+The distinct Linux `920715a5` assertion did not print its actual response;
+controlled Busy evidence does not retroactively label that CI failure.
 
 The unexposed paired terminal slice adds bounded binary framing, explicit
 frontend adoption/observed native writer admission, immutable client bindings,

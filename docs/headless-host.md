@@ -33,6 +33,15 @@ is not Ready. Missing/corrupt/busy/foreign-origin state fails rather than lookin
 like an absent installation that can be recreated. No default directories,
 credential stores or installed services are consulted.
 
+The separate [owned-installation migration reservation](owned-installation-migration.md)
+commands inventory only explicitly selected protected legacy sources, preview
+their exact account/key/generation mapping, reserve a new disabled host identity
+and source claims, resume/defer that operation and release it through journaled
+local rollback. They do not inherit owner/sharing/create grants or stop shells.
+This release has no authenticated live legacy daemon binding API; rows say so,
+setup refuses an outstanding migration reservation and no switch is claimed.
+Deferral/rollback preserve legacy use and never restore revoked exposure.
+
 The initial journal and both CLI/helper staging paths publish private bytes via
 temporary-file write, sync and atomic no-replace rename, never a torn final file.
 Failed writes remove only their own temporary entry. A crash can still leave an
@@ -124,9 +133,9 @@ After `configure`, explicit `setup` requires the signed package inputs above,
 `--state-dir`, `--account-id` and `--consent enable`. It authenticates every
 executable before foreground GitHub device sign-in, provisions the zero-shell
 endpoint and registers the same-user host without an explicit start command.
-UserSignIn registration arms next-login activation (Linux user-unit enable /
-macOS RunAtLoad); it is not a guarantee of never launching. The runnable Linux
-controller currently refuses UserSignIn pending the current-logon fence below.
+UserSignIn registration arms automatic activation (Linux receipt-owned user-unit
+enable/start with fresh current-logon admission; macOS RunAtLoad).
+It is not a guarantee of never launching. Manual registration remains inert.
 Initial owner policy
 has no keys and access off. Its public `owner_approval_prerequisite` describes the
 exact installation/host/account/principal for independent foreground pin review;
@@ -150,11 +159,18 @@ requiring configured creation consent), `--end allow` and independent
 There is no bearer enrollment, recipe-derived trust or file-store fallback.
 The protected client-local receipt/index and actual first-connect UI remain
 separate prerequisites.
-Linux runnable setup/run currently requires Manual startup. Enabling a user unit
-under `default.target` does not prove sign-in-only activation when user lingering
-is already enabled; until a verified current-logon/session activation fence is
-implemented, UserSignIn refuses before account or listener effects. No host
-linger/permission setting is changed to bypass that prerequisite.
+Linux UserSignIn now requires bounded verified login1 proof for actual-UID
+`Class=user` graphical/interactive TTY/SSH sessions, retaining hosting through
+lock/idle until the last eligible logout. Missing/uncertain proof refuses or
+closes hosting, never daemon sessions or grants. An enabled/lingering user manager
+is not login proof. Manual is unchanged. No linger/permission setting is changed.
+See the [current-login fence and native gates](native-host-services.md#linux-current-login-fence);
+real manager/logind/cgroup/logout survival remains unqualified.
+The owned Linux sign-in unit retries only reserved exit **75**, emitted for
+typed current-login-proof unavailability after bundle/owner validation.
+It uses `Restart=no` and `RestartForceExitStatus=75`; lifecycle refusal,
+revoked/missing/changed consent, bundle/cloud failure and other errors exit 1,
+not an automatic background retry. Normal cancellation exits 0.
 
 `run --state-dir PATH` reauthenticates retained signed bundle provenance, selects
 only its same-version daemon helper and reopens existing native account/owner
@@ -281,9 +297,12 @@ registration/control and authenticated executable-publication APIs, with
 deterministic native-adapter fixtures. The shared CLI controller consumes those
 APIs; desktop controls and native endpoint qualification remain separate. macOS admission
 requires the pinned release Developer ID team and hardened runtime; Windows
-admission refuses until authoritative publisher policy exists;
-Windows registration/start additionally refuse until authenticated graceful stop
-can preserve independent daemons. See the
+admission checks the approved Artifact Signing publisher/profile/Microsoft chain,
+trusted RFC3161 and online-enabled fail-closed revocation. Windows registration/
+start require the compiled cloud/runtime controller; stop waits for authenticated
+protected lifecycle revocation, run-lease release and exact native task quiescence,
+without Scheduler Stop or daemon termination. These paths are source/fixture
+evidence, not real Windows qualification. See the
 [API, startup semantics and native prerequisites](native-host-services.md).
 
 The opt-in library `owner-enrollment` API supports protected local public-key
@@ -334,6 +353,13 @@ Manual means an explicit foreground run. User sign-in registration is not
 availability before login. Pre-login is rejected until the OS user-service,
 secure credential availability and non-system shell identity are qualified.
 No platform startup acceptance is established by local fixtures.
+
+The separately opt-in [public Windows publisher fixture](host-release-artifacts.md#opt-in-windows-public-pki-fixture)
+checks only the existing native PKI policy against fixed legacy data after
+source review and separate run authorization. It never executes that binary,
+enables a host or substitutes for whole-bundle/updater authentication or
+ordinary-user native service/daemon qualification. No such hosted run is
+included in the source-only workflow preparation.
 
 ## Shared desktop/endpoint integration API
 
@@ -553,6 +579,12 @@ It adds no trust bypass, implicit pairing or recipe authority. Host-local key
 approval does not complete the separate client foreground trust/approved-context
 receipt/index and inventory/session-choice UI; that producer is ongoing work.
 Real cloud/native-vault/service and first-connect evidence remain separate gates.
+
+Pure shared-controller/cloud fixtures select explicit test-only per-adapter
+accounts and typed no-manager native contexts, not the Windows CI runner's
+process-token authority. Protected private-root policy, Services/runtime leases
+and production ordinary-user admission are unchanged. This corrects fixture
+isolation, not Windows endpoint qualification.
 
 ## Evidence
 

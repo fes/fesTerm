@@ -840,8 +840,8 @@ class OptionalValidationContractTests(unittest.TestCase):
         self.assertNotIn("'optional-validation-result.txt'", script)
         self.assertEqual(
             script.count("[IO.FileMode]::CreateNew"),
-            2,
-            "both full and Markdown-only aggregate results must fail closed",
+            3,
+            "full, Markdown-only and publisher-only aggregate results must fail closed",
         )
         self.assertIn("Write-OptionalResultLocation $resultFullPath", script)
 

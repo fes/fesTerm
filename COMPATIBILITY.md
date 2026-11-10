@@ -88,6 +88,13 @@ Desktop Profiles and the separately reviewed existing-session connection path
 remain distinct from local Settings authority; metadata/import alone never
 grants protected trust or stage-6/native acceptance.
 
+The separate [owned-installation reservation](docs/owned-installation-migration.md)
+implements protected explicit inventory/preview, stable identity/source claims,
+resume/defer and local rollback only. It preserves legacy protocols, keys,
+grants, native generation and frontend. Actual legacy-to-HOST daemon binding,
+exposure switching and native/old-release migration acceptance remain unsupported;
+reservation never enables or silently restarts a source.
+
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 
 The sourced implementation references and cross-project lessons that guide this

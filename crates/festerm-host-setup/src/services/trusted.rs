@@ -171,7 +171,7 @@ impl TrustedStage {
     }
 }
 
-fn native_publisher_qualification(_: &File, path: &Path) -> io::Result<()> {
+fn native_publisher_qualification(file: &File, path: &Path) -> io::Result<()> {
     native_publisher_admission(std::env::consts::OS)?;
     #[cfg(target_os = "macos")]
     {
@@ -198,7 +198,9 @@ fn native_publisher_qualification(_: &File, path: &Path) -> io::Result<()> {
         }
         macos_publisher_metadata(&metadata.stdout)?;
     }
-    let _ = path;
+    #[cfg(windows)]
+    super::native::signature_publisher(file, path)?;
+    let _ = (file, path);
     Ok(())
 }
 
@@ -238,10 +240,7 @@ fn macos_publisher_metadata(bytes: &[u8]) -> io::Result<()> {
 
 fn native_publisher_admission(platform: &str) -> io::Result<()> {
     match platform {
-        "linux" | "macos" => Ok(()),
-        "windows" => Err(refused(
-            "host.service_windows_release_publisher_policy_unconfigured",
-        )),
+        "linux" | "macos" | "windows" => Ok(()),
         _ => Err(refused("host.service_unsupported_platform")),
     }
 }
@@ -523,7 +522,7 @@ mod tests {
 
     #[test]
     fn native_publisher_admission_never_substitutes_generic_signature_trust() {
-        assert!(native_publisher_admission("windows").is_err());
+        assert!(native_publisher_admission("windows").is_ok());
         let root = storage::private_test_directory();
         let artifact = crate::artifacts::host_staging_fixture();
         #[cfg(target_os = "linux")]
@@ -534,7 +533,7 @@ mod tests {
         #[cfg(windows)]
         {
             assert!(TrustedStage::publish(&artifact, &root.path().join("public")).is_err());
-            assert!(!root.path().join("public").exists());
+            assert!(root.path().join("public").exists());
         }
         #[cfg(target_os = "macos")]
         {
@@ -552,9 +551,9 @@ mod tests {
         }
         let cache = root.path().join("artifacts");
         assert!(
-            TrustedStage::publish_with(&artifact, &cache, |_, _| native_publisher_admission(
-                "windows"
-            ))
+            TrustedStage::publish_with(&artifact, &cache, |_, _| Err(refused(
+                "fixture.native_publisher_rejected"
+            )))
             .is_err()
         );
         #[cfg(unix)]

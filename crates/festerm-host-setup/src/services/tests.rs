@@ -138,6 +138,7 @@ struct FakeState {
     fail_reload_once: bool,
     pending_start: bool,
     start_delay_queries: usize,
+    quiesce_after_query: bool,
     calls: Vec<NativeRequest>,
 }
 
@@ -160,7 +161,11 @@ impl CommandRunner for FakeRunner {
                         output.success = false;
                     }
                 }
-                if (args.contains(&"start") || args.contains(&"kickstart")) && !state.refuse_start {
+                if (args.contains(&"start")
+                    || args.contains(&"kickstart")
+                    || (args.contains(&"enable") && args.contains(&"--now")))
+                    && !state.refuse_start
+                {
                     if state.start_delay_queries > 0 {
                         state.pending_start = true;
                     } else {
@@ -291,6 +296,9 @@ impl CommandRunner for FakeRunner {
                     TaskAction::Remove => state.native_xml = None,
                     TaskAction::Query => {}
                 }
+                if matches!(action, TaskAction::Query) && state.quiesce_after_query {
+                    state.running = false;
+                }
                 output.stdout = serde_json::to_vec(&TaskSnapshot {
                     xml: state.native_xml.clone(),
                     security: state.native_xml.as_ref().map(|_| {
@@ -298,8 +306,16 @@ impl CommandRunner for FakeRunner {
                             "task-owner-system-full-control-v1:S-1-5-21-1-2-3-1001".into()
                         })
                     }),
-                    state: if state.running { 4 } else { 3 },
-                    last_exit: 0,
+                    state: if state.observation_error {
+                        0
+                    } else if state.pending_start {
+                        2
+                    } else if state.running {
+                        4
+                    } else {
+                        3
+                    },
+                    last_exit: if state.failed { 1 } else { 0 },
                 })
                 .unwrap();
             }
@@ -356,6 +372,20 @@ fn services<'a>(root: &Path, store: &'a Store, platform: Platform) -> Services<'
             state: RefCell::new(FakeState::default()),
         },
     }
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[test]
+#[should_panic(expected = "pure unpublished-registration fixture must not call a native manager")]
+fn native_service_unpublished_fixture_forbids_native_manager_effects() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    let fixture = super::fixture_services(&store, &state).unwrap();
+    let _ = fixture.runner.execute(&NativeRequest::Task {
+        name: "fixture-only-never-native".into(),
+        action: TaskAction::Query,
+    });
 }
 
 fn provision(store: &Store) -> Snapshot {
@@ -637,15 +667,19 @@ fn native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_e
         let stage = trusted::fixture(root.path());
         let services = services(root.path(), &store, platform);
         if platform == Platform::Windows {
-            assert_eq!(
-                services
-                    .install(&stage, snapshot.epoch)
-                    .err()
-                    .unwrap()
-                    .to_string(),
-                "host.service_windows_authenticated_graceful_stop_unavailable"
-            );
-            assert!(services.runner.state.borrow().calls.is_empty());
+            if cfg!(all(feature = "cloud", feature = "host-runtime")) {
+                services.install(&stage, snapshot.epoch).unwrap();
+            } else {
+                assert_eq!(
+                    services
+                        .install(&stage, snapshot.epoch)
+                        .err()
+                        .unwrap()
+                        .to_string(),
+                    "host.service_windows_authenticated_graceful_stop_unavailable"
+                );
+                assert!(services.runner.state.borrow().calls.is_empty());
+            }
             continue;
         }
         assert_eq!(
@@ -653,7 +687,9 @@ fn native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_e
             "host.service_not_installed_no_native_observation"
         );
         let installed = services.install(&stage, snapshot.epoch).unwrap();
-        assert_ne!(installed.process, ProcessState::Running);
+        if platform != Platform::Linux || startup != Startup::UserSignIn {
+            assert_ne!(installed.process, ProcessState::Running);
+        }
         let record = services.registration().unwrap().1.unwrap();
         match platform {
             Platform::Linux => assert_eq!(
@@ -750,6 +786,102 @@ fn native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_e
                 _ => false,
             }));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_linux_sign_in_activation_is_owned_and_manual_remains_inert() {
+    for startup in [Startup::Manual, Startup::UserSignIn] {
+        let root = storage::private_test_directory();
+        let store = Store::create(
+            &root.path().join("state"),
+            Origin::Headless,
+            Settings {
+                startup,
+                ..settings()
+            },
+        )
+        .unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let services = services(root.path(), &store, Platform::Linux);
+        services.install(&stage, snapshot.epoch).unwrap();
+        let record = services.registration().unwrap().1.unwrap();
+        assert_eq!(store.snapshot().unwrap(), snapshot);
+        assert!(record.definition.contains("KillMode=process\n"));
+        assert!(record.definition.contains("SendSIGKILL=no\n"));
+        let calls = &services.runner.state.borrow().calls;
+        if startup == Startup::UserSignIn {
+            assert!(record.definition.contains(&format!(
+                "Restart=no\nRestartForceExitStatus={}\nRestartSec=2s",
+                crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
+            )));
+            assert!(!record.definition.contains("Restart=on-failure"));
+            assert!(record.definition.contains("StartLimitIntervalSec=0\n"));
+            assert!(calls.iter().any(|request| matches!(request,
+                NativeRequest::Process { args, .. }
+                if args == &["--user", "enable", "--now", &record.resource]
+                    .map(std::ffi::OsString::from))));
+        } else {
+            assert!(record.definition.contains("Restart=no\n"));
+            assert!(!record.definition.contains("RestartForceExitStatus="));
+            assert!(!record.definition.contains("StartLimitIntervalSec="));
+            assert!(!calls.iter().any(|request| matches!(request,
+                NativeRequest::Process { args, .. }
+                if args.iter().any(|arg| arg == "--now" || arg == "enable" || arg == "start"))));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_linux_sign_in_raced_revocation_retains_exact_reservation_without_success() {
+    struct Revoking<'a> {
+        store: &'a Store,
+        inner: FakeRunner,
+    }
+    impl CommandRunner for Revoking<'_> {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            if matches!(request, NativeRequest::Process { args, .. }
+                if args.iter().any(|arg| arg == "--now"))
+            {
+                self.store.revoke()?;
+            }
+            self.inner.execute(request)
+        }
+    }
+    let root = storage::private_test_directory();
+    let store = Store::create(
+        &root.path().join("state"),
+        Origin::Headless,
+        Settings {
+            startup: Startup::UserSignIn,
+            ..settings()
+        },
+    )
+    .unwrap();
+    let before = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let original = services(root.path(), &store, Platform::Linux);
+    let services = Services {
+        store: original.store,
+        state: original.state,
+        context: original.context,
+        runner: Revoking {
+            store: &store,
+            inner: original.runner,
+        },
+    };
+    assert!(services.install(&stage, before.epoch).is_err());
+    let current = store.snapshot().unwrap();
+    assert_eq!(current.phase, Phase::StopRequested);
+    assert_eq!(current.binding, before.binding);
+    assert!(current.epoch > before.epoch);
+    let retained = services.registration().unwrap().1.unwrap();
+    assert_eq!(retained.epoch, before.epoch);
+    assert_eq!(retained.binding, before.binding.unwrap());
+    assert_eq!(retained.settings.startup, Startup::UserSignIn);
+    assert!(services.runner.inner.state.borrow().running);
 }
 
 #[cfg(unix)]
@@ -1236,13 +1368,15 @@ fn native_service_windows_recovery_is_reserved_exact_and_stop_has_no_destructive
     let snapshot = provision(&store);
     let stage = trusted::fixture(root.path());
     let services = services(root.path(), &store, Platform::Windows);
-    assert!(services.install(&stage, snapshot.epoch).is_err());
-    assert!(services
-        .start_with(&stage, snapshot.epoch, || panic!(
-            "disabled Windows start must not invoke credentials"
-        ))
-        .is_err());
-    assert!(services.runner.state.borrow().calls.is_empty());
+    if !cfg!(all(feature = "cloud", feature = "host-runtime")) {
+        assert!(services.install(&stage, snapshot.epoch).is_err());
+        assert!(services
+            .start_with(&stage, snapshot.epoch, || panic!(
+                "disabled Windows start must not invoke credentials"
+            ))
+            .is_err());
+        assert!(services.runner.state.borrow().calls.is_empty());
+    }
     services.install_reserved(&stage, snapshot.epoch).unwrap();
     let mut record = services.registration().unwrap().1.unwrap();
     assert!(record
@@ -1291,7 +1425,19 @@ fn native_service_windows_recovery_is_reserved_exact_and_stop_has_no_destructive
     }
     services.runner.state.borrow_mut().running = true;
     store.revoke().unwrap();
+    #[cfg(not(all(feature = "cloud", feature = "host-runtime")))]
     assert!(services.stop(store.snapshot().unwrap().epoch).is_err());
+    #[cfg(all(feature = "cloud", feature = "host-runtime"))]
+    {
+        services.runner.state.borrow_mut().quiesce_after_query = true;
+        assert_eq!(
+            services
+                .stop(store.snapshot().unwrap().epoch)
+                .unwrap()
+                .process,
+            ProcessState::Stopped
+        );
+    }
     assert!(!services
         .runner
         .state
@@ -1306,4 +1452,76 @@ fn native_service_windows_recovery_is_reserved_exact_and_stop_has_no_destructive
             }
         )));
     assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+}
+
+#[cfg(all(feature = "cloud", feature = "host-runtime"))]
+#[test]
+fn native_service_windows_revocation_reconciles_exact_task_without_destructive_stop() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let before = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let services = services(root.path(), &store, Platform::Windows);
+    services.install(&stage, before.epoch).unwrap();
+    assert_eq!(
+        services
+            .start_with(&stage, before.epoch, || Ok(()))
+            .unwrap()
+            .process,
+        ProcessState::Running
+    );
+    assert!(services.stop(before.epoch).is_err());
+    store.revoke().unwrap();
+    let revoked = store.snapshot().unwrap();
+    assert!(services.stop(before.epoch).is_err());
+    let record = services.registration().unwrap().1.unwrap();
+    for transitioning in [false, true] {
+        services.runner.state.borrow_mut().pending_start = transitioning;
+        let _lease = services.lease().unwrap();
+        let error = services
+            .wait_windows_revocation(&revoked, &record, std::time::Duration::ZERO)
+            .err()
+            .unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(store.snapshot().unwrap(), revoked);
+    }
+    services.runner.state.borrow_mut().pending_start = false;
+    services.runner.state.borrow_mut().quiesce_after_query = true;
+    assert_eq!(
+        services.stop(revoked.epoch).unwrap().process,
+        ProcessState::Stopped
+    );
+    services.runner.state.borrow_mut().failed = true;
+    assert_eq!(
+        services.stop(revoked.epoch).unwrap().process,
+        ProcessState::Failed
+    );
+    services.runner.state.borrow_mut().failed = false;
+    services.runner.state.borrow_mut().observation_error = true;
+    assert!(services.stop(revoked.epoch).is_err());
+    services.runner.state.borrow_mut().observation_error = false;
+    services.runner.state.borrow_mut().native_security = Some("foreign".into());
+    assert!(services.stop(revoked.epoch).is_err());
+    services.runner.state.borrow_mut().native_security = None;
+    services.runner.state.borrow_mut().native_xml = Some("foreign".into());
+    assert!(services.stop(revoked.epoch).is_err());
+    services.runner.state.borrow_mut().native_xml = None;
+    assert_eq!(
+        services.stop(revoked.epoch).unwrap().process,
+        ProcessState::Absent
+    );
+    assert!(!services
+        .runner
+        .state
+        .borrow()
+        .calls
+        .iter()
+        .any(|request| matches!(
+            request,
+            NativeRequest::Process { .. }
+                | NativeRequest::Task {
+                    action: TaskAction::Stop,
+                    ..
+                }
+        )));
 }
