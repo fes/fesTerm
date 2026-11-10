@@ -439,6 +439,12 @@ approval does not complete the separate client foreground trust/approved-context
 receipt/index and inventory/session-choice UI; that producer is ongoing work.
 Real cloud/native-vault/service and first-connect evidence remain separate gates.
 
+Pure shared-controller/cloud fixtures select explicit test-only per-adapter
+accounts and typed no-manager native contexts, not the Windows CI runner's
+process-token authority. Protected private-root policy, Services/runtime leases
+and production ordinary-user admission are unchanged. This corrects fixture
+isolation, not Windows endpoint qualification.
+
 ## Evidence
 
 The merged cloud/main/enrollment/channel tree at `a2da40e` passed the bounded

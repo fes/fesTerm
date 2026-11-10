@@ -651,8 +651,13 @@ directory identity. Three service regressions prove unpublished-receipt own
 absence with zero fake-manager calls and untouched foreign definitions, lease/
 epoch/instance refusal and corrupt/foreign/non-file/missing-lock receipt refusal.
 `host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup`
-and the acknowledged-uncertainty adoption case pass through actual controller
-disable/uninstall and Services, substituting only the cloud network/credentials.
+and the acknowledged-uncertainty adoption case execute actual controller
+disable/uninstall and Services logic with explicit fake network/credentials,
+per-adapter test accounts and typed fake native context. The unpublished-only
+runner panics on any manager request. Production account admission and private
+storage policy remain unchanged; ordinary Windows process-token admission is
+not a prerequisite for pure fixtures. Account drift/native denial, foreign
+state and cleanup-denial ordering regressions retain fail-closed boundaries.
 Successful direct `confirm_stopped` shortcuts are removed from those cloud and
 controller integration fixtures; active runtime ownership and missing-lock/history
 guards still block Disabled. These tests require the explicit combined controller

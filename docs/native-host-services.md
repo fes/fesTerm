@@ -297,6 +297,13 @@ locked credentials, failed/unobserved startup, stale epochs, late creation/start
 foreign definitions and exact-owned stop/cleanup. They never touch installed
 services, accounts, cloud resources or native vaults.
 
+Pure cloud/controller fixtures explicitly inject test-only account/native
+contexts; unpublished-registration fixtures panic on any manager request while
+retaining real Services leases, directory/receipt/epoch checks and runtime-lock
+refusals. They do not relax production ordinary-user authorization or qualify
+Windows token/Task Scheduler behavior. See the core9b failure analysis in
+[milestone progress](milestone-progress.md).
+
 The remediation source bundle is frozen before Rust validation, under the
 coordinator's exclusive shared-target queue. Added/updated Rust fixtures and
 Windows API types remain **unexecuted/unqualified** until that window and fresh
