@@ -1,5 +1,38 @@
 # Milestone Progress Narrative
 
+## Repairing inherited primary-Setup CI without changing admission
+
+The separate desktop-primary CI-repair child starts at frozen `fe62b372` and
+normally merges only published backend
+`a8113f6a15fe99f9604bb977635409e645f21723`. Its Unix-only replacement-helper
+cfg and redacted first-Ensure diagnostics remain test-only. The ordinary merge
+exposes one fixture cfg overlap: acquisition needs `verify_staging_fixture` on
+every platform, while native replacement alone consumes it only on Unix.
+The union keeps acquisition portable and restricts native-only replacement
+helpers to their actual Unix consumers, without importing an acquisition repair.
+
+The frozen-primary source review also found one directly caused feature-specific
+regression: its Desktop-origin fixture expected mocked Windows installation even
+without cloud/host-runtime support. The exact native-services-only selector
+reproduces exit 101 with `host.service_windows_authenticated_graceful_stop_unavailable`.
+The minimal fixture correction now asserts that exact refusal, no native calls,
+no registration and unchanged lifecycle for that configuration; full-feature
+coverage still installs through the existing guarded mock and verifies exact
+Desktop versus headless runner verbs. No production policy or assertion is
+weakened. An initial unqualified `--exact` selector ran zero tests; it is retained
+as a selector mistake, not qualification, followed by a one-name listing and the
+genuine failure.
+
+Qualification uses actual Rust 1.99.1, jobs1/debug0/incremental0 and the existing
+30%-start/15%-pause memory guard. A private copy-on-write warm target in this new
+worktree protects the frozen primary's original target/helper/test bytes and
+receipt. Only the exact small fixture under both feature configurations and
+affected setup/bridge compilation/strict checks are required; Desktop26 and the
+fourteen native routes are not rerun or relabeled. Current acquisition repair is
+not consumed until the parent provides a separately qualified immutable pin.
+Actual Windows runtime/native publisher, OS/vault/provider/GUI, install, signing,
+release, sharing and three-platform acceptance remain outside this increment.
+
 ## Primary desktop Setup acquires the authenticated current host bundle
 
 Scope: ADR 0084 §7's primary local Settings workflow, not sharing or a new
@@ -94,6 +127,56 @@ No ignored native fixture, full workspace, real GUI/network/provider/native vaul
 manager, VM, permissions, signing or release operation was run. Publication and
 the prerequisite CI repairs remain parent-owned; the private build slot is
 released after the stable handoff.
+## Recording redacted first-Ensure failure classifications
+
+Parent-retained PR #706 exact7fa Linux job `130101987441` again reports
+13 passed / one failed in 164.60s at the first Ensure assertion of
+`native_committed_creation_policy_contention_is_uncertain_not_disconnect`.
+Its raw SHA-256 is
+`58d89588434170cd2f6e9c53b401ad7c9aa495e02ced0e61478cead4bda4acf4`;
+the actual response was unprinted and remains **UNKNOWN**, not proven the same
+root cause as another fixture failure or fixed by the earlier local14 passes.
+
+A diagnostic-only child of exact20c exhaustively classifies the eight public
+response variants into static names and, only for Refused, copies the fieldless
+public `Refusal` code. The first-Ensure mismatch and deadline assertions print
+only that pair, never the response envelope, ticket, identifiers, session data,
+paths or secrets. No existing suitable classifier was found at this boundary;
+the match is local to these two messages, not a new protocol/helper framework.
+Both assertion predicates, test names/counts, ignores, deadlines, existing waits
+and all production code remain unchanged.
+
+Bounded actual macOS Rust/Cargo1.99.1 compiles the affected native fixture and
+strict-checks the test target with the private jobs1/debug0/incremental0 target.
+Exact-one listing is discovery only, **not an executed native pass**. Neither
+this case nor the native14 aggregate is rerun, and no new native/helper build
+provenance or Linux runtime result is claimed. New CI failure output, if any,
+must supply the concrete classification before a behavioral fix is inferred.
+
+## Matching replacement test helpers to their Unix-only consumers
+
+Required Windows CI for backend PR #707 at exact
+`d862fd5d212674cbca9397b14ed0e7aedd273555` failed strict workspace Clippy:
+job `130102020948`, run `42893952854`, reported four unused test helpers,
+not a native execution failure. The retained 158039-byte raw log has SHA-256
+`01260048c0819c1b30922c521fc136fd2ee04783022e8cd8d9709a1bd8bfa6f6`.
+Every caller of `version_fixture` and `authenticate_fixture_registered` is
+inside replacement's existing `#[cfg(all(test, unix))]` module. Their artifact
+helpers `host_version_fixture` and `verify_staging_fixture` have no other
+consumers. The correction aligns those four definitions and their artifact
+re-export with that existing Unix test boundary; it changes five cfg attributes,
+not tests, assertions, production admission or the required CI command.
+
+Bounded actual macOS Rust/Cargo 1.99.1 validation uses the private warm session
+target, jobs1, debug0 and incremental0. The native-services artifact/replacement
+selection passes **21 tests / zero failures / two existing ignores** (packager
+interoperability and explicit native daemon preservation). Strict all-target
+Clippy passes for native-services alone, all features and lifecycle alone.
+All changed items were already test-only: their bodies, every production item,
+manifests, feature defaults and CI remain unchanged. No helper rebuild, native14
+or full macOS suite rerun is attributed to this repair; the preserved native14
+result remains at exact28c below. Actual new-head Windows required CI remains
+necessary after publication. This does not qualify Windows services or PKI.
 
 ## Normally integrating the six gated backend source pins
 

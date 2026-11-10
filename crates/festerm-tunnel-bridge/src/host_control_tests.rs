@@ -1369,8 +1369,18 @@ pub(crate) mod native_routes {
             tokio::select! {
                 result = &mut request => {
                     let response = result.unwrap();
-                    assert!(matches!(response.body, Response::Refused { reason: Refusal::Busy | Refusal::Unknown | Refusal::OutcomeUncertain }), "{response:?}");
-                    assert!(Instant::now() < deadline, "{response:?}");
+                    let (variant, refusal_code) = match &response.body {
+                        Response::Capabilities { .. } => ("capabilities", None),
+                        Response::Inventory { .. } => ("inventory", None),
+                        Response::Lookup { .. } => ("lookup", None),
+                        Response::Ensured { .. } => ("ensured", None),
+                        Response::Attached { .. } => ("attached", None),
+                        Response::Detached { .. } => ("detached", None),
+                        Response::Ended { .. } => ("ended", None),
+                        Response::Refused { reason } => ("refused", Some(*reason)),
+                    };
+                    assert!(matches!(response.body, Response::Refused { reason: Refusal::Busy | Refusal::Unknown | Refusal::OutcomeUncertain }), "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
+                    assert!(Instant::now() < deadline, "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }
                 _ = backend.committed.notified() => {

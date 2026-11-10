@@ -408,6 +408,22 @@ fn native_service_desktop_runner_definition_is_origin_exact_without_headless_ado
         let snapshot = provision(&store);
         let manager = services(root.path(), &store, platform);
         let stage = trusted::fixture(root.path());
+        if platform == Platform::Windows
+            && !cfg!(all(feature = "cloud", feature = "host-runtime"))
+        {
+            assert_eq!(
+                manager
+                    .install(&stage, snapshot.epoch)
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                "host.service_windows_authenticated_graceful_stop_unavailable"
+            );
+            assert!(manager.registration().unwrap().1.is_none());
+            assert!(manager.runner.state.borrow().calls.is_empty());
+            assert_eq!(store.snapshot().unwrap(), snapshot);
+            continue;
+        }
         manager.install(&stage, snapshot.epoch).unwrap();
         let (_, record) = manager.registration().unwrap();
         let mut record = record.unwrap();

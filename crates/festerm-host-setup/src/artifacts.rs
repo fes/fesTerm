@@ -472,11 +472,14 @@ pub(crate) fn host_staging_fixture() -> VerifiedArtifact {
 
 #[cfg(all(test, feature = "acquisition"))]
 pub(crate) use tests::host_acquisition_fixture;
-#[cfg(all(test, feature = "native-services"))]
+#[cfg(all(test, feature = "native-services", unix))]
 pub(crate) use tests::host_version_fixture;
 #[cfg(all(test, feature = "native-services", unix))]
 pub(crate) use tests::host_version_fixture_with_sessiond;
-#[cfg(all(test, any(feature = "native-services", feature = "acquisition")))]
+#[cfg(all(
+    test,
+    any(feature = "acquisition", all(feature = "native-services", unix))
+))]
 pub(crate) use tests::verify_staging_fixture;
 
 #[cfg(test)]
@@ -677,7 +680,7 @@ mod tests {
         staging_fixture_for_package(Package::Host)
     }
 
-    #[cfg(feature = "native-services")]
+    #[cfg(all(feature = "native-services", unix))]
     pub(crate) fn host_version_fixture(version: &str) -> VerifiedArtifact {
         staging_version_fixture(Package::Host, version)
     }
@@ -690,7 +693,7 @@ mod tests {
         staging_version_fixture_with_sessiond(Package::Host, version, Some(sessiond))
     }
 
-    #[cfg(any(feature = "native-services", feature = "acquisition"))]
+    #[cfg(any(feature = "acquisition", all(feature = "native-services", unix)))]
     pub(crate) fn verify_staging_fixture(
         manifest: &[u8],
         signature: &[u8],
