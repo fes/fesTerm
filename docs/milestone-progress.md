@@ -9291,6 +9291,76 @@ Historical nine-of-nine evidence is not qualification of this new union.
 
 ### ADR 0084 authenticated stream composition source checkpoint
 
+The later actual-runtime lane normally integrates native policy `7e27edd5` at
+`9a6f24e8` and fixed session `28e0391a` at `64415e65`; no moving native branch
+or ancestry-only merge is consumed. ADR 0085 and the corrected shared-registry
+publication/adoption contracts are preserved. `HostRuntime` now privately pairs
+native control with the actual adopted terminal route before advertising current
+protected lifecycle capabilities and the backend-reserved issuer. Standalone
+control remains inventory-only; control Attach/Detach cannot acquire a frontend.
+Actual SSH creation retains its original issued operation, supports unchanged
+retry/resume, distinguishes creation-disabled resume from denied virgin execution,
+and observes authoritative absence before recreation after exact end.
+
+The owned signed-SSH/native tests additionally exercise adopted frontend snapshots,
+two-session input isolation, correlated persistent detach, stale generations,
+pending takeover without stalling the old writer and per-frame key/host/session
+revocation. Revoked remote input never reaches the recovery snapshot; persistent
+shells survive and accept ordinary unticketed local input afterward. Exact local
+end cleans only these owned revoked fixtures. One early failed fixture retained
+its root; its exact PID/generation/endpoint was stopped using `kill-unattached`,
+exit was positively observed, and its state was preserved under
+`.runtime-validation/retained-revoked-fixture-490b3ad7`.
+
+The real temporary case first passed in 126.29 seconds: 65 seconds active beyond
+the initial connected deadline, with 20-second renewals, then abrupt actual SSH
+stream closure, original-authority TransportLost and the real 60-second grace
+before daemon expiry. The next concurrent aggregate run retained 13 passes and
+one real native cancellation failure in `final-native-routes.log`: one-shot
+cleanup returned Busy, leaving its pending ticket until expiry. The fix retries
+only Busy within the existing 15-second deadline, reacquiring original current
+authority on every attempt with no lock during sleeps/network. Denied/stale/
+revoked cleanup never retries. The deterministic native pending-cancel fixture
+holds policy for 200 ms and passes with this fix; the actual SSH loss case now
+holds policy too and requires TransportLost after release, not abandonment.
+Failure logs and corrected runs remain separate; no refusal, assertion,
+production deadline or existing ignore was weakened.
+
+Fresh final corrected-union qualification (macOS, jobs 1, private
+`.runtime-target`, dev/test debug 0, incremental 0):
+
+```sh
+cargo build -p festerm-sessiond -p festerm-pty-test-child
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored
+cargo test --locked -p festerm-host-protocol --test contracts
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing --lib
+cargo test --locked -p festerm-host-setup --features host-runtime --lib protected_owner_
+cargo clippy --locked -p festerm-tunnel-bridge -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py
+git diff --check
+```
+
+The native command sets `FESTERM_HOST_TEST_HELPER` to the exact rebuilt
+`.runtime-target/debug/festerm-sessiond`. Results: bridge library **110 passed,
+14 explicitly ignored**, followed by **all 14 explicitly selected native routes
+passed** in 127.96 seconds, including the real policy-contention transport-loss
+case; protocol **13 passed**; protected-owner adapter **14 passed** (29 unrelated
+library tests filtered, not newly qualified). Portable check, strict affected
+all-target clippy, fmt, traceability (311 edges, zero broken references) and diff
+checks passed. Logs are retained separately as
+`.runtime-validation/final-corrected-*.log`. The vendored Dev Tunnels unused
+proxy warning remains; no dependency was edited to suppress it.
+Unix CI now selects `native_`, including the actual SSH and real deadline cases,
+instead of only the earlier duplex fixture modules. That workflow change has not
+itself run in remote CI. No native-vault ceremony, installed service, Dev Tunnels
+cloud, Windows/Linux guest, physical mobile suspension or exact-head independent
+consumer acceptance is claimed. Next product slice is explicit approved client
+context/imported-execution consent into real selected-host Ensure/Create and
+adopted frontend presentation over these unchanged runtime APIs, alongside the
+separately owned verified-helper/native setup/run composition.
+
 Recovery normally merged corrected session `8ebbaf29` into runtime at
 `ae1ef27a`. A fresh owned helper/fixture-child build and actual two-daemon SSH
 round trip passed. Fresh integrated checks: bridge library 108 passed/10

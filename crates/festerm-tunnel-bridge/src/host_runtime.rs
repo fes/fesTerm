@@ -167,7 +167,10 @@ impl<A: ProtectedPolicySource> HostRuntime<A> {
     pub fn new(sessions: SessionControl, policy: Arc<A>) -> Self {
         let sessions = Arc::new(sessions);
         Self {
-            control: Arc::new(NativeControl::new(sessions.clone(), policy.clone())),
+            control: Arc::new(NativeControl::with_terminal_routes(
+                sessions.clone(),
+                policy.clone(),
+            )),
             terminal: Arc::new(NativeTerminal::new(sessions, policy.clone())),
             policy,
             budgets: Budgets::default(),

@@ -753,18 +753,29 @@ feature implements the runtime policy traits directly: each admission reacquires
 the explicitly selected credential store and returns an owned enrollment lease,
 not cached authority. The app wrapper delegates; its default remains native vault
 with no file-store fallback. Owned native fixtures cover
-control routing/retry without frontend leases. No listener uses these modules.
+control routing/retry without frontend leases. No installed listener uses these modules.
 The unexposed `host_terminal` module pairs bounded binary terminal framing with
-an immutable client handle and a fixture-only actual native attachment actor. Recovery
+an immutable client handle and an opt-in actual native attachment actor. Recovery
 adoption and observed native writer admission precede Attached; exact temporary
 leases distinguish intentional detach from transport loss. FIFO output turns
 are released before network I/O; current authorization can cancel slow output.
 The native actor retains original opaque generation/attachment authority, and
 freshly checks an intentional-detach receipt before publishing stopped success;
 no client lease fields can mint replacement authority.
-Actual consuming same-channel authentication integration, backend hotpath/history
-qualification and fair control-under-load remain gates; legacy exact-generation relay
-and independent grants are unchanged.
+`HostRuntime` consumes proof on each actual signed SSH stream and pairs these
+control/terminal adapters over the same protected backend. Only that paired
+constructor advertises current lifecycle capabilities and the backend-reserved
+issuer; standalone control stays inventory-only. No claimed issuer or cached
+permission can replace protected current admission. Every frame/action and output
+publication revalidates the opaque attachment against fresh protected state.
+Key/host/session revocation closes the remote and native attachment, not the
+persistent daemon. A 20-second heartbeat renews the daemon's 60-second connected
+temporary deadline; unexpected closure uses original-authority TransportLost,
+leaving grace/expiry daemon-owned. Persistent unticketed local attachment remains
+available; temporary attachment always requires its actual ticket.
+Independent exact-head consumer review, native-vault/first-connect/service
+qualification and fair control-under-load remain gates; legacy exact-generation
+relay and independent grants are unchanged.
 
 The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small
 `festerm-host-protocol` serde/UUID crate for shared HOST identities, bounded

@@ -38,8 +38,8 @@ foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
 messages, opt-in owner-key authentication primitives and an unexposed bounded
 dispatcher/paired framed-client core. Stage 2 adds a local
 durable session-control backend with real detached daemons and daemon-enforced
-temporary leases. No HOST endpoint or remote creation is exposed; independent
-review, enrollment/channel integration and later implementation/native
+temporary leases. No installed HOST endpoint or product remote-creation control is enabled; independent
+review, native enrollment/channel qualification and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
@@ -50,10 +50,12 @@ stream; independent review, endpoint integration and native acceptance remain op
 An opt-in `host_runtime` now supplies the actual SSH-stream owner handshake and
 control/terminal dispatcher composition. Four focused native TCP SSH tests pass
 for encrypted request routing, stream-bound proof rejection and bounds.
-The qualified session correction is integrated, and ten owned native bridge
-routes pass, including actual two-daemon SSH input isolation and persistent
-detach. Protected enrollment composition and independent consumer qualification
-remain pending. No installed endpoint or Ready state is enabled.
+The qualified session correction and protected lease-backed policy adapter are
+integrated. Owned native routes include actual two-daemon SSH input isolation
+and persistent detach. The paired runtime supports protected Ensure/Create/end
+with the original backend-issued operation; standalone control stays inventory-only.
+Independent consumer/native qualification remains pending.
+No installed endpoint or Ready state is enabled.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition

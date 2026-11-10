@@ -571,8 +571,20 @@ correlated persistent detach. The concurrent first run retained nine passes and
 one inventory-contention failure; a bounded same-operation read-only Busy retry
 then passed all ten, without changing production contention behavior. This is
 local automated runtime evidence, not installed/native or whole-ADR acceptance.
-Temporary heartbeat/transport-loss and live policy revocation still require
-their own actual runtime evidence.
+Fixed native policy head `7e27edd5` and session correction `28e0391a` are also
+normally integrated. Additional actual signed-SSH/native cases pass individually:
+`native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority`,
+`native_authenticated_runtime_live_policy_fences_actions_without_stopping_shells`,
+`native_authenticated_runtime_takeover_waits_for_adoption_and_fences_old_generation`
+and `native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned`.
+The temporary case uses real time (126.29 seconds): an active terminal outlives
+the initial 60-second deadline through 20-second native heartbeats; abrupt
+stream closure retains the original lease/writer authority, records TransportLost
+and preserves the real 60-second grace before independent daemon expiry. Key,
+host and session revocation reject actual live input, close remote/native
+attachment and preserve a persistent shell that still accepts local unticketed
+input. These constrained vault/policy fixtures do not qualify native credential
+storage, installed services, physical mobile suspension or cross-platform lifecycle.
 
 The native/headless management follow-up adds actual functions
 `headless_disable_fences_unbound_intent_without_touching_native_services`,
@@ -616,15 +628,19 @@ The source adds `authenticated_runtime_routes_actual_ssh_control_and_rechecks_re
 and `authenticated_runtime_bounds_proof_frames_and_client_admission`.
 The opt-in
 `native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input`
-adds actual owned-daemon input/isolation, inventory and persistent detach over
-native TCP SSH, without widening the inventory-only remote control capability.
-The four focused tests passed on macOS; the owned-daemon case remains unrun
-pending the qualified session correction. They use
-real native TCP encrypted signed SSH channels and local inventory, not native-vault/service
-acceptance or an end-to-end multi-session shell claim. Native capabilities remain
-inventory-only; creation is not widened. Protected enrollment composition,
-qualified session correction, actual daemon round trips and independent gates
-remain prerequisites before native exposure. No installed endpoint is enabled.
+adds actual owned-daemon input/isolation, frontend snapshot adoption, inventory
+and persistent detach over native TCP SSH and passes after normal corrected-session
+integration. The paired runtime now supplies adopted terminal routes and advertises
+current protected Ensure/Create/end/temporary capabilities with the actual
+backend-reserved issuer. Original issued operations survive retry; bare IDs
+cannot create, denied virgin execution never becomes absence, and end remains
+OutcomeUncertain until observed native absence. Standalone control stays
+inventory-only; Attach/Detach use independently proven terminal channels.
+The four focused tests and additional real-daemon lifecycle/current-policy cases
+use actual native TCP encrypted signed SSH, not native-vault/service acceptance.
+The fixed protected adapter is integrated; exact-head independent consumer review,
+first-connect approval, verified-helper production composition and native
+qualification remain prerequisites. No installed endpoint is enabled.
 
 **Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
 protected lifecycle journal; the separate GUI-free `festerm-host` supports
@@ -958,10 +974,11 @@ candidate-adoption fix: the old writer progresses while a bounded candidate
 waits, then post-snapshot deltas reach the adopted replacement. The assertion
 and deadlines are unchanged. This is not endpoint acceptance: the backend
 hotpath/issuance-history replacement and consuming owner-channel integration
-remain pending. Cross-platform/native service and physical-device gates remain
-separate; the terminal server/scheduler are still fixture-only.
-That prior result does not qualify the current main/enrollment/opaque-authority
-union: its native-nine/clippy rerun and cross-family antagonist remain pending.
+were subsequently integrated and qualified locally through the actual owner-channel
+runtime. Cross-platform/native service and physical-device gates remain separate;
+the terminal server/scheduler are opt-in, not installed.
+That prior result did not itself qualify the current union; fresh combined checks
+are recorded separately, and independent exact-head consumer review remains open.
 
 The paired control API binds each issued creation operation to its original
 account/endpoint/host and negotiated namespace, including reconnect and local

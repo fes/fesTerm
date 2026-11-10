@@ -10,7 +10,7 @@ Independent antagonist/security review is required before exposure.
 
 ## Dependency and API boundary
 
-### Authenticated runtime composition (source checkpoint)
+### Authenticated runtime composition (uninstalled integration)
 
 The bridge's opt-in `host_runtime` module provides these concrete APIs:
 
@@ -31,7 +31,11 @@ The bridge's opt-in `host_runtime` module provides these concrete APIs:
   `Arc<HostRuntime>::serve(&mut HostConnection, CancellationToken)` consumes the
   existing relay listener; `serve_stream(HostStream, CancellationToken)` handles
   one actual SSH stream. Raw sockets, verified-owner arguments and asserted
-  principals are intentionally absent. Control remains inventory-only.
+  principals are intentionally absent. This paired composition advertises only
+  current protected capabilities and the backend's current issuance namespace:
+  Ensure/Create/ExplicitEnd execute on control; Attach/Detach execute only on
+  independently authenticated terminal streams. Standalone `NativeControl::new`
+  remains inventory-only, so a control-only consumer cannot imply terminal support.
 
 The whole proof exchange and role admission have bounded deadlines; blocking
 protected-policy/vault work retains its aggregate client permit even if its
@@ -50,10 +54,27 @@ exact input, live control inventory remains available, and correlated detach
 preserves both persistent daemons. Under concurrent native routes the read-only
 inventory may return correlated Busy; its bounded fixture retry retains the
 operation and requires eventual exact attached inventory, not a weakened refusal.
-Constrained test policy/vault state is not production enrollment, native vault,
-Dev Tunnels service/rekey qualification or installed readiness. Consume the
-protected enrollment adapter before
-native end-to-end exposure; installation/CLI activation remains separate.
+Additional actual signed-SSH/owned-daemon cases exercise original-issued
+Create retries, Ensure, exact end and authoritative absence before recreation;
+stale generation and adoption-gated takeover; key, host and session revocation
+on live input while persistent local attachment remains usable; and real
+temporary heartbeat/transport-loss deadlines. The native actor checks fresh
+protected attachment authority on every frame/action and before output/replies,
+not only at authentication or its periodic liveness check. Its 20-second
+heartbeat renews the daemon-owned 60-second connected deadline; unexpected
+closure records TransportLost under the original authority, never intentional
+detach success. The daemon owns the subsequent 60-second grace/expiry. Transient cleanup Busy
+retries only within the existing 15-second deadline, always reacquiring current
+policy and original authority; denial, stale authority or revocation never retry.
+Pending cancellation and lost-transport fixtures deliberately hold policy for
+200 ms to prove cleanup survives contention rather than abandoning its ticket.
+
+The fixed setup adapter (`7e27edd5`) and session correction (`28e0391a`) are
+normally integrated. Production `CurrentOwnerPolicySource` retains the actual
+selected-store enrollment lease and verifier. Constrained runtime test
+policy/vault state is not native-vault, Dev Tunnels service/rekey or installed
+qualification; first-connect approval, verified helper provenance and exact-head
+independent review remain prerequisites. Installation/CLI activation is separate.
 
 `festerm-host-protocol` contains transport-independent serde/UUID contracts.
 It has no sessiond, PTY, GUI, native-store, cloud or async dependency. A separate
@@ -873,7 +894,7 @@ Five explicitly invoked Unix owned-daemon duplex fixtures prove actual
 ensure/create replies and lost-reply retry without duplicate native generations,
 nonattaching inventory, denied virgin creation without false absence, exact
 generation end, and independent control while a committed reply is withheld.
-They also prove production inventory-only enforcement and current-policy
+They also prove standalone inventory-only enforcement and current-policy
 contention after an actual native commit without losing the connection or
 duplicating the shell. Native effects use a **cfg(test)-only** backend capability
 override, not a bypass in production framing or authorization.
@@ -881,13 +902,16 @@ CI builds the repository helper/fixture child and runs these fixtures explicitly
 on Linux/macOS; they use a newly created project-local private root and verify
 owned daemons stop before removing it. They do not use installed/user sessions.
 
-**Partial adapter boundary:** native capabilities advertise and enforce inventory
-only. Ensure/Create/Attach/Detach/ExplicitEnd return correlated Unsupported
-rather than executing an unadvertised operation or claiming an adopted frontend or
-lease exists. Ensure/Create handlers are exercised through the low-level framed
-core with real protected authorization, but are not advertised while the
-terminal attachment path remains incomplete. The legacy exact-generation bridge
-continues unchanged; it is not silently selected as a HOST default session.
+**Composition boundary:** standalone `NativeControl::new` advertises/enforces
+inventory only. `HostRuntime::new` additionally supplies the real adopted terminal
+route, so its private control construction advertises current protected lifecycle
+capabilities plus the issuer captured inside the native reservation. An issued
+operation remains bound to its original account/endpoint/host/namespace on retries;
+no client-provided epoch can advance current authority. Bare IDs cannot create.
+Attach/Detach on control still return Unsupported; only their exact authenticated
+terminal stream may acquire or release a frontend lease. ExplicitEnd returns
+OutcomeUncertain until Lookup proves actual absence. None of these operations
+installs/enables a listener. The legacy exact-generation bridge remains unchanged.
 
 #### Unexposed paired terminal transport
 
@@ -907,7 +931,7 @@ The portable `TerminalHandle` uses eight command/four event slots, immutable
 account/endpoint/host/generation bindings, and no reconnect or input replay.
 Detach returns an operation ID only; its validated reply establishes success.
 
-The fixture-only native adapter admits a bounded blocking actor before allocating its
+The opt-in native adapter admits a bounded blocking actor before allocating its
 one-slot work queue. Every action obtains fresh protected authorization under
 the actual backend guard. Notification-driven output uses bounded FIFO turns
 released before network I/O; independent authorization supervision can retire
@@ -921,13 +945,12 @@ freshly reauthorizes that receipt immediately before replying, even after a
 temporary stop. That receipt never authorizes terminal input or renewal.
 Stale takeover cleanup cannot renew or stop the replacement.
 
-The native server/scheduler are compiled only in tests, not exported as a
-production stream-plus-proof API. The portable client is framing, not authority.
-This is low-level, unexposed composition, not authenticated endpoint readiness.
-The consuming actual pinned-channel owner-proof adapter, independently reviewed
-backend hotpath/history fixes, cross-platform native qualification and fair
-control-under-load evidence remain integration gates. Control capabilities
-remain inventory-only; no listener, automatic fallback, file/observation/MCP
+The native server/scheduler are consumed by `HostRuntime` only after proof on
+the exact pinned channel. The portable client is framing, not authority.
+This is opt-in, uninstalled composition, not authenticated endpoint readiness.
+Independent exact-head consumer review, cross-platform native qualification and
+fair control-under-load evidence remain gates. No listener installation,
+automatic fallback, file/observation/MCP
 grant, setup authority or remote sharing/enrollment operation is added.
 
 At the prior `1a66a935` milestone, all nine explicitly invoked owned native

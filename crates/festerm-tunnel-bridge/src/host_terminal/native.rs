@@ -641,7 +641,19 @@ async fn serve_inner<S: AsyncRead + AsyncWrite + Unpin, A: ProtectedPolicySource
                 Err(flume::RecvTimeoutError::Disconnected) => break,
             }
         }
-        if let Err(error) = worker.cleanup() {
+        let cleanup_deadline = Instant::now() + DEADLINE;
+        let cleanup = loop {
+            match worker.cleanup() {
+                Err(ControlError::Busy) if Instant::now() < cleanup_deadline => {
+                    std::thread::sleep(
+                        Duration::from_millis(10)
+                            .min(cleanup_deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                result => break result,
+            }
+        };
+        if let Err(error) = cleanup {
             // Content-free diagnostic: denial/stale cleanup cannot extend a
             // newer lease. The actual daemon retains its independent expiry.
             eprintln!("host terminal cleanup incomplete: {error}");

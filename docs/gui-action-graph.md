@@ -1644,7 +1644,12 @@ recovery adoption/writer activation; abandoned candidates are not Attached.
 These remain local automated evidence, not endpoint or native-platform acceptance.
 The runtime/session union also passes the actual two-daemon signed-SSH
 input-isolation, independent attached inventory and persistent-detach route;
-temporary heartbeat and current-policy revocation consumer evidence remain open.
+additional actual signed-SSH cases pass for original-issued creation/end,
+creation-disabled resume versus denied virgin execution, adoption-gated takeover,
+and per-frame key/host/session revocation preserving persistent/local shells.
+A real 65-second active temporary terminal and subsequent 60-second transport-loss
+grace prove the bridge's 20-second heartbeat and daemon-owned expiry. This does
+not qualify physical mobile suspension, native credentials or installed services.
 
 The component's macOS admission pins the release Developer ID team/runtime;
 Windows promotion refuses pending authoritative publisher policy.

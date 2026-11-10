@@ -3423,19 +3423,26 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 The opt-in authenticated runtime source checkpoint adds an actual signed SSH
 stream handshake and control/terminal dispatch, with four passing native TCP SSH
 tests for inventory/terminal negotiation, revocation, replay and frame/client
-bounds. The authored owned-daemon case is still unrun. They use constrained test
+bounds. The owned-daemon cases now run explicitly on Unix CI, including actual
+signed-SSH lifecycle and real temporary deadlines. They use constrained test
 policy/vault state and do not qualify protected production enrollment or an
-actual multi-session shell host. HOSTAUTH-01, DT-07/DT-08, CP-11 and mobile gates
-remain manual/native or deferred behind the qualified final session correction,
-protected enrollment adapter and consuming native endpoint. No service is
+installed multi-session shell host. HOSTAUTH-01, DT-07/DT-08, CP-11 and mobile gates
+remain manual/native or deferred behind installed endpoint/approval qualification.
+Fixed session and protected policy adapters are integrated. No service is
 installed or Ready state asserted; legacy qualification is unchanged.
 
 [ADR 0084](adr/0084-host-based-dev-tunnels.md) remains Proposed.
-The corrected runtime/session union has fresh owned macOS evidence for ten native
+The corrected runtime/session/native-policy union has fresh owned macOS evidence for fourteen native
 bridge routes, including two real signed SSH terminal channels with isolated
 input, independent inventory and correlated persistent detach. Constrained
 fixture policy is not native-vault consent, installation or platform acceptance;
-temporary active/grace and live policy changes require actual runtime evidence.
+additional actual SSH cases pass for issued creation/end, stale-generation
+takeover and key/host/session revocation without persistent-shell termination.
+The temporary case runs for 126.29 seconds with real heartbeat and transport-loss
+grace deadlines; it is not simulated-clock or physical mobile suspension evidence.
+The fixed lease-backed setup policy adapter and Windows session source correction
+are integrated, but cross-platform/installed/native-vault and exact-head independent
+consumer review remain required.
 [HOST contract primitives](host-protocol.md) have automated codec, canonical
 signature, default-deny owner/session admission, revocation/replay, privacy/
 pagination and budget evidence. This is not a native host endpoint, installation,
