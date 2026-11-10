@@ -1999,9 +1999,10 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
     async fn host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create() {
-        let (_root, store, secrets) = fixture();
+        let (root, store, secrets) = fixture();
         let adapter = CloudHostAdapter::new(&store);
         let initial = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
@@ -2040,17 +2041,89 @@ mod tests {
         assert_eq!(network.state.borrow().creates, 1);
         assert_eq!(network.state.borrow().sign_ins, 1);
         assert!(store.request_cleanup().is_err());
-        let exact = snapshot.binding.unwrap();
-        store.confirm_stopped(snapshot.epoch, &exact).unwrap();
+        let state = root.path().join("host");
+        let disabled = crate::controller::disable(&store, &state).unwrap();
+        assert_eq!(disabled.lifecycle.phase, Phase::Disabled);
+        assert_eq!(
+            disabled.native_process.unwrap().process,
+            crate::services::ProcessState::Absent
+        );
         store.request_cleanup().unwrap();
         assert_eq!(
-            adapter
-                .cleanup_with(&cancel, &network, &secrets)
-                .await
-                .unwrap(),
-            Cleanup::GenerationConditionalDeleteUnavailable
+            crate::controller::uninstall_with(
+                &store,
+                &state,
+                &cancel,
+                adapter.cleanup_with(&cancel, &network, &secrets),
+            )
+            .await
+            .unwrap(),
+            crate::controller::UninstallResult::NativeRemovedCloudCleanupPending
         );
         assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
+        assert!(!state.join("native-service.json").exists());
+        assert_eq!(network.state.borrow().creates, 1);
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup() {
+        for cancel_after_publish in [false, true] {
+            let (root, store, secrets) = fixture();
+            let state = root.path().join("host");
+            let adapter = CloudHostAdapter::new(&store);
+            let initial = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&initial, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            network.state.borrow_mut().cancel_create = cancel_after_publish;
+            let provisioned = adapter
+                .provision_with(&initial, &cancel, &network, &secrets)
+                .await;
+            assert_eq!(provisioned.is_err(), cancel_after_publish);
+            let receipt = adapter.load().unwrap().receipt.unwrap();
+            assert!(!state.join("native-service.json").exists());
+            let disabled = crate::controller::disable(&store, &state).unwrap();
+            assert_eq!(disabled.lifecycle.phase, Phase::Disabled);
+            assert_eq!(
+                disabled.native_process.unwrap().process,
+                crate::services::ProcessState::Absent
+            );
+            store.request_cleanup().unwrap();
+            let cleanup_cancel = CancellationToken::new();
+            assert_eq!(
+                crate::controller::uninstall_with(
+                    &store,
+                    &state,
+                    &cleanup_cancel,
+                    adapter.cleanup_with(&cleanup_cancel, &network, &secrets),
+                )
+                .await
+                .unwrap(),
+                crate::controller::UninstallResult::NativeRemovedCloudCleanupPending
+            );
+            assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
+            assert_eq!(adapter.load().unwrap().receipt.as_ref(), Some(&receipt));
+            network.state.borrow_mut().created = None;
+            assert_eq!(
+                crate::controller::uninstall_with(
+                    &store,
+                    &state,
+                    &cleanup_cancel,
+                    adapter.cleanup_with(&cleanup_cancel, &network, &secrets),
+                )
+                .await
+                .unwrap(),
+                crate::controller::UninstallResult::Removed
+            );
+            assert_eq!(store.snapshot().unwrap().phase, Phase::Removed);
+            assert_eq!(network.state.borrow().creates, 1);
+            assert_eq!(network.state.borrow().sign_ins, 1);
+            assert!(!state.join("native-service.json").exists());
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -2280,9 +2353,10 @@ mod tests {
         assert_eq!(network.state.borrow().creates, 1);
     }
 
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
     async fn host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker() {
-        let (_root, store, secrets) = fixture();
+        let (root, store, secrets) = fixture();
         let adapter = CloudHostAdapter::new(&store);
         let foreground = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
@@ -2324,10 +2398,7 @@ mod tests {
             .await
             .is_err());
         network.state.borrow_mut().confirm_error = None;
-        store.revoke().unwrap();
-        let snapshot = store.snapshot().unwrap();
-        let exact = snapshot.binding.unwrap();
-        store.confirm_stopped(snapshot.epoch, &exact).unwrap();
+        crate::controller::disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
         assert_eq!(
             adapter
@@ -2408,9 +2479,10 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
     async fn host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity() {
-        let (_root, store, secrets) = fixture();
+        let (root, store, secrets) = fixture();
         let adapter = CloudHostAdapter::new(&store);
         let foreground = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
@@ -2462,9 +2534,7 @@ mod tests {
             .await
             .unwrap();
         let original = store.snapshot().unwrap().binding.unwrap();
-        store.revoke().unwrap();
-        let snapshot = store.snapshot().unwrap();
-        store.confirm_stopped(snapshot.epoch, &original).unwrap();
+        crate::controller::disable(&store, &root.path().join("host")).unwrap();
         let next = super::tests::foreground(&adapter);
         assert!(adapter
             .sign_in_with(&foreground, &cancel, |_| panic!(), &network, &secrets)
@@ -2656,10 +2726,11 @@ mod tests {
         );
     }
 
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
     async fn host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup() {
         for reconcile in [false, true] {
-            let (_root, store, secrets) = fixture();
+            let (root, store, secrets) = fixture();
             let adapter = CloudHostAdapter::new(&store);
             let initial = foreground(&adapter);
             let network = FixtureNetwork::new(&store);
@@ -2674,10 +2745,7 @@ mod tests {
                 .unwrap();
             let binding = store.snapshot().unwrap().binding.unwrap();
             let receipt = adapter.load().unwrap().receipt;
-            store.revoke().unwrap();
-            store
-                .confirm_stopped(store.snapshot().unwrap().epoch, &binding)
-                .unwrap();
+            crate::controller::disable(&store, &root.path().join("host")).unwrap();
             network.state.borrow_mut().created = None;
             let next = foreground(&adapter);
             let phase = if reconcile {
@@ -2703,7 +2771,7 @@ mod tests {
             let mut wrong = binding.clone();
             wrong.host_key_fingerprint = format!("{}x", wrong.host_key_fingerprint);
             assert!(store.confirm_stopped(stopped.epoch, &wrong).is_err());
-            store.confirm_stopped(stopped.epoch, &binding).unwrap();
+            crate::controller::disable(&store, &root.path().join("host")).unwrap();
             store.request_cleanup().unwrap();
             assert_eq!(
                 adapter
@@ -2833,9 +2901,10 @@ mod tests {
         assert!(adapter.acknowledge_uncertain_submission(&recovery).is_err());
     }
 
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
     async fn host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states() {
-        let (_root, store, secrets) = fixture();
+        let (root, store, secrets) = fixture();
         let adapter = CloudHostAdapter::new(&store);
         let initial = foreground(&adapter);
         let network = FixtureNetwork::new(&store);
@@ -2873,10 +2942,7 @@ mod tests {
             .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
             .is_err());
         assert!(store.request_cleanup().is_err());
-        let snapshot = store.snapshot().unwrap();
-        store
-            .confirm_stopped(snapshot.epoch, snapshot.binding.as_ref().unwrap())
-            .unwrap();
+        crate::controller::disable(&store, &root.path().join("host")).unwrap();
         assert!(adapter.acknowledge_uncertain_submission(&recovery).is_err());
         assert!(adapter.load().unwrap().receipt.is_some());
     }

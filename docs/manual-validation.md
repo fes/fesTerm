@@ -3579,6 +3579,13 @@ passed 245 tests with 7 existing ignored, including all 26 host-control and
 6 real SSH cases. Original CI failures are preserved; fresh exact-head primary
 CI remains required. Separately assigned Windows legacy fixture failures are
 not corrected or qualified by this session-only change.
+Fresh Windows primary job `129938153330` at `181eb572` then retained 62 daemon
+binary passes and two private-registry fixture failures at ancestor validation.
+Those two fixtures now select their root through the existing private-storage
+policy-checked helper, with handle-safe fixture lifetime; production checkout
+refusal/DACL checks and all publication-lock/rebase assertions remain unchanged.
+Local macOS registry/storage selectors passed 6/3 respectively. This is a fixture
+correction, not Windows acceptance; fresh exact-head Windows CI remains required.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
@@ -3637,6 +3644,27 @@ and cancelled/history-only uninstall without native/cloud calls. They do not
 qualify real manager termination, signed update or generation-atomic deletion;
 `HOSTSETUP-01` still requires real ordinary-user host stop and independent
 persistent-daemon survival with the combined signed runnable head.
+The unpublished-native-receipt correction now passes real Services/controller
+removal after cloud publication (including cancellation) and acknowledged
+uncertainty adoption, without a successful direct lifecycle-stop shortcut.
+Absence is scoped only to this installation's never-published native registration
+under the Services lease and fresh phase/epoch/full-snapshot/directory fences;
+status remains no-observation. Typed fake-manager regressions assert zero manager
+calls, preserve a foreign running definition and refuse corrupt/foreign receipts,
+non-file evidence, missing locks and stale/contended ownership. Actual Services
+absence still cannot bypass an active runtime lease or missing runtime lock with
+existing run history. Present cloud generations retain CleanupPending; only
+authenticated absence may complete Removed. No real manager, native vault or
+cloud operation was performed, so HOSTSETUP-01 remains open.
+The coupled CI build correction has fresh pinned Rust/Cargo 1.99.1 and Clippy
+0.1.99 host/no-host checks, portable snapshot tests and strict
+`aarch64-apple-ios` bridge compilation. The host JSON helper is absent without
+host-routing; shared snapshot codecs remain compiled/tested. This is iOS
+device-target compilation, not a simulator run, GUI launch or mobile acceptance.
+The normally integrated Task Scheduler API regressions are Windows x64
+cross-compiled only, with zero Windows test executions; the registry fixture
+correction has fresh macOS tests, not fresh Windows execution. Required primary
+and iOS CI results remain independent gates.
 Before the subsequent review corrections, the compiled checkpoint passed 9 runtime
 controller cases plus the production
 foreground identity-initialization regression; affected host/setup packages
@@ -3687,6 +3715,16 @@ unrelated external helper/namespace and did **not** prove old-cache preservation
 Synthetic 0.15.0 metadata around a current binary, test signatures/qualifier and
 a fake Linux manager are not genuine older-release compatibility, publisher
 qualification or positive native manager switching.
+The integrated no-registration correction does not bypass update recovery.
+Missing active receipts with either interrupted reload state still reconcile
+both journal-owned targets at the current revoked epoch; stale epochs refuse.
+Cleanup cannot finalize Aborted without a retained active receipt, even after
+retiring both definitions. Corrupt or foreign crash journals refuse stop/cleanup
+before manager effects and remain byte-identical. These are deterministic
+transaction/typed-manager fixtures, not additional native-manager acceptance.
+The additional settled-history regression first reproduced false absence after
+a committed update's receipt was lost; stop and cleanup now refuse that uncertain
+ownership without effects or changed journal/definition/lifecycle.
 HOSTSETUP-01 remains partial/native; Windows policy and Linux current-logon
 eligibility decisions are specified in native-host-services, not accepted or
 bypassed. Client first-connect/mobile/GPU/live cloud evidence is unchanged.
@@ -3712,6 +3750,14 @@ blocked pending authoritative publisher identity and revocation policy.
 Windows registration/start and running-task stop additionally require
 authenticated graceful stop and daemon-independence qualification; generic
 signature validity or Task Scheduler termination is not acceptance evidence.
+
+The November 10 Task Scheduler XML binding correction is cross-compilation
+evidence only: `x86_64-pc-windows-msvc` library/test checking and strict Clippy
+include three new output-parameter/error/UTF-16-and-UTF-8-bound regressions.
+Those Windows tests were not executed on macOS. Actual COM XML normalization,
+HRESULT/output ownership and native manager behavior still require Windows
+execution; neither ARM compilation nor signed/native service acceptance is
+inferred from the x64 check.
 
 Cloud recovery fixtures also cover offline/cancel followed by explicit
 ticket/account/current-epoch acknowledgement retaining the uncertain reservation,

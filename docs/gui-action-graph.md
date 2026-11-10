@@ -1630,6 +1630,18 @@ Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
 | `HOST-05` | Headless package → configured service | Configure/status/acquisition/staging/native qualification; explicit setup → public owner context → host-local approve-owner → run/run-status; disable/cleanup-local/uninstall/recover-cleanup; authenticated stopped update/update-status | Disabled configuration, zero-shell access-off setup; independent default-No creation/end/temporary, temporary never creates; exact signed bundle/helper and fresh vault policy; update strictly newer current release + explicit signed from-version, existing identity/binding, stopped host/runtime, protected old/new native reservation; no cached authority or Ready claim; Linux UserSignIn awaits current-logon fence | Revoke before exact native stop/runtime-lease release; update Prepared/Applying retains unknown old/new state, same-intent retry only, no automatic enable/rollback/repair or daemon kill; partial-update cleanup reconciles both resources; cloud CleanupPending/deletion remains separate | P,H,N; controller/update cores use typed fake native/network/credentials and synthetic signed archives; coupled real daemon launches authenticated old cached entry in installation namespace, preserving PID/generation/endpoint, frontend/control and helper path/bytes; helper deletion/replacement and daemon-end negative controls; current-source binary tagged old is not genuine older-release/publisher/native switching acceptance; separate client trust/index/chooser, first bootstrap, platform and cloud-deletion gates remain |
 | `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: manifest/verifier/private executable-publication component; H,N: native acceptance/switching/migration deferred |
 
+HOST-05 additionally permits never-published receipt absence only under the
+exclusive Services lease and current phase/epoch/full-snapshot/directory fences;
+status remains no-observation. Real controller/Services removal tests use real
+private lifecycle and fake cloud, including zero-manager-call absence and
+untouched foreign definitions. Pending update old/new journals are reconciled
+before missing-receipt handling: stale epochs and corrupt/foreign crash journals
+refuse; lost active receipts cannot manufacture Aborted cleanup. Foreground
+runtime lease/history guards and independent cloud cleanup remain mandatory.
+Settled update history also forbids treating a lost receipt as never-registered
+absence; the regression reproduces and fences that uncertain-ownership case.
+This does not qualify signed endpoints, native managers, vaults or cloud deletion.
+
 HOST-06 currently has the independently testable
 [helper authenticity boundary](host-release-artifacts.md) and separate
 [private executable-publication component](native-host-services.md):

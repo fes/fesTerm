@@ -17,6 +17,21 @@ the installation to a Ready-shaped state. Repeating a StopRequested disable
 reuses its epoch. `cleanup-local` requires an existing CleanupPending journal
 and never commits Removed or deletes cloud/identity/grant/daemon state.
 
+For a bound installation whose native registration receipt was never published,
+`stop` in StopRequested and `cleanup` in CleanupPending may report **owned
+resource absence**, not an observation of arbitrary native-manager resources.
+They retain the exclusive Services lease, recheck the full current lifecycle
+snapshot/epoch and exact state-directory identity, and reread the missing receipt
+under the short lifecycle lock. Registration publishes its retained receipt
+before native effects; removal retains a tombstone. No receipt is fabricated,
+foreign definition probed/removed or manager command run for this path.
+Corrupt, foreign, unreadable or uncertain receipts and lease contention still
+refuse. `service-status` deliberately keeps its missing-receipt no-observation
+error. The controller still revokes first and requires released foreground
+runtime ownership (missing runtime lock plus existing history refuses) before
+Disabled; cloud cleanup remains independent and never uses an unqualified DELETE.
+Pending replacement journals take precedence over this absence path.
+
 `recover-cleanup` performs authenticated read-only adoption of an acknowledged
 uncertain cloud submission without an enable ticket or another create. Present
 exact-resource evidence is pinned before the lifecycle moves to StopRequested.
@@ -188,13 +203,24 @@ consent/revocation lease to advance during an outstanding native effect.
 | `install(&TrustedStage, epoch)` | Provisioned, exact current epoch | Publish/register the approved definition; do not start a process; Windows refuses until authenticated graceful stop exists |
 | `status()` | Existing exact-owned receipt | Query native manager state; missing receipt is an explicit no-observation error |
 | `start(&TrustedStage, epoch)` | Provisioned, exact current epoch | Require current protected enrollment/vault policy, revalidate executable, explicitly start and boundedly reconcile Running/Transitioning; Windows refuses |
-| `stop(epoch)` | StopRequested, exact current epoch | Stop only the exact owned resource and require stopped/failed/absent observation |
-| `cleanup(epoch)` | CleanupPending, exact current epoch | Remove only the exact owned native registration/definition and require observed absence |
+| `stop(epoch)` | StopRequested, exact current epoch | Reconcile pending replacement first; otherwise stop only the exact owned resource and require stopped/failed/absent observation, or fenced own absence when no registration receipt was published |
+| `cleanup(epoch)` | CleanupPending, exact current epoch | Reconcile both pending replacement resources first; otherwise remove only the exact owned native registration/definition and require observed absence, or fenced own absence when no registration receipt was published |
 | `replace_stopped(&TrustedStage, from_version, epoch)` | Disabled, exact current epoch, free foreground-runtime lease | Authenticate complete old/new signed bundles, reserve/journal, retire old and commit observed stopped new registration without enabling access |
 | `replacement_status()` | Valid private update journal, if present | Report Prepared/Applying/Committed/Aborted history and exact cached provenance, never availability |
 
 On macOS, install can observe Absent because the private LaunchAgent definition
 is published without bootstrapping it; it does not manufacture a loaded job.
+
+The unpublished-receipt absence path remains under the exclusive Services lease,
+current phase/epoch/full snapshot and state-directory identity fences. It neither
+queries a manager nor fabricates a receipt; status still reports no observation.
+A pending old/new update journal is never bypassed by a missing active receipt:
+stop reconciles both targets, and cleanup retains Applying/refuses if ownership
+cannot be finalized. Corrupt or foreign journal evidence refuses before effects,
+never inferring Aborted or absence from `None`. Runtime history/lease guards
+remain controller prerequisites.
+Even settled update history proves prior registration: a lost active receipt
+therefore refuses rather than claiming never-published absence.
 
 `Observation` carries installation, origin, current epoch and
 `ProcessState::{Absent,Stopped,Running,Failed,Transitioning}`. Running is **not**

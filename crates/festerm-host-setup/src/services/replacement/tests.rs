@@ -364,6 +364,181 @@ fn host_update_partial_new_registration_remains_exact_owned_cleanup_after_revoca
 }
 
 #[test]
+fn host_update_missing_receipt_reconciles_pending_journal_before_owned_absence() {
+    for interrupted_reload in [1, 2] {
+        let fixture = Fixture::new();
+        let services = fixture.services();
+        fixture.installed(&services);
+        *services.runner.fail_reload.borrow_mut() =
+            Some(*services.runner.reloads.borrow() + interrupted_reload);
+        assert!(fixture.update(&services).is_err());
+        let transaction = services.replacement().unwrap().unwrap();
+        assert_eq!(transaction.state, ReplacementState::Applying);
+        let journal = std::fs::read(services.state.join(JOURNAL)).unwrap();
+        std::fs::remove_file(services.state.join(RECORD)).unwrap();
+        assert!(services.registration().unwrap().1.is_none());
+        fixture.store.revoke().unwrap();
+        let revoked = fixture.store.snapshot().unwrap();
+        fixture.store.revoke().unwrap();
+        let current = fixture.store.snapshot().unwrap();
+        let stop_calls = services.runner.calls.borrow().len();
+        assert!(services.stop(revoked.epoch).is_err());
+        assert_eq!(services.runner.calls.borrow().len(), stop_calls);
+        assert_eq!(
+            std::fs::read(services.state.join(JOURNAL)).unwrap(),
+            journal
+        );
+
+        assert_eq!(
+            services.stop(current.epoch).unwrap().process,
+            ProcessState::Stopped
+        );
+        {
+            let calls = services.runner.calls.borrow();
+            for target in [&transaction.old, &transaction.new] {
+                assert!(calls[stop_calls..].iter().any(|args| {
+                    args.iter().any(|arg| arg == "show")
+                        && args.iter().any(|arg| arg == &target.resource)
+                }));
+            }
+        }
+        assert_eq!(
+            std::fs::read(services.state.join(JOURNAL)).unwrap(),
+            journal
+        );
+        fixture
+            .store
+            .confirm_stopped(current.epoch, current.binding.as_ref().unwrap())
+            .unwrap();
+        fixture.store.request_cleanup().unwrap();
+        let cleanup = fixture.store.snapshot().unwrap();
+        let calls = services.runner.calls.borrow().len();
+        assert!(services.cleanup(current.epoch).is_err());
+        assert_eq!(services.runner.calls.borrow().len(), calls);
+        assert_eq!(
+            services.cleanup(cleanup.epoch).err().unwrap().to_string(),
+            "host.service_not_installed"
+        );
+        assert_eq!(
+            std::fs::read_dir(&services.context.registration)
+                .unwrap()
+                .count(),
+            0
+        );
+        let retained = services.replacement_status().unwrap().unwrap();
+        assert_eq!(retained.operation, transaction.operation);
+        assert_eq!(retained.state, ReplacementState::Applying);
+        assert!(!services.state.join(RECORD).exists());
+        assert_eq!(fixture.store.snapshot().unwrap(), cleanup);
+        assert!(services.cleanup(cleanup.epoch).is_err());
+        assert_eq!(
+            services.replacement_status().unwrap().unwrap().state,
+            ReplacementState::Applying
+        );
+    }
+}
+
+#[test]
+fn host_update_missing_receipt_never_bypasses_corrupt_or_foreign_crash_journal() {
+    for cleanup in [false, true] {
+        for foreign in [false, true] {
+            let fixture = Fixture::new();
+            let services = fixture.services();
+            fixture.installed(&services);
+            *services.runner.fail_reload.borrow_mut() = Some(*services.runner.reloads.borrow() + 2);
+            assert!(fixture.update(&services).is_err());
+            std::fs::remove_file(services.state.join(RECORD)).unwrap();
+            fixture.store.revoke().unwrap();
+            if cleanup {
+                let stopped = fixture.store.snapshot().unwrap();
+                services.stop(stopped.epoch).unwrap();
+                fixture
+                    .store
+                    .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+                    .unwrap();
+                fixture.store.request_cleanup().unwrap();
+            }
+            let path = services.state.join(JOURNAL);
+            let bytes = if foreign {
+                let mut journal: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                journal["old"]["installation"] = uuid::Uuid::new_v4().to_string().into();
+                serde_json::to_vec(&journal).unwrap()
+            } else {
+                b"interrupted journal bytes".to_vec()
+            };
+            std::fs::write(&path, &bytes).unwrap();
+            let before = fixture.store.snapshot().unwrap();
+            let calls = services.runner.calls.borrow().len();
+            let result = if cleanup {
+                services.cleanup(before.epoch)
+            } else {
+                services.stop(before.epoch)
+            };
+            assert!(result.is_err());
+            assert!(services.replacement_status().is_err());
+            assert_eq!(services.runner.calls.borrow().len(), calls);
+            assert_eq!(fixture.store.snapshot().unwrap(), before);
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+            assert!(!services.state.join(RECORD).exists());
+        }
+    }
+}
+
+#[test]
+fn host_update_lost_receipt_with_committed_history_is_not_never_registered_absence() {
+    for cleanup in [false, true] {
+        let fixture = Fixture::new();
+        let services = fixture.services();
+        fixture.installed(&services);
+        assert_eq!(
+            fixture.update(&services).unwrap().state,
+            ReplacementState::Committed
+        );
+        fixture.store.revoke().unwrap();
+        if cleanup {
+            let stopped = fixture.store.snapshot().unwrap();
+            services.stop(stopped.epoch).unwrap();
+            fixture
+                .store
+                .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+                .unwrap();
+            fixture.store.request_cleanup().unwrap();
+        }
+        std::fs::remove_file(services.state.join(RECORD)).unwrap();
+        let journal = std::fs::read(services.state.join(JOURNAL)).unwrap();
+        let before = fixture.store.snapshot().unwrap();
+        let calls = services.runner.calls.borrow().len();
+        let result = if cleanup {
+            services.cleanup(before.epoch)
+        } else {
+            services.stop(before.epoch)
+        };
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "host.update_missing_registration_reconciliation_required"
+        );
+        assert_eq!(services.runner.calls.borrow().len(), calls);
+        assert_eq!(fixture.store.snapshot().unwrap(), before);
+        assert_eq!(
+            std::fs::read(services.state.join(JOURNAL)).unwrap(),
+            journal
+        );
+        assert_eq!(
+            services.replacement_status().unwrap().unwrap().state,
+            ReplacementState::Committed
+        );
+        assert!(!services.state.join(RECORD).exists());
+        assert_eq!(
+            std::fs::read_dir(&services.context.registration)
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
 fn host_update_epoch_revocation_retains_unknown_then_explicit_stopped_retry_without_grant_restore()
 {
     let fixture = Fixture::new();

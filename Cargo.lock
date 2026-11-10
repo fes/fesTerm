@@ -2939,6 +2939,7 @@ dependencies = [
  "festerm-pty",
  "festerm-secret-store",
  "festerm-session",
+ "festerm-sessiond",
  "festerm-ssh",
  "festerm-tunnel-bridge",
  "festerm-unix-security",

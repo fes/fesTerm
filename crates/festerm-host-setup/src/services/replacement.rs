@@ -143,6 +143,16 @@ impl<R: CommandRunner> Services<'_, R> {
         })
     }
 
+    pub(super) fn require_no_replacement_history(&self) -> io::Result<()> {
+        // Update history proves prior registration, not never-published absence.
+        if self.replacement()?.is_some() {
+            return Err(refused(
+                "host.update_missing_registration_reconciliation_required",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn require_replacement_settled(&self) -> io::Result<()> {
         if self.replacement()?.is_some_and(|record| record.pending()) {
             return Err(refused("host.update_recovery_required"));

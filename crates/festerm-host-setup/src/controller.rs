@@ -359,6 +359,16 @@ pub async fn uninstall(
     state: &Path,
     cancel: &CancellationToken,
 ) -> io::Result<UninstallResult> {
+    let cloud = CloudHostAdapter::new(store);
+    uninstall_with(store, state, cancel, cloud.cleanup(cancel)).await
+}
+
+pub(crate) async fn uninstall_with(
+    store: &Store,
+    state: &Path,
+    cancel: &CancellationToken,
+    cleanup: impl std::future::Future<Output = io::Result<Cleanup>>,
+) -> io::Result<UninstallResult> {
     let before = store.snapshot()?;
     if cancel.is_cancelled() {
         return Err(refused("host.cloud_cancelled"));
@@ -372,7 +382,7 @@ pub async fn uninstall(
     }
     let epoch = store.snapshot()?.epoch;
     Services::current_user(store, state)?.cleanup(epoch)?;
-    match CloudHostAdapter::new(store).cleanup(cancel).await? {
+    match cleanup.await? {
         Cleanup::Removed => Ok(UninstallResult::Removed),
         Cleanup::GenerationConditionalDeleteUnavailable => {
             Ok(UninstallResult::NativeRemovedCloudCleanupPending)
@@ -765,11 +775,12 @@ mod tests {
 
     #[test]
     fn host_runtime_disable_revokes_before_stop_and_waits_for_exact_run_lease() {
-        let (_root, store) = fixture();
+        let (root, store) = fixture();
+        let state = root.path().join("host");
         provision(&store);
         let (lease, before, _) = reserve(&store).unwrap();
         let error = disable_with(&store, Duration::ZERO, |epoch| {
-            Ok(observed_stop(&store, epoch))
+            Services::current_user(&store, &state)?.stop(epoch)
         })
         .err()
         .unwrap();
@@ -778,7 +789,7 @@ mod tests {
         assert!(store.snapshot().unwrap().epoch > before.epoch);
         drop(lease);
         let stopped = disable_with(&store, Duration::ZERO, |epoch| {
-            Ok(observed_stop(&store, epoch))
+            Services::current_user(&store, &state)?.stop(epoch)
         })
         .unwrap();
         assert_eq!(stopped.lifecycle.phase, Phase::Disabled);
@@ -813,18 +824,17 @@ mod tests {
     #[test]
     fn host_runtime_missing_lock_never_authorizes_restart_or_confirmed_stop() {
         let (root, store) = fixture();
+        let state = root.path().join("host");
         provision(&store);
         let (lease, _, record) = reserve(&store).unwrap();
         persist(&store, &record).unwrap();
         drop(lease);
-        std::fs::remove_file(root.path().join("host").join(LOCK)).unwrap();
+        std::fs::remove_file(state.join(LOCK)).unwrap();
         assert!(reserve(&store).is_err());
-        assert!(
-            disable_with(&store, Duration::ZERO, |epoch| Ok(observed_stop(
-                &store, epoch
-            )))
-            .is_err()
-        );
+        assert!(disable_with(&store, Duration::ZERO, |epoch| {
+            Services::current_user(&store, &state)?.stop(epoch)
+        })
+        .is_err());
         assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
         assert!(store.request_cleanup().is_err());
         assert_eq!(last_run(&store).unwrap().unwrap(), record);
@@ -841,11 +851,7 @@ mod tests {
             .await
             .is_err());
         assert_eq!(store.snapshot().unwrap(), before);
-        store.revoke().unwrap();
-        let stopped = store.snapshot().unwrap();
-        store
-            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
-            .unwrap();
+        disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
         let pending = store.snapshot().unwrap();
         store
