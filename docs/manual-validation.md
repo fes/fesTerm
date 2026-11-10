@@ -3523,6 +3523,12 @@ select file credentials. A future headless CLI must verify protected origin and
 explicit local opt-in. The host Store enforces journal origin; the lower-level
 bridge/client marker is only a namespace, not a headless-origin capability.
 No current GUI/default path selects file storage or falls back after vault failure.
+The automated
+`protected_owner_runtime_trait_retains_lease_and_reloads_revocation` fixture
+now covers the production runtime trait adapter's actual enrollment lease,
+Busy refusal and fresh revocation policy through explicitly selected headless
+file storage. This is not native-vault, endpoint, signed-service or first-connect
+qualification; those HOSTAUTH-01/HOSTSETUP-01 prerequisites remain open.
 
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;

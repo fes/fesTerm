@@ -5699,6 +5699,7 @@
         "interrupted_private_publication_never_exposes_torn_final_bytes",
         "private_publication_preserves_shared_atomic_no_replace_boundary",
         "protected_owner_policy_source_reacquires_selected_storage_and_fresh_revocation_lease",
+        "protected_owner_runtime_trait_retains_lease_and_reloads_revocation",
         "offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache",
         "bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache",
         "bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation",

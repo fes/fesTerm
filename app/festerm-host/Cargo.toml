@@ -10,7 +10,7 @@ publish = false
 
 [features]
 default = []
-owner-routing = ["festerm-host-setup/owner-enrollment", "dep:festerm-tunnel-bridge", "dep:festerm-host-protocol"]
+owner-routing = ["festerm-host-setup/host-runtime", "dep:festerm-tunnel-bridge", "dep:festerm-host-protocol"]
 
 [dependencies]
 festerm-host-setup = { path = "../../crates/festerm-host-setup", features = ["acquisition", "native-services", "cloud"] }

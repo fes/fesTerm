@@ -9180,3 +9180,15 @@ Encrypted-channel regression tests are authored, not yet executed at this
 checkpoint. The final session correction, production protected enrollment
 adapter, actual daemon round trips and independent/native gates remain open.
 No installed host, remote creation, GUI change or acceptance is claimed.
+
+### ADR 0084 protected runtime policy adapter recovery
+
+The interrupted native adapter wiring left runtime trait implementations nested
+inside an inherent implementation. The first actual Rust build reproduced that
+compiler failure; recovery moved the implementations to module scope without
+replacing the preserved enrollment source. The setup-owned adapter now supplies
+the actual installation lease through the runtime policy traits, reacquires
+selected-store authority for each admission and keeps Busy distinct from denial.
+The app remains a thin delegator with native vault as its default and explicit
+headless file selection only. A generic trait regression exercises lease retention
+and fresh revocation; native endpoint/service acceptance remains separately gated.

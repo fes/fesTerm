@@ -305,6 +305,22 @@ impl CurrentOwnerPolicySource {
     }
 }
 
+#[cfg(feature = "host-runtime")]
+impl festerm_tunnel_bridge::host_control::PolicyGuard for CurrentOwnerPolicy {
+    fn verifier(&self) -> &OwnerVerifier {
+        CurrentOwnerPolicy::verifier(self)
+    }
+}
+
+#[cfg(feature = "host-runtime")]
+impl festerm_tunnel_bridge::host_control::ProtectedPolicySource for CurrentOwnerPolicySource {
+    type Guard = CurrentOwnerPolicy;
+
+    fn current_policy(&self) -> Result<Self::Guard, ContractError> {
+        CurrentOwnerPolicySource::current_policy(self)
+    }
+}
+
 impl Store {
     pub fn owner_enrollment(&self) -> io::Result<OwnerEnrollment<'_>> {
         self.owner_enrollment_with_storage(OwnerStorage::NativeVault)
@@ -1567,9 +1583,12 @@ mod tests {
         store.revoke().unwrap();
         let guard = source.current_policy().unwrap();
         assert!(!guard.verifier().policy().remote_access);
-        assert!(guard.verifier().policy().host_epoch > epoch);
+        assert!(guard.verifier().policy().host_epoch.get() > epoch.get());
         drop(guard);
-        enrollment.revoke(state.revision, key.public_key()).unwrap();
+        assert!(enrollment.revoke(state.revision, key.public_key()).is_err());
+        enrollment
+            .revoke(enrollment.snapshot().unwrap().revision, key.public_key())
+            .unwrap();
         assert!(matches!(
             source.current_policy(),
             Err(ContractError::Denied)
@@ -1588,6 +1607,50 @@ mod tests {
             source.current_policy(),
             Err(ContractError::Denied)
         ));
+    }
+
+    #[cfg(feature = "host-runtime")]
+    #[test]
+    fn protected_owner_runtime_trait_retains_lease_and_reloads_revocation() {
+        use festerm_tunnel_bridge::host_control::{PolicyGuard, ProtectedPolicySource};
+
+        fn current<T: ProtectedPolicySource>(source: &T) -> Result<T::Guard, ContractError> {
+            source.current_policy()
+        }
+
+        let (_root, store, _vault) = setup();
+        let store = Arc::new(store);
+        let source =
+            CurrentOwnerPolicySource::new(store.clone(), OwnerStorage::HeadlessProtectedFile);
+        assert!(matches!(current(&source), Err(ContractError::Denied)));
+        let enrollment = store
+            .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        let initial = initialize(&enrollment);
+        let key = OwnerSigningKey::from_seed(&[82; 32]);
+        let state = enroll(&enrollment, &initial, &key);
+        enrollment
+            .approve_permissions(
+                state.revision,
+                true,
+                Capabilities {
+                    inventory: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let guard = current(&source).unwrap();
+        let epoch = PolicyGuard::verifier(&guard).policy().host_epoch;
+        assert!(PolicyGuard::verifier(&guard).policy().remote_access);
+        assert!(matches!(current(&source), Err(ContractError::Busy)));
+        assert!(store
+            .revoke()
+            .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock));
+        drop(guard);
+        store.revoke().unwrap();
+        let guard = current(&source).unwrap();
+        assert!(!PolicyGuard::verifier(&guard).policy().remote_access);
+        assert!(PolicyGuard::verifier(&guard).policy().host_epoch.get() > epoch.get());
     }
 
     #[test]

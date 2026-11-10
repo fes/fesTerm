@@ -748,7 +748,11 @@ the original negotiated namespace across reconnects; lifecycle RPCs never
 inherit a creation scope. Correlation includes the exact echoed namespace.
 `host_control::native::NativeControl` uses actual sessiond reservations and owned
 policy guards; the off-by-default headless `owner-routing` composition adapts
-protected enrollment, not portable configuration. Owned native fixtures cover
+protected enrollment, not portable configuration. Setup's opt-in `host-runtime`
+feature implements the runtime policy traits directly: each admission reacquires
+the explicitly selected credential store and returns an owned enrollment lease,
+not cached authority. The app wrapper delegates; its default remains native vault
+with no file-store fallback. Owned native fixtures cover
 control routing/retry without frontend leases. No listener uses these modules.
 The unexposed `host_terminal` module pairs bounded binary terminal framing with
 an immutable client handle and a fixture-only actual native attachment actor. Recovery

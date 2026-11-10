@@ -542,7 +542,13 @@ and `host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts`.
 adds cancellation, missing credentials and wrong account/resource refusal cases.
 `protected_owner_policy_source_reacquires_selected_storage_and_fresh_revocation_lease`
 covers the lease-backed selected-store runtime authority seam (fresh consent,
-Busy, revocation and corrupt-state refusal); trait/listener integration remains
+Busy, revocation and corrupt-state refusal).
+`protected_owner_runtime_trait_retains_lease_and_reloads_revocation` exercises
+the production `ProtectedPolicySource`/`PolicyGuard` implementations through
+generic runtime trait calls, retaining the actual enrollment lease until guard
+drop and observing the next revocation epoch. The opt-in setup `host-runtime`
+feature owns these implementations; the app adapter only delegates and keeps
+native-vault storage as its default. Listener/startup qualification remains
 dependent on the separately gated runtime source.
 These cover HOST-04/HOST-05 revocation, actionable unavailable credentials,
 native management/publication refusals and read-only cleanup adoption, not
