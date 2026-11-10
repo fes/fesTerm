@@ -460,6 +460,39 @@ fn ensure_with_launcher(
         u128,
     ) -> Result<(), PersistentSessionError>,
 ) -> Result<NativeSessionIdentity, PersistentSessionError> {
+    ensure_reserved_with_launcher(root, request, None, true, launch)
+}
+
+pub(crate) fn ensure_host_reserved(
+    root: &Path,
+    request: DetachedSessionRequest<'_>,
+    generation: u128,
+    may_launch: bool,
+    helper: &Path,
+) -> Result<NativeSessionIdentity, PersistentSessionError> {
+    ensure_reserved_with_launcher(
+        root,
+        request,
+        Some(generation),
+        may_launch,
+        |root, request, profile, generation| {
+            launch_with_helper_control(helper.to_owned(), root, request, profile, generation, true)
+        },
+    )
+}
+
+fn ensure_reserved_with_launcher(
+    root: &Path,
+    request: DetachedSessionRequest<'_>,
+    reserved: Option<u128>,
+    may_launch: bool,
+    launch: impl FnOnce(
+        &Path,
+        &DetachedSessionRequest<'_>,
+        &LocalProfile,
+        u128,
+    ) -> Result<(), PersistentSessionError>,
+) -> Result<NativeSessionIdentity, PersistentSessionError> {
     PersistentSessionName::new(request.name).map_err(|_| refused("invalid session name"))?;
     let id = uuid(request.launch_request)?;
     let profile = normalize_spawn_profile(request.profile)?;
@@ -492,6 +525,7 @@ fn ensure_with_launcher(
             || journal.name != request.name
             || journal.fingerprint != fingerprint
             || journal.generation == 0
+            || reserved.is_some_and(|generation| generation != journal.generation)
         {
             return Err(refused("foreign or incompatible launch journal"));
         }
@@ -516,8 +550,16 @@ fn ensure_with_launcher(
     }
     if live {
         let record = record.unwrap();
+        if reserved.is_some_and(|generation| generation != record.created_at_unix_ms) {
+            return Err(refused("a different native generation is running"));
+        }
         check_evidence(record, &fingerprint)?;
         let identity = NativeSessionIdentity::from_record(record);
+        if !may_launch {
+            return Err(refused(
+                "unconfirmed reservation; reconciliation cannot spawn",
+            ));
+        }
         let mut journal = LaunchJournal {
             version: 1,
             launch_request: request.launch_request.into(),
@@ -535,7 +577,7 @@ fn ensure_with_launcher(
         launch_request: request.launch_request.into(),
         name: request.name.into(),
         fingerprint,
-        generation: lifecycle::now_ms(),
+        generation: reserved.unwrap_or_else(lifecycle::now_ms),
         identity: None,
     };
     // Durable before launching, including a failure to spawn the start helper.
@@ -602,7 +644,23 @@ fn launch_with_helper(
     profile: &LocalProfile,
     generation: u128,
 ) -> Result<(), PersistentSessionError> {
+    launch_with_helper_control(helper, root, request, profile, generation, false)
+}
+
+fn launch_with_helper_control(
+    helper: PathBuf,
+    root: &Path,
+    request: &DetachedSessionRequest<'_>,
+    profile: &LocalProfile,
+    generation: u128,
+    host_control: bool,
+) -> Result<(), PersistentSessionError> {
     let mut command = Command::new(helper);
+    // Never let an inherited host lease convert an ordinary shared shell.
+    command.env_remove("FESTERM_SESSIOND_HOST_CONTROL");
+    if host_control {
+        command.env("FESTERM_SESSIOND_HOST_CONTROL", generation.to_string());
+    }
     command
         .env("FESTERM_SESSIOND_RUNTIME_ROOT", root)
         .env("FESTERM_SESSIOND_GENERATION", generation.to_string())
@@ -679,6 +737,60 @@ pub fn verify_spawn_fingerprint_in(
         return Err(refused("selected generation unavailable or replaced"));
     }
     check_evidence(record, expected)
+}
+
+/// Authoritative absence only for a previously bound incarnation. Missing
+/// metadata with a held lease remains unknown; PID reuse alone is never live.
+pub(crate) fn host_generation_state(
+    root: &Path,
+    selected: &NativeSessionIdentity,
+    expected: &str,
+) -> Result<bool, PersistentSessionError> {
+    let directory = storage::private_directory(root, false).map_err(storage_error)?;
+    let records = registry(&directory)?;
+    match matching_record(&records, &selected.name)? {
+        Some(record) if NativeSessionIdentity::from_record(record) == *selected => {
+            if !verified_live(root, &directory, record)? {
+                return Ok(false);
+            }
+            check_evidence(record, expected)?;
+            Ok(true)
+        }
+        Some(_) => Err(refused(
+            "logical generation was replaced outside its reservation",
+        )),
+        None => {
+            let name = format!("lease-{}-{}", selected.pid, selected.created_at_unix_ms);
+            match storage::open_private_file(&directory, Path::new(&name), false) {
+                Ok(lease) => match FileExt::try_lock_shared(&lease) {
+                    Ok(()) => Ok(false),
+                    Err(_) => Err(refused("native generation outcome is unknown")),
+                },
+                Err(error)
+                    if error.kind() == io::ErrorKind::NotFound && !process_alive(selected.pid) =>
+                {
+                    Ok(false)
+                }
+                Err(_) => Err(refused("native generation outcome is unknown")),
+            }
+        }
+    }
+}
+
+pub(crate) fn host_generation_attached(
+    root: &Path,
+    selected: &NativeSessionIdentity,
+) -> Result<bool, PersistentSessionError> {
+    let directory = storage::private_directory(root, false).map_err(storage_error)?;
+    let records = registry(&directory)?;
+    let record = matching_record(&records, &selected.name)?
+        .ok_or_else(|| refused("native generation unavailable"))?;
+    if NativeSessionIdentity::from_record(record) != *selected
+        || !verified_live(root, &directory, record)?
+    {
+        return Err(refused("native generation unavailable"));
+    }
+    Ok(record.attached)
 }
 
 #[cfg(test)]

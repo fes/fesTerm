@@ -627,3 +627,30 @@ for a minute (the Running Sessions refresh button re-lists). Choosing one
 connects once with that account's stored sign-in; no profile is saved. The
 New Session **Dev Tunnel** card opens a compact form that connects the same way
 and saves a profile only when **Save as profile** is checked.
+
+### HOST session-control state (ADR 0084 stage 2)
+
+The local session-control API adds no portable TOML setting or network listener.
+Its `Recipe` is an argument vector plus optional shell/cwd, not an administrative
+command string. Original intent and the resolved executable/cwd fingerprint are
+journaled separately. A conflicting running recipe refuses; an explicit Connect
+after authoritative absence may use an edited future recipe and fresh generation.
+Reusing an operation ID with changed intent always refuses.
+
+`Persistent {}` survives bridge/client/UI/installer exit, not reboot.
+`Temporary { reconnect_grace_seconds: 60 }` requires an owning attachment/lease.
+The actual daemon enforces its protected deadline; the bridge must renew an
+adopted owning lease more frequently than 60 seconds. Intentional disconnect
+ends only that exact lease; unexpected loss starts grace once, and bridge crash
+expires the last renewal without requiring another bridge process. Restart does
+not reset grace. Takeover fences the previous lease epoch only when recovery
+adoption and daemon writer replacement commit. Ordinary persistent shared shells
+never inherit this policy, and legacy clients cannot bypass the temporary lease
+handshake. Native mobile grace qualification remains required.
+
+Private `host-sessions.json`, bounded launch journals and generation-scoped
+`host-daemon-*.json` files are host-local runtime authority, not synchronized
+profiles, credentials or import/export metadata. Never copy or delete them to
+retry an uncertain spawn. Ambiguous unbound reservations remain Unknown; local
+ownership investigation is required, not an automatic fresh shell. Journal
+capacity refuses boundedly rather than discarding revocation/idempotency fences.

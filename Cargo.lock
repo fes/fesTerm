@@ -2884,6 +2884,7 @@ version = "0.16.0"
 dependencies = [
  "bincode",
  "festerm-core",
+ "festerm-host-protocol",
  "festerm-mobile-profiles",
  "festerm-mobile-tunnels",
  "festerm-pty",

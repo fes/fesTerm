@@ -5498,15 +5498,28 @@
         "host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed",
         "host_owner_admission_requires_current_shared_exact_generation_and_absence",
         "host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys",
-        "host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes"
+        "host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes",
+        "concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon",
+        "crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generation",
+        "absence_denial_revocation_cancellation_and_generations_remain_distinct",
+        "temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease",
+        "daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor",
+        "current_absence_requires_fresh_create_permission_but_live_resume_does_not",
+        "failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create",
+        "cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner",
+        "lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace",
+        "lease_supervisor_refuses_revision_rollback_or_foreign_generation"
       ],
       "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681: contract primitives only; no HOST endpoint or GUI control is exposed. Independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
-        "Implement durable authoritative ensure/reservations, recipe conflicts and temporary lease supervision independently of bridge lifetime; reconcile uncertain outcomes, never infer absence from denial/offline/partial inventory",
+        "Issue #681: contracts and local durable session control only; no HOST endpoint or GUI control is exposed. Independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
+        "Integrate the stage-2 local durable session-control backend with reviewed protected admission and routing; unbound uncertain reservations remain Unknown, never infer absence from denial/offline/partial inventory",
         "Implement authenticated multi-session routing, fair output/control scheduling, aggregate permit/deadline integration and legacy adapter without grant expansion",
-        "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth fixtures do not qualify it"
+        "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth and Unix owned daemon fixtures do not qualify it",
+        "PendingAttachment is not Attached; remote recovery adoption and observed daemon lease/writer commit must precede success. StopRequested is not Ended; reconcile process absence before success. The endpoint must retire already established revoked relays",
+        "Native reboot, Windows ConPTY/job/breakaway, Linux service startup, update/uninstall independence and physical-device 60-second grace remain DT-07/DT-08, CP-11 and MOB-03/MOB-06 gates; Unix owned fixtures do not qualify them",
+        "Ambiguous unbound reservations require local ownership investigation, not journal deletion or automatic respawn; capacity saturation preserves tombstones and refuses boundedly"
       ]
     },
     {

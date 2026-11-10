@@ -1,10 +1,11 @@
 # HOST v1 contract and owner admission
 
-Stage 1 of [ADR 0084](adr/0084-host-based-dev-tunnels.md), tracked by
+Stages 1–2 of [ADR 0084](adr/0084-host-based-dev-tunnels.md), tracked by
 [#681](https://github.com/fes/fesTerm/issues/681). The ADR remains **Proposed**.
-These are usable codec, identity, authorization and reservation primitives,
+These are usable contracts and a local durable session-control backend,
 **not a running endpoint**. No listener advertises HOST, routes these requests,
-creates a process, changes an ACL or migrates an existing bridge.
+changes an ACL or migrates an existing bridge. Trusted local callers can use
+the stage-2 API to create actual detached daemons after protected admission.
 Independent antagonist/security review is required before exposure.
 
 ## Dependency and API boundary
@@ -87,7 +88,8 @@ persistent create does not implicitly attach or become temporary.
 failed lookup as absence. `Create` refuses an existing/uncertain reservation.
 An operation ID identifies a journaled request/result; retries must compare
 the entire owner/logical/recipe/lifetime intent and return conflict if it
-changed. This stage supplies representations, not the journal/spawn algorithm.
+changed. Stage 2 implements the local journal/spawn algorithm below; remote dispatch
+and reviewed enrollment/channel integration remain prerequisites.
 
 `Recipe { shell, args, cwd }` uses an argument vector, never a shell command
 string. Optional shell means the host's default and requires an empty argument
@@ -101,12 +103,92 @@ them into shell text. Name is a bounded label (128 bytes), never identity.
 `Lifetime::Persistent {}` survives detach/host-bridge exit, not OS reboot.
 `Temporary { reconnect_grace_seconds: 60 }` accepts only the initial 60-second
 policy; qualification is pending. An owning `TemporaryLease` carries a distinct
-lease ID, monotonic epoch and attachment. The future durable supervisor must
-implement intentional-disconnect termination, unexpected-loss grace,
+lease ID, monotonic epoch and attachment. The daemon-owned durable supervisor implements
+intentional-disconnect termination, unexpected-loss grace,
 generation-fenced expiry and atomic takeover/lease transfer independently of
 bridge uptime. Stale detach must not kill a replacement. Attaching a temporary
 client never converts an existing persistent session into temporary lifetime.
-No timer, lease supervisor or termination implementation is claimed here.
+These are local APIs, not evidence of mobile/network lifecycle qualification.
+
+## Local durable session control (stage 2)
+
+`festerm-sessiond::host_control::SessionControl` depends on the shared contracts,
+not the bridge, GUI or setup crate. `open(root)` selects the installed helper;
+`with_helper(root, helper)` is a trusted installation/test seam, never a request
+field. All record parsing is bounded (4 MiB journal, at most 64 logical records
+and 128 operation intents; generation lease files at most 4 KiB). Existing
+private-directory, ownership, no-follow, exclusive-file, atomic-replace and
+synchronization protections apply. No credentials are serialized.
+
+The private journal try-lock serializes owners/logical IDs without queued
+workers. Native starts additionally use the existing per-name start lock shared
+with ordinary launch/managed repair. Saturation is Busy, never another launch.
+Uncertain pending reservations count against the two-create bound. Capacity
+refuses rather than silently erasing idempotency or revocation tombstones.
+
+Each method's admission callback receives fresh protected `AdmissionState`
+(`SessionGrant`, record revision and effect) under journal serialization. It
+returns a scoped policy guard covering durable effect commit or publication.
+The guard is released before waiting for native startup/attachment IPC; a fresh
+guard checks the actual post-commit state before publication. Revocation can
+therefore proceed while a previously committed creation finishes. A late denial
+returns `CommittedButNotPublished`, not absence or successful cancellation.
+Do not compare the initial absent fence with the deliberate running result:
+freshly authorize the actual state/revision. The endpoint must revalidate again
+at physical delivery and retire revoked connections/attachments.
+
+- `ensure(owner, operation, creation, create_only, cancelled, admit)` journals
+  original recipe/lifetime/attachment intent and a fresh reserved generation
+  **before** launching. It invokes the real non-attaching helper, never creates
+  an in-memory-only success, and records the exact native identity. Resuming a
+  live session needs no creation permission; fresh creation checks current
+  absence and the separate creation grant. `create_only` refuses an existing
+  logical record. Same operation with changed intent conflicts; different
+  operations cannot bypass a running/unknown reservation. Running recipe
+  collisions refuse without replacing the process.
+- `lookup` / `inspect` and bounded `inventory` reconcile private metadata without
+  frontend admission. `inspect` supplies the protected grant plus actual
+  summary; `inventory` filters owner/revocation before labels. Empty inventory
+  never substitutes for lookup absence. Denied, revoked, storage errors, replaced
+  generations and unbound uncertain launches are not Absent. A bound dead
+  incarnation becomes authoritative absence; a later explicit ensure can
+  recreate with a fresh generation and edited future recipe.
+- A crashed/lost-reply creation can adopt only its reserved generation and
+  fingerprint. A reservation without enough native evidence remains Unknown,
+  even across repeated requests; investigate locally instead of deleting the
+  journal or blindly spawning. Cancellation after committed creation returns
+  the actual outcome with its cancellation observation. No terminal input is
+  journaled, resent or replayed.
+- `attach` returns **`PendingAttachment`**, not Attached success. Its existing
+  `PersistentSession` exposes the deferred recovery snapshot. The endpoint must
+  forward it, wait for frontend adoption, acknowledge adoption, then poll
+  `attachment_outcome` for temporary ownership commit. Local admission `FSA5`
+  extends `FSA4` with one canonical 36-byte operation ticket; it is not a remote
+  HOST frame or protocol downgrade. Only a protected pending lease accepts it.
+  The sole daemon writer loop commits lease epoch/attachment transfer immediately
+  beside writer replacement, after adoption. An obsolete disconnect cannot end
+  the new owner. Legacy admission cannot bypass a temporary lease. Existing
+  persistent/legacy daemon attachment and takeover remain unchanged.
+- `cancel_attachment` serializes with daemon transfer and reports cancelled
+  before commit versus the actual committed lease. `maintain_lease` renews only
+  the adopted current lease; intentional disconnect stops that exact lease;
+  first unexpected loss starts 60 seconds of grace without duplicate loss
+  notifications extending it. Without a bridge, the last renewal expires in at
+  most 60 seconds. Generation-scoped private deadlines survive bridge/supervisor
+  restart; the actual daemon loop also applies a monotonic cap, including during
+  output backpressure and recovery waits. No bridge process must stay alive to
+  run cleanup. Restart does not renew a lease.
+- `end` returns **`EndOutcome::StopRequested`**, a durable exact-generation stop,
+  not observed process exit. Reconcile absence before sending an Ended result.
+  Local consent revocation fences pending/native remote admission; persistent
+  shells remain alive. The future endpoint owns closing already established
+  revoked remote relays. No local administrative API becomes remote by default.
+
+The owned Unix integration fixtures launch repository `festerm-pty-test-child`
+processes and real detached daemons. Build that child before running
+`cargo test -p festerm-sessiond`. Windows ConPTY/job/breakaway, Linux service,
+reboot, update/uninstall and physical-mobile grace evidence remain native gates.
+No installed service, real user session, account or cloud resource is touched.
 
 `LookupResult::Absent` is explicit and distinct from Denied, Offline, Unknown,
 Busy and Incompatible. Only reconciled protected metadata under current admission

@@ -696,8 +696,19 @@ dependency. The bridge's non-default `owner-auth` feature provides enrolled-owne
 Ed25519 challenge/admission primitives, not provider identity or a listener.
 Legacy bearer connectivity is not principal proof. Protected enrollment,
 pinned-channel integration and independent security review are mandatory before
-new remote capabilities; all new capabilities default denied. No session routing,
-creation, migration or lifetime-supervisor implementation is claimed by this slice.
+new remote capabilities; all new capabilities default denied. Stage 2 adds
+`festerm-sessiond -> festerm-host-protocol`, never a dependency on the bridge.
+Its local `host_control::SessionControl` journals owner/logical identity,
+immutable launch intent, reserved generations, operation results and revocation
+revisions through the existing private no-follow/atomic storage boundary. It
+uses the real detached native launcher and single-writer daemon admission.
+The daemon's own loop enforces temporary heartbeat/grace deadlines from
+generation/lease-fenced private records, independently of bridge/client lifetime.
+Temporary ownership changes commit beside the writer replacement only after
+recovery adoption; a pending attachment is not an Attached success. Persistent
+shells never acquire temporary cleanup merely through attachment. Endpoint
+routing, protected enrollment/channel integration, migration and native
+reboot/device qualification remain gated; this is not remote exposure.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

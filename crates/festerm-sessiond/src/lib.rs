@@ -1,6 +1,8 @@
 //! Client backend for fesTerm's native local session persistence daemon.
 
 mod detached;
+pub mod host_control;
+pub mod host_lease;
 pub mod lifecycle;
 pub mod private_storage;
 mod remote;
@@ -1120,6 +1122,38 @@ impl PersistentSession {
             takeover,
             AttachKind::Remote,
             maximum_recovery_bytes,
+        )?;
+        Self::from_stream_with_reconnector(connection, notifier, None)
+    }
+
+    pub(crate) fn resume_host_reserved_in(
+        selected: &NativeSessionIdentity,
+        root: &Path,
+        takeover: bool,
+        maximum_recovery_bytes: u32,
+        ticket: &festerm_host_protocol::OperationId,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        let registry = load_registry_in(root)?;
+        let record = registry
+            .sessions
+            .get(&selected.name)
+            .ok_or_else(|| PersistentSessionError::new("host generation unavailable"))?;
+        if NativeSessionIdentity::from_record(record) != *selected
+            || record.protocol_version != 3
+            || !record.attach_kinds
+        {
+            return Err(PersistentSessionError::new(
+                "host lease admission unavailable",
+            ));
+        }
+        let connection = connect_record_admitted_ticket(
+            record,
+            &AtomicBool::new(false),
+            takeover,
+            AttachKind::Remote,
+            maximum_recovery_bytes,
+            Some(ticket),
         )?;
         Self::from_stream_with_reconnector(connection, notifier, None)
     }
@@ -2671,6 +2705,24 @@ fn connect_record_admitted(
     kind: AttachKind,
     maximum_recovery_bytes: u32,
 ) -> Result<ConnectedSession, PersistentSessionError> {
+    connect_record_admitted_ticket(
+        record,
+        cancelled,
+        takeover,
+        kind,
+        maximum_recovery_bytes,
+        None,
+    )
+}
+
+fn connect_record_admitted_ticket(
+    record: &SessionRecord,
+    cancelled: &AtomicBool,
+    takeover: bool,
+    kind: AttachKind,
+    maximum_recovery_bytes: u32,
+    ticket: Option<&festerm_host_protocol::OperationId>,
+) -> Result<ConnectedSession, PersistentSessionError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
@@ -2695,7 +2747,14 @@ fn connect_record_admitted(
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT))
             .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-        admit_record(&mut stream, record, takeover, kind, maximum_recovery_bytes)?;
+        admit_record_ticket(
+            &mut stream,
+            record,
+            takeover,
+            kind,
+            maximum_recovery_bytes,
+            ticket,
+        )?;
         Ok(ConnectedSession {
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
@@ -2716,7 +2775,14 @@ fn connect_record_admitted(
         })?;
         stream.set_read_timeout(POLL_INTERVAL);
         stream.set_write_timeout(WRITE_TIMEOUT);
-        admit_record(&mut stream, record, takeover, kind, maximum_recovery_bytes)?;
+        admit_record_ticket(
+            &mut stream,
+            record,
+            takeover,
+            kind,
+            maximum_recovery_bytes,
+            ticket,
+        )?;
         Ok(ConnectedSession {
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
@@ -2770,17 +2836,18 @@ pub fn decode_admission_header(request: &[u8; ADMISSION_BYTES]) -> Option<(bool,
     }
 }
 
-fn admit_record(
+fn admit_record_ticket(
     stream: &mut (impl Read + Write),
     record: &SessionRecord,
     takeover: bool,
     kind: AttachKind,
     maximum_recovery_bytes: u32,
+    ticket: Option<&festerm_host_protocol::OperationId>,
 ) -> Result<(), PersistentSessionError> {
     if record.protocol_version < 3 {
         return Ok(());
     }
-    let request = if record.attach_kinds {
+    let mut request = if record.attach_kinds {
         encode_admission_for(
             record.pid,
             record.created_at_unix_ms,
@@ -2796,9 +2863,17 @@ fn admit_record(
             maximum_recovery_bytes,
         )
     };
+    if ticket.is_some() {
+        request[3] = b'5';
+    }
     stream
         .write_all(&request)
         .map_err(|_| PersistentSessionError::new("daemon admission write failed"))?;
+    if let Some(ticket) = ticket {
+        stream
+            .write_all(ticket.as_str().as_bytes())
+            .map_err(|_| PersistentSessionError::new("host lease ticket write failed"))?;
+    }
     let mut reply = [0];
     let deadline = Instant::now() + Duration::from_secs(3);
     read_protocol_bytes(stream, &mut reply, &mut || {
