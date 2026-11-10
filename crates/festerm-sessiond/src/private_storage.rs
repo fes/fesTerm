@@ -194,40 +194,83 @@ pub fn write_new_private(directory: &File, name: &Path, bytes: &[u8]) -> io::Res
 /// Existing targets must already be private regular files. Only a fresh
 /// caller-owned staging entry is removed if publication fails.
 pub fn replace_private(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
-    file_name(name)?;
-    private(directory, true)?;
-    match open_private_file(directory, name, false) {
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    let staging = std::path::PathBuf::from(format!(".checkpoint-{}", uuid::Uuid::new_v4()));
-    let mut file = open_private_file(directory, &staging, true)?;
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        // Recheck immediately before publication; don't replace a symlink or
-        // foreign/permissive entry that appeared during the write.
+    let mut prepared = PreparedCheckpoint::prepare(directory, name, bytes)?;
+    prepared.publish()?;
+    prepared.sync()
+}
+
+/// Prepare slow durable I/O before taking a publication lock. Publication must
+/// be serialized and the caller must revalidate its source immediately before
+/// `publish`; `sync` follows after releasing the short publication lock.
+pub struct PreparedCheckpoint {
+    directory: File,
+    name: std::path::PathBuf,
+    staging: std::path::PathBuf,
+    file: File,
+    published: bool,
+}
+
+impl PreparedCheckpoint {
+    pub fn prepare(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<Self> {
+        file_name(name)?;
+        private(directory, true)?;
         match open_private_file(directory, name, false) {
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
-        #[cfg(unix)]
-        festerm_unix_security::replace_private_file(directory, &staging, name)?;
-        #[cfg(windows)]
-        festerm_windows_security::replace_private_file(&file, directory, name)?;
-        #[cfg(unix)]
-        directory.sync_all()?;
-        Ok(())
-    })();
-    if result.is_err() {
-        #[cfg(unix)]
-        let _ = festerm_unix_security::remove_private_staging_file(directory, &staging);
-        #[cfg(windows)]
-        let _ = festerm_windows_security::remove_private_staging_file(&file);
+        let staging = std::path::PathBuf::from(format!(".checkpoint-{}", uuid::Uuid::new_v4()));
+        let owned_directory = directory.try_clone()?;
+        let file = open_private_file(directory, &staging, true)?;
+        let mut prepared = Self {
+            directory: owned_directory,
+            name: name.into(),
+            staging,
+            file,
+            published: false,
+        };
+        prepared.file.write_all(bytes)?;
+        prepared.file.sync_all()?;
+        Ok(prepared)
     }
-    result
+
+    pub fn publish(&mut self) -> io::Result<()> {
+        if self.published {
+            return Err(io::Error::other("checkpoint already published"));
+        }
+        match open_private_file(&self.directory, &self.name, false) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        #[cfg(unix)]
+        festerm_unix_security::replace_private_file(&self.directory, &self.staging, &self.name)?;
+        #[cfg(windows)]
+        festerm_windows_security::replace_private_file(&self.file, &self.directory, &self.name)?;
+        self.published = true;
+        Ok(())
+    }
+
+    pub fn sync(self) -> io::Result<()> {
+        if !self.published {
+            return Err(io::Error::other("checkpoint not published"));
+        }
+        #[cfg(unix)]
+        self.directory.sync_all()?;
+        Ok(())
+    }
+}
+
+impl Drop for PreparedCheckpoint {
+    fn drop(&mut self) {
+        if !self.published {
+            #[cfg(unix)]
+            let _ =
+                festerm_unix_security::remove_private_staging_file(&self.directory, &self.staging);
+            #[cfg(windows)]
+            let _ = festerm_windows_security::remove_private_staging_file(&self.file);
+        }
+    }
 }
 
 #[cfg(test)]
