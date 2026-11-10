@@ -67,7 +67,8 @@ The verifier enforces the exact six Unix/seven Windows allowlisted entries,
 nonempty regular files, exact 0755/0644 modes and exact VERSION contents.
 It refuses duplicates, missing/extra/nested/absolute/traversal names,
 symlinks, hardlinks, special files, tar extension records, encrypted ZIPs,
-ZIP64/multidisk/commented ZIPs, oversized headers and trailing gzip streams.
+ZIP64/multidisk/commented ZIPs, oversized headers, nonzero data after TAR end
+markers and trailing gzip streams.
 Central-directory count/size is bounded before ZIP parser allocation.
 No archive path is passed to a filesystem extraction API.
 
