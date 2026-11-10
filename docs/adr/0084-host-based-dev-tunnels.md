@@ -634,6 +634,20 @@ dependent on the separately gated runtime source.
 These cover HOST-04/HOST-05 revocation, actionable unavailable credentials,
 native management/publication refusals and read-only cleanup adoption, not
 successful endpoint startup or cloud deletion.
+The no-registration removal correction exercises real Services stop/cleanup
+under the exclusive native lease, current phase/epoch/full snapshot and exact
+directory identity. Three service regressions prove unpublished-receipt own
+absence with zero fake-manager calls and untouched foreign definitions, lease/
+epoch/instance refusal and corrupt/foreign/non-file/missing-lock receipt refusal.
+`host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup`
+and the acknowledged-uncertainty adoption case pass through actual controller
+disable/uninstall and Services, substituting only the cloud network/credentials.
+Successful direct `confirm_stopped` shortcuts are removed from those cloud and
+controller integration fixtures; active runtime ownership and missing-lock/history
+guards still block Disabled. These tests require the explicit combined controller
+features; standalone cloud tests do not substitute lifecycle confirmation.
+Native status still refuses absent receipts, and real native-manager/cloud/vault
+qualification and generation-conditional deletion remain separate gates.
 `native_service_live_exact_owned_lifecycle_preserves_independent_child` is
 ignored by default and requires an explicitly authorized disposable Unix guest.
 Its synthetic executable/native-manager evidence is not release publisher,

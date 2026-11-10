@@ -17,6 +17,20 @@ the installation to a Ready-shaped state. Repeating a StopRequested disable
 reuses its epoch. `cleanup-local` requires an existing CleanupPending journal
 and never commits Removed or deletes cloud/identity/grant/daemon state.
 
+For a bound installation whose native registration receipt was never published,
+`stop` in StopRequested and `cleanup` in CleanupPending may report **owned
+resource absence**, not an observation of arbitrary native-manager resources.
+They retain the exclusive Services lease, recheck the full current lifecycle
+snapshot/epoch and exact state-directory identity, and reread the missing receipt
+under the short lifecycle lock. Registration publishes its retained receipt
+before native effects; removal retains a tombstone. No receipt is fabricated,
+foreign definition probed/removed or manager command run for this path.
+Corrupt, foreign, unreadable or uncertain receipts and lease contention still
+refuse. `service-status` deliberately keeps its missing-receipt no-observation
+error. The controller still revokes first and requires released foreground
+runtime ownership (missing runtime lock plus existing history refuses) before
+Disabled; cloud cleanup remains independent and never uses an unqualified DELETE.
+
 `recover-cleanup` performs authenticated read-only adoption of an acknowledged
 uncertain cloud submission without an enable ticket or another create. Present
 exact-resource evidence is pinned before the lifecycle moves to StopRequested.
@@ -154,8 +168,8 @@ consent/revocation lease to advance during an outstanding native effect.
 | `install(&TrustedStage, epoch)` | Provisioned, exact current epoch | Publish/register the approved definition; do not start a process; Windows refuses until authenticated graceful stop exists |
 | `status()` | Existing exact-owned receipt | Query native manager state; missing receipt is an explicit no-observation error |
 | `start(&TrustedStage, epoch)` | Provisioned, exact current epoch | Require current protected enrollment/vault policy, revalidate executable, explicitly start and boundedly reconcile Running/Transitioning; Windows refuses |
-| `stop(epoch)` | StopRequested, exact current epoch | Stop only the exact owned resource and require stopped/failed/absent observation |
-| `cleanup(epoch)` | CleanupPending, exact current epoch | Remove only the exact owned native registration/definition and require observed absence |
+| `stop(epoch)` | StopRequested, exact current epoch | Stop only the exact owned resource and require stopped/failed/absent observation, or fenced own absence when no registration receipt was published |
+| `cleanup(epoch)` | CleanupPending, exact current epoch | Remove only the exact owned native registration/definition and require observed absence, or fenced own absence when no registration receipt was published |
 
 On macOS, install can observe Absent because the private LaunchAgent definition
 is published without bootstrapping it; it does not manufacture a loaded job.

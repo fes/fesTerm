@@ -3637,6 +3637,18 @@ and cancelled/history-only uninstall without native/cloud calls. They do not
 qualify real manager termination, signed update or generation-atomic deletion;
 `HOSTSETUP-01` still requires real ordinary-user host stop and independent
 persistent-daemon survival with the combined signed runnable head.
+The unpublished-native-receipt correction now passes real Services/controller
+removal after cloud publication (including cancellation) and acknowledged
+uncertainty adoption, without a successful direct lifecycle-stop shortcut.
+Absence is scoped only to this installation's never-published native registration
+under the Services lease and fresh phase/epoch/full-snapshot/directory fences;
+status remains no-observation. Typed fake-manager regressions assert zero manager
+calls, preserve a foreign running definition and refuse corrupt/foreign receipts,
+non-file evidence, missing locks and stale/contended ownership. Actual Services
+absence still cannot bypass an active runtime lease or missing runtime lock with
+existing run history. Present cloud generations retain CleanupPending; only
+authenticated absence may complete Removed. No real manager, native vault or
+cloud operation was performed, so HOSTSETUP-01 remains open.
 Before the subsequent review corrections, the compiled checkpoint passed 9 runtime
 controller cases plus the production
 foreground identity-initialization regression; affected host/setup packages

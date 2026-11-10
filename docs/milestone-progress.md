@@ -1,5 +1,78 @@
 # Milestone Progress Narrative
 
+## Unblocking removal before native registration publication
+
+The complete frozen-core reliability review found a HIGH functional dead end:
+cloud provisioning/adoption could bind an installation before native registration,
+but real Services stop and cleanup rejected every missing receipt. Existing cloud
+and controller fixtures directly confirmed lifecycle stop, hiding the broken
+composition after cancellation, owner-store failure or an abandoned Provisioned
+installation. A new real Services regression reproduced `host.service_not_installed`;
+the RED remains in `.runtime-validation/no-receipt-red.log`.
+
+StopRequested stop and CleanupPending cleanup now accept only this installation's
+unpublished-registration absence. The existing exclusive Services lease prevents
+registration effects while the full lifecycle snapshot, current epoch and exact
+state-directory instance are revalidated and the missing receipt is reread under
+the short lifecycle lock. Registration publishes before native effects and retains
+its receipt/tombstone. The absence path creates no receipt, queries no native
+manager and never probes or removes a foreign definition. Status retains its
+explicit no-observation error. Corrupt/foreign/non-file evidence, stale phase/epoch,
+directory mismatch or lease contention still refuse; controller revoke-first and
+runtime-lease/missing-lock-plus-history guards remain unchanged.
+
+Three Services regressions cover all three typed platform contexts with an
+untouched foreign running definition/zero manager calls, exclusive-lease and
+current-instance/epoch fences, and fourteen corrupt/foreign/non-file/missing-lock
+stop/cleanup cases. A new shared-controller regression uses actual Services after
+ordinary provisioning and cancellation, then reaches real controller uninstall's
+cloud cleanup through only substituted network/credentials. The existing
+acknowledged-uncertainty adoption case now follows that same real path.
+Successful direct `confirm_stopped` shortcuts were removed from the cloud/controller
+integration tests; they explicitly require the combined controller features.
+Lifecycle transition-unit tests and the negative wrong-binding assertion remain.
+Present cloud resources retain unsuccessful CleanupPending without DELETE;
+authenticated absence alone completes Removed. The production uninstall path
+shares its exact native/lifecycle body with the crate-private cloud-future test
+seam; no generic manager/transport redesign or public signature change is added.
+
+Qualification uses private `.runtime-target`, jobs1, dev/test debug0 and
+incremental0, with exact commands and logs:
+
+```sh
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/.runtime-target"
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib services::tests
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib cloud::tests
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib controller::tests
+cargo test --locked -p festerm-host -p festerm-host-setup
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo check --locked -p festerm-host-setup --no-default-features --features native-services --lib
+cargo test --locked -p festerm-host --no-default-features
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 1debea976d62c32344c0d79cbfa74026a152264d
+git diff --check
+```
+
+Focused passes: **14 Services**, **25 cloud/controller integration** and **10
+runtime-controller**. The subsequent complete affected-package union passes
+**118 tests/one existing dedicated-signer ignore** (105 setup, five host units,
+eight CLI integrations); the ignored pinned cargo-packager manifest case requires
+cargo-packager 0.11.8 and runs in its dedicated normal-CI signer job. The focused
+cases are subsets, not extra aggregate passes. Compatibility passes **10**
+(four units/six CLI), strict affected
+all-target Clippy and standalone native-services check pass. Logs are retained
+as `.runtime-validation/no-receipt-*.log`; existing optional-feature/vendor
+warnings are not suppressed. Format, base-`1de` traceability and diff checks
+accompany the handoff. No actual OS manager, production cloud/vault, VM or device
+operation was performed. The prior 14-route SSH aggregate remains attributed to
+`e49bb89a`; this no-registration correction does not relabel or rerun that proof.
+No native update/client branch is merged, no Ready/ADR completion is claimed,
+and independent exact-head follow-up reviews/primary CI remain parent-owned.
+Postcommit range checking caught separately paragraphed trailers; the corrected
+single Git-parsed trailer block changes no source. The failed trace is retained
+as `no-receipt-range-trace-first.log`, alongside the final passing trace.
+
 ## Freezing the runtime/native core with exact primary-CI corrections
 
 The frozen publication union normally merges exact
