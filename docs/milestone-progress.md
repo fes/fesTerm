@@ -1,5 +1,37 @@
 # Milestone Progress Narrative
 
+## Combining the narrow primary-CI corrections
+
+The session branch normally merges exact Windows fixture checkpoint
+`794c360bc5038eb498b1dc0beaef4821bb9507fe` into exact session correction
+`d7d2d94d611e06c98734ed8168dc3dc2383d2fe1`. Only the overlapping progress
+sections needed conflict resolution; both histories and all source assertions
+are preserved. No moving branch was substituted for either reviewed input.
+
+With the warm private target, one build job, zero dev/test debug info and
+incremental compilation disabled, the combined source passed:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams -- --exact --nocapture
+cargo clippy --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup --tests -- -D warnings
+cargo test --locked -p festerm-sessiond --test host_control temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease -- --exact --test-threads=1
+cargo test --locked -p festerm-sessiond --test remote_ssh -- --test-threads=2
+```
+
+The portable evidence fixture ran **1 passed/0 failed/0 ignored** (71 macOS
+tests filtered); coupled session selectors ran **1 host-control and all 6 SSH
+tests passed**, zero ignored. Strict affected Clippy passed. Logs are retained
+as `target/adr84-windows-correction/combined-*.log`. The **245 passed/7 existing
+ignored** full sessiond qualification below remains attributed to `d7d2d94d`,
+not relabeled as a new combined-head full-suite run. Final format, base-`9d521174`
+traceability and diff checks accompany the merge handoff.
+
+The native console fixture change and bounded first-failure capture do **not**
+establish that all three Windows failures are fixed. The argv/CIM cause
+distinctions and all three exact native selectors still require fresh actual
+Windows x64 CI. Publication/review remain parent-owned; no service, platform
+acceptance or main merge is claimed.
+
 ## Correcting primary-CI fixture admission races
 
 Exact `9d521174` Windows x64 native CI ran both bridge cases successfully:
@@ -58,6 +90,57 @@ adoption deadlines and existing failure/preservation assertions are unchanged.
 Fresh corrected-head Linux/
 macOS primary CI and the separately owned Windows legacy corrections remain
 required; local passes do not qualify installed services or native acceptance.
+
+## Retaining evidence for legacy Windows setup CI failures
+
+Required Windows CI run `42793362331`, job `129752154452`, at
+`9d5211745c126c2cdc417062d153c324d024b188` ran 67 setup tests: 60 passed,
+three failed and four were ignored. The failing `setup.rs` and
+`service_install.rs` source was carried unchanged from green main `8ac8070d`;
+this is not evidence that the actual failures were cache or infrastructure
+noise. Both ownership fixture errors erased the distinction between spawn,
+deadline and script failure. Their roughly 15-second completion is consistent
+with the runner deadline but does not prove a C# or CIM root cause. The console
+fixture explicitly exceeded its 15-second deadline while using PowerShell
+`Add-Type` merely to call `GetConsoleWindow`.
+
+The console regression now re-executes its own test binary and queries the
+same native API through `festerm-windows-security`. It still requires exactly
+one zero-console observation, exit status 37 and the existing
+`CREATE_NO_WINDOW` command path within the unchanged deadline. The read-only
+ownership fixtures now capture bounded stdout/stderr concurrently and retain
+escaped first evidence on exit failure, overflow and timeout, with
+`fixture.started`/`fixture.matcher_ready` progress markers. Production command
+redaction, the C# matcher, native argv decoding, the CIM precision bound and
+all ownership cases are unchanged. Child cleanup cannot replace the original
+identity-fixture failure. No serialization, retries, skips or deadline changes
+were added.
+
+The deterministic diagnostic regression is
+`service_install::tests::service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams`
+(one case). It covers nonzero exit, both bounded streams, escaped control bytes,
+partial-read cancellation and timeout. Its standalone `794c360b` checkpoint had
+not run Cargo; the combined-source portable execution recorded above subsequently
+passed one case under the granted single-job resource window. No Windows success
+is claimed.
+
+The three exact native selectors, each expected to execute **one** test with
+zero ignored, are:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_windows_native_argv_ownership_is_exact_and_read_only -- --exact --nocapture
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup service_install::tests::service_windows_creation_identity_matches_only_cim_microsecond_precision -- --exact --nocapture
+cargo test --locked -p festerm-tunnel-bridge --bin festerm-tunnel-setup tests::background_commands_do_not_allocate_a_console -- --exact --nocapture
+```
+
+After correction, the complete Windows setup binary is expected to report
+64 passed and the existing four ignored (68 total). These are expected counts,
+not executed results. A reviewed, SHA-pinned lab entry or new required Windows
+x64 CI must retain the first failure if either ownership fixture still refuses.
+The current lab's Windows mapping does not authorize these selectors; no
+arbitrary payload or guest execution was attempted. This checkpoint does not
+qualify new ADR 0084 controller APIs, installed services, GUI, signing or native
+acceptance.
 
 ## Proving native pending-output order rather than presence
 

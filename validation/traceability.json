@@ -1234,6 +1234,9 @@
         "service_upgrade_replaces_only_an_owned_definition_atomically",
         "service_upgrade_refuses_another_identity_or_state",
         "service_windows_stop_script_targets_only_owned_workers_and_bridges",
+        "service_windows_native_argv_ownership_is_exact_and_read_only",
+        "service_windows_creation_identity_matches_only_cim_microsecond_precision",
+        "service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams",
         "managed_state_refuses_unknown_credentials_and_relative_paths",
         "managed_checkpoint_and_lock_are_private_and_reusable",
         "managed_runtime_namespace_is_explicit_and_never_uses_worker_environment",
@@ -1317,6 +1320,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "Fresh required Windows x64 CI proof of the three legacy tunnel-setup fixtures after 9d521174; read-only capture improvements and macOS checks are not Windows qualification",
         "Remaining real GitHub-provisioned service/native desktop qualification beyond the reviewed Windows fixture",
         "Controlled two-account real-service evidence; mock isolation is not service qualification",
         "Native Entra remains deferred; native macOS/Pi GitHub sign-in, vault refresh/reload and desktop reconnect passed, with broader platform and two-account qualification tracked in #429"
