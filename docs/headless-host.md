@@ -124,9 +124,9 @@ After `configure`, explicit `setup` requires the signed package inputs above,
 `--state-dir`, `--account-id` and `--consent enable`. It authenticates every
 executable before foreground GitHub device sign-in, provisions the zero-shell
 endpoint and registers the same-user host without an explicit start command.
-UserSignIn registration arms next-login activation (Linux user-unit enable /
-macOS RunAtLoad); it is not a guarantee of never launching. The runnable Linux
-controller currently refuses UserSignIn pending the current-logon fence below.
+UserSignIn registration arms automatic activation (Linux receipt-owned user-unit
+enable/start with fresh current-logon admission; macOS RunAtLoad).
+It is not a guarantee of never launching. Manual registration remains inert.
 Initial owner policy
 has no keys and access off. Its public `owner_approval_prerequisite` describes the
 exact installation/host/account/principal for independent foreground pin review;
@@ -150,11 +150,18 @@ requiring configured creation consent), `--end allow` and independent
 There is no bearer enrollment, recipe-derived trust or file-store fallback.
 The protected client-local receipt/index and actual first-connect UI remain
 separate prerequisites.
-Linux runnable setup/run currently requires Manual startup. Enabling a user unit
-under `default.target` does not prove sign-in-only activation when user lingering
-is already enabled; until a verified current-logon/session activation fence is
-implemented, UserSignIn refuses before account or listener effects. No host
-linger/permission setting is changed to bypass that prerequisite.
+Linux UserSignIn now requires bounded verified login1 proof for actual-UID
+`Class=user` graphical/interactive TTY/SSH sessions, retaining hosting through
+lock/idle until the last eligible logout. Missing/uncertain proof refuses or
+closes hosting, never daemon sessions or grants. An enabled/lingering user manager
+is not login proof. Manual is unchanged. No linger/permission setting is changed.
+See the [current-login fence and native gates](native-host-services.md#linux-current-login-fence);
+real manager/logind/cgroup/logout survival remains unqualified.
+The owned Linux sign-in unit retries only reserved exit **75**, emitted for
+typed current-login-proof unavailability after bundle/owner validation.
+It uses `Restart=no` and `RestartForceExitStatus=75`; lifecycle refusal,
+revoked/missing/changed consent, bundle/cloud failure and other errors exit 1,
+not an automatic background retry. Normal cancellation exits 0.
 
 `run --state-dir PATH` reauthenticates retained signed bundle provenance, selects
 only its same-version daemon helper and reopens existing native account/owner

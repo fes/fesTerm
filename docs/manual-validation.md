@@ -3740,8 +3740,37 @@ passed 106 tests with one existing native ignore, compatibility CLI passed 10 an
 strict affected-package Clippy passed. The real initializer is invoked from an
 absent key through production `CloudHostAdapter::foreground`, not preseeded by a
 fixture. Identity loss under an existing cloud record refuses regeneration.
-Linux UserSignIn remains blocked on current-logon activation (an already lingering
-user manager is not sign-in proof); Manual setup/run remains available in source.
+Linux UserSignIn has source-level bounded current-logon admission and per-run
+supervision under the owner's explicit graphical/interactive TTY/SSH and
+retain-until-last-eligible-logout approval. HOSTSETUP-01 must verify that only typed login-proof
+exit 75 triggers `RestartForceExitStatus=75` under `Restart=no`, while exits
+0/1, disabled/stopping/cleanup, missing/revoked/changed owner consent and
+bundle/cloud failures do not loop. Portable disposition/unit-text and protected
+lifecycle fixtures cover those refusals, not genuine manager execution.
+Portable final-account-confirmation cancellation and held-real-Store-lease
+fixtures now cover the two narrow login-recovery races. The post-loss snapshot
+read waits at most 250 ms for WouldBlock only; success still requires fresh
+bundle and owner proof. Persistent contention, malformed state, revocation and
+changed consent refuse retry. These tests are not OS timing/load or native
+credential/manager acceptance.
+Repeated no-login probe load under an already lingering manager remains a native
+evidence boundary; do not enable linger or change OS policy to qualify it.
+An already lingering user manager is
+not proof; Manual setup/run remains unchanged. HOSTSETUP-01 still requires a
+separately granted ordinary-user real-manager/logind window: actual eligible
+graphical/PAM TTY/SSH sessions, lock/idle, multiple logins, last logout, missing/
+restarted bus and logind, and existing linger without configuration changes.
+Observe actual relay retirement and continued persistent child I/O with identical
+daemon PID/generation, helpers, grants and cgroup membership. A user-manager or
+session cgroup terminated by OS logout policy may kill those daemons; no synthetic
+manager/parser/watcher test proves otherwise or authorizes policy repair.
+The exact-core Linux follow-up attempted the real
+`x86_64-unknown-linux-gnu` library check after installing only its missing
+official standard-library target in the existing user-owned stable toolchain.
+It remains blocked in `aws-lc-sys 0.47.0`: `x86_64-linux-gnu-gcc` is absent
+(os error 2; Cargo 101/build-script 1). Portable checks are not successful
+Linux-target compilation; no cfg/C-toolchain workaround or native proof is
+inferred. See the opening milestone entry for pinned compiler paths/raw logs.
 The review-correction union passes 114 host/setup tests with one existing native
 ignore: 101 setup-library, 5 headless unit and 8 CLI integration cases. The new
 production-supervision regression holds the actual Store installation lease

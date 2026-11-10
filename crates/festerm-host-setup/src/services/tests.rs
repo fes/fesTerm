@@ -160,7 +160,11 @@ impl CommandRunner for FakeRunner {
                         output.success = false;
                     }
                 }
-                if (args.contains(&"start") || args.contains(&"kickstart")) && !state.refuse_start {
+                if (args.contains(&"start")
+                    || args.contains(&"kickstart")
+                    || (args.contains(&"enable") && args.contains(&"--now")))
+                    && !state.refuse_start
+                {
                     if state.start_delay_queries > 0 {
                         state.pending_start = true;
                     } else {
@@ -614,7 +618,9 @@ fn native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_e
             "host.service_not_installed_no_native_observation"
         );
         let installed = services.install(&stage, snapshot.epoch).unwrap();
-        assert_ne!(installed.process, ProcessState::Running);
+        if platform != Platform::Linux || startup != Startup::UserSignIn {
+            assert_ne!(installed.process, ProcessState::Running);
+        }
         let record = services.registration().unwrap().1.unwrap();
         match platform {
             Platform::Linux => assert_eq!(
@@ -711,6 +717,102 @@ fn native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_e
                 _ => false,
             }));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_linux_sign_in_activation_is_owned_and_manual_remains_inert() {
+    for startup in [Startup::Manual, Startup::UserSignIn] {
+        let root = storage::private_test_directory();
+        let store = Store::create(
+            &root.path().join("state"),
+            Origin::Headless,
+            Settings {
+                startup,
+                ..settings()
+            },
+        )
+        .unwrap();
+        let snapshot = provision(&store);
+        let stage = trusted::fixture(root.path());
+        let services = services(root.path(), &store, Platform::Linux);
+        services.install(&stage, snapshot.epoch).unwrap();
+        let record = services.registration().unwrap().1.unwrap();
+        assert_eq!(store.snapshot().unwrap(), snapshot);
+        assert!(record.definition.contains("KillMode=process\n"));
+        assert!(record.definition.contains("SendSIGKILL=no\n"));
+        let calls = &services.runner.state.borrow().calls;
+        if startup == Startup::UserSignIn {
+            assert!(record.definition.contains(&format!(
+                "Restart=no\nRestartForceExitStatus={}\nRestartSec=2s",
+                crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
+            )));
+            assert!(!record.definition.contains("Restart=on-failure"));
+            assert!(record.definition.contains("StartLimitIntervalSec=0\n"));
+            assert!(calls.iter().any(|request| matches!(request,
+                NativeRequest::Process { args, .. }
+                if args == &["--user", "enable", "--now", &record.resource]
+                    .map(std::ffi::OsString::from))));
+        } else {
+            assert!(record.definition.contains("Restart=no\n"));
+            assert!(!record.definition.contains("RestartForceExitStatus="));
+            assert!(!record.definition.contains("StartLimitIntervalSec="));
+            assert!(!calls.iter().any(|request| matches!(request,
+                NativeRequest::Process { args, .. }
+                if args.iter().any(|arg| arg == "--now" || arg == "enable" || arg == "start"))));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_service_linux_sign_in_raced_revocation_retains_exact_reservation_without_success() {
+    struct Revoking<'a> {
+        store: &'a Store,
+        inner: FakeRunner,
+    }
+    impl CommandRunner for Revoking<'_> {
+        fn execute(&self, request: &NativeRequest) -> io::Result<NativeOutput> {
+            if matches!(request, NativeRequest::Process { args, .. }
+                if args.iter().any(|arg| arg == "--now"))
+            {
+                self.store.revoke()?;
+            }
+            self.inner.execute(request)
+        }
+    }
+    let root = storage::private_test_directory();
+    let store = Store::create(
+        &root.path().join("state"),
+        Origin::Headless,
+        Settings {
+            startup: Startup::UserSignIn,
+            ..settings()
+        },
+    )
+    .unwrap();
+    let before = provision(&store);
+    let stage = trusted::fixture(root.path());
+    let original = services(root.path(), &store, Platform::Linux);
+    let services = Services {
+        store: original.store,
+        state: original.state,
+        context: original.context,
+        runner: Revoking {
+            store: &store,
+            inner: original.runner,
+        },
+    };
+    assert!(services.install(&stage, before.epoch).is_err());
+    let current = store.snapshot().unwrap();
+    assert_eq!(current.phase, Phase::StopRequested);
+    assert_eq!(current.binding, before.binding);
+    assert!(current.epoch > before.epoch);
+    let retained = services.registration().unwrap().1.unwrap();
+    assert_eq!(retained.epoch, before.epoch);
+    assert_eq!(retained.binding, before.binding.unwrap());
+    assert_eq!(retained.settings.startup, Startup::UserSignIn);
+    assert!(services.runner.inner.state.borrow().running);
 }
 
 #[cfg(unix)]

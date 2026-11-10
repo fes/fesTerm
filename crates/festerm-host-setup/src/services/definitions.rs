@@ -67,9 +67,19 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
     let executable = path_text(&record.executable)?;
     let state = path_text(&record.state)?;
     match record.platform {
-        Platform::Linux => Ok(format!(
-            "[Unit]\nDescription=fesTerm host {}\n[Service]\nType=exec\nExecStart={} run --state-dir {}\nRestart=no\nTimeoutStartSec=10s\nTimeoutStopSec=10s\nSendSIGKILL=no\nKillMode=process\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=default.target\n",
-            record.resource, systemd(executable), systemd(state))),
+        Platform::Linux => {
+            let (limits, restart) = if record.settings.startup == Startup::UserSignIn {
+                ("StartLimitIntervalSec=0\n", format!(
+                    "Restart=no\nRestartForceExitStatus={}\nRestartSec=2s",
+                    crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
+                ))
+            } else {
+                ("", "Restart=no".into())
+            };
+            Ok(format!(
+                "[Unit]\nDescription=fesTerm host {}\n{}[Service]\nType=exec\nExecStart={} run --state-dir {}\n{}\nTimeoutStartSec=10s\nTimeoutStopSec=10s\nSendSIGKILL=no\nKillMode=process\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=default.target\n",
+                record.resource, limits, systemd(executable), systemd(state), restart))
+        },
         Platform::Macos => Ok(format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
              <key>Label</key><string>{}</string><key>ProgramArguments</key><array>\

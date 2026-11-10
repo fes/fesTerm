@@ -1,5 +1,7 @@
 //! Shared explicit foreground setup and restartable host composition.
 
+mod linux_login;
+
 use crate::{
     cloud::{Cleanup, CloudHostAdapter, Foreground, Health, HOST_IDENTITY_FILE},
     enrollment::{
@@ -164,7 +166,10 @@ pub(crate) async fn setup_with(
         cancel,
     } = request;
     let before = store.snapshot()?;
-    startup_admission(std::env::consts::OS, before.settings.startup)?;
+    startup_admission(before.settings.startup, cancel).await?;
+    if store.snapshot()? != before {
+        return Err(refused("host.runtime_consent_changed"));
+    }
     stage.sessiond_path()?;
     if account == 0 || cancel.is_cancelled() {
         return Err(refused("host.foreground_account_consent_required"));
@@ -453,6 +458,7 @@ pub enum RunState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunFailure {
+    LoginProofUnavailable,
     AuthenticatedBundleRequired,
     CurrentOwnerConsentRequired,
     DaemonBoundaryUnavailable,
@@ -534,9 +540,9 @@ fn refused(reason: &'static str) -> io::Error {
     io::Error::other(reason)
 }
 
-fn startup_admission(platform: &str, startup: Startup) -> io::Result<()> {
-    if platform == "linux" && startup == Startup::UserSignIn {
-        return Err(refused("host.linux_sign_in_session_fence_required"));
+async fn startup_admission(startup: Startup, cancel: &CancellationToken) -> io::Result<()> {
+    if linux_login::required(std::env::consts::OS, startup) {
+        linux_login::admit(&linux_login::Logind, cancel).await?;
     }
     Ok(())
 }
@@ -595,10 +601,7 @@ pub async fn run(store: Arc<Store>, state: &Path, cancel: CancellationToken) -> 
     let (_run_lease, snapshot, mut record) = reserve(&store)?;
     persist(&store, &record)?;
     let result = run_reserved(store.clone(), state, &snapshot, &mut record, cancel.clone()).await;
-    let result = if cancel.is_cancelled()
-        && result
-            .as_ref()
-            .is_err_and(|error| error.to_string() == "host.cloud_cancelled")
+    let result = if cancel.is_cancelled() && result.as_ref().is_err_and(crate::cloud::is_cancelled)
     {
         Ok(())
     } else {
@@ -635,10 +638,98 @@ async fn run_reserved(
     if cancel.is_cancelled() {
         return Ok(());
     }
-    startup_admission(std::env::consts::OS, expected.settings.startup)?;
+    let stage = authorize_run(&store, state, expected, record, &store.snapshot()?)?;
+    record.failure = Some(RunFailure::LoginProofUnavailable);
+    let hosting_cancel = cancel.child_token();
+    let result = if let Err(error) = startup_admission(expected.settings.startup, &cancel).await {
+        if cancel.is_cancelled() {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    } else if linux_login::required(std::env::consts::OS, expected.settings.startup) {
+        let hosting = async {
+            let result = run_admitted(
+                store.clone(),
+                state,
+                expected,
+                record,
+                &stage,
+                hosting_cancel.clone(),
+            )
+            .await;
+            if hosting_cancel.is_cancelled()
+                && result.as_ref().is_err_and(crate::cloud::is_cancelled)
+            {
+                Ok(())
+            } else {
+                result
+            }
+        };
+        linux_login::guard(
+            &linux_login::Logind,
+            cancel,
+            hosting_cancel.clone(),
+            hosting,
+        )
+        .await
+    } else {
+        run_admitted(
+            store.clone(),
+            state,
+            expected,
+            record,
+            &stage,
+            hosting_cancel,
+        )
+        .await
+    };
+    if result.as_ref().is_err_and(|error| {
+        crate::run_exit::error_exit_code(error)
+            == crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
+    }) {
+        // Login loss never authorizes retry after a concurrent revoke or
+        // bundle/owner change while the owned hosting future was draining.
+        record.failure = Some(RunFailure::RuntimeFailed);
+        let current = login_retry_snapshot(&store).await?;
+        authorize_run(&store, state, expected, record, &current)?;
+        record.failure = Some(RunFailure::LoginProofUnavailable);
+    }
+    result
+}
+
+async fn login_retry_snapshot(store: &Store) -> io::Result<Snapshot> {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+    loop {
+        match store.snapshot() {
+            Err(error)
+                if error.kind() == io::ErrorKind::WouldBlock
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep_until(
+                    (tokio::time::Instant::now() + Duration::from_millis(25)).min(deadline),
+                )
+                .await;
+            }
+            result => return result,
+        }
+    }
+}
+
+fn authorize_run(
+    store: &Arc<Store>,
+    state: &Path,
+    expected: &Snapshot,
+    record: &mut RunRecord,
+    current: &Snapshot,
+) -> io::Result<crate::services::TrustedStage> {
+    record.failure = Some(RunFailure::RuntimeFailed);
+    if current != expected {
+        return Err(refused("host.runtime_consent_changed"));
+    }
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
-    let stage = Services::current_user(&store, state)?.reopen_stage(expected.epoch)?;
-    let helper = stage.sessiond_path()?;
+    let stage = Services::current_user(store, state)?.reopen_stage(expected.epoch)?;
+    stage.sessiond_path()?;
     record.failure = Some(RunFailure::CurrentOwnerConsentRequired);
     {
         let current = store.owner_enrollment()?.snapshot()?;
@@ -657,12 +748,33 @@ async fn run_reserved(
             refused("host.runtime_current_owner_consent_required")
         }
     })?);
+    Ok(stage)
+}
+
+async fn run_admitted(
+    store: Arc<Store>,
+    state: &Path,
+    expected: &Snapshot,
+    record: &mut RunRecord,
+    stage: &crate::services::TrustedStage,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
+    record.failure = Some(RunFailure::AuthenticatedBundleRequired);
+    let helper = stage.sessiond_path()?;
+    let policy = Arc::new(CurrentOwnerPolicySource::new(
+        store.clone(),
+        OwnerStorage::NativeVault,
+    ));
     record.failure = Some(RunFailure::DaemonBoundaryUnavailable);
     let sessions = SessionControl::with_helper(&state.join("daemon"), helper)
         .map_err(|_| refused("host.runtime_daemon_boundary_unavailable"))?;
     let runtime = Arc::new(HostRuntime::new(sessions, policy));
     record.failure = Some(RunFailure::RelayUnavailable);
     let mut relay = CloudHostAdapter::new(&store).open_relay(&cancel).await?;
+    startup_admission(expected.settings.startup, &cancel).await?;
     stage.sessiond_path()?;
     if store.snapshot()? != *expected {
         return Err(refused("host.runtime_consent_changed"));
@@ -716,6 +828,10 @@ mod tests {
     use crate::lifecycle::{Binding, Origin, Settings};
 
     fn fixture() -> (storage::PrivateTestDirectory, Arc<Store>) {
+        fixture_startup(Startup::Manual)
+    }
+
+    fn fixture_startup(startup: Startup) -> (storage::PrivateTestDirectory, Arc<Store>) {
         let root = storage::private_test_directory();
         let store = Arc::new(
             Store::create(
@@ -723,7 +839,7 @@ mod tests {
                 Origin::Headless,
                 Settings {
                     friendly_name: "Runtime fixture".into(),
-                    startup: Startup::Manual,
+                    startup,
                     allow_creation: false,
                 },
             )
@@ -767,9 +883,117 @@ mod tests {
 
     #[test]
     fn host_runtime_linux_sign_in_requires_logon_fence_not_lingering_user_manager() {
-        assert!(startup_admission("linux", Startup::Manual).is_ok());
-        assert!(startup_admission("linux", Startup::UserSignIn).is_err());
-        assert!(startup_admission("macos", Startup::UserSignIn).is_ok());
+        assert!(!linux_login::required("linux", Startup::Manual));
+        assert!(linux_login::required("linux", Startup::UserSignIn));
+        assert!(!linux_login::required("macos", Startup::UserSignIn));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_login_retry_snapshot_waits_for_short_held_lease() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (_run_lease, expected, mut record) = reserve(&store).unwrap();
+        let policy_lease = store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap();
+        let current = login_retry_snapshot(&store);
+        tokio::pin!(current);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut current)
+                .await
+                .is_err()
+        );
+        drop(policy_lease);
+        let current = current.await.unwrap();
+        assert_eq!(current, expected);
+        assert!(authorize_run(
+            &store,
+            &root.path().join("host"),
+            &expected,
+            &mut record,
+            &current
+        )
+        .is_err());
+        assert_eq!(
+            record.failure,
+            Some(RunFailure::AuthenticatedBundleRequired)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_login_retry_snapshot_persistent_busy_and_nonbusy_errors_refuse() {
+        let (_root, store) = fixture();
+        provision(&store);
+        let lease = store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap();
+        let started = tokio::time::Instant::now();
+        let error = login_retry_snapshot(&store).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(started.elapsed() <= Duration::from_millis(275));
+        drop(lease);
+        assert!(last_run(&store).unwrap().is_none());
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(directory, Path::new("host-lifecycle.json"), b"invalid")
+            })
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        let error = login_retry_snapshot(&store).await.unwrap_err();
+        assert_ne!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_login_retry_snapshot_rechecks_revoked_or_changed_consent() {
+        for change_settings in [false, true] {
+            let (root, store) = fixture();
+            provision(&store);
+            let (_run_lease, expected, mut record) = reserve(&store).unwrap();
+            let policy_lease = store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap();
+            let current = login_retry_snapshot(&store);
+            tokio::pin!(current);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), &mut current)
+                    .await
+                    .is_err()
+            );
+            drop(policy_lease);
+            store.revoke().unwrap();
+            if change_settings {
+                let stopped = store.snapshot().unwrap();
+                let binding = stopped.binding.unwrap();
+                store.confirm_stopped(stopped.epoch, &binding).unwrap();
+                let mut settings = expected.settings.clone();
+                settings.allow_creation = !settings.allow_creation;
+                store.configure(settings.clone()).unwrap();
+                let ticket = store.request_enable(&settings).unwrap();
+                store.record_provisioned(&ticket, binding).unwrap();
+            }
+            let current = current.await.unwrap();
+            assert_ne!(current, expected);
+            assert_eq!(
+                current.phase,
+                if change_settings {
+                    Phase::Provisioned
+                } else {
+                    Phase::StopRequested
+                }
+            );
+            let error = match authorize_run(
+                &store,
+                &root.path().join("host"),
+                &expected,
+                &mut record,
+                &current,
+            ) {
+                Ok(_) => panic!("changed protected consent cannot authorize login retry"),
+                Err(error) => error,
+            };
+            assert_eq!(error.to_string(), "host.runtime_consent_changed");
+            assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+            assert_eq!(store.snapshot().unwrap(), current);
+            assert!(last_run(&store).unwrap().is_none());
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -785,13 +1009,22 @@ mod tests {
             let shutdown = shutdown.clone();
             async move { shutdown.cancelled().await }
         };
-        let watched = supervise(
+        struct Eligible;
+        impl linux_login::Query for Eligible {
+            async fn eligible(&self, _: &CancellationToken) -> io::Result<bool> {
+                Ok(true)
+            }
+        }
+        let cancel = CancellationToken::new();
+        let hosting_cancel = cancel.child_token();
+        let hosted = supervise(
             &store,
             &expected,
-            CancellationToken::new(),
+            hosting_cancel.clone(),
             shutdown.clone(),
             serving,
         );
+        let watched = linux_login::guard(&Eligible, cancel, hosting_cancel, hosted);
         tokio::pin!(watched);
         assert!(tokio::time::timeout(Duration::from_secs(4), &mut watched)
             .await
@@ -808,8 +1041,61 @@ mod tests {
             .unwrap()
             .unwrap_err();
         assert_eq!(error.to_string(), "host.runtime_consent_changed");
+        assert_eq!(crate::run_exit::error_exit_code(&error), 1);
         assert_ne!(error.kind(), io::ErrorKind::WouldBlock);
         assert!(shutdown.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn host_runtime_manager_restart_after_disabled_stop_or_cleanup_is_not_retryable() {
+        for phase in [Phase::Disabled, Phase::StopRequested, Phase::CleanupPending] {
+            let (root, store) = fixture_startup(Startup::UserSignIn);
+            provision(&store);
+            store.revoke().unwrap();
+            if phase != Phase::StopRequested {
+                let stopped = store.snapshot().unwrap();
+                store
+                    .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+                    .unwrap();
+            }
+            if phase == Phase::CleanupPending {
+                store.request_cleanup().unwrap();
+            }
+            assert_eq!(store.snapshot().unwrap().phase, phase);
+            let before = store.snapshot().unwrap();
+            let error = run(
+                store.clone(),
+                &root.path().join("host"),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(crate::run_exit::error_exit_code(&error), 1, "{phase:?}");
+            assert_eq!(store.snapshot().unwrap(), before);
+            assert!(last_run(&store).unwrap().is_none());
+            assert!(!root.path().join("host/daemon").exists());
+            assert!(!root.path().join("host/host-cloud.json").exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn host_runtime_sign_in_bad_bundle_is_not_a_login_retry() {
+        let (root, store) = fixture_startup(Startup::UserSignIn);
+        provision(&store);
+        let error = run(
+            store.clone(),
+            &root.path().join("host"),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+        assert_eq!(
+            last_run(&store).unwrap().unwrap().failure,
+            Some(RunFailure::AuthenticatedBundleRequired)
+        );
+        assert!(!root.path().join("host/daemon").exists());
+        assert!(!root.path().join("host/host-cloud.json").exists());
     }
 
     fn observed_stop(store: &Store, epoch: u64) -> Observation {
@@ -971,13 +1257,14 @@ mod tests {
     async fn host_runtime_failed_start_is_durable_without_shell_or_credentials() {
         let (root, store) = fixture();
         provision(&store);
-        assert!(run(
+        let error = run(
             store.clone(),
             &root.path().join("host"),
-            CancellationToken::new()
+            CancellationToken::new(),
         )
         .await
-        .is_err());
+        .unwrap_err();
+        assert_eq!(crate::run_exit::error_exit_code(&error), 1);
         let record = last_run(&store).unwrap().unwrap();
         assert_eq!(record.state, RunState::Failed);
         assert_eq!(

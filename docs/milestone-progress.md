@@ -686,6 +686,316 @@ guest, signing or release operation was performed. Actual provider removal/
 retry and native/platform/client/migration acceptance remain **UNRUN**, not
 implied by these mock-boundary results. Publication/reviews remain parent-owned.
 
+## Completing two narrow login-recovery races
+
+The published `aeedeac7ee919b16f831e8806f4a31e28d227e24` remains immutable.
+Its review-cleared login-only restart contract had two availability races:
+owned cancellation after cloud account confirmation reached an untyped stale
+operation refusal, and a briefly contended post-login-loss snapshot read
+permanently lost automatic login recovery.
+
+The final locked relay-authorization check now distinguishes its existing
+private typed `CloudCancelled` from a genuinely changed snapshot, retaining
+the same error display. The owned hosting drain can recognize cancellation,
+while stale/revoked consent still refuses. A fixture cancels immediately after
+the successful final account-confirmation response and before the locked check;
+the companion case changes protected consent instead. Both retain identity and
+cloud-journal bytes and create/sign in exactly once.
+
+Only the post-login-loss snapshot read now uses a bounded async variant of the
+existing WouldBlock-only, 25-ms contention pattern: at most 250 ms, reacquiring
+the real protected read on every attempt with no lease spanning a sleep.
+The fresh full snapshot must still equal the original, followed by the same
+bundle/helper and current protected owner-policy checks before exit75.
+There is no retry of owner validation, bundle checks, cloud effects, initial
+admission, or other failures, and no cached authority or error-string inference.
+Persistent Busy, corrupt/non-Busy state and changed/revoked consent retain
+non-retryable refusal. A failed read is not journaled as proven login loss.
+
+The lease/barrier fixture proves the read stays pending under an actual Store
+lease and succeeds after release; subsequent real bundle validation still
+rejects that fixture's missing authenticated stage instead of granting exit75.
+Other held-lease fixtures prove the deadline, immediate non-Busy refusal and
+fresh revocation/changed-settings detection, including re-enabled Provisioned
+state with a different epoch/settings. These are isolated protected-state
+fixtures, not signed/native-vault or installed-manager acceptance.
+
+Both regressions first failed with **Cargo101, zero passes/one failure each**;
+raw logs and exit receipts are `target/adr84-login-evidence/login-races-red-*`.
+Fresh final selected source passes are **15 runtime / 3 cloud relay /
+9 login parser-watcher / 1 identity / 7 controller / 1 exit mapping /
+1 typed cancellation / 5 CLI**: **42 invocations, 42 distinct passes**,
+zero failures/ignores. Strict affected two-package all-target and cloud-only
+Clippy, fmt, base-aeede trace311/zero broken and diff checks pass.
+Prior Services/full-suite/native totals remain attributed to their old heads.
+Exact commands, private compiler paths/versions, source and raw-log hashes
+are in `target/adr84-login-evidence/login-races-provenance.json`;
+raw final logs are adjacent `login-races-{runtime,cloud-relay,login,identity,controller,mapping,cancellation,cli,clippy,cloud-only-clippy}.log`.
+
+The existing private Rust/Cargo1.99.1 jobs1/debug0/incremental0 warm environment
+is unchanged; memory was 49% free before qualification. No VM, native manager,
+native credential, cloud, signing, linger/OS-setting operation or cross-C retry
+ran. The prior Cargo101/aws-lc-sys/missing `x86_64-linux-gnu-gcc` evidence is
+preserved. Genuine logind/last-logout/repeated-probe/cgroup/daemon-survival gates
+remain pending. No new retry policy, grant, cleanup-absence or daemon termination
+authority is introduced. The host Cargo slot is released at the fixed
+checkpoint, with zero owned compiler/query/daemon CWD matches; no push is made.
+
+## Restricting Linux sign-in restart to typed login-proof loss
+
+Review of published Linux head `64e9d0e1` found that `Restart=on-failure`
+retried every failure, including a disabled installation or missing owner
+approval. The regression first failed against that exact source: zero passes,
+one failure, Cargo101 in `target/adr84-login-evidence/retry-only-red.log`.
+The receipt-owned sign-in unit now uses `Restart=no` and
+`RestartForceExitStatus=75`; the shared reserved constant is emitted only for
+the typed login-proof-unavailable error. Normal stop remains exit0, every other
+error exit1, and Manual's unit text/activation behavior is unchanged.
+
+Run validates signed helper provenance and current protected owner consent
+before querying login eligibility, then validates them again before returning
+a retryable login-loss result. Disabled/StopRequested/CleanupPending and a
+racing consent change cannot acquire retry authority. A login watcher cancels
+and drains only its run; a non-login failure discovered during drain wins over
+login loss. Cloud cancellation is now typed without changing its diagnostic or
+ordinary failure exit; only exact cancellation induced by this owned run is
+normalized during drain. Cloud, bundle, missing/revoked/changed consent, Busy,
+daemon-boundary, stream and unknown errors never request automatic restart.
+There is no error-text inference or journal-derived retry permission.
+
+Fresh qualification of the committed source uses the existing absolute private
+Rust/Cargo1.99.1 toolchain, jobs1/debug0/incremental0 and the same granted warm
+target. Exact executable paths, commands, source hashes and raw log hashes are
+in `target/adr84-login-evidence/retry-only-provenance.json`; final logs are
+adjacent `retry-only-qualified-*.log`:
+
+```sh
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_runtime_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib linux_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_controller_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib services::tests -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib run_exit_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_cloud_cancellation_is_typed -- --test-threads=1
+cargo test --locked -p festerm-host --bin festerm-host headless_
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo clippy --locked -p festerm-host-setup --no-default-features --features cloud --lib -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 64e9d0e1fcb0dad9298b45f277e0fb7a793e04ca
+git diff --check
+```
+
+Final passes are **12 runtime / 14 Linux / 7 controller / 16 Services /
+1 exit mapping / 1 typed cloud cancellation / 5 CLI**: **56 successful
+invocations, 51 distinct tests**, zero failures/ignores. Affected strict
+all-target and cloud-only Clippy, fmt, base64 trace311 and diff checks pass.
+The portable regressions include protected disabled/stopping/cleanup manager
+re-entry, bad-bundle refusal before login retry, actual consent-change
+supervision, initial missing proof, last-logout drain and non-login drain-error
+precedence. Synthetic lifecycle fixtures explicitly confirm their stopped
+binding before requesting cleanup; no production stop fence was weakened.
+The existing vendor/rust-objcopy warnings and test-development RED logs remain.
+
+The known Linux-target Cargo101/aws-lc-sys/missing cross-GCC blocker was not
+retried. Real systemd/logind/logout, repeated no-login probe load under an
+already lingering manager and OS cgroup/daemon survival remain native gates,
+not inferred from these tests. No linger/permission/OS change, native manager,
+VM, credential, cloud or signing operation ran. No grant, native-absence or
+persistent-daemon termination policy changed. The host Cargo slot is released
+at the fixed checkpoint, with zero owned compiler/query/daemon CWD matches.
+No push is performed; parent owns the full base64-to-fix re-review/publication.
+
+## Requalifying Linux sign-in over the exact core cfg correction
+
+Normal merge `e74259e1d843d27c56366cf7287f121e4aea9c41` has first parent
+`42e11bd87646137f1463059c1ee7e6ce6c559963` and second parent exactly
+`9b1d2a688e35cad8dead2afa4b228c152c2cadb9`. Only additive milestone prose
+conflicted; both evidence histories remain. The core's platform-parameter and
+Unix-only native-fixture cfg corrections integrate without source conflicts.
+Approved Linux eligibility/lifetime, Manual behavior and fenced absence are
+unchanged. No stopped-update, client or manual cloud-fallback feature is added.
+
+Fresh qualification on that merge uses the same absolute private Rust/Cargo
+1.99.1 paths and jobs1/debug0/incremental0 warm environment recorded below.
+The same five selected test commands pass **12 Linux / 10 runtime /
+7 controller / 1 registration / 1 diagnostic**, zero failures/ignores:
+**31 successful invocations, 30 distinct tests** because Linux/runtime overlap
+once. Strict all-target Clippy passes for `festerm-host`, `festerm-host-setup`
+and the additionally affected `festerm-tunnel-bridge`; fmt, traceability with
+`--base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9` (311 edges, zero broken)
+and diff checks pass. Exact commands, toolchain paths/versions and raw log
+hashes are in `target/adr84-login-evidence/combined-9b-provenance.json`;
+raw logs are adjacent `combined-9b-*.log`. Earlier full-suite/native totals
+are not relabeled as fresh combined-head qualification.
+
+The known Linux cross-C blocker was **not retried**: the prior Cargo101,
+`aws-lc-sys 0.47.0` build-script1/missing `x86_64-linux-gnu-gcc` evidence is
+preserved. Linux-target compilation and actual manager/logind/last-logout/
+cgroup/daemon-survival acceptance remain pending. The bridge cancellation
+contract does not guarantee survival through OS-owned user-logout teardown;
+fixtures cannot prove that boundary or authorize OS-setting changes.
+No actual native manager, VM, credential, cloud, signing or OS operation ran.
+The host Cargo slot is released at this fixed checkpoint; no push is performed.
+
+## Qualifying Linux sign-in on the exact corrected core
+
+Normal merge `c635a194c02f10db229631861f841bbb569f500c` preserves first parent
+`cab0d9121928829010be50ee5d0d8abf013da00e` and second parent exactly
+`b5e3bead12732cda335764e79e4b234bee1509d0`. Only milestone prose and HOST-05
+graph wording conflicted; their union retains approved Linux current-login
+semantics and the core's lease/phase/epoch/instance-fenced unpublished-registration
+absence. Status still reports no observation, not speculative absence.
+No stopped-update/client source or Windows policy work is included. Windows,
+sessiond, bridge and lockfile bytes are identical to the exact corrected core.
+Manual and the explicit Linux eligibility/lifetime decisions are unchanged.
+
+The genuinely pinned supported toolchain caught a new Clippy
+`chunks_exact_to_as_chunks` warning in the login parser. Commit
+`8e59f99a51971192fa2076383cccab159d755562` makes the one-line fixed-size slice
+API correction after the existing exact tuple-count check; no policy, ordering,
+minimum compiler or warning exception changes. That strict RED is retained as
+`combined-b5-clippy.log`. Fresh final qualification below ran on **8e59f99a**;
+this evidence-only child changes no tested implementation. Earlier cab0/Homebrew
+results and the core's full suites/native aggregates remain separately attributed.
+
+All final checks explicitly use existing user-private
+`/Users/fes/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc`,
+`cargo`, `rustdoc` and `cargo-clippy`: **rustc/Cargo 1.99.1, Clippy 0.1.99**.
+`RUSTC`/`RUSTDOC` are absolute and that bin directory prefixes PATH; no bare
+`+stable` dispatch is assumed. RUSTUP_HOME is initially unset with effective
+`/Users/fes/.rustup`; the target-install/retry sets that same home explicitly.
+Full `rustc -vV`, `cargo -vV`, executable paths and installed-target inventory are
+in `target/adr84-login-evidence/combined-b5-toolchain.log`.
+The checks use jobs1, the native lane's private warm `target/adr84-native`,
+dev/test debug0, incremental0 and this checkout's owned evidence TMPDIR.
+
+```sh
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib linux_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_runtime_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_controller_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs -- --test-threads=1
+cargo test --locked -p festerm-host --bin festerm-host headless_native_and_vault_diagnostics_are_specific_and_sanitized
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base b5e3bead12732cda335764e79e4b234bee1509d0
+git diff --check
+```
+
+Final passes are **12 Linux / 10 runtime / 7 controller / 1 registration /
+1 diagnostic**, zero failures/ignores. The controller selector now includes the
+six previous cases **plus**
+`host_controller_unpublished_registration_disable_and_uninstall_reach_cloud_cleanup`
+from the corrected core. Linux/runtime overlap once: **31 successful invocations,
+30 distinct tests**, not a full package aggregate. Strict affected two-package
+all-target Clippy, fmt, base-b5 traceability311/zero broken references and diff
+pass. Raw final logs are `target/adr84-login-evidence/combined-b5-final-*.log`.
+Existing vendored warnings and the installed toolchain's rust-objcopy
+libLLVM.dylib warning remain visible; no toolchain repair or warning waiver.
+
+The additional actual target command was:
+
+```sh
+cargo check --locked --target x86_64-unknown-linux-gnu -p festerm-host-setup --features host-runtime,native-services,cloud --lib
+```
+
+It first failed **101/E0463** for missing Rust `core`. Only the official
+`x86_64-unknown-linux-gnu` standard-library target was then installed into the
+existing named user-owned stable toolchain. No compiler installation, global
+default change, dependency/configuration change or C-toolchain installation
+was performed. The unchanged
+target command then failed **Cargo 101**, `aws-lc-sys 0.47.0` build script **1**:
+cc-rs cannot find **`x86_64-linux-gnu-gcc` (os error 2)**. Logs:
+`combined-b5-linux-target-initial.log`, `combined-b5-linux-target-install.log`
+and `combined-b5-linux-target.log`, with exact `.exit` records for both failed
+checks. There was no ignored/forged target cfg, C-compiler substitution or claim
+that the Linux library reached successful target typechecking. A real Linux
+builder or separately provided cross-C compiler/sysroot remains the prerequisite.
+
+The host Cargo slot is released: owned compiler/query/daemon CWD matches are
+zero. No push, PR creation, VM, actual manager/logind, credential, cloud, signing
+or OS-setting operation occurred. Real manager/login/logout/cgroup and persistent
+daemon PID/generation/child-I/O survival remain HOSTSETUP-01 gates; neither this
+portable fixture qualification nor the blocked target check establishes them.
+
+## Implementing the approved Linux current-login lifetime fence
+
+A separate lane starts at exact Windows COM correction
+`154b26f21fd417df24bf2366647c951ebb243770`, not the stopped-update branch.
+No moving core, c75/update transaction or Windows publisher policy is consumed.
+The later corrected-core exact head is still a separate parent-owned integration
+input, not silently substituted for this base.
+
+The owner's explicit two approvals are implemented: actual-UID logind
+`Class=user` graphical/interactive TTY/SSH (`x11/wayland/tty`) eligibility, and
+retention through lock/idle/inactivity until the last eligible logout. Root
+login1 unique-owner verification on the fixed native system bus precedes
+per-session UID/object/ID/class/type/state checks; inventory and issuer are
+rechecked. Background/manager/linger presence is not login authority. Unknown,
+malformed, changed, missing or over-limit evidence fails closed. Snapshots have
+one two-second budget, 64 sessions and 64-KiB aggregate output. The production
+protocol adapter also compiles in Unix fixture tests without executing it.
+
+Setup fences its original protected snapshot after the read-only admission
+query. Each run refreshes proof before relay work and before Listening, with
+an independent one-second polling watcher spanning acquisition and serving.
+Logout/uncertainty cancels and drains only hosting, keeping the per-run lease
+until that future finishes. Short installation/policy guards do not span OS
+queries; query children are exact, read-only and cancellation-owned, with no
+detached login-query task that can publish later. Existing native activation
+workers still retain the service-operation lease until the helper actually
+exits, including after caller timeout. Existing epoch/revocation and transient
+policy-Busy supervision remain independent. Failure history adds
+LoginProofUnavailable; no native/cloud absence or new owner grant is inferred.
+
+Only UserSignIn changes activation: receipt-owned `enable --now` covers an
+already running manager, and a per-unit two-second on-failure retry/start-limit
+exemption re-enters fresh login/owner/bundle admission for later logins. Manual
+retains its exact inert registration and `Restart=no`. There is no linger,
+pre-login, root/global policy or permission change. A racing revoke during
+activation refuses success and retains the exact earlier reservation even when
+the fake native process was started; it never restores consent.
+
+Bounded qualification used Homebrew rustc/Cargo **1.97.1**, jobs1, the native
+lane's exclusively granted private warm `target/adr84-native`, dev/test debug0,
+incremental0 and this checkout's `target/adr84-login-evidence` TMPDIR:
+
+```sh
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib linux_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_runtime_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib host_controller_ -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib native_service_install_start_stop_cleanup_requires_observed_exact_owner_and_epochs -- --test-threads=1
+cargo test --locked -p festerm-host --bin festerm-host headless_native_and_vault_diagnostics_are_specific_and_sanitized
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 154b26f21fd417df24bf2366647c951ebb243770
+git diff --check
+```
+
+Final selectors pass **12 Linux**, **10 runtime**, **six controller-core**,
+**one registration** and **one CLI diagnostic**, zero failures/ignores.
+The Linux/runtime selectors overlap on the startup-fence test: these are
+**30 successful invocations of 29 distinct tests**, not a full package suite.
+The seven login tests cover eligibility, hostile metadata/limits, root issuer/
+UID/inventory races, last-logout/uncertainty cancellation, query deadline and
+watcher termination. Two new native-adapter cases cover Manual versus guarded
+sign-in activation and late revocation, with typed fake effects only. The real
+Store-lease Busy/revocation regression now also composes the login guard.
+Strict affected two-package all-target Clippy, fmt, traceability311 and diff
+pass. The initial strict run caught a test-only RefCell borrow spanning a later
+await; a lexical scope fixed it without a lint waiver. That RED remains in
+`target/adr84-login-evidence/clippy-first.log`; final logs use `final-*.log`.
+
+No actual bus/logind/manager, native credential, VM, cloud or signing operation
+was run, and no new target/toolchain/dependency was installed. Linux-target
+compilation and real current-logon/restart/last-logout acceptance remain pending.
+HOSTSETUP-01 must observe actual transport closure plus unchanged daemon PID/
+generation, child I/O, helpers, grants and cgroup membership across host exit and
+last logout. An OS-owned user-manager/session cgroup teardown can independently
+terminate a daemon; fake-manager or parser proof cannot establish survival or
+authorize changing OS settings. This slice is source/fixture evidence, not
+Linux native service, persistent-logout survival, Ready or ADR acceptance.
+The host Cargo slot is released at this fixed checkpoint. The owned-worktree
+compiler/query/sessiond/PTY-helper CWD process check found zero matches.
+No push, PR creation or integration of a moving dependency was performed.
 ## Aligning the frozen core's Windows cfg boundaries
 
 Fresh Windows primary CI for `b5e3bead` found two strict-build failures:

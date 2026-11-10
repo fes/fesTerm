@@ -1,11 +1,11 @@
 # Same-user native host service component
 
 ADR [0084](adr/0084-host-based-dev-tunnels.md), stage 4, remains partial under
-[#681](https://github.com/fes/fesTerm/issues/681). The off-default
-`festerm-host-setup` feature `native-services` supplies actual native control
-adapters, not a complete installer or a readiness gate. Headless management
-can observe, revoke/stop and retire already receipt-owned native resources.
-It cannot install/start the incomplete endpoint or claim Ready.
+[#681](https://github.com/fes/fesTerm/issues/681). The `festerm-host-setup`
+feature `native-services`, included by the default headless binary, supplies
+actual native control adapters consumed by explicit shared setup/run.
+Headless management can observe, revoke/stop and retire receipt-owned resources;
+registration or a running process is not native qualification or Ready.
 
 ## Headless management and recovery
 
@@ -165,12 +165,75 @@ This admits authenticated bytes, not a functioning endpoint. Actual protected
 release/native signing and independently trusted first-verifier delivery remain
 qualification gates.
 
-The runnable Linux controller admits Manual startup only. The existing user-unit
-definition's `WantedBy=default.target` is not a logon proof: an already lingering
-user manager may start before login. UserSignIn setup/run therefore refuses with
-`host.linux_sign_in_session_fence_required` until verified current-user logon
-activation is implemented and qualified. Manual Linux hosting remains available;
-no linger, service-manager or OS permission setting is modified to qualify it.
+### Linux current-login fence
+
+The owner approved these two policy choices on 2026-11-10: eligible logins are
+verified graphical plus interactive TTY/SSH logind sessions for the actual UID,
+`Class=user`; hosting remains authorized through lock, idle and inactive
+fast-user switching until the **last eligible logout**. The implemented eligible
+types are `tty`, `x11` and `wayland`, with logind State `active` or `online`.
+`closing` is no longer an eligible login. Active/LockedHint are not permission
+conditions. An unspecified/noninteractive SSH connection, background class,
+user manager or lingering service alone never supplies login proof.
+
+Linux UserSignIn setup/run now require this proof rather than unconditionally
+refusing. A read-only adapter uses only root-owned, non-writable
+`/usr/bin/busctl` and the fixed `/run/dbus/system_bus_socket`, refusing redirected
+paths. It clears inherited environment, disables service auto-start, resolves
+login1's unique bus owner and verifies that owner's OS UID is zero. Session reads
+target that unique owner, verify each actual user/object/ID/class/type/state,
+then recheck inventory and issuer. Changed ownership/inventory, malformed,
+unknown or over-limit metadata, missing bus/login1 and failed queries refuse
+with `host.linux_current_login_proof_required`; no environment session assertion,
+cached proof or file fallback grants access.
+
+Each snapshot has one absolute two-second budget, at most 64 sessions and 64 KiB
+aggregate output. A per-run watcher checks every second and closes/cancels the
+host relay on missing or uncertain proof, including during relay acquisition.
+Proof is refreshed again before Listening; revocation/current-epoch checks remain
+independent. Logout detection is bounded polling (up to one interval plus a
+snapshot budget), not a claim of atomic D-Bus event delivery. Cancellation drops
+only that run's watcher and exact read-only query child; it never ends a session
+daemon, edits an owner grant or confirms native/cloud absence.
+
+For UserSignIn only, the receipt-owned unit is enabled with `--now` so an already
+running/lingering user manager can observe the current and later eligible logins.
+Its `Restart=no` plus `RestartForceExitStatus=75`, two-second delay and per-unit
+start-limit exemption retry **only** typed login-proof unavailability. Reserved
+exit 75 is shared by the runtime/CLI and unit renderer; all other errors exit 1,
+normal stop exits 0. No error-text match or cached run history grants retry.
+Signed helper provenance and current owner consent are checked before login
+admission and rechecked before a login-loss error can authorize retry.
+Only that post-login-loss snapshot read tolerates short installation-lock
+contention: the existing 25-ms WouldBlock-only deadline pattern is bounded to
+250 ms here. Each attempt reacquires current protected state; no guard spans
+the async wait. A successful read must still match the original full snapshot,
+then pass fresh bundle/helper and owner-policy validation before exit75.
+Persistent Busy, any non-Busy error or failed validation refuses retry.
+Disabled/StopRequested/CleanupPending, missing or revoked owner consent, changed
+consent, bundle, cloud, Busy and other errors never request automatic restart.
+Draining preserves non-login hosting errors; only an exact typed cloud
+cancellation induced by the login watcher is normalized within its owned run.
+This includes cancellation after final cloud account confirmation but before
+the locked relay-identity read; a changed snapshot remains a non-cancellation
+failure with the same diagnostic. No provisioning or cloud operation is retried.
+No listener is admitted without current proof and owner consent.
+This is automatic current-logon activation,
+not Manual startup or pre-login exposure. Manual retains `Restart=no` and no
+enable/start effect. No linger, root/system-wide setting or permission is changed.
+Existing differently rendered sign-in receipts require explicit owned
+reconciliation, not silent definition replacement.
+
+Portable parser/proof-race/watcher and fake-manager fixtures do **not** qualify
+real Linux startup/logout or cgroup survival. A separately granted ordinary-user
+window must exercise graphical and PAM TTY/SSH login, lock/idle/switch, multiple
+logins with one remaining, last logout, bus/manager loss and an already lingering
+manager without changing its settings. Observe real relay retirement and retained
+identity/grants plus exact persistent daemon PID/generation, continued child I/O,
+old helpers and actual cgroup membership across host exit and last logout.
+An OS configuration that terminates the user-manager/session cgroup on logout
+may kill daemons independently; this is an unresolved native prerequisite, not
+fixture-proven survival or authorization to change OS policy.
 
 **Current-logon owner decision proposal (unfinished, not implementation):**
 define whether UserSignIn includes interactive PAM tty/SSH sessions as well as
@@ -200,7 +263,7 @@ consent/revocation lease to advance during an outstanding native effect.
 
 | API | Required journal state | Meaning |
 | --- | --- | --- |
-| `install(&TrustedStage, epoch)` | Provisioned, exact current epoch | Publish/register the approved definition; do not start a process; Windows refuses until authenticated graceful stop exists |
+| `install(&TrustedStage, epoch)` | Provisioned, exact current epoch | Publish/register the approved definition; Manual does not start a process; Linux UserSignIn activates only its guarded launcher; Windows refuses until authenticated graceful stop exists |
 | `status()` | Existing exact-owned receipt | Query native manager state; missing receipt is an explicit no-observation error |
 | `start(&TrustedStage, epoch)` | Provisioned, exact current epoch | Require current protected enrollment/vault policy, revalidate executable, explicitly start and boundedly reconcile Running/Transitioning; Windows refuses |
 | `stop(epoch)` | StopRequested, exact current epoch | Reconcile pending replacement first; otherwise stop only the exact owned resource and require stopped/failed/absent observation, or fenced own absence when no registration receipt was published |

@@ -5,6 +5,8 @@
 
 use sha2::{Digest, Sha256};
 
+pub mod run_exit;
+
 #[cfg(feature = "acquisition")]
 pub mod acquisition;
 #[cfg(feature = "artifacts")]

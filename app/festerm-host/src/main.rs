@@ -493,7 +493,7 @@ fn main() -> ExitCode {
         Err(error) => {
             // OS errors may contain paths or native details; never relay them.
             eprintln!("{}", render_diagnostic(&error));
-            ExitCode::FAILURE
+            failure_exit(&error)
         }
     }
 }
@@ -531,6 +531,10 @@ fn render_diagnostic(error: &io::Error) -> String {
         );
     }
     diagnostic(error).into()
+}
+
+fn failure_exit(error: &io::Error) -> ExitCode {
+    ExitCode::from(festerm_host_setup::run_exit::error_exit_code(error))
 }
 
 fn diagnostic(error: &io::Error) -> &'static str {
@@ -584,8 +588,8 @@ fn diagnostic(error: &io::Error) -> &'static str {
             "host.cloud_rate_limited; preserve receipt and retry later, outcome not confirmed"
         }
         "host.cloud_cancelled" => "host.cloud_cancelled; retained evidence was not discarded",
-        "host.linux_sign_in_session_fence_required" =>
-            "host.linux_sign_in_session_fence_required; choose manual startup until current-logon activation is qualified; no linger or permission changes performed",
+        "host.linux_current_login_proof_required" =>
+            "host.linux_current_login_proof_required; require a verified current-user graphical or interactive TTY/SSH logind session; no linger or permission changes performed",
         "host.runtime_current_provisioned_consent_required" =>
             "host.runtime_current_provisioned_consent_required; complete explicit current setup before run",
         "host.runtime_current_owner_consent_required" =>
@@ -691,6 +695,41 @@ fn diagnostic(error: &io::Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn headless_run_exit_retries_only_typed_login_proof_and_preserves_diagnostics() {
+        use festerm_host_setup::run_exit::{
+            LoginProofUnavailable, LOGIN_PROOF_UNAVAILABLE_EXIT_CODE,
+        };
+        let error = io::Error::other(LoginProofUnavailable);
+        assert_eq!(
+            failure_exit(&error),
+            ExitCode::from(LOGIN_PROOF_UNAVAILABLE_EXIT_CODE)
+        );
+        assert_eq!(error.to_string(), "host.linux_current_login_proof_required");
+        assert_eq!(
+            diagnostic(&error),
+            diagnostic(&io::Error::other("host.linux_current_login_proof_required"))
+        );
+        for reason in [
+            "host.linux_current_login_proof_required",
+            "host.runtime_current_provisioned_consent_required",
+            "host.runtime_current_owner_consent_required",
+            "host.runtime_consent_changed",
+            "host.authenticated_bundle_required",
+            "host.runtime_daemon_boundary_unavailable",
+            "host.cloud_offline_or_unknown",
+            "host.cloud_cancelled",
+            "host.runtime_stream_closed",
+            "host.runtime_failed",
+        ] {
+            assert_eq!(
+                failure_exit(&io::Error::other(reason)),
+                ExitCode::FAILURE,
+                "{reason}"
+            );
+        }
+    }
 
     fn arguments(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
@@ -985,6 +1024,7 @@ mod tests {
                 "publisher",
             ),
             ("host.service_native_timeout", "outcome unknown"),
+            ("host.linux_current_login_proof_required", "TTY/SSH logind"),
             (
                 "owner.vault_anchor_missing_local_reconciliation_required",
                 "sign_in_required",
