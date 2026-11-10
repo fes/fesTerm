@@ -133,6 +133,13 @@ handling across all supported targets) remains tracked in
 evidence rather than to producing the first release itself. Custom terminfo
 remains [#27](https://github.com/fes/fesTerm/issues/27).
 
+[Authenticated helper manifests and an offline verifier](docs/host-release-artifacts.md)
+reuse the updater trust root for all six standalone helper targets
+([#681](https://github.com/fes/fesTerm/issues/681), proposed ADR 0084).
+Headless CLI inclusion, installer integration, service switching/rollback and
+legacy migration remain separate gates; existing Linux scripts are not upgraded
+to publisher authentication by merely publishing these additive manifests.
+
 An optional, fesTerm-owned local session-persistence daemon
 (`festerm-sessiond`, [ADR 0025](docs/adr/0025-native-local-session-persistence-daemon.md))
 ships alongside the packaged builds but is **experimental**: its ADR remains
