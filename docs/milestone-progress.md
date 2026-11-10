@@ -9581,3 +9581,9 @@ native-vault, signed install/start/stop or cross-platform acceptance. Remaining
 reliability lifecycle review and independent combined-source gates are not cleared.
 Authenticated stopped-version replacement/update remains active incomplete work;
 unqualified cloud deletion remains unsuccessful CleanupPending.
+The qualified native review-correction source is fixed at `3d18fff1`; subsequent
+documentation does not change those tested bytes. Runtime's separate
+`1b5987ec` authentication Busy correction is not consumed here. A future normal
+integration must retain its original authentication deadline and both
+same-issued-operation/lost-reply and actual two-daemon adoption/detach oracles,
+then qualify the new combined head independently.
