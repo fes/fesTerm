@@ -1,6 +1,6 @@
 use crate::{
     ConnectionId, ContractError, Epoch, GenerationId, HostId, LogicalSessionId, OperationId,
-    PrincipalId, Target, CONTROL_FRAME_BYTES, MAX_SESSIONS,
+    PrincipalId, Request, Target, CONTROL_FRAME_BYTES, MAX_SESSIONS,
 };
 use std::sync::{Arc, Mutex};
 
@@ -83,6 +83,23 @@ pub struct SessionGrant {
     /// Protected monotonic record revision, advanced on every transition,
     /// including a return to a previous state (Absent -> Running -> Absent).
     pub revision: Epoch,
+}
+
+/// Exact request admitted locally; redacted from debug output because recipes
+/// and arguments may contain sensitive values.
+#[derive(Clone, Eq, PartialEq)]
+pub struct AdmittedRequest(Request);
+
+impl From<&Request> for AdmittedRequest {
+    fn from(request: &Request) -> Self {
+        Self(request.clone())
+    }
+}
+
+impl std::fmt::Debug for AdmittedRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AdmittedRequest(..)")
+    }
 }
 
 impl Budgets {
@@ -170,6 +187,7 @@ pub struct AdmissionFence {
     pub grant_epoch: Epoch,
     pub operation_epoch: Epoch,
     pub operation: OperationId,
+    pub intent: AdmittedRequest,
     pub logical: Option<LogicalSessionId>,
     pub logical_state: Option<LogicalState>,
     pub logical_revision: Option<Epoch>,

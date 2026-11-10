@@ -441,6 +441,7 @@ impl VerifiedOwner {
             grant_epoch: self.challenge.grant_epoch,
             operation_epoch,
             operation: request.operation.clone(),
+            intent: (&request.body).into(),
             logical,
             logical_state,
             logical_revision,
@@ -865,5 +866,79 @@ mod tests {
             owner.authorize(&verifier, &create, epoch, Some(&grant)),
             Err(ContractError::Busy)
         ));
+    }
+
+    #[test]
+    fn host_owner_fence_rejects_changed_intent_for_the_same_operation() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        let mut allowed = policy();
+        allowed.capabilities = Capabilities {
+            attach: true,
+            ensure: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        };
+        let verifier = OwnerVerifier::new(allowed, &[key.public_key()]).unwrap();
+        let (pending, proof) = signed(&verifier, &key);
+        let (owner, _connection) = pending.verify(&proof, &verifier).unwrap();
+        let target = Target {
+            logical: id(2),
+            generation: GenerationId::new(42).unwrap(),
+        };
+        let mut grant = SessionGrant {
+            logical: id(2),
+            owner: id(7),
+            remote_access: true,
+            state: LogicalState::Running(target.generation),
+            revision: Epoch::new(1).unwrap(),
+        };
+        let epoch = Epoch::new(1).unwrap();
+        let attach = |takeover| {
+            request(Request::Attach {
+                target: target.clone(),
+                attachment: id(4),
+                takeover,
+            })
+        };
+        let original = owner
+            .authorize(&verifier, &attach(false), epoch, Some(&grant))
+            .unwrap();
+        let changed = owner
+            .authorize(&verifier, &attach(true), epoch, Some(&grant))
+            .unwrap();
+        assert_eq!(original.revalidate(&changed), Err(ContractError::Stale));
+
+        grant.state = LogicalState::Absent;
+        let creation = Creation {
+            logical: id(2),
+            attachment: id(4),
+            name: None,
+            recipe: Recipe::default(),
+            lifetime: Lifetime::Persistent {},
+        };
+        let original = owner
+            .authorize(
+                &verifier,
+                &request(Request::Ensure {
+                    creation: creation.clone(),
+                }),
+                epoch,
+                Some(&grant),
+            )
+            .unwrap();
+        let mut changed_creation = creation;
+        changed_creation.recipe.shell = Some("/different-shell".into());
+        let changed = owner
+            .authorize(
+                &verifier,
+                &request(Request::Ensure {
+                    creation: changed_creation,
+                }),
+                epoch,
+                Some(&grant),
+            )
+            .unwrap();
+        assert_eq!(original.revalidate(&changed), Err(ContractError::Stale));
+        assert!(!format!("{changed:?}").contains("/different-shell"));
     }
 }

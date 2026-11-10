@@ -561,6 +561,8 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `protected_inventory_filters_before_labels_without_frontend_admission` and
   `scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_committed`
   additionally pin the routing integration boundary and scoped guard lifetime.
+  `host_owner_fence_rejects_changed_intent_for_the_same_operation` covers
+  takeover and recipe changes under a reused operation ID.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
 - **Protected enrollment prerequisite evidence (stages 1/3):**
