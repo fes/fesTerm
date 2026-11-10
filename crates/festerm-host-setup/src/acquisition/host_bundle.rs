@@ -235,41 +235,48 @@ fn acquire(
         .enable_all()
         .build()
         .map_err(|_| HostBundleError::Client)?;
-    let fetched = runtime.block_on(async {
-        cancel
-            .run_until_cancelled(tokio::time::timeout_at(
-                tokio::time::Instant::from_std(deadline),
-                async {
-                    let mut bytes = [Vec::new(), Vec::new(), Vec::new()];
-                    for ((asset, url), destination) in [
-                        BundleAsset::Manifest,
-                        BundleAsset::Signature,
-                        BundleAsset::Archive,
-                    ]
-                    .into_iter()
-                    .zip(urls)
-                    .zip(&mut bytes)
-                    {
-                        check_active(cancel, deadline)?;
-                        *destination = receive_asset(&downloader.client, url, asset.limit())
-                            .await
-                            .map_err(|error| download_error(asset, error))?;
-                    }
-                    Ok(bytes)
-                },
-            ))
-            .await
-    });
+    let fetched = runtime.block_on(receive_assets(downloader, urls, cancel, deadline));
     // Cancel/drop all asynchronous IO before CPU-bounded verification. It cannot
     // publish a late capability: check cancellation/deadline again afterwards.
     drop(runtime);
-    let [manifest, signature, archive] = fetched
-        .ok_or(HostBundleError::Cancelled)?
-        .map_err(|_| HostBundleError::Deadline)??;
+    let [manifest, signature, archive] = fetched?;
     check_active(cancel, deadline)?;
     let verified = verify(&manifest, &signature, &archive, expected);
     check_active(cancel, deadline)?;
     verified.map_err(HostBundleError::Verification)
+}
+
+async fn receive_assets(
+    downloader: &Downloader,
+    urls: [Url; 3],
+    cancel: &CancellationToken,
+    deadline: Instant,
+) -> Result<[Vec<u8>; 3], HostBundleError> {
+    cancel
+        .run_until_cancelled(tokio::time::timeout_at(
+            tokio::time::Instant::from_std(deadline),
+            async {
+                let mut bytes = [Vec::new(), Vec::new(), Vec::new()];
+                for ((asset, url), destination) in [
+                    BundleAsset::Manifest,
+                    BundleAsset::Signature,
+                    BundleAsset::Archive,
+                ]
+                .into_iter()
+                .zip(urls)
+                .zip(&mut bytes)
+                {
+                    check_active(cancel, deadline)?;
+                    *destination = receive_asset(&downloader.client, url, asset.limit())
+                        .await
+                        .map_err(|error| download_error(asset, error))?;
+                }
+                Ok(bytes)
+            },
+        ))
+        .await
+        .ok_or(HostBundleError::Cancelled)?
+        .map_err(|_| HostBundleError::Deadline)?
 }
 
 #[cfg(test)]

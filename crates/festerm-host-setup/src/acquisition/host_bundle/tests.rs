@@ -19,6 +19,7 @@ struct Response {
     body: Vec<u8>,
     before_headers: Duration,
     before_body: Duration,
+    body_release: Option<std::sync::mpsc::Receiver<()>>,
 }
 
 impl Response {
@@ -28,6 +29,7 @@ impl Response {
             body,
             before_headers: Duration::ZERO,
             before_body: Duration::ZERO,
+            body_release: None,
         }
     }
 
@@ -87,6 +89,11 @@ impl Server {
                 thread::sleep(response.before_headers);
                 if connection.write_all(&response.head).is_ok() {
                     thread::sleep(response.before_body);
+                    if let Some(release) = response.body_release {
+                        if release.recv_timeout(Duration::from_secs(5)).is_err() {
+                            return;
+                        }
+                    }
                     let _ = connection.write_all(&response.body);
                 }
             }
@@ -619,22 +626,71 @@ fn official_host_bundle_cancellation_and_deadline_cover_headers_body_and_total_b
         }
     }
     let mut response = responses(&fixture);
-    for response in &mut response {
-        response.before_body = Duration::from_millis(60);
-    }
+    let releases: Vec<_> = response
+        .iter_mut()
+        .map(|response| {
+            let (release, wait) = std::sync::mpsc::channel();
+            response.body_release = Some(wait);
+            release
+        })
+        .collect();
     let server = Server::new(response);
-    assert_eq!(
-        refused(acquire(
-            &downloader,
-            server.urls(&expected),
-            &expected,
-            &CancellationToken::new(),
-            Instant::now() + Duration::from_millis(150),
-            verify_acquisition_fixture,
-        )),
-        HostBundleError::Deadline
-    );
-    assert!((2..=3).contains(&server.requests().len()));
+    let urls = server.urls(&expected);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        tokio::time::pause();
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        let receiving = tokio::spawn(async move {
+            receive_assets(
+                &fixture_client(REQUEST_TIMEOUT),
+                urls,
+                &CancellationToken::new(),
+                deadline,
+            )
+            .await
+        });
+        for (index, release) in releases.into_iter().enumerate() {
+            let watchdog = Instant::now() + Duration::from_secs(5);
+            // Stay runnable while waiting for real loopback IO, so Tokio cannot
+            // auto-advance past a deadline before the fixture serves a resource.
+            while server.requests().len() < index + 1 {
+                assert!(
+                    Instant::now() < watchdog,
+                    "fixture stalled before resource {index}; requests={:?}",
+                    server.requests()
+                );
+                tokio::task::yield_now().await;
+            }
+            assert!(
+                !receiving.is_finished(),
+                "deadline expired before resource {index}"
+            );
+            if index < 2 {
+                tokio::time::advance(REQUEST_TIMEOUT / 3).await;
+                release.send(()).unwrap();
+            } else {
+                // Reaching Archive proves Manifest and Signature completed.
+                // Expire the original total budget, not the later request
+                // deadline or a fresh budget after either completed resource.
+                assert_eq!(server.requests().len(), 3);
+                tokio::time::advance(REQUEST_TIMEOUT / 3 + Duration::from_secs(1)).await;
+                while !receiving.is_finished() {
+                    assert!(
+                        Instant::now() < watchdog,
+                        "shared deadline did not finish after two completed resources"
+                    );
+                    tokio::task::yield_now().await;
+                }
+                drop(release);
+            }
+        }
+        assert_eq!(receiving.await.unwrap(), Err(HostBundleError::Deadline));
+    });
+    drop(runtime);
+    assert_eq!(server.requests().len(), 3);
 
     let mut response = responses(&fixture);
     response[0].before_headers = Duration::from_millis(150);
