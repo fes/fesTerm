@@ -1424,11 +1424,13 @@ pub(crate) mod native_routes {
             .await
             .unwrap();
         let (variant, refusal_code) = public_response_kind(&response.body);
-        assert_eq!(
-            response.body,
-            Response::Refused {
-                reason: Refusal::Busy
-            },
+        assert!(
+            matches!(
+                response.body,
+                Response::Refused {
+                    reason: Refusal::Busy
+                }
+            ),
             "original-operation lease replay response variant={variant}, refusal_code={refusal_code:?}"
         );
         assert_eq!(

@@ -39,6 +39,17 @@ fourteen native routes are not rerun or relabeled. The exact Desktop runner
 selector now passes one test in each configuration. Publication still awaits
 the parent's separately qualified immutable backend cleanup-fixture child;
 its Windows required-check failure is not repaired speculatively in this lane.
+Fresh selected execution is three passes across two test identities: the exact
+Desktop runner guard once per feature configuration, plus the controlled
+acquisition deadline guard. Each selector lists exactly one test first.
+Integrated setup/bridge/headless all-target strict Clippy and standalone
+acquisition strict pass, followed by affected bridge strict after replacing
+automatic response-debug assertion formatting with an equivalent exact Busy
+predicate. The original generation, disposition, journal and lease assertions
+are unchanged. An initial strict invocation named a nonexistent package and
+exited 101 before compilation; its raw failure is retained, not counted as a
+source failure or silently discarded. Formatting, diff and trace311 with zero
+broken references pass. Memory starts are 48–50%, with no pause.
 Actual Windows runtime/native publisher, OS/vault/provider/GUI, install, signing,
 release, sharing and three-platform acceptance remain outside this increment.
 
