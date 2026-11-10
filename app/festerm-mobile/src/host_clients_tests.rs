@@ -508,11 +508,14 @@ fn mobile_host_native_privacy_handle_is_shared_with_suspension_owner() {
 }
 
 fn creation_context() -> ApprovedContext {
+    creation_context_for(HostId::new())
+}
+
+fn creation_context_for(host: HostId) -> ApprovedContext {
     use festerm_tunnel_bridge::owner_auth::PinnedHost;
     use russh::keys::{Algorithm, HashAlg, PrivateKey};
     let key = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
     let public = key.public_key().to_openssh().unwrap();
-    let host = HostId::new();
     ApprovedContext::from_protected_approval(OwnerBinding {
         installation: HostId::new().to_string(),
         host: PinnedHost { host: host.clone(), host_key_fingerprint: key.public_key().fingerprint(HashAlg::Sha256).to_string() },
@@ -521,6 +524,69 @@ fn creation_context() -> ApprovedContext {
     serde_json::from_value(serde_json::json!({"connectionMode":"TunnelRelay","hostId":"fixture",
         "hostPublicKeys":[public.split_whitespace().nth(1).unwrap()],"clientRelayUri":"wss://example.invalid/client"})).unwrap(),
     22, Zeroizing::new("not-a-service-token".into()), Binding::new(host, "github:7".into(), "fixture".into()).unwrap()).unwrap()
+}
+
+#[test]
+fn mobile_host_end_registry_never_replaces_original_after_account_or_protected_authority_change() {
+    let profiles = crate::profiles::testing::profiles();
+    let store = profiles.store_handle();
+    let id = festerm_mobile_tunnels::testing::seed_account(&store, 7, "mobile", false);
+    let account = store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|account| account.id == id)
+        .unwrap()
+        .clone();
+    let context = creation_context();
+    let target = host_client::Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(9).unwrap(),
+    };
+    let mut hosts = HostUi::default();
+    let original = hosts
+        .end_intent(&context, target.clone(), &account)
+        .unwrap();
+    let operation = original.operation().clone();
+    hosts.ends.push(OriginalEnd {
+        host: context.binding().host().clone(),
+        account: account.clone(),
+        intent: original.clone(),
+    });
+    hosts.clear_approval();
+    assert!(Arc::ptr_eq(
+        &original,
+        &hosts
+            .end_intent(&context, target.clone(), &account)
+            .unwrap()
+    ));
+    let mut changed_account = account.clone();
+    changed_account.login.push_str("-changed");
+    assert!(hosts
+        .end_intent(&context, target.clone(), &changed_account)
+        .is_err());
+    let changed_authority = creation_context_for(context.binding().host().clone());
+    assert_eq!(changed_authority.binding(), context.binding());
+    assert!(
+        hosts
+            .end_intent(&changed_authority, target.clone(), &account)
+            .is_err(),
+        "same public host/endpoint is not the original protected principal/reference"
+    );
+    let mut replacement = target.clone();
+    replacement.generation = GenerationId::new(10).unwrap();
+    let new_review = hosts
+        .end_intent(&context, replacement.clone(), &account)
+        .unwrap();
+    assert_eq!(new_review.target(), &replacement);
+    assert_ne!(new_review.operation(), &operation);
+    assert_eq!(original.operation(), &operation);
+    assert_eq!(original.target(), &target);
+    assert!(
+        !original.is_issued() && !new_review.is_issued(),
+        "review is not execution"
+    );
 }
 
 #[test]
@@ -595,6 +661,7 @@ fn mobile_host_end_cancel_close_lock_and_metadata_never_issue_and_keep_original(
     app.open_hosts();
     app.hosts.account = id;
     app.hosts.ends.push(OriginalEnd {
+        host: context.binding().host().clone(),
         account: account.clone(),
         intent: intent.clone(),
     });

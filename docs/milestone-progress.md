@@ -29,6 +29,13 @@ lease ends under host policy. Native lock/suspend still cancel directly without
 a UI frame, intentional detach or replay. Sixteen process-local End originals
 and sixteen retirement jobs are bounded and observable; cold-restart original
 action reconciliation remains the explicit next slice, not automatic retry.
+One shared application lookup also refuses to mint a replacement End operation
+for an already retained host/generation after account, protected principal,
+key reference or endpoint changes; fresh review is not permission to discard
+an uncertain original.
+The prior matching-only lookup counterexample fails **0 pass/1 fail** (exit101)
+on account change; the centralized host/generation lookup passes while retaining
+the exact original and refusing changed protected authority.
 
 Focused framed tests retain the original app-lock/no-replay oracle and add
 close/disconnect-versus-End, exact confirmation/account/epoch and late-frontend

@@ -154,6 +154,7 @@ struct SessionAccount {
 }
 
 struct OriginalEnd {
+    host: festerm_host_protocol::HostId,
     account: TunnelAccount,
     intent: Arc<EndIntent>,
 }
@@ -226,6 +227,23 @@ pub(super) struct HostUi {
 }
 
 impl HostUi {
+    fn end_intent(
+        &self,
+        context: &ApprovedContext,
+        target: host_client::Target,
+        account: &TunnelAccount,
+    ) -> Result<Arc<EndIntent>, String> {
+        if let Some(original) = self.ends.iter().find(|original| {
+            &original.host == context.binding().host() && original.intent.target() == &target
+        }) {
+            if &original.account != account || !original.intent.matches_context(context) {
+                return Err("Original End retained under its original protected host/account; no replacement operation issued.".into());
+            }
+            return Ok(original.intent.clone());
+        }
+        Ok(Arc::new(EndIntent::new(context, target)))
+    }
+
     fn cancel(&mut self) {
         if let Some(pending) = self.pending.take() {
             pending.token.cancel();
@@ -431,17 +449,7 @@ impl MobileApp {
             .ok_or("The exact adopted generation is unavailable; refresh inventory.")?
             .clone();
         let account = owner.account.clone();
-        let intent = self
-            .hosts
-            .ends
-            .iter()
-            .find(|original| {
-                original.account == account
-                    && original.intent.target() == &target
-                    && original.intent.matches_context(&context)
-            })
-            .map(|original| original.intent.clone())
-            .unwrap_or_else(|| Arc::new(EndIntent::new(&context, target)));
+        let intent = self.hosts.end_intent(&context, target, &account)?;
         self.review_end(account, intent);
         self.hosts.end_review.as_mut().expect("new review").source = Some((tab, session.id()));
         Ok(())
@@ -914,17 +922,7 @@ impl MobileApp {
                     .target
                     .clone();
                 let context = self.hosts.context()?;
-                let intent = self
-                    .hosts
-                    .ends
-                    .iter()
-                    .find(|original| {
-                        original.intent.target() == &target
-                            && original.account == account
-                            && original.intent.matches_context(&context)
-                    })
-                    .map(|original| original.intent.clone())
-                    .unwrap_or_else(|| Arc::new(EndIntent::new(&context, target)));
+                let intent = self.hosts.end_intent(&context, target, &account)?;
                 self.review_end(account, intent);
                 return Ok(());
             }
@@ -986,6 +984,7 @@ impl MobileApp {
                         );
                     }
                     self.hosts.ends.push(OriginalEnd {
+                        host: self.hosts.context()?.binding().host().clone(),
                         account,
                         intent: intent.clone(),
                     });
@@ -1276,7 +1275,7 @@ impl MobileApp {
                 if ui.add_enabled(review.confirmed, egui::Button::new("Confirm exact End once")).clicked() { action = Some(Action::ConfirmEnd); }
                 if ui.button("Cancel End (no request)").clicked() { action = Some(Action::CancelEnd); }
             }
-            ui.label("After restart, reconcile uncertain actions on the host before approving another creation. No input replay or background reconnect.");
+            ui.label("After restart, reconcile uncertain actions on the host before approving another creation or End. Original tickets are process-local; no automatic retry, input replay or background reconnect.");
             if self.hosts.pending.is_some() || self.hosts.worker.is_some() { ui.label("Bounded foreground HOST work in progress…"); }
             if let Some(error) = &self.hosts.error { ui.label(error); }
             if ui.button("Cancel / close host review").clicked() { action = Some(Action::Close); }

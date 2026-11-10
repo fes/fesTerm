@@ -5540,6 +5540,7 @@
         "mobile_host_disconnect_uses_correlated_retirement_not_end_or_transport_abandonment",
         "mobile_host_end_confirmation_fences_account_native_epoch_generation_and_protected_owner",
         "mobile_host_end_cancel_close_lock_and_metadata_never_issue_and_keep_original",
+        "mobile_host_end_registry_never_replaces_original_after_account_or_protected_authority_change",
         "selected_host_end_refusals_and_lost_reply_retain_original_without_creation_authority",
         "selected_host_end_requires_capability_and_rejects_replacement_receipt",
         "selected_host_end_context_and_precancel_fence_before_vault_or_worker",
