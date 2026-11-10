@@ -2,7 +2,7 @@ use festerm_sessiond::private_storage as storage;
 use fs2::FileExt;
 use std::{
     fs::File,
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -76,9 +76,20 @@ pub(crate) fn publish_immutable(
     bytes: &[u8],
     mismatch: &'static str,
 ) -> io::Result<()> {
-    match storage::read_private(directory, name, bytes.len()) {
-        Ok(existing) if existing.as_slice() == bytes => Ok(()),
-        Ok(_) => Err(io::Error::other(mismatch)),
+    match storage::open_private_file(directory, name, false) {
+        Ok(file) => {
+            if file.metadata()?.len() != bytes.len() as u64 {
+                return Err(io::Error::other(mismatch));
+            }
+            let mut existing = Vec::new();
+            file.take(bytes.len() as u64 + 1)
+                .read_to_end(&mut existing)?;
+            if existing == bytes {
+                Ok(())
+            } else {
+                Err(io::Error::other(mismatch))
+            }
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             publish_new(directory, name, bytes)
         }

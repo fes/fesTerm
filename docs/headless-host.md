@@ -38,6 +38,8 @@ Failed writes remove only their own temporary entry. A crash can still leave an
 initial directory with no journal. This reports
 `host.recordless_directory_requires_manual_review`, not "new installation":
 absence of a record is not proof of ownership or permission to adopt/delete it.
+While initialization still holds its lease, opening instead reports
+`host.installation_busy`; the journal is read only after acquiring that lease.
 After independently verifying the **exact** supplied directory never initialized
 and contains no identity, revocation receipt or foreign state, an operator may
 move it aside and choose a fresh path. Existing records, including corrupt or
@@ -49,6 +51,8 @@ in a private source directory. It verifies the executable against the release's
 existing reviewed `cli_pins` hash before writing private cache bytes. Existing
 different cache bytes are never overwritten. Nothing is downloaded or executed;
 new files are non-executable and staging never adds executable permissions.
+Any cached length/content difference reports `host.cached_cli_mismatch`,
+including oversized entries, without an unbounded read.
 Execution adapters must reopen it with
 `cli_pins::verify`, retain the verified handles, and only then make it executable.
 Changed official bytes require a reviewed pin update, not an override.
@@ -66,6 +70,7 @@ The cache key includes version, target and archive hash. Existing entries,
 including partial/corrupt previous writes, must match exactly or publication
 fails without overwriting them. Staging retains the **exact signed manifest,
 signature and archive** for restart verification, not a reserialized manifest.
+Any cached length/content difference reports `host.staged_artifact_mismatch`.
 New entries are non-executable and nothing is registered. Existing matching
 private files are not changed. On restart, reverify
 that provenance and compare **every** staged entry before use; `.complete` is
