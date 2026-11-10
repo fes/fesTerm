@@ -84,6 +84,16 @@ endpoint remain separate integration work.
 
 ## Explicitly unavailable operations
 
+The opt-in library `owner-enrollment` API supports protected local public-key
+enrollment/revocation/status and separate permission consent under the same
+installation lease. It does not expose a CLI enrollment command, enable a
+listener or turn `status` into an authentication/readiness claim. Client signing
+keys and host policy rollback anchors require the native vault; no file seed
+fallback exists. See the [API and concrete channel blocker](host-protocol.md#concrete-transport-blocker--no-owner-signing-adapter-yet).
+First-connect foreground handoff versus advanced explicit public-key import
+remains a bounded UX prerequisite. Neither bearer presence nor a provisioning
+account string enrolls an owner.
+
 `setup`, `run`, `update` and `uninstall` return unsuccessful exit status and
 `host.endpoint_adapter_unavailable`. They are not successful stub commands and
 never dispatch to the legacy one-shell scripts/helpers. Requirements still open:

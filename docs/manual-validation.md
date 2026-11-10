@@ -3351,6 +3351,9 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 signature, default-deny owner/session admission, revocation/replay, privacy/
 pagination and budget evidence. This is not a native host endpoint, installation,
 owner-enrollment ceremony, actual pinned-channel proof or temporary supervisor.
+Protected local enrollment/revocation/rotation and opaque native-vault key APIs
+now have deterministic fixture evidence; real pinned SSH streams exercise the
+explicit missing-exporter refusal, not successful owner channel authentication.
 No live credentials/services were used or installed by this slice.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
@@ -3379,6 +3382,12 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
 | HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/pin staging boundary; native/service/package and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, exact-owned native adapters and authenticated release artifacts. Windows/macOS/Linux startup and service acceptance require real platform evidence; fixture success is not that evidence. |
+
+## ADR 0084 owner enrollment qualification
+
+| ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
+| --- | --- | --- | --- |
+| HOSTAUTH-01 | On macOS/Windows/Linux and physical mobile clients, explicitly confirm exact host/account/owner public-key fingerprint; generate/reopen/delete per-host owner keys in the native vault; lock/unlock/unavailable store; revoke/rotate while proof and operations are pending; restart/update with stale disk state; verify no key in exports/logs/argv/env and no fallback. | Automated synthetic protected storage/crypto/real SSH refusal fixtures; native and first-connect usability deferred | #681 stages 1/3: reviewed shared SSH connection/channel exporter and role-bound signing adapter; integrated foreground enrollment or advanced host-local public-key consent; exact-owned endpoint admission/routing. A provisioned journal is not Ready; fixture success is not native vault/platform acceptance. |
 
 ## Intake rule for new work
 

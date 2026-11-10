@@ -8693,6 +8693,27 @@ version-first refusal, zero-field schemas and cursor progress. Optional owner
 proofs are explicitly enabled in every platform's CI test/lint combinations;
 this closes a coverage gap, not the remaining native/exposure gates.
 
+### Protected owner enrollment without inventing authenticated transport
+
+ADR 0084's owner proof needs more than a bearer and an account label.
+The stages 1/3 prerequisite ([#681](https://github.com/fes/fesTerm/issues/681))
+now binds explicit local public-key consent to the exact installation, stable
+host/key, account and locally generated owner. Enrollment/rotation/revocation
+use compare-and-swap revisions under the setup lease; native-vault policy
+high-water and revoked-key tombstones refuse disk rollback and stale results.
+Importing a key enables neither access nor creation. Client seeds and their
+approved bindings stay in the native vault behind opaque references, without
+plaintext fallback.
+
+The transport investigation also found a real stop condition: pinned inner SSH
+verifies its host key, but the handed-off streams do not expose a shared
+connection-and-channel transcript. Both real endpoints now explicitly refuse
+owner authentication at that gate. Contract crypto fixtures and local protected
+storage tests are useful evidence, not permission to invent a verified boolean
+or expose HOST. A reviewed exporter/adapter, native vault qualification,
+foreground first-connect consent and routing integration remain prerequisites;
+no services, cloud resources, normal setup controls or legacy capabilities change.
+
 ## A headless host boundary without pretending the endpoint exists
 
 ADR 0084 separates installing a host from creating a shell. The legacy installer

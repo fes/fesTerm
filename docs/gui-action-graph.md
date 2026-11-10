@@ -1569,6 +1569,12 @@ transitions remain deferred behind endpoint/session-control and security review
 in [#681](https://github.com/fes/fesTerm/issues/681), not accepted behavior.
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
+HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
+Actual verified SSH client/server streams explicitly refuse owner authentication
+until a shared connection-and-channel exporter exists; this is a tested blocker,
+not authenticated endpoint coverage. First-connect controls/native vault
+qualification remain deferred.
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Opening/saving is offline; verified principal and host; private sessions hidden; bounded workers | Cancel/account change fences results | P; partial contracts/auth/privacy tests; H,N deferred |

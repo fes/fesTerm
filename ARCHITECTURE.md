@@ -726,8 +726,14 @@ messages, authorized pagination and reservation/freshness helpers. This avoids
 a sessiond-to-bridge dependency cycle; it has no PTY, GUI, cloud or native-store
 dependency. The bridge's non-default `owner-auth` feature provides enrolled-owner
 Ed25519 challenge/admission primitives, not provider identity or a listener.
-Legacy bearer connectivity is not principal proof. Protected enrollment,
-pinned-channel integration and independent security review are mandatory before
+Legacy bearer connectivity is not principal proof. The non-default
+`festerm-host-setup/owner-enrollment` feature persists exact-installation
+owner/key/account policy under the lifecycle lease, with native-vault rollback
+fencing and monotonic revocation revisions. Bridge `ClientOwnerKey` uses native
+opaque references only; enrollment does not enable access or creation.
+The real pinned SSH stream lacks a shared connection/channel transcript
+exporter, so both client/server owner-channel gates explicitly refuse.
+Pinned-channel integration and independent security review are mandatory before
 new remote capabilities; all new capabilities default denied. No session routing,
 creation, migration or lifetime-supervisor implementation is claimed by this slice.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal

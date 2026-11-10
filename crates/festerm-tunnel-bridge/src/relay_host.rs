@@ -38,6 +38,14 @@ pub struct HostStream {
     _slot: OwnedSemaphorePermit,
     _client: Arc<OwnedSemaphorePermit>,
 }
+#[cfg(feature = "owner-auth")]
+impl HostStream {
+    /// A tunnel bearer / auth_none is not an owner or channel-bound proof.
+    /// Do not issue an owner challenge or admit HOST on this stream.
+    pub fn require_owner_channel_binding(&self) -> Result<(), crate::owner_auth::OwnerKeyError> {
+        Err(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable)
+    }
+}
 impl tokio::io::AsyncRead for HostStream {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
@@ -745,6 +753,18 @@ mod tests {
             port: 47461,
             observation_expiry: None,
         };
+        #[cfg(feature = "owner-auth")]
+        {
+            use crate::owner_auth::OwnerKeyError;
+            assert_eq!(
+                connection.require_owner_channel_binding(),
+                Err(OwnerKeyError::ChannelBindingUnavailable)
+            );
+            assert_eq!(
+                accepted.require_owner_channel_binding(),
+                Err(OwnerKeyError::ChannelBindingUnavailable)
+            );
+        }
         let binding = connection.observation_binding();
         let mut extra = Vec::new();
         for _ in 1..CHANNELS_PER_CLIENT {

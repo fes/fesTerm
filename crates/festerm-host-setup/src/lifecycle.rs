@@ -192,6 +192,24 @@ pub struct Store {
 }
 
 impl Store {
+    #[cfg(feature = "owner-enrollment")]
+    pub(crate) fn with_owned_lease<T>(
+        &self,
+        operation: impl FnOnce(&File, &Snapshot, Lease) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let lease = self.lease()?;
+        operation(&self.directory, &self.read()?, lease)
+    }
+
+    #[cfg(feature = "owner-enrollment")]
+    pub(crate) fn with_locked<T>(
+        &self,
+        operation: impl FnOnce(&File, &Snapshot) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let _lease = self.lease()?;
+        operation(&self.directory, &self.read()?)
+    }
+
     /// Create a new installation. Existing journals (including other origins)
     /// are never adopted or overwritten.
     pub fn create(path: &Path, origin: Origin, settings: Settings) -> io::Result<Self> {

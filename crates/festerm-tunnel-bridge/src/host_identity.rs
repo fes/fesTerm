@@ -21,6 +21,16 @@ fn invalid() -> io::Error {
 }
 
 impl HostIdentity {
+    /// Loads the existing stable identity relative to an already verified
+    /// private installation handle. Never creates or replaces missing state.
+    pub fn load_from_private_directory(directory: &std::fs::File, name: &Path) -> io::Result<Self> {
+        Self::decode(&setup_storage::read_private(
+            directory,
+            name,
+            MAX_IDENTITY_BYTES,
+        )?)
+    }
+
     pub fn ephemeral() -> io::Result<Self> {
         Ok(Self {
             host_id: uuid::Uuid::new_v4(),

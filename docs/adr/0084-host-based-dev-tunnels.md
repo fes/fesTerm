@@ -515,6 +515,23 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   additionally proves current-authorize state/generation/ABA revision fencing.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
+- **Protected enrollment prerequisite evidence (stages 1/3):**
+  `protected_owner_enrollment_is_explicit_persistent_and_not_creation_consent`,
+  `protected_owner_rotation_revokes_pending_and_live_admission_and_stale_results`,
+  `protected_owner_vault_fences_disk_rollback_foreign_installation_and_missing_anchor`,
+  `protected_owner_observed_lifecycle_revision_cannot_roll_back`,
+  `protected_owner_detects_changed_stable_host_key_or_provisioning_account`,
+  `protected_owner_interrupted_policy_publication_requires_reconciliation`,
+  `native_owner_reference_reopens_only_exact_approved_binding` and
+  `native_owner_vault_failure_never_creates_a_fallback_key` exercise actual
+  local persistence/native-reference APIs with synthetic vaults and keys.
+  `encrypted_transport_pins_host_and_exports_only_one_preconfigured_port` now
+  additionally proves both real pinned SSH stream endpoints refuse owner
+  authentication without a shared connection/channel exporter; the changed-key
+  fixture still refuses before authentication. This is a concrete remaining
+  transport prerequisite, not successful channel-bound proof qualification.
+  `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
+  no UI, listener, broad pairing service or full ADR acceptance is claimed.
 - **Automated tests required:** Planned tests and acceptance matrix below.
   Implemented stage-4 boundary coverage:
   `headless_configuration_is_inert_and_origin_is_not_adopted`,

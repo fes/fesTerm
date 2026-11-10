@@ -38,6 +38,9 @@ foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
 messages and opt-in owner-key authentication primitives. No HOST endpoint or
 remote creation is exposed; security review and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
+Protected local owner enrollment and native-vault references now have fixture
+coverage; real pinned SSH streams still refuse owner authentication until a
+shared connection/channel binding exporter is implemented and reviewed.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, offline pinned-CLI staging and

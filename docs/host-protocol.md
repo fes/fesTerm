@@ -128,7 +128,7 @@ keys** in addition to the existing private service ACL and host-key trust.
 There is no new identity provider, borrowed OAuth token, anonymous ACL or
 management-token authentication.
 
-### Enrollment and secret boundary (integration still gated)
+### Enrollment and secret boundary (transport integration still gated)
 
 1. A foreground local setup operation authenticates the configured OS user
    through existing protected setup/consent boundaries and selects the intended
@@ -140,8 +140,8 @@ management-token authentication.
    separately from portable configuration.
 2. Each authorized device generates a dedicated **per-host** `OwnerSigningKey`.
    Its seed is stored through existing native `SecretBytes`/opaque-reference
-   vault storage; a headless client may use the existing protected private-file
-   boundary. Never store it in TOML, portable recipes, exports, cloud metadata,
+   vault storage, including headless clients; there is no private-file/plaintext
+   seed fallback. Never store it in TOML, portable recipes, exports, cloud metadata,
    command arguments, environment variables or logs. `OwnerSigningKey` has no
    Debug/Clone/serde; exported seed views are zeroizing.
 3. Via a trusted operator channel, transfer only the public key to the host.
@@ -153,12 +153,75 @@ management-token authentication.
 4. Account IDs remain public provisioning hints. Public keys map to the
    configured owner only, not an asserted GitHub user or creator-specific ACL.
    Permission/key changes advance protected host/grant epochs before publication.
-   Removing a device invalidates its live/pending admission and disconnects it.
+   Removing a device invalidates its live/pending admission. A future endpoint
+   must close the affected streams; no endpoint is implemented here.
 
-This stage provides `OwnerSigningKey`, `OwnerPolicy`, `OwnerVerifier` and proof
-verification. Native enrollment UI/CLI, protected enrollment-store adapters and
-vault integration are later-stage dependencies, not implied working features.
-Until installed/reviewed, an owner grant must not be reconstructed from config.
+The opt-in `festerm-host-setup/owner-enrollment` feature now implements protected
+local persistence through `Store::owner_enrollment() -> OwnerEnrollment`.
+`initialize(identity_filename, account)` loads the existing stable `HostIdentity`
+through the verified private installation handle (never generates a replacement)
+and creates a local principal bound to the exact installation/host/key/account,
+with no keys or permissions. Each policy read reloads that exact identity;
+changed/missing host identity or a changed provisioning account refuses admission.
+`enroll(revision, key, confirmed_fingerprint)`, `revoke` and `rotate` compare the
+current revision; fingerprint confirmation is exact `ED25519-SHA256:` of the raw
+Ed25519 public key, distinct from the SSH host-key fingerprint. Four active keys
+and 64 lifetime entries bound the store; revoked-key tombstones cannot be
+reenrolled. Key import does not enable access or shell creation.
+`approve_permissions` is separate host-local consent, never a remote request or
+config import. Creation also requires existing host settings permission; remote
+admission additionally requires the lifecycle's Provisioned phase (not a Ready
+claim). No CLI/UI enrollment controls are exposed by this backend slice.
+
+The private installation journal lease serializes enrollment, lifecycle and
+fresh admission. `current_policy() -> CurrentOwnerPolicy` owns that short lease
+and exposes `verifier()`: authorize against it and return the guard as the
+backend admission callback's `G`, so reservation/publication retains the policy
+guard but drops it before startup/attachment waits. Reacquire for final effects.
+`with_current_verifier` is a short closure convenience, never network I/O;
+cached verifiers are not current policy.
+Every policy mutation advances the grant revision, fencing pending proofs and
+live admission. Observed lifecycle epochs advance a persisted high-water.
+The native vault holds the authoritative complete policy snapshot; a private
+immutable opaque reference identifies it. Vault update precedes private atomic
+disk publication. Old disk/startup/rollback state, a missing native anchor or an
+interrupted publication refuses admission rather than reviving old grants.
+Preserve both records for explicit local reconciliation; automated repair/reset
+is intentionally unavailable. Locked/unavailable vault errors request native
+unlock/retry, with no fallback. This does not claim resistance to an attacker
+able to roll back the native credential store itself.
+
+`ClientOwnerKey::generate_native/open_native` store the generated seed and exact
+`OwnerBinding` together through the existing native store. The handle exposes
+only public bytes and an opaque reference for protected local credential
+metadata. Reopening refuses changed installation, host/key, account or owner;
+no OAuth credential borrowing is involved. Secret buffers are zeroized. Client
+key deletion is retryable and distinct from host-side revocation.
+
+### Concrete transport blocker — no owner signing adapter yet
+
+The existing inner SSH `VerifiedHost` really verifies the exact approved host
+key; its encrypted transport fixtures reject changed keys before authentication.
+However `ClientConnection` retains a `ChannelStream` plus client handle, and
+server `HostStream` retains only stream/admission permits. The shared SSH
+session-ID/KEX transcript is private inside vendored russh and neither stream
+exports a shared connection **and channel** binding. A server-generated
+connection UUID or asserted verified boolean is not a substitute: proofs could
+otherwise be relayed/reflected between authenticated streams.
+
+Both real stream types therefore expose `require_owner_channel_binding`, which
+returns the actionable `ChannelBindingUnavailable` error, even after genuine
+host-key verification. No seed is retrieved and no challenge is signed/admitted
+by this gate. A reviewed role/domain-separated transport exporter carried
+immutably with both stream endpoints, plus anti-relay/reflection/cross-channel
+integration tests, is prerequisite to a production signing/verification adapter.
+The lower-level `OwnerSigningKey::prove` remains a contract primitive, not that
+adapter; fixture proofs do not qualify the missing seam.
+
+First-connect UX is also deferred: use explicit advanced host-local public-key
+import/fingerprint confirmation or an integrated foreground setup handoff, never
+automatic bearer enrollment. The normal future flow must not require connection
+JSON; this slice chooses neither new controls nor a pairing service.
 
 ### Authentication and admission algorithm
 
