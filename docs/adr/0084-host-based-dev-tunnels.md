@@ -536,6 +536,8 @@ changes are part of the stage-1 contract slice.
   `protected_inventory_filters_before_labels_without_frontend_admission` and
   `scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_committed`
   additionally pin the routing integration boundary and scoped guard lifetime.
+  `host_owner_fence_rejects_changed_intent_for_the_same_operation` covers
+  takeover and recipe changes under a reused operation ID.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and

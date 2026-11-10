@@ -503,6 +503,12 @@ fn host_admission_fence_rejects_revocation_replacement_and_operation_change() {
         grant_epoch: Epoch::new(3).unwrap(),
         operation_epoch: Epoch::new(4).unwrap(),
         operation: id(8),
+        intent: (&Request::Attach {
+            target: session(2).target,
+            attachment: id(4),
+            takeover: false,
+        })
+            .into(),
         logical: Some(id(2)),
         logical_state: Some(LogicalState::Running(GenerationId::new(3).unwrap())),
         logical_revision: Some(Epoch::new(1).unwrap()),
