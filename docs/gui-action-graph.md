@@ -1673,6 +1673,12 @@ then aborted during the genuine positive PKI case on a misaligned timestamp
 pointer; the unsigned negative was unreached. Native PKI remains **blocked**;
 portable/source gates are not native acceptance.
 
+The [bounded backend union](milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins)
+has162 full-feature host/setup passes/four existing ignores and one newly
+attributed actual14-route local aggregate at28c (172.56s), with freshly compiled
+retained helpers and explicit file-measurement/source limits. This does not
+promote HOST-04/05/06 or the known-blocked Windows PKI/native-manager gates.
+
 HOST-06 currently has the independently testable
 [helper authenticity boundary](host-release-artifacts.md) and separate
 [private executable-publication component](native-host-services.md):

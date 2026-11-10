@@ -3922,6 +3922,19 @@ Successful PUT receipts are pinned only after authoritative GET, including late
 cancelled results. Live-service incarnation stability across repeated GETs still
 requires qualification; these fixtures perform no real cloud or vault mutations.
 
+**Bounded backend fan-in qualification:** Exacte157 full-feature host/setup
+passes162 with four existing ignores; CI-only35 normally merged at28c leaves
+all1055 Rust/native/build inputs identical. At28c, one actual local native
+aggregate passes14/0/0 in172.56s using freshly compiled default helpers copied
+into a new owned0700 directory with exclusive0500 executable files. Both
+digests match after the run. These are file measurements, not per-child exec
+audit/sealed retention, installed-manager or real-provider proof. See
+[fresh build/source/lifecycle and complete command evidence](milestone-progress.md#fresh-helper-provenance-backend-normal-fan-in).
+Existing ignored native fixtures and the cfg-excluded be8 Linux opt-in were not
+executed. Windows native PKI remains blocked by the actual3030 timestamp crash;
+ordinary Windows services, genuine cross-version switching, OS logout/cgroup
+survival, migration binding and full ADR acceptance remain deferred.
+
 **HOSTSETUP-01 cleanup recovery:** `recover-cleanup` can now bind an
 acknowledged uncertain exact resource through read-only observation, without
 enable/creation consent. Unknown/absent observations retain uncertainty;

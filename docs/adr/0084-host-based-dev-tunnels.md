@@ -666,6 +666,10 @@ and same-epoch changed-snapshot refusal before any native/identity effects.
 This is not real logind/native-manager evidence or Windows replacement enablement.
 The first compile RED and known actual Windows PKI crash remain in the
 [combined-source record](../milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins).
+That record separately attributes162/four-existing-ignored host/setup results
+to sourcee157, zero-Rust/build-input CI-only35 integration at28c, and the fresh
+default-helper one-run14/0/0 native aggregate at28c (172.56s). These are macOS
+local fixtures, not actual logind/native-manager/Windows PKI or binding acceptance.
 
 The owner-approved Linux current-login slice adds portable eligibility/hostile
 metadata tests, `linux_login_proof_pins_root_owner_uid_and_refuses_inventory_or_issuer_race`,

@@ -14,6 +14,13 @@ The separate `work/adr0084-backend-fanin-nov10` worktree starts at exact
 | Windows publisher/graceful-stop source | `3030bcd7008e300a90b67fa6c6bc6c0a37ce88c1` |
 | Migration reservation foundation only | `73f2afa8b72c843b856fd0591cbe32d7fec44b00` |
 
+The subsequently authorized CI-only `35c4c8c2a6d70b53bf95dd1b4628215a40938977`
+is normally merged at `28c56d96812f2ba3132403abc5b24267f3ceea3d`. It changes
+only the workflow and its mocked registration contracts: all1055 tracked Rust/
+native/build inputs, including manifests/lockfile, are identical to source
+`e1570be66f2355dbf8f3f2df416b5b17bfe2cc29`. It requires future Linux compilation
+and exact-one listing, never execution, of the existing be8 ignored smoke.
+
 No source branch is rewritten, and both complete histories are retained.
 The source integration joins fresh manual-cleanup diagnostics with typed
 Linux exit disposition, and shares the existing account validator with the new
@@ -41,7 +48,33 @@ pointer at native.rs416:20; the unsigned negative was unreached. No PKI
 acceptance is claimed. Its separately owned FFI correction/security assessment
 and any moving child are excluded from this fan-in.
 
-Combined-source Rust/native validation is pending at this source checkpoint.
+Bounded **macOS-only** combined qualification uses actual Rust/Cargo1.99.1,
+Clippy0.1.99, the exclusive warm session target, jobs1, dev/test debug0 and
+incremental0. The full-feature suite compiles/runs at exacte157; its1055
+Rust/native/build input hashes remain identical through the CI-only28c merge
+and final documentation child. Other commands, fresh helper build and the
+one actual native aggregate run at exact28c, not old61:
+
+| Selected group | Actual result |
+| --- | --- |
+| Full-feature host/setup library | 162 passed / zero failed / four existing ignored |
+| Default-owner host CLI | Nine unit + ten CLI passed |
+| No-owner host CLI | Six unit + six CLI passed |
+| Standalone owner-enrollment/cloud library | 69 passed / zero failed / two existing ignored |
+| Session retirement/ensure/logical-capacity guards | Six passed |
+| Portable bridge control/terminal | 16 passed / nine existing native ignores |
+| Portable Windows publisher policy, no native FFI | Four passed |
+| Offline CI/publisher contracts | 39 run:37 passed / two PowerShell-unavailable skips |
+| Strict all-target five-package/full-feature, standalone cloud, no-owner | All three configurations passed |
+| One complete local signed-SSH/native-daemon aggregate | **14 unique passed / zero failed / zero ignored,172.56s**, exit0 |
+
+The four full-feature ignores are existing cargo-packager interoperability,
+owned-migration daemon preservation, stopped-update daemon/cache preservation
+and disposable real-manager fixtures. The existing be8 Linux-only ignored body
+is cfg-excluded on macOS, not a fifth ignored test or a zero-test native pass.
+Groups overlap; do not sum them as disjoint coverage. Native helpers/processes
+are local fixture evidence, not installed-manager, provider or publisher proof.
+
 The first combined full-feature command at `6ce107369e96c7341e6b31d2d31b4979f3579ec8`
 is retained with exit101/raw SHA-256
 `ae31987ca50eb483ca4c3192ffb48e6db1da37df0dfa89e4fd511606b18e855c`:
@@ -55,6 +88,55 @@ The private admission seam permits deterministic unavailable-proof, cancellation
 before/after admission, revocation and same-epoch settings-change fixtures;
 none calls logind, a native manager, cloud or sign-in. No policy change or
 Windows replacement enablement is inferred: that existing refusal remains.
+An initial portable selector incorrectly used source filenames rather than Rust
+module namespaces: exit0, **zero tests**, raw SHA-256
+`1cdf6ea3dcb75d59932bb5d5ab9d7e5f550a0cf0f35e448df3590ce7c00a7436`.
+It is retained non-evidence. Selecting registered `host_control::tests` and
+`host_terminal::tests` produces the16 actual passes above without assertion or
+source changes. The actual native aggregate is a single run, not isolated
+successes, a retry, old61 evidence or that zero-test command.
+
+### Fresh helper provenance (backend normal fan-in)
+
+Before that aggregate, the actual default-feature helpers are freshly compiled
+from exact28c. Cargo JSON identifies this worktree's package IDs, empty feature
+sets and `fresh:false` for **both** binaries. The build exits0; raw SHA-256 is
+`318ac3a4aff24ca8cdb9205f79f04acd6c32019f6e7328b0f285c7fa1b25bb77`.
+Reproduction order and actual native selector:
+
+```sh
+cargo build --locked -p festerm-sessiond -p festerm-pty-test-child --bins --message-format=json
+# Before running, copy BOTH new binaries into a new owned0700 directory:
+# exclusive O_CREAT|O_EXCL files, requested/verified0500; copy, fsync, close.
+# Do not chmod cached artifacts or repair existing directories.
+FESTERM_HOST_TEST_HELPER="$PWD/target/adr84-backend-fanin-evidence/retained-helper-28c56d96812f/festerm-sessiond" \
+  cargo test --locked -p festerm-tunnel-bridge --features host-routing \
+  native_ --lib -- --ignored --test-threads=1
+```
+
+The actual compiler is selected by absolute stable1.99 toolchain paths, not
+Homebrew dispatch. Both retained files are owner-read/execute-only0500 under a
+new0700 directory. Sessiond SHA-256 is
+`0a3d7983027f653a383b939d97e5ffe2b8bf42fa4b0b9713be1c936d9f556c85`;
+its freshly copied sibling `festerm-pty-test-child` is
+`4994e4fce827dfaafcf606ecae28dae6977fabd3a525fe87513ac14d5abd00be`.
+Sessiond has equal runner hashes immediately before/after; the sibling has
+equal copy-time-before-run and post-run hashes. These are **file measurements,
+not per-child exec audits or sealed immutable archives**. Mutable Cargo-managed
+source paths are not the configured retained helper. Matching an older digest
+does not replace the new build/source proof; Cargo reports fresh compilation.
+The native raw log SHA-256 is
+`31d90983d6cc3d9280a18dc7a0da2afeef465998b06e6e92834a362f5c9753ea`.
+
+Exact commands, numeric exits, raw hashes, compiler/environment, memory samples,
+all14 names and source/copy lifecycle receipts are under
+`target/adr84-backend-fanin-evidence/`, including
+`compiled-source-inputs.json`, `fresh-retained-helper-provenance.json`,
+`actual-native-and-helper-postcheck.json` and the final handoff.
+Formatting/range-aware trace against exact3d/diff pass; trace remains311 edges,
+zero broken/unclassified. The private Cargo lane is released only after
+checking no owned compiler/test/daemon activity or short fixture roots remain.
+
 All earlier61/3d commands, results, unknown Linux replies and helper-lifecycle
 qualifications below remain attributed to those sources. The existing be8
 ignored logind test is Linux-only and is not executed or called a zero-test
