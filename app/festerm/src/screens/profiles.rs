@@ -47,6 +47,7 @@ pub(crate) struct LocalHostView {
     pub sign_in: bool,
     pub recreate: bool,
     pub new_shell: bool,
+    pub restart: bool,
     pub unreferenced: bool,
 }
 
@@ -99,7 +100,63 @@ pub(crate) fn report_local_profile_save_outcome(
         draft.pending_save = None;
         match outcome {
             Ok(()) => state.mode = ProfilesScreenMode::List,
-            Err(error) => draft.error = Some(error),
+            Err(error) => {
+                draft.account_verified = false;
+                draft.error = Some(error);
+            }
+        }
+        data.insert_temp(id, state);
+    });
+    context.request_repaint();
+}
+
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) fn local_host_account_request(
+    context: &egui::Context,
+    tab: TabId,
+    request: egui::Id,
+) -> Option<Option<String>> {
+    let state =
+        context.data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))?;
+    let ProfilesScreenMode::EditLocal(draft) = state.mode else {
+        return None;
+    };
+    (draft.expose && draft.account_selection == Some(request)).then_some(draft.original_id)
+}
+
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) fn report_local_host_account(
+    context: &egui::Context,
+    tab: TabId,
+    request: egui::Id,
+    outcome: Result<bool, String>,
+) {
+    context.data_mut(|data| {
+        let id = profiles_state_id(tab);
+        let Some(mut state) = data.get_temp::<ProfilesScreenState>(id) else {
+            return;
+        };
+        let ProfilesScreenMode::EditLocal(draft) = &mut state.mode else {
+            return;
+        };
+        if draft.account_selection != Some(request) || !draft.expose {
+            return;
+        }
+        match outcome {
+            Ok(true) => {
+                draft.account_verified = true;
+                draft.error = None;
+            }
+            Ok(false) => {
+                draft.expose = false;
+                draft.explicit_enable = false;
+                draft.account_selection = None;
+                draft.account_verified = false;
+            }
+            Err(error) => {
+                draft.account_verified = false;
+                draft.error = Some(error);
+            }
         }
         data.insert_temp(id, state);
     });
@@ -394,6 +451,8 @@ struct LocalProfileDraft {
     hosting_initialized: bool,
     expose: bool,
     explicit_enable: bool,
+    account_selection: Option<egui::Id>,
+    account_verified: bool,
     pending_save: Option<egui::Id>,
     error: Option<String>,
 }
@@ -434,6 +493,8 @@ impl LocalProfileDraft {
             hosting_initialized: true,
             expose: false,
             explicit_enable: false,
+            account_selection: None,
+            account_verified: false,
             pending_save: None,
         }
     }
@@ -455,6 +516,8 @@ impl LocalProfileDraft {
             hosting_initialized: false,
             expose: false,
             explicit_enable: false,
+            account_selection: None,
+            account_verified: false,
             pending_save: None,
         }
     }
@@ -1875,9 +1938,31 @@ pub(crate) fn show_profiles(
                                 ssh_section_heading(ui, "Dev Tunnel hosting");
                                 if ui.add_enabled(eligible, egui::Checkbox::new(&mut draft.expose, "Expose via Dev Tunnel")).changed() {
                                     draft.explicit_enable = draft.expose;
+                                    draft.account_verified = false;
+                                    draft.account_selection = None;
+                                    if draft.expose {
+                                        let request = egui::Id::new(("local_host_account", tab_id))
+                                            .with(ui.ctx().cumulative_frame_nr());
+                                        draft.account_selection = Some(request);
+                                        command = Some(AppCommand::BeginLocalHostAccount { tab_id, request });
+                                    }
                                 }
                                 if !eligible {
                                     draft.expose = false;
+                                    draft.account_selection = None;
+                                    draft.account_verified = false;
+                                }
+                                if draft.expose && draft.explicit_enable {
+                                    ssh_paragraph(ui, if draft.account_verified {
+                                        "GitHub account selected. Save to authorize hosting."
+                                    } else { "Choose a GitHub account before saving exposure." });
+                                    if ui.button("Choose GitHub account").clicked() {
+                                        let request = egui::Id::new(("local_host_account", tab_id))
+                                            .with(ui.ctx().cumulative_frame_nr());
+                                        draft.account_selection = Some(request);
+                                        draft.account_verified = false;
+                                        command = Some(AppCommand::BeginLocalHostAccount { tab_id, request });
+                                    }
                                 }
                                 ssh_paragraph(ui, "Save can start the configured persistent command and authorize remote terminal access. Remote takeover is enabled and can displace a local tab. Closing fesTerm does not stop exposure; disable and Save to remove the tunnel, not the shell. File and observation access remain off.");
                                 if !hosting.message.is_empty() {
@@ -1897,6 +1982,7 @@ pub(crate) fn show_profiles(
                                             ("Retry hosting / cleanup", LocalHostAction::Retry, !hosting.busy && draft.original_hosting.is_some()),
                                             ("Recreate missing tunnel", LocalHostAction::RecreateMissing, hosting.recreate),
                                             ("Start a new persistent shell and expose it", LocalHostAction::NewShell, hosting.new_shell),
+                                            ("Restart session to enable hosting", LocalHostAction::Restart, hosting.restart && !hosting.busy),
                                         ] {
                                             if visible && ui.button(label).clicked() {
                                                 command = Some(AppCommand::LocalTunnelHost {
@@ -1915,7 +2001,9 @@ pub(crate) fn show_profiles(
                         }
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
-                            if ui.add_enabled(draft.pending_save.is_none(), egui::Button::new("Save")).clicked() {
+                            if ui.add_enabled(draft.pending_save.is_none()
+                                && (!draft.expose || !draft.explicit_enable || draft.account_verified),
+                                egui::Button::new("Save")).clicked() {
                                 match draft.build() {
                                     Ok(profile) => {
                                         if draft.expose || draft.original_hosting.is_some() {
@@ -1929,6 +2017,7 @@ pub(crate) fn show_profiles(
                                                 profile,
                                                 expose: draft.expose,
                                                 explicit_enable: draft.explicit_enable,
+                                                account_selection: draft.account_selection,
                                             });
                                         } else {
                                             command = Some(AppCommand::SaveProfile { profile });
@@ -2628,7 +2717,19 @@ mod tests {
         harness.run_ok();
         harness.get_by_label("Expose via Dev Tunnel").click();
         harness.run_ok();
-        assert!(harness.state().command.is_none());
+        let Some(AppCommand::BeginLocalHostAccount { tab_id, request }) =
+            harness.state().command.as_ref()
+        else {
+            panic!("checking exposure must immediately request account selection");
+        };
+        let (tab_id, account_request) = (*tab_id, *request);
+        assert_eq!(
+            local_host_account_request(&harness.ctx, tab_id, account_request),
+            Some(None)
+        );
+        report_local_host_account(&harness.ctx, tab_id, account_request, Ok(true));
+        harness.state_mut().command = None;
+        harness.run_ok();
         harness.get_by_label("Save").scroll_to_me();
         harness.run_ok();
         harness.get_by_label("Save").click();
@@ -2641,6 +2742,46 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    #[cfg(feature = "experimental-dev-tunnels")]
+    fn account_selection_cancellation_and_stale_replies_cannot_enable_exposure() {
+        let context = egui::Context::default();
+        let tab = AppState::for_test().active();
+        let request = egui::Id::new("account-current");
+        context.data_mut(|data| {
+            data.insert_temp(
+                profiles_state_id(tab),
+                ProfilesScreenState {
+                    mode: ProfilesScreenMode::EditLocal(LocalProfileDraft {
+                        expose: true,
+                        explicit_enable: true,
+                        account_selection: Some(request),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+        });
+        report_local_host_account(&context, tab, egui::Id::new("old-request"), Ok(true));
+        let state = context
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))
+            .unwrap();
+        let ProfilesScreenMode::EditLocal(draft) = state.mode else {
+            panic!("editor retained")
+        };
+        assert!(!draft.account_verified);
+        report_local_host_account(&context, tab, request, Ok(false));
+        report_local_host_account(&context, tab, request, Ok(true));
+        assert!(local_host_account_request(&context, tab, request).is_none());
+        let state = context
+            .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab)))
+            .unwrap();
+        let ProfilesScreenMode::EditLocal(draft) = state.mode else {
+            panic!("editor retained")
+        };
+        assert!(!draft.expose && !draft.account_verified && !draft.explicit_enable);
     }
 
     #[test]

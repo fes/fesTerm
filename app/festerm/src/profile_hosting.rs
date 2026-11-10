@@ -1,6 +1,8 @@
 //! Composition-owned desktop hosting. Config is intent; private consent is
 //! authority, and background replies never change either.
 
+#[path = "profile_hosting_account.rs"]
+mod account;
 #[path = "profile_hosting_stage.rs"]
 mod staging;
 
@@ -10,8 +12,8 @@ use eframe::egui;
 use festerm_config::{Configuration, LocalTunnelHosting, PersistenceProviderKind, Profile};
 use festerm_tunnel_bridge::{
     profile_hosting::{
-        self, BindExistingRequest, Consent, Failure, ManagedHostStatus, ManagementOperation,
-        ManagementReply, ManagementRequest, Origin, Phase, Store, Target,
+        self, BindExistingRequest, Consent, Failure, HostedLaunch, ManagedHostStatus,
+        ManagementOperation, ManagementReply, ManagementRequest, Origin, Phase, Store, Target,
     },
     setup_storage,
 };
@@ -34,11 +36,13 @@ pub(super) struct LocalProfileEdit {
     pub profile: Profile,
     pub expose: bool,
     pub explicit_enable: bool,
+    pub account_selection: Option<egui::Id>,
 }
 
 #[derive(Clone)]
 enum Work {
     Ensure(Box<Profile>, usize),
+    Restart(Box<Profile>, usize, Target),
     Remove(LocalTunnelHosting),
     Status(LocalTunnelHosting),
     Login(Box<Work>),
@@ -56,6 +60,7 @@ impl Work {
     fn same_operation(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Ensure(..), Self::Ensure(..))
+            | (Self::Restart(..), Self::Restart(..))
             | (Self::Remove(_), Self::Remove(_))
             | (Self::Status(_), Self::Status(_)) => true,
             (Self::Login(next), Self::Login(other)) => next.same_operation(other),
@@ -65,7 +70,7 @@ impl Work {
 
     fn binding(&self) -> Option<&LocalTunnelHosting> {
         match self {
-            Self::Ensure(profile, _) => binding(profile),
+            Self::Ensure(profile, _) | Self::Restart(profile, ..) => binding(profile),
             Self::Login(next) => next.binding(),
             Self::Remove(binding) | Self::Status(binding) => Some(binding),
         }
@@ -88,6 +93,7 @@ impl Drop for Pending {
 
 #[derive(Default)]
 pub(super) struct Controller {
+    accounts: account::Chooser,
     enabled: bool,
     initialized: bool,
     queue: VecDeque<Work>,
@@ -109,6 +115,34 @@ pub(super) struct Controller {
 
 fn binding(profile: &Profile) -> Option<&LocalTunnelHosting> {
     profile.as_local()?.tunnel_hosting()
+}
+
+fn validate_hosted_names(
+    configuration: &Configuration,
+    original_id: Option<&str>,
+    candidate: &Profile,
+    expose: bool,
+) -> Result<(), &'static str> {
+    fn native_name(profile: &Profile) -> Option<&str> {
+        profile
+            .as_local()?
+            .persistence()
+            .filter(|persistence| {
+                persistence.provider() == PersistenceProviderKind::FestermSessiond
+            })
+            .map(|persistence| persistence.session_name())
+    }
+    let Some(name) = native_name(candidate) else {
+        return Ok(());
+    };
+    if configuration.profiles().iter().any(|other| {
+        Some(other.identifier()) != original_id
+            && native_name(other) == Some(name)
+            && (expose || binding(other).is_some_and(LocalTunnelHosting::enabled))
+    }) {
+        return Err("Dev Tunnel hosting requires a unique native persistent session name. Rename the conflicting session before saving.");
+    }
+    Ok(())
 }
 
 fn store(binding: &LocalTunnelHosting) -> io::Result<Store> {
@@ -175,6 +209,248 @@ fn selected(target: &Target) -> festerm_sessiond::NativeSessionIdentity {
         created_at_unix_ms: target.generation,
         endpoint: target.endpoint.clone(),
     }
+}
+
+fn deferred_restart(grant: &Consent) -> Option<&Target> {
+    grant.hosted_launch.as_ref()?.legacy.as_ref()
+}
+
+fn legacy_session(name: &str) -> Result<Option<Target>, String> {
+    let root = festerm_sessiond::runtime_root().map_err(|_| "profile_host.runtime_namespace")?;
+    let sessions = festerm_sessiond::list_running_sessions_strict_in(&root)
+        .map_err(|_| "profile_host.restart_identity")?;
+    Ok(sessions
+        .into_iter()
+        .find(|running| running.session.name == name)
+        .map(|running| {
+            let session = running.session;
+            Target {
+                runtime_root: root,
+                name: session.name,
+                pid: session.pid,
+                generation: session.created_at_unix_ms,
+                endpoint: session.endpoint,
+            }
+        }))
+}
+
+pub(crate) fn connect_profile(
+    profile: &Profile,
+    size: festerm_session::TerminalSize,
+    scrollback: usize,
+    notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
+    allow_start: bool,
+) -> Result<festerm_sessiond::PersistentSession, String> {
+    let binding = binding(profile).ok_or("profile_host.binding")?;
+    let local = profile.as_local().ok_or("profile_host.profile")?;
+    let persistence = local.persistence().ok_or("profile_host.profile")?;
+    let native = crate::environment::with_corrected_local_path(local.to_local_profile());
+    let mut grant = match grant(binding) {
+        Ok(grant) => grant,
+        Err(GrantReadFailure::Missing | GrantReadFailure::ForeignConsent) => {
+            return connect_unbound_profile(
+                persistence.session_name(),
+                &native,
+                size,
+                scrollback,
+                notifier,
+                allow_start,
+                None,
+            )
+        }
+        Err(GrantReadFailure::Unavailable) => {
+            return Err(
+                "Private hosting state is unavailable; no fallback shell was started.".into(),
+            )
+        }
+    };
+    let launch = match (
+        &grant.hosted_launch,
+        binding.enabled() && grant.phase.allows_hosting(),
+    ) {
+        (Some(launch), true) => launch,
+        _ => {
+            return connect_unbound_profile(
+                persistence.session_name(),
+                &native,
+                size,
+                scrollback,
+                notifier,
+                allow_start,
+                grant
+                    .target
+                    .as_ref()
+                    .map(|target| target.runtime_root.as_path()),
+            )
+        }
+    };
+    let root = launch.runtime_root.clone();
+    let restart = deferred_restart(&grant).cloned();
+    if root != profile_hosting::hosted_runtime().map_err(|_| "profile_host.runtime_namespace")?
+        || fingerprint(profile)? != grant.spawn_fingerprint
+    {
+        return Err(
+            "The hosted profile command or runtime changed; no fallback shell was started.".into(),
+        );
+    }
+    if let Some(expected) = deferred_restart(&grant) {
+        if let Some(current) = legacy_session(&grant.session_name)? {
+            if &current != expected {
+                return Err(
+                    "The legacy session was replaced; no session was attached or restarted.".into(),
+                );
+            }
+            return attach_target(&current, notifier);
+        }
+        if !allow_start {
+            return Err(
+                "Hosting is pending a manual session restart; restoration cannot start it.".into(),
+            );
+        }
+        grant = store(binding)
+            .and_then(|store| store.authorize_hosted_start(binding.consent(), expected))
+            .map_err(|_| {
+                "The old session has not definitively ended; no replacement was started."
+            })?;
+    }
+    if !grant.phase.allows_hosting() {
+        return Err("Hosting consent is not active; no replacement was started.".into());
+    }
+    if let Some(target) = &grant.target {
+        return attach_target(target, notifier);
+    }
+    if grant.target.is_none() && restart.is_none() {
+        if let Some(legacy) = legacy_session(&grant.session_name)? {
+            store(binding)
+                .and_then(|store| store.defer_hosted_start(binding.consent(), legacy))
+                .map_err(|_| "profile_host.stale_consent")?;
+            return Err("The existing session needs a restart. Edit the profile to restart it, or end it and open the profile again.".into());
+        }
+    }
+    let target = if allow_start {
+        let identity = festerm_sessiond::ensure_detached_in(
+            &root,
+            festerm_sessiond::DetachedSessionRequest {
+                name: persistence.session_name(),
+                profile: &native,
+                size,
+                scrollback_limit_bytes: scrollback,
+                launch_request: binding.consent(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        Target {
+            runtime_root: root,
+            name: identity.name,
+            pid: identity.pid,
+            generation: identity.created_at_unix_ms,
+            endpoint: identity.endpoint,
+        }
+    } else {
+        let running = festerm_sessiond::list_running_sessions_in(&root)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|running| running.session.name == persistence.session_name())
+            .ok_or("No hosted session exists. Restoration never starts a replacement shell.")?;
+        Target {
+            runtime_root: root,
+            name: running.session.name,
+            pid: running.session.pid,
+            generation: running.session.created_at_unix_ms,
+            endpoint: running.session.endpoint,
+        }
+    };
+    if allow_start {
+        store(binding)
+            .and_then(|store| match restart {
+                Some(expected) => {
+                    store.bind_restarted_target(binding.consent(), &expected, target.clone())
+                }
+                None => store.bind_target(binding.consent(), target.clone()),
+            })
+            .map_err(|_| "The hosting consent changed. The shell was retained without exposure.")?;
+    }
+    attach_target(&target, notifier)
+}
+
+fn attach_target(
+    target: &Target,
+    notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
+) -> Result<festerm_sessiond::PersistentSession, String> {
+    let running = festerm_sessiond::list_running_sessions_in(&target.runtime_root)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|running| {
+            let session = &running.session;
+            session.name == target.name
+                && session.pid == target.pid
+                && session.created_at_unix_ms == target.generation
+                && session.endpoint == target.endpoint
+        })
+        .ok_or(
+            "The selected hosted generation is unavailable. No replacement shell was started.",
+        )?;
+    festerm_sessiond::PersistentSession::resume_discovered_in(
+        &running.session,
+        &target.runtime_root,
+        notifier,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn connect_unbound_profile(
+    name: &str,
+    profile: &festerm_pty::LocalProfile,
+    size: festerm_session::TerminalSize,
+    scrollback: usize,
+    notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
+    allow_start: bool,
+    preferred: Option<&Path>,
+) -> Result<festerm_sessiond::PersistentSession, String> {
+    let hosted = profile_hosting::hosted_runtime().map_err(|_| "profile_host.runtime_namespace")?;
+    let legacy = festerm_sessiond::runtime_root().map_err(|_| "profile_host.runtime_namespace")?;
+    let mut roots = preferred
+        .into_iter()
+        .map(Path::to_path_buf)
+        .collect::<Vec<_>>();
+    for root in [hosted, legacy] {
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    if let Some((root, session)) = unbound_existing_session_in(&roots, name)? {
+        return festerm_sessiond::PersistentSession::resume_discovered_in(
+            &session, &root, notifier,
+        )
+        .map_err(|error| error.to_string());
+    }
+    if allow_start {
+        festerm_sessiond::PersistentSession::start_with_notifier(
+            name, profile, size, scrollback, notifier,
+        )
+        .map_err(|error| error.to_string())
+    } else {
+        Err(
+            "No existing session is available. Restoration never starts an unbound hosted profile."
+                .into(),
+        )
+    }
+}
+
+fn unbound_existing_session_in(
+    roots: &[PathBuf],
+    name: &str,
+) -> Result<Option<(PathBuf, festerm_sessiond::UnattachedSession)>, String> {
+    for root in roots {
+        if let Some(running) = festerm_sessiond::list_running_sessions_strict_in(root)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|running| running.session.name == name)
+        {
+            return Ok(Some((root.clone(), running.session)));
+        }
+    }
+    Ok(None)
 }
 
 impl Controller {
@@ -277,6 +553,7 @@ impl Controller {
         previous: Option<&Profile>,
         expose: bool,
         explicit_enable: bool,
+        selected_account: Option<&str>,
     ) -> Result<(Profile, bool), &'static str> {
         if !self.enabled {
             return Err("Hosting is unavailable in this application context.");
@@ -318,6 +595,28 @@ impl Controller {
                     {
                         return Err("Disable exposure and Save before changing the command or persistent session name.");
                     }
+                    if let Some(selected) = selected_account {
+                        let recorded = grant.selected_account.as_deref().or_else(|| {
+                            grant
+                                .cloud_reservation
+                                .as_ref()
+                                .map(|reservation| reservation.account.as_str())
+                        });
+                        if recorded.is_some_and(|recorded| recorded != selected) {
+                            return Err("This exposure belongs to its recorded GitHub account. Restore that sign-in or disable and remove it before choosing another account.");
+                        }
+                        if recorded.is_none() {
+                            let _account = profile_hosting::account_lease(false)
+                                .map_err(|_| "Account sign-in is busy. Retry shortly.")?;
+                            store(existing)
+                                .and_then(|store| {
+                                    store.select_account(existing.consent(), selected)
+                                })
+                                .map_err(|_| {
+                                    "The hosting account changed. Verify the account again."
+                                })?;
+                        }
+                    }
                     return profile
                         .with_local_tunnel_hosting(Some(existing.clone()))
                         .map(|profile| (profile, grant.phase == Phase::Prepared))
@@ -329,12 +628,26 @@ impl Controller {
             return Err("This exposure is not authorized on this host. Turn the checkbox off and on, then Save.");
         }
         staging::initialize().map_err(|_| "Private hosting storage is unavailable.")?;
+        let account = selected_account.ok_or("Choose a GitHub account before enabling hosting.")?;
+        let _account = profile_hosting::account_lease(false)
+            .map_err(|_| "Account sign-in is busy. Retry shortly.")?;
         let installation = uuid::Uuid::new_v4().to_string();
         let consent = uuid::Uuid::new_v4().to_string();
         let state = profile_hosting::installation_path(&installation)
             .map_err(|_| "Private hosting storage is unavailable.")?;
         Store::open(&state, &installation, true)
-            .and_then(|store| store.prepare(&consent, &fingerprint, persistence.session_name()))
+            .and_then(|store| {
+                store.prepare_hosted(
+                    &consent,
+                    &fingerprint,
+                    persistence.session_name(),
+                    HostedLaunch {
+                        runtime_root: profile_hosting::hosted_runtime()?,
+                        legacy: None,
+                    },
+                )?;
+                store.select_account(&consent, account)
+            })
             .map_err(|_| "The hosting consent could not be prepared.")?;
         let metadata = LocalTunnelHosting::new(installation, consent, true)
             .map_err(|_| "Invalid hosting metadata.")?;
@@ -394,7 +707,9 @@ impl Controller {
             for profile in configuration.profiles() {
                 if binding(profile).is_some_and(|binding| {
                     binding.enabled()
-                        && grant_view(binding).is_ok_and(|grant| grant.phase.allows_hosting())
+                        && grant_view(binding).is_ok_and(|grant| {
+                            grant.phase.allows_hosting() && deferred_restart(&grant).is_none()
+                        })
                 }) {
                     self.enqueue(Work::Ensure(
                         Box::new(profile.clone()),
@@ -442,6 +757,16 @@ impl Controller {
                             }
                         }
                         Err(error) => {
+                            if error == "profile_host.restart_confirmation_required" {
+                                if let Work::Ensure(profile, _) = &pending.work {
+                                    self.confirmation = Some((
+                                        profile.identifier().to_owned(),
+                                        binding.clone(),
+                                        LocalHostAction::Restart,
+                                    ));
+                                    self.focus_confirmation = true;
+                                }
+                            }
                             self.rows.remove(&id);
                             self.errors.insert(id, error);
                         }
@@ -459,7 +784,7 @@ impl Controller {
         {
             self.refresh = Some(Instant::now());
             for metadata in configuration.profiles().iter().filter_map(binding) {
-                if grant_view(metadata).is_ok() {
+                if grant_view(metadata).is_ok_and(|grant| deferred_restart(&grant).is_none()) {
                     self.enqueue(Work::Status(metadata.clone()));
                 }
             }
@@ -579,6 +904,7 @@ impl Controller {
                 sign_in: grant.failure == Some(Failure::SignInRequired),
                 recreate: grant.phase == Phase::CloudMissing,
                 new_shell: grant.failure == Some(Failure::NewShellApprovalRequired),
+                restart: deferred_restart(&grant).is_some(),
                 message: phase_message(&grant).into(),
                 ..Default::default()
             };
@@ -711,11 +1037,16 @@ fn local_inventory() -> LocalInventory {
             inventory.truncated = true;
             break;
         }
-        let Ok(entry) = entry else { continue };
+        let Ok(entry) = entry else {
+            inventory.truncated = true;
+            continue;
+        };
         let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+            inventory.truncated = true;
             continue;
         };
         let Ok(path) = profile_hosting::installation_path(&id) else {
+            inventory.truncated = true;
             continue;
         };
         let grant = Store::open(&path, &id, false)
@@ -735,7 +1066,8 @@ fn references_grant(configuration: &Configuration, installation: &str, consent: 
 }
 
 fn unreferenced_active(configuration: &Configuration, installation: &str, grant: &Consent) -> bool {
-    grant.phase.allows_hosting() && !references_grant(configuration, installation, &grant.consent)
+    (grant.phase.allows_hosting() || grant.phase == Phase::Prepared)
+        && !references_grant(configuration, installation, &grant.consent)
 }
 
 fn cloud_candidate(grant: &Consent, locator: &str) -> bool {
@@ -775,6 +1107,7 @@ fn phase_message(grant: &Consent) -> &'static str {
         Some(Failure::CommandMismatch) => return "The persistent command could not be verified. No running shell was replaced.",
         Some(Failure::CreationUncertain) => return "Creation outcome uncertain. Cleanup remains tracked; Retry only looks for the reserved owned tunnel.",
         Some(Failure::HelperUnavailable) => return "Hosting helpers are unavailable. Install a complete signed fesTerm build, then Retry.",
+        Some(Failure::RestartRequired) => return "Hosting is pending a session restart. The current shell is unchanged. Restart it explicitly here, or end it and open this profile again; Retry never restarts it.",
         _ => {}
     }
     match grant.phase {
@@ -790,6 +1123,8 @@ fn phase_message(grant: &Consent) -> &'static str {
 
 fn failure_message(code: &str) -> &'static str {
     match code {
+        "profile_host.restart_required" | "profile_host.restart_confirmation_required" =>
+            "Hosting is pending a session restart. The current shell is unchanged. Restart it explicitly here, or end it and open this profile again; Retry never restarts it.",
         "profile_host.cancelled" => "Sign-in or the pending operation was cancelled. Saved consent was not renewed.",
         "profile_host.new_shell_approval_required" => "New shell approval required. Retry cannot replace a dead or uncertain shell.",
         "profile_host.signature_required" | "profile_host.package_location" => "Install a complete signed fesTerm build with its tunnel helpers, then Retry.",
@@ -814,6 +1149,13 @@ async fn capture(
     let mut child = command
         .spawn()
         .map_err(|_| "profile_host.helper_unavailable".to_owned())?;
+    capture_child(&mut child, deadline).await
+}
+
+async fn capture_child(
+    child: &mut tokio::process::Child,
+    deadline: Duration,
+) -> Result<Zeroizing<Vec<u8>>, String> {
     let stdout = child.stdout.take().ok_or("profile_host.helper_output")?;
     let stderr = child.stderr.take().ok_or("profile_host.helper_output")?;
     async fn drain(reader: impl tokio::io::AsyncRead + Unpin) -> io::Result<Zeroizing<Vec<u8>>> {
@@ -843,10 +1185,90 @@ async fn execute(
     work: Work,
     cancel: &CancellationToken,
 ) -> Result<ManagementReply, String> {
+    execute_in(helpers, work, cancel, None).await
+}
+
+async fn execute_in(
+    helpers: &staging::Helpers,
+    work: Work,
+    cancel: &CancellationToken,
+    restart: Option<Target>,
+) -> Result<ManagementReply, String> {
     let operation = match work {
+        Work::Restart(profile, scrollback, expected) => {
+            let binding = binding(&profile).ok_or("profile_host.binding")?;
+            let store = store(binding).map_err(|_| "profile_host.binding")?;
+            let grant = grant(binding).map_err(|_| "profile_host.binding")?;
+            if !grant.phase.allows_hosting()
+                || deferred_restart(&grant) != Some(&expected)
+                || fingerprint(&profile).map_err(|_| "profile_host.command_mismatch")?
+                    != grant.spawn_fingerprint
+                || cancel.is_cancelled()
+            {
+                return Err("profile_host.stale_consent".into());
+            }
+            let checked = request_management(
+                helpers,
+                ManagementOperation::CheckRestartTarget {
+                    target: expected.clone(),
+                },
+                cancel,
+            )
+            .await?;
+            if checked.error.is_some() {
+                return Err("The selected session is already hosted, or hosting ownership could not be verified. No session was stopped.".into());
+            }
+            if festerm_sessiond::process_alive(expected.pid) {
+                let command = festerm_sessiond::terminate_selected_session_command_in(
+                    &expected.runtime_root,
+                    &selected(&expected),
+                )
+                .map_err(|_| "profile_host.restart_identity")?;
+                let mut command = tokio::process::Command::from(command);
+                command
+                    .kill_on_drop(true)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                #[cfg(windows)]
+                command.creation_flags(0x0800_0000);
+                let mut child = store
+                    .with_restart_permit(binding.consent(), &expected, || {
+                        if cancel.is_cancelled() {
+                            return Err(io::Error::other("profile_host.cancelled"));
+                        }
+                        command.spawn()
+                    })
+                    .map_err(|_| "profile_host.stale_consent")?;
+                capture_child(&mut child, Duration::from_secs(15)).await?;
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while festerm_sessiond::process_alive(expected.pid) {
+                    if cancel.is_cancelled() || Instant::now() >= deadline {
+                        return Err("profile_host.restart_required".into());
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+            store
+                .authorize_hosted_start(binding.consent(), &expected)
+                .map_err(|_| "profile_host.restart_required")?;
+            return Box::pin(execute_in(
+                helpers,
+                Work::Ensure(profile, scrollback),
+                cancel,
+                Some(expected),
+            ))
+            .await;
+        }
         Work::Login(next) => {
             let _account =
                 profile_hosting::account_lease(true).map_err(|_| "profile_host.account_busy")?;
+            let binding = next.binding().ok_or("profile_host.binding")?;
+            if grant(binding).map_err(|_| "profile_host.binding")?.failure
+                != Some(Failure::SignInRequired)
+            {
+                return Err("profile_host.sign_in_not_required".into());
+            }
             let verified = festerm_tunnel_bridge::cli_pins::verify(&helpers.cli)
                 .map_err(|_| "profile_host.cli_pin_mismatch")?;
             let mut command = tokio::process::Command::new(verified.path());
@@ -861,6 +1283,14 @@ async fn execute(
             let grant = grant(binding).map_err(|_| "profile_host.binding")?;
             if !grant.phase.allows_hosting() {
                 return Err("profile_host.consent_not_active".into());
+            }
+            if deferred_restart(&grant) != restart.as_ref() {
+                return Err("profile_host.restart_required".into());
+            }
+            if let Some(expected) = &restart {
+                store
+                    .authorize_hosted_start(binding.consent(), expected)
+                    .map_err(|_| "profile_host.restart_required")?;
             }
             let local = profile.as_local().ok_or("profile_host.profile")?;
             let persistence = local.persistence().ok_or("profile_host.profile")?;
@@ -886,32 +1316,51 @@ async fn execute(
                 }
                 target
             } else {
-                let identity =
-                    festerm_sessiond::ensure_detached(festerm_sessiond::DetachedSessionRequest {
+                let root = grant
+                    .hosted_launch
+                    .as_ref()
+                    .map(|launch| Ok(launch.runtime_root.clone()))
+                    .unwrap_or_else(festerm_sessiond::runtime_root)
+                    .map_err(|_| "profile_host.runtime_namespace")?;
+                if grant.hosted_launch.is_some() && restart.is_none() {
+                    if let Some(legacy) = legacy_session(&grant.session_name)? {
+                        store
+                            .defer_hosted_start(binding.consent(), legacy)
+                            .map_err(|_| "profile_host.stale_consent")?;
+                        return Err("profile_host.restart_confirmation_required".into());
+                    }
+                }
+                let identity = festerm_sessiond::ensure_detached_in(
+                    &root,
+                    festerm_sessiond::DetachedSessionRequest {
                         name: persistence.session_name(),
                         profile: &native_profile,
                         size: festerm_session::TerminalSize::new(80, 24)
                             .expect("default terminal dimensions"),
                         scrollback_limit_bytes: scrollback,
                         launch_request: binding.consent(),
-                    })
-                    .map_err(|_| {
-                        let _ = store
-                            .report_failure(binding.consent(), Failure::NewShellApprovalRequired);
-                        "profile_host.new_shell_approval_required"
-                    })?;
+                    },
+                )
+                .map_err(|_| {
+                    let _ =
+                        store.report_failure(binding.consent(), Failure::NewShellApprovalRequired);
+                    "profile_host.new_shell_approval_required"
+                })?;
                 Target {
-                    runtime_root: festerm_sessiond::runtime_root()
-                        .map_err(|_| "profile_host.runtime_namespace")?,
+                    runtime_root: root,
                     name: identity.name,
                     pid: identity.pid,
                     generation: identity.created_at_unix_ms,
                     endpoint: identity.endpoint,
                 }
             };
-            store
-                .bind_target(binding.consent(), target.clone())
-                .map_err(|_| "profile_host.stale_consent")?;
+            match restart {
+                Some(expected) => {
+                    store.bind_restarted_target(binding.consent(), &expected, target.clone())
+                }
+                None => store.bind_target(binding.consent(), target.clone()),
+            }
+            .map_err(|_| "profile_host.stale_consent")?;
             ManagementOperation::BindExisting(Box::new(BindExistingRequest {
                 installation: binding.installation().to_owned(),
                 consent: binding.consent().to_owned(),
@@ -930,6 +1379,14 @@ async fn execute(
             installation: binding.installation().to_owned(),
         },
     };
+    request_management(helpers, operation, cancel).await
+}
+
+async fn request_management(
+    helpers: &staging::Helpers,
+    operation: ManagementOperation,
+    cancel: &CancellationToken,
+) -> Result<ManagementReply, String> {
     if cancel.is_cancelled() {
         return Err("profile_host.cancelled".into());
     }
@@ -1010,14 +1467,37 @@ impl FesTermApp {
             profile,
             expose,
             explicit_enable,
+            account_selection,
         } = edit;
         let previous = original_id
             .as_deref()
             .and_then(|id| self.state.configuration().profile(id))
             .cloned();
-        let plan = self
-            .local_hosting
-            .prepare(profile, previous.as_ref(), expose, explicit_enable);
+        let plan = validate_hosted_names(
+            self.state.configuration(),
+            original_id.as_deref(),
+            &profile,
+            expose,
+        )
+        .and_then(|_| {
+            let account = if expose && explicit_enable {
+                Some(self.local_hosting.accounts.take(
+                    context,
+                    tab_id,
+                    account_selection,
+                    original_id.as_deref(),
+                )?)
+            } else {
+                None
+            };
+            self.local_hosting.prepare(
+                profile,
+                previous.as_ref(),
+                expose,
+                explicit_enable,
+                account.as_deref(),
+            )
+        });
         let outcome = match plan {
             Err(message) => Err(message.to_owned()),
             Ok((profile, prepared)) => {
@@ -1068,7 +1548,24 @@ impl FesTermApp {
     }
 
     pub(super) fn poll_local_hosts(&mut self, context: &egui::Context) {
+        let selecting_account = self
+            .local_hosting
+            .accounts
+            .poll(context, self.state.active());
+        if let Some(profile) = self.state.take_completed_hosted_profile() {
+            if self.state.configuration().profile(profile.identifier()) == Some(&profile)
+                && binding(&profile).is_some_and(LocalTunnelHosting::enabled)
+            {
+                self.local_hosting.enqueue(Work::Ensure(
+                    Box::new(profile),
+                    self.state.scrollback_limit().bytes(),
+                ));
+            }
+        }
         self.local_hosting.poll(self.state.configuration(), context);
+        if selecting_account {
+            return;
+        }
         let focus_cancel = std::mem::take(&mut self.local_hosting.focus_confirmation);
         if let Some(binding) = self.local_hosting.cleanup_confirmation.clone() {
             let mut confirmed = false;
@@ -1113,18 +1610,21 @@ impl FesTermApp {
         let mut confirmed = false;
         let mut cancelled = context.input(|input| input.key_pressed(egui::Key::Escape));
         let new_shell = action == LocalHostAction::NewShell;
+        let restart = action == LocalHostAction::Restart;
         egui::Modal::new(egui::Id::new("local_host_confirmation"))
             .show(context, |ui| {
                 super::confirmations::prepare_confirmation(ui, context, 480.0);
-                ui.heading(if new_shell { "Start a new persistent shell?" } else { "Recreate the missing tunnel?" });
-                ui.label(if new_shell {
+                ui.heading(if restart { "Restart this session to enable Dev Tunnel?" } else if new_shell { "Start a new persistent shell?" } else { "Recreate the missing tunnel?" });
+                ui.label(if restart {
+                    "Enabling hosting requires restarting this persistent session. Yes stops only the selected session and starts the configured command; running programs and terminal state are lost, and any attached local tabs or remote clients disconnect. No keeps it running and saves hosting as pending until you end the session and open this profile again. Other sessions are not restarted."
+                } else if new_shell {
                     "This starts a new configured persistent shell and exposes it. Old programs and terminal state are not recovered. No live daemon is terminated."
                 } else {
                     "This creates a new cloud tunnel and connection details for the exact recorded persistent shell. It cannot start or replace that shell."
                 });
                 ui.horizontal(|ui| {
-                    confirmed = ui.button(if new_shell { "Start new shell and expose" } else { "Recreate tunnel" }).clicked();
-                    let cancel = ui.button("Cancel");
+                    confirmed = ui.button(if restart { "Yes, restart and enable" } else if new_shell { "Start new shell and expose" } else { "Recreate tunnel" }).clicked();
+                    let cancel = ui.button(if restart { "No, keep running" } else { "Cancel" });
                     if focus_cancel { cancel.request_focus(); }
                     cancelled |= cancel.clicked();
                 });
@@ -1137,6 +1637,15 @@ impl FesTermApp {
                 self.secure_storage_feedback = Some(message);
             }
         }
+    }
+
+    pub(super) fn begin_local_host_account(
+        &mut self,
+        tab: TabId,
+        request: egui::Id,
+        context: &egui::Context,
+    ) {
+        self.local_hosting.accounts.begin(context, tab, request);
     }
 
     fn confirm_local_host_action(
@@ -1163,6 +1672,16 @@ impl FesTermApp {
             grant(&binding).map_err(|_| "The hosting consent changed. Open the profile again.")?;
         let store = store(&binding).map_err(|_| "Private hosting storage is unavailable.")?;
         match action {
+            LocalHostAction::Restart => {
+                let expected = deferred_restart(&grant)
+                    .ok_or("The pending restart changed. Open the profile again.")?
+                    .clone();
+                self.local_hosting.enqueue(Work::Restart(
+                    Box::new(profile),
+                    self.state.scrollback_limit().bytes(),
+                    expected,
+                ));
+            }
             LocalHostAction::RecreateMissing => {
                 store.request_recreation(binding.consent()).map_err(|_| {
                     "The tunnel is not definitively missing, or its consent was revoked."
@@ -1282,7 +1801,7 @@ impl FesTermApp {
                     Phase::Revoking | Phase::CleanupPending | Phase::Revoked
                 ) {
                     self.local_hosting.enqueue(Work::Remove(binding.clone()));
-                } else if grant.phase.allows_hosting() {
+                } else if grant.phase.allows_hosting() && deferred_restart(&grant).is_none() {
                     self.local_hosting.enqueue(Work::Ensure(
                         Box::new(profile),
                         self.state.scrollback_limit().bytes(),
@@ -1300,7 +1819,9 @@ impl FesTermApp {
                 };
                 self.local_hosting.enqueue(Work::Login(Box::new(next)));
             }
-            LocalHostAction::RecreateMissing | LocalHostAction::NewShell => {
+            LocalHostAction::RecreateMissing
+            | LocalHostAction::NewShell
+            | LocalHostAction::Restart => {
                 self.local_hosting.confirmation =
                     Some((profile_id.to_owned(), binding.clone(), action));
                 self.local_hosting.focus_confirmation = true;
@@ -1313,6 +1834,53 @@ impl FesTermApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unbound_profile_prefers_existing_hosted_then_legacy_and_refuses_unknown() {
+        let fixture = tempfile::tempdir().unwrap();
+        let hosted = fixture.path().join("hosted");
+        let legacy = fixture.path().join("legacy");
+        let roots = [hosted.clone(), legacy.clone()];
+        assert!(unbound_existing_session_in(&roots, "shell")
+            .unwrap()
+            .is_none());
+        std::fs::create_dir(&hosted).unwrap();
+        std::fs::create_dir(&legacy).unwrap();
+        let document = serde_json::json!({ "sessions": { "shell": {
+            "name": "shell", "pid": std::process::id(), "socket": "legacy.sock",
+            "created_at_unix_ms": 42
+        } } });
+        std::fs::write(
+            legacy.join("registry.json"),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            unbound_existing_session_in(&roots, "shell")
+                .unwrap()
+                .unwrap()
+                .0,
+            legacy
+        );
+        std::fs::write(
+            hosted.join("registry.json"),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            unbound_existing_session_in(&roots, "shell")
+                .unwrap()
+                .unwrap()
+                .0,
+            hosted
+        );
+        std::fs::write(
+            hosted.join("registry.json"),
+            br#"{"sessions":{"shell":{"socket":42,"protocol_version":9}}}"#,
+        )
+        .unwrap();
+        assert!(unbound_existing_session_in(&roots, "shell").is_err());
+    }
 
     fn fixture() -> (LocalTunnelHosting, Consent, Profile) {
         let binding = LocalTunnelHosting::new(
@@ -1395,18 +1963,21 @@ mod tests {
 
     #[test]
     fn an_unreferenced_host_cannot_be_removed_after_its_profile_reappears() {
-        let (binding, grant, profile) = fixture();
-        assert!(unreferenced_active(
-            &Configuration::empty(),
-            binding.installation(),
-            &grant
-        ));
+        let (binding, mut grant, profile) = fixture();
         let loaded = Configuration::new(vec![profile]).unwrap();
-        assert!(!unreferenced_active(
-            &loaded,
-            binding.installation(),
-            &grant
-        ));
+        for phase in [Phase::Exposed, Phase::Prepared] {
+            grant.phase = phase;
+            assert!(unreferenced_active(
+                &Configuration::empty(),
+                binding.installation(),
+                &grant
+            ));
+            assert!(!unreferenced_active(
+                &loaded,
+                binding.installation(),
+                &grant
+            ));
+        }
         assert!(references_grant(
             &loaded,
             binding.installation(),

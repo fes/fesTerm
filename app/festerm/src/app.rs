@@ -5,7 +5,7 @@ mod panes;
 pub(crate) mod panes_tests;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "profile_hosting.rs"]
-mod profile_hosting;
+pub(crate) mod profile_hosting;
 #[cfg(feature = "experimental-dev-tunnels")]
 #[path = "running_tunnels.rs"]
 mod running_tunnels;
@@ -8017,6 +8017,7 @@ impl FesTermApp {
                     profile,
                     expose,
                     explicit_enable,
+                    account_selection,
                 } => {
                     #[cfg(feature = "experimental-dev-tunnels")]
                     self.save_local_hosted_profile(
@@ -8027,15 +8028,26 @@ impl FesTermApp {
                             profile,
                             expose,
                             explicit_enable,
+                            account_selection,
                         },
                         ui.ctx(),
                     );
                     #[cfg(not(feature = "experimental-dev-tunnels"))]
                     {
-                        let _ = (original_id, profile, expose, explicit_enable);
+                        let _ = (
+                            original_id,
+                            profile,
+                            expose,
+                            explicit_enable,
+                            account_selection,
+                        );
                         screens::report_local_profile_save_outcome(ui.ctx(), tab_id, request,
                             Err("Use a Dev Tunnel hosting-capable build to change this profile's exposure.".into()));
                     }
+                }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::BeginLocalHostAccount { tab_id, request } => {
+                    self.begin_local_host_account(tab_id, request, ui.ctx());
                 }
                 #[cfg(feature = "experimental-dev-tunnels")]
                 AppCommand::LocalTunnelHost { profile_id, action } => {

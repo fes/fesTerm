@@ -52,6 +52,21 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-08)
 
+DT-08 also requires signed native qualification of ADR 0084: start with legacy
+inherited product/runtime permissions and an attached session; verify no ACL or
+registry repair, default-No restart confirmation, exact-generation Yes, retained
+unrelated/script-hosted sessions, durable No across app restart/Retry, explicit
+manual completion, existing-only restoration and ordinary local use when a
+portable profile lacks its host-local grant. Verify local `festerm-open` still
+addresses frontend IPC from the hosted shell. Check the exposure box before
+Save and verify immediate GitHub account selection, browser Cancel, compatible
+current-account reuse, refusal to switch with existing desktop/script bindings,
+unknown inventory, receipt expiry and changed-editor refusal. Re-save a
+Prepared grant after interrupted commit; an unreferenced Prepared grant is
+available for explicit protected cleanup, not automatic deletion. These remain
+native/real-service/usability checks; the isolated ACL, restart, inventory,
+account and UI regressions do not qualify live servicing or browser delivery.
+
 Installer command integrity is automated: shell subprocess regressions exercise
 matching, modified and empty responses, download failures, argument quoting and
 Unix temporary-file cleanup. PowerShell additionally rejects newline-rewritten

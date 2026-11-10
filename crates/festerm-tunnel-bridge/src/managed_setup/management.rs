@@ -116,16 +116,7 @@ fn valid_id(id: &str) -> bool {
 }
 
 fn namespace() -> io::Result<PathBuf> {
-    #[cfg(windows)]
-    let root = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .map(|path| path.join("fesTerm-tunnels"));
-    #[cfg(unix)]
-    let root = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|path| path.join(".local").join("share").join("festerm-tunnels"));
-    root.filter(|path| path.is_absolute())
-        .ok_or_else(|| refused("management.private_namespace_unavailable"))
+    setup_storage::script_namespace()
 }
 
 fn namespace_lock(root: &Path) -> io::Result<File> {
@@ -339,6 +330,44 @@ fn inventory(root: &Path) -> io::Result<Vec<Row>> {
 enum Outcome {
     Complete,
     Pending(&'static str),
+}
+
+pub(super) fn check_restart_target(
+    target: &festerm_tunnel_bridge::profile_hosting::Target,
+) -> io::Result<()> {
+    let root = namespace()?;
+    check_restart_target_in(&root, target)
+}
+
+fn check_restart_target_in(
+    root: &Path,
+    target: &festerm_tunnel_bridge::profile_hosting::Target,
+) -> io::Result<()> {
+    match fs::symlink_metadata(root) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+        Ok(_) => {}
+    }
+    let _root = setup_storage::private_directory(root, false)?;
+    match fs::symlink_metadata(root.join("state")) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+        Ok(_) => {}
+    }
+    let (directory, record) = load(root)?;
+    if record.runtime_root != target.runtime_root {
+        return Ok(());
+    }
+    if record.target.as_ref().is_none_or(|selected| {
+        selected.name == target.name
+            && selected.pid == target.pid
+            && selected.generation == target.generation
+            && selected.endpoint == target.endpoint
+    }) && (record.phase != "deleted" || row(&directory, &record)?.cleanup != "complete")
+    {
+        return Err(refused("profile_host.restart_target_already_hosted"));
+    }
+    Ok(())
 }
 
 fn matches_cloud(
@@ -887,6 +916,40 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn restart_guard_preserves_script_target_and_allows_unrelated_generation() {
+        let fixture = Fixture::new();
+        let mut record = fixture.record();
+        let target = festerm_tunnel_bridge::profile_hosting::Target {
+            runtime_root: record.runtime_root.clone(),
+            name: format!(
+                "festerm-{}",
+                uuid::Uuid::parse_str(&record.id).unwrap().simple()
+            ),
+            pid: 1234,
+            generation: 5678,
+            endpoint: "session-1234-5678".into(),
+        };
+        record.target = Some(Target {
+            name: target.name.clone(),
+            pid: target.pid,
+            generation: target.generation,
+            endpoint: target.endpoint.clone(),
+        });
+        fixture.save(&record);
+        assert!(check_restart_target_in(&fixture.0, &target).is_err());
+        let mut different = target.clone();
+        different.generation += 1;
+        different.endpoint = format!("session-{}-{}", different.pid, different.generation);
+        check_restart_target_in(&fixture.0, &different).unwrap();
+        record.target = None;
+        fixture.save(&record);
+        assert!(check_restart_target_in(&fixture.0, &target).is_err());
+        different.runtime_root = fixture.0.join("other").join("sessiond");
+        assert!(check_restart_target_in(&fixture.0, &different).is_ok());
+        assert!(load(&fixture.0).unwrap().1.target.is_none());
     }
 
     #[test]

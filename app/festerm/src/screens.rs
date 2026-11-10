@@ -51,6 +51,8 @@ pub(crate) use profiles::report_local_profile_save_outcome;
 pub(crate) use profiles::show_profiles;
 #[cfg(test)]
 pub(crate) use profiles::{has_profile_screen_state_for_test, install_profile_secret_for_test};
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use profiles::{local_host_account_request, report_local_host_account};
 use profiles::{profile_text_edit_with_id, serial_enum_combo};
 #[cfg(feature = "experimental-dev-tunnels")]
 pub(crate) use profiles::{set_local_host_views, LocalHostView};

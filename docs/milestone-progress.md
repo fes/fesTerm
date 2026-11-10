@@ -1,5 +1,23 @@
 # Milestone Progress Narrative
 
+## Enabling desktop hosting without disturbing legacy sessions
+
+Older Windows installations could not enable profile hosting because shared
+product/native-runtime directories had inherited permissions. The fix creates a
+dedicated protected hosted runtime without repairing those directories or their
+registries. A live legacy session requires an explicit restart-or-defer choice;
+the exact-generation gate survives interrupted authorization and clears only
+after a replacement is bound. Local tabs retain root-aware routing, while the
+user shell still addresses its original frontend IPC.
+
+The exposure checkbox now opens GitHub account selection immediately rather
+than discovering sign-in only after Save. A bounded editor receipt and protected
+numeric identity bind the initial creation; the new browser path refuses account
+switching while desktop/script bindings depend on the shared CLI sign-in.
+Isolated regressions cover inherited Windows ACLs, interrupted restart and stale
+account selection. Native signed servicing and real-service qualification remain
+DT-08 work; no live installation is migrated by these tests. See ADR 0084.
+
 ## Investigating Windows inherited stdout
 
 A separate, job-supervised native probe measures inherited stdout pipe mode

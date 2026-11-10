@@ -44,7 +44,7 @@ pub(crate) async fn request_file(args: &[OsString]) -> io::Result<()> {
         ManagementOperation::BindExisting(request) => Some(request.installation.clone()),
         ManagementOperation::Status { installation }
         | ManagementOperation::Remove { installation, .. } => Some(installation.clone()),
-        ManagementOperation::Inventory => None,
+        ManagementOperation::Inventory | ManagementOperation::CheckRestartTarget { .. } => None,
     };
     let result = match request.operation {
         ManagementOperation::BindExisting(request) => {
@@ -59,6 +59,9 @@ pub(crate) async fn request_file(args: &[OsString]) -> io::Result<()> {
             None => Err(refused("profile_host.consent_required")),
         },
         ManagementOperation::Inventory => inventory(),
+        ManagementOperation::CheckRestartTarget { target } => {
+            check_restart_target(&target).map(|()| Vec::new())
+        }
     };
     let (hosts, error) = match result {
         Ok(hosts) => (hosts, None),
@@ -87,8 +90,6 @@ pub(crate) async fn request_file(args: &[OsString]) -> io::Result<()> {
 fn validate_desktop_entry(record: &Installation, installation: &str) -> io::Result<()> {
     validate_record(record)?;
     let releases = profile_hosting::namespace()?.join("releases");
-    let runtime =
-        festerm_sessiond::runtime_root().map_err(|_| refused("profile_host.runtime_namespace"))?;
     let valid_helper = |path: &Path| {
         path.file_name()
             == Some(std::ffi::OsStr::new(&format!(
@@ -100,7 +101,7 @@ fn validate_desktop_entry(record: &Installation, installation: &str) -> io::Resu
     if record.version != 2
         || record.origin.is_none()
         || record.id != installation
-        || record.runtime_root != runtime
+        || !profile_hosting::accepts_runtime(&record.runtime_root)?
         || !valid_helper(&record.executable)
         || record.upgrading_from.iter().any(|path| !valid_helper(path))
         || record.cli
@@ -142,10 +143,7 @@ fn selected(target: &profile_hosting::Target) -> festerm_sessiond::NativeSession
 }
 
 fn verify_target(request: &BindExistingRequest) -> io::Result<()> {
-    if request.target.runtime_root
-        != festerm_sessiond::runtime_root()
-            .map_err(|_| refused("profile_host.runtime_namespace"))?
-    {
+    if !profile_hosting::accepts_runtime(&request.target.runtime_root)? {
         return Err(refused("profile_host.runtime_namespace"));
     }
     festerm_sessiond::verify_spawn_fingerprint_in(
@@ -396,9 +394,13 @@ async fn bind_existing(request: BindExistingRequest) -> io::Result<ManagedHostSt
         }
     };
     let grant = require_request(&store, &request)?;
-    if existing
+    if grant
+        .selected_account
         .as_ref()
-        .is_some_and(|record| record.account != account)
+        .is_some_and(|selected| selected != &account)
+        || existing
+            .as_ref()
+            .is_some_and(|record| record.account != account)
         || grant
             .cloud_reservation
             .as_ref()
@@ -590,6 +592,20 @@ fn status(installation: &str) -> io::Result<ManagedHostStatus> {
         failure: grant.failure,
         destination,
     })
+}
+
+fn check_restart_target(target: &profile_hosting::Target) -> io::Result<()> {
+    if !profile_hosting::accepts_runtime(&target.runtime_root)? {
+        return Err(refused("profile_host.runtime_namespace"));
+    }
+    for host in inventory()? {
+        let state = profile_hosting::installation_path(&host.installation)?;
+        let grant = Store::open(&state, &host.installation, false)?.read()?;
+        if grant.phase != Phase::Revoked && grant.target.as_ref() == Some(target) {
+            return Err(refused("profile_host.restart_target_already_hosted"));
+        }
+    }
+    management::check_restart_target(target)
 }
 
 fn inventory() -> io::Result<Vec<ManagedHostStatus>> {

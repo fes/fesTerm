@@ -442,6 +442,29 @@ pub fn terminate_unattached_session_command(
     Ok(command)
 }
 
+/// Builds an exact-generation stop authorized by an explicit restart confirmation.
+/// Unlike discovery cleanup, the selected generation may have an attached client.
+pub fn terminate_selected_session_command_in(
+    root: &std::path::Path,
+    selected: &NativeSessionIdentity,
+) -> Result<Command, PersistentSessionError> {
+    PersistentSessionName::new(&selected.name)
+        .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    let mut command = Command::new(daemon_executable_for_root(Some(root))?);
+    command.env("FESTERM_SESSIOND_RUNTIME_ROOT", root).args([
+        "kill-selected",
+        "--name",
+        &selected.name,
+        "--pid",
+        &selected.pid.to_string(),
+        "--created-at",
+        &selected.created_at_unix_ms.to_string(),
+        "--endpoint",
+        &selected.endpoint,
+    ]);
+    Ok(command)
+}
+
 /// Explicit runtime-root seam for isolated native validation.
 pub fn list_unattached_sessions_in(
     root: &std::path::Path,
@@ -457,8 +480,28 @@ pub fn list_unattached_sessions_in(
 pub fn list_running_sessions_in(
     root: &std::path::Path,
 ) -> Result<Vec<RunningSession>, PersistentSessionError> {
+    running_sessions_from_registry(root, load_registry_in(root)?)
+}
+
+/// Migration must not interpret a partial older-version inventory as absence.
+pub fn list_running_sessions_strict_in(
+    root: &std::path::Path,
+) -> Result<Vec<RunningSession>, PersistentSessionError> {
+    let registry = load_registry_in(root)?;
+    if !registry.unreadable.is_empty() {
+        return Err(PersistentSessionError::new(
+            "native session inventory is incomplete; update the session helper before migrating",
+        ));
+    }
+    running_sessions_from_registry(root, registry)
+}
+
+fn running_sessions_from_registry(
+    root: &std::path::Path,
+    registry: SessionRegistry,
+) -> Result<Vec<RunningSession>, PersistentSessionError> {
     let mut sessions = Vec::new();
-    for (name, record) in load_registry_in(root)?.sessions {
+    for (name, record) in registry.sessions {
         if record.name != name || PersistentSessionName::new(&name).is_err() {
             return Err(PersistentSessionError::new(
                 "session registry contains an invalid or inconsistent session identity",
@@ -493,6 +536,8 @@ pub fn list_running_sessions_in(
 }
 
 pub const SESSION_CORRELATION_ENV: &str = "FESTERM_SESSION_CORRELATION";
+#[doc(hidden)]
+pub const CALLER_RUNTIME_ROOT_ENV: &str = "FESTERM_SESSIOND_CALLER_RUNTIME_ROOT";
 
 /// Read-only evidence for one exact, lease-backed generation; never admission.
 pub fn session_correlation_in(
@@ -5930,6 +5975,19 @@ mod registry_filtering_tests {
             serde_json::to_vec(document).unwrap(),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn strict_migration_inventory_refuses_unreadable_generations() {
+        let fixture = RegistryFixture::new();
+        write_registry_document(
+            &fixture,
+            &serde_json::json!({
+                "sessions": { "future": { "socket": 42, "protocol_version": 9 } }
+            }),
+        );
+        assert!(list_running_sessions_in(&fixture.0).unwrap().is_empty());
+        assert!(list_running_sessions_strict_in(&fixture.0).is_err());
     }
 
     fn live_endpoint(fixture: &RegistryFixture, pid: u32, generation: u128) -> String {

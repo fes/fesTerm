@@ -102,6 +102,8 @@ Architecture decision records preserve decisions that affect the project across 
 
 - [ADR 0083: Android Google Play Release Pipeline](0083-android-play-release-pipeline.md) - Proposed; upload-key-signed multi-ABI AAB, run-number versionCode, keyless WIF upload to the Internal track only
 
+- [ADR 0084: Hosted Runtime and Explicit Session Restart](0084-hosted-runtime-and-explicit-session-restart.md) - Proposed; protected hosted runtime without legacy ACL repair, exact-generation restart consent and persistent manual-restart deferral
+
 ## Status Values
 
 - **Proposed:** under discussion and not yet binding.

@@ -635,6 +635,7 @@ fn launch_with_helper(
     if let EnvironmentPolicy::InheritWith(environment) = profile.environment() {
         command.envs(environment);
     }
+    command.env(crate::CALLER_RUNTIME_ROOT_ENV, crate::runtime_root()?);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

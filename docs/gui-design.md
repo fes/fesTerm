@@ -1898,8 +1898,27 @@ exception to metadata-only profile Save: saving can start the exact configured
 command and publish it without opening a local tab. The explanation identifies
 remote takeover, independent service lifetime and the absence of file/observation
 grants. Starting, sign-in, readiness and cleanup are distinct states; only
-verified ready hosts offer connection details. Browser sign-in is foreground
-and cancellable, never an invisible startup prompt.
+verified ready hosts offer connection details. Checking the box immediately opens
+**GitHub account for hosting**: select the verified current account or explicitly
+connect one in the browser before Save. Hosting uses the official CLI's shared
+host sign-in, not the remote-client account vault. Connecting a different account
+is unavailable while protected desktop/script bindings still need the current
+one, or their inventory cannot be verified. Selection expires after five minutes
+and belongs only to that editor. Cancel unchecks exposure and creates no shell,
+grant or tunnel; completed browser authentication can remain in official CLI
+storage. Browser sign-in is foreground and cancellable, never a startup prompt.
+
+Existing inherited product/native-runtime permissions are not repaired. New
+hosts use a dedicated protected runtime. If the selected legacy session is
+running, Save offers **Yes** (restart only that exact generation, losing its
+programs/state and disconnecting clients) or **No** (retain it and defer hosting
+until an explicit manual restart). No is the default. Startup and Retry cannot
+consume the persisted restart gate, even after an interrupted authorized launch.
+Other desktop/script-hosted targets cannot be stopped through this confirmation.
+Local open and restoration follow the profile's recorded runtime, and disabling
+hosting retains the shell. Missing/foreign host-local consent permits ordinary
+local opening without adopting cloud authority; unknown inventories refuse
+instead of silently starting a duplicate. See ADR 0084.
 
 Disable/Save, provider removal and profile deletion revoke exposure before the
 config write, retain the shell and track pending cloud cleanup even when the
@@ -1907,7 +1926,7 @@ profile no longer exists. Profiles lists that protected local cleanup with
 sign-in/Retry actions. Renaming retains ownership and the durable session name;
 duplication clears the hosting grant. Retry cannot authorize another shell or
 cloud object; separate confirmed actions explain each. See ADR 0072 and
-`TUNNEL-15`/`TUNNEL-16` for the lifecycle and failure contract.
+`TUNNEL-15`/`TUNNEL-16`/`TUNNEL-17` for the lifecycle and failure contract.
 
 Local executable and initial-directory fields share
 bounded filesystem-backed completion. That completion is asynchronous: it
