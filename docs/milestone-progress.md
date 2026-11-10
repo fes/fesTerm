@@ -715,24 +715,42 @@ budget. Task registration reserves immutable marker/configuration/ACL evidence
 before submission and can recover matching late observations without restoring
 consent.
 
-## Windows native admission without destructive stop
-
-Windows registration/start require the compiled runtime controller.
-Protected lifecycle revocation cancels the existing host watcher; stop confirms
-exclusive run-lease release and exact native task quiescence, never Scheduler
-Stop or process-tree termination. Timeout remains pending.
 macOS admission now pins the actual release environment's Developer ID team
 and requires Apple's chain and hardened runtime, rather than learning trust
-from an artifact or arbitrary app. Windows promotion now implements the independently
-owner-approved Artifact Signing subject/profile and Microsoft chain, trusted
-RFC3161 and online-enabled fail-closed revocation. Pure policy/runtime fixtures
-and official x64 MSVC cross-checks are not real Windows PKI/task/runtime/daemon
-qualification; that ordinary-user signed-release evidence remains open.
+from an artifact or arbitrary app.
 
 Cargo emits UTF-8 metadata independently of the Windows console code page.
 The host notice check now decodes that transport explicitly as UTF-8. A portable
 subprocess regression preserves non-ASCII dependency metadata while forcing a
 CP1252 default decoder; no lossy decoding or production locale override is used.
+
+## Windows native admission without destructive stop
+
+Windows registration/start require the compiled runtime controller.
+Protected lifecycle revocation cancels the existing host watcher; stop confirms
+exclusive run-lease release and exact native task quiescence, never Scheduler
+Stop or process-tree termination. Timeout remains pending. The portable
+supervision regression proves serving shutdown and run-lease release only,
+not independent daemon survival.
+
+Windows promotion implements the independently owner-approved Artifact Signing
+subject/profile and Microsoft chain, trusted RFC3161 and online-enabled
+fail-closed revocation. At `2d3a7894`, actual Rust/Cargo 1.99.1 on macOS passed
+only these official x64 MSVC **security-facade** checks:
+
+```sh
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets -- -D warnings
+```
+
+These compile the facade library/tests, not the Windows `festerm-host-setup`
+integration in `services.rs`, `services/native.rs`, `trusted.rs` or the combined
+headless host. Earlier broader check and Clippy attempts at core `9b1d2a68`
+both exited 101 in `ring` because Windows SDK `assert.h` was missing; they were
+not retried at `2d3a7894`. That Windows integration remains locally uncompiled.
+Pure policy/runtime fixtures are not real Windows PKI/COM/task/runtime/daemon
+qualification; there were zero native Windows executions. Required CI and
+ordinary-user signed-release evidence remain open.
 
 
 ## Capturing issuance before remote shell creation

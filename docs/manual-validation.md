@@ -3718,8 +3718,13 @@ the independently owner-approved subject/profile/Microsoft chain and requires
 native digest, genuine trusted RFC3161 and online-enabled fail-closed revocation.
 Windows registration/start require the compiled runtime watcher; stop reconciles
 protected lifecycle revocation, exclusive run-lease release and exact task
-quiescence, never Scheduler Stop. Pure fixtures and x64 cross-checks are not
-native PKI/task/runtime/daemon qualification.
+quiescence, never Scheduler Stop. The x64 MSVC check/strict Clippy cover only
+`festerm-windows-security --features host-service`, not the Windows host-setup
+integration; the prior broader attempts failed on missing SDK `assert.h`.
+See the [exact commands and source provenance](milestone-progress.md#windows-native-admission-without-destructive-stop).
+Pure fixtures and facade cross-compilation are not native PKI/task/runtime/daemon
+qualification. The portable supervision test covers serving shutdown and
+run-lease release only, not independent daemon survival.
 
 The read-only ignored Windows PKI fixture
 `windows_publisher_native_opt_in_approved_signed_host_and_unsigned_rejection`

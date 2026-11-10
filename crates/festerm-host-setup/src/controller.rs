@@ -738,16 +738,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn host_runtime_revocation_waits_for_serving_shutdown_without_cancelling_independent_daemon(
-    ) {
+    async fn host_runtime_revocation_waits_for_serving_shutdown_and_run_lease_release() {
         let (_root, store) = fixture();
         provision(&store);
         let (lease, expected, record) = reserve(&store).unwrap();
         persist(&store, &record).unwrap();
         let shutdown = CancellationToken::new();
-        let independent = CancellationToken::new();
-        let independent_wait = independent.cancelled();
-        tokio::pin!(independent_wait);
         let (finish, finished) = tokio::sync::oneshot::channel::<()>();
         let serving = {
             let shutdown = shutdown.clone();
@@ -770,17 +766,11 @@ mod tests {
             .await
             .is_err());
         assert!(shutdown.is_cancelled());
-        assert!(!independent.is_cancelled());
         assert!(!revoked_runtime_released(&store, &current).unwrap());
         finish.send(()).unwrap();
         assert!(watched.await.is_err());
         drop(lease);
         assert!(revoked_runtime_released(&store, &current).unwrap());
-        assert!(
-            tokio::time::timeout(Duration::from_millis(1), &mut independent_wait)
-                .await
-                .is_err()
-        );
     }
 
     #[test]

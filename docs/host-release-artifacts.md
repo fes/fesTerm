@@ -248,6 +248,9 @@ evidence; no custom 24-hour offline grace exists. See the
 
 Updater authentication, current whole-bundle checks, retained private file
 identity and every executable helper's native publisher check remain independent
-requirements. Synthetic policy tests and MSVC cross-checks are not real Windows
-publisher/runtime acceptance. This policy neither authorizes signing/releases,
+requirements. Synthetic policy tests and x64 MSVC check/strict Clippy of only
+`festerm-windows-security --features host-service` are not real Windows
+publisher/runtime acceptance or Windows compilation of the host-setup integration.
+The [exact commands and SDK limitation](milestone-progress.md#windows-native-admission-without-destructive-stop)
+are recorded separately. This policy neither authorizes signing/releases,
 OS changes or VM execution nor grants host-owner/client trust.
