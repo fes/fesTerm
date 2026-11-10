@@ -179,7 +179,29 @@ impl ClientOwnerKey {
         })
     }
 
-    fn open(
+    #[cfg(all(feature = "host-routing", feature = "relay"))]
+    pub(crate) fn generate_reserved(
+        vault: &dyn SecretStore,
+        reference: SecretReference,
+        approved: &OwnerBinding,
+    ) -> Result<Self, OwnerKeyError> {
+        approved
+            .validate()
+            .map_err(|_| OwnerKeyError::InvalidBinding)?;
+        let key =
+            OwnerSigningKey::generate().map_err(|_| OwnerKeyError::KeyGenerationUnavailable)?;
+        let mut bytes = Zeroizing::new(KEY_RECORD.to_vec());
+        bytes.extend_from_slice(key.secret_seed().as_ref());
+        serde_json::to_writer(&mut *bytes, approved).map_err(|_| OwnerKeyError::InvalidBinding)?;
+        vault.create_reserved(&reference, &SecretBytes::copy_from_slice(&bytes))?;
+        Ok(Self {
+            reference,
+            public_key: key.public_key(),
+            headless_installation: None,
+        })
+    }
+
+    pub(crate) fn open(
         vault: &dyn SecretStore,
         reference: SecretReference,
         approved: &OwnerBinding,

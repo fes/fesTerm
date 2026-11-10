@@ -21,6 +21,8 @@ use tokio_util::sync::CancellationToken;
 use tunnels::contracts::TunnelEndpoint;
 use zeroize::Zeroizing;
 
+#[cfg(feature = "relay")]
+pub mod approvals;
 mod session;
 pub use festerm_host_protocol::{Budgets, Target};
 pub use session::HostSession;

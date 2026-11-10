@@ -1,6 +1,65 @@
 # Milestone Progress Narrative
 
-## Executing a selected host without inventing enrollment
+## Reaching protected foreground approval from saved host recipes
+
+The fixed #691 editor is actual ancestry of the client lane, not an assumed UI
+producer inherited from native core. Its **Review and connect…** button now emits
+an untrusted, origin/request-identified review command. Opening review is still
+network/vault-free. The foreground user independently verifies the full host-local
+binding and SSH pin before a separate native-key preparation action. A private
+local receipt journal reserves the opaque reference before creating a key and
+recovers only that same pending reference. Missing ready seeds, changed bindings,
+Busy, unsafe storage and vault failure never generate replacements or fall back.
+
+The public owner key and its separate `ED25519-SHA256:` fingerprint are displayed
+for explicit host-local `approve-owner`, not enrolled over the relay or authorized
+by setup/recipe metadata. After that separate review, an explicit selected locator
+is resolved under the exact native account without sign-in/refresh. HOST-only
+selection rejects legacy bridge ports. Real bounded authenticated inventory feeds
+a chooser and the already implemented adopted `SessionTab` route; exact-generation
+and logical resume restrictions survive, while AlwaysCreate is refused. No shell
+creation is substituted for unknown/denied/Busy/timeout observations.
+
+Eighteen selected-host tests (including six private-file/memory-vault receipt
+tests) and nine existing/new service-selection tests pass. Fourteen headless desktop
+tests pass diagnostically: eight selected-host and six existing offline metadata
+regressions, including the reachable recipe button, no-work review,
+imported metadata refusal, original editor/recipe/account-credential cancellation,
+deadline/late-result fencing and saved behavior. An initial missing enrollment
+feature compiler failure is retained, then fixed by enabling the existing
+owner-enrollment feature only with the experimental desktop tunnel feature.
+The installed Rust 1.97.1 versus existing Rust 1.98 dependency mismatch still
+requires explicit `--ignore-rust-version`; no supported-toolchain/native acceptance
+is inferred. Validation logs use `target/adr84-clients-foreground-*.log`.
+
+The private jobs1 target and debug0/incremental0 settings below are retained.
+The exact new selectors are `selected_host_` for bridge and desktop, and
+`service::tests` for the tunnel client; the final desktop runner combines
+`selected_host_` and `dev_tunnel_host_recipe_` filters. Strict bridge/client
+all-target clippy, portable host-routing check, and diagnostic desktop check and
+strict bin/test clippy pass. Commands:
+
+```sh
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib selected_host_
+cargo test --locked -p festerm-tunnel-client --lib service::tests
+cargo clippy --locked -p festerm-tunnel-bridge -p festerm-tunnel-client --features festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing --lib
+# Explicit diagnostic MSRV bypass, not supported-toolchain qualification:
+cargo check --locked --ignore-rust-version -p festerm --features experimental-dev-tunnels
+cargo clippy --locked --ignore-rust-version -p festerm --features experimental-dev-tunnels --bin festerm --tests -- -D warnings
+cargo test --locked --ignore-rust-version -p festerm --features experimental-dev-tunnels --bin festerm -- selected_host_ dev_tunnel_host_recipe_
+```
+
+The compiled client dependency baseline remains fixed runtime `95a88ed7` and
+session `8ebbaf29`, plus the actual fixed `f03f0cc4` editor ancestry. Newly reported
+runtime `1b5987ec` and native `48fd5303` are not silently included in these results;
+their combined fixed-head integration/requalification is separate.
+Actual native-vault access, the
+development-wrapper GUI, signed/native/cloud/service, VM, mobile installation,
+physical-device and GPU acceptance remain unrun. Account-wide Find hosts and
+actual create/ensure remain subsequent execution milestones, not ADR completion.
+
+## Executing a selected host without inventing enrollment (prior checkpoint)
 
 The next checkpoint qualifies twelve selected-host tests: the original eight
 executor tests, successful multi-page inventory and three shared Session tests.
@@ -11,9 +70,9 @@ Event-loop notifications cover new frames and unexpected closure. The typed
 desktop route now installs that same adapter into a real `SessionTab`, fences the
 originating editor/account credential and converts recovery sync to the existing
 controller format; configuration adoption invalidates removed/rotated accounts.
-This privileged route deliberately has no public recipe producer while the
-protected foreground receipt/index loader and authorized inventory chooser are
-missing. Unsupported first-connect is not made to appear functional. Desktop
+At that checkpoint this privileged route deliberately had no public recipe
+producer while protected receipt/index loading and authorized selection were
+missing; the subsequent foreground work is recorded above. Desktop
 diagnostic checks explicitly bypass an existing dependency MSRV mismatch
 (installed Rust 1.97.1 versus required 1.98); they are not release/native evidence.
 Six existing terminal tests pass with four explicit-native ignores; two

@@ -10,7 +10,7 @@ use festerm_config::host_recipes::{
 const REVIEW_NOTICE: &str =
     "Execution review required. Host/account identity and trust have not been verified here. Imported metadata never grants authority.";
 const OFFLINE_NOTICE: &str =
-    "Experimental · metadata only. No sign-in, discovery, connection, shell creation, sharing, service changes or legacy migration.";
+    "Experimental · rendering and metadata editing stay offline. Review and connect is a separate foreground action; saving or importing never authorizes execution.";
 
 #[derive(Clone, Default)]
 pub(super) struct HostRecipesState {
@@ -209,6 +209,7 @@ impl HostRecipesState {
         let mut back = false;
         let mut next = None;
         let mut intent = None;
+        let mut review = None;
         show_bounded_content_scroll(ui, (tab_id, "host_recipe_metadata"), |ui| {
             ui.heading("Host/session recipes · Experimental");
             ui.label(OFFLINE_NOTICE);
@@ -241,6 +242,9 @@ impl HostRecipesState {
                                     ui.strong(&recipe.name);
                                     identity(ui, recipe);
                                     ui.horizontal_wrapped(|ui| {
+                                        if ui.button("Review and connect…").clicked() {
+                                            review = Some(recipe.clone());
+                                        }
                                         if ui.button("Edit metadata").clicked() {
                                             next = Some(RecipePage::Edit(Box::new(RecipeDraft::from_recipe(recipe.clone()))));
                                         }
@@ -408,6 +412,15 @@ impl HostRecipesState {
         }
         if let Some(metadata) = intent {
             *command = Some(self.submit(tab_id, metadata));
+        } else if let Some(recipe) = review {
+            let request = egui::Id::new(uuid::Uuid::new_v4());
+            self.pending = Some(request);
+            self.feedback = None;
+            *command = Some(AppCommand::ReviewHostFromProfiles {
+                tab_id,
+                request,
+                recipe: Box::new(recipe),
+            });
         }
         back
     }
@@ -592,6 +605,35 @@ mod tests {
         harness.get_by_label("Cancel").click();
         harness.run_ok();
         assert!(harness.state().command.is_none());
+    }
+
+    #[test]
+    fn selected_host_recipe_button_emits_foreground_review_not_approved_attachment() {
+        let recipe = recipe();
+        let (configuration, _) = festerm_config::Configuration::empty()
+            .with_host_recipe_command(MetadataCommand::Save(recipe.clone()))
+            .unwrap();
+        let mut harness = harness(configuration.clone());
+        install(&harness, RecipePage::List);
+        harness.run_ok();
+        assert!(harness.state().command.is_none());
+        harness.get_by_label("Review and connect…").click();
+        harness.run_ok();
+        let Some(AppCommand::ReviewHostFromProfiles {
+            tab_id,
+            request,
+            recipe: selected,
+        }) = harness.state().command.as_ref()
+        else {
+            panic!("foreground intent, never protected authority")
+        };
+        assert_eq!(selected.as_ref(), &recipe);
+        assert!(host_recipe_request_is_current(
+            &harness.ctx,
+            *tab_id,
+            *request
+        ));
+        assert_eq!(harness.state().configuration, configuration);
     }
 
     #[test]

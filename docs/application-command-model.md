@@ -71,9 +71,9 @@ of that same handler. The coordinator refuses obsolete editors before any
 effect and reports the transactional result only to the submitting editor.
 Preview uses the shared portable parser; import confirmation only saves metadata.
 Export returns JSON to the view for explicit clipboard copy and never saves.
-The desktop/mobile connection command wiring is deferred under
-[#681](https://github.com/fes/fesTerm/issues/681), not delegated to legacy
-`SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
+Desktop selected-host review is described below; mobile connection installation
+and creation remain deferred under [#681](https://github.com/fes/fesTerm/issues/681),
+not delegated to legacy `SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
 
 The shared `festerm-tunnel-bridge::host_client` executor performs actual
 selected-host inventory and existing-generation attachment only after its
@@ -92,11 +92,35 @@ recovery, and cancels on account removal/credential replacement. Its
 `ApplicationSession::Host` branch translates recovery sync to the existing desktop
 controller format; it grants no files, port forwarding or automation.
 
-No public recipe UI currently emits that privileged command: foreground protected
-approval receipt/index loading and the authorized inventory chooser remain
-prerequisites. No creation, implicit discovery, background sign-in or input replay
-is implemented by this executor. Shared framing/Session tests and diagnostic
-desktop compilation are not native-vault, GUI or physical-mobile acceptance.
+The reachable recipe button emits `ReviewHostFromProfiles { tab_id, request,
+recipe }`, never an `ApprovedAttachment`. Merely opening review performs no vault
+or network work. The foreground composition root checks the original saved
+recipe, editor and exact account credential. First connection requires the full
+host-local `owner_approval_prerequisite.binding`, independently confirmed host
+fingerprint and a distinct explicit native-key preparation action. The private
+local receipt journal reserves its opaque reference before writing the native
+key, resumes only that same pending reference, and never regenerates a missing
+ready key. Authentication only reopens existing exact keys. Neither host-local
+setup metadata nor imported recipes are client receipts.
+
+The public owner key and its `ED25519-SHA256:` fingerprint are displayed for
+separate host-local `approve-owner`; preparing a client key does not enroll it.
+After reviewing that full protected binding, the user explicitly supplies the
+selected locator and requests authorized sessions. Only the exact signed-in
+account is confirmed; expired credentials require foreground account sign-in,
+not implicit refresh. HOST-only resolution refuses legacy bridge ports. The
+bounded inventory chooser creates the privileged attachment command only for
+an allowed observed target: exact attach preserves logical/generation identity,
+resume only selects the recipe's logical session, and AlwaysCreate is refused
+until actual creation is wired. Busy/unknown/refused observations never become
+absence or permission to create. Receipt/vault actions have a 15-second visible
+deadline and resolution a 45-second bound; blocked native calls retain admission
+until actual completion and late results cannot replace the originating UI.
+
+No creation, implicit discovery, background sign-in or input replay is implemented
+by this executor. Shared framing, protected-file/memory-vault and headless GUI
+tests plus diagnostic desktop compilation are not native-vault, development-wrapper
+GUI or physical-mobile acceptance.
 
 Destructive confirmation remains composition-owned even when the final effect
 is an `AppCommand`. Every close invocation first passes through the same

@@ -9,7 +9,7 @@ description = "An AI-friendly local, SSH, and serial terminal."
 
 [features]
 default = ["experimental-dev-tunnels"]
-experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip"]
+experimental-dev-tunnels = ["dep:festerm-tunnel-bridge", "dep:festerm-tunnel-client", "dep:tokio-util", "dep:zip", "festerm-host-setup/owner-enrollment"]
 
 [dependencies]
 cap-fs-ext = "4.0.3"

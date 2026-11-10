@@ -3558,12 +3558,12 @@ account/generation/cancellation fencing and actual frontend recovery adoption.
 Its signed-SSH inventory fixture and updated ignored owned-native two-daemon
 fixture are not native-vault or GUI acceptance. Run and record their exact
 client-head results separately from earlier backend qualification.
-Foreground remote-client context receipt lookup remains a prerequisite:
-explicitly approve the host key and enroll the owner's public key on the host,
-then reopen the corresponding native-vault seed bound to the exact installation,
-host, account and principal. Host-local setup consent is not that remote-client
-receipt; imported metadata and bearer connectivity cannot synthesize it.
-Desktop/mobile command/presentation installation and app-lock cancellation still
+The reachable desktop `Review and connect…` action now performs separate
+foreground full-binding/pin review, private client receipt preparation/loading,
+explicit selected HOST resolution and authorized inventory selection. Host-local
+setup consent is not a remote-client receipt; imported metadata and bearer
+connectivity cannot synthesize one. Preparing a native key does not approve it
+on the host. Native desktop/mobile presentation and app-lock cancellation still
 need qualification. During active temporary attachment verify daemon heartbeat;
 unexpected closure must enter daemon-owned transport-loss grace. Physical-device
 60-second/suspension and native DT/CP/MOB checks remain deferred.
@@ -3572,17 +3572,50 @@ The shared `HostSession` adapter now has passing actual framed
 recovery/adoption/activation/input/output/correlated-detach and active app-lock
 transport-close tests, plus starting-state cancellation. Together with the
 original eight executor tests and successful multi-page inventory regression,
-the selected-host suite passes twelve tests. Six existing terminal transport and
+the original selected-host subset passes twelve tests. Six additional protected
+receipt regressions expand that run to eighteen; nine service-selector tests
+and fourteen diagnostic desktop tests (eight selected-host, six offline metadata)
+also pass. Six existing terminal transport and
 two memory-vault tests pass; four explicit-native terminal tests remain ignored
 in that targeted run. The typed desktop route installs its presentation before
 adoption, rejects stale origin/request and unavailable account before work,
 converts authoritative recovery sync and cancels account credential replacement.
-There is still no protected receipt/index producer or authorized inventory
-chooser in the user-facing recipe screen, and mobile installation remains open.
+The later foreground recipe flow supplies protected receipt/index production and
+an authorized inventory chooser; mobile installation remains open.
 Rust 1.97.1 fails the desktop's pre-existing Rust 1.98 PowerShell dependency
 requirement; check, strict bin/test clippy and both new desktop rejection tests
 pass with `--ignore-rust-version` diagnostically only. Native-vault,
 development-wrapper GUI, VM and physical-mobile evidence remain unrun here.
+
+For native `HOST-01`/`HOST-02`, use only an owned qualified host/lab and the
+development wrapper, not installed or production services:
+
+1. Render, edit, save and import recipes offline. Open/cancel **Review and
+   connect…** and verify no vault read, discovery, sign-in or transport starts.
+   Missing accounts must request separate foreground Profiles sign-in.
+2. Copy only the exact host-local prerequisite's full `binding`; independently
+   verify installation, host/account/principal and SSH `SHA256:` fingerprint.
+   Wrong/imported public metadata, wrong pins and changed bindings must refuse
+   without key replacement. Explicit preparation displays only the public key
+   and separate owner `ED25519-SHA256:` fingerprint.
+3. Perform separate host-local `approve-owner` with that public key and explicitly
+   chosen independent permissions. Preparation alone must still be denied.
+   Exercise native-vault lock/unavailability, unsupported storage, missing ready
+   seed, pending preparation recovery, private index refusal and concurrent Busy.
+   Never repair permissions or fall back to ordinary files/configuration.
+4. Explicitly enter that selected host's locator and request authorized inventory.
+   Confirm the exact account and pinned HOST endpoint; reject legacy ports,
+   ambiguity, stale identity and changed host pins. Denial, revocation, timeout,
+   Busy and unknown targets must not become empty inventory or creation authority.
+5. Attach an allowed existing generation and verify the installed frontend receives
+   recovery before activation/input. Respect exact-generation and logical resume
+   restrictions; AlwaysCreate remains unavailable. Exercise account credential
+   replacement, editor/recipe replacement, cancellation, 15-second vault and
+   45-second resolver deadlines, and late completion while admission stays charged.
+   Detach requires its correlated receipt; loss never replays input.
+
+These are pending native/manual checks, not results from the headless recipe
+button, memory-vault/protected-file or framed-session fixtures.
 
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;

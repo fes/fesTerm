@@ -2628,10 +2628,12 @@ pub enum AppCommand {
         command: festerm_config::host_recipes::MetadataCommand,
     },
     #[cfg(feature = "experimental-dev-tunnels")]
-    #[allow(
-        dead_code,
-        reason = "protected foreground receipt loading must supply authority; portable recipe UI cannot manufacture it"
-    )]
+    ReviewHostFromProfiles {
+        tab_id: TabId,
+        request: egui::Id,
+        recipe: Box<festerm_config::host_recipes::PublicRecipe>,
+    },
+    #[cfg(feature = "experimental-dev-tunnels")]
     OpenApprovedHostFromProfiles {
         tab_id: TabId,
         request: egui::Id,
@@ -3501,7 +3503,7 @@ pub struct AppState {
     pub resume_error: Option<String>,
     pending_resume: Option<PendingResume>,
     #[cfg(feature = "experimental-dev-tunnels")]
-    host_client_budgets: festerm_tunnel_bridge::host_client::Budgets,
+    pub(crate) host_client_budgets: festerm_tunnel_bridge::host_client::Budgets,
     #[cfg(feature = "experimental-dev-tunnels")]
     host_account_bindings:
         std::collections::HashMap<SessionId, festerm_secret_store::SecretReference>,
@@ -4860,6 +4862,8 @@ impl AppState {
             }
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::HostRecipeFromProfiles { .. } => {}
+            #[cfg(feature = "experimental-dev-tunnels")]
+            AppCommand::ReviewHostFromProfiles { .. } => {}
             #[cfg(feature = "experimental-dev-tunnels")]
             AppCommand::OpenApprovedHostFromProfiles {
                 tab_id,

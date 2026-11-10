@@ -1,5 +1,8 @@
 mod automation;
 mod confirmations;
+#[cfg(feature = "experimental-dev-tunnels")]
+#[path = "host_browser.rs"]
+mod host_browser;
 mod panes;
 #[cfg(test)]
 pub(crate) mod panes_tests;
@@ -456,6 +459,8 @@ pub struct FesTermApp {
     native_tunnel: Option<tunnel_workflow::Workflow>,
     #[cfg(feature = "experimental-dev-tunnels")]
     tunnel_browser: Option<tunnel_browser::Browser>,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    host_browser: Option<host_browser::Browser>,
     #[cfg(feature = "experimental-dev-tunnels")]
     running_tunnels: running_tunnels::RunningTunnels,
     #[cfg(feature = "experimental-dev-tunnels")]
@@ -960,6 +965,8 @@ impl FesTermApp {
             native_tunnel: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             tunnel_browser: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_browser: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             running_tunnels: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]
@@ -7062,6 +7069,7 @@ impl FesTermApp {
         {
             self.poll_native_tunnel(context);
             self.poll_tunnel_browser(context);
+            self.poll_host_browser(context);
             self.poll_local_hosts(context);
             self.drive_tunnel_reconnects(context);
         }
@@ -7865,6 +7873,14 @@ impl FesTermApp {
                 } => {
                     self.apply_host_recipe_editor_command(tab_id, request, command, ui.ctx());
                 }
+                #[cfg(feature = "experimental-dev-tunnels")]
+                AppCommand::ReviewHostFromProfiles {
+                    tab_id,
+                    request,
+                    recipe,
+                } => {
+                    self.review_host(tab_id, request, *recipe, ui.ctx());
+                }
                 command @ (AppCommand::OpenRecording
                 | AppCommand::OpenRecordingSettings
                 | AppCommand::OpenRecordingLibrary) => self.dispatch_recording_command(command),
@@ -8422,6 +8438,7 @@ impl FesTermApp {
         {
             self.show_native_tunnel(ui.ctx(), escape_pressed);
             self.show_tunnel_browser(ui.ctx(), escape_pressed);
+            self.show_host_browser(ui.ctx(), escape_pressed);
         }
         self.show_transient_notice(ui.ctx());
 
@@ -8863,6 +8880,8 @@ impl FesTermApp {
             native_tunnel: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             tunnel_browser: None,
+            #[cfg(feature = "experimental-dev-tunnels")]
+            host_browser: None,
             #[cfg(feature = "experimental-dev-tunnels")]
             running_tunnels: Default::default(),
             #[cfg(feature = "experimental-dev-tunnels")]

@@ -544,6 +544,26 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The foreground client follow-up makes the fixed #691 recipe editor reachable
+through **Review and connect…**, with a typed untrusted review intent distinct
+from the protected attachment command. Independent full-binding/pin review and
+explicit native-key preparation produce a private local pending-reference receipt;
+host-local `approve-owner` remains separate. Only a selected, explicitly resolved
+HOST endpoint and authorized inventory target can produce an attachment. Metadata
+render/save/import stays offline, and recipe logical/exact-generation restrictions
+remain enforced. Creation, account-wide Find hosts and mobile installation are
+not implemented here.
+
+Six protected-file/memory-vault receipt tests cover exact review, durable
+reference recovery, missing ready seeds, Busy, changed stored binding and Unix
+symlink refusal. Eighteen selected-host tests and nine service-selector tests pass;
+the selector checks HOST/legacy isolation. Eight diagnostic desktop tests include
+the actual recipe-button producer and no-work review, imported metadata refusal,
+recipe/editor/credential invalidation, late-deadline fencing and saved behavior
+restrictions; six existing offline metadata regressions pass in the same runner
+(fourteen desktop tests total). These are not native-vault, signed-host/service, GPU, VM, physical
+mobile or end-to-end development-wrapper acceptance.
+
 The client qualification follow-up adds the shared `HostSession` presentation
 adapter and typed desktop installation for an already-approved selected target.
 Its notifier-driven frame consumption preserves output/recovery ordering,
@@ -560,8 +580,8 @@ dependencies requiring Rust 1.98 while the installed toolchain is 1.97.1;
 `--ignore-rust-version` desktop checks are explicitly diagnostic, not release
 qualification. Diagnostic desktop check, strict bin/test clippy and both new
 desktop rejection tests pass; the tests cover stale origin/request and missing
-account before vault/network/tab allocation. No foreground receipt producer,
-inventory chooser, mobile installation or native acceptance is claimed.
+account before vault/network/tab allocation. The later foreground follow-up above
+adds its producer and chooser; mobile installation and native acceptance remain open.
 
 The selected-host portable executor now composes actual relay connection,
 native-vault reopening of an existing exact `OwnerBinding`, role-specific
@@ -574,10 +594,10 @@ uses the real signed SSH dispatcher. The existing ignored owned-native two-shell
 runtime fixture now routes inventory and frontend adoption through this executor.
 The portable selected-host tests are now executed as recorded above; the changed
 ignored owned-native fixture still needs its client-head execution. Previous
-fixed-head backend results do not qualify that changed fixture. Foreground
-remote-client receipt lookup, inventory chooser/mobile installation, explicit
-discovery/create and native/physical-mobile evidence remain incomplete. No public
-recipe UI or host access is enabled by this checkpoint.
+fixed-head backend results do not qualify that changed fixture. The later
+foreground receipt/chooser source does not establish native or physical-mobile
+acceptance. Mobile installation, account-wide discovery and creation remain
+incomplete; this original executor checkpoint alone enabled no public recipe UI.
 
 **Authenticated runtime source checkpoint (#681):** the non-default bridge
 `host_runtime` consumes only actual `HostStream`s, reserves aggregate admission

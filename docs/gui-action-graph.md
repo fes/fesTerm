@@ -1581,8 +1581,8 @@ and budget evidence for `HOST-01`–`HOST-03`. Client-local metadata/commands an
 explicit-browse state add evidence for `HOST-01`/`HOST-02`. Their end-to-end
 UI/remote transitions remain deferred behind endpoint/session-control and
 security review in [#681](https://github.com/fes/fesTerm/issues/681), not accepted
-behavior. Experimental desktop Profiles now manages saved recipe metadata only;
-no host endpoint/connection executor is provided. Existing TUNNEL edges
+behavior. Experimental desktop Profiles manages saved recipe metadata offline
+and now exposes a separate foreground review path described below. Existing TUNNEL edges
 retain their current coverage until explicit migration. The single
 `host-protocol-owner-contracts` trace group combines these evidence sets.
 
@@ -1591,17 +1591,22 @@ relay/role-proof composition, bounded inventory and frontend-confirmed
 existing-generation adoption. Its executed `selected_host_*` tests are not
 desktop/mobile GUI coverage; the updated ignored owned SSH/two-daemon fixture
 still requires client-head execution. The protected remote-client approval receipt
-loader is missing, so public recipes cannot start this path. HOST-01/02 remain
-partial; creation and explicit discovery are not implemented by this executor.
+loader now derives only from an explicitly reviewed host-local full binding and
+independently confirmed pin, with a private local pending-reference journal and
+separate native-key preparation. Host-local owner approval is still a distinct
+action. HOST-01/02 remain partial; creation and account-wide explicit discovery
+are not implemented by this executor.
 The subsequent shared Session adapter consumes bounded frames with event-loop
 wakes, preserves recovery ordering and uses correlated detach. Typed desktop
 installation checks the originating editor and account credential before work;
 configuration adoption cancels removed/rotated accounts. Its privileged command
-has no public metadata-UI producer until protected foreground receipt loading
-and an authorized inventory chooser exist. Twelve selected-host, six terminal
-and two memory-vault tests pass; portable check/strict bridge clippy pass.
-Diagnostic desktop check, strict bin/test clippy and two rejection tests pass
-using `--ignore-rust-version`, not supported-toolchain or native acceptance.
+is produced only after the reachable `Review and connect…` recipe action,
+foreground consent, exact account confirmation, HOST-only selected resolution and
+authorized inventory selection. Rendering/save/import remain offline. The
+original twelve selected-host tests and subsequent protected receipt, selector,
+reachable-button and foreground fencing regressions are headless evidence, not
+native acceptance. Diagnostic desktop qualification uses
+`--ignore-rust-version`, not a supported release toolchain.
 HOST-01–03 additionally have an opt-in source implementation of actual
 SSH-stream owner challenge/proof framing and control/terminal dispatch
 (`host_runtime`). Four passing native TCP SSH tests cover control inventory,

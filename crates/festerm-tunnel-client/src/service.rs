@@ -56,6 +56,24 @@ pub async fn resolve(
     name: &str,
     cancel: &CancellationToken,
 ) -> Result<ResolvedTunnel, Error> {
+    resolve_labeled(identity, name, cancel, BRIDGE_PORT_LABEL).await
+}
+
+/// Explicit selected-host resolution. Never selects a legacy bridge port.
+pub async fn resolve_host(
+    identity: &Identity,
+    name: &str,
+    cancel: &CancellationToken,
+) -> Result<ResolvedTunnel, Error> {
+    resolve_labeled(identity, name, cancel, festerm_host_protocol::HOST_MARKER).await
+}
+
+async fn resolve_labeled(
+    identity: &Identity,
+    name: &str,
+    cancel: &CancellationToken,
+    label: &str,
+) -> Result<ResolvedTunnel, Error> {
     let locator = locator(name)?;
     let identity_http = Https::new()?;
     identity.confirm_account(&identity_http, cancel).await?;
@@ -72,7 +90,7 @@ pub async fn resolve(
         _ = cancel.cancelled() => return Err(Error::Cancelled),
         value = management.get_tunnel(&locator, &options) => value.map_err(management_error)?,
     };
-    let resolved = select(tunnel)?;
+    let resolved = select_labeled(tunnel, label)?;
     identity.confirm_account(&identity_http, cancel).await?;
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
@@ -298,7 +316,11 @@ pub fn summarize(tunnels: Vec<Tunnel>) -> Vec<TunnelSummary> {
     summaries
 }
 
-pub fn select(mut tunnel: Tunnel) -> Result<ResolvedTunnel, Error> {
+pub fn select(tunnel: Tunnel) -> Result<ResolvedTunnel, Error> {
+    select_labeled(tunnel, BRIDGE_PORT_LABEL)
+}
+
+fn select_labeled(mut tunnel: Tunnel, label: &str) -> Result<ResolvedTunnel, Error> {
     let token = tunnel
         .access_tokens
         .as_mut()
@@ -312,7 +334,7 @@ pub fn select(mut tunnel: Tunnel) -> Result<ResolvedTunnel, Error> {
         );
         Error::Denied
     })?;
-    select_with_token(tunnel, token)
+    select_with_token_labeled(tunnel, token, label)
 }
 
 /// Qualification/advanced scoped-token path, independent of OAuth registration.
@@ -381,9 +403,14 @@ fn wipe_tokens(tunnel: &mut Tunnel) {
     }
 }
 
-fn select_with_token(
+fn select_with_token(tunnel: Tunnel, token: Zeroizing<String>) -> Result<ResolvedTunnel, Error> {
+    select_with_token_labeled(tunnel, token, BRIDGE_PORT_LABEL)
+}
+
+fn select_with_token_labeled(
     mut tunnel: Tunnel,
     token: Zeroizing<String>,
+    label: &str,
 ) -> Result<ResolvedTunnel, Error> {
     wipe_tokens(&mut tunnel);
     if !valid_token(&token) {
@@ -396,8 +423,8 @@ fn select_with_token(
         .ports
         .first()
         .filter(|port| {
-            port.labels.iter().any(|label| label == BRIDGE_PORT_LABEL)
-                || port.description.as_deref() == Some(BRIDGE_PORT_LABEL)
+            port.labels.iter().any(|candidate| candidate == label)
+                || port.description.as_deref() == Some(label)
         })
         .ok_or(Error::Tunnel)?
         .port_number;
@@ -616,6 +643,29 @@ mod tests {
             "endpoints":[{"connectionMode":"TunnelRelay","hostId":"owned-host",
                 "hostPublicKeys":["owned-pin"],"clientRelayUri":"wss://usw3.rel.tunnels.api.visualstudio.com/owned"}]
         })).unwrap()
+    }
+
+    #[test]
+    fn selected_host_service_selector_is_host_only_without_legacy_fallback() {
+        let marker = festerm_host_protocol::HOST_MARKER;
+        assert!(matches!(
+            select_labeled(tunnel(), marker),
+            Err(Error::Tunnel)
+        ));
+        let mut host = tunnel();
+        host.ports[0].labels = vec![marker.into()];
+        assert!(matches!(select(host.clone()), Err(Error::Tunnel)));
+        let resolved = select_labeled(host.clone(), marker).unwrap();
+        assert_eq!(resolved.binding.host_id, "owned-host");
+        assert_eq!(resolved.binding.port, 47461);
+        host.ports[0].labels.clear();
+        host.ports[0].description = Some(marker.into());
+        assert!(select_labeled(host.clone(), marker).is_ok());
+        host.ports.push(host.ports[0].clone());
+        assert!(matches!(
+            select_labeled(host, marker),
+            Err(Error::Ambiguous)
+        ));
     }
     #[test]
     fn native_service_selection_refuses_ordinary_tunnels_ambiguity_and_missing_pins() {

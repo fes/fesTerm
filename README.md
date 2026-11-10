@@ -38,20 +38,23 @@ foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
 messages, opt-in owner-key authentication primitives and an unexposed bounded
 dispatcher/paired framed-client core. Stage 2 adds a local
 durable session-control backend with real detached daemons and daemon-enforced
-temporary leases. No HOST endpoint or remote creation is exposed; independent
+temporary leases. Contract types alone expose no HOST endpoint or creation authority; independent
 review, enrollment/channel integration and later implementation/native
 gates remain open. Legacy Dev Tunnels behavior is unchanged.
 Experimental desktop Profiles also manages public host/session recipe metadata
-offline (add/edit/copy/delete and reviewed JSON import/export); it exposes no
-live HOST connection or execution approval.
+offline (add/edit/copy/delete and reviewed JSON import/export). A separate
+**Review and connect…** action enters foreground protected owner approval;
+saving/importing metadata never grants execution approval.
 The portable `host_client` executor now composes selected-host inventory and
 existing-session attachment using protected native-vault context, actual
 role-specific SSH owner proof and frontend-confirmed snapshot adoption.
 The shared Session adapter and typed desktop installation preserve frontend
-ownership, activation and account-credential fencing. Foreground protected receipt
-loading, an inventory chooser and mobile installation remain unwired: no public
-recipe UI emits this privileged command. This is not stage-6 completion or native
-acceptance.
+ownership, activation and account-credential fencing. Desktop foreground review
+can prepare/load an exact private native-key receipt, show its public key for
+separate host-local approval, explicitly resolve one HOST endpoint and choose an
+authorized existing session. It never silently enrolls a key, falls back to a
+legacy bridge or creates a shell. Mobile installation, account-wide Find hosts,
+creation and native acceptance remain open; this is not stage-6 completion.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
 coverage (file mode has weaker whole-store rollback protection and is never a
