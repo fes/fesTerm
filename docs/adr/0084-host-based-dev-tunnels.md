@@ -516,6 +516,11 @@ unchanged 15-second adoption deadline with Windows' 250-ms client read polling.
 It now batches the same lines and observes every old-writer echo before adoption,
 then verifies every ordered delta afterward. Actual Windows baseline/corrected
 trace remains a qualification gate, not inferred from macOS results.
+Both observed buffers require each child-output marker `pending-chunk-00` through
+`pending-chunk-95` exactly once in increasing byte order, followed by the final
+`before-candidate-adopts` marker exactly once. Deterministic matcher fixtures
+reject reordered, duplicated/replayed or missing markers, including the final
+marker; ordinary terminal input echo is not mistaken for child output.
 Persistent host shells additionally have a real ordinary local unticketed attach/
 adoption/detach regression; Unix lease coverage preserves temporary unticketed
 refusal and advances the persistent writer epoch only at commit.

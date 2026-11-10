@@ -1,5 +1,33 @@
 # Milestone Progress Narrative
 
+## Proving native pending-output order rather than presence
+
+Review of `28e0391a` caught that its native assertions still checked only marker
+presence, so the ordered-output claim was not yet established. Both the
+old-writer pre-adoption buffer and new-writer post-snapshot delta now use the same
+matcher: all 96 child-output markers must occur exactly once, in increasing byte
+order, followed by the final marker exactly once. Raw terminal input echo does
+not count as child output. Duplicate/replay detection covers the observed buffer,
+not later unread output. No cap, deadline, adoption or ownership policy changes.
+
+On macOS, with the private warm target, one build job, zero dev/test debug info
+and incremental compilation off, these selectors passed:
+
+```sh
+cargo test --locked -p festerm-sessiond --test native_daemon pending_marker_order_ -- --nocapture --test-threads=1
+cargo test --locked -p festerm-sessiond --test native_daemon native_bridge_ -- --nocapture --test-threads=1
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+The matcher ran four tests: ordered terminal/child bytes passed; reordered chunks/
+early final marker, duplicated chunks/replayed final marker and missing chunks/
+missing final marker were rejected. All three native bridge cases listed below
+passed with the stronger matcher, zero ignored; the 96-line pending backlog was
+observed in 38 ms. Native runtime and trace remained in this worktree.
+Format, traceability (311 edges) and diff checks pass. The original `8ebbaf29`
+Windows failures remain retained; actual corrected x64 Windows proof is pending,
+and any Windows ARM diagnostic would not substitute for it.
+
 ## Correcting the Windows session-control CI regressions
 
 The `8ebbaf29` Windows jobs exposed real failures after the macOS qualification:

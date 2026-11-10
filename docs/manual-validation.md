@@ -3430,6 +3430,12 @@ The bridge fixture now batches 96 pending lines, checks every old-writer echo
 before adoption and every delta after it, without increasing the 15-second
 production adoption deadline. Windows baseline/corrected trace and exact-head
 strict Clippy/native results remain required; macOS success is not Windows proof.
+The native assertions now validate strictly increasing positions and one
+occurrence of each of the 96 child-output markers followed by the final marker,
+separately in the pre-adoption old-writer buffer and post-snapshot delta.
+Four deterministic matcher fixtures cover ordered output mixed with terminal
+bytes and rejection of reordered, duplicate/replayed and missing markers.
+This only checks duplicates within each observed buffer, not later unread output.
 The new persistent-host ordinary local unticketed attach fixture is Unix-only;
 Unix lease tests separately prove persistent admission and temporary refusal.
 These are automated corrections, not new completed manual or usability gates.
