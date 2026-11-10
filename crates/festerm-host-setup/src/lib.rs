@@ -22,6 +22,8 @@ pub mod enrollment;
 #[cfg(feature = "lifecycle")]
 pub mod lifecycle;
 #[cfg(feature = "lifecycle")]
+pub mod owned_migration;
+#[cfg(feature = "lifecycle")]
 mod protected_state;
 #[cfg(feature = "native-services")]
 pub mod services;

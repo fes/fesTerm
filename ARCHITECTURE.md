@@ -879,6 +879,15 @@ remain default denied. Independent combined-source review, real release/native
 vault/service and client first-connect/device qualification remain mandatory.
 The enrollment/channel helpers alone grant no routing, creation, migration or
 lifetime authority; those effects require the separate current protected backend.
+The lifecycle library's `owned_migration` module adds explicit canonical
+desktop/script source inventory and exact account/key/receipt/generation preview,
+immutable operation intent, disabled destination host-identity reservation,
+cross-installation claims, recovery/deferral and local rollback. It imports no
+owner/session permissions and invokes no frontend, service or cloud API. Enable
+refuses an outstanding migration reservation. Native daemon binding and retained
+runtime routing are not supported by the current ordinary-daemon API; unsupported
+rows stay usable as legacy sessions, never fabricated HOST records. See the
+[bounded migration contract](docs/owned-installation-migration.md).
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;

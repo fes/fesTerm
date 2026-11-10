@@ -1,5 +1,81 @@
 # Milestone Progress Narrative
 
+## Reserving owned migration without inventing daemon adoption
+
+ADR 0084 §11 previously had no executable owned-migration transaction. The new
+shared lifecycle module and headless commands now inventory only explicitly
+selected canonical desktop/script installations, verify protected account/key/
+ownership and native generation evidence, hash an exact preview and reserve the
+normal destination host identity plus per-source claims. Original receipt bytes,
+IDs, incarnation and narrow legacy policies remain evidence, never imported
+owner/session/create authority. Ordered existing installer/consent leases,
+immutable operation intent and per-source checkpoints make partial reservation,
+same-operation resume, deferral and local rollback durable. Missing/corrupt/
+foreign/revoked/stale state refuses; rollback releases only its own claims,
+retains identity/history and cannot restore revoked exposure or clear provider
+cleanup. An outstanding reservation cannot be bypassed through normal enable.
+
+The investigation also established a real API blocker, independently confirmed
+by the session owner: `SessionControl` has no authenticated `bind_existing`,
+records assume their own runtime root, and ordinary daemons create the HOST
+watch only under the launch-time contract. Existing `ensure`, PID checks,
+metadata and fabricated lease files are not adoption. Consequently valid
+generations truthfully say `authenticated-binding-unavailable`; reservation is
+working source, **not** a fabricated bound/switch result. No frontend, shell
+creation/restart/stop, service, account sign-in, permission repair or cloud API
+is part of migration. The concrete
+[bind/retained-root routing contract](owned-installation-migration.md#concrete-missing-binding-boundary)
+must be supplied by the owning session/runtime lane before actual binding,
+current owner/issuer admission and exposure switching. Old helpers remain
+usable/deferred; separate default-No exact-generation stop consent is not
+replaced by setup/sharing/reservation consent.
+
+The focused protected suite passes **14 deterministic tests**; its one opt-in
+native fixture is separately executed and passes. It covers both source origins,
+exact receipts,
+foreign account/key/name collisions, multi-source partial failures and foreign
+claim preservation, stale epochs/settings, missing/corrupt/future/released
+evidence, PID-only legacy refusal, interruption before identity/after claim,
+rollback after source revocation and untrusted no-follow/private files. Exact
+in-progress first compiler, fixture-parent and undersized native-attachment
+recovery-budget failures remain in the private
+worktree's ignored `target/adr84-owned-migration-evidence`, alongside subsequent
+successful logs; they are not discarded or reported as qualified passes.
+The failed native fixture was cleaned only after its exact generation was
+stopped, its registry was empty and its lifetime/lease locks were uncontended.
+The corrected real current-source native/CLI fixture preserves the original
+PID, generation and frontend with round-trip input/output through reservation,
+deferral, same-operation resume, stale-generation refusal and rollback, then
+cleans up only that test generation. This does not prove authenticated binding.
+The existing lifecycle regressions pass **8 tests**; headless unit/CLI regression
+commands pass **6 + 8 tests**.
+Strict affected-package all-target Clippy and the portable no-default headless
+Clippy/library check pass without warning waivers. Format, shell syntax,
+whitespace and the 311-edge traceability check pass. Existing dependency/vendor
+warnings and the installed toolchain's missing-`libLLVM.dylib` rust-objcopy
+stripping warning remain in the raw logs; no toolchain repair was attempted.
+
+```sh
+cargo test --locked -p festerm-host-setup --features lifecycle --lib owned_migration -- --nocapture --test-threads=1
+cargo test --locked -p festerm-host-setup --features lifecycle --lib lifecycle::tests
+cargo test --locked -p festerm-host --bin festerm-host --test cli
+cargo clippy --locked -p festerm-host-setup -p festerm-host --features festerm-host-setup/host-runtime,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/acquisition --all-targets -- -D warnings
+cargo clippy --locked -p festerm-host --no-default-features --all-targets -- -D warnings
+cargo check --locked -p festerm-host-setup --no-default-features
+cargo fmt --all -- --check
+sh -n scripts/run-optional-validation.sh
+python3 scripts/check_validation_traceability.py --base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9
+git diff --check
+```
+
+The separately executed [native fixture command](owned-installation-migration.md#concrete-missing-binding-boundary)
+uses helpers built from this exact source and records their SHA-256 hashes.
+All Cargo work uses explicit Rust/Cargo 1.99.1, jobs 1, debug 0, incremental 0
+and this worktree's own target, with the host-memory floor checked before gates.
+`HOSTMIG-01` remains partial/deferred for real authenticated binding/switch,
+old-release and signed native Windows/macOS/Linux acceptance; current-source
+reservation preservation is not those claims.
+
 ## Aligning the frozen core's Windows cfg boundaries
 
 Fresh Windows primary CI for `b5e3bead` found two strict-build failures:

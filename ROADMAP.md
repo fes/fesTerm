@@ -29,6 +29,11 @@ owner-key/permission approval and run. Configuration defaults disabled; no
 listener starts from compilation/import. Combined-source review, real release/
 cloud/vault/service/device qualification and foreground client trust/session
 chooser evidence remain open. This source is not a native Ready/acceptance claim.
+Owned migration now has protected explicit inventory/preview, identity/claim
+reservation, resume/deferral and local rollback. The
+[authenticated live-binding/routing contract](docs/owned-installation-migration.md#concrete-missing-binding-boundary),
+real switch and native/old-release migration acceptance remain open; no
+reservation grants authority or restarts a legacy shell.
 
 Issue #65 is owner-authorized desktop split-pane work (ADR 0078).
 The presentation slice adds live composition, bounded layouts, focused input,

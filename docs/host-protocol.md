@@ -1028,15 +1028,20 @@ strict `client,owner-auth` lib clippy step disables default features to preserve
 the portable client-only boundary. This is
 portable regression coverage, not native enrollment/channel/service acceptance.
 
-There is no actual legacy migration: existing profiles/protocol/host-key/vault/
-grants remain unchanged. No legacy import acquires an owner enrollment,
+There is no legacy daemon binding or exposure switch: existing profiles/protocol/
+host-key/vault/grants remain unchanged. The separate
+[owned-installation reservation](owned-installation-migration.md) implements
+protected explicit inventory/preview, destination identity/source claims,
+resume/defer and local rollback, not a fabricated live-binding receipt.
+No legacy import acquires an owner enrollment,
 creation permission or HOST marker. Codec refusal is not migration acceptance.
 Migration must preserve protected state/account binding and offer manual
 deferral. Stopping a live legacy session requires a **separate, default-No**
 confirmation for that exact generation; setup/sharing consent never authorizes
 restart. The existing codec fixture also refuses a purported remote migration/
 restart request carrying setup/sharing assertions. It does not implement or
-qualify the future local confirmation flow.
+qualify the future local confirmation flow. Migration reservation adds no stop
+operation; its CLI rejects stop/restart/takeover flags.
 
 Independent security review must evaluate enrollment/storage/revocation, domain
 separation and replay resistance, pinned-channel non-forwarding, denial privacy,

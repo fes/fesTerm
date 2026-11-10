@@ -586,6 +586,23 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The owned-installation increment adds executable headless protected inventory,
+exact preview mapping, destination identity/source-claim reservation, interrupted
+operation resume, deferral and journaled local rollback (`HOST-06`). Original
+account/key/installation/consent/cloud-incarnation/generation receipts are
+retained, not converted into owner/session/sharing/create authority. Stale
+destination settings/epochs, changed/revoked/foreign/missing/untrusted evidence
+refuse; rollback releases only exact operation claims and cannot revive exposure.
+No live stop operation is added; separate default-No exact-generation consent
+remains mandatory for any future stop. The
+[migration contract and source limits](../owned-installation-migration.md)
+identify the actual missing authenticated daemon bind/retained-root routing API.
+Ordinary legacy daemons are explicitly unsupported, not silently restarted or
+reported bound. Native fixture preservation is current-source local evidence,
+not supported binding, an exposure switch, old-release or signed cross-platform
+migration acceptance. `HOSTMIG-01` remains deferred until that API, fresh protected
+owner/issuer admission, real binding/switch/rollback and native acceptance exist.
+
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation
 during proof, one original authentication deadline, framed persistent Busy and
