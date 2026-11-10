@@ -1,5 +1,51 @@
 # Milestone Progress Narrative
 
+## Completing the Windows binding fixture handle lifetimes
+
+This normal child of `c5635c479a79fb5d320bcbdda7148846e5f989cb` continues
+the same seven-failure required-Windows correction, rather than stopping at
+four root fixtures. The original d258 raw failures and c563's 17-pass proof
+remain unchanged. Only the remaining three unit fixtures' Windows setup/cleanup
+ordering changes; production and the four inherited root corrections do not.
+
+The two replacement fixtures must keep the original creation handle alive to
+test exact-file ownership refusal. They now move that exact owned file to a
+fresh private sentinel name without replacement, retaining its owner handle,
+before the original publication/replacement operation. Its destination no longer
+has an open target handle, satisfying the existing Windows helper contract.
+The original same-bytes/foreign/corrupt identity-refusal cases, intentional
+publication error, cleanup-failure diagnostic and foreign-file preservation
+assertions all remain. No creator, lease or security guard is dropped before
+those negative boundaries; no share-delete or ACL policy is changed.
+
+The dead-generation fixture still proves live-lease refusal, missing-lease
+refusal and wrong-fingerprint refusal. Its exclusive dead-generation lease and
+unrelated generation's owner stay live throughout. On Windows, an exact-identity
+move handle temporarily retains the original file under a private sentinel;
+the original name must report **NotFound**, and the original owner's existing
+cleanup assertion runs against that genuine missing name. The sentinel must
+survive. The same retained file is then restored without replacement, and the
+temporary move handle closes. Thus the original creator handle has genuinely
+retired before dead-generation cleanup, without pre-deleting its test target:
+the restored key must exist immediately before the original positive cleanup.
+Exact identity/fingerprint/lease cleanup, immediate absence, other-generation
+preservation and repeated idempotent cleanup remain required. Unix retains its
+original ordering, including the original final owner-cleanup assertion.
+No assertion is removed or changed to accept an error, and no new fixture
+framework or fake authority is introduced.
+
+Actual macOS Rust/Cargo1.99.1 qualification again passes **17 binding module unit
+tests / zero failed / zero ignored**, 114 filtered, 7.60s: all seven original
+Windows-failure counterparts and ten direct guards. Affected all-target strict
+Clippy, fmt, traceability and diff checks pass. Jobs1/debug0/incremental0 uses a
+new APFS-cloned private target with a 25%-free-memory pause guard; c563's target,
+17-pass test binary, raw logs and prior helper/provenance evidence are preserved.
+No real daemon/helper/native14/full suite, SDK/VM/OS/provider/account/permission
+operation or moving privateCore source is consumed. All seven failures now have
+bounded fixture-source corrections, not Windows execution proof. Fresh exact-head
+source gates and required Windows CI remain necessary; no ADR/graph/manual
+classification or platform/native acceptance changes.
+
 ## Separating Windows binding root failures from file-lifetime fixture blockers
 
 Required Windows run `42916663709` / job `130180758230` at exact

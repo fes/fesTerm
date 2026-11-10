@@ -1103,6 +1103,13 @@ pub(crate) mod tests {
             file: storage::open_private_file(&directory, &name, true).unwrap(),
             name: name.clone(),
         };
+        #[cfg(windows)]
+        festerm_windows_security::rename_file_noreplace(
+            &owner.file,
+            &directory,
+            Path::new("retired.key"),
+        )
+        .unwrap();
         let error = owner
             .publish(|_| {
                 storage::replace_private(&directory, &name, b"foreign")?;
@@ -1142,6 +1149,15 @@ pub(crate) mod tests {
             )
             .unwrap();
             let bytes = storage::read_private(&daemon.directory, &name, 4096).unwrap();
+            #[cfg(windows)]
+            if matches!(replacement, "same-bytes" | "foreign" | "corrupt") {
+                festerm_windows_security::rename_file_noreplace(
+                    &owner.file,
+                    &daemon.directory,
+                    Path::new("retired.key"),
+                )
+                .unwrap();
+            }
             match replacement {
                 "same-bytes" => storage::replace_private(&daemon.directory, &name, &bytes).unwrap(),
                 "foreign" => {
@@ -1238,6 +1254,33 @@ pub(crate) mod tests {
         )
         .is_err());
         assert!(root.path().join(&name).exists());
+        #[cfg(windows)]
+        {
+            // Retire the creator handle while preserving its missing-name cleanup oracle.
+            let retired_name = Path::new("retired.key");
+            let retired =
+                festerm_windows_security::open_file_no_reparse_for_move(&daemon.directory, &name)
+                    .unwrap();
+            assert!(festerm_windows_security::same_file_identity(&owner.file, &retired).unwrap());
+            festerm_windows_security::rename_file_noreplace(
+                &retired,
+                &daemon.directory,
+                retired_name,
+            )
+            .unwrap();
+            assert_eq!(
+                storage::open_private_file(&daemon.directory, &name, false)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::NotFound
+            );
+            owner.cleanup().unwrap();
+            assert!(root.path().join(retired_name).exists());
+            festerm_windows_security::rename_file_noreplace(&retired, &daemon.directory, &name)
+                .unwrap();
+            drop(retired);
+            assert!(root.path().join(&name).exists());
+        }
         cleanup_dead_capability(
             &daemon.directory,
             &binding.identity,
@@ -1254,6 +1297,7 @@ pub(crate) mod tests {
             Some(&observer),
         )
         .unwrap();
+        #[cfg(unix)]
         owner.cleanup().unwrap();
         other_owner.cleanup().unwrap();
     }
