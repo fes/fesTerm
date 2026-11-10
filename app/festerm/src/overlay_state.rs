@@ -103,7 +103,7 @@ pub(crate) struct PendingSettingsResetConfirmation {
 
 #[derive(Clone, Debug)]
 pub(crate) struct PendingNativeTerminationConfirmation {
-    pub(crate) session: festerm_sessiond::UnattachedSession,
+    pub(crate) session: crate::discovery::NativeSession,
     pub(crate) cancel_focus_requested: bool,
 }
 

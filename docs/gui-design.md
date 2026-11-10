@@ -1902,23 +1902,25 @@ verified ready hosts offer connection details. Checking the box immediately open
 **GitHub account for hosting**: select the verified current account or explicitly
 connect one in the browser before Save. Hosting uses the official CLI's shared
 host sign-in, not the remote-client account vault. Connecting a different account
-is unavailable while protected desktop/script bindings still need the current
-one, or their inventory cannot be verified. Selection expires after five minutes
+is unavailable while protected desktop or default script bindings still need
+the current one, or their inventory cannot be verified. Older script hosts in
+custom state directories cannot be discovered and may be interrupted by a
+different shared sign-in; the chooser warns about them. Selection expires after five minutes
 and belongs only to that editor. Cancel unchecks exposure and creates no shell,
 grant or tunnel; completed browser authentication can remain in official CLI
 storage. Browser sign-in is foreground and cancellable, never a startup prompt.
 
 Existing inherited product/native-runtime permissions are not repaired. New
 hosts use a dedicated protected runtime. If the selected legacy session is
-running, Save offers **Yes** (restart only that exact generation, losing its
-programs/state and disconnecting clients) or **No** (retain it and defer hosting
-until an explicit manual restart). No is the default. Startup and Retry cannot
-consume the persisted restart gate, even after an interrupted authorized launch.
-Other desktop/script-hosted targets cannot be stopped through this confirmation.
+running, Save retains it and reports that hosting is pending until the user
+manually ends it and opens the profile again. Ending it stops its programs and
+disconnects its clients; hosting does not stop any session automatically.
+Startup and Retry cannot consume the persisted gate, even after an interrupted
+authorized launch.
 Local open and restoration follow the profile's recorded runtime, and disabling
 hosting retains the shell. Missing/foreign host-local consent permits ordinary
 local opening without adopting cloud authority; unknown inventories refuse
-instead of silently starting a duplicate. See ADR 0084.
+instead of silently starting a duplicate. See ADR 0085.
 
 Disable/Save, provider removal and profile deletion revoke exposure before the
 config write, retain the shell and track pending cloud cleanup even when the

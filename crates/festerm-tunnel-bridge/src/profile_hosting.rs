@@ -32,9 +32,6 @@ pub enum ManagementOperation {
         consent: Option<String>,
     },
     Inventory,
-    CheckRestartTarget {
-        target: Target,
-    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -166,8 +163,7 @@ pub struct Target {
 }
 
 impl Target {
-    fn validate(&self) -> io::Result<()> {
-        let suffix = format!("{}-{}", self.pid, self.generation);
+    fn validate_fields(&self) -> io::Result<()> {
         if !self.runtime_root.is_absolute()
             || self.runtime_root.file_name() != Some(std::ffi::OsStr::new("sessiond"))
             || self.pid == 0
@@ -180,12 +176,49 @@ impl Target {
                 .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
             || self.endpoint.len() > 4096
             || self.endpoint.chars().any(char::is_control)
-            || !(self.endpoint.ends_with(&suffix)
-                || self.endpoint.ends_with(&format!("{suffix}.sock")))
         {
             return Err(refused("profile_host.target_identity"));
         }
         Ok(())
+    }
+
+    fn validate(&self) -> io::Result<()> {
+        self.validate_fields()?;
+        let suffix = format!("{}-{}", self.pid, self.generation);
+        if !(self.endpoint.ends_with(&suffix) || self.endpoint.ends_with(&format!("{suffix}.sock")))
+        {
+            return Err(refused("profile_host.target_identity"));
+        }
+        Ok(())
+    }
+
+    fn validate_legacy(&self) -> io::Result<()> {
+        self.validate_fields()?;
+        if self.validate().is_ok() || self.endpoint == self.named_endpoint() {
+            return Ok(());
+        }
+        Err(refused("profile_host.target_identity"))
+    }
+
+    #[cfg(unix)]
+    fn named_endpoint(&self) -> String {
+        self.runtime_root
+            .join(format!("{}.sock", self.name))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[cfg(windows)]
+    fn named_endpoint(&self) -> String {
+        let name: String = self
+            .name
+            .chars()
+            .map(|character| match character {
+                ch if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') => ch,
+                _ => '_',
+            })
+            .collect();
+        format!(r"\\.\pipe\festerm-sessiond-{name}")
     }
 }
 
@@ -292,7 +325,7 @@ impl Consent {
                 return Err(refused("profile_host.runtime_namespace"));
             }
             if let Some(legacy) = &launch.legacy {
-                legacy.validate()?;
+                legacy.validate_legacy()?;
                 if legacy.name != self.session_name
                     || legacy.runtime_root == launch.runtime_root
                     || self.target.is_some()
@@ -344,6 +377,67 @@ impl Consent {
 pub struct Store {
     directory: File,
     installation: String,
+}
+
+pub struct HostedPreparation<'a> {
+    pub installation: &'a str,
+    pub consent: &'a str,
+    pub spawn_fingerprint: &'a str,
+    pub session_name: &'a str,
+    pub launch: HostedLaunch,
+    pub account: &'a str,
+}
+
+/// Publish only a complete Prepared record into the canonical inventory.
+pub fn prepare_hosted_installation_in(
+    namespace: &Path,
+    request: HostedPreparation<'_>,
+) -> io::Result<()> {
+    canonical_uuid(request.installation)?;
+    let staging = namespace.join("preparing");
+    let installations = namespace.join("installations");
+    let staging_parent = setup_storage::private_directory(&staging, true)?;
+    let destination_parent = setup_storage::private_directory(&installations, false)?;
+    let name = Path::new(request.installation);
+    #[cfg(unix)]
+    let created = festerm_unix_security::create_private_directory(&staging_parent, name)?;
+    #[cfg(windows)]
+    let created =
+        festerm_windows_security::create_current_user_only_directory(&staging_parent, name)?;
+    drop(created);
+
+    let staged_path = staging.join(name);
+    let store = Store::open(&staged_path, request.installation, false)?;
+    store.prepare_hosted(
+        request.consent,
+        request.spawn_fingerprint,
+        request.session_name,
+        request.launch,
+    )?;
+    store.select_account(request.consent, request.account)?;
+    drop(store);
+
+    #[cfg(unix)]
+    {
+        festerm_unix_security::rename_noreplace(&staging_parent, name, &destination_parent, name)?;
+        staging_parent.sync_all()?;
+        destination_parent.sync_all()?;
+    }
+    #[cfg(windows)]
+    {
+        let directory = setup_storage::private_directory(&staged_path, false)?;
+        let mover =
+            festerm_windows_security::open_private_directory_for_move(&staging_parent, name)?;
+        if !festerm_windows_security::same_file_identity(&directory, &mover)? {
+            return Err(refused("profile_host.prepared_state_changed"));
+        }
+        festerm_windows_security::rename_private_directory_noreplace(
+            &mover,
+            &destination_parent,
+            name,
+        )?;
+    }
+    Ok(())
 }
 
 impl Store {
@@ -499,7 +593,7 @@ impl Store {
             if launch.legacy.as_ref() != Some(expected) {
                 return Err(refused("profile_host.restart_identity"));
             }
-            require_legacy_ended(expected)?;
+            require_generation_ended(expected)?;
             Ok(())
         })
     }
@@ -521,7 +615,7 @@ impl Store {
             if launch.legacy.as_ref() != Some(expected) || target.name != record.session_name {
                 return Err(refused("profile_host.restart_identity"));
             }
-            require_legacy_ended(expected)?;
+            require_generation_ended(expected)?;
             launch.legacy = None;
             record.target = Some(target);
             record.phase = Phase::Provisioning;
@@ -547,27 +641,6 @@ impl Store {
             record.failure = Some(Failure::RestartRequired);
             Ok(())
         })
-    }
-
-    pub fn with_restart_permit<T>(
-        &self,
-        consent: &str,
-        expected: &Target,
-        action: impl FnOnce() -> io::Result<T>,
-    ) -> io::Result<T> {
-        let _lock = self.lock()?;
-        let record = self.load()?;
-        if record.consent != consent
-            || !record.phase.allows_hosting()
-            || record
-                .hosted_launch
-                .as_ref()
-                .and_then(|launch| launch.legacy.as_ref())
-                != Some(expected)
-        {
-            return Err(refused("profile_host.restart_identity"));
-        }
-        action()
     }
 
     fn update(
@@ -624,6 +697,16 @@ impl Store {
                 || record.creation_pending
             {
                 return Err(refused("profile_host.new_shell_not_authorized"));
+            }
+            if let Some(target) = &record.target {
+                require_generation_ended(target)?;
+            }
+            if let Some(legacy) = record
+                .hosted_launch
+                .as_ref()
+                .and_then(|launch| launch.legacy.as_ref())
+            {
+                require_generation_ended(legacy)?;
             }
             record.consent = fresh.to_owned();
             record.phase = Phase::Prepared;
@@ -861,7 +944,7 @@ impl Store {
     }
 }
 
-fn require_legacy_ended(expected: &Target) -> io::Result<()> {
+fn require_generation_ended(expected: &Target) -> io::Result<()> {
     if festerm_sessiond::process_alive(expected.pid)
         || festerm_sessiond::list_running_sessions_strict_in(&expected.runtime_root)
             .map_err(|_| refused("profile_host.restart_identity"))?
@@ -912,6 +995,52 @@ mod tests {
             generation: 123,
             endpoint: "session-42-123".into(),
         }
+    }
+
+    #[test]
+    fn hosted_preparation_publishes_only_complete_records_without_overwriting() {
+        let root = crate::test_support::private_directory("festerm-profile-publish");
+        setup_storage::private_directory(&root.join("installations"), true).unwrap();
+        let product = if cfg!(windows) { "fesTerm" } else { "festerm" };
+        let runtime = root.join("runtime").join(product).join("sessiond");
+        let installation = uuid::Uuid::new_v4().to_string();
+        let consent = uuid::Uuid::new_v4().to_string();
+        let prepare = |id: &str, consent: &str, account: &str| {
+            prepare_hosted_installation_in(
+                &root,
+                HostedPreparation {
+                    installation: id,
+                    consent,
+                    spawn_fingerprint: "spawn-v1:test",
+                    session_name: "configured-shell",
+                    launch: HostedLaunch {
+                        runtime_root: runtime.clone(),
+                        legacy: None,
+                    },
+                    account,
+                },
+            )
+        };
+        let failed = uuid::Uuid::new_v4().to_string();
+        assert!(prepare(&failed, &consent, "not-an-account").is_err());
+        assert!(!root.join("installations").join(&failed).exists());
+        assert!(root.join("preparing").join(&failed).exists());
+
+        prepare(&installation, &consent, "1234").unwrap();
+        let path = root.join("installations").join(&installation);
+        let store = Store::open(&path, &installation, false).unwrap();
+        let saved = store.read().unwrap();
+        assert_eq!(saved.phase, Phase::Prepared);
+        assert_eq!(saved.selected_account.as_deref(), Some("1234"));
+        assert_eq!(saved.hosted_launch.unwrap().runtime_root, runtime);
+        drop(store);
+
+        let other = uuid::Uuid::new_v4().to_string();
+        assert!(prepare(&installation, &other, "5678").is_err());
+        let store = Store::open(&path, &installation, false).unwrap();
+        assert_eq!(store.read().unwrap().consent, consent);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -986,16 +1115,43 @@ mod tests {
         replacement.generation += 1;
         replacement.endpoint = format!("session-{}-{}", replacement.pid, replacement.generation);
         assert!(store
-            .with_restart_permit::<()>(&consent, &replacement, || panic!("stale restart"))
+            .authorize_hosted_start(&consent, &replacement)
             .is_err());
-        store
-            .with_restart_permit(&consent, &legacy, || Ok(()))
-            .unwrap();
         store.revoke(&consent).unwrap();
-        assert!(store
-            .with_restart_permit::<()>(&consent, &legacy, || panic!("revoked restart"))
-            .is_err());
         assert!(store.authorize_hosted_start(&consent, &legacy).is_err());
+        drop(store);
+        std::fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn named_legacy_endpoint_is_deferred_without_authorizing_live_replacement() {
+        let state = crate::test_support::private_directory("festerm-profile-named-legacy");
+        let installation = uuid::Uuid::new_v4().to_string();
+        let consent = uuid::Uuid::new_v4().to_string();
+        let store = Store::open(&state, &installation, false).unwrap();
+        let mut legacy = target();
+        legacy.runtime_root = state.join("legacy").join("sessiond");
+        legacy.pid = std::process::id();
+        legacy.endpoint = legacy.named_endpoint();
+        let product = if cfg!(windows) { "fesTerm" } else { "festerm" };
+        let hosted = state.join("runtime").join(product).join("sessiond");
+        store
+            .prepare_hosted(
+                &consent,
+                "spawn-v1:test",
+                &legacy.name,
+                HostedLaunch {
+                    runtime_root: hosted,
+                    legacy: Some(legacy.clone()),
+                },
+            )
+            .unwrap();
+        store.commit_requested(&consent).unwrap();
+        assert!(store.authorize_hosted_start(&consent, &legacy).is_err());
+        assert_eq!(
+            store.read().unwrap().hosted_launch.unwrap().legacy,
+            Some(legacy)
+        );
         drop(store);
         std::fs::remove_dir_all(state).unwrap();
     }
@@ -1105,6 +1261,8 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
         drop(lock);
         assert_eq!(store.try_read().unwrap().consent, consent);
+        drop(store);
+        std::fs::remove_dir_all(state).unwrap();
     }
 
     #[test]
@@ -1122,7 +1280,12 @@ mod tests {
         wrong.name = "unapproved-shell".into();
         assert!(store.bind_target(&consent, wrong).is_err());
         assert!(store.read().unwrap().target.is_none());
-        store.bind_target(&consent, target()).unwrap();
+        let mut retired = target();
+        retired.pid = i32::MAX as u32;
+        retired.endpoint = format!("session-{}-{}", retired.pid, retired.generation);
+        retired.runtime_root = state.join("legacy").join("sessiond");
+        assert!(!festerm_sessiond::process_alive(retired.pid));
+        store.bind_target(&consent, retired).unwrap();
         let reservation = store.reserve_creation(&consent, "1234").unwrap();
         let cloud = CloudIdentity {
             qualified_id: format!("{}.usw3", reservation.cloud_reservation.unwrap().name),
@@ -1149,6 +1312,31 @@ mod tests {
         assert!(store
             .prepare_new_shell(&fresh, &uuid::Uuid::new_v4().to_string())
             .is_err());
+        drop(store);
+        std::fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn fresh_shell_approval_refuses_a_live_recorded_generation() {
+        let state = crate::test_support::private_directory("festerm-profile-live-shell");
+        let installation = uuid::Uuid::new_v4().to_string();
+        let consent = uuid::Uuid::new_v4().to_string();
+        let store = Store::open(&state, &installation, false).unwrap();
+        store
+            .prepare(&consent, "spawn-v1:test", "configured-shell")
+            .unwrap();
+        store.commit_requested(&consent).unwrap();
+        let mut live = target();
+        live.pid = std::process::id();
+        live.endpoint = format!("session-{}-{}", live.pid, live.generation);
+        store.bind_target(&consent, live.clone()).unwrap();
+        store
+            .report_failure(&consent, Failure::NewShellApprovalRequired)
+            .unwrap();
+        assert!(store
+            .prepare_new_shell(&consent, &uuid::Uuid::new_v4().to_string())
+            .is_err());
+        assert_eq!(store.read().unwrap().target, Some(live));
         drop(store);
         std::fs::remove_dir_all(state).unwrap();
     }

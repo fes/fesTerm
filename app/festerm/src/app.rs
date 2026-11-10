@@ -7378,6 +7378,10 @@ impl FesTermApp {
                         if let Some(error) = &self.state.resume_error {
                             ui.colored_label(theme::TEXT_SECONDARY, error);
                         }
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        if let Some(error) = self.state.hosted_open_error(active_tab_id) {
+                            ui.colored_label(theme::TEXT_SECONDARY, error);
+                        }
                         screen_command = screens::show_launcher(
                             ui,
                             active_tab_id,
@@ -7457,6 +7461,10 @@ impl FesTermApp {
                         );
                     }
                     TabContent::Profiles => {
+                        #[cfg(feature = "experimental-dev-tunnels")]
+                        if let Some(error) = self.state.hosted_open_error(active_tab_id) {
+                            ui.colored_label(theme::TEXT_SECONDARY, error);
+                        }
                         if let Some(status) = secure_storage_status.filter(|_| {
                             cfg!(feature = "experimental-dev-tunnels")
                                 || self
@@ -13359,15 +13367,17 @@ mod tests {
         app.state
             .dispatch(AppCommand::ToggleShowResumableSessions, &context);
         let pending = PendingNativeTerminationConfirmation {
-            session: festerm_sessiond::UnattachedSession {
-                name: "owned-test-session".into(),
-                pid: 123,
-                endpoint: "owned-test-endpoint".into(),
-                created_at_unix_ms: 456,
-                shell: "owned-test-shell".into(),
-                arguments: Vec::new(),
-                working_directory: None,
-            },
+            session: crate::discovery::NativeSession::fixture(
+                festerm_sessiond::UnattachedSession {
+                    name: "owned-test-session".into(),
+                    pid: 123,
+                    endpoint: "owned-test-endpoint".into(),
+                    created_at_unix_ms: 456,
+                    shell: "owned-test-shell".into(),
+                    arguments: Vec::new(),
+                    working_directory: None,
+                },
+            ),
             cancel_focus_requested: false,
         };
         app.overlays.pending_native_termination = Some(pending.clone());

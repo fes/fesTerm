@@ -1172,7 +1172,7 @@ impl FesTermApp {
                     ui.label(format!(
                         "This ends '{}' and its running processes. Its terminal state \
                          will be discarded and cannot be reattached. Saved profiles are unchanged.",
-                        pending.session.name,
+                        pending.session.display_name(),
                     ));
                 });
                 ui.add_space(12.0);

@@ -49,6 +49,29 @@ struct Inspection {
     verified: Instant,
 }
 
+enum InspectionMode {
+    Check,
+    Connect,
+    Recover(String),
+}
+
+fn authorize_sign_in(
+    mode: &InspectionMode,
+    accounts: &BTreeSet<String>,
+    has_bindings: bool,
+) -> Result<(), &'static str> {
+    match mode {
+        InspectionMode::Check => Ok(()),
+        InspectionMode::Connect if has_bindings => Err(
+            "Existing tunnel exposures still require their recorded account. Use that account or finish their cleanup before switching.",
+        ),
+        InspectionMode::Recover(expected) if accounts.iter().any(|account| account != expected) => {
+            Err("Other known tunnel exposures require a different account. No sign-in was started.")
+        }
+        InspectionMode::Connect | InspectionMode::Recover(_) => Ok(()),
+    }
+}
+
 struct Task {
     receiver: mpsc::Receiver<Result<Inspection, String>>,
     cancel: CancellationToken,
@@ -204,7 +227,8 @@ impl Chooser {
             super::super::confirmations::prepare_confirmation(ui, context, 480.0);
             ui.heading("GitHub account for Dev Tunnel hosting");
             ui.label("Choose the account that will own this tunnel. Nothing is exposed until you Save.");
-            ui.label("The Dev Tunnels CLI uses a shared sign-in on this host. Account switching is unavailable while an existing local tunnel still needs its account.");
+            ui.label("The Dev Tunnels CLI uses a shared sign-in on this host. Account switching is unavailable while a known desktop or default script host needs its account.");
+            ui.label("Older script hosts in custom state directories cannot be discovered and may be interrupted by a different sign-in. Remove or migrate them first.");
             if let Some(inspection) = &prompt.inspection {
                 if let Some(account) = &inspection.current {
                     let name = account.username.as_deref().unwrap_or("GitHub account");
@@ -284,7 +308,7 @@ fn start_task(context: &egui::Context, login: bool) -> Task {
             runtime.block_on(async {
                 tokio::select! {
                     _ = cancellation.cancelled() => Err("Account selection cancelled.".into()),
-                    result = inspect(&helpers, login) => result,
+                    result = inspect(&helpers, if login { InspectionMode::Connect } else { InspectionMode::Check }) => result,
                 }
             })
         })();
@@ -294,7 +318,13 @@ fn start_task(context: &egui::Context, login: bool) -> Task {
     Task { receiver, cancel }
 }
 
-async fn inspect(helpers: &staging::Helpers, login: bool) -> Result<Inspection, String> {
+pub(super) async fn recover(helpers: &staging::Helpers, account: String) -> Result<(), String> {
+    inspect(helpers, InspectionMode::Recover(account)).await?;
+    Ok(())
+}
+
+async fn inspect(helpers: &staging::Helpers, mode: InspectionMode) -> Result<Inspection, String> {
+    let login = !matches!(mode, InspectionMode::Check);
     let _account = profile_hosting::account_lease(login)
         .map_err(|_| "Another account operation is busy. Retry shortly.")?;
     let _script = if login {
@@ -329,14 +359,19 @@ async fn inspect(helpers: &staging::Helpers, login: bool) -> Result<Inspection, 
         let grant = grant.expect("verified inventory");
         if grant.phase != Phase::Revoked {
             has_bindings = true;
-            if let Some(account) = grant.selected_account.as_ref().or_else(|| {
-                grant
-                    .cloud_reservation
-                    .as_ref()
-                    .map(|reservation| &reservation.account)
-            }) {
-                accounts.insert(account.clone());
-            }
+            let account = grant
+                .selected_account
+                .as_ref()
+                .or_else(|| {
+                    grant
+                        .cloud_reservation
+                        .as_ref()
+                        .map(|reservation| &reservation.account)
+                })
+                .ok_or(
+                    "An existing local tunnel has an unknown account; sign-in was not changed.",
+                )?;
+            accounts.insert(account.clone());
         }
     }
     #[derive(Deserialize)]
@@ -380,11 +415,11 @@ async fn inspect(helpers: &staging::Helpers, login: bool) -> Result<Inspection, 
             accounts.insert(host.account);
         }
     }
+    authorize_sign_in(&mode, &accounts, has_bindings)?;
     if login {
-        if has_bindings {
-            return Err("Existing tunnel exposures still require their recorded account. Use that account or finish their cleanup before switching.".into());
-        }
-        let mut command = tokio::process::Command::new(&helpers.cli);
+        let verified = festerm_tunnel_bridge::cli_pins::verify(&helpers.cli)
+            .map_err(|_| "The hosting CLI could not be verified; sign-in was not started.")?;
+        let mut command = tokio::process::Command::new(verified.path());
         command.args(["user", "login", "--github", "--use-browser-auth"]);
         capture(command, Duration::from_secs(180))
             .await
@@ -399,6 +434,14 @@ async fn inspect(helpers: &staging::Helpers, login: bool) -> Result<Inspection, 
     if login && current.is_none() {
         return Err("The browser sign-in did not produce a verified GitHub account.".into());
     }
+    if let InspectionMode::Recover(expected) = &mode {
+        if current
+            .as_ref()
+            .is_none_or(|account| &account.id != expected)
+        {
+            return Err("The browser signed in to a different account. Restore the recorded account before retrying; the CLI's shared sign-in may have changed.".into());
+        }
+    }
     Ok(Inspection {
         current,
         accounts,
@@ -410,6 +453,17 @@ async fn inspect(helpers: &staging::Helpers, login: bool) -> Result<Inspection, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_sign_in_refuses_conflicting_known_accounts() {
+        let one = BTreeSet::from(["1234".to_owned()]);
+        let two = BTreeSet::from(["1234".to_owned(), "5678".to_owned()]);
+        assert!(authorize_sign_in(&InspectionMode::Check, &two, true).is_ok());
+        assert!(authorize_sign_in(&InspectionMode::Connect, &one, true).is_err());
+        assert!(authorize_sign_in(&InspectionMode::Connect, &BTreeSet::new(), false).is_ok());
+        assert!(authorize_sign_in(&InspectionMode::Recover("1234".into()), &one, true).is_ok());
+        assert!(authorize_sign_in(&InspectionMode::Recover("1234".into()), &two, true).is_err());
+    }
 
     #[test]
     fn account_receipt_expires_and_cannot_cross_editors_or_documents() {

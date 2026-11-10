@@ -30,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 const QUEUE_LIMIT: usize = 64;
+const MANUAL_RESTART_MESSAGE: &str = "Hosting is pending. When ready, end the existing session yourself, then open this profile again. Ending it stops its programs and disconnects its clients; fesTerm will not stop it automatically.";
 
 pub(super) struct LocalProfileEdit {
     pub original_id: Option<String>,
@@ -42,7 +43,7 @@ pub(super) struct LocalProfileEdit {
 #[derive(Clone)]
 enum Work {
     Ensure(Box<Profile>, usize),
-    Restart(Box<Profile>, usize, Target),
+    FreshAfterExit(Box<Profile>, usize, Target),
     Remove(LocalTunnelHosting),
     Status(LocalTunnelHosting),
     Login(Box<Work>),
@@ -60,7 +61,7 @@ impl Work {
     fn same_operation(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Ensure(..), Self::Ensure(..))
-            | (Self::Restart(..), Self::Restart(..))
+            | (Self::FreshAfterExit(..), Self::FreshAfterExit(..))
             | (Self::Remove(_), Self::Remove(_))
             | (Self::Status(_), Self::Status(_)) => true,
             (Self::Login(next), Self::Login(other)) => next.same_operation(other),
@@ -70,9 +71,17 @@ impl Work {
 
     fn binding(&self) -> Option<&LocalTunnelHosting> {
         match self {
-            Self::Ensure(profile, _) | Self::Restart(profile, ..) => binding(profile),
+            Self::Ensure(profile, _) | Self::FreshAfterExit(profile, ..) => binding(profile),
             Self::Login(next) => next.binding(),
             Self::Remove(binding) | Self::Status(binding) => Some(binding),
+        }
+    }
+
+    fn profile(&self) -> Option<&Profile> {
+        match self {
+            Self::Ensure(profile, _) | Self::FreshAfterExit(profile, ..) => Some(profile),
+            Self::Login(next) => next.profile(),
+            Self::Remove(_) | Self::Status(_) => None,
         }
     }
 }
@@ -123,26 +132,9 @@ fn validate_hosted_names(
     candidate: &Profile,
     expose: bool,
 ) -> Result<(), &'static str> {
-    fn native_name(profile: &Profile) -> Option<&str> {
-        profile
-            .as_local()?
-            .persistence()
-            .filter(|persistence| {
-                persistence.provider() == PersistenceProviderKind::FestermSessiond
-            })
-            .map(|persistence| persistence.session_name())
-    }
-    let Some(name) = native_name(candidate) else {
-        return Ok(());
-    };
-    if configuration.profiles().iter().any(|other| {
-        Some(other.identifier()) != original_id
-            && native_name(other) == Some(name)
-            && (expose || binding(other).is_some_and(LocalTunnelHosting::enabled))
-    }) {
-        return Err("Dev Tunnel hosting requires a unique native persistent session name. Rename the conflicting session before saving.");
-    }
-    Ok(())
+    configuration
+        .validate_hosted_session_name(original_id, candidate, expose)
+        .map_err(|_| "Dev Tunnel hosting requires a unique native persistent session name. Rename the conflicting session before saving.")
 }
 
 fn store(binding: &LocalTunnelHosting) -> io::Result<Store> {
@@ -195,11 +187,28 @@ fn revocation_grant(
 }
 
 fn fingerprint(profile: &Profile) -> Result<String, &'static str> {
+    native_and_fingerprint(profile).map(|(_, fingerprint)| fingerprint)
+}
+
+fn native_and_fingerprint(
+    profile: &Profile,
+) -> Result<(festerm_pty::LocalProfile, String), &'static str> {
     let local = profile.as_local().ok_or("Select a local profile.")?;
     let local = crate::environment::with_corrected_local_path(local.to_local_profile());
-    festerm_sessiond::spawn_fingerprint(&local).map_err(|_| {
+    let fingerprint = festerm_sessiond::spawn_fingerprint(&local).map_err(|_| {
         "Check the executable, working directory and effective PATH before enabling hosting."
-    })
+    })?;
+    Ok((local, fingerprint))
+}
+
+async fn worker_native_and_fingerprint(
+    profile: &Profile,
+) -> Result<(festerm_pty::LocalProfile, String), String> {
+    let profile = profile.clone();
+    tokio::task::spawn_blocking(move || native_and_fingerprint(&profile))
+        .await
+        .map_err(|_| "profile_host.local_environment".to_owned())?
+        .map_err(|_| "profile_host.command_mismatch".to_owned())
 }
 
 fn selected(target: &Target) -> festerm_sessiond::NativeSessionIdentity {
@@ -217,7 +226,11 @@ fn deferred_restart(grant: &Consent) -> Option<&Target> {
 
 fn legacy_session(name: &str) -> Result<Option<Target>, String> {
     let root = festerm_sessiond::runtime_root().map_err(|_| "profile_host.runtime_namespace")?;
-    let sessions = festerm_sessiond::list_running_sessions_strict_in(&root)
+    legacy_session_in(&root, name)
+}
+
+fn legacy_session_in(root: &Path, name: &str) -> Result<Option<Target>, String> {
+    let sessions = festerm_sessiond::list_running_sessions_strict_in(root)
         .map_err(|_| "profile_host.restart_identity")?;
     Ok(sessions
         .into_iter()
@@ -225,7 +238,7 @@ fn legacy_session(name: &str) -> Result<Option<Target>, String> {
         .map(|running| {
             let session = running.session;
             Target {
-                runtime_root: root,
+                runtime_root: root.to_owned(),
                 name: session.name,
                 pid: session.pid,
                 generation: session.created_at_unix_ms,
@@ -234,12 +247,71 @@ fn legacy_session(name: &str) -> Result<Option<Target>, String> {
         }))
 }
 
+fn initial_hosted_launch(name: &str) -> Result<HostedLaunch, &'static str> {
+    let legacy =
+        festerm_sessiond::runtime_root().map_err(|_| "Private hosting storage is unavailable.")?;
+    let hosted =
+        profile_hosting::hosted_runtime().map_err(|_| "Private hosting storage is unavailable.")?;
+    verify_hosted_endpoint_capacity(&hosted)?;
+    initial_hosted_launch_in(&legacy, hosted, name)
+}
+
+fn initial_hosted_launch_in(
+    legacy: &Path,
+    hosted: PathBuf,
+    name: &str,
+) -> Result<HostedLaunch, &'static str> {
+    let _legacy_start = festerm_sessiond::lock_legacy_start_in(legacy, name).map_err(|_| {
+        "Existing session startup could not be safely serialized. No hosting consent was saved; retry."
+    })?;
+    Ok(HostedLaunch {
+        runtime_root: hosted,
+        legacy: legacy_session_in(legacy, name).map_err(|_| {
+            "Existing sessions could not be verified. No hosting consent was saved; retry."
+        })?,
+    })
+}
+
+#[cfg(unix)]
+fn verify_hosted_endpoint_capacity(root: &Path) -> Result<(), &'static str> {
+    let generation = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "The system clock cannot be verified. No session was stopped.")?
+        .as_millis()
+        .checked_add(360_000)
+        .ok_or("The system clock cannot be verified. No session was stopped.")?;
+    let generation_bound = "9".repeat(generation.to_string().len() + 1);
+    let endpoint = root.join(format!("{}-{generation_bound}.sock", u32::MAX));
+    std::os::unix::net::SocketAddr::from_pathname(endpoint)
+        .map(|_| ())
+        .map_err(|_| "Private hosting storage is too long for a session socket. Use a shorter XDG_STATE_HOME and retry; no session was stopped.")
+}
+
+#[cfg(not(unix))]
+fn verify_hosted_endpoint_capacity(_root: &Path) -> Result<(), &'static str> {
+    Ok(())
+}
+
 pub(crate) fn connect_profile(
     profile: &Profile,
     size: festerm_session::TerminalSize,
     scrollback: usize,
     notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
     allow_start: bool,
+) -> (Result<festerm_sessiond::PersistentSession, String>, bool) {
+    let mut bound = false;
+    let result =
+        connect_profile_inner(profile, size, scrollback, notifier, allow_start, &mut bound);
+    (result, bound)
+}
+
+fn connect_profile_inner(
+    profile: &Profile,
+    size: festerm_session::TerminalSize,
+    scrollback: usize,
+    notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
+    allow_start: bool,
+    bound: &mut bool,
 ) -> Result<festerm_sessiond::PersistentSession, String> {
     let binding = binding(profile).ok_or("profile_host.binding")?;
     let local = profile.as_local().ok_or("profile_host.profile")?;
@@ -264,6 +336,26 @@ pub(crate) fn connect_profile(
             )
         }
     };
+    if binding.enabled() && grant.phase.allows_hosting() {
+        validate_loaded_session_name(persistence.session_name(), &grant)?;
+        if grant.hosted_launch.is_none() {
+            if fingerprint(profile)? != grant.spawn_fingerprint {
+                return Err("The hosted profile command changed; no session was attached.".into());
+            }
+            let target = grant.target.as_ref().ok_or(
+                "The hosting grant has no recorded shell. Retry hosting before opening this profile.",
+            )?;
+            if !profile_hosting::accepts_runtime(&target.runtime_root)
+                .map_err(|_| "profile_host.runtime_namespace")?
+            {
+                return Err(
+                    "The recorded session runtime is unavailable; no session was attached.".into(),
+                );
+            }
+            *bound = allow_start;
+            return attach_target(target, notifier);
+        }
+    }
     let launch = match (
         &grant.hosted_launch,
         binding.enabled() && grant.phase.allows_hosting(),
@@ -277,10 +369,7 @@ pub(crate) fn connect_profile(
                 scrollback,
                 notifier,
                 allow_start,
-                grant
-                    .target
-                    .as_ref()
-                    .map(|target| target.runtime_root.as_path()),
+                grant.target.as_ref(),
             )
         }
     };
@@ -293,6 +382,17 @@ pub(crate) fn connect_profile(
             "The hosted profile command or runtime changed; no fallback shell was started.".into(),
         );
     }
+    let _legacy_start = if allow_start && grant.target.is_none() {
+        let legacy =
+            festerm_sessiond::runtime_root().map_err(|_| "profile_host.runtime_namespace")?;
+        Some(
+            festerm_sessiond::lock_legacy_start_in(&legacy, &grant.session_name).map_err(|_| {
+                "Existing session startup could not be safely verified; no replacement was started."
+            })?,
+        )
+    } else {
+        None
+    };
     if let Some(expected) = deferred_restart(&grant) {
         if let Some(current) = legacy_session(&grant.session_name)? {
             if &current != expected {
@@ -317,60 +417,61 @@ pub(crate) fn connect_profile(
         return Err("Hosting consent is not active; no replacement was started.".into());
     }
     if let Some(target) = &grant.target {
+        *bound = allow_start;
         return attach_target(target, notifier);
+    }
+    if !allow_start {
+        return Err(
+            "No hosted generation is recorded. Open the profile explicitly to complete hosting."
+                .into(),
+        );
     }
     if grant.target.is_none() && restart.is_none() {
         if let Some(legacy) = legacy_session(&grant.session_name)? {
             store(binding)
                 .and_then(|store| store.defer_hosted_start(binding.consent(), legacy))
                 .map_err(|_| "profile_host.stale_consent")?;
-            return Err("The existing session needs a restart. Edit the profile to restart it, or end it and open the profile again.".into());
+            return Err(MANUAL_RESTART_MESSAGE.into());
         }
     }
-    let target = if allow_start {
-        let identity = festerm_sessiond::ensure_detached_in(
-            &root,
-            festerm_sessiond::DetachedSessionRequest {
-                name: persistence.session_name(),
-                profile: &native,
-                size,
-                scrollback_limit_bytes: scrollback,
-                launch_request: binding.consent(),
-            },
-        )
-        .map_err(|error| error.to_string())?;
-        Target {
-            runtime_root: root,
-            name: identity.name,
-            pid: identity.pid,
-            generation: identity.created_at_unix_ms,
-            endpoint: identity.endpoint,
-        }
-    } else {
-        let running = festerm_sessiond::list_running_sessions_in(&root)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .find(|running| running.session.name == persistence.session_name())
-            .ok_or("No hosted session exists. Restoration never starts a replacement shell.")?;
-        Target {
-            runtime_root: root,
-            name: running.session.name,
-            pid: running.session.pid,
-            generation: running.session.created_at_unix_ms,
-            endpoint: running.session.endpoint,
-        }
+    let identity = festerm_sessiond::ensure_owned_detached_in(
+        &root,
+        festerm_sessiond::DetachedSessionRequest {
+            name: persistence.session_name(),
+            profile: &native,
+            size,
+            scrollback_limit_bytes: scrollback,
+            launch_request: binding.consent(),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let target = Target {
+        runtime_root: root,
+        name: identity.name,
+        pid: identity.pid,
+        generation: identity.created_at_unix_ms,
+        endpoint: identity.endpoint,
     };
-    if allow_start {
-        store(binding)
-            .and_then(|store| match restart {
-                Some(expected) => {
-                    store.bind_restarted_target(binding.consent(), &expected, target.clone())
-                }
-                None => store.bind_target(binding.consent(), target.clone()),
-            })
-            .map_err(|_| "The hosting consent changed. The shell was retained without exposure.")?;
-    }
+    store(binding)
+        .and_then(|store| match restart {
+            Some(expected) => {
+                store.bind_restarted_target(binding.consent(), &expected, target.clone())
+            }
+            None => store.bind_target(binding.consent(), target.clone()),
+        })
+        .map_err(|_| "The hosting consent changed. The shell was retained without exposure.")?;
+    *bound = true;
     attach_target(&target, notifier)
+}
+
+fn validate_loaded_session_name(name: &str, grant: &Consent) -> Result<(), String> {
+    if name != grant.session_name {
+        return Err(
+            "The hosted profile's persistent session name changed; no session was attached or started."
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn attach_target(
@@ -405,50 +506,72 @@ fn connect_unbound_profile(
     scrollback: usize,
     notifier: std::sync::Arc<dyn festerm_session::SessionEventNotifier>,
     allow_start: bool,
-    preferred: Option<&Path>,
+    recorded: Option<&Target>,
 ) -> Result<festerm_sessiond::PersistentSession, String> {
     let hosted = profile_hosting::hosted_runtime().map_err(|_| "profile_host.runtime_namespace")?;
     let legacy = festerm_sessiond::runtime_root().map_err(|_| "profile_host.runtime_namespace")?;
-    let mut roots = preferred
-        .into_iter()
-        .map(Path::to_path_buf)
-        .collect::<Vec<_>>();
-    for root in [hosted, legacy] {
-        if !roots.contains(&root) {
-            roots.push(root);
+    if let Some(target) = recorded.filter(|target| target.name == name) {
+        if !profile_hosting::accepts_runtime(&target.runtime_root)
+            .map_err(|_| "profile_host.runtime_namespace")?
+        {
+            return Err(
+                "The recorded session runtime is unavailable; no session was attached.".into(),
+            );
+        }
+        let sessions = festerm_sessiond::list_running_sessions_strict_in(&target.runtime_root)
+            .map_err(|error| error.to_string())?;
+        if sessions.iter().any(|running| {
+            let session = &running.session;
+            session.name == target.name
+                && session.pid == target.pid
+                && session.created_at_unix_ms == target.generation
+                && session.endpoint == target.endpoint
+        }) {
+            return attach_target(target, notifier);
+        }
+        if sessions
+            .iter()
+            .any(|running| running.session.name == target.name)
+            || festerm_sessiond::process_alive(target.pid)
+        {
+            return Err("The recorded session changed or its exit is uncertain; no different session was attached.".into());
         }
     }
-    if let Some((root, session)) = unbound_existing_session_in(&roots, name)? {
+    if !allow_start {
+        return Err("No recorded session is available. Restoration never attaches an unverified generation.".into());
+    }
+    if let Some((root, session)) = unbound_existing_session_in(&hosted, &legacy, name)? {
         return festerm_sessiond::PersistentSession::resume_discovered_in(
             &session, &root, notifier,
         )
         .map_err(|error| error.to_string());
     }
-    if allow_start {
-        festerm_sessiond::PersistentSession::start_with_notifier(
-            name, profile, size, scrollback, notifier,
-        )
-        .map_err(|error| error.to_string())
-    } else {
-        Err(
-            "No existing session is available. Restoration never starts an unbound hosted profile."
-                .into(),
-        )
-    }
+    festerm_sessiond::PersistentSession::start_with_notifier(
+        name, profile, size, scrollback, notifier,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn unbound_existing_session_in(
-    roots: &[PathBuf],
+    hosted: &Path,
+    legacy: &Path,
     name: &str,
 ) -> Result<Option<(PathBuf, festerm_sessiond::UnattachedSession)>, String> {
-    for root in roots {
-        if let Some(running) = festerm_sessiond::list_running_sessions_strict_in(root)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .find(|running| running.session.name == name)
-        {
-            return Ok(Some((root.clone(), running.session)));
-        }
+    let legacy_sessions = festerm_sessiond::list_running_sessions_strict_in(legacy)
+        .map_err(|_| "Session inventory is unavailable; no replacement was started.")?;
+    if let Some(running) = legacy_sessions
+        .into_iter()
+        .find(|running| running.session.name == name)
+    {
+        return Ok(Some((legacy.to_owned(), running.session)));
+    }
+    let hosted_sessions = festerm_sessiond::list_running_sessions_strict_in(hosted)
+        .map_err(|_| "Session inventory is unavailable; no replacement was started.")?;
+    if hosted_sessions
+        .iter()
+        .any(|running| running.session.name == name)
+    {
+        return Err("An unverified hosted session already uses this name; no session was attached or started.".into());
     }
     Ok(None)
 }
@@ -627,28 +750,26 @@ impl Controller {
         if !explicit_enable {
             return Err("This exposure is not authorized on this host. Turn the checkbox off and on, then Save.");
         }
-        staging::initialize().map_err(|_| "Private hosting storage is unavailable.")?;
+        let namespace =
+            staging::initialize().map_err(|_| "Private hosting storage is unavailable.")?;
         let account = selected_account.ok_or("Choose a GitHub account before enabling hosting.")?;
         let _account = profile_hosting::account_lease(false)
             .map_err(|_| "Account sign-in is busy. Retry shortly.")?;
         let installation = uuid::Uuid::new_v4().to_string();
         let consent = uuid::Uuid::new_v4().to_string();
-        let state = profile_hosting::installation_path(&installation)
-            .map_err(|_| "Private hosting storage is unavailable.")?;
-        Store::open(&state, &installation, true)
-            .and_then(|store| {
-                store.prepare_hosted(
-                    &consent,
-                    &fingerprint,
-                    persistence.session_name(),
-                    HostedLaunch {
-                        runtime_root: profile_hosting::hosted_runtime()?,
-                        legacy: None,
-                    },
-                )?;
-                store.select_account(&consent, account)
-            })
-            .map_err(|_| "The hosting consent could not be prepared.")?;
+        let launch = initial_hosted_launch(persistence.session_name())?;
+        profile_hosting::prepare_hosted_installation_in(
+            &namespace,
+            profile_hosting::HostedPreparation {
+                installation: &installation,
+                consent: &consent,
+                spawn_fingerprint: &fingerprint,
+                session_name: persistence.session_name(),
+                launch,
+                account,
+            },
+        )
+        .map_err(|_| "The hosting consent could not be prepared.")?;
         let metadata = LocalTunnelHosting::new(installation, consent, true)
             .map_err(|_| "Invalid hosting metadata.")?;
         profile
@@ -657,13 +778,28 @@ impl Controller {
             .map_err(|_| "Invalid hosting metadata.")
     }
 
-    fn start_pending(&mut self, context: &egui::Context) {
+    fn start_pending(&mut self, configuration: &Configuration, context: &egui::Context) {
         if self.pending.is_some() {
             return;
         }
         let Some(work) = self.queue.pop_front() else {
             return;
         };
+        if let Some(profile) = work.profile() {
+            if configuration.profile(profile.identifier()) != Some(profile)
+                || configuration
+                    .validate_hosted_session_name(Some(profile.identifier()), profile, false)
+                    .is_err()
+            {
+                if let Some(binding) = work.binding() {
+                    self.errors.insert(
+                        binding.installation().to_owned(),
+                        "profile_host.profile_conflict".into(),
+                    );
+                }
+                return;
+            }
+        }
         let cancel = CancellationToken::new();
         let worker_cancel = cancel.clone();
         let context = context.clone();
@@ -701,6 +837,16 @@ impl Controller {
     fn poll(&mut self, configuration: &Configuration, context: &egui::Context) {
         if !self.enabled {
             return;
+        }
+        if let Some(pending) = &self.pending {
+            if pending.work.profile().is_some_and(|profile| {
+                configuration.profile(profile.identifier()) != Some(profile)
+                    || configuration
+                        .validate_hosted_session_name(Some(profile.identifier()), profile, false)
+                        .is_err()
+            }) {
+                pending.cancel.cancel();
+            }
         }
         if !self.initialized {
             self.initialized = true;
@@ -757,16 +903,6 @@ impl Controller {
                             }
                         }
                         Err(error) => {
-                            if error == "profile_host.restart_confirmation_required" {
-                                if let Work::Ensure(profile, _) = &pending.work {
-                                    self.confirmation = Some((
-                                        profile.identifier().to_owned(),
-                                        binding.clone(),
-                                        LocalHostAction::Restart,
-                                    ));
-                                    self.focus_confirmation = true;
-                                }
-                            }
                             self.rows.remove(&id);
                             self.errors.insert(id, error);
                         }
@@ -789,7 +925,7 @@ impl Controller {
                 }
             }
         }
-        self.start_pending(context);
+        self.start_pending(configuration, context);
         self.publish(configuration, context);
         if self.pending.is_some() {
             context.request_repaint_after(Duration::from_millis(100));
@@ -904,7 +1040,6 @@ impl Controller {
                 sign_in: grant.failure == Some(Failure::SignInRequired),
                 recreate: grant.phase == Phase::CloudMissing,
                 new_shell: grant.failure == Some(Failure::NewShellApprovalRequired),
-                restart: deferred_restart(&grant).is_some(),
                 message: phase_message(&grant).into(),
                 ..Default::default()
             };
@@ -924,6 +1059,13 @@ impl Controller {
                         "Checking service readiness. Connection details are not yet verified."
                             .into();
                 }
+            }
+            if configuration
+                .validate_hosted_session_name(Some(profile.identifier()), profile, false)
+                .is_err()
+            {
+                view.message = failure_message("profile_host.profile_conflict").into();
+                view.share = None;
             }
             views.insert(profile.identifier().to_owned(), view);
         }
@@ -1102,12 +1244,12 @@ fn phase_message(grant: &Consent) -> &'static str {
         return "Cloud creation was submitted but is unconfirmed. Retry only reconciles this reservation. Disable/Save and explicitly re-enable to request a separate tunnel; this old reservation stays tracked for cleanup.";
     }
     match grant.failure {
-        Some(Failure::SignInRequired) => return "Sign-in required. Use the recorded GitHub account; no credentials are stored in the profile.",
+        Some(Failure::SignInRequired) => return "Sign-in required. Use the recorded GitHub account. Changing the shared CLI sign-in may interrupt older script hosts in custom state directories.",
         Some(Failure::NewShellApprovalRequired) => return "New shell approval required. Retry cannot replace the recorded persistent shell.",
         Some(Failure::CommandMismatch) => return "The persistent command could not be verified. No running shell was replaced.",
         Some(Failure::CreationUncertain) => return "Creation outcome uncertain. Cleanup remains tracked; Retry only looks for the reserved owned tunnel.",
         Some(Failure::HelperUnavailable) => return "Hosting helpers are unavailable. Install a complete signed fesTerm build, then Retry.",
-        Some(Failure::RestartRequired) => return "Hosting is pending a session restart. The current shell is unchanged. Restart it explicitly here, or end it and open this profile again; Retry never restarts it.",
+        Some(Failure::RestartRequired) => return MANUAL_RESTART_MESSAGE,
         _ => {}
     }
     match grant.phase {
@@ -1123,14 +1265,15 @@ fn phase_message(grant: &Consent) -> &'static str {
 
 fn failure_message(code: &str) -> &'static str {
     match code {
-        "profile_host.restart_required" | "profile_host.restart_confirmation_required" =>
-            "Hosting is pending a session restart. The current shell is unchanged. Restart it explicitly here, or end it and open this profile again; Retry never restarts it.",
+        "profile_host.restart_required" => MANUAL_RESTART_MESSAGE,
         "profile_host.cancelled" => "Sign-in or the pending operation was cancelled. Saved consent was not renewed.",
         "profile_host.new_shell_approval_required" => "New shell approval required. Retry cannot replace a dead or uncertain shell.",
         "profile_host.signature_required" | "profile_host.package_location" => "Install a complete signed fesTerm build with its tunnel helpers, then Retry.",
         "profile_host.archive_pin_mismatch" | "profile_host.cli_pin_mismatch" | "profile_host.cached_helper_mismatch" => "Hosting helper verification failed. Existing services were not replaced; reinstall the reviewed release.",
         "profile_host.download_failed" | "profile_host.download_unavailable" => "The pinned Dev Tunnel CLI could not be downloaded. Check connectivity, then Retry.",
         "profile_host.command_mismatch" => "The exact persistent command could not be verified. Disable exposure before changing its command or session name.",
+        "profile_host.account_recovery" => "Sign-in could not be verified or conflicts with another known host. A completed browser login may have changed the shared account; restore the recorded account before retrying.",
+        "profile_host.profile_conflict" => "This profile changed or shares a native session name with a hosted profile. Resolve the conflict before opening or starting hosting.",
         _ => "Hosting could not complete. The protected operation is retained; check the saved profile and Retry. Cleanup may require browser sign-in.",
     }
 }
@@ -1195,63 +1338,7 @@ async fn execute_in(
     restart: Option<Target>,
 ) -> Result<ManagementReply, String> {
     let operation = match work {
-        Work::Restart(profile, scrollback, expected) => {
-            let binding = binding(&profile).ok_or("profile_host.binding")?;
-            let store = store(binding).map_err(|_| "profile_host.binding")?;
-            let grant = grant(binding).map_err(|_| "profile_host.binding")?;
-            if !grant.phase.allows_hosting()
-                || deferred_restart(&grant) != Some(&expected)
-                || fingerprint(&profile).map_err(|_| "profile_host.command_mismatch")?
-                    != grant.spawn_fingerprint
-                || cancel.is_cancelled()
-            {
-                return Err("profile_host.stale_consent".into());
-            }
-            let checked = request_management(
-                helpers,
-                ManagementOperation::CheckRestartTarget {
-                    target: expected.clone(),
-                },
-                cancel,
-            )
-            .await?;
-            if checked.error.is_some() {
-                return Err("The selected session is already hosted, or hosting ownership could not be verified. No session was stopped.".into());
-            }
-            if festerm_sessiond::process_alive(expected.pid) {
-                let command = festerm_sessiond::terminate_selected_session_command_in(
-                    &expected.runtime_root,
-                    &selected(&expected),
-                )
-                .map_err(|_| "profile_host.restart_identity")?;
-                let mut command = tokio::process::Command::from(command);
-                command
-                    .kill_on_drop(true)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                #[cfg(windows)]
-                command.creation_flags(0x0800_0000);
-                let mut child = store
-                    .with_restart_permit(binding.consent(), &expected, || {
-                        if cancel.is_cancelled() {
-                            return Err(io::Error::other("profile_host.cancelled"));
-                        }
-                        command.spawn()
-                    })
-                    .map_err(|_| "profile_host.stale_consent")?;
-                capture_child(&mut child, Duration::from_secs(15)).await?;
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while festerm_sessiond::process_alive(expected.pid) {
-                    if cancel.is_cancelled() || Instant::now() >= deadline {
-                        return Err("profile_host.restart_required".into());
-                    }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            }
-            store
-                .authorize_hosted_start(binding.consent(), &expected)
-                .map_err(|_| "profile_host.restart_required")?;
+        Work::FreshAfterExit(profile, scrollback, expected) => {
             return Box::pin(execute_in(
                 helpers,
                 Work::Ensure(profile, scrollback),
@@ -1261,20 +1348,22 @@ async fn execute_in(
             .await;
         }
         Work::Login(next) => {
-            let _account =
-                profile_hosting::account_lease(true).map_err(|_| "profile_host.account_busy")?;
             let binding = next.binding().ok_or("profile_host.binding")?;
-            if grant(binding).map_err(|_| "profile_host.binding")?.failure
-                != Some(Failure::SignInRequired)
-            {
+            let grant = grant(binding).map_err(|_| "profile_host.binding")?;
+            if grant.failure != Some(Failure::SignInRequired) {
                 return Err("profile_host.sign_in_not_required".into());
             }
-            let verified = festerm_tunnel_bridge::cli_pins::verify(&helpers.cli)
-                .map_err(|_| "profile_host.cli_pin_mismatch")?;
-            let mut command = tokio::process::Command::new(verified.path());
-            command.args(["user", "login", "--github", "--use-browser-auth"]);
-            let _output = capture(command, Duration::from_secs(300)).await?;
-            drop(_account);
+            let expected = grant
+                .selected_account
+                .or_else(|| {
+                    grant
+                        .cloud_reservation
+                        .map(|reservation| reservation.account)
+                })
+                .ok_or("profile_host.account_recovery")?;
+            account::recover(helpers, expected)
+                .await
+                .map_err(|_| "profile_host.account_recovery")?;
             return Box::pin(execute(helpers, *next, cancel)).await;
         }
         Work::Ensure(profile, scrollback) => {
@@ -1287,22 +1376,30 @@ async fn execute_in(
             if deferred_restart(&grant) != restart.as_ref() {
                 return Err("profile_host.restart_required".into());
             }
+            let local = profile.as_local().ok_or("profile_host.profile")?;
+            let persistence = local.persistence().ok_or("profile_host.profile")?;
+            let (native_profile, fingerprint) = worker_native_and_fingerprint(&profile).await?;
+            if persistence.session_name() != grant.session_name
+                || fingerprint != grant.spawn_fingerprint
+            {
+                let _ = store.report_failure(binding.consent(), Failure::CommandMismatch);
+                return Err("profile_host.command_mismatch".into());
+            }
+            let _legacy_start = if grant.hosted_launch.is_some() && grant.target.is_none() {
+                let legacy = festerm_sessiond::runtime_root()
+                    .map_err(|_| "profile_host.runtime_namespace")?;
+                Some(
+                    festerm_sessiond::lock_legacy_start_in(&legacy, &grant.session_name)
+                        .map_err(|_| "profile_host.restart_required")?,
+                )
+            } else {
+                None
+            };
             if let Some(expected) = &restart {
                 store
                     .authorize_hosted_start(binding.consent(), expected)
                     .map_err(|_| "profile_host.restart_required")?;
             }
-            let local = profile.as_local().ok_or("profile_host.profile")?;
-            let persistence = local.persistence().ok_or("profile_host.profile")?;
-            if persistence.session_name() != grant.session_name
-                || fingerprint(&profile).map_err(|_| "profile_host.command_mismatch")?
-                    != grant.spawn_fingerprint
-            {
-                let _ = store.report_failure(binding.consent(), Failure::CommandMismatch);
-                return Err("profile_host.command_mismatch".into());
-            }
-            let native_profile =
-                crate::environment::with_corrected_local_path(local.to_local_profile());
             let target = if let Some(target) = grant.target {
                 if festerm_sessiond::session_correlation_in(
                     &target.runtime_root,
@@ -1327,20 +1424,22 @@ async fn execute_in(
                         store
                             .defer_hosted_start(binding.consent(), legacy)
                             .map_err(|_| "profile_host.stale_consent")?;
-                        return Err("profile_host.restart_confirmation_required".into());
+                        return Err("profile_host.restart_required".into());
                     }
                 }
-                let identity = festerm_sessiond::ensure_detached_in(
-                    &root,
-                    festerm_sessiond::DetachedSessionRequest {
-                        name: persistence.session_name(),
-                        profile: &native_profile,
-                        size: festerm_session::TerminalSize::new(80, 24)
-                            .expect("default terminal dimensions"),
-                        scrollback_limit_bytes: scrollback,
-                        launch_request: binding.consent(),
-                    },
-                )
+                let request = festerm_sessiond::DetachedSessionRequest {
+                    name: persistence.session_name(),
+                    profile: &native_profile,
+                    size: festerm_session::TerminalSize::new(80, 24)
+                        .expect("default terminal dimensions"),
+                    scrollback_limit_bytes: scrollback,
+                    launch_request: binding.consent(),
+                };
+                let identity = if grant.hosted_launch.is_some() {
+                    festerm_sessiond::ensure_owned_detached_in(&root, request)
+                } else {
+                    festerm_sessiond::ensure_detached_in(&root, request)
+                }
                 .map_err(|_| {
                     let _ =
                         store.report_failure(binding.consent(), Failure::NewShellApprovalRequired);
@@ -1511,23 +1610,30 @@ impl FesTermApp {
                     super::ConfigurationReloader::save_profile,
                 );
                 if saved {
-                    let commit = binding(&profile)
-                        .map(|binding| {
-                            if prepared {
-                                store(binding)
-                                    .and_then(|store| store.commit_requested(binding.consent()))
-                                    .map(|_| ())
-                            } else {
-                                Ok(())
-                            }
-                        })
-                        .unwrap_or(Ok(()));
-                    if commit.is_ok() {
+                    let commit = match (prepared, binding(&profile)) {
+                        (true, Some(binding)) => store(binding)
+                            .and_then(|store| store.commit_requested(binding.consent()))
+                            .map(Some),
+                        (true, None) => Err(io::Error::other("profile_host.binding")),
+                        (false, _) => Ok(None),
+                    };
+                    if let Ok(committed) = commit {
                         if expose {
-                            self.local_hosting.enqueue(Work::Ensure(
-                                Box::new(profile),
-                                self.state.scrollback_limit().bytes(),
-                            ));
+                            let effective = committed.or_else(|| {
+                                binding(&profile).and_then(|binding| grant(binding).ok())
+                            });
+                            match effective {
+                                Some(grant) if deferred_restart(&grant).is_some() => {
+                                    self.secure_storage_feedback = Some(MANUAL_RESTART_MESSAGE);
+                                }
+                                Some(_) => self.local_hosting.enqueue(Work::Ensure(
+                                    Box::new(profile),
+                                    self.state.scrollback_limit().bytes(),
+                                )),
+                                None => {
+                                    self.secure_storage_feedback = Some("The profile was saved, but its hosting state is unavailable. No hosting action was started; retry after verifying the private state.");
+                                }
+                            }
                         }
                         Ok(())
                     } else {
@@ -1563,6 +1669,14 @@ impl FesTermApp {
             }
         }
         self.local_hosting.poll(self.state.configuration(), context);
+        if self
+            .local_hosting
+            .errors
+            .values()
+            .any(|error| error == "profile_host.restart_required")
+        {
+            self.secure_storage_feedback = Some(MANUAL_RESTART_MESSAGE);
+        }
         if selecting_account {
             return;
         }
@@ -1610,21 +1724,18 @@ impl FesTermApp {
         let mut confirmed = false;
         let mut cancelled = context.input(|input| input.key_pressed(egui::Key::Escape));
         let new_shell = action == LocalHostAction::NewShell;
-        let restart = action == LocalHostAction::Restart;
         egui::Modal::new(egui::Id::new("local_host_confirmation"))
             .show(context, |ui| {
                 super::confirmations::prepare_confirmation(ui, context, 480.0);
-                ui.heading(if restart { "Restart this session to enable Dev Tunnel?" } else if new_shell { "Start a new persistent shell?" } else { "Recreate the missing tunnel?" });
-                ui.label(if restart {
-                    "Enabling hosting requires restarting this persistent session. Yes stops only the selected session and starts the configured command; running programs and terminal state are lost, and any attached local tabs or remote clients disconnect. No keeps it running and saves hosting as pending until you end the session and open this profile again. Other sessions are not restarted."
-                } else if new_shell {
+                ui.heading(if new_shell { "Start a new persistent shell?" } else { "Recreate the missing tunnel?" });
+                ui.label(if new_shell {
                     "This starts a new configured persistent shell and exposes it. Old programs and terminal state are not recovered. No live daemon is terminated."
                 } else {
                     "This creates a new cloud tunnel and connection details for the exact recorded persistent shell. It cannot start or replace that shell."
                 });
                 ui.horizontal(|ui| {
-                    confirmed = ui.button(if restart { "Yes, restart and enable" } else if new_shell { "Start new shell and expose" } else { "Recreate tunnel" }).clicked();
-                    let cancel = ui.button(if restart { "No, keep running" } else { "Cancel" });
+                    confirmed = ui.button(if new_shell { "Start new shell and expose" } else { "Recreate tunnel" }).clicked();
+                    let cancel = ui.button("Cancel");
                     if focus_cancel { cancel.request_focus(); }
                     cancelled |= cancel.clicked();
                 });
@@ -1668,20 +1779,14 @@ impl FesTermApp {
                 "The hosting binding changed. Review the current profile before confirming.",
             );
         }
+        self.state
+            .configuration()
+            .validate_hosted_session_name(Some(profile_id), &profile, false)
+            .map_err(|_| "This profile shares a native session name with a hosted profile. Resolve the conflict before confirming.")?;
         let grant =
             grant(&binding).map_err(|_| "The hosting consent changed. Open the profile again.")?;
         let store = store(&binding).map_err(|_| "Private hosting storage is unavailable.")?;
         match action {
-            LocalHostAction::Restart => {
-                let expected = deferred_restart(&grant)
-                    .ok_or("The pending restart changed. Open the profile again.")?
-                    .clone();
-                self.local_hosting.enqueue(Work::Restart(
-                    Box::new(profile),
-                    self.state.scrollback_limit().bytes(),
-                    expected,
-                ));
-            }
             LocalHostAction::RecreateMissing => {
                 store.request_recreation(binding.consent()).map_err(|_| {
                     "The tunnel is not definitively missing, or its consent was revoked."
@@ -1701,9 +1806,15 @@ impl FesTermApp {
                 }) {
                     return Err("The recorded shell is still live. It was not replaced.");
                 }
+                let deferred = deferred_restart(&grant).cloned();
+                if let Some(expected) = &deferred {
+                    store
+                        .authorize_hosted_start(binding.consent(), expected)
+                        .map_err(|_| "The old session is still running or its exit cannot be verified. No shell was stopped or started.")?;
+                }
                 let fresh = uuid::Uuid::new_v4().to_string();
                 store.prepare_new_shell(binding.consent(), &fresh)
-                    .map_err(|_| "A fresh shell cannot be approved in this hosting state. Resolve pending creation or cleanup first.")?;
+                    .map_err(|_| "A fresh shell requires the old session to have definitely ended and no creation or cleanup to be pending. No shell was stopped.")?;
                 let metadata = LocalTunnelHosting::new(binding.installation(), fresh, true)
                     .map_err(|_| "Invalid hosting consent.")?;
                 let profile = profile
@@ -1721,10 +1832,11 @@ impl FesTermApp {
                 store.commit_requested(metadata.consent()).map_err(|_| {
                     "The profile was saved, but another explicit Save is required before exposure."
                 })?;
-                self.local_hosting.enqueue(Work::Ensure(
-                    Box::new(profile),
-                    self.state.scrollback_limit().bytes(),
-                ));
+                let scrollback = self.state.scrollback_limit().bytes();
+                self.local_hosting.enqueue(match deferred {
+                    Some(expected) => Work::FreshAfterExit(Box::new(profile), scrollback, expected),
+                    None => Work::Ensure(Box::new(profile), scrollback),
+                });
             }
             _ => return Err("This hosting action requires a different confirmation."),
         }
@@ -1819,9 +1931,7 @@ impl FesTermApp {
                 };
                 self.local_hosting.enqueue(Work::Login(Box::new(next)));
             }
-            LocalHostAction::RecreateMissing
-            | LocalHostAction::NewShell
-            | LocalHostAction::Restart => {
+            LocalHostAction::RecreateMissing | LocalHostAction::NewShell => {
                 self.local_hosting.confirmation =
                     Some((profile_id.to_owned(), binding.clone(), action));
                 self.local_hosting.focus_confirmation = true;
@@ -1836,12 +1946,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unbound_profile_prefers_existing_hosted_then_legacy_and_refuses_unknown() {
+    fn unbound_profile_uses_legacy_and_refuses_unverified_hosted_sessions() {
         let fixture = tempfile::tempdir().unwrap();
         let hosted = fixture.path().join("hosted");
         let legacy = fixture.path().join("legacy");
-        let roots = [hosted.clone(), legacy.clone()];
-        assert!(unbound_existing_session_in(&roots, "shell")
+        assert!(unbound_existing_session_in(&hosted, &legacy, "shell")
             .unwrap()
             .is_none());
         std::fs::create_dir(&hosted).unwrap();
@@ -1858,7 +1967,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            unbound_existing_session_in(&roots, "shell")
+            unbound_existing_session_in(&hosted, &legacy, "shell")
                 .unwrap()
                 .unwrap()
                 .0,
@@ -1870,18 +1979,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            unbound_existing_session_in(&roots, "shell")
+            unbound_existing_session_in(&hosted, &legacy, "shell")
                 .unwrap()
                 .unwrap()
                 .0,
-            hosted
+            legacy
         );
+        std::fs::remove_file(legacy.join("registry.json")).unwrap();
+        assert!(unbound_existing_session_in(&hosted, &legacy, "shell")
+            .unwrap_err()
+            .contains("unverified hosted"));
         std::fs::write(
             hosted.join("registry.json"),
             br#"{"sessions":{"shell":{"socket":42,"protocol_version":9}}}"#,
         )
         .unwrap();
-        assert!(unbound_existing_session_in(&roots, "shell").is_err());
+        assert!(unbound_existing_session_in(&hosted, &legacy, "shell").is_err());
     }
 
     fn fixture() -> (LocalTunnelHosting, Consent, Profile) {
@@ -1918,6 +2031,276 @@ mod tests {
             .with_local_tunnel_hosting(Some(binding.clone()))
             .unwrap();
         (binding, grant, profile)
+    }
+
+    #[test]
+    fn loaded_hosting_grant_rejects_a_changed_session_name() {
+        let (_, grant, _) = fixture();
+        assert!(validate_loaded_session_name("fixture", &grant).is_ok());
+        let error = validate_loaded_session_name("different", &grant).unwrap_err();
+        assert!(error.contains("no session was attached or started"));
+    }
+
+    #[test]
+    fn prepared_hosting_remembers_a_legacy_session_that_exits_before_commit() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(fixture.path()).unwrap();
+        let legacy = root.join("legacy").join("sessiond");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let pid = std::process::id();
+        let generation = 42;
+        let endpoint = legacy.join(format!("{pid}-{generation}.sock"));
+        std::fs::write(&endpoint, b"").unwrap();
+        let lease =
+            std::fs::File::create(legacy.join(format!("lease-{pid}-{generation}"))).unwrap();
+        fs2::FileExt::lock_exclusive(&lease).unwrap();
+        let registry = serde_json::json!({ "sessions": { "fixture": {
+            "name": "fixture",
+            "pid": pid,
+            "socket": endpoint,
+            "created_at_unix_ms": generation
+        } } });
+        std::fs::write(
+            legacy.join("registry.json"),
+            serde_json::to_vec(&registry).unwrap(),
+        )
+        .unwrap();
+        let product = if cfg!(windows) { "fesTerm" } else { "festerm" };
+        let hosted = root.join("protected").join(product).join("sessiond");
+        let launch = initial_hosted_launch_in(&legacy, hosted, "fixture").unwrap();
+        let expected = launch.legacy.clone().unwrap();
+        let installation = uuid::Uuid::new_v4().to_string();
+        let consent = uuid::Uuid::new_v4().to_string();
+        let store = Store::open(&root.join("consent"), &installation, true).unwrap();
+        store
+            .prepare_hosted(&consent, "spawn-v1:fixture", "fixture", launch)
+            .unwrap();
+
+        drop(lease);
+        assert!(legacy_session_in(&legacy, "fixture").unwrap().is_none());
+        let committed = store.commit_requested(&consent).unwrap();
+        assert_eq!(deferred_restart(&committed), Some(&expected));
+        assert_eq!(committed.failure, Some(Failure::RestartRequired));
+        assert_eq!(deferred_restart(&store.read().unwrap()), Some(&expected));
+    }
+
+    #[test]
+    fn hosting_preparation_waits_for_an_inflight_legacy_start() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(fixture.path()).unwrap();
+        let legacy = root.join("legacy").join("sessiond");
+        std::fs::create_dir_all(&legacy).unwrap();
+        let guard = festerm_sessiond::lock_legacy_start_in(&legacy, "fixture").unwrap();
+        let product = if cfg!(windows) { "fesTerm" } else { "festerm" };
+        let hosted = root.join("protected").join(product).join("sessiond");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let thread_legacy = legacy.clone();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            result_tx
+                .send(initial_hosted_launch_in(&thread_legacy, hosted, "fixture"))
+                .unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(matches!(
+            result_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        let pid = std::process::id();
+        let generation = 42;
+        let endpoint = legacy.join(format!("{pid}-{generation}.sock"));
+        std::fs::write(&endpoint, b"").unwrap();
+        let lease =
+            std::fs::File::create(legacy.join(format!("lease-{pid}-{generation}"))).unwrap();
+        fs2::FileExt::lock_exclusive(&lease).unwrap();
+        let registry = serde_json::json!({ "sessions": { "fixture": {
+            "name": "fixture",
+            "pid": pid,
+            "socket": endpoint,
+            "created_at_unix_ms": generation
+        } } });
+        std::fs::write(
+            legacy.join("registry.json"),
+            serde_json::to_vec(&registry).unwrap(),
+        )
+        .unwrap();
+        drop(guard);
+        let launch = result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        let selected = launch.legacy.unwrap();
+        assert_eq!(selected.pid, pid);
+        assert_eq!(selected.generation, generation);
+        drop(lease);
+    }
+
+    #[test]
+    fn fresh_approval_checks_deferred_exit_without_stopping_a_session() {
+        const CHILD: &str = "FESTERM_TEST_FRESH_AFTER_EXIT";
+        if std::env::var_os(CHILD).is_none() {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = std::fs::canonicalize(fixture.path())
+                .unwrap()
+                .join("legacy")
+                .join("sessiond");
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "app::profile_hosting::tests::fresh_approval_checks_deferred_exit_without_stopping_a_session",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("FESTERM_SESSIOND_RUNTIME_ROOT", root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated recovery test failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let namespace = profile_hosting::namespace().unwrap();
+        festerm_sessiond::prepare_native_runtime(&namespace.join("installations")).unwrap();
+        let legacy_root = festerm_sessiond::runtime_root().unwrap();
+        let hosted_root = profile_hosting::hosted_runtime().unwrap();
+        let helpers = staging::Helpers {
+            setup: PathBuf::new(),
+            cli: PathBuf::new(),
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        for (pid, expected_error) in [
+            (std::process::id(), "profile_host.restart_required"),
+            (i32::MAX as u32, "profile_host.command_mismatch"),
+        ] {
+            let installation = uuid::Uuid::new_v4().to_string();
+            let consent = uuid::Uuid::new_v4().to_string();
+            let binding = LocalTunnelHosting::new(&installation, &consent, true).unwrap();
+            let shell = if cfg!(windows) {
+                std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
+            } else {
+                "/bin/sh".into()
+            };
+            let profile = Profile::local("fixture", &shell, Vec::new(), None)
+                .unwrap()
+                .with_persistence(PersistenceProviderKind::FestermSessiond, "fixture")
+                .unwrap()
+                .with_local_tunnel_hosting(Some(binding.clone()))
+                .unwrap();
+            let verified_fingerprint = fingerprint(&profile).unwrap();
+            let saved_fingerprint = if pid == std::process::id() {
+                &verified_fingerprint
+            } else {
+                "spawn-v1:fixture"
+            };
+            let expected = Target {
+                runtime_root: legacy_root.clone(),
+                name: "fixture".into(),
+                pid,
+                generation: 42,
+                endpoint: format!("session-{pid}-42"),
+            };
+            let store = Store::open(
+                &profile_hosting::installation_path(&installation).unwrap(),
+                &installation,
+                true,
+            )
+            .unwrap();
+            store
+                .prepare_hosted(
+                    &consent,
+                    saved_fingerprint,
+                    "fixture",
+                    HostedLaunch {
+                        runtime_root: hosted_root.clone(),
+                        legacy: Some(expected.clone()),
+                    },
+                )
+                .unwrap();
+            store.commit_requested(&consent).unwrap();
+            let result = runtime.block_on(execute(
+                &helpers,
+                Work::FreshAfterExit(Box::new(profile), 1024, expected.clone()),
+                &CancellationToken::new(),
+            ));
+            assert_eq!(result.err().as_deref(), Some(expected_error));
+            assert_eq!(deferred_restart(&store.read().unwrap()), Some(&expected));
+        }
+    }
+
+    #[test]
+    fn ambiguous_loaded_profiles_cannot_queue_hosting_work() {
+        let profile = Profile::local("hosted", "shell", Vec::new(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "shared")
+            .unwrap()
+            .with_local_tunnel_hosting(Some(
+                LocalTunnelHosting::new(
+                    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    true,
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let ordinary = Profile::local("ordinary", "shell", Vec::new(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "shared")
+            .unwrap();
+        let configuration = Configuration::new(vec![profile.clone(), ordinary]).unwrap();
+        let mut controller = Controller::default();
+        controller.enqueue(Work::Ensure(Box::new(profile.clone()), 1024));
+        controller.start_pending(&configuration, &egui::Context::default());
+        assert!(controller.pending.is_none());
+        assert!(controller.queue.is_empty());
+        assert_eq!(
+            controller
+                .errors
+                .get(binding(&profile).unwrap().installation()),
+            Some(&"profile_host.profile_conflict".to_owned())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preparation_rejects_an_oversized_hosted_endpoint() {
+        const CHILD: &str = "FESTERM_TEST_LONG_HOSTED_ENDPOINT";
+        if std::env::var_os(CHILD).is_none() {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = std::fs::canonicalize(fixture.path())
+                .unwrap()
+                .join("long-hosting-path".repeat(6))
+                .join("sessiond");
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "app::profile_hosting::tests::preparation_rejects_an_oversized_hosted_endpoint",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("FESTERM_SESSIOND_RUNTIME_ROOT", root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated hosting preflight failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let namespace = profile_hosting::namespace().unwrap();
+        assert!(initial_hosted_launch("fixture")
+            .unwrap_err()
+            .contains("too long"));
+        assert!(!namespace.exists());
     }
 
     #[test]

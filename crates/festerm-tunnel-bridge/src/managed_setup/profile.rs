@@ -44,7 +44,7 @@ pub(crate) async fn request_file(args: &[OsString]) -> io::Result<()> {
         ManagementOperation::BindExisting(request) => Some(request.installation.clone()),
         ManagementOperation::Status { installation }
         | ManagementOperation::Remove { installation, .. } => Some(installation.clone()),
-        ManagementOperation::Inventory | ManagementOperation::CheckRestartTarget { .. } => None,
+        ManagementOperation::Inventory => None,
     };
     let result = match request.operation {
         ManagementOperation::BindExisting(request) => {
@@ -59,9 +59,6 @@ pub(crate) async fn request_file(args: &[OsString]) -> io::Result<()> {
             None => Err(refused("profile_host.consent_required")),
         },
         ManagementOperation::Inventory => inventory(),
-        ManagementOperation::CheckRestartTarget { target } => {
-            check_restart_target(&target).map(|()| Vec::new())
-        }
     };
     let (hosts, error) = match result {
         Ok(hosts) => (hosts, None),
@@ -592,20 +589,6 @@ fn status(installation: &str) -> io::Result<ManagedHostStatus> {
         failure: grant.failure,
         destination,
     })
-}
-
-fn check_restart_target(target: &profile_hosting::Target) -> io::Result<()> {
-    if !profile_hosting::accepts_runtime(&target.runtime_root)? {
-        return Err(refused("profile_host.runtime_namespace"));
-    }
-    for host in inventory()? {
-        let state = profile_hosting::installation_path(&host.installation)?;
-        let grant = Store::open(&state, &host.installation, false)?.read()?;
-        if grant.phase != Phase::Revoked && grant.target.as_ref() == Some(target) {
-            return Err(refused("profile_host.restart_target_already_hosted"));
-        }
-    }
-    management::check_restart_target(target)
 }
 
 fn inventory() -> io::Result<Vec<ManagedHostStatus>> {

@@ -47,7 +47,6 @@ pub(crate) struct LocalHostView {
     pub sign_in: bool,
     pub recreate: bool,
     pub new_shell: bool,
-    pub restart: bool,
     pub unreferenced: bool,
 }
 
@@ -308,6 +307,13 @@ impl DevTunnelProfileDraft {
 
 fn profiles_state_id(tab_id: TabId) -> egui::Id {
     egui::Id::new(("profiles_state", tab_id))
+}
+
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) fn profiles_has_open_editor(context: &egui::Context, tab_id: TabId) -> bool {
+    context
+        .data(|data| data.get_temp::<ProfilesScreenState>(profiles_state_id(tab_id)))
+        .is_some_and(|state| !matches!(state.mode, ProfilesScreenMode::List))
 }
 
 fn clear_powershell_editor_secret(context: &egui::Context, mode: &mut ProfilesScreenMode) {
@@ -1982,7 +1988,6 @@ pub(crate) fn show_profiles(
                                             ("Retry hosting / cleanup", LocalHostAction::Retry, !hosting.busy && draft.original_hosting.is_some()),
                                             ("Recreate missing tunnel", LocalHostAction::RecreateMissing, hosting.recreate),
                                             ("Start a new persistent shell and expose it", LocalHostAction::NewShell, hosting.new_shell),
-                                            ("Restart session to enable hosting", LocalHostAction::Restart, hosting.restart && !hosting.busy),
                                         ] {
                                             if visible && ui.button(label).clicked() {
                                                 command = Some(AppCommand::LocalTunnelHost {
@@ -2019,6 +2024,14 @@ pub(crate) fn show_profiles(
                                                 explicit_enable: draft.explicit_enable,
                                                 account_selection: draft.account_selection,
                                             });
+                                        } else if let Err(error) = configuration
+                                            .validate_hosted_session_name(
+                                                draft.original_id.as_deref(),
+                                                &profile,
+                                                false,
+                                            )
+                                        {
+                                            draft.error = Some(error.to_string());
                                         } else {
                                             command = Some(AppCommand::SaveProfile { profile });
                                             next_mode = Some(ProfilesScreenMode::List);
@@ -4473,6 +4486,46 @@ mod tests {
             PersistenceProviderKind::FestermSessiond
         );
         assert_eq!(persistence.session_name(), "durable-local");
+    }
+
+    #[test]
+    fn ordinary_local_save_rejects_hosted_session_name_and_keeps_draft() {
+        let hosted = Profile::local("hosted", "shell", Vec::new(), None)
+            .unwrap()
+            .with_persistence(PersistenceProviderKind::FestermSessiond, "shared")
+            .unwrap()
+            .with_local_tunnel_hosting(Some(
+                festerm_config::LocalTunnelHosting::new(
+                    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    true,
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let mut harness =
+            profiles_harness(festerm_config::Configuration::new(vec![hosted]).unwrap());
+        harness.run_ok();
+        open_new_profile(&mut harness, "Local");
+        harness.get_by_label("Name").focus();
+        harness.get_by_label("Name").type_text("shared");
+        harness.run_ok();
+        harness.get_by_label("Use a durable local session").click();
+        harness.run_ok();
+        harness.get_by_label("Save").scroll_to_me();
+        harness.run_ok();
+        harness.get_by_label("Save").click();
+        harness.run_ok();
+
+        assert!(harness.state().command.is_none());
+        assert!(harness.query_by_label("New Local Profile").is_some());
+        assert!(harness
+            .query_by_label("Dev Tunnel hosting requires a unique native persistent session name; rename the conflicting session before saving")
+            .is_some());
+        assert_eq!(
+            harness.get_by_label("Name").value().as_deref(),
+            Some("shared")
+        );
     }
 
     #[test]

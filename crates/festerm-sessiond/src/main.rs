@@ -339,9 +339,6 @@ enum CommandSpec {
     KillUnattached {
         expected: festerm_sessiond::NativeSessionIdentity,
     },
-    KillSelected {
-        expected: festerm_sessiond::NativeSessionIdentity,
-    },
     Attach {
         name: String,
     },
@@ -514,7 +511,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         CommandSpec::DiscoverJson => run_discover_json(),
         CommandSpec::Kill { name } => run_kill(name),
         CommandSpec::KillUnattached { expected } => run_kill_unattached(expected),
-        CommandSpec::KillSelected { expected } => run_kill_selected(expected),
         CommandSpec::Attach { name } => run_attach(name),
         CommandSpec::Bridge {
             name,
@@ -537,7 +533,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Error>> {
     if args.is_empty() {
         return Err(
-            "usage: festerm-sessiond <start|daemon|list|capabilities|discover|kill|kill-unattached|kill-selected|attach|bridge> ..."
+            "usage: festerm-sessiond <start|daemon|list|capabilities|discover|kill|kill-unattached|attach|bridge> ..."
                 .into(),
         );
     }
@@ -559,7 +555,7 @@ fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Erro
             let name = parse_name_only(&args[1..], "kill")?;
             Ok(CommandSpec::Kill { name })
         }
-        "kill-unattached" | "kill-selected" => {
+        "kill-unattached" => {
             let [name_flag, name, pid_flag, pid, created_flag, created, endpoint_flag, endpoint] =
                 &args[1..]
             else {
@@ -578,16 +574,13 @@ fn parse_args(args: Vec<String>) -> Result<CommandSpec, Box<dyn std::error::Erro
             if pid == 0 || endpoint.is_empty() {
                 return Err("invalid kill-unattached identity".into());
             }
-            let expected = festerm_sessiond::NativeSessionIdentity {
-                name: validate_name(name.clone())?,
-                pid,
-                created_at_unix_ms: created.parse()?,
-                endpoint: endpoint.clone(),
-            };
-            Ok(if args[0] == "kill-selected" {
-                CommandSpec::KillSelected { expected }
-            } else {
-                CommandSpec::KillUnattached { expected }
+            Ok(CommandSpec::KillUnattached {
+                expected: festerm_sessiond::NativeSessionIdentity {
+                    name: validate_name(name.clone())?,
+                    pid,
+                    created_at_unix_ms: created.parse()?,
+                    endpoint: endpoint.clone(),
+                },
             })
         }
         "attach" => {
@@ -2910,37 +2903,10 @@ fn run_kill_unattached(
     })
 }
 
-fn run_kill_selected(
-    expected: festerm_sessiond::NativeSessionIdentity,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let root = festerm_sessiond::runtime_root()?;
-    with_registry_lock(|registry| {
-        kill_generation_registered_session(
-            &root,
-            registry,
-            &expected,
-            false,
-            terminate_pid,
-            GENERATION_EXIT_TIMEOUT,
-        )
-    })
-}
-
 fn kill_unattached_registered_session(
     root: &Path,
     registry: &mut SessionRegistry,
     expected: &festerm_sessiond::NativeSessionIdentity,
-    terminate: impl FnOnce(u32) -> Result<(), Box<dyn std::error::Error>>,
-    timeout: Duration,
-) -> Result<(), Box<dyn std::error::Error>> {
-    kill_generation_registered_session(root, registry, expected, true, terminate, timeout)
-}
-
-fn kill_generation_registered_session(
-    root: &Path,
-    registry: &mut SessionRegistry,
-    expected: &festerm_sessiond::NativeSessionIdentity,
-    require_unattached: bool,
     terminate: impl FnOnce(u32) -> Result<(), Box<dyn std::error::Error>>,
     timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -2952,7 +2918,7 @@ fn kill_generation_registered_session(
         || current.pid != expected.pid
         || current.created_at_unix_ms != expected.created_at_unix_ms
         || current.socket != expected.endpoint
-        || (require_unattached && current.attached)
+        || current.attached
     {
         return Err("Selected session was replaced or attached; refresh Running Sessions".into());
     }
@@ -6713,65 +6679,6 @@ mod tests {
             &fixture.0,
             &mut registry,
             &expected,
-            |pid| {
-                assert_eq!(pid, expected.pid);
-                FileExt::unlock(&lease)?;
-                Ok(())
-            },
-            Duration::from_millis(20),
-        )
-        .unwrap();
-        fixture.assert_removed(&record);
-        assert!(!registry.sessions.contains_key("demo"));
-        assert!(registry.sessions.contains_key("other"));
-        assert!(generation_lease_path(&fixture.0, &other).exists());
-    }
-
-    #[test]
-    fn selected_restart_allows_attached_generation_but_never_a_replacement() {
-        let fixture = GenerationFixture::new();
-        let mut record = fixture.record("demo", 1);
-        record.attached = true;
-        let lease = fixture.artifacts(&record, true);
-        let other = fixture.record("other", 2);
-        let _other_lease = fixture.artifacts(&other, true);
-        let expected = festerm_sessiond::NativeSessionIdentity {
-            name: record.name.clone(),
-            pid: record.pid,
-            created_at_unix_ms: record.created_at_unix_ms,
-            endpoint: record.socket.clone(),
-        };
-        let mut registry = SessionRegistry {
-            sessions: BTreeMap::from([
-                ("demo".into(), record.clone()),
-                ("other".into(), other.clone()),
-            ]),
-            ..Default::default()
-        };
-        for mismatch in 0..4 {
-            let mut stale = expected.clone();
-            match mismatch {
-                0 => stale.pid += 1,
-                1 => stale.created_at_unix_ms += 1,
-                2 => stale.endpoint.push_str("-replacement"),
-                _ => stale.name = "missing".into(),
-            }
-            assert!(kill_generation_registered_session(
-                &fixture.0,
-                &mut registry,
-                &stale,
-                false,
-                |_| panic!("a replaced session must never be signalled"),
-                Duration::ZERO
-            )
-            .is_err());
-            assert!(registry.sessions.contains_key("demo"));
-        }
-        kill_generation_registered_session(
-            &fixture.0,
-            &mut registry,
-            &expected,
-            false,
             |pid| {
                 assert_eq!(pid, expected.pid);
                 FileExt::unlock(&lease)?;

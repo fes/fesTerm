@@ -5,11 +5,13 @@ pub mod lifecycle;
 pub mod private_storage;
 mod remote;
 pub use detached::{
-    ensure_detached, ensure_detached_in, spawn_fingerprint, verify_spawn_fingerprint_in,
-    DetachedSessionRequest,
+    ensure_detached, ensure_detached_in, ensure_owned_detached_in, spawn_fingerprint,
+    verify_spawn_fingerprint_in, DetachedSessionRequest,
 };
 #[doc(hidden)]
-pub use detached::{lock_native_start_in, normalize_spawn_profile, prepare_native_runtime};
+pub use detached::{
+    lock_legacy_start_in, lock_native_start_in, normalize_spawn_profile, prepare_native_runtime,
+};
 pub use remote::{RemoteSessionInventory, RemoteSessionTarget, RemoteSshEndpoint};
 
 use std::{
@@ -425,34 +427,23 @@ pub fn list_unattached_local_sessions() -> Result<Vec<UnattachedSession>, Persis
 pub fn terminate_unattached_session_command(
     selected: &UnattachedSession,
 ) -> Result<Command, PersistentSessionError> {
-    PersistentSessionName::new(&selected.name)
-        .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-    let mut command = Command::new(daemon_executable()?);
-    command.args([
-        "kill-unattached",
-        "--name",
-        &selected.name,
-        "--pid",
-        &selected.pid.to_string(),
-        "--created-at",
-        &selected.created_at_unix_ms.to_string(),
-        "--endpoint",
-        &selected.endpoint,
-    ]);
-    Ok(command)
+    terminate_unattached_session_command_in(selected, &runtime_root()?)
 }
 
-/// Builds an exact-generation stop authorized by an explicit restart confirmation.
-/// Unlike discovery cleanup, the selected generation may have an attached client.
-pub fn terminate_selected_session_command_in(
+/// Builds the same generation-pinned request for an explicit runtime root.
+pub fn terminate_unattached_session_command_in(
+    selected: &UnattachedSession,
     root: &std::path::Path,
-    selected: &NativeSessionIdentity,
 ) -> Result<Command, PersistentSessionError> {
     PersistentSessionName::new(&selected.name)
         .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+    if !root.is_absolute() {
+        return Err(PersistentSessionError::new("invalid native runtime root"));
+    }
     let mut command = Command::new(daemon_executable_for_root(Some(root))?);
-    command.env("FESTERM_SESSIOND_RUNTIME_ROOT", root).args([
-        "kill-selected",
+    command.env("FESTERM_SESSIOND_RUNTIME_ROOT", root);
+    command.args([
+        "kill-unattached",
         "--name",
         &selected.name,
         "--pid",
