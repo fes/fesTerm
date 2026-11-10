@@ -898,6 +898,10 @@ They also prove standalone inventory-only enforcement and current-policy
 contention after an actual native commit without losing the connection or
 duplicating the shell. Native effects use a **cfg(test)-only** backend capability
 override, not a bypass in production framing or authorization.
+The lost-reply case deliberately forces correlated Busy on an original-issued
+retry, then explicitly retries that same opaque operation with an eight-second
+fixture bound and still requires exactly one native generation. This does not
+add automatic client retries or substitute a new issuance namespace.
 CI builds the repository helper/fixture child and runs these fixtures explicitly
 on Linux/macOS; they use a newly created project-local private root and verify
 owned daemons stop before removing it. They do not use installed/user sessions.

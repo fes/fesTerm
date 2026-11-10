@@ -9389,6 +9389,49 @@ context/imported-execution consent into real selected-host Ensure/Create and
 adopted frontend presentation over these unchanged runtime APIs, alongside the
 separately owned verified-helper/native setup/run composition.
 
+The compiled runtime checkpoint is `366b4943`. The fixed test-only session
+matcher follow-up `9d521174` then normally integrates at `a0899965`; production
+runtime APIs and session behavior are unchanged. Fresh combined-head selectors
+`cargo test --locked -p festerm-sessiond --test native_daemon pending_marker_order -- --test-threads=1`
+and
+`cargo test --locked -p festerm-sessiond --test native_daemon native_bridge -- --test-threads=1`
+pass four deterministic marker fixtures and three actual native adoption/bridge
+cases respectively (the native cases take 5.03 seconds).
+`FESTERM_SESSIOND_TEST_RUNTIME_ROOT` uses the owned checkout's short `s` root,
+and `FESTERM_SESSIOND_TRACE_FILE` retains exact native events under
+`.runtime-validation/ordered-union-native-trace.log`. Other combined-head
+checks retain separate `ordered-union-*.log` evidence, rather than relabelling
+the preceding checkpoint's counts as new-head proof.
+The first ordered-union aggregate retained 13 passes and one lost-reply fixture
+failure: the unchanged issued retry safely returned correlated Busy while the
+fixture incorrectly required immediate Ensured. Its corrected oracle deliberately
+holds policy to observe that Busy, then explicitly retries only the same captured
+issued operation within eight seconds. Inventory likewise retains one operation
+through bounded read-only Busy retry; exact one-generation assertions remain.
+This changes no production admission, operation namespace or refusal semantics.
+The failed run remains `ordered-union-native-routes.log`, separate from
+`ordered-corrected-*.log`.
+Fresh corrected ordered-union qualification repeats the bridge library,
+explicit native, protocol, protected-owner and portable commands above:
+**110 library passes/14 explicit ignores**, **14 actual native passes/zero
+ignored in 128.19 seconds**, **13 protocol passes** and **14 protected-owner
+passes** (29 unrelated tests filtered). The native group again proves actual
+two-daemon SSH isolation/adoption/detach, original-issued creation/end,
+takeover/revocation and the unchanged real heartbeat/grace deadlines.
+Strict clippy additionally covers the merged session crate:
+
+```sh
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+```
+
+Portable check, that strict all-target clippy, fmt, traceability (311 edges)
+and diff checks pass. These fresh logs are `ordered-corrected-*.log`; the
+preceding four matcher/three session bridge results remain separately recorded.
+Only fixture reconciliation and its documentation change after the normal
+session merge; production APIs and the qualified runtime source remain unchanged.
+This bounded macOS qualification is neither a fresh workspace-wide/remote-CI
+claim nor installed/native-vault/cloud/product acceptance.
+
 Recovery normally merged corrected session `8ebbaf29` into runtime at
 `ae1ef27a`. A fresh owned helper/fixture-child build and actual two-daemon SSH
 round trip passed. Fresh integrated checks: bridge library 108 passed/10
