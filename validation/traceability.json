@@ -5465,6 +5465,32 @@
       "prerequisites": [
         "Issue #564: physical-device local speech model/language availability, denied/granted permissions, offline recognition, native microphone/deadline/interruption/background/lock cancellation without another UI frame, session replacement and actual terminal/TUI/touch/accessibility qualification remain required, including the microphone icon after Left/Up/Down/Right. Simulator unsupported/manual-preview flow and portable tests are not native speech recognition or privacy acceptance."
       ]
+    },
+    {
+      "id": "host-based-dev-tunnels-design",
+      "edges": [
+        "HOST-01",
+        "HOST-02",
+        "HOST-03",
+        "HOST-04",
+        "HOST-05",
+        "HOST-06"
+      ],
+      "requirements": [
+        "docs/adr/0084-host-based-dev-tunnels.md#decision",
+        "docs/adr/0084-host-based-dev-tunnels.md#acceptance-matrix"
+      ],
+      "decisions": [
+        "ADR-0084"
+      ],
+      "automated_tests": [],
+      "manual_scenarios": [],
+      "status": "deferred",
+      "prerequisites": [
+        "Implement ADR 0084's seven staged slices, including verified principal binding and atomic generation reservation",
+        "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
+        "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect"
+      ]
     }
   ]
 }
