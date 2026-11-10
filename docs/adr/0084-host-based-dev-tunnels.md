@@ -544,6 +544,10 @@ no-adoption and old-writer preservation assertions remain unchanged.
 Exact `9d521174` x64 Windows native CI subsequently passed both bridge cases;
 the original failures and newly exposed primary failures remain recorded in
 the manual qualification entry. This does not qualify installed-service behavior.
+Private-registry reader/rebase fixture roots use the existing policy-checked
+test directory rather than assuming Windows checkout ancestors are trusted.
+Production ancestor/DACL refusal and actual publication-lock/once-only-effect
+assertions remain unchanged; corrected Windows CI remains a separate gate.
 
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
