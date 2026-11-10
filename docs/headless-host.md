@@ -14,10 +14,12 @@ Build from the same source/tag as fesTerm: `cargo build -p festerm-host`.
 festerm-host configure --state-dir /absolute/private/new-host --name "My computer"
 festerm-host status --state-dir /absolute/private/new-host
 festerm-host stage-cli --source-dir /absolute/private/source --cache-dir /absolute/private/cache
+festerm-host stage-package --manifest /absolute/private/download/helpers.manifest.json --signature /absolute/private/download/helpers.manifest.json.sig --archive /absolute/private/download/helpers.tar.gz --cache-root /absolute/private/releases
 ```
 
-The state directory's parent must already exist and satisfy the existing native
-private-storage policy. Configuration creates a fresh headless installation ID
+The initial state directory must not already exist; its parent must exist and
+satisfy the existing native private-storage policy. Configuration creates a fresh
+headless installation ID
 and a **disabled** journal. It does not sign in, contact the network, obtain
 credentials, stage a service, create a tunnel or launch a shell.
 `--creation allow|deny` defaults to deny. `--startup manual|sign-in` defaults
@@ -34,10 +36,34 @@ credential stores or installed services are consulted.
 in a private source directory. It verifies the executable against the release's
 existing reviewed `cli_pins` hash before writing private cache bytes. Existing
 different cache bytes are never overwritten. Nothing is downloaded or executed;
-the result stays non-executable. Execution adapters must reopen it with
+new files are non-executable and staging never adds executable permissions.
+Execution adapters must reopen it with
 `cli_pins::verify`, retain the verified handles, and only then make it executable.
 Changed official bytes require a reviewed pin update, not an override.
 This does not authenticate fesTerm release bundles.
+
+`stage-package` authenticates a helper manifest with the existing updater public
+key, verifies the exact current build version, native platform/architecture,
+archive length/hash and bounded exact regular entries, then stages immutable
+verified bytes. Its three inputs must be regular private files in trusted
+private directories; no symlinks, pipes or unbounded reads. The shared policy is
+`staging::stage_release_files`; neither the CLI nor desktop implements a second
+verifier. The lower-level `stage_artifact` accepts only a typed `VerifiedArtifact`.
+
+The cache key includes version, target and archive hash. Existing entries,
+including partial/corrupt previous writes, must match exactly or publication
+fails without overwriting them. Staging retains the **exact signed manifest,
+signature and archive** for restart verification, not a reserialized manifest.
+New entries are non-executable and nothing is registered. Existing matching
+private files are not changed. On restart, reverify
+that provenance and compare **every** staged entry before use; `.complete` is
+only a completion receipt, not authority. There is no unauthenticated execution
+or downgrade override.
+
+The authenticated package kind currently contains the existing legacy helpers.
+Staging them does **not** make them a new zero-shell host endpoint or run their
+one-shell setup policy. A signed `festerm-host` release package and the new
+endpoint remain separate integration work.
 
 ## Explicitly unavailable operations
 
@@ -52,10 +78,16 @@ never dispatch to the legacy one-shell scripts/helpers. Requirements still open:
 - Same-user native registration/start/stop/status adapters proving exact
   installation/service ownership; privileges confined to explicit registration.
   Persistent daemon lifetime must not depend on these adapters.
-- Authenticated fesTerm artifacts using the existing updater trust, compatible
-  switching/rollback and referenced-helper retention. Checksums beside downloads
-  cannot authorize a release.
+- Authenticated **new host endpoint/headless** release artifacts, compatible
+  switching/rollback and referenced-helper retention. Existing helper artifacts
+  can be staged now, but checksums beside downloads cannot authorize a release.
 - Qualified cleanup observations before committing exact-owned cloud removal.
+
+Legacy migration is not implemented. Future migration must preserve protected
+state/account binding and allow manual deferral. Setup, enable or sharing
+consent is **not** permission to stop/restart a live legacy shell: require a
+separate default-No confirmation bound to that exact generation. No lifecycle
+operation in this slice accepts a daemon-generation restart target.
 
 Manual means an explicit foreground run. User sign-in registration is not
 availability before login. Pre-login is rejected until the OS user-service,

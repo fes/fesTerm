@@ -5,12 +5,12 @@
 
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "artifacts")]
+pub mod artifacts;
 #[cfg(feature = "lifecycle")]
 pub mod lifecycle;
 #[cfg(feature = "lifecycle")]
 pub mod staging;
-#[cfg(feature = "artifacts")]
-pub mod artifacts;
 
 /// A host platform the installer supports.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

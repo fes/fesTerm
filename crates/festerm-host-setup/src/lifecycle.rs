@@ -63,7 +63,10 @@ fn label(value: &str, max: usize) -> io::Result<()> {
 
 fn identifier(value: &str) -> io::Result<()> {
     let id = Uuid::parse_str(value).map_err(|_| refused("host.invalid_identity"))?;
-    if id.get_version_num() != 4 || id.to_string() != value {
+    if id.get_version_num() != 4
+        || id.get_variant() != uuid::Variant::RFC4122
+        || id.to_string() != value
+    {
         return Err(refused("host.invalid_identity"));
     }
     Ok(())
@@ -182,6 +185,11 @@ impl Store {
     /// are never adopted or overwritten.
     pub fn create(path: &Path, origin: Origin, settings: Settings) -> io::Result<Self> {
         settings.validate()?;
+        match storage::private_directory(path, false) {
+            Ok(_) => return Err(refused("host.installation_exists_or_incomplete")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         let store = Self {
             directory: storage::private_directory(path, true)?,
             origin,
@@ -266,7 +274,8 @@ impl Store {
         })
     }
 
-    /// Call only after explicit foreground consent. This is not a Ready result.
+    /// Call only after explicit foreground consent. This is not a Ready result
+    /// or permission to stop/restart a legacy daemon generation.
     pub fn request_enable(&self) -> io::Result<Ticket> {
         self.change(|record| {
             if record.phase != Phase::Disabled {
@@ -430,6 +439,10 @@ mod tests {
         assert!(!store.snapshot().unwrap().settings.allow_creation);
         assert!(Store::open(&root.path().join("host"), Origin::Desktop).is_err());
         assert!(Store::create(&root.path().join("host"), Origin::Headless, settings()).is_err());
+        let unrelated = root.path().join("unrelated");
+        let _directory = storage::private_directory(&unrelated, true).unwrap();
+        assert!(Store::create(&unrelated, Origin::Headless, settings()).is_err());
+        assert_eq!(std::fs::read_dir(unrelated).unwrap().count(), 0);
         let mut changed = settings();
         changed.startup = Startup::BeforeLogin;
         assert!(store.configure(changed).is_err());

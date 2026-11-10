@@ -37,3 +37,51 @@ fn headless_binary_status_is_a_journal_not_a_ready_claim() {
     assert_eq!(report["binding"], serde_json::Value::Null);
     assert_eq!(std::fs::read_dir(state).unwrap().count(), 2);
 }
+
+#[test]
+fn headless_package_staging_refuses_unauthenticated_input_before_writing() {
+    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let source = root.path().join("source");
+    let directory = festerm_sessiond::private_storage::private_directory(&source, true).unwrap();
+    let input = source.join("untrusted");
+    let cache = root.path().join("cache");
+    festerm_sessiond::private_storage::write_new_private(
+        &directory,
+        std::path::Path::new("untrusted"),
+        b"not a signed package",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .arg("stage-package")
+        .arg("--manifest")
+        .arg(&input)
+        .arg("--signature")
+        .arg(&input)
+        .arg("--archive")
+        .arg(&input)
+        .arg("--cache-root")
+        .arg(&cache)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("artifact_authentication_failed"));
+    assert!(!cache.exists());
+}
+
+#[test]
+fn headless_setup_does_not_treat_enable_consent_as_legacy_restart_confirmation() {
+    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let record = root.path().join("legacy-generation.json");
+    let bytes = br#"{"account":"fixture","generation":"123","running":true}"#;
+    std::fs::write(&record, bytes).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["setup", "--enable", "--share", "--legacy-state"])
+        .arg(&record)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(std::fs::read(record).unwrap(), bytes);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+}

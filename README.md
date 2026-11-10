@@ -34,7 +34,8 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 ## Status
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
-GUI-free disabled configuration, journal status and offline pinned-CLI staging.
+GUI-free disabled configuration, journal status, offline pinned-CLI staging and
+authenticated helper-artifact staging without execution.
 New host setup/run/update/uninstall remain unavailable pending endpoint and
 authenticated-package integration ([#681](https://github.com/fes/fesTerm/issues/681));
 the legacy installer is unchanged.

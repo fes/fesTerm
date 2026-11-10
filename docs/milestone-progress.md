@@ -8658,3 +8658,10 @@ uninstall return failure until the new endpoint, secure foreground sign-in,
 native adapters and authenticated artifacts are wired. Portable tests prove the
 boundary, not cross-platform service or pre-login readiness. The remaining work
 stays explicit under [#681](https://github.com/fes/fesTerm/issues/681).
+
+The next boundary connects the shared artifact verifier rather than inventing a
+second signing scheme. Headless `stage-package` authenticates exact-version,
+native-target helper artifacts with the existing updater trust and stages their
+immutable entries plus exact signed provenance for restart verification. Cached
+bytes must still match; a completion marker is not authority. Nothing is
+executed or registered, and legacy helpers are not rebranded as the new endpoint.

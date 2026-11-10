@@ -13,6 +13,8 @@ status --state-dir PATH
     Read the protected headless lifecycle journal as JSON. This is not a liveness probe.
 stage-cli --source-dir PATH --cache-dir PATH
     Stage an already obtained official CLI against this release's reviewed pin.
+stage-package --manifest PATH --signature PATH --archive PATH --cache-root PATH
+    Verify signed helpers for this exact version/target and stage immutable bytes.
 setup | run | update | uninstall
     Unavailable until the new host endpoint/authenticated package adapter is integrated.
 
@@ -39,6 +41,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         "configure" => &["--state-dir", "--name", "--creation", "--startup"],
         "status" => &["--state-dir"],
         "stage-cli" => &["--source-dir", "--cache-dir"],
+        "stage-package" => &["--manifest", "--signature", "--archive", "--cache-root"],
         "setup" | "run" | "update" | "uninstall" => {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -114,6 +117,15 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             staging::stage_cli(&path("--source-dir")?, &path("--cache-dir")?)?;
             Ok("Official CLI pin verified and staged; nothing executed. No host configuration or service state changed.\n".into())
         }
+        "stage-package" => {
+            let _staged = staging::stage_release_files(
+                &path("--manifest")?,
+                &path("--signature")?,
+                &path("--archive")?,
+                &path("--cache-root")?,
+            )?;
+            Ok("Authenticated helper artifact staged. Nothing executed or registered; no shell created.\n".into())
+        }
         _ => unreachable!(),
     }
 }
@@ -157,6 +169,8 @@ fn diagnostic(error: &io::Error) -> &'static str {
         "host.cached_cli_mismatch" => {
             "host.cached_cli_mismatch; existing cache was not overwritten"
         }
+        "host.artifact_authentication_failed" => "host.artifact_authentication_failed; require signed exact-version/target release helpers, no staging performed",
+        "host.staged_artifact_mismatch" => "host.staged_artifact_mismatch; existing cache was not overwritten",
         _ => "host.operation_refused; check arguments, private storage, origin and journal state",
     }
 }

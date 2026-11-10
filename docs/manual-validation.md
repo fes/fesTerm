@@ -3337,6 +3337,11 @@ pass from a mock response, a CLI build, an Entra token, or an ordinary SSH shell
 
 ## ADR 0084 host setup qualification
 
+Migration must preserve protected state/account binding and permit manual
+deferral. Setup/sharing consent cannot stop or restart a live legacy session;
+that needs separate default-No confirmation for its exact generation. The
+current headless CLI refuses migration without modifying a legacy fixture.
+
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
 | HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/pin staging boundary; native/service/package and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, exact-owned native adapters and authenticated release artifacts. Windows/macOS/Linux startup and service acceptance require real platform evidence; fixture success is not that evidence. |

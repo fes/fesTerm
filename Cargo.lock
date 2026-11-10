@@ -2579,6 +2579,7 @@ name = "festerm-host"
 version = "0.16.0"
 dependencies = [
  "festerm-host-setup",
+ "festerm-sessiond",
  "serde_json",
  "tempfile",
 ]
@@ -2592,6 +2593,8 @@ dependencies = [
  "ed25519-dalek",
  "festerm-sessiond",
  "festerm-tunnel-bridge",
+ "festerm-unix-security",
+ "festerm-windows-security",
  "flate2",
  "fs2",
  "minisign-verify",

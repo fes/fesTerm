@@ -10,7 +10,7 @@ publish = false
 
 [features]
 default = []
-lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid"]
+lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 artifacts = [
     "dep:base64",
     "dep:flate2",
@@ -39,6 +39,12 @@ fs2 = { version = "0.4", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 tar = { version = "0.4", optional = true }
 zip = { version = "4.6", default-features = false, features = ["deflate"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+festerm-unix-security = { path = "../festerm-unix-security", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+festerm-windows-security = { path = "../festerm-windows-security", optional = true }
 
 [dev-dependencies]
 blake2 = "0.10"

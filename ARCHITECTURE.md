@@ -706,11 +706,13 @@ ADR 0084 stage 4 adds the opt-in `festerm-host-setup::lifecycle` policy and
 standalone `app/festerm-host` composition root without GUI/graphics dependencies.
 Both desktop and headless callers can use its protected, origin-scoped
 configuration/consent journal, operation epochs and exact-owned cleanup receipts.
-It reuses sessiond private storage and the bridge's reviewed official-CLI pins;
+It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
+the shared authenticated-artifact verifier. Verified helper entries and their
+exact signed provenance are staged immutably without execution;
 default legacy/mobile installer-review dependencies remain unchanged.
 No new endpoint, native service adapter, Ready result or shell-launch ownership
 is implied. Current CLI configuration/status/staging are local-only; service
-operations explicitly refuse until integration. See the
+operations explicitly refuse until new endpoint/native integration. See the
 [headless boundary and adapter contract](docs/headless-host.md).
 
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,

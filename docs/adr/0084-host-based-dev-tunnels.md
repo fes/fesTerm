@@ -378,6 +378,10 @@ tunnels by display name.
 Provide an explicit owned-installation migration: inventory, preview mapping,
 verify account/key/ownership, reserve new host records, bind selected existing
 daemons without frontend takeover, then switch and retain rollback evidence.
+Preserve protected state and account binding. Migration, setup and sharing
+consent do not authorize stopping or restarting a live legacy session. That
+requires a separate default-No confirmation for the exact generation; otherwise
+offer manual deferral.
 Preserve grants narrowly. Multiple old per-session tunnels may be consolidated
 only by explicit selection, never account-wide cleanup. Cleanup deletes only
 verified owned cloud incarnations. Interrupted migration is resumable and cannot
@@ -446,7 +450,9 @@ changes are part of this documentation PR.
 
 **Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
 protected lifecycle journal; the separate GUI-free `festerm-host` supports
-disabled configure, recorded status and offline official-CLI pin staging.
+disabled configure, recorded status, offline official-CLI pin staging and
+authenticated helper staging through the shared verifier, retaining exact signed
+provenance and comparing immutable cache entries without execution.
 Epoch fencing retains late provisioned identity for exact stop/cleanup, preserves
 identity on re-enable and refuses desktop/headless origin adoption. These are
 local boundary operations, not a working endpoint installer. Setup/run/update/
@@ -474,7 +480,12 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `headless_commands_configure_and_report_only_disabled_state`,
   `unavailable_host_operations_and_unsafe_options_fail_closed`,
   `headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments`,
-  `headless_binary_status_is_a_journal_not_a_ready_claim`.
+  `headless_binary_status_is_a_journal_not_a_ready_claim`,
+  `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
+  `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
+  `headless_package_staging_refuses_unauthenticated_input_before_writing`;
+  `headless_setup_does_not_treat_enable_consent_as_legacy_restart_confirmation`
+  preserves a synthetic legacy-generation fixture without invoking migration.
 - **Automated tests implemented (authenticity foundation only):**
   `authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes`,
   `rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing`,
