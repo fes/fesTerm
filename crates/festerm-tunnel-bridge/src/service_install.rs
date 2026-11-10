@@ -1609,16 +1609,189 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
 
+    async fn read_fixture_stream(
+        mut pipe: impl tokio::io::AsyncRead + Unpin,
+        bytes: &mut Vec<u8>,
+        limit: usize,
+        name: &str,
+    ) -> io::Result<()> {
+        use tokio::io::AsyncReadExt;
+        (&mut pipe)
+            .take(limit as u64 + 1)
+            .read_to_end(bytes)
+            .await?;
+        if bytes.len() > limit {
+            bytes.truncate(limit);
+            return Err(io::Error::other(format!("{name} exceeded output limit")));
+        }
+        Ok(())
+    }
+
+    // Only synthetic read-only fixtures may publish these diagnostics. Native
+    // service/provisioning commands must retain the production runner's redaction.
+    fn run_read_only_fixture(
+        mut command: tokio::process::Command,
+        stage: &'static str,
+        deadline: Duration,
+        limit: usize,
+    ) -> io::Result<Vec<u8>> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            let mut child = command
+                .spawn()
+                .map_err(|error| io::Error::other(format!("{stage}: spawn: {error}")))?;
+            let stdout = child.stdout.take().unwrap();
+            let stderr = child.stderr.take().unwrap();
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            let result = tokio::time::timeout(deadline, async {
+                let ((), (), status) = tokio::try_join!(
+                    read_fixture_stream(stdout, &mut out, limit, "stdout"),
+                    read_fixture_stream(stderr, &mut err, limit, "stderr"),
+                    child.wait(),
+                )?;
+                Ok::<_, io::Error>(status)
+            })
+            .await;
+            let failure = match result {
+                Ok(Ok(status)) if status.success() => return Ok(out),
+                Ok(Ok(status)) => format!("exit: {status}"),
+                Ok(Err(error)) => format!("capture: {error}"),
+                Err(_) => "deadline exceeded".to_owned(),
+            };
+            // Preserve the first failure and bytes already captured, even when
+            // killing/reaping the fixture also fails.
+            let _ = child.start_kill();
+            let cleanup = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
+            Err(io::Error::other(format!(
+                "{stage}: {failure}; stdout={}; stderr={}; cleanup={cleanup:?}",
+                out.escape_ascii(),
+                err.escape_ascii(),
+            )))
+        })
+    }
+
     #[cfg(windows)]
     fn run_windows_read_only_fixture(expression: &str, stage: &'static str) -> io::Result<Vec<u8>> {
         // Hosted runners can be elevated: these read-only fixtures need OS
         // tools, not permission to install an unelevated per-user service.
         let system = festerm_windows_security::system_directory()?;
-        run(
-            &system.join("WindowsPowerShell\\v1.0\\powershell.exe"),
-            &args(&["-NoProfile", "-NonInteractive", "-Command", expression]),
-            stage,
+        let expression = format!(
+            "$ErrorActionPreference='Stop'; \
+             [Console]::Error.WriteLine('fixture.started'); \
+             try {{ {expression}\n }} catch {{ \
+               [Console]::Error.WriteLine($_.ToString()); exit 1 \
+             }}"
+        );
+        let mut command =
+            tokio::process::Command::new(system.join("WindowsPowerShell\\v1.0\\powershell.exe"));
+        command.args(["-NoProfile", "-NonInteractive", "-Command", &expression]);
+        run_read_only_fixture(command, stage, DEADLINE, OUTPUT_LIMIT)
+    }
+
+    #[test]
+    fn service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams() {
+        const ROLE: &str = "FESTERM_TUNNEL_READ_ONLY_FIXTURE";
+        match std::env::var(ROLE).as_deref() {
+            Ok("failure") => {
+                std::io::stdout().write_all(b"fixture-out\0").unwrap();
+                std::io::stderr()
+                    .write_all(b"fixture-first\x1b[31m")
+                    .unwrap();
+                std::process::exit(41);
+            }
+            Ok("stdout") => {
+                std::io::stdout().write_all(&[b'x'; 4096]).unwrap();
+                std::process::exit(0);
+            }
+            Ok("stderr") => {
+                std::io::stderr().write_all(&[b'y'; 4096]).unwrap();
+                std::process::exit(0);
+            }
+            Ok("slow") => {
+                std::thread::sleep(Duration::from_secs(30));
+                std::process::exit(0);
+            }
+            _ => {}
+        }
+        struct PrefixThenPending(bool);
+        impl tokio::io::AsyncRead for PrefixThenPending {
+            fn poll_read(
+                mut self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+                buffer: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                if self.0 {
+                    return std::task::Poll::Pending;
+                }
+                self.0 = true;
+                buffer.put_slice(b"first evidence");
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+        // Cancellation at a deadline must not discard bytes read before EOF.
+        let mut evidence = Vec::new();
+        {
+            use std::future::Future;
+            let mut read = Box::pin(read_fixture_stream(
+                PrefixThenPending(false),
+                &mut evidence,
+                1024,
+                "stderr",
+            ));
+            let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+            assert!(read.as_mut().poll(&mut context).is_pending());
+        }
+        assert_eq!(evidence, b"first evidence");
+        let executable = std::env::current_exe().unwrap();
+        let child = |role: &str| {
+            let mut command = tokio::process::Command::new(&executable);
+            command
+                .args([
+                    "--exact",
+                    "service_install::tests::service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams",
+                    "--nocapture",
+                ])
+                .env(ROLE, role);
+            command
+        };
+        let failure = run_read_only_fixture(child("failure"), "fixture.exit", DEADLINE, 1024)
+            .unwrap_err()
+            .to_string();
+        assert!(failure.contains("fixture.exit: exit:"), "{failure}");
+        assert!(failure.contains("41"), "{failure}");
+        assert!(failure.contains(r"fixture-out\x00"), "{failure}");
+        assert!(failure.contains(r"fixture-first\x1b[31m"), "{failure}");
+        assert!(!failure.contains('\x1b'), "{failure}");
+        for stream in ["stdout", "stderr"] {
+            let failure = run_read_only_fixture(child(stream), "fixture.overflow", DEADLINE, 1024)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                failure.contains(&format!("{stream} exceeded output limit")),
+                "{failure}"
+            );
+            assert!(failure.len() < 2500, "{failure}");
+        }
+        let failure = run_read_only_fixture(
+            child("slow"),
+            "fixture.timeout",
+            Duration::from_millis(100),
+            1024,
         )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            failure.contains("fixture.timeout: deadline exceeded"),
+            "{failure}"
+        );
     }
 
     fn spec() -> ServiceSpec {
@@ -2200,6 +2373,7 @@ mod tests {
         ];
         let mut expression = format!(
             "$ErrorActionPreference='Stop'; {WINDOWS_PROCESS_MATCHER}\n\
+             [Console]::Error.WriteLine('fixture.matcher_ready'); \
              [string[]]$setups=@({},{}); $state={};",
             powershell_literal(setup).unwrap(),
             powershell_literal(r"C:\new helpers\festerm-tunnel-setup.exe").unwrap(),
@@ -2274,6 +2448,7 @@ mod tests {
             .unwrap();
         let expression = format!(
             "$ErrorActionPreference='Stop'; {WINDOWS_PROCESS_MATCHER}\n\
+             [Console]::Error.WriteLine('fixture.matcher_ready'); \
              if(![FesTermOwnedProcess]::SameCreationTime(1000,1000) -or \
                 ![FesTermOwnedProcess]::SameCreationTime(1009,1000) -or \
                 [FesTermOwnedProcess]::SameCreationTime(999,1000) -or \
@@ -2295,8 +2470,9 @@ mod tests {
         // The probe is read-only. Cleanup is through this newly spawned
         // child's owned handle, never through an enumerated or preexisting PID.
         let _ = child.kill();
-        child.wait().unwrap();
+        let cleanup = child.wait();
         result.unwrap();
+        cleanup.unwrap();
     }
 
     #[test]

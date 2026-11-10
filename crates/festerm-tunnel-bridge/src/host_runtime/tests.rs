@@ -108,6 +108,276 @@ impl Drop for Fixture {
     }
 }
 
+struct BusyPolicy {
+    inner: Arc<Policy>,
+    remaining: std::sync::atomic::AtomicUsize,
+    simulated_busy: std::sync::atomic::AtomicUsize,
+    locked_busy: std::sync::atomic::AtomicUsize,
+}
+
+impl ProtectedPolicySource for BusyPolicy {
+    type Guard = <Policy as ProtectedPolicySource>::Guard;
+
+    fn current_policy(&self) -> Result<Self::Guard, ContractError> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self
+            .remaining
+            .fetch_update(SeqCst, SeqCst, |remaining| remaining.checked_sub(1))
+            .is_ok()
+        {
+            self.simulated_busy.fetch_add(1, SeqCst);
+            return Err(ContractError::Busy);
+        }
+        let current = self.inner.current_policy();
+        if matches!(current, Err(ContractError::Busy)) {
+            self.locked_busy.fetch_add(1, SeqCst);
+        }
+        current
+    }
+}
+
+fn busy_runtime(
+    fixture: &Fixture,
+    remaining: usize,
+) -> (Arc<HostRuntime<BusyPolicy>>, Arc<BusyPolicy>) {
+    let source = Arc::new(BusyPolicy {
+        inner: fixture.source.clone(),
+        remaining: remaining.into(),
+        simulated_busy: 0.into(),
+        locked_busy: 0.into(),
+    });
+    let sessions =
+        SessionControl::with_helper(&fixture.root, &std::env::current_exe().unwrap()).unwrap();
+    (Arc::new(HostRuntime::new(sessions, source.clone())), source)
+}
+
+async fn wait_for_busy(counter: &std::sync::atomic::AtomicUsize, minimum: usize) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while counter.load(std::sync::atomic::Ordering::SeqCst) < minimum {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("authentication did not reach protected-policy contention");
+}
+
+fn client_budget_drained(runtime: &HostRuntime<BusyPolicy>) -> bool {
+    let permits: Result<Vec<_>, _> = (0..MAX_CLIENTS)
+        .map(|_| {
+            runtime
+                .budgets
+                .reserve(festerm_host_protocol::Resource::Client, 1)
+        })
+        .collect();
+    permits.is_ok()
+}
+
+#[tokio::test]
+async fn authenticated_runtime_policy_busy_retries_both_phases_and_rechecks_actual_guard() {
+    use std::sync::atomic::Ordering::SeqCst;
+    for revoke in [false, true] {
+        let fixture = Fixture::new();
+        let (runtime, source) = busy_runtime(&fixture, 3);
+        let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+        let held = fixture.source.0.clone().lock_owned().await;
+        let (mut client, stream, ssh) = fixture.pair().await;
+        let host = runtime.clone();
+        let server =
+            tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+        wait_for_busy(&source.locked_busy, 1).await;
+        drop(held);
+        let frame = read_frame(&mut client, permit.budgets()).await.unwrap();
+        let Authentication::Challenge { challenge } = frame.decode().unwrap() else {
+            panic!("contention must not replace the original SSH challenge");
+        };
+        drop(frame);
+        let proof = client
+            .prove_owner_fixture(
+                fixture.vault.as_ref(),
+                &fixture.key,
+                &fixture.approved,
+                &challenge,
+            )
+            .unwrap();
+        let mut held = fixture.source.0.clone().lock_owned().await;
+        source.remaining.store(3, SeqCst);
+        write_frame(
+            &mut client,
+            permit.budgets(),
+            &Authentication::Proof { proof },
+        )
+        .await
+        .unwrap();
+        wait_for_busy(&source.locked_busy, 2).await;
+        if revoke {
+            let mut changed = fixture.policy.clone();
+            changed.remote_access = false;
+            *held = OwnerVerifier::from_protected_permissions(changed, &[fixture.key.public_key()])
+                .unwrap();
+        }
+        drop(held);
+        let frame = read_frame(&mut client, permit.budgets()).await.unwrap();
+        let response: Authentication = frame.decode().unwrap();
+        drop(frame);
+        if revoke {
+            assert!(matches!(response, Authentication::Denied {}));
+        } else {
+            assert!(matches!(response, Authentication::Accepted {}));
+            client.write_u8(0).await.unwrap();
+            client.flush().await.unwrap();
+        }
+        drop(client);
+        drop(permit);
+        let result = tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        if revoke {
+            assert!(matches!(
+                result,
+                Err(Error::Contract(ContractError::Denied))
+            ));
+        }
+        assert!(source.simulated_busy.load(SeqCst) >= 6);
+        assert!(client_budget_drained(&runtime));
+        ssh.abort();
+        let _ = ssh.await;
+    }
+}
+
+#[tokio::test]
+async fn authenticated_runtime_policy_busy_refusal_uses_one_deadline_for_both_phases() {
+    use std::sync::atomic::Ordering::SeqCst;
+    for after_challenge in [false, true] {
+        let fixture = Fixture::new();
+        let (runtime, source) =
+            busy_runtime(&fixture, if after_challenge { 0 } else { usize::MAX });
+        let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+        let (client, stream, ssh) = fixture.pair().await;
+        let host = runtime.clone();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+        let host_permit = Arc::new(ConnectionPermit::reserve(&host.budgets).unwrap());
+        let server = tokio::spawn(async move {
+            tokio::time::timeout_at(
+                deadline,
+                host.authenticate(stream, host_permit, deadline, CancellationToken::new()),
+            )
+            .await
+            .expect("policy contention restarted or exhausted the authentication deadline")
+        });
+        let vault = fixture.vault.clone();
+        let key = fixture.key.clone();
+        let approved = fixture.approved.clone();
+        let result = authenticate_client_using(
+            client,
+            permit,
+            StreamRole::Control,
+            CancellationToken::new(),
+            move |stream, challenge| {
+                if after_challenge {
+                    std::thread::sleep(Duration::from_millis(200));
+                    source.remaining.store(usize::MAX, SeqCst);
+                }
+                stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+        ));
+        assert!(matches!(
+            server.await.unwrap(),
+            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+        ));
+        assert!(client_budget_drained(&runtime));
+        ssh.abort();
+        let _ = ssh.await;
+    }
+}
+
+#[tokio::test]
+async fn authenticated_runtime_policy_persistent_busy_is_framed_before_real_auth_deadline() {
+    let fixture = Fixture::new();
+    let (runtime, source) = busy_runtime(&fixture, usize::MAX);
+    let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+    let (client, stream, ssh) = fixture.pair().await;
+    let host = runtime.clone();
+    let started = tokio::time::Instant::now();
+    let server =
+        tokio::spawn(async move { host.serve_stream(stream, CancellationToken::new()).await });
+    let vault = fixture.vault.clone();
+    let key = fixture.key.clone();
+    let approved = fixture.approved.clone();
+    let result = authenticate_client_using(
+        client,
+        permit,
+        StreamRole::Control,
+        CancellationToken::new(),
+        move |stream, challenge| {
+            stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)
+        },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+    ));
+    assert!(matches!(
+        server.await.unwrap(),
+        Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+    ));
+    assert!(started.elapsed() >= AUTH_DEADLINE - AUTH_REFUSAL_RESERVE);
+    assert!(started.elapsed() < AUTH_DEADLINE + Duration::from_secs(1));
+    assert!(
+        source
+            .simulated_busy
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 1
+    );
+    assert!(client_budget_drained(&runtime));
+    ssh.abort();
+    let _ = ssh.await;
+}
+
+#[tokio::test]
+async fn authenticated_runtime_policy_busy_cancellation_drains_charged_work() {
+    let fixture = Fixture::new();
+    let (runtime, source) = busy_runtime(&fixture, usize::MAX);
+    let permit = ConnectionPermit::reserve(&Budgets::default()).unwrap();
+    let (client, stream, ssh) = fixture.pair().await;
+    let cancel = CancellationToken::new();
+    let host = runtime.clone();
+    let host_cancel = cancel.clone();
+    let server = tokio::spawn(async move { host.serve_stream(stream, host_cancel).await });
+    let vault = fixture.vault.clone();
+    let key = fixture.key.clone();
+    let approved = fixture.approved.clone();
+    let client_cancel = cancel.clone();
+    let client = tokio::spawn(authenticate_client_using(
+        client,
+        permit,
+        StreamRole::Control,
+        client_cancel,
+        move |stream, challenge| {
+            stream.prove_owner_fixture(vault.as_ref(), &key, &approved, challenge)
+        },
+    ));
+    wait_for_busy(&source.simulated_busy, 1).await;
+    cancel.cancel();
+    assert!(matches!(client.await.unwrap(), Err(Error::Cancelled)));
+    assert!(matches!(server.await.unwrap(), Err(Error::Cancelled)));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !client_budget_drained(&runtime) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("cancelled Busy work retained an unbounded client charge");
+    ssh.abort();
+    let _ = ssh.await;
+}
+
 #[cfg(unix)]
 struct NativeRuntimeFixture {
     auth: Fixture,

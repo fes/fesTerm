@@ -718,6 +718,58 @@ fn host_key_rotation_after_discovery_never_authenticates_or_displaces_the_live_s
 }
 
 #[test]
+fn remote_pending_adoption_refuses_competing_bridge_before_corrupt_payload_delivery() {
+    let fixture = Fixture::start();
+    let target = fixture
+        .endpoint
+        .discover(authentication())
+        .unwrap()
+        .select("existing")
+        .unwrap();
+    let existing = target
+        .attach_with_takeover(authentication(), noop_session_event_notifier())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut terminal = loop {
+        if let Some(terminal) = existing.take_recovered_terminal_deferred() {
+            break terminal;
+        }
+        assert!(Instant::now() < deadline, "{:?}", existing.lifecycle());
+        thread::sleep(Duration::from_millis(5));
+    };
+    fixture.snapshot_corruption.store(1, Ordering::Release);
+    let candidate = target
+        .attach_with_takeover(authentication(), noop_session_event_notifier())
+        .unwrap();
+    loop {
+        assert!(candidate.take_recovered_terminal().is_none());
+        match candidate.lifecycle() {
+            SessionLifecycle::Failed(error) | SessionLifecycle::Disconnected(error) => {
+                assert!(
+                    error
+                        .message()
+                        .contains("SSH raw exec exited with status 1"),
+                    "competing pending admission failed for the wrong reason: {error}"
+                );
+                break;
+            }
+            _ => {}
+        }
+        assert!(Instant::now() < deadline, "competing bridge did not fail");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(fixture.bridge_executions.load(Ordering::Acquire), 2);
+    assert_eq!(fixture.corrupt_deliveries.load(Ordering::Acquire), 0);
+    assert_eq!(fixture.corrupt_adoptions.load(Ordering::Acquire), 0);
+    drop(candidate);
+    existing.acknowledge_recovery_adoption();
+    existing
+        .try_send_input(b"printf '\\157\\162\\151\\147\\151\\156\\141\\154\\055\\167\\162\\151\\164\\145\\162\\n'\n")
+        .unwrap();
+    wait_for_text(&existing, &mut terminal, "original-writer");
+}
+
+#[test]
 fn invalid_remote_snapshots_never_adopt_or_displace_the_live_session() {
     let fixture = Fixture::start();
     let target = fixture
@@ -730,6 +782,14 @@ fn invalid_remote_snapshots_never_adopt_or_displace_the_live_session() {
         .attach_with_takeover(authentication(), noop_session_event_notifier())
         .unwrap();
     let mut terminal = adopt(&existing);
+    // Snapshot delivery only queues ADOPTED; an input/output round trip proves
+    // daemon writer activation before reserving another recovery candidate.
+    existing
+        .try_send_input(
+            b"printf '\\142\\145\\146\\157\\162\\145\\055\\151\\156\\166\\141\\154\\151\\144\\n'\n",
+        )
+        .unwrap();
+    wait_for_text(&existing, &mut terminal, "before-invalid");
     for (index, (corruption, command, expected)) in [
         (
             1,

@@ -1575,9 +1575,21 @@ fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease(
     });
     let running = fixture.ensure(&creation);
     let initial = running.lease.unwrap();
-    let pending = fixture
-        .control()
-        .attach(
+    let operations = fixture.state()["operations"].clone();
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let stem = format!("host-daemon-{}", running.target.generation.get());
+    let locked =
+        storage::open_private_file(&directory, Path::new(&format!("{stem}.lock")), false).unwrap();
+    eventually(|| match fs2::FileExt::try_lock_exclusive(&locked) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+        Err(error) => panic!("lease lock failed: {error}"),
+    });
+    let lease_name = PathBuf::from(format!("{stem}.json"));
+    let before = storage::read_private(&directory, &lease_name, 4096).unwrap();
+    // Busy is a nonblocking lock outcome, not a new creation or attachment.
+    assert!(matches!(
+        fixture.control().attach(
             &fixture.owner,
             &running.target,
             &creation.attachment,
@@ -1585,8 +1597,26 @@ fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease(
             2 * 1024 * 1024,
             noop_session_event_notifier(),
             allow,
-        )
-        .unwrap();
+        ),
+        Err(ControlError::Busy)
+    ));
+    assert_eq!(
+        storage::read_private(&directory, &lease_name, 4096).unwrap(),
+        before
+    );
+    let before: serde_json::Value = serde_json::from_slice(&before).unwrap();
+    assert_eq!(before["temporary"], serde_json::to_value(&initial).unwrap());
+    assert_eq!(before["writer_epoch"], 1);
+    assert_eq!(before["connected"], false);
+    assert!(before["pending"].is_null());
+    assert_eq!(fixture.state()["operations"], operations);
+    drop(locked);
+    let pending = fixture.attach(&running.target, &creation.attachment, false);
+    assert_eq!(pending.authority.target(), &running.target);
+    assert_eq!(
+        pending.reserved_lease.as_ref().unwrap().epoch.get(),
+        initial.epoch.get() + 1
+    );
     assert!(matches!(
         fixture
             .control()
@@ -1595,7 +1625,19 @@ fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease(
     ));
     let (first, first_lease, first_authority) = fixture.adopt_authorized(&running.target, pending);
     let first_lease = first_lease.unwrap();
-    assert_ne!(first_lease.epoch, initial.epoch);
+    assert_eq!(first_lease.epoch.get(), initial.epoch.get() + 1);
+    assert_eq!(first_lease.lease, initial.lease);
+    assert_eq!(first_lease.attachment, creation.attachment);
+    assert_eq!(fixture.state()["operations"], operations);
+    let native = list_running_sessions_in(&fixture.root).unwrap();
+    assert_eq!(native.len(), 1);
+    assert_eq!(native[0].session.name, running.identity.name);
+    assert_eq!(native[0].session.pid, running.identity.pid);
+    assert_eq!(
+        native[0].session.created_at_unix_ms,
+        running.target.generation.get()
+    );
+    assert_eq!(native[0].session.endpoint, running.identity.endpoint);
     let next_attachment = AttachmentId::new();
     assert!(matches!(
         fixture.control().attach(
@@ -1609,18 +1651,7 @@ fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease(
         ),
         Err(ControlError::Busy)
     ));
-    let pending = fixture
-        .control()
-        .attach(
-            &fixture.owner,
-            &running.target,
-            &next_attachment,
-            true,
-            2 * 1024 * 1024,
-            noop_session_event_notifier(),
-            allow,
-        )
-        .unwrap();
+    let pending = fixture.attach(&running.target, &next_attachment, true);
     fixture
         .control()
         .maintain_lease(&first_authority, None, allow)

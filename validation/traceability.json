@@ -1236,6 +1236,9 @@
         "service_upgrade_replaces_only_an_owned_definition_atomically",
         "service_upgrade_refuses_another_identity_or_state",
         "service_windows_stop_script_targets_only_owned_workers_and_bridges",
+        "service_windows_native_argv_ownership_is_exact_and_read_only",
+        "service_windows_creation_identity_matches_only_cim_microsecond_precision",
+        "service_read_only_fixture_preserves_failure_evidence_and_bounds_both_streams",
         "managed_state_refuses_unknown_credentials_and_relative_paths",
         "managed_checkpoint_and_lock_are_private_and_reusable",
         "managed_runtime_namespace_is_explicit_and_never_uses_worker_environment",
@@ -1319,6 +1322,7 @@
       ],
       "status": "partial",
       "prerequisites": [
+        "Fresh required Windows x64 CI proof of the three legacy tunnel-setup fixtures after 9d521174; read-only capture improvements and macOS checks are not Windows qualification",
         "Remaining real GitHub-provisioned service/native desktop qualification beyond the reviewed Windows fixture",
         "Controlled two-account real-service evidence; mock isolation is not service qualification",
         "Native Entra remains deferred; native macOS/Pi GitHub sign-in, vault refresh/reload and desktop reconnect passed, with broader platform and two-account qualification tracked in #429"
@@ -1503,6 +1507,7 @@
         "native_ssh_remote_sessiond_rejects_a_replaced_generation",
         "native_ssh_remote_sessiond_rejects_an_untrusted_host_key",
         "host_key_rotation_after_discovery_never_authenticates_or_displaces_the_live_session",
+        "remote_pending_adoption_refuses_competing_bridge_before_corrupt_payload_delivery",
         "invalid_remote_snapshots_never_adopt_or_displace_the_live_session"
       ],
       "manual_scenarios": ["CP-24"],
@@ -5667,6 +5672,10 @@
         "authenticated_runtime_terminal_role_uses_separate_bounded_framing",
         "authenticated_runtime_rejects_proof_replayed_on_another_actual_ssh_channel",
         "authenticated_runtime_bounds_proof_frames_and_client_admission",
+        "authenticated_runtime_policy_busy_retries_both_phases_and_rechecks_actual_guard",
+        "authenticated_runtime_policy_busy_refusal_uses_one_deadline_for_both_phases",
+        "authenticated_runtime_policy_persistent_busy_is_framed_before_real_auth_deadline",
+        "authenticated_runtime_policy_busy_cancellation_drains_charged_work",
         "native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input",
         "native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority",
         "native_authenticated_runtime_live_policy_fences_actions_without_stopping_shells",
@@ -5676,6 +5685,7 @@
       "manual_scenarios": ["DT-05", "DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
       "status": "partial",
       "prerequisites": [
+        "Host authentication policy contention retries only Busy under one original 15-second deadline, leaving 100 ms in that budget for a framed Busy refusal. Actual signed-SSH fixtures cover first-N Busy and held real guards at both phases, current revocation while proof is waiting, shared-deadline exhaustion, actual 15-second persistent Busy and cancellation with complete client-charge recovery. No client proof retry, authority cache or native-vault acceptance is implied",
         "Issue #681: historical corrected runtime milestone 1802eb1c normally integrates session 8ebbaf29; fixed native adapter 7e27edd5 and session 28e0391a followed. Corrected-union owned macOS evidence: 110 bridge library passes/14 explicit ignores, all fourteen selected native routes (127.96s), thirteen protocol contracts and fourteen protected-owner adapter tests; portable/strict/fmt/trace311/diff pass. Actual SSH creation/end, takeover, policy revocation and real 65-second active/60-second loss-grace are covered, including contended cleanup. The default headless build now composes explicit signed setup/foreground consent, separate owner approval and authenticated run; configuration remains disabled. Independent exact-head review and installed/native qualification remain mandatory",
         "Paired HostRuntime now advertises current protected lifecycle capabilities and actual backend-reserved issuer with native adopted terminal routes; standalone NativeControl remains inventory-only. Every actual frame/action/output checks fresh original attachment authority; key/host/session revocation closes attachments without killing persistent shells. Unbound uncertain reservations remain Unknown, never infer absence from denial/offline/partial inventory",
         "Issue #681 stages 1/3: protected enrollment and actual signed inner-SSH connection/channel exporter + role-bound proof helpers implemented. Server success transfers the exact stream with owner/lifetime guard. The default headless binary consumes them only through explicit current-consent run; bridge/setup library features remain opt-in for other consumers. Independent combined-source review and native/first-connect qualification remain mandatory; no default desktop/mobile listener or implicit GUI permission",

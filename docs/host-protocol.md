@@ -47,6 +47,14 @@ protected-policy/vault work retains its aggregate client permit even if its
 waiter cancels. No policy guard spans network I/O. Existing frame/byte budgets,
 per-operation current-policy checks, native authorities, receipt-only detach
 publication and FIFO terminal output scheduling remain unchanged.
+Both host-side policy acquisitions retry only Busy against the same original
+15-second authentication deadline, reacquiring protected state each time.
+The host reserves 100 ms within that deadline for a bounded authentication
+`{"message":"refused","reason":"busy"}` frame; the portable client returns
+`Error::Refused(Refusal::Busy)` at either phase rather than treating contention
+as denial, absence or a successful authentication. The client never reconnects
+or retries the proof. Cancelled blocking work retains its reserved client charge
+until it drains; no verifier or lease is cached across a Busy wait.
 
 Authored tests use signed SSH over exact-owned native loopback sockets,
 including queued rekey with original-binding preservation and cross-connection
@@ -377,6 +385,11 @@ at physical delivery and retire revoked connections/attachments.
   beside writer replacement, after adoption. An obsolete disconnect cannot end
   the new owner. Legacy admission cannot bypass a temporary lease. Existing
   persistent/legacy daemon attachment and takeover remain unchanged.
+  Registry/per-generation lock contention is nonblocking Busy, including the
+  first attachment after Ensure. A caller retains its original issued creation
+  operation, exact target and attachment intent; Busy is not absence or authority
+  to issue another creation. Fixture coverage holds the exact lease lock and
+  proves unchanged lease bytes/operation ledger before admitting that attachment.
   Recovery waiting is nonblocking for the daemon loop: the current writer keeps
   handling input/output while the one candidate adopts. Post-snapshot terminal
   and control output is staged by bytes (at most 512 KiB, including allocation
@@ -916,6 +929,10 @@ They also prove standalone inventory-only enforcement and current-policy
 contention after an actual native commit without losing the connection or
 duplicating the shell. Native effects use a **cfg(test)-only** backend capability
 override, not a bypass in production framing or authorization.
+The lost-reply case deliberately forces correlated Busy on an original-issued
+retry, then explicitly retries that same opaque operation with an eight-second
+fixture bound and still requires exactly one native generation. This does not
+add automatic client retries or substitute a new issuance namespace.
 CI builds the repository helper/fixture child and runs these fixtures explicitly
 on Linux/macOS; they use a newly created project-local private root and verify
 owned daemons stop before removing it. They do not use installed/user sessions.

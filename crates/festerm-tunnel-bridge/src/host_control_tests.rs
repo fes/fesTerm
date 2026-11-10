@@ -1380,25 +1380,78 @@ pub(crate) mod native_routes {
         let remaining_create = budgets.reserve(Resource::PendingCreate, 1).unwrap();
         assert!(budgets.reserve(Resource::PendingCreate, 1).is_err());
         drop(remaining_create);
-        let (mut second, second_server) = fixture.connect(backend.clone(), source, &budgets).await;
-        let result = second
-            .request_issued(
-                &operation,
-                Request::Ensure {
-                    creation: creation.clone(),
-                },
-                &cancel,
-            )
-            .await
-            .unwrap();
+        let (mut second, second_server) = fixture
+            .connect(backend.clone(), source.clone(), &budgets)
+            .await;
+        let held_policy = source.0.clone().lock_owned().await;
+        assert_eq!(
+            second
+                .request_issued(
+                    &operation,
+                    Request::Ensure {
+                        creation: creation.clone(),
+                    },
+                    &cancel,
+                )
+                .await
+                .unwrap()
+                .body,
+            Response::Refused {
+                reason: Refusal::Busy
+            }
+        );
+        drop(held_policy);
+        let retry_deadline = Instant::now() + Duration::from_secs(8);
+        let result = loop {
+            let result = second
+                .request_issued(
+                    &operation,
+                    Request::Ensure {
+                        creation: creation.clone(),
+                    },
+                    &cancel,
+                )
+                .await
+                .unwrap();
+            if matches!(
+                result.body,
+                Response::Refused {
+                    reason: Refusal::Busy
+                }
+            ) && Instant::now() < retry_deadline
+            {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            } else {
+                break result;
+            }
+        };
         let Response::Ensured { session, .. } = result.body else {
             panic!("{result:?}")
         };
         assert_eq!(session.target.logical, creation.logical);
-        let inventory = second
-            .request(OperationId::new(), Request::List { cursor: None }, &cancel)
-            .await
-            .unwrap();
+        let inventory_operation = OperationId::new();
+        let inventory_deadline = Instant::now() + Duration::from_secs(8);
+        let inventory = loop {
+            let inventory = second
+                .request(
+                    inventory_operation.clone(),
+                    Request::List { cursor: None },
+                    &cancel,
+                )
+                .await
+                .unwrap();
+            if matches!(
+                inventory.body,
+                Response::Refused {
+                    reason: Refusal::Busy
+                }
+            ) && Instant::now() < inventory_deadline
+            {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            } else {
+                break inventory;
+            }
+        };
         let Response::Inventory { page } = inventory.body else {
             panic!("inventory")
         };
