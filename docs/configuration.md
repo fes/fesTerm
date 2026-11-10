@@ -648,9 +648,14 @@ adoption and daemon writer replacement commit. Ordinary persistent shared shells
 never inherit this policy, and legacy clients cannot bypass the temporary lease
 handshake. Native mobile grace qualification remains required.
 
-Private `host-sessions.json`, bounded launch journals and generation-scoped
+Private `host-sessions.json`, exact-key `host-receipt-*.json` /
+`host-retired-*.json` fences, bounded launch journals and generation-scoped
 `host-daemon-*.json` files are host-local runtime authority, not synchronized
 profiles, credentials or import/export metadata. Never copy or delete them to
 retry an uncertain spawn. Ambiguous unbound reservations remain Unknown; local
-ownership investigation is required, not an automatic fresh shell. Journal
-capacity refuses boundedly rather than discarding revocation/idempotency fences.
+ownership investigation or protected exact-generation `retire_local` abandonment
+is required, not an automatic fresh shell. Completed operations and known-Absent
+logical records retire out of the active journal without forgetting their
+fences. Abandonment seals the generation lease and keeps Unknown; retired IDs
+cannot launch again. Active memory/parsing/work are bounded, but historical disk
+grows until a reviewed authenticated request-expiry contract exists.

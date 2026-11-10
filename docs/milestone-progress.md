@@ -8694,3 +8694,18 @@ cancellation, stale disconnect, revocation and bridge-independent expiry.
 No HOST listener, enrollment shortcut, GUI, service registration or cloud action
 is introduced. Native reboot/ConPTY/service/mobile evidence and independent
 review remain prerequisites; the ADR stays Proposed.
+
+Independent antagonist review (#687) caught a dangerous fallthrough: reconciling a
+reservation with no native launch journal could still execute the helper before
+fresh admission. The read-only path now stops before every fresh reservation,
+and revoked records do no native work. Active, non-stopped lease regressions
+cover the original failure rather than relying on prior termination to hide it.
+
+The same review exposed historical bookkeeping masquerading as active capacity.
+Completed operation receipts and retired logical fences now move out of the
+bounded active journal without forgetting exact requests, generations or
+revocation. Explicit protected local abandonment seals an uncertain generation
+and reclaims pending capacity, but never reports absence or permits reuse.
+Exact-key historical files grow on disk; globally bounded expiry still needs an
+authenticated issuance-epoch contract. Contended daemon adoption retries
+boundedly, and transient observations no longer turn Running into Launching.

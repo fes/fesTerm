@@ -5510,7 +5510,14 @@
         "lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace",
         "lease_supervisor_refuses_revision_rollback_or_foreign_generation",
         "protected_inventory_filters_before_labels_without_frontend_admission",
-        "scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_committed"
+        "scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_committed",
+        "reconciliation_without_launch_journal_never_executes_helper_even_with_active_lease",
+        "transient_native_observation_preserves_bound_running_phase_and_revision",
+        "operation_capacity_retires_receipts_without_resurrection_or_resume_outage",
+        "logical_capacity_retires_absent_records_but_never_erases_revocation_or_generation_fences",
+        "local_quarantine_retirement_releases_pending_budget_without_asserting_absence",
+        "attachment_commit_retries_lease_contention_but_not_past_pending_deadline",
+        "guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation"
       ],
       "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06"],
       "status": "partial",
@@ -5521,7 +5528,7 @@
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth and Unix owned daemon fixtures do not qualify it",
         "PendingAttachment is not Attached; remote recovery adoption and observed daemon lease/writer commit must precede success. StopRequested is not Ended; reconcile process absence before success. The endpoint must retire already established revoked relays",
         "Native reboot, Windows ConPTY/job/breakaway, Linux service startup, update/uninstall independence and physical-device 60-second grace remain DT-07/DT-08, CP-11 and MOB-03/MOB-06 gates; Unix owned fixtures do not qualify them",
-        "Ambiguous unbound reservations require local ownership investigation, not journal deletion or automatic respawn; capacity saturation preserves tombstones and refuses boundedly"
+        "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment, not journal deletion/automatic respawn; archived receipts/fences reclaim active capacity but historical disk grows until a reviewed authenticated issuance-epoch expiry contract exists"
       ]
     },
     {

@@ -4,6 +4,7 @@ use festerm_host_protocol::{AttachmentId, GenerationId, Lifetime, OperationId, T
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::Cell,
     fs::File,
     io,
     path::{Path, PathBuf},
@@ -147,6 +148,7 @@ pub struct DaemonWatch {
     deadline: Option<Instant>,
     next_poll: Instant,
     stopped: bool,
+    attachment_deadline: Cell<Option<Instant>>,
 }
 
 impl DaemonWatch {
@@ -166,6 +168,7 @@ impl DaemonWatch {
             deadline: None,
             next_poll: Instant::now(),
             stopped: false,
+            attachment_deadline: Cell::new(None),
         };
         watch.adopt(&lease)?;
         Ok(watch)
@@ -202,10 +205,18 @@ impl DaemonWatch {
         }
         match (&lease.temporary, ticket) {
             (None, None) => true,
-            (Some(_), Some(ticket)) => lease
-                .pending
-                .as_ref()
-                .is_some_and(|pending| &pending.ticket == ticket && pending.deadline_ms > now_ms()),
+            (Some(_), Some(ticket)) => lease.pending.as_ref().is_some_and(|pending| {
+                if &pending.ticket != ticket || pending.deadline_ms <= now_ms() {
+                    return false;
+                }
+                self.attachment_deadline.set(Some(
+                    Instant::now()
+                        + Duration::from_millis(
+                            pending.deadline_ms.saturating_sub(now_ms()).min(15_000) as u64,
+                        ),
+                ));
+                true
+            }),
             _ => false,
         }
     }
@@ -240,7 +251,24 @@ impl DaemonWatch {
         ticket: Option<&OperationId>,
         remote: bool,
     ) -> io::Result<()> {
-        let guard = LeaseGuard::acquire(&self.root, self.generation)?;
+        let deadline = self
+            .attachment_deadline
+            .get()
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(1))
+            .min(Instant::now() + Duration::from_secs(1));
+        let deadline = self.deadline.map_or(deadline, |lease| lease.min(deadline));
+        let guard = loop {
+            match LeaseGuard::acquire(&self.root, self.generation) {
+                Ok(guard) => break guard,
+                Err(error) if crate::lock_is_contended(&error) && Instant::now() < deadline => {
+                    std::thread::sleep(
+                        Duration::from_millis(5)
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                Err(error) => return Err(error),
+            }
+        };
         let mut lease = guard.read()?;
         if lease.expired() || (remote && lease.remote_revoked) {
             return Err(invalid());
@@ -388,5 +416,49 @@ mod tests {
         )
         .unwrap();
         assert!(DaemonWatch::open(&fixture.0, "fixture", 1).is_err());
+    }
+
+    #[test]
+    fn attachment_commit_retries_lease_contention_but_not_past_pending_deadline() {
+        let fixture = Fixture::new();
+        for (value, succeeds) in [(1, true), (2, false)] {
+            let generation = fixture.lease(value, now_ms() + 60_000);
+            let ticket = OperationId::new();
+            let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+            let mut lease = guard.read().unwrap();
+            lease.pending = Some(PendingAttachment {
+                ticket: ticket.clone(),
+                previous: lease.temporary.clone().unwrap(),
+                attachment: AttachmentId::new(),
+                deadline_ms: now_ms() + 15_000,
+            });
+            guard.replace(&mut lease).unwrap();
+            drop(guard);
+            let mut watch = DaemonWatch::open(&fixture.0, "fixture", value).unwrap();
+            assert!(watch.allows_attachment(Some(&ticket), true));
+            if !succeeds {
+                // Model elapsed pending grace without a filesystem-speed race.
+                watch.attachment_deadline.set(Some(Instant::now()));
+            }
+            let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+            let release = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(80));
+                drop(guard);
+            });
+            let started = Instant::now();
+            let outcome = watch.commit_attachment(Some(&ticket), true);
+            release.join().unwrap();
+            assert_eq!(outcome.is_ok(), succeeds);
+            assert!(started.elapsed() < Duration::from_secs(1));
+            let lease = LeaseGuard::acquire(&fixture.0, generation)
+                .unwrap()
+                .read()
+                .unwrap();
+            assert_eq!(lease.last_attachment.as_ref() == Some(&ticket), succeeds);
+            assert_eq!(
+                lease.temporary.unwrap().epoch.get(),
+                if succeeds { 2 } else { 1 }
+            );
+        }
     }
 }

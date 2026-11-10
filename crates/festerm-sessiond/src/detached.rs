@@ -548,6 +548,14 @@ fn ensure_reserved_with_launcher(
         }
         return Ok(identity);
     }
+    // Reconciliation may adopt only an existing exact reservation. In
+    // particular, absence of both metadata and a launch journal is UNKNOWN,
+    // not authorization to create a fresh reservation or invoke the helper.
+    if !may_launch {
+        return Err(refused(
+            "unconfirmed reservation; reconciliation cannot spawn",
+        ));
+    }
     if live {
         let record = record.unwrap();
         if reserved.is_some_and(|generation| generation != record.created_at_unix_ms) {
@@ -555,11 +563,6 @@ fn ensure_reserved_with_launcher(
         }
         check_evidence(record, &fingerprint)?;
         let identity = NativeSessionIdentity::from_record(record);
-        if !may_launch {
-            return Err(refused(
-                "unconfirmed reservation; reconciliation cannot spawn",
-            ));
-        }
         let mut journal = LaunchJournal {
             version: 1,
             launch_request: request.launch_request.into(),

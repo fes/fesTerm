@@ -448,6 +448,15 @@ inherit temporary cleanup merely through attachment. Ambiguous unbound spawn
 reservations remain Unknown, requiring local investigation rather than an
 unsafe fresh launch. See [the concrete integration API](../host-protocol.md#local-durable-session-control-stage-2).
 
+Antagonist remediation makes reconciliation structurally unable to create a
+fresh native reservation, including a missing-journal crash with an active
+persistent lease. Transient observations preserve bound Running state. Compact
+exact-key receipts and retired logical fences reclaim active capacity without
+old-request resurrection; protected local abandonment seals an uncertain
+generation without declaring it absent. Historical disk usage is not globally
+bounded: expiry would require a separately reviewed authenticated issuance epoch.
+Pending daemon ownership commit retries contention within its bounded deadline.
+
 Owned Unix daemon/fixture-child tests cover these mechanisms; they do not
 qualify native reboot, Windows service/job, actual Linux startup, mobile grace,
 enrollment/channel proof or endpoint routing. No listener or installed service

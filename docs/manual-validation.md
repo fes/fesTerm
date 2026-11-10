@@ -3350,6 +3350,15 @@ in fixture-only private state; they are not a physical 60-second mobile timing
 qualification. Unit supervisor fixtures cover restart, monotonic expiry under
 storage contention, foreign generations and revision rollback.
 
+Antagonist regressions also cover active-lease/missing-journal reconciliation
+without helper execution, preserved Running phase after transient observation,
+128-operation/64-logical active-capacity retirement, exact-request replay fences,
+local abandonment of both pending-create slots, interrupted retirement recovery,
+bounded adoption-lock contention, and guarded pending/committed relay actions.
+These are local fixture evidence, not terminal endpoint readiness. Historical
+receipts/fences remain on disk; globally bounded authenticated expiry is not
+implemented, and operators must not delete them to reclaim active slots.
+
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot
 reconciliation, Windows ConPTY/job/breakaway and Linux service startup, update/
