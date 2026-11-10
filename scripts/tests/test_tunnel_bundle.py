@@ -48,7 +48,7 @@ class TunnelBundleTests(unittest.TestCase):
                     "id": name, "name": name, "version": VERSION, "license": "MIT",
                     "manifest_path": str(self.root / "crates" / name / "Cargo.toml"),
                 }
-                for name in bundle.BINARIES[:2]
+                for name in bundle.PACKAGES
             ] + [{
                 "id": "dependency", "name": "dependency", "version": "2.0.0",
                 "license": "MIT", "license_file": None,
@@ -59,7 +59,7 @@ class TunnelBundleTests(unittest.TestCase):
                     "id": name, "deps": [{
                         "pkg": "dependency", "dep_kinds": [{"kind": None}],
                     }],
-                } for name in bundle.BINARIES[:2]
+                } for name in bundle.PACKAGES
             ] + [{"id": "dependency", "deps": []}]},
         }
 
@@ -107,6 +107,8 @@ class TunnelBundleTests(unittest.TestCase):
                     )
                     contents = self.contents(archive, platform)
                     self.assertEqual(set(contents), set(bundle.entry_names(platform)))
+                    host = "festerm-host.exe" if platform == "windows" else "festerm-host"
+                    self.assertEqual(contents[host][0], f"mock binary {host}".encode())
                     self.assertEqual(contents["VERSION"][0], b"1.2.3\n")
                     for name, (content, mode) in contents.items():
                         self.assertTrue(content)
@@ -166,6 +168,19 @@ class TunnelBundleTests(unittest.TestCase):
                     self.build()
                 self.assertFalse((self.root / "dist").exists())
 
+    def test_legacy_recovery_payload_excludes_host_and_is_not_current_admission(self):
+        for platform in bundle.PLATFORMS:
+            with self.subTest(platform=platform):
+                host = "festerm-host.exe" if platform == "windows" else "festerm-host"
+                (self.binaries / host).unlink(missing_ok=True)
+                archive = self.build(platform, output=f"legacy-{platform}", legacy=True)
+                self.assertNotIn(host, self.contents(archive, platform))
+                bundle.verify_bundle(archive, VERSION, platform, legacy=True)
+                with self.assertRaisesRegex(ValueError, "exactly"):
+                    bundle.verify_bundle(archive, VERSION, platform)
+                with self.assertRaisesRegex(ValueError, host):
+                    self.build(platform, output=f"current-{platform}")
+
     def test_invalid_or_mismatched_versions_fail_closed(self):
         for version in ("", "v1.2.3", "01.2.3", "1.2", "1.2.3\n", "1.2.4",
                         "../1.2.3", "1.2.3-rc.1", "1.2.3+build"):
@@ -174,15 +189,17 @@ class TunnelBundleTests(unittest.TestCase):
                     self.build(version=version)
                 self.assertFalse((self.root / "dist").exists())
 
-    def test_package_metadata_must_match_both_helper_packages(self):
-        for change in ("missing", "version"):
-            metadata = copy.deepcopy(self.metadata)
-            if change == "missing":
-                metadata["packages"].pop(0)
-            else:
-                metadata["packages"][0]["version"] = "9.0.0"
-            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "package metadata"):
-                self.build(metadata=metadata)
+    def test_package_metadata_must_match_all_helper_packages(self):
+        for name in bundle.PACKAGES:
+            for change in ("missing", "version"):
+                metadata = copy.deepcopy(self.metadata)
+                package = next(p for p in metadata["packages"] if p["name"] == name)
+                if change == "missing":
+                    metadata["packages"].remove(package)
+                else:
+                    package["version"] = "9.0.0"
+                with self.subTest(name=name, change=change), self.assertRaisesRegex(ValueError, "package metadata"):
+                    self.build(metadata=metadata)
 
     def test_notices_follow_helper_closure_and_retain_nested_notices(self):
         metadata = copy.deepcopy(self.metadata)
@@ -325,7 +342,7 @@ class TunnelBundleTests(unittest.TestCase):
                 for name, content in contents.items():
                     info = zipfile.ZipInfo(name)
                     info.create_system = 3
-                    mode = 0o755 if name in names[:3] else 0o644
+                    mode = 0o755 if name in bundle.binary_names(platform) else 0o644
                     info.external_attr = (stat.S_IFREG | mode) << 16
                     if change == "symlink" and name == names[0]:
                         info.external_attr = (stat.S_IFLNK | 0o777) << 16
@@ -338,7 +355,7 @@ class TunnelBundleTests(unittest.TestCase):
             with tarfile.open(path, "w:gz") as archive:
                 for name, content in contents.items():
                     info = tarfile.TarInfo(name)
-                    info.mode = 0o755 if name in names[:3] else 0o644
+                    info.mode = 0o755 if name in bundle.binary_names(platform) else 0o644
                     info.size = len(content)
                     if change == "symlink" and name == names[0]:
                         info.type = tarfile.SYMTYPE

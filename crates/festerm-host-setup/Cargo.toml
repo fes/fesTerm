@@ -10,6 +10,7 @@ publish = false
 
 [features]
 default = []
+acquisition = ["lifecycle", "dep:reqwest"]
 lifecycle = ["artifacts", "dep:festerm-sessiond", "dep:festerm-tunnel-bridge", "dep:fs2", "dep:serde", "dep:serde_json", "dep:uuid", "dep:festerm-unix-security", "dep:festerm-windows-security"]
 artifacts = [
     "dep:base64",
@@ -33,6 +34,7 @@ minisign-verify = { version = "0.2.5", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 sha2 = "0.11"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking"], optional = true }
 festerm-sessiond = { path = "../festerm-sessiond", optional = true }
 festerm-tunnel-bridge = { path = "../festerm-tunnel-bridge", optional = true }
 fs2 = { version = "0.4", optional = true }

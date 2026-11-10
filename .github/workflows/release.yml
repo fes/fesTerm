@@ -45,6 +45,7 @@ jobs:
       recovery: ${{ steps.release.outputs.recovery }}
       helper_sha256: ${{ steps.release.outputs.helper_sha256 }}
       authenticated_helpers: ${{ steps.release.outputs.authenticated_helpers }}
+      headless_helpers: ${{ steps.release.outputs.headless_helpers }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -86,6 +87,15 @@ jobs:
           fi
           helper_sha256=$(sha256sum scripts/build_tunnel_bundle.py | cut -d ' ' -f1)
           authenticated_helpers=true
+          headless_helpers=true
+          if ! git show "$source_commit:scripts/build_host_manifest.py" 2>/dev/null | grep -q '^SCHEMA = 2$'; then
+            if [[ "$recovery" != true ]]; then
+              echo "::error::Release source lacks schema-2 headless helper tooling"
+              exit 1
+            fi
+            headless_helpers=false
+            echo "::notice::Legacy tag recovery: preserve the old helper payload without host CLI"
+          fi
           if ! git cat-file -e "$source_commit:scripts/build_host_manifest.py" 2>/dev/null; then
             # Recovery must preserve the tagged source contract. Do not copy a
             # new verifier/manifest scheme into an older runtime's release.
@@ -104,6 +114,7 @@ jobs:
             echo "recovery=$recovery"
             echo "helper_sha256=$helper_sha256"
             echo "authenticated_helpers=$authenticated_helpers"
+            echo "headless_helpers=$headless_helpers"
           } >> "$GITHUB_OUTPUT"
       - name: Install Linux validation dependencies
         run: |
@@ -602,6 +613,8 @@ jobs:
       VERSION: ${{ needs.validate.outputs.version }}
       HELPER_PLATFORM: ${{ matrix.platform }}
       HELPER_ARCH: ${{ matrix.arch }}
+      HEADLESS_HELPERS: ${{ needs.validate.outputs.headless_helpers }}
+      RELEASE_RECOVERY: ${{ needs.validate.outputs.recovery }}
     defaults:
       run:
         shell: bash
@@ -638,7 +651,13 @@ jobs:
           set -euo pipefail
           host=$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')
           test "$host" = '${{ matrix.target }}'
-          cargo build --locked --release -p festerm-sessiond -p festerm-tunnel-bridge --bins
+          packages=(-p festerm-sessiond -p festerm-tunnel-bridge)
+          if [[ "$HEADLESS_HELPERS" == true ]]; then
+            packages+=(-p festerm-host)
+          else
+            test "$RELEASE_RECOVERY" = true
+          fi
+          cargo build --locked --release "${packages[@]}" --bins
           cargo metadata --locked --format-version 1 --filter-platform "$host" > helper-metadata.json
       - name: Stage native Windows signing input and dependency notices
         if: matrix.platform == 'windows'
@@ -708,7 +727,9 @@ jobs:
             -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$password" "$keychain" >/dev/null
-          for binary in festerm-sessiond festerm-tunnel-bridge festerm-tunnel-setup; do
+          binaries=(festerm-sessiond festerm-tunnel-bridge festerm-tunnel-setup)
+          if [[ "$HEADLESS_HELPERS" == true ]]; then binaries+=(festerm-host); fi
+          for binary in "${binaries[@]}"; do
             codesign --force --options runtime --timestamp \
               --keychain "$keychain" --sign "$APPLE_SIGNING_IDENTITY" \
               --identifier "dev.fes.$binary" "target/release/$binary"
@@ -736,9 +757,16 @@ jobs:
         if: matrix.platform != 'windows'
         run: |
           set -euo pipefail
+          options=()
+          # Only macOS recovery replaces its tagged producer with this reviewed
+          # tooling. Other platforms keep the producer from the exact tag.
+          if [[ "$HEADLESS_HELPERS" != true && "$HELPER_PLATFORM" == macos ]]; then
+            test "$RELEASE_RECOVERY" = true
+            options+=(--legacy-helpers)
+          fi
           python scripts/build_tunnel_bundle.py \
             --version "$VERSION" --platform "$HELPER_PLATFORM" --arch "$HELPER_ARCH" \
-            --metadata helper-metadata.json
+            --metadata helper-metadata.json "${options[@]}"
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: matrix.platform != 'windows'
         with:
@@ -769,6 +797,7 @@ jobs:
       id-token: write
     env:
       VERSION: ${{ needs.validate.outputs.version }}
+      HEADLESS_HELPERS: ${{ needs.validate.outputs.headless_helpers }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -800,6 +829,7 @@ jobs:
             'festerm-sessiond.exe', 'festerm-tunnel-bridge.exe',
             'festerm-tunnel-setup.exe', 'festerm-tunnel-worker.exe', 'THIRD_PARTY_NOTICES.txt', 'VERSION'
           )
+          if ($env:HEADLESS_HELPERS -eq 'true') { $expected += 'festerm-host.exe' }
           $actual = @(Get-ChildItem helper-input -Force)
           if ($actual.Count -ne $expected.Count -or
               @(Compare-Object ($expected | Sort-Object) ($actual.Name | Sort-Object)).Count -ne 0) {
@@ -827,7 +857,7 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Sign all three helper executables
+      - name: Sign all standalone helper executables
         uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
@@ -838,13 +868,16 @@ jobs:
             ${{ github.workspace }}\helper-input\festerm-tunnel-bridge.exe
             ${{ github.workspace }}\helper-input\festerm-tunnel-setup.exe
             ${{ github.workspace }}\helper-input\festerm-tunnel-worker.exe
+            ${{ needs.validate.outputs.headless_helpers == 'true' && format('{0}\helper-input\festerm-host.exe', github.workspace) || '' }}
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
       - name: Verify Authenticode and package signed helpers
         shell: pwsh
         run: |
-          foreach ($name in @('festerm-sessiond', 'festerm-tunnel-bridge', 'festerm-tunnel-setup', 'festerm-tunnel-worker')) {
+          $names = @('festerm-sessiond', 'festerm-tunnel-bridge', 'festerm-tunnel-setup', 'festerm-tunnel-worker')
+          if ($env:HEADLESS_HELPERS -eq 'true') { $names += 'festerm-host' }
+          foreach ($name in $names) {
             if ((Get-AuthenticodeSignature "helper-input/$name.exe").Status -ne 'Valid') {
               throw "Helper is not Authenticode-valid: $name"
             }

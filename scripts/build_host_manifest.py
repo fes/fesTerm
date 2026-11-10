@@ -16,6 +16,7 @@ from build_tunnel_bundle import ARCHITECTURES, PLATFORMS, verify_bundle
 
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4096
+SCHEMA = 2
 
 
 def build_manifest(archive, version, platform, arch):
@@ -35,7 +36,7 @@ def build_manifest(archive, version, platform, arch):
     if not 0 < len(data) <= MAX_ARCHIVE_BYTES:
         raise ValueError("archive length exceeds bounds")
     manifest = {
-        "schema": 1,
+        "schema": SCHEMA,
         "package": "festerm-helpers",
         "version": version,
         "platform": platform,

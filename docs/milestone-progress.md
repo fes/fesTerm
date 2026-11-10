@@ -8702,3 +8702,20 @@ The incremental reliability pass also distinguishes an initializer holding its
 lease from an abandoned recordless directory. Protected cache comparisons now
 classify oversized entries as the same specific mismatch as other changed
 bytes, keeping bounded reads and refusing overwrite for CLI and helper staging.
+
+### A distributable headless command, without pretending it is an installer
+
+The bounded ADR 0084 stage-7 slice adds `festerm-host` to all six existing
+authenticated helper targets, their native signing paths and dependency notices.
+Schema 2 makes inclusion mandatory; old-tag recovery retains its actual older
+payload rather than silently promoting it. Real Python producers, the pinned
+cargo-packager signer and Rust admission now interoperate across all six targets
+with synthetic keys and no release secrets.
+
+`acquire-cli` connects the existing reviewed Microsoft executable hashes to
+versioned official HTTPS URLs, bounded receiving and the same protected atomic
+staging policy. It rejects redirects, mutable aliases, unsupported Windows ARM
+and provenance overrides. Local HTTP fixtures exercise failures without fetching
+or executing dependency binaries. This is acquisition only: native Microsoft
+publisher qualification, executable publication, independently authenticated
+first delivery and working endpoint/service management remain explicit gates.

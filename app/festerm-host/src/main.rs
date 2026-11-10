@@ -1,4 +1,5 @@
 use festerm_host_setup::{
+    acquisition,
     lifecycle::{Origin, Settings, Startup, Store},
     staging,
 };
@@ -13,6 +14,8 @@ status --state-dir PATH
     Read the protected headless lifecycle journal as JSON. This is not a liveness probe.
 stage-cli --source-dir PATH --cache-dir PATH
     Stage an already obtained official CLI against this release's reviewed pin.
+acquire-cli --cache-dir PATH
+    Download this release's pinned official CLI into private non-executable staging only.
 stage-package --manifest PATH --signature PATH --archive PATH --cache-root PATH
     Verify signed helpers for this exact version/target and stage immutable bytes.
 setup | run | update | uninstall
@@ -41,6 +44,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         "configure" => &["--state-dir", "--name", "--creation", "--startup"],
         "status" => &["--state-dir"],
         "stage-cli" => &["--source-dir", "--cache-dir"],
+        "acquire-cli" => &["--cache-dir"],
         "stage-package" => &["--manifest", "--signature", "--archive", "--cache-root"],
         "setup" | "run" | "update" | "uninstall" => {
             return Err(io::Error::new(
@@ -117,6 +121,10 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             staging::stage_cli(&path("--source-dir")?, &path("--cache-dir")?)?;
             Ok("Official CLI pin verified and staged; nothing executed. No host configuration or service state changed.\n".into())
         }
+        "acquire-cli" => {
+            acquisition::acquire_cli(&path("--cache-dir")?)?;
+            Ok("Pinned official CLI acquired into private staging only. Nothing executed, installed or registered; native publisher qualification is still required.\n".into())
+        }
         "stage-package" => {
             let _staged = staging::stage_release_files(
                 &path("--manifest")?,
@@ -178,6 +186,14 @@ fn diagnostic(error: &io::Error) -> &'static str {
         "host.cached_cli_mismatch" => {
             "host.cached_cli_mismatch; existing cache was not overwritten"
         }
+        "profile_host.cli_platform" | "host.cli_target_unavailable" => {
+            "host.cli_target_unavailable; no qualified pin for this native target, no fallback"
+        }
+        "host.cli_download_policy" => "host.cli_download_policy; a reviewed dependency pin update is required",
+        "host.cli_download_failed" => "host.cli_download_failed; bounded acquisition failed, nothing published",
+        "host.cli_download_status" => "host.cli_download_status; require HTTP 200 without redirects, nothing published",
+        "host.cli_download_limit" => "host.cli_download_limit; response is empty or oversized, nothing published",
+        "host.cli_download_encoding" => "host.cli_download_encoding; require raw pinned bytes, nothing published",
         "host.artifact_authentication_failed" => "host.artifact_authentication_failed; require signed exact-version/target release helpers, no staging performed",
         "host.staged_artifact_mismatch" => "host.staged_artifact_mismatch; existing cache was not overwritten",
         _ => "host.operation_refused; check arguments, private storage, origin and journal state",
@@ -224,6 +240,21 @@ mod tests {
             );
         }
         for args in [
+            vec![
+                "acquire-cli",
+                "--cache-dir",
+                "/unused",
+                "--url",
+                "fixture-do-not-echo",
+            ],
+            vec![
+                "acquire-cli",
+                "--cache-dir",
+                "/unused",
+                "--sha256",
+                "fixture-do-not-echo",
+            ],
+            vec!["acquire-cli", "--cache-dir", "relative"],
             vec!["configure", "--state-dir", "relative", "--name", "Fixture"],
             vec!["status", "--state-dir", "/unused", "--state-dir", "/other"],
             vec!["status", "--token", "do-not-read-secrets"],

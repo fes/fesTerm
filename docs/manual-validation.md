@@ -59,8 +59,9 @@ the Linux normal-CI signer check uses pinned cargo-packager 0.11.8 and a
 generated throwaway key, not the protected release identity.
 DT-05/DT-08 still require protected real-release signatures, independently
 trusted first-verifier delivery and clean-machine verification/rejection on all
-six native targets. These offline tests are not installed service
-switching/rollback, headless CLI inclusion or legacy-migration evidence.
+six native targets. Schema-2 host CLI inclusion and acquisition-only bounded
+HTTP behavior have synthetic fixtures; these are not installed service
+switching/rollback, native publisher qualification or legacy-migration evidence.
 Legacy Linux installers still lack this new independent publisher verification;
 integration remains tracked in [#681](https://github.com/fes/fesTerm/issues/681).
 
@@ -3354,7 +3355,7 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
-| HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/pin staging boundary; native/service/package and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, exact-owned native adapters and authenticated release artifacts. Windows/macOS/Linux startup and service acceptance require real platform evidence; fixture success is not that evidence. |
+| HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/CLI/schema-2 host packaging and bounded pin acquisition/staging boundary; native publisher/executable/service and desktop usability deferred | #681 stages 3–5/7: working host endpoint, verified principal channel, secure foreground sign-in, exact-owned native adapters, trusted first-verifier delivery and native publisher/executable admission. Windows/macOS/Linux startup and service acceptance require real platform evidence; fixture success is not that evidence. |
 
 ## Intake rule for new work
 
