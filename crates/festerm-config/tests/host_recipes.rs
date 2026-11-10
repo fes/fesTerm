@@ -1,9 +1,9 @@
 use festerm_config::{
     host_recipes::{
         AccountReference, DuplicatePolicy, HostId, HostReference, MetadataCommand, MetadataOutcome,
-        PublicRecipe, Recipe,
+        PublicRecipe, Recipe, RecipeError, RecipeId, MAX_PORTABLE_BYTES, MAX_RECIPES,
     },
-    Configuration, Profile,
+    ConfigErrorKind, Configuration, Profile,
 };
 
 fn recipe() -> PublicRecipe {
@@ -162,6 +162,7 @@ fn host_recipe_invalid_commands_and_documents_do_not_replace_configuration() {
         assert!(Configuration::parse(&invalid).is_err());
         assert!(toml::from_str::<Configuration>(&invalid).is_err());
     }
+
     let (unchanged, MetadataOutcome::Exported(portable)) = saved
         .with_host_recipe_command(MetadataCommand::Export(recipe.id.clone()))
         .unwrap()
@@ -176,4 +177,55 @@ fn host_recipe_invalid_commands_and_documents_do_not_replace_configuration() {
     assert_eq!(deleted.profiles(), original.profiles());
     assert_eq!(deleted.accounts(), original.accounts());
     assert!(deleted.host_recipes().is_empty());
+}
+
+#[test]
+fn host_recipe_config_adapter_preserves_typed_command_failures() {
+    let public = recipe();
+    let (saved, _) = Configuration::empty()
+        .with_host_recipe_command(MetadataCommand::Save(public.clone()))
+        .unwrap();
+    let portable = public.export().unwrap();
+    let unsupported = portable.replace(
+        "\"festerm_host_recipe_version\": 1",
+        "\"festerm_host_recipe_version\": 99",
+    );
+    for (command, expected) in [
+        (
+            MetadataCommand::Save(public.clone()),
+            RecipeError::Duplicate,
+        ),
+        (MetadataCommand::Import(portable), RecipeError::Duplicate),
+        (
+            MetadataCommand::Export(RecipeId::new()),
+            RecipeError::NotFound,
+        ),
+        (
+            MetadataCommand::Import(unsupported),
+            RecipeError::UnsupportedVersion,
+        ),
+        (
+            MetadataCommand::Import(" ".repeat(MAX_PORTABLE_BYTES + 1)),
+            RecipeError::TooLarge,
+        ),
+    ] {
+        let error = saved.with_host_recipe_command(command).unwrap_err();
+        assert_eq!(error.kind(), ConfigErrorKind::HostRecipe(expected));
+        assert!(error.to_string().contains(expected.message()));
+        assert_eq!(saved.host_recipes().get(&public.id), Some(&public));
+    }
+    let mut full = saved;
+    for _ in 1..MAX_RECIPES {
+        full = full
+            .with_host_recipe_command(MetadataCommand::Save(recipe()))
+            .unwrap()
+            .0;
+    }
+    assert_eq!(
+        full.with_host_recipe_command(MetadataCommand::Save(recipe()))
+            .unwrap_err()
+            .kind(),
+        ConfigErrorKind::HostRecipe(RecipeError::LimitReached)
+    );
+    assert_eq!(full.host_recipes().recipes().len(), MAX_RECIPES);
 }

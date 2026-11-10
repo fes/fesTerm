@@ -493,13 +493,20 @@ changes are introduced by the contract or client-local metadata foundations.
   `invalid_recipe_ids_launch_and_protected_fields_are_refused`,
   `duplicate_allocates_logical_identity_unless_explicit_generation_shortcut`,
   `host_recipe_toml_round_trip_keeps_legacy_profiles_separate`,
-  `host_recipe_app_commands_persist_metadata_only_and_publish_after_save`,
+  `dev_tunnel_host_recipe_app_commands_persist_metadata_only_and_publish_after_save`,
   `mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation`,
   and `local_browser_requires_explicit_scoped_requests_and_fences_stale_results`.
   The trace registry includes transactional failure/quarantine and compatibility
   tests as well, including
   `host_recipe_commands_preserve_legacy_account_and_hosting_references` and
   `mobile_recipe_commands_preserve_legacy_generation_and_account_binding`.
+  Reliability regressions
+  `host_recipe_config_adapter_preserves_typed_command_failures`,
+  `mobile_host_recipe_adapter_preserves_typed_command_failures` and
+  `mobile_host_recipe_recovery_retains_valid_entries_across_unrelated_save`
+  cover typed failures and per-entry recovery/reporting across later saves.
+  The desktop command regression also checks export-specific outcomes and
+  runs under the experimental CI `dev_tunnel` selector.
   These do not prove protected-state migration, a live-shell stop confirmation,
   network execution, actual shell creation
   or stage 6 end-to-end acceptance; the remaining matrix is still required.

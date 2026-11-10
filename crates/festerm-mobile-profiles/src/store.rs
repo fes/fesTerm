@@ -151,14 +151,23 @@ impl ProfileStore {
 
     fn collect(value: &Value, document: &mut Document, report: &mut LoadReport) {
         if let Some(value) = value.get("host_recipes") {
-            match serde_json::from_value(value.clone()) {
-                Ok(book) => document.host_recipes = book,
-                Err(_) => {
-                    // Preserve the original through the existing quarantine
-                    // path; never reinterpret an invalid host recipe as legacy.
-                    report.dropped_entries +=
-                        value.as_array().map_or(1, |items| items.len().max(1));
+            match value.as_array() {
+                Some(entries) => {
+                    for entry in entries {
+                        let candidate = serde_json::from_value(entry.clone())
+                            .map_err(|_| crate::host_recipes::RecipeError::Invalid)
+                            .and_then(|recipe| {
+                                document
+                                    .host_recipes
+                                    .apply(crate::host_recipes::MetadataCommand::Save(recipe))
+                            });
+                        match candidate {
+                            Ok((book, _)) => document.host_recipes = book,
+                            Err(_) => report.dropped_entries += 1,
+                        }
+                    }
                 }
+                None => report.dropped_entries += 1,
             }
         }
         let entries = |key: &str| {
@@ -236,10 +245,7 @@ impl ProfileStore {
         &mut self,
         command: crate::host_recipes::MetadataCommand,
     ) -> Result<crate::host_recipes::MetadataOutcome, ProfileError> {
-        let (book, outcome) =
-            self.document.host_recipes.apply(command).map_err(|_| {
-                ValidationError::new("host_recipes", "invalid public recipe command")
-            })?;
+        let (book, outcome) = self.document.host_recipes.apply(command)?;
         if !matches!(outcome, crate::host_recipes::MetadataOutcome::Exported(_)) {
             let mut next = self.document.clone();
             next.host_recipes = book;

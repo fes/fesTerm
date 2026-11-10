@@ -3,10 +3,11 @@ use std::{fs, path::PathBuf, sync::Arc};
 use festerm_mobile_profiles::{
     host_recipes::{
         AccountReference, DuplicatePolicy, HostId, HostReference, MetadataCommand, MetadataOutcome,
-        PublicRecipe, Recipe,
+        PublicRecipe, Recipe, RecipeError, RecipeId, MAX_PORTABLE_BYTES, MAX_RECIPES,
     },
     AccountProvider, DestinationEndpoint, DestinationTarget, DevTunnelProfile, PathStyle,
-    ProfileKind, ProfileStore, PublicDestination, SecretRef, TunnelSource, PROFILES_FILE,
+    ProfileError, ProfileKind, ProfileStore, PublicDestination, SecretRef, SshProfile,
+    TunnelSource, PROFILES_FILE,
 };
 use festerm_secret_store::{SecretBytes, SecretReference, SecretStore, SecretStoreError};
 
@@ -220,4 +221,116 @@ fn mobile_host_recipe_failed_write_keeps_previous_metadata_and_invalid_load_is_q
         serde_json::from_slice::<serde_json::Value>(&fs::read(quarantined).unwrap()).unwrap(),
         value
     );
+}
+
+#[test]
+fn mobile_host_recipe_recovery_retains_valid_entries_across_unrelated_save() {
+    let fixture = Fixture::new();
+    let candidates: Vec<_> = (0..=MAX_RECIPES).map(|_| recipe()).collect();
+    let mut entries = vec![serde_json::to_value(&candidates[0]).unwrap()];
+    let mut invalid = entries[0].clone();
+    invalid["name"] = serde_json::json!("");
+    entries.push(invalid);
+    entries.push(entries[0].clone());
+    entries.extend(
+        candidates[1..]
+            .iter()
+            .map(|recipe| serde_json::to_value(recipe).unwrap()),
+    );
+    let document = serde_json::json!({
+        "version": 1,
+        "profiles": [],
+        "accounts": [],
+        "pending_secret_deletions": [],
+        "host_recipes": entries,
+    });
+    fs::write(
+        fixture.0.join(PROFILES_FILE),
+        serde_json::to_vec(&document).unwrap(),
+    )
+    .unwrap();
+    let mut recovered = fixture.open();
+    assert_eq!(
+        recovered.host_recipes().recipes(),
+        &candidates[..MAX_RECIPES]
+    );
+    assert_eq!(recovered.load_report().dropped_entries, 3);
+    assert!(!recovered.load_report().started_empty_after_corruption);
+    let quarantine = recovered.load_report().quarantined_file.clone().unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&quarantine).unwrap()).unwrap(),
+        document
+    );
+    assert_eq!(
+        recovered.apply_host_recipe_command(MetadataCommand::Save(recipe())),
+        Err(ProfileError::HostRecipe(RecipeError::LimitReached))
+    );
+    recovered
+        .create(
+            "Unrelated SSH profile",
+            ProfileKind::Ssh(SshProfile::new("host.example", "owner")),
+        )
+        .unwrap();
+    let reopened = fixture.open();
+    assert_eq!(
+        reopened.host_recipes().recipes(),
+        &candidates[..MAX_RECIPES]
+    );
+    assert_eq!(reopened.profiles().len(), 1);
+    assert_eq!(reopened.load_report().dropped_entries, 0);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&quarantine).unwrap()).unwrap(),
+        document
+    );
+
+    let malformed = Fixture::new();
+    fs::write(
+        malformed.0.join(PROFILES_FILE),
+        r#"{"version":1,"host_recipes":{}}"#,
+    )
+    .unwrap();
+    let rejected = malformed.open();
+    assert!(rejected.host_recipes().is_empty());
+    assert_eq!(rejected.load_report().dropped_entries, 1);
+    assert!(rejected.load_report().quarantined_file.is_some());
+}
+
+#[test]
+fn mobile_host_recipe_adapter_preserves_typed_command_failures() {
+    let fixture = Fixture::new();
+    let mut store = fixture.open();
+    let public = recipe();
+    store
+        .apply_host_recipe_command(MetadataCommand::Save(public.clone()))
+        .unwrap();
+    let portable = public.export().unwrap();
+    let unsupported = portable.replace(
+        "\"festerm_host_recipe_version\": 1",
+        "\"festerm_host_recipe_version\": 99",
+    );
+    let before = fs::read(fixture.0.join(PROFILES_FILE)).unwrap();
+    for (command, expected) in [
+        (
+            MetadataCommand::Save(public.clone()),
+            RecipeError::Duplicate,
+        ),
+        (MetadataCommand::Import(portable), RecipeError::Duplicate),
+        (
+            MetadataCommand::Export(RecipeId::new()),
+            RecipeError::NotFound,
+        ),
+        (
+            MetadataCommand::Import(unsupported),
+            RecipeError::UnsupportedVersion,
+        ),
+        (
+            MetadataCommand::Import(" ".repeat(MAX_PORTABLE_BYTES + 1)),
+            RecipeError::TooLarge,
+        ),
+    ] {
+        let error = store.apply_host_recipe_command(command).unwrap_err();
+        assert_eq!(error, ProfileError::HostRecipe(expected));
+        assert_eq!(fs::read(fixture.0.join(PROFILES_FILE)).unwrap(), before);
+        assert_eq!(store.host_recipes().get(&public.id), Some(&public));
+    }
 }

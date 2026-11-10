@@ -1883,6 +1883,11 @@ edit, duplicate, import/export and delete do not create or end a shell.
 Default duplication means a fresh logical session; saving another shortcut
 to an existing session is deliberate and generation-pinned.
 
+Recipe status retains content-free conflict, missing, invalid, unsupported,
+oversize and limit distinctions; export must never claim a save succeeded or
+failed. Mobile recovery retains valid entries and uses the existing skipped-entry
+count/quarantine notification convention instead of silently clearing recipes.
+
 Opening the new host card/launcher shows local metadata only. Find hosts and
 single-host selection/Refresh are explicit network intents; cancellation and
 account changes fence results. Never inherit legacy automatic discovery or

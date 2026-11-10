@@ -60,6 +60,13 @@ touch credentials. Explicit browser request tests cover cancellation, account
 switches, supersession and obsolete browser instances. These are logic/state
 tests, not native UI or real-service evidence.
 
+Recovery regressions load mixed valid/invalid/duplicate/overflow recipes,
+check skipped-entry reporting/quarantine and retain valid entries after an
+unrelated save. Adapter and desktop-command tests preserve typed failures and
+distinguish export from saving. The desktop regression includes `dev_tunnel`
+in its name so the existing experimental CI selector runs its no-tunnel/browser
+assertions with the feature enabled; this does not replace native network evidence.
+
 Before future stage 6 execution is exposed, qualify explicit first-execution
 review/reconfirmation of imported shell/argv/cwd, lifetime and resume/create
 behavior against verified host/account/principal identity. Import, save or a

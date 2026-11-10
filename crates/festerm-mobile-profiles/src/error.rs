@@ -54,6 +54,7 @@ impl std::error::Error for StorageError {}
 /// Failures of the profile store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProfileError {
+    HostRecipe(crate::host_recipes::RecipeError),
     Validation(ValidationError),
     Storage(StorageError),
     Secret(SecretStoreError),
@@ -68,6 +69,7 @@ pub enum ProfileError {
 impl fmt::Display for ProfileError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::HostRecipe(error) => error.fmt(formatter),
             Self::Validation(error) => error.fmt(formatter),
             Self::Storage(error) => error.fmt(formatter),
             Self::Secret(error) => write!(formatter, "secure storage failed: {error:?}"),
@@ -81,6 +83,12 @@ impl fmt::Display for ProfileError {
 }
 
 impl std::error::Error for ProfileError {}
+
+impl From<crate::host_recipes::RecipeError> for ProfileError {
+    fn from(error: crate::host_recipes::RecipeError) -> Self {
+        Self::HostRecipe(error)
+    }
+}
 
 impl From<ValidationError> for ProfileError {
     fn from(error: ValidationError) -> Self {

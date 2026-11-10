@@ -138,7 +138,7 @@ impl Configuration {
         let (book, outcome) = self
             .host_recipes
             .apply(command)
-            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidHostRecipe))?;
+            .map_err(ConfigError::from)?;
         let mut next = self.clone();
         next.host_recipes = book;
         next.validate()?;
@@ -814,9 +814,7 @@ impl Configuration {
         if self.schema_version != SCHEMA_VERSION {
             return Err(ConfigError::new(ConfigErrorKind::UnsupportedSchemaVersion));
         }
-        self.host_recipes
-            .validate()
-            .map_err(|_| ConfigError::new(ConfigErrorKind::InvalidHostRecipe))?;
+        self.host_recipes.validate().map_err(ConfigError::from)?;
 
         let mut identifiers = HashSet::with_capacity(self.profiles.len());
         let mut host_installations = HashSet::new();

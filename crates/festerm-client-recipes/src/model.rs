@@ -19,16 +19,22 @@ pub enum RecipeError {
     LimitReached,
 }
 
-impl fmt::Display for RecipeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
+impl RecipeError {
+    pub const fn message(self) -> &'static str {
+        match self {
             Self::Invalid => "invalid public host recipe metadata",
             Self::UnsupportedVersion => "unsupported public host recipe version",
             Self::TooLarge => "public host recipe exceeds its size limit",
             Self::Duplicate => "host recipe identifier already exists",
             Self::NotFound => "host recipe not found",
             Self::LimitReached => "host recipe limit reached",
-        })
+        }
+    }
+}
+
+impl fmt::Display for RecipeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.message())
     }
 }
 

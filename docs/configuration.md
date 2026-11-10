@@ -133,6 +133,15 @@ affects future actions and never mutates an attached session's snapshot.
 Host/logical identity edits require a new recipe rather than silently
 retargeting an existing one.
 
+Adapters preserve content-free `RecipeError` categories for invalid metadata,
+identifier conflicts, missing recipes, unsupported portable versions, oversize
+imports and the 200-recipe limit. Export success/failure is reported separately
+from saving; export never reports a configuration save. Mobile loading recovers
+entries individually with the shared validation, uniqueness and limit rules:
+valid entries survive an unrelated later save, rejected entries are counted in
+`LoadReport::dropped_entries`, and the existing quarantine/report mechanism
+preserves the rejected input rather than silently defaulting the whole book.
+
 Default duplication creates both a fresh recipe ID and logical-session ID.
 Duplicating an attach-only recipe as a separate shell drops its old generation
 pin and selects resume-or-create. Deliberate `ExistingSession { generation }`

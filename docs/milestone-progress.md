@@ -14,6 +14,13 @@ handling and explicit browsing intent are tested. Verified endpoint wiring,
 authorized resume/create, native UI and physical-device lifecycle evidence
 remain prerequisites; this is not stage 6 end-to-end acceptance.
 
+Reliability review found that one malformed mobile recipe could discard the
+entire collection on the next save. Loading now retains valid unique entries
+within the shared limit and reports/quarantines rejected entries. Typed adapter
+errors distinguish conflicts and portable-input failures, while desktop export
+has its own status rather than claiming a save. Focused regressions exercise
+recovery across an unrelated save and the actual experimental CI feature path.
+
 ## Stabilizing SSH-agent test startup
 
 The vendored SSH tests could connect between the agent creating its Unix
