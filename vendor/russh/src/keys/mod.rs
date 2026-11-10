@@ -837,22 +837,7 @@ Cog3JMeTrb3LiPHgN6gU2P30MRp6L1j1J/MtlOAr5rux
     #[cfg(unix)]
     async fn test_client_agent(key: PrivateKey) -> Result<(), Box<dyn std::error::Error>> {
         env_logger::try_init().unwrap_or(());
-        use std::process::Stdio;
-
-        let dir = tempfile::tempdir()?;
-        let agent_path = dir.path().join("agent");
-        let mut agent = tokio::process::Command::new("ssh-agent")
-            .arg("-a")
-            .arg(&agent_path)
-            .arg("-D")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
-
-        // Wait for the socket to be created
-        while agent_path.canonicalize().is_err() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+        let (mut agent, agent_path, _dir) = spawn_agent().await?;
 
         let public = key.public_key();
         let stream = tokio::net::UnixStream::connect(&agent_path).await?;
@@ -989,6 +974,39 @@ Cog3JMeTrb3LiPHgN6gU2P30MRp6L1j1J/MtlOAr5rux
         }
     }
 
+    #[cfg(unix)]
+    async fn wait_for_agent(
+        agent: &mut tokio::process::Child,
+        path: &std::path::Path,
+    ) -> std::io::Result<()> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match tokio::net::UnixStream::connect(path).await {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                    ) =>
+                {
+                    if let Some(status) = agent.try_wait()? {
+                        return Err(std::io::Error::other(format!(
+                            "ssh-agent exited before accepting connections: {status}"
+                        )));
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            format!("ssh-agent did not accept connections: {error}"),
+                        ));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     /// Helper to spawn an ssh-agent and return the agent process and socket path
     #[cfg(unix)]
     async fn spawn_agent() -> Result<
@@ -999,20 +1017,59 @@ Cog3JMeTrb3LiPHgN6gU2P30MRp6L1j1J/MtlOAr5rux
 
         let dir = tempfile::tempdir()?;
         let agent_path = dir.path().join("agent");
-        let agent = tokio::process::Command::new("ssh-agent")
+        let mut agent = tokio::process::Command::new("ssh-agent")
             .arg("-a")
             .arg(&agent_path)
             .arg("-D")
+            .kill_on_drop(true)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-
-        // Wait for the socket to be created
-        while agent_path.canonicalize().is_err() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-
+        wait_for_agent(&mut agent, &agent_path).await?;
         Ok((agent, agent_path, dir))
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn agent_readiness_waits_for_a_listening_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent");
+        drop(tokio::net::UnixListener::bind(&path).unwrap());
+        let mut child = tokio::process::Command::new("sleep")
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+
+        {
+            let readiness = wait_for_agent(&mut child, &path);
+            tokio::pin!(readiness);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(50), &mut readiness)
+                    .await
+                    .is_err()
+            );
+            std::fs::remove_file(&path).unwrap();
+            let listener = tokio::net::UnixListener::bind(&path).unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(2), &mut readiness)
+                .await
+                .unwrap()
+                .unwrap();
+            listener.accept().await.unwrap();
+        }
+        child.kill().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn agent_readiness_reports_an_exited_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = tokio::process::Command::new("false").spawn().unwrap();
+        child.wait().await.unwrap();
+        let error = wait_for_agent(&mut child, &dir.path().join("agent"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exited before accepting"));
     }
 
     /// Helper to create a test certificate
