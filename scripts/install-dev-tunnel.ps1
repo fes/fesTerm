@@ -309,11 +309,11 @@ try {
         }
         throw 'Setup finished but did not write the connection JSON.'
     }
-    $json = [IO.File]::ReadAllText($profile)
+    $connectionJson = [IO.File]::ReadAllText($profile)
     Write-Host "`n=== fesTerm connection JSON (public; no credentials) ==="
-    Write-Host $json
+    Write-Host $connectionJson
     Write-Host "`n=== Saved to $profile ==="
-    try { Set-Clipboard -Value $json; Write-Host -NoNewline 'Copied to the clipboard. ' } catch { }
+    try { Set-Clipboard -Value $connectionJson; Write-Host -NoNewline 'Copied to the clipboard. ' } catch { }
     Write-Host 'In fesTerm: Dev Tunnel profile > Import setup JSON, paste, then sign in with the same GitHub account.'
 } finally {
     foreach ($temporaryFile in @($archivePath, $checksumPath)) {
