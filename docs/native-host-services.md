@@ -135,6 +135,13 @@ This admits authenticated bytes, not a functioning endpoint. Actual protected
 release/native signing and independently trusted first-verifier delivery remain
 qualification gates.
 
+The runnable Linux controller admits Manual startup only. The existing user-unit
+definition's `WantedBy=default.target` is not a logon proof: an already lingering
+user manager may start before login. UserSignIn setup/run therefore refuses with
+`host.linux_sign_in_session_fence_required` until verified current-user logon
+activation is implemented and qualified. Manual Linux hosting remains available;
+no linger, service-manager or OS permission setting is modified to qualify it.
+
 ## Shared lifecycle API
 
 `services::Services::current_user(&Store, state_dir)` binds the actual protected
@@ -290,6 +297,7 @@ survival and login/reboot observations. Fixtures and native CI compilation do
 not qualify those behaviors. Endpoint integration, foreground sign-in/consent,
 update/rollback and migration remain separate gates; the
 [headless CLI](headless-host.md) now has shared explicit setup/owner-approval/run
-source, while update/uninstall remain unavailable. This source is not signed
+source, plus revoke-first disable/exact native removal with cloud CleanupPending
+retention; update remains unavailable. This source is not signed
 native acceptance; real release input, native-vault/service qualification and
 client protected first-connect approval remain prerequisites.

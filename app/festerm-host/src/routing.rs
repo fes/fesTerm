@@ -1,6 +1,6 @@
-//! Protected native enrollment adapter for the unexposed routing core.
-//! `run` stays unavailable until actual owner-channel binding and terminal
-//! routing have independently passed their exposure gates.
+//! Thin protected enrollment delegation for the authenticated headless runtime.
+//! Fresh native-vault authority is the default; explicit file selection is not
+//! a vault-error fallback. Native/first-connect acceptance remains separate.
 use festerm_host_protocol::ContractError;
 use festerm_host_setup::{
     enrollment::{CurrentOwnerPolicy, CurrentOwnerPolicySource, OwnerStorage},

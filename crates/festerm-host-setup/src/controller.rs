@@ -1,19 +1,25 @@
 //! Shared explicit foreground setup and restartable host composition.
 
 use crate::{
-    cloud::{CloudHostAdapter, Health, HOST_IDENTITY_FILE},
+    cloud::{Cleanup, CloudHostAdapter, Foreground, Health, HOST_IDENTITY_FILE},
     enrollment::{
-        owner_key_fingerprint, CurrentOwnerPolicySource, EnrollmentSnapshot, OwnerStorage,
+        owner_key_fingerprint, CurrentOwnerPolicySource, EnrollmentSnapshot, OwnerEnrollment,
+        OwnerStorage,
     },
-    lifecycle::{Phase, Snapshot, Store},
+    lifecycle::{Phase, Snapshot, Startup, Store},
     protected_state::Lease,
-    services::{Observation, Services, TrustedStage},
+    services::{Observation, ProcessState, Services, TrustedStage},
 };
 use festerm_host_protocol::{Capabilities, ContractError};
 use festerm_sessiond::{host_control::SessionControl, private_storage as storage};
 use festerm_tunnel_bridge::host_runtime::HostRuntime;
 use serde::{Deserialize, Serialize};
-use std::{io, path::Path, sync::Arc, time::Duration};
+use std::{
+    io,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio_util::sync::CancellationToken;
 
 const LOCK: &str = "host-runtime.lock";
@@ -33,6 +39,88 @@ pub struct SetupResult {
     pub owner_approval_prerequisite: EnrollmentSnapshot,
 }
 
+pub(crate) struct SetupRequest<'a> {
+    pub(crate) store: &'a Store,
+    pub(crate) state: &'a Path,
+    pub(crate) stage: &'a TrustedStage,
+    pub(crate) account: u64,
+    pub(crate) cancel: &'a CancellationToken,
+}
+
+pub(crate) trait SetupBoundary {
+    async fn sign_in(
+        &self,
+        cloud: &CloudHostAdapter<'_>,
+        foreground: &Foreground,
+        cancel: &CancellationToken,
+        prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
+    ) -> io::Result<()>;
+    async fn provision(
+        &self,
+        cloud: &CloudHostAdapter<'_>,
+        foreground: &Foreground,
+        cancel: &CancellationToken,
+    ) -> io::Result<()>;
+    async fn health(
+        &self,
+        cloud: &CloudHostAdapter<'_>,
+        cancel: &CancellationToken,
+    ) -> io::Result<Health>;
+    fn owners<'a>(&self, store: &'a Store) -> io::Result<OwnerEnrollment<'a>>;
+    fn install(
+        &self,
+        store: &Store,
+        state: &Path,
+        stage: &TrustedStage,
+        epoch: u64,
+    ) -> io::Result<Observation>;
+}
+
+struct NativeBoundary;
+
+impl SetupBoundary for NativeBoundary {
+    async fn sign_in(
+        &self,
+        cloud: &CloudHostAdapter<'_>,
+        foreground: &Foreground,
+        cancel: &CancellationToken,
+        prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
+    ) -> io::Result<()> {
+        cloud.sign_in(foreground, cancel, prompt).await
+    }
+
+    async fn provision(
+        &self,
+        cloud: &CloudHostAdapter<'_>,
+        foreground: &Foreground,
+        cancel: &CancellationToken,
+    ) -> io::Result<()> {
+        cloud.provision(foreground, cancel).await.map(|_| ())
+    }
+
+    async fn health(
+        &self,
+        cloud: &CloudHostAdapter<'_>,
+        cancel: &CancellationToken,
+    ) -> io::Result<Health> {
+        cloud.health(cancel).await
+    }
+
+    fn owners<'a>(&self, store: &'a Store) -> io::Result<OwnerEnrollment<'a>> {
+        store.owner_enrollment()
+    }
+
+    fn install(
+        &self,
+        store: &Store,
+        state: &Path,
+        stage: &TrustedStage,
+        epoch: u64,
+    ) -> io::Result<Observation> {
+        Services::current_user(store, state)?.install(stage, epoch)
+    }
+}
+
 /// Register zero-shell hosting after explicit package/account consent.
 /// A failed or uncertain cloud submission is retained by the existing journal.
 /// Owner access remains off until the separate local approval step.
@@ -44,18 +132,47 @@ pub async fn setup(
     cancel: &CancellationToken,
     prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
 ) -> io::Result<SetupResult> {
+    setup_with(
+        SetupRequest {
+            store,
+            state,
+            stage,
+            account,
+            cancel,
+        },
+        prompt,
+        &NativeBoundary,
+    )
+    .await
+}
+
+pub(crate) async fn setup_with(
+    request: SetupRequest<'_>,
+    prompt: impl FnOnce(festerm_tunnel_client::identity::DevicePrompt),
+    boundary: &impl SetupBoundary,
+) -> io::Result<SetupResult> {
+    let SetupRequest {
+        store,
+        state,
+        stage,
+        account,
+        cancel,
+    } = request;
+    let before = store.snapshot()?;
+    startup_admission(std::env::consts::OS, before.settings.startup)?;
     stage.sessiond_path()?;
     if account == 0 || cancel.is_cancelled() {
         return Err(refused("host.foreground_account_consent_required"));
     }
-    let before = store.snapshot()?;
     let cloud = CloudHostAdapter::new(store);
     let expected_epoch = match before.phase {
         Phase::Disabled => {
             let ticket = store.request_enable(&before.settings)?;
             let foreground = cloud.foreground(&ticket, account)?;
-            cloud.sign_in(&foreground, cancel, prompt).await?;
-            cloud.provision(&foreground, cancel).await?;
+            boundary
+                .sign_in(&cloud, &foreground, cancel, prompt)
+                .await?;
+            boundary.provision(&cloud, &foreground, cancel).await?;
             ticket.epoch()
         }
         Phase::Provisioned => {
@@ -65,7 +182,7 @@ pub async fn setup(
                 .map(|binding| binding.account.as_str())
                 != Some(crate::cloud::subject(account).as_str())
                 || !matches!(
-                    cloud.health(cancel).await?,
+                    boundary.health(&cloud, cancel).await?,
                     Health::PresentEndpointUnqualified { .. }
                 )
             {
@@ -78,7 +195,6 @@ pub async fn setup(
     if cancel.is_cancelled() {
         return Err(refused("host.cloud_cancelled"));
     }
-    let owners = store.owner_enrollment()?;
     let current = store.snapshot()?;
     if current.epoch != expected_epoch || current.phase != Phase::Provisioned {
         return Err(refused("host.runtime_consent_changed"));
@@ -87,6 +203,7 @@ pub async fn setup(
         .binding
         .ok_or_else(|| refused("host.cloud_binding_changed"))?
         .account;
+    let owners = boundary.owners(store)?;
     let initial = match owners.snapshot() {
         Ok(existing) => existing,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -94,8 +211,7 @@ pub async fn setup(
         }
         Err(error) => return Err(error),
     };
-    let native_registration =
-        Services::current_user(store, state)?.install(stage, expected_epoch)?;
+    let native_registration = boundary.install(store, state, stage, expected_epoch)?;
     Ok(SetupResult {
         native_registration,
         owner_approval_prerequisite: initial,
@@ -103,6 +219,14 @@ pub async fn setup(
 }
 
 pub fn approve_owner(store: &Store, consent: OwnerConsent) -> io::Result<EnrollmentSnapshot> {
+    approve_owner_with(store, consent, &NativeBoundary)
+}
+
+pub(crate) fn approve_owner_with(
+    store: &Store,
+    consent: OwnerConsent,
+    boundary: &impl SetupBoundary,
+) -> io::Result<EnrollmentSnapshot> {
     consent
         .permissions
         .validate_permissions()
@@ -119,7 +243,7 @@ pub fn approve_owner(store: &Store, consent: OwnerConsent) -> io::Result<Enrollm
     if consent.permissions.creation_allowed && !before.settings.allow_creation {
         return Err(refused("owner.creation_settings_consent_required"));
     }
-    let owners = store.owner_enrollment()?;
+    let owners = boundary.owners(store)?;
     let current = owners.snapshot()?;
     let enrolled = if current
         .keys
@@ -135,6 +259,125 @@ pub fn approve_owner(store: &Store, consent: OwnerConsent) -> io::Result<Enrollm
         )?
     };
     owners.approve_permissions(enrolled.revision, true, consent.permissions)
+}
+
+#[derive(Serialize)]
+pub struct DisableResult {
+    pub lifecycle: Snapshot,
+    pub native_process: Option<Observation>,
+}
+
+/// Revoke first, observe exact manager stop and released foreground-host lease.
+/// Neither native daemon nor persistent sessions are stop targets.
+pub fn disable(store: &Store, state: &Path) -> io::Result<DisableResult> {
+    disable_with(store, Duration::from_secs(10), |epoch| {
+        Services::current_user(store, state)?.stop(epoch)
+    })
+}
+
+fn disable_with(
+    store: &Store,
+    wait: Duration,
+    stop: impl FnOnce(u64) -> io::Result<Observation>,
+) -> io::Result<DisableResult> {
+    match store.snapshot()?.phase {
+        Phase::Removed => return Err(refused("host.installation_removed")),
+        Phase::CleanupPending => return Err(refused("host.cleanup_already_pending")),
+        Phase::StopRequested => {}
+        _ => store.revoke()?,
+    }
+    let stopped = store.snapshot()?;
+    if stopped.phase == Phase::Reconciling {
+        return Err(refused("host.cloud_reconciliation_required"));
+    }
+    let Some(binding) = stopped.binding.as_ref() else {
+        return Ok(DisableResult {
+            lifecycle: stopped,
+            native_process: None,
+        });
+    };
+    let observation = stop(stopped.epoch)?;
+    if observation.installation != stopped.installation
+        || observation.origin != stopped.origin
+        || observation.epoch != stopped.epoch
+        || !matches!(
+            observation.process,
+            ProcessState::Absent | ProcessState::Stopped | ProcessState::Failed
+        )
+    {
+        return Err(refused("host.service_stop_not_observed"));
+    }
+    let deadline = Instant::now() + wait;
+    loop {
+        let absent = store.with_locked(|directory, current| {
+            if current != &stopped {
+                return Err(refused("host.runtime_consent_changed"));
+            }
+            match storage::open_private_file(directory, Path::new(LOCK), false) {
+                Ok(file) => Lease::exclusive(file).map(Some),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    match storage::open_private_file(directory, Path::new(RECORD), false) {
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                        _ => Err(refused("host.runtime_lock_missing_reconciliation_required")),
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        });
+        match absent {
+            Ok(_lease) => break,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "host.runtime_stop_pending",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    store.confirm_stopped(stopped.epoch, binding)?;
+    Ok(DisableResult {
+        lifecycle: store.snapshot()?,
+        native_process: Some(observation),
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UninstallResult {
+    Removed,
+    AlreadyRemovedNotReobserved,
+    NativeRemovedCloudCleanupPending,
+}
+
+/// Remove exact stopped registration, then reconcile authenticated cloud state.
+/// ID-only cloud DELETE is never used to manufacture conditional-delete proof.
+pub async fn uninstall(
+    store: &Store,
+    state: &Path,
+    cancel: &CancellationToken,
+) -> io::Result<UninstallResult> {
+    let before = store.snapshot()?;
+    if cancel.is_cancelled() {
+        return Err(refused("host.cloud_cancelled"));
+    }
+    if before.phase == Phase::Removed {
+        return Ok(UninstallResult::AlreadyRemovedNotReobserved);
+    }
+    if before.phase != Phase::CleanupPending {
+        disable(store, state)?;
+        store.request_cleanup()?;
+    }
+    let epoch = store.snapshot()?.epoch;
+    Services::current_user(store, state)?.cleanup(epoch)?;
+    match CloudHostAdapter::new(store).cleanup(cancel).await? {
+        Cleanup::Removed => Ok(UninstallResult::Removed),
+        Cleanup::GenerationConditionalDeleteUnavailable => {
+            Ok(UninstallResult::NativeRemovedCloudCleanupPending)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -196,6 +439,13 @@ fn refused(reason: &'static str) -> io::Error {
     io::Error::other(reason)
 }
 
+fn startup_admission(platform: &str, startup: Startup) -> io::Result<()> {
+    if platform == "linux" && startup == Startup::UserSignIn {
+        return Err(refused("host.linux_sign_in_session_fence_required"));
+    }
+    Ok(())
+}
+
 fn persist(store: &Store, record: &RunRecord) -> io::Result<()> {
     store.with_locked(|directory, snapshot| {
         if record.installation != snapshot.installation {
@@ -217,6 +467,13 @@ fn reserve(store: &Store) -> io::Result<(Lease, Snapshot, RunRecord)> {
         let file = match storage::open_private_file(directory, Path::new(LOCK), false) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                match storage::open_private_file(directory, Path::new(RECORD), false) {
+                    Ok(_) => {
+                        return Err(refused("host.runtime_lock_missing_reconciliation_required"))
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
                 storage::open_private_file(directory, Path::new(LOCK), true)?
             }
             Err(error) => return Err(error),
@@ -243,7 +500,11 @@ pub async fn run(store: Arc<Store>, state: &Path, cancel: CancellationToken) -> 
     let (_run_lease, snapshot, mut record) = reserve(&store)?;
     persist(&store, &record)?;
     let result = run_reserved(store.clone(), state, &snapshot, &mut record, cancel.clone()).await;
-    let result = if cancel.is_cancelled() {
+    let result = if cancel.is_cancelled()
+        && result
+            .as_ref()
+            .is_err_and(|error| error.to_string() == "host.cloud_cancelled")
+    {
         Ok(())
     } else {
         result
@@ -279,6 +540,7 @@ async fn run_reserved(
     if cancel.is_cancelled() {
         return Ok(());
     }
+    startup_admission(std::env::consts::OS, expected.settings.startup)?;
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
     let stage = Services::current_user(&store, state)?.reopen_stage(expected.epoch)?;
     let helper = stage.sessiond_path()?;
@@ -315,6 +577,16 @@ async fn run_reserved(
     persist(&store, record)?;
     let shutdown = CancellationToken::new();
     let served = runtime.serve(&mut relay, shutdown.clone());
+    supervise(&store, expected, cancel, shutdown, served).await
+}
+
+async fn supervise<T>(
+    store: &Store,
+    expected: &Snapshot,
+    cancel: CancellationToken,
+    shutdown: CancellationToken,
+    served: impl std::future::Future<Output = T>,
+) -> io::Result<()> {
     tokio::pin!(served);
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     let mut terminated = false;
@@ -325,6 +597,9 @@ async fn run_reserved(
             _ = interval.tick() => match store.snapshot() {
                 Ok(snapshot) if snapshot == *expected => {}
                 Ok(_) => break Err(refused("host.runtime_consent_changed")),
+                // A short current-policy guard owns this same installation
+                // lock. Contention is unobservable state, not revocation.
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) => break Err(error),
             },
             _ = &mut served => {
@@ -343,7 +618,7 @@ async fn run_reserved(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lifecycle::{Binding, Origin, Settings, Startup};
+    use crate::lifecycle::{Binding, Origin, Settings};
 
     fn fixture() -> (storage::PrivateTestDirectory, Arc<Store>) {
         let root = storage::private_test_directory();
@@ -395,6 +670,167 @@ mod tests {
         assert!(reserve(&store).is_err());
     }
 
+    #[test]
+    fn host_runtime_linux_sign_in_requires_logon_fence_not_lingering_user_manager() {
+        assert!(startup_admission("linux", Startup::Manual).is_ok());
+        assert!(startup_admission("linux", Startup::UserSignIn).is_err());
+        assert!(startup_admission("macos", Startup::UserSignIn).is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_watch_retries_real_installation_contention_then_observes_revocation() {
+        let (_root, store) = fixture();
+        provision(&store);
+        let (_run_lease, expected, mut record) = reserve(&store).unwrap();
+        record.state = RunState::Listening;
+        persist(&store, &record).unwrap();
+        let policy_lease = store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap();
+        let shutdown = CancellationToken::new();
+        let serving = {
+            let shutdown = shutdown.clone();
+            async move { shutdown.cancelled().await }
+        };
+        let watched = supervise(
+            &store,
+            &expected,
+            CancellationToken::new(),
+            shutdown.clone(),
+            serving,
+        );
+        tokio::pin!(watched);
+        assert!(tokio::time::timeout(Duration::from_secs(4), &mut watched)
+            .await
+            .is_err());
+        assert!(!shutdown.is_cancelled());
+        drop(policy_lease);
+        assert_eq!(
+            last_run(&store).unwrap().unwrap().state,
+            RunState::Listening
+        );
+        store.revoke().unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(2), &mut watched)
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.to_string(), "host.runtime_consent_changed");
+        assert_ne!(error.kind(), io::ErrorKind::WouldBlock);
+        assert!(shutdown.is_cancelled());
+    }
+
+    fn observed_stop(store: &Store, epoch: u64) -> Observation {
+        let snapshot = store.snapshot().unwrap();
+        assert_eq!(snapshot.phase, Phase::StopRequested);
+        assert_eq!(snapshot.epoch, epoch);
+        Observation {
+            process: ProcessState::Stopped,
+            installation: snapshot.installation,
+            origin: snapshot.origin,
+            epoch,
+        }
+    }
+
+    #[test]
+    fn host_runtime_disable_revokes_before_stop_and_waits_for_exact_run_lease() {
+        let (_root, store) = fixture();
+        provision(&store);
+        let (lease, before, _) = reserve(&store).unwrap();
+        let error = disable_with(&store, Duration::ZERO, |epoch| {
+            Ok(observed_stop(&store, epoch))
+        })
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+        assert!(store.snapshot().unwrap().epoch > before.epoch);
+        drop(lease);
+        let stopped = disable_with(&store, Duration::ZERO, |epoch| {
+            Ok(observed_stop(&store, epoch))
+        })
+        .unwrap();
+        assert_eq!(stopped.lifecycle.phase, Phase::Disabled);
+        assert_eq!(stopped.lifecycle.binding, before.binding);
+        store.request_cleanup().unwrap();
+        assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
+    }
+
+    #[test]
+    fn host_runtime_disable_does_not_confirm_foreign_stop_or_cloud_uncertainty() {
+        let (_root, store) = fixture();
+        provision(&store);
+        assert!(disable_with(&store, Duration::ZERO, |epoch| {
+            let mut observed = observed_stop(&store, epoch);
+            observed.installation = uuid::Uuid::new_v4().to_string();
+            Ok(observed)
+        })
+        .is_err());
+        assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+        assert!(store.request_cleanup().is_err());
+
+        let (_other_root, other) = fixture();
+        other
+            .request_enable(&other.snapshot().unwrap().settings)
+            .unwrap();
+        assert!(disable_with(&other, Duration::ZERO, |_| panic!("no native operation")).is_err());
+        assert_eq!(other.snapshot().unwrap().phase, Phase::Reconciling);
+        assert!(other.snapshot().unwrap().pending_ticket().is_some());
+        assert!(other.request_cleanup().is_err());
+    }
+
+    #[test]
+    fn host_runtime_missing_lock_never_authorizes_restart_or_confirmed_stop() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (lease, _, record) = reserve(&store).unwrap();
+        persist(&store, &record).unwrap();
+        drop(lease);
+        std::fs::remove_file(root.path().join("host").join(LOCK)).unwrap();
+        assert!(reserve(&store).is_err());
+        assert!(
+            disable_with(&store, Duration::ZERO, |epoch| Ok(observed_stop(
+                &store, epoch
+            )))
+            .is_err()
+        );
+        assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+        assert!(store.request_cleanup().is_err());
+        assert_eq!(last_run(&store).unwrap().unwrap(), record);
+    }
+
+    #[tokio::test]
+    async fn host_runtime_uninstall_cancel_and_removed_history_never_contact_native_or_cloud() {
+        let (root, store) = fixture();
+        provision(&store);
+        let before = store.snapshot().unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(uninstall(&store, &root.path().join("host"), &cancel)
+            .await
+            .is_err());
+        assert_eq!(store.snapshot().unwrap(), before);
+        store.revoke().unwrap();
+        let stopped = store.snapshot().unwrap();
+        store
+            .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+            .unwrap();
+        store.request_cleanup().unwrap();
+        let pending = store.snapshot().unwrap();
+        store
+            .confirm_removed(pending.epoch, pending.binding.as_ref().unwrap())
+            .unwrap();
+        assert_eq!(
+            uninstall(&store, &root.path().join("host"), &CancellationToken::new())
+                .await
+                .unwrap(),
+            UninstallResult::AlreadyRemovedNotReobserved,
+        );
+        assert!(!root
+            .path()
+            .join("host")
+            .join("native-service.json")
+            .exists());
+        assert!(!root.path().join("host").join("host-cloud.json").exists());
+    }
+
     #[tokio::test]
     async fn host_runtime_cancelled_start_never_opens_relay_and_persists_stopped_history() {
         let (root, store) = fixture();
@@ -409,6 +845,33 @@ mod tests {
         assert_eq!(record.failure, None);
         assert!(!root.path().join("host").join("daemon").exists());
         assert!(!root.path().join("host").join("host-cloud.json").exists());
+        assert_eq!(store.snapshot().unwrap().phase, Phase::Provisioned);
+    }
+
+    #[tokio::test]
+    async fn host_runtime_failed_start_is_durable_without_shell_or_credentials() {
+        let (root, store) = fixture();
+        provision(&store);
+        assert!(run(
+            store.clone(),
+            &root.path().join("host"),
+            CancellationToken::new()
+        )
+        .await
+        .is_err());
+        let record = last_run(&store).unwrap().unwrap();
+        assert_eq!(record.state, RunState::Failed);
+        assert_eq!(
+            record.failure,
+            Some(RunFailure::AuthenticatedBundleRequired)
+        );
+        assert!(!root.path().join("host").join("daemon").exists());
+        assert!(!root.path().join("host").join("host-cloud.json").exists());
+        assert!(!root
+            .path()
+            .join("host")
+            .join("owner-enrollment.json")
+            .exists());
         assert_eq!(store.snapshot().unwrap().phase, Phase::Provisioned);
     }
 

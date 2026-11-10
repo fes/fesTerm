@@ -388,7 +388,10 @@ support requires additional aggregate limits on clients, sessions, pending
 creates, control operations and bytes; per-session limits alone are insufficient.
 Specify concrete constants in the protocol implementation review. Fair scheduling
 must prevent one busy shell starving others/control/revocation. Saturation refuses
-boundedly; no unbounded task/thread creation or lock held over network I/O.
+boundedly; no unbounded task/thread creation. Installation, policy and journal
+guards are never held over network I/O. A separate bounded cloud-operation
+serialization lease may span its network operation without blocking revocation
+or becoming current installation/policy authority.
 
 Version mismatch and unsupported capabilities produce clear refusal. Changed
 generation retires pending input, file reads, observation, selection and recovery
@@ -644,8 +647,11 @@ inventory-only; Attach/Detach use independently proven terminal channels.
 The four focused tests and additional real-daemon lifecycle/current-policy cases
 use actual native TCP encrypted signed SSH, not native-vault/service acceptance.
 The fixed protected adapter is integrated; exact-head independent consumer review,
-first-connect approval, verified-helper production composition and native
-qualification remain prerequisites. No installed endpoint is enabled.
+client first-connect approval and real release/native qualification remain
+prerequisites. The default headless build now composes
+explicit signed setup/foreground consent, separate owner-key/permission approval
+and authenticated run; configuration remains disabled by default. This is source
+integration, not native endpoint acceptance or client first-connect completion.
 
 **Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
 protected lifecycle journal; the separate GUI-free `festerm-host` supports
@@ -656,7 +662,8 @@ Epoch fencing retains late provisioned identity for exact stop/cleanup, preserve
 identity on re-enable and refuses desktop/headless origin adoption. These are
 local boundary operations, not native endpoint acceptance. Shared source now
 composes explicit setup, separate local owner approval and authenticated run;
-update/uninstall remain unavailable. No Ready or native acceptance is claimed.
+disable/owned native uninstall retain unqualified cloud deletion as CleanupPending;
+update remains unavailable. No Ready or native acceptance is claimed.
 See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 
 **Native service component progress (#681):** Off-default `native-services`
@@ -960,16 +967,18 @@ Stage-3 core evidence adds real-proof owned-duplex dispatcher tests
 `revision_or_generation_change_while_pending_fences_publication`,
 `protected_revocation_during_work_never_publishes_inventory_or_absence`, and
 paired transport deadline/cancellation/correlation/legacy-refusal tests in
-`festerm-tunnel-client::host_control`. These qualify only the unexposed bounded
-core, not native endpoint or whole-ADR acceptance. Consuming the reviewed inner
-SSH session/channel owner proof and fair adopted terminal routing remain
-prerequisites. Real native-control/scoped-policy adapters add
+`festerm-tunnel-client::host_control`. Those tests qualified the then-unexposed
+bounded core, not native endpoint or whole-ADR acceptance. At that checkpoint,
+inner-SSH owner proof and fair adopted terminal routing were downstream
+prerequisites; the current explicit headless composition consumes those sources
+but does not qualify native/first-connect acceptance. Real native-control/scoped-policy adapters add
 `native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`,
 `native_creation_denial_does_not_register_virgin_identity_or_claim_absence`, and
 `native_lost_reply_disconnect_retry_and_independent_control_never_duplicate_spawn`.
 These explicitly invoked owned Unix fixtures qualify local control routing,
 not actual encrypted owner-channel proof, terminal attachment or native service
-acceptance. No listener advertises HOST; the partial adapter reports only
+acceptance. At that historical core checkpoint no listener advertised HOST; the
+standalone adapter still reports only
 inventory capability and enforces it for every operation: unadvertised
 ensure/create/attach/detach/end refuse before backend effects. Native control
 fixtures explicitly opt into a cfg(test)-only advertisement seam. Additional

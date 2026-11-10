@@ -2,15 +2,20 @@
 
 Stages 1–2 of [ADR 0084](adr/0084-host-based-dev-tunnels.md), tracked by
 [#681](https://github.com/fes/fesTerm/issues/681). The ADR remains **Proposed**.
-These are usable contracts and a local durable session-control backend,
-**not a running endpoint**. No listener advertises HOST, routes these requests,
-changes an ACL or migrates an existing bridge. Trusted local callers can use
-the stage-2 API to create actual detached daemons after protected admission.
-Independent antagonist/security review is required before exposure.
+These contracts and the local durable backend are now consumed by the default
+headless build's explicit signed setup/foreground consent, separate owner-key/
+permission approval and authenticated run. Configure defaults disabled; compiled
+features and imported recipes confer no listener/ACL/migration authority.
+Paired runtime lifecycle and terminal routing use fresh protected admission;
+standalone control remains inventory-only. This is runnable source, **not native
+endpoint acceptance**. Independent combined-source review, real release/cloud/
+vault/service and client first-connect/device gates remain open.
 
 ## Dependency and API boundary
 
-### Authenticated runtime composition (uninstalled integration)
+<a id="authenticated-runtime-composition-uninstalled-integration"></a>
+
+### Authenticated runtime composition (explicit headless integration)
 
 The bridge's opt-in `host_runtime` module provides these concrete APIs:
 
@@ -128,9 +133,10 @@ tagged variants are Rust struct variants (`Request::Capabilities {}`,
 `Lifetime::Persistent {}`, and the non-running lookup results), preserving the
 same JSON while rejecting extra authority/lifetime fields.
 
-The future transport must read a four-byte big-endian payload length and refuse
+The transport reads a four-byte big-endian payload length and refuses
 zero or more than 65,536 bytes **before allocating/reading the body**. One body
-is one JSON object. No framing/SSH listener is installed by this stage.
+is one JSON object. The initial codec stage alone installed no listener; the
+current explicit headless runtime consumes the authenticated framed transport.
 Authentication uses the same bounded codec for `OwnerChallenge`/`OwnerProof`.
 Terminal bytes never enter this control codec; the existing bounded
 snapshot/input/output protocol and explicit recovery adoption remain unchanged.
@@ -449,7 +455,9 @@ keys** in addition to the existing private service ACL and host-key trust.
 There is no new identity provider, borrowed OAuth token, anonymous ACL or
 management-token authentication.
 
-### Enrollment and secret boundary (transport integration still gated)
+<a id="enrollment-and-secret-boundary-transport-integration-still-gated"></a>
+
+### Enrollment and secret boundary (native/first-connect qualification gated)
 
 1. A foreground local setup operation authenticates the configured OS user
    through existing protected setup/consent boundaries and selects the intended
@@ -476,8 +484,9 @@ management-token authentication.
 4. Account IDs remain public provisioning hints. Public keys map to the
    configured owner only, not an asserted GitHub user or creator-specific ACL.
    Permission/key changes advance protected host/grant epochs before publication.
-   Removing a device invalidates its live/pending admission. A future endpoint
-   must close the affected streams; no endpoint is implemented here.
+   Removing a device invalidates its live/pending admission. The authenticated
+   runtime closes affected streams using fresh policy; the local enrollment
+   helper itself owns neither transport nor client first-connect UX.
 
 The opt-in `festerm-host-setup/owner-enrollment` feature now implements protected
 local persistence through `Store::owner_enrollment() -> OwnerEnrollment`.
@@ -498,7 +507,9 @@ masks effective creation without invalidating the stored record or blocking
 revocation/permission removal. New creation approval still requires settings
 consent. Remote
 admission additionally requires the lifecycle's Provisioned phase (not a Ready
-claim). No CLI/UI enrollment controls are exposed by this backend slice.
+claim). The default headless controller consumes this API through separate
+foreground `approve-owner`; there is no remote/implicit enrollment. Client
+foreground approved-context/key/index and UI qualification remain separate.
 
 The private installation journal lease serializes enrollment, lifecycle and
 fresh admission. `current_policy() -> CurrentOwnerPolicy` owns that short lease
@@ -763,8 +774,13 @@ JSON; this slice chooses neither new controls nor a pairing service.
   though their requests do not carry a generation pin. Revalidate against fresh
   authoritative state under the **same admission/journal boundary as the
   disclosure or daemon IPC**. Checking two copies of a captured fence is not
-  revalidation. Never hold that lock across network I/O; revoke/cancel first,
+  revalidation. Never hold installation, policy or admission/journal guards
+  across network I/O; revoke/cancel first,
   then reconcile late work. Connection retirement invalidates all its captures.
+
+The separate bounded cloud-operation serialization lease may span its network
+operation. It prevents duplicate cloud work, is not current policy/installation
+authority, and does not retain those short-lived guards or prevent revocation.
 
 ## Aggregate admission and fairness
 
@@ -884,11 +900,13 @@ leases or turns a partial result into authoritative absence.
 `StopRequested` returns `OutcomeUncertain`, not fabricated `Ended`; a caller can
 reconcile the actual later absence through Lookup.
 
-The headless composition library's **off-by-default** `owner-routing` feature
+The headless binary's **default-enabled** `owner-routing` feature
 adapts the real `Store::owner_enrollment().current_policy()`/`CurrentOwnerPolicy`
-to these traits (`EnrollmentPolicy`/`EnrollmentGuard`). It adds no command,
-vault write, authentication bypass, listener or Ready state. Production native
-vault/channel/service acceptance is not inferred from compilation.
+to these traits (`EnrollmentPolicy`/`EnrollmentGuard`) and selects the explicit
+controller/CLI setup, owner approval and run. The adapter itself is thin
+delegation, not a vault write, authentication bypass or Ready state. Configure
+remains disabled; the compatibility no-default build refuses setup/run.
+Production native vault/channel/service acceptance is not inferred from compilation.
 
 Five explicitly invoked Unix owned-daemon duplex fixtures prove actual
 ensure/create replies and lost-reply retry without duplicate native generations,
@@ -947,10 +965,11 @@ Stale takeover cleanup cannot renew or stop the replacement.
 
 The native server/scheduler are consumed by `HostRuntime` only after proof on
 the exact pinned channel. The portable client is framing, not authority.
-This is opt-in, uninstalled composition, not authenticated endpoint readiness.
+The bridge/library features are opt-in; the default headless build composes them
+through explicit authenticated run. This is not native endpoint readiness.
 Independent exact-head consumer review, cross-platform native qualification and
-fair control-under-load evidence remain gates. No listener installation,
-automatic fallback, file/observation/MCP
+fair control-under-load evidence remain gates. No automatic listener,
+fallback, file/observation/MCP
 grant, setup authority or remote sharing/enrollment operation is added.
 
 At the prior `1a66a935` milestone, all nine explicitly invoked owned native
@@ -960,11 +979,14 @@ bytes, temporary cancellation/detach and independent control during slow-output
 revocation. Unix CI selects both control and terminal fixture modules. This is
 local bounded fixture evidence, not production endpoint or native-service
 acceptance.
-The current main/enrollment/opaque-authority source union still requires its
-own native-nine/clippy rerun and different-source-family antagonist validation.
+That historical checkpoint did not qualify the later combined source. Current
+fixed-head owned-runtime qualification and independent review are recorded in
+[milestone progress](milestone-progress.md); native acceptance remains separate.
 
-**Exposure remains blocked:** these dispatcher/native consumers are not yet
-wired to the reviewed inner-SSH channel binding and enrolled-owner stream.
+**Historical stage-3 boundary:** at that checkpoint these consumers were not yet
+wired to the inner-SSH binding/enrolled-owner stream. Current explicit headless
+run consumes that binding and the protected policy source; first-connect,
+native-service/vault and independent combined-review gates remain open.
 A host-key pin alone cannot supply the required same-channel non-forwardable
 owner proof. Integration must consume that actual binding; no asserted principal, bearer,
 arbitrary trusted boolean or random substitute is acceptable. Separate terminal attachment routing and

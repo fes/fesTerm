@@ -3596,6 +3596,40 @@ Linux ordinary-user real-release setup/run/disable/daemon-survival remains
 `HOSTSETUP-01`; native client pin/key approval and its protected local index remain
 `HOSTAUTH-01`. Windows still requires the explicit publisher/revocation and
 exact-host graceful-stop decisions below.
+The shared disable/removal fixtures cover revoke-before-stop, exact
+foreground runtime-lease exclusion, refusal of foreign observations/uncertainty
+and cancelled/history-only uninstall without native/cloud calls. They do not
+qualify real manager termination, signed update or generation-atomic deletion;
+`HOSTSETUP-01` still requires real ordinary-user host stop and independent
+persistent-daemon survival with the combined signed runnable head.
+Before the subsequent review corrections, the compiled checkpoint passed 9 runtime
+controller cases plus the production
+foreground identity-initialization regression; affected host/setup packages
+passed 106 tests with one existing native ignore, compatibility CLI passed 10 and
+strict affected-package Clippy passed. The real initializer is invoked from an
+absent key through production `CloudHostAdapter::foreground`, not preseeded by a
+fixture. Identity loss under an existing cloud record refuses regeneration.
+Linux UserSignIn remains blocked on current-logon activation (an already lingering
+user manager is not sign-in proof); Manual setup/run remains available in source.
+The review-correction union passes 114 host/setup tests with one existing native
+ignore: 101 setup-library, 5 headless unit and 8 CLI integration cases. The new
+production-supervision regression holds the actual Store installation lease
+across four pending serving ticks, retains Listening, then releases/revokes and
+observes ConsentChanged rather than InstallationBusy. Fresh per-action admission
+still refuses unobservable authority; this is not cached permission.
+Six actual shared controller-core tests exercise setup and owner approval through
+typed fake network/credentials/native registration with real private lifecycle,
+identity and enrollment: ordering, zero-shell/access-off initialization, phase/
+fingerprint/creation/issuer/account fences, late revocation, failed-install reuse
+and cancelled/missing consent. They are deterministic boundary tests, not real
+native registration or vault evidence. Independent default-No temporary approval
+is covered separately and does not grant creation. Client foreground context/
+independent-pin review, protected local receipt/index and session-choice UI remain
+separate HOSTAUTH-01 work; host-local approval does not complete them.
+The same fixed-source qualification passes compatibility CLI10, strict affected
+all-target Clippy and the setup library's standalone `native-services` check.
+Packaging metadata and Python66 (59 passed / 7 skipped), fmt, trace311 and diff
+checks pass. These do not replace the real native prerequisites above.
 
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;

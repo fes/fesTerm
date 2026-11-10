@@ -31,14 +31,16 @@ qualify-package --manifest PATH --signature PATH --archive PATH --cache-root PAT
     Verify native release publisher and publish private executable bytes; never starts a service.
 setup --state-dir PATH --manifest PATH --signature PATH --archive PATH --cache-root PATH --account-id ID --consent enable
     Foreground signed-package/account consent; register zero shells and report public owner-approval context.
-approve-owner --state-dir PATH --public-key HEX --fingerprint FINGERPRINT --consent approve [--creation allow|deny] [--end allow|deny]
+approve-owner --state-dir PATH --public-key HEX --fingerprint FINGERPRINT --consent approve [--creation allow|deny] [--end allow|deny] [--temporary allow|deny]
     Explicit host-local approval of the reviewed client key. Never imports trust from a recipe.
 run --state-dir PATH
     Explicit authenticated host listener; existing native credentials and owner approval required.
 run-status --state-dir PATH
     Durable last-run history, not a liveness or endpoint-ready claim.
-update | uninstall
-    Unavailable until qualified update and exact cloud-removal prerequisites are integrated.
+uninstall --state-dir PATH --consent remove
+    Revoke, observe exact host stop and remove owned native registration; unqualified cloud deletion remains CleanupPending and exits unsuccessfully.
+update
+    Unavailable until the authenticated stopped-version replacement transaction is integrated.
 
 Manual startup requires an explicit run. Sign-in is user sign-in, NOT pre-login.
 No native startup registration is performed by configure. Paths must be absolute,
@@ -87,12 +89,15 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             "--consent",
             "--creation",
             "--end",
+            "--temporary",
         ],
         #[cfg(feature = "owner-routing")]
         "run" | "run-status" => &["--state-dir"],
+        #[cfg(feature = "owner-routing")]
+        "uninstall" => &["--state-dir", "--consent"],
         #[cfg(not(feature = "owner-routing"))]
-        "setup" | "run" => return Err(unavailable()),
-        "update" | "uninstall" => return Err(unavailable()),
+        "setup" | "run" | "uninstall" => return Err(unavailable()),
+        "update" => return Err(unavailable()),
         _ => return Err(invalid()),
     };
     let mut options = BTreeMap::new();
@@ -112,6 +117,29 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         Ok(path)
     };
     match command {
+        #[cfg(feature = "owner-routing")]
+        "uninstall" => {
+            if options.get("--consent").and_then(|value| value.to_str()) != Some("remove") {
+                return Err(invalid());
+            }
+            let state = path("--state-dir")?;
+            let store = Store::open(&state, Origin::Headless)?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            let cancel = tokio_util::sync::CancellationToken::new();
+            match runtime.block_on(with_shutdown(
+                festerm_host_setup::controller::uninstall(&store, &state, &cancel),
+                cancel.clone(),
+            ))? {
+                festerm_host_setup::controller::UninstallResult::Removed =>
+                    Ok("Exact owned native registration and cloud endpoint absence confirmed. Revocation evidence and persistent sessions retained.\n".into()),
+                festerm_host_setup::controller::UninstallResult::AlreadyRemovedNotReobserved =>
+                    Ok("Recorded removed tombstone retained; resources were not reobserved. Persistent sessions unchanged.\n".into()),
+                festerm_host_setup::controller::UninstallResult::NativeRemovedCloudCleanupPending =>
+                    Err(io::Error::other("host.native_removed_cloud_cleanup_pending")),
+            }
+        }
         #[cfg(feature = "owner-routing")]
         "setup" => {
             if options.get("--consent").and_then(|value| value.to_str()) != Some("enable") {
@@ -163,11 +191,6 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 *byte = u8::from_str_radix(&public[index * 2..index * 2 + 2], 16)
                     .map_err(|_| invalid())?;
             }
-            let choice = |name| match options.get(name).and_then(|value| value.to_str()) {
-                Some("allow") => Ok(true),
-                Some("deny") | None => Ok(false),
-                _ => Err(invalid()),
-            };
             let store = Store::open(&path("--state-dir")?, Origin::Headless)?;
             let report = festerm_host_setup::controller::approve_owner(
                 &store,
@@ -178,16 +201,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                         .and_then(|value| value.to_str())
                         .ok_or_else(invalid)?
                         .into(),
-                    permissions: festerm_host_protocol::Capabilities {
-                        inventory: true,
-                        attach: true,
-                        detach: true,
-                        ensure: true,
-                        create: true,
-                        creation_allowed: choice("--creation")?,
-                        explicit_end: choice("--end")?,
-                        ..Default::default()
-                    },
+                    permissions: owner_permissions(&options)?,
                 },
             )?;
             serde_json::to_string_pretty(&report)
@@ -266,6 +280,14 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         "service-status" | "disable" | "cleanup-local" => {
             let state = path("--state-dir")?;
             let store = Store::open(&state, Origin::Headless)?;
+            #[cfg(feature = "owner-routing")]
+            if command == "disable" {
+                return serde_json::to_string_pretty(&festerm_host_setup::controller::disable(
+                    &store, &state,
+                )?)
+                .map(|report| format!("{report}\n"))
+                .map_err(|_| io::Error::other("host.status_serialization"));
+            }
             if command == "disable" {
                 match store.snapshot()?.phase {
                     Phase::Removed => return Err(io::Error::other("host.installation_removed")),
@@ -348,6 +370,31 @@ fn unavailable() -> io::Error {
 }
 
 #[cfg(feature = "owner-routing")]
+fn owner_permissions(
+    options: &BTreeMap<String, OsString>,
+) -> io::Result<festerm_host_protocol::Capabilities> {
+    let choice = |name| match options.get(name) {
+        None => Ok(false),
+        Some(value) => match value.to_str() {
+            Some("allow") => Ok(true),
+            Some("deny") => Ok(false),
+            _ => Err(invalid()),
+        },
+    };
+    Ok(festerm_host_protocol::Capabilities {
+        inventory: true,
+        attach: true,
+        detach: true,
+        ensure: true,
+        create: true,
+        creation_allowed: choice("--creation")?,
+        explicit_end: choice("--end")?,
+        temporary: choice("--temporary")?,
+        ..Default::default()
+    })
+}
+
+#[cfg(feature = "owner-routing")]
 async fn with_shutdown<T>(
     work: impl std::future::Future<Output = io::Result<T>>,
     cancel: tokio_util::sync::CancellationToken,
@@ -392,6 +439,9 @@ fn main() -> ExitCode {
 }
 
 fn diagnostic(error: &io::Error) -> &'static str {
+    if error.to_string() == "host.runtime_stop_pending" {
+        return "host.runtime_stop_pending; access revoked but foreground host exit is not confirmed; preserve the exact receipt and retry";
+    }
     match error.kind() {
         io::ErrorKind::Unsupported => return "host.endpoint_adapter_unavailable (#681); no operation performed",
         io::ErrorKind::PermissionDenied => return "host.private_storage_required; use the configured non-system user and owner-only storage",
@@ -430,6 +480,18 @@ fn diagnostic(error: &io::Error) -> &'static str {
             "host.cloud_rate_limited; preserve receipt and retry later, outcome not confirmed"
         }
         "host.cloud_cancelled" => "host.cloud_cancelled; retained evidence was not discarded",
+        "host.linux_sign_in_session_fence_required" =>
+            "host.linux_sign_in_session_fence_required; choose manual startup until current-logon activation is qualified; no linger or permission changes performed",
+        "host.runtime_current_provisioned_consent_required" =>
+            "host.runtime_current_provisioned_consent_required; complete explicit current setup before run",
+        "host.runtime_current_owner_consent_required" =>
+            "host.runtime_current_owner_consent_required; complete reviewed host-local owner key and permission approval",
+        "host.runtime_lock_missing_reconciliation_required" =>
+            "host.runtime_lock_missing_reconciliation_required; preserve runtime history and reconcile exact ownership; no restart or stopped claim",
+        "host.service_signed_provenance_required" =>
+            "host.service_signed_provenance_required; original signed release provenance required for runtime; old receipt remains cleanup-only",
+        "host.native_removed_cloud_cleanup_pending" =>
+            "host.native_removed_cloud_cleanup_pending; access revoked and owned native registration removed; cloud CleanupPending retained because generation-atomic deletion is unqualified; no DELETE sent",
         "host.service_not_installed"
         | "host.service_not_installed_no_native_observation" => {
             "host.service_not_installed_no_native_observation; no receipt is not proof of process absence"
@@ -521,6 +583,26 @@ mod tests {
         values.iter().map(OsString::from).collect()
     }
 
+    #[cfg(feature = "owner-routing")]
+    #[test]
+    fn headless_temporary_permission_is_explicit_and_never_grants_creation() {
+        let mut options = BTreeMap::new();
+        let default = owner_permissions(&options).unwrap();
+        assert!(!default.temporary);
+        assert!(!default.creation_allowed);
+        options.insert("--temporary".into(), "allow".into());
+        let approved = owner_permissions(&options).unwrap();
+        assert!(approved.temporary);
+        assert!(!approved.creation_allowed);
+        assert_eq!(approved.create, default.create);
+        assert_eq!(approved.ensure, default.ensure);
+        assert_eq!(approved.explicit_end, default.explicit_end);
+        options.insert("--temporary".into(), "deny".into());
+        assert!(!owner_permissions(&options).unwrap().temporary);
+        options.insert("--temporary".into(), "yes".into());
+        assert!(owner_permissions(&options).is_err());
+    }
+
     #[test]
     fn headless_commands_configure_and_report_only_disabled_state() {
         let root = festerm_sessiond::private_storage::private_test_directory();
@@ -547,7 +629,8 @@ mod tests {
     #[test]
     fn unavailable_host_operations_and_unsafe_options_fail_closed() {
         for command in ["setup", "run", "update", "uninstall"] {
-            let expected = if cfg!(feature = "owner-routing") && matches!(command, "setup" | "run")
+            let expected = if cfg!(feature = "owner-routing")
+                && matches!(command, "setup" | "run" | "uninstall")
             {
                 io::ErrorKind::Other
             } else {

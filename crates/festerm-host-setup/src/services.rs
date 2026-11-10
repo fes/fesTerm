@@ -5,6 +5,12 @@ pub mod native;
 mod trusted;
 pub use trusted::TrustedStage;
 
+#[cfg(all(test, feature = "cloud", feature = "host-runtime"))]
+pub(crate) fn fixture_stage(root: &std::path::Path) -> TrustedStage {
+    let _directory = festerm_sessiond::private_storage::private_directory(root, true).unwrap();
+    trusted::fixture(root)
+}
+
 use crate::{
     lifecycle::{Binding, Origin, Phase, Settings, Snapshot, Startup, Store},
     protected_state::{self, Lease},

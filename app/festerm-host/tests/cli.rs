@@ -10,7 +10,9 @@ fn headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments() 
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         let error = String::from_utf8(output.stderr).unwrap();
-        let expected = if cfg!(feature = "owner-routing") && matches!(operation, "setup" | "run") {
+        let expected = if cfg!(feature = "owner-routing")
+            && matches!(operation, "setup" | "run" | "uninstall")
+        {
             "invalid_arguments"
         } else {
             "endpoint_adapter_unavailable"
@@ -56,6 +58,7 @@ fn headless_setup_and_owner_approval_require_explicit_foreground_confirmation() 
     for (command, args) in [
         ("setup", vec!["--account-id", "42"]),
         ("approve-owner", vec!["--public-key", "fixture-do-not-echo"]),
+        ("uninstall", vec!["--state-dir", "fixture-do-not-echo"]),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
             .arg(command)
