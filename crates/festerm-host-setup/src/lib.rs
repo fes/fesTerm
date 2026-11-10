@@ -1,4 +1,4 @@
-//! The Dev Tunnel host installers exactly as this build shipped them.
+//! Dev Tunnel installer scripts and GUI-free helper artifact authentication.
 //!
 //! The scripts are embedded, not fetched, so what a user reviews in the app is
 //! byte-for-byte what the matching GitHub release publishes for this version.
@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 pub mod lifecycle;
 #[cfg(feature = "lifecycle")]
 pub mod staging;
+#[cfg(feature = "artifacts")]
+pub mod artifacts;
 
 /// A host platform the installer supports.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

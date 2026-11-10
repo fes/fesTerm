@@ -1563,7 +1563,7 @@ branch silently.
 
 ## Proposed host-based Dev Tunnels (ADR 0084)
 
-These edges are deferred design contracts, not implemented behavior or acceptance.
+These edges are design contracts, not overall implemented behavior or acceptance.
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
@@ -1573,4 +1573,10 @@ Existing TUNNEL edges retain their current coverage until implementation migrate
 | `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; persistent detach or temporary lease | New local shells private; independent daemon lifetime; generation-fenced temporary cleanup | Preserve persistent shells; bounded reconnect grace | P,H,N; deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch boundary implemented; actual setup/Ready and desktop controls deferred; no default shell | Preserve draft; journal late identity for exact stop, never re-enable | P,H,N; partial boundary, native/UI deferred |
 | `HOST-05` | Headless package → configured service | Configure/status/offline pinned CLI staging; setup/run/update/uninstall refuse | Shared disabled settings and exact-owned receipt policy; no shell/service changes; pre-login unavailable | Busy/corrupt/foreign state fails closed; retain cleanup evidence | P,H,N; partial boundary, endpoint/package/native deferred |
-| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; old daemons preserved; no grant expansion or automatic legacy recreation | Compatible rollback; no revoked-state resurrection | P,H,N; deferred |
+| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; old daemons preserved; no grant expansion or automatic legacy recreation | Compatible rollback; no revoked-state resurrection | P: manifest/verifier foundation; H,N: switching/migration deferred |
+
+HOST-06 currently has only the independently testable
+[helper authenticity boundary](host-release-artifacts.md): signed exact-target
+metadata, immutable verified bytes and bounded archive allowlists. It does not
+implement service switching, rollback or migration; the legacy Linux script
+path is not promoted to authenticated setup.

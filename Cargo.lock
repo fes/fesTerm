@@ -2587,14 +2587,21 @@ dependencies = [
 name = "festerm-host-setup"
 version = "0.16.0"
 dependencies = [
+ "base64 0.22.1",
+ "blake2 0.10.6",
+ "ed25519-dalek",
  "festerm-sessiond",
  "festerm-tunnel-bridge",
+ "flate2",
  "fs2",
+ "minisign-verify",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tar",
  "tempfile",
  "uuid",
+ "zip",
 ]
 
 [[package]]

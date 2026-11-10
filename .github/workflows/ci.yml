@@ -179,6 +179,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/select_headless_vulkan.py --github-env "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Validate authenticated helper artifacts without desktop dependencies
+        run: |
+          cargo test --locked -p festerm-host-setup --features artifacts
+          cargo clippy --locked -p festerm-host-setup --features artifacts --all-targets -- -D warnings
       - name: Check the experimental Dev Tunnels feature
         run: cargo clippy -p festerm -p festerm-tunnel-bridge --all-targets --features festerm/experimental-dev-tunnels,festerm-tunnel-bridge/relay -- -D warnings
       - name: Test the experimental bridge protocol and relay

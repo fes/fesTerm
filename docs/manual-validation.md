@@ -52,6 +52,15 @@ fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
 ## Experimental direct Dev Tunnels bridge (DT-01 through DT-08)
 
+HOST-06's [authenticated helper foundation](host-release-artifacts.md) has
+synthetic-key rejection/allowlist tests and Python manifest/recovery fixtures.
+DT-05/DT-08 still require protected real-release signatures, independently
+trusted first-verifier delivery and clean-machine verification/rejection on all
+six native targets. These offline tests are not installed service
+switching/rollback, headless CLI inclusion or legacy-migration evidence.
+Legacy Linux installers still lack this new independent publisher verification;
+integration remains tracked in [#681](https://github.com/fes/fesTerm/issues/681).
+
 Installer command integrity is automated: shell subprocess regressions exercise
 matching, modified and empty responses, download failures, argument quoting and
 Unix temporary-file cleanup. PowerShell additionally rejects newline-rewritten

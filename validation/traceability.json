@@ -5471,8 +5471,7 @@
       "edges": [
         "HOST-01",
         "HOST-02",
-        "HOST-03",
-        "HOST-06"
+        "HOST-03"
       ],
       "requirements": [
         "docs/adr/0084-host-based-dev-tunnels.md#decision",
@@ -5516,6 +5515,31 @@
         "Issue #681 stages 3–5/7: new zero-shell host endpoint, verified principal channel, real observed health and foreground secure sign-in/consent integration; setup/run/update/uninstall refuse until functional",
         "Exact-owned same-user native service/status/cleanup adapters and persistent-daemon independence; signed authenticated artifacts and compatible update/rollback",
         "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance"
+      ]
+    },
+    {
+      "id": "authenticated-host-helper-artifacts",
+      "edges": ["HOST-06"],
+      "requirements": [
+        "docs/adr/0084-host-based-dev-tunnels.md#9-packaging-integrity-and-upgrades",
+        "docs/host-release-artifacts.md#verification-and-staging-api"
+      ],
+      "decisions": ["ADR-0084"],
+      "automated_tests": [
+        "authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes",
+        "rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing",
+        "rejects_wrong_version_arch_platform_filename_length_and_hash",
+        "rejects_unknown_duplicate_and_out_of_bounds_manifest_fields",
+        "rejects_signed_unsafe_tar_entries_duplicates_missing_files_and_wrong_version",
+        "rejects_signed_zip_paths_symlinks_modes_and_duplicates",
+        "rejects_oversized_headers_without_allocating_entry_and_trailing_gzip"
+      ],
+      "manual_scenarios": ["DT-05", "DT-08"],
+      "status": "partial",
+      "prerequisites": [
+        "Issue #681: headless CLI package inclusion and consuming installer/private atomic staging integration",
+        "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
+        "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence"
       ]
     }
   ]
