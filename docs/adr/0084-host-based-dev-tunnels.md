@@ -591,7 +591,10 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `host_cloud_local_no_send_and_rejection_resolve_without_widening_consent`,
   `host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation`,
   `host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create`,
-  `host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup`.
+  `host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup`,
+  `host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource`,
+  `host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states`,
+  `host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt`.
   Windows configuration/journal/staging fixtures share the existing
   policy-validated private-storage fixture-root selection, not an assumption
   that checkout ancestors are safe. The native

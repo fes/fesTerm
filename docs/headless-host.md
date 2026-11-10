@@ -218,8 +218,13 @@ executable authority, and no shell/session/profile identity is created.
    Cancellation before transport polling and definitive 400/401/403 rejections
    restore only this attempt's previous submission state, never erase older
    uncertainty. Lost/error/cancelled replies retain the exact reservation. A later
-   matching response pins the semantically parsed service creation timestamp
-   before publication; differing equivalent precision/UTC spelling is not drift.
+   matching GET pins the semantically parsed service creation timestamp before
+   publication. Successful PUT is always followed by an authoritative GET:
+   its timestamp is never pinned from PUT-only precision. Equivalent UTC/zero
+   spellings normalize, while genuinely different GET timestamps fail closed.
+   The read-only GET may complete after cancellation (existing 20-second HTTP
+   deadline) to retain late cleanup evidence, never to restore enable intent.
+   If it fails, possible submission remains journaled without a guessed receipt.
    Revocation retains late results in StopRequested, never re-enables access.
    Observed cancellation fences only the matching lifecycle ticket/epoch.
    A UI abandoning/dropping a pending future must still call `Store::revoke`
@@ -231,8 +236,10 @@ executable authority, and no shell/session/profile identity is created.
    denied/unknown observations and revoked consent never resubmit. An older
    submitted journal lacking its immutable description cannot be retried by
    guessing that body. A crash between submission journaling and transport
-   polling remains honestly uncertain; after revocation, absent unpinned
-   uncertainty requires manual resolution, not automatic new consent or deletion.
+   polling remains honestly uncertain. Generic DNS/connect/TLS/transport errors
+   are also conservative: this transport does not expose a documented
+   attempt-level proof excluding all prior sends, so they are not classified as
+   NotSent from a broad error category.
    If a pinned resource disappears, provisioning/reconciliation retains the
    exact receipt/binding, clears the matching pending intent and requests native
    stop. Cloud absence is **not** native-stop proof: exact `confirm_stopped`
@@ -243,6 +250,28 @@ executable authority, and no shell/session/profile identity is created.
    An authenticated exact-ID/cluster 404 is `Absent`; denial, refresh failure,
    offline, malformed, foreign ownership/port/ACL and changed incarnation are
    errors, never absence. Service/channel/principal health is not implemented.
+
+For an **unbound cancelled uncertain submission**, there is a specific offline
+foreground exit, not a directory-deletion/manual workaround:
+
+- Read the current `Snapshot` and show explicit acknowledgement that a cloud
+  resource may still exist and will be retained. Use its exact pending ticket,
+  displayed epoch and selected verified numeric account with
+  `foreground_recovery(ticket, expected_epoch, expected_github_subject)`.
+- Only after that foreground acknowledgement, call
+  `acknowledge_uncertain_submission(&UncertainRecovery)`. It validates the same
+  account/origin/OS-user/journal/ticket/current epoch again, advances the epoch
+  and releases pending intent to Disabled. It does **not** assert Absent/Removed,
+  clear `submitted`, erase credentials/receipt debt or grant creation consent.
+- Any binding, pinned receipt or native-stop lifecycle state forbids this exit.
+  Stale/mismatched recovery handles cannot clear a newer ticket or native proof.
+  Background `reconcile` neither acknowledges nor creates: while Disabled with
+  retained unbound uncertainty it reports that lifecycle phase without cloud or
+  vault access, **not** absence. Do not delete the installation directory.
+- A later separately approved `request_enable`/`foreground` reuses the same
+  immutable reservation and credential. A late exact resource is observed and
+  bound; otherwise only authenticated exact absence permits the same conditional
+  request. No new resource ID/incarnation is silently selected.
 
 `cleanup(cancel)` requires the lifecycle's exact binding, current cleanup epoch
 and confirmed native stop. It rechecks current account, exact ID/cluster,
@@ -255,6 +284,8 @@ we do not invent an ETag/creation-time header or claim cleanup succeeded.
 Qualifying a service-side incarnation-conditional destructive contract remains
 a genuine prerequisite to automatic cloud removal. Credentials and protected
 tombstones are retained; this API does not claim complete uninstall.
+Live-service creation-incarnation stability across repeated authoritative GETs
+remains unqualified; fixture precision coverage is not live-service evidence.
 
 The request contract follows the vendored Microsoft Rust management client and
 the [official TypeScript SDK at reviewed source

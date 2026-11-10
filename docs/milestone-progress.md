@@ -8795,7 +8795,13 @@ authenticated exact absence can retry the identical unpinned conditional
 reservation/body; background reconciliation never creates. Equivalent service
 timestamp precision is normalized. A disappeared pinned resource retains its
 binding and requires exact native stop before cleanup, never silent recreation.
-Crash-window uncertainty after revoked consent remains manual-required.
+Unbound uncertainty after revoked consent now has a named foreground recovery:
+an exact ticket/account/current-epoch acknowledgement releases pending intent
+to Disabled while retaining possible submission, credentials and the identical
+reservation. It is not absence/removal or renewed creation consent; bound or
+pinned/native-stop state forbids it. A later explicit enable observes late
+creation using that same identity. Successful PUTs pin only a follow-up
+authoritative GET, including late cancelled receipts, never PUT-only precision.
 
 Research also found a destructive-operation boundary that cannot honestly be
 papered over: the official API offers ID-only deletion without a documented

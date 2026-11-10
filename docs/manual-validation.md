@@ -3383,6 +3383,13 @@ API exists; generic command-refusal tests are not migration-consent evidence.
 | --- | --- | --- | --- |
 | HOSTSETUP-01 | Install a signed desktop/headless zero-shell host; foreground account sign-in/consent; enable, disable, cancel each stage, reconcile late completion and exact-owned offline cleanup; preserve host identity/grants and persistent daemons across helper exit/update/uninstall. Verify manual versus user sign-in versus separately qualified pre-login startup, locked/missing vault, non-system shell identity, origin collision refusal and no legacy-installer adoption. | Automated local journal/staging and private fake HTTP/account/cloud-receipt fixtures, including local no-send/rejection recovery, same-reservation foreground conditional retry/conflict, timestamp normalization and pinned absence requiring native stop; native/service/package and desktop usability deferred | #681 stages 3–5/7: working endpoint, verified principal channel, foreground composition and authenticated release artifacts. Found-resource cloud deletion requires a qualified service-side incarnation-atomic precondition; ID-only delete remains unavailable, not successful cleanup. Windows/macOS/Linux real account/vault/service/startup evidence remains required; no real cloud/sign-in/vault mutation is validated by fixtures. |
 
+Cloud recovery fixtures also cover offline/cancel followed by explicit
+ticket/account/current-epoch acknowledgement retaining the uncertain reservation,
+later enable observing exact late creation, and rejection of stale/bound recovery.
+Successful PUT receipts are pinned only after authoritative GET, including late
+cancelled results. Live-service incarnation stability across repeated GETs still
+requires qualification; these fixtures perform no real cloud or vault mutations.
+
 ## ADR 0084 owner enrollment qualification
 
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |

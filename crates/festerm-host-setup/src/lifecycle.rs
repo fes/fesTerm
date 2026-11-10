@@ -413,6 +413,24 @@ impl Store {
         })
     }
 
+    #[cfg(feature = "cloud")]
+    pub(crate) fn release_uncertain_enable(&self, ticket: &Ticket, epoch: u64) -> io::Result<()> {
+        self.change(|record| {
+            pending(record, ticket)?;
+            if record.epoch != epoch
+                || record.epoch <= ticket.epoch
+                || record.phase != Phase::Reconciling
+                || record.binding.is_some()
+            {
+                return Err(refused("host.cloud_uncertain_recovery_unavailable"));
+            }
+            advance(record)?;
+            record.pending = None;
+            record.phase = Phase::Disabled;
+            Ok(())
+        })
+    }
+
     /// A cloud absence is not native stop evidence. Retain the exact binding,
     /// fence enable intent and require the ordinary exact native-stop receipt.
     #[cfg(feature = "cloud")]

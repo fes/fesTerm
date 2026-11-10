@@ -5565,6 +5565,9 @@
         "host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation",
         "host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create",
         "host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup",
+        "host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource",
+        "host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states",
+        "host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt",
         "staging_parent_rejects_a_dacl_that_allows_child_substitution"
       ],
       "manual_scenarios": ["HOSTSETUP-01"],
@@ -5574,7 +5577,8 @@
         "Exact-owned same-user native service/status/cleanup adapters and persistent-daemon independence; signed authenticated artifacts and compatible update/rollback",
         "Exact-generation separate default-No migration confirmation is deferred until the migration API; setup command refusals do not establish that behavior",
         "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance",
-        "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable and retains CleanupPending without DELETE"
+        "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable and retains CleanupPending without DELETE",
+        "Live-service creation-incarnation stability across repeated authoritative GETs remains unqualified; fixture PUT/GET precision differences do not establish native/live-service acceptance"
       ]
     },
     {

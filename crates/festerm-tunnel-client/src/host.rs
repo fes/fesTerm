@@ -509,27 +509,32 @@ mod tests {
 
     #[tokio::test]
     async fn host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port() {
+        let mut put_response = response();
+        put_response["created"] = "2026-11-09T00:00:00.123Z".into();
         let mut get_response = response();
-        get_response["created"] = "2026-11-09T00:00:00.0000000+00:00".into();
+        get_response["created"] = "2026-11-09T00:00:00.123456700+00:00".into();
         let http = Fake::new(vec![
             (
                 200,
                 serde_json::json!({"recommendedClusterId":"usw2","isFallback":false,"recommendations":[]}),
             ),
-            (201, response()),
+            (201, put_response),
             (200, get_response),
         ]);
         let cancel = CancellationToken::new();
         let identity = identity();
         assert_eq!(recommend(&http, &identity, &cancel).await.unwrap(), "usw2");
         let prepared = prepare_create(&identity, &resource(), "Fixture host").unwrap();
-        let receipt = submit(&http, prepared, &cancel).await.unwrap();
-        assert_eq!(
-            observe(&http, &identity, &resource(), &cancel)
-                .await
-                .unwrap(),
-            Observation::Present(receipt)
-        );
+        let put_receipt = submit(&http, prepared, &cancel).await.unwrap();
+        let Observation::Present(get_receipt) = observe(&http, &identity, &resource(), &cancel)
+            .await
+            .unwrap()
+        else {
+            panic!("exact resource missing");
+        };
+        assert_eq!(put_receipt.created, "2026-11-09T00:00:00.123Z");
+        assert_eq!(get_receipt.created, "2026-11-09T00:00:00.1234567Z");
+        assert_ne!(get_receipt, put_receipt);
         let requests = http.requests.lock().unwrap();
         assert_eq!(requests[0].url().as_str(), "https://global.rel.tunnels.api.visualstudio.com/clusters/recommendations?api-version=2023-09-27-preview");
         assert_eq!(requests[1].method(), Method::PUT);
