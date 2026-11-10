@@ -217,8 +217,10 @@ queries a manager nor fabricates a receipt; status still reports no observation.
 A pending old/new update journal is never bypassed by a missing active receipt:
 stop reconciles both targets, and cleanup retains Applying/refuses if ownership
 cannot be finalized. Corrupt or foreign journal evidence refuses before effects,
-never inferring Aborted or absence from `None`. Runtime history/lease guards
-remain controller prerequisites.
+never inferring Aborted or absence from `None`. The outer controller must acquire
+the run-exclusive lease before Disabled; prior foreground run history alone is
+not a denial condition. Missing runtime lock with retained history still requires
+reconciliation; Services does not add a blanket no-run-history precondition.
 Even settled update history proves prior registration: a lost active receipt
 therefore refuses rather than claiming never-published absence.
 

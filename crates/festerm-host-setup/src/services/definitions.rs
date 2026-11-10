@@ -141,7 +141,11 @@ fn directory(path: &Path, create: bool) -> io::Result<File> {
     Ok(directory)
 }
 
-pub(super) fn check_file(context: &Context, record: &Registration) -> io::Result<bool> {
+pub(super) fn check_file(
+    context: &Context,
+    #[cfg(unix)] record: &Registration,
+    #[cfg(not(unix))] _: &Registration,
+) -> io::Result<bool> {
     if context.platform == Platform::Windows {
         return Ok(true);
     }

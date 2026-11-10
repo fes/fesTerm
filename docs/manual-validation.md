@@ -3665,6 +3665,13 @@ The normally integrated Task Scheduler API regressions are Windows x64
 cross-compiled only, with zero Windows test executions; the registry fixture
 correction has fresh macOS tests, not fresh Windows execution. Required primary
 and iOS CI results remain independent gates.
+The subsequent `b5e3bead` Windows strict-build correction only aligns the
+definition-verification parameter and Unix relay-test override cfgs. Fresh
+macOS Services/control regressions and affected-package strict builds pass.
+Broader Windows MSVC all-target check and strict attempts for host-setup and
+bridge both exit 101 in `ring` because Windows SDK `assert.h` is unavailable;
+they do not qualify those packages on Windows. Actual Windows CI remains
+required; see the opening milestone-progress section for commands and logs.
 Before the subsequent review corrections, the compiled checkpoint passed 9 runtime
 controller cases plus the production
 foreground identity-initialization regression; affected host/setup packages

@@ -1,5 +1,107 @@
 # Milestone Progress Narrative
 
+## Integrating exact published Windows cfg correction into the update union
+
+The combined update branch normally merges exact published core
+`9b1d2a688e35cad8dead2afa4b228c152c2cadb9` into qualified
+`255b6206db68c99355075afe6a2fdffe0f54bf6b`. The source delta is only the
+Windows-unused parameter binding and Unix relay-test constructor/field cfgs;
+both source files match exact `9b1d2a68`. No runtime behavior or ancillary
+refactor is added. Earlier source-qualified evidence histories are preserved.
+
+The coupled old-cache daemon/PTY positive and helper-deletion/replacement/
+daemon-end negative oracles, pending-journal precedence, missing-receipt crash/
+revoked-epoch refusals and settled-update ownership guard remain unchanged.
+Prior foreground run history is **not** itself a denial condition: the outer
+controller obtains the run-exclusive lease before Disabled. Services' absence
+path retains its own lease/current phase/epoch/full-snapshot/receipt checks;
+pending replacement is still reconciled first. No new runtime-history ban is
+introduced.
+
+This lane uses its existing private `target/adr84-update`, jobs1, debug0/
+incremental0 and explicitly pinned rustup stable Rust/Cargo 1.99.1 / Clippy
+0.1.99. Host free memory is checked against the 15% pause threshold before
+affected Cargo commands. Exact selected commands, in the earlier pinned
+environment, are:
+
+```sh
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib services::replacement::tests -- --test-threads=1
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib services::tests -- --test-threads=1
+FESTERM_ADR84_UPDATE_HELPER="$PWD/target/adr84-update/debug/festerm-sessiond" cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib native_host_update_preserves_actual -- --ignored --test-threads=1
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib host_control::tests -- --test-threads=1
+cargo clippy --locked -p festerm-host-setup -p festerm-tunnel-bridge --features festerm-host-setup/acquisition,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/host-runtime,festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo clippy --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9
+git diff --check
+```
+
+Logs are `target/adr84-update-evidence/core-9b-*.log`. The lane's existing
+freshly built helper source still matches exact `9b1d2a68` (sessiond/core/PTY
+unchanged since `b5`); no other actor's target/binary is reused. No Windows SDK
+installation, full MSVC retry, fake cfg, VM/guest/OS-manager/cloud/vault/signing
+operation or full affected/workspace suite is added. The known broad MSVC
+`ring`/missing Windows SDK `assert.h` exit 101 remains a blocker, not compilation
+success. Windows native execution remains unrun. Synthetic old-version current-
+source bytes/test signatures/qualifier/fake Linux manager still do not establish
+genuine older-release, native publisher or cross-version acceptance.
+The parent owns publication and all three same-head rereviews; this lane does
+not push.
+
+Fresh combined-source results: **12 replacement / one opt-in ignore**, **14
+Services / zero ignored**, **10 control / five existing native-helper ignores**,
+and then **exactly one coupled actual-daemon pass / zero ignored**. All three
+missing-receipt/journal regressions and the before/after same-frontend PTY plus
+helper-loss/replacement/daemon-end oracles pass unchanged. Affected two-package
+all-target strict Clippy and portable no-host strict Clippy pass on the pinned
+toolchain. Format, diff and base-`9b` traceability pass with **311 edges / zero
+broken references**. Free host memory at command gates remained **45–50%**;
+no low-memory compilation was started. Owned daemon/fixture/Cargo processes
+are gone and the private build slot is released. The earlier **131** affected
+unit passes remain attributed to `255b6206`, not rerun or relabeled here.
+
+## Aligning the frozen core's Windows cfg boundaries
+
+Fresh Windows primary CI for `b5e3bead` found two strict-build failures:
+definition-file verification named a registration used only on Unix, and the
+native control capability-override constructor was compiled without its sole
+Unix relay-test consumer. The verification parameter now has a binding only
+on Unix; other platforms accept the same argument anonymously. The existing
+Windows fast path and unsupported-platform refusal are unchanged. The private
+override constructor, field, initializers and branches now share their actual
+`test + relay + unix` consumer gate. No production capability, receipt,
+manager, ownership or cleanup behavior changes; there are no warning waivers.
+
+Using the explicitly pinned Rust/Cargo 1.99.1 and Clippy 0.1.99 environment
+documented below, fresh selected results are **14 Services tests** and **10
+control tests**, zero failures, with **five existing native-helper tests
+explicitly ignored**. Strict all-target Clippy passes for both affected packages
+with acquisition, native-services, cloud, host-runtime and host-routing enabled.
+The portable no-default client/owner-auth bridge library also passes strict
+Clippy.
+
+```sh
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib services::tests
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib host_control::tests
+cargo clippy --locked -p festerm-host-setup -p festerm-tunnel-bridge --features festerm-host-setup/acquisition,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/host-runtime,festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo clippy --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-host-setup -p festerm-tunnel-bridge --features festerm-host-setup/acquisition,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/host-runtime,festerm-tunnel-bridge/host-routing --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-host-setup -p festerm-tunnel-bridge --features festerm-host-setup/acquisition,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/host-runtime,festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base b5e3bead12732cda335764e79e4b234bee1509d0
+git diff --check
+```
+
+Both broad Windows MSVC attempts above **exit 101 before completing affected
+package checking**: `ring 0.17.14` cannot find Windows C SDK `assert.h`.
+No SDK/toolchain was installed, no dependency was bypassed, and neither attempt
+is Windows compilation success. Exact logs and exit receipts remain in
+`.runtime-validation/windows-cfg-*`; existing vendor and rust-objcopy warnings
+are retained. Format, base-`b5` traceability and diff checks pass. There are
+**zero Windows executions** and no fresh fourteen-native-route claim. Fresh
+actual Windows primary CI remains required; no native manager/cloud/vault/VM
+operation, pending sibling integration or product acceptance is included.
+
 ## Integrating exact core cleanup with the coupled update proof
 
 The update branch normally merges exact published core
@@ -136,8 +238,9 @@ all selected cases zero ignored. Five-package strict all-target Clippy and
 standalone no-host/client+owner-auth strict Clippy pass on the genuinely pinned
 toolchain. The existing iOS device standard-library target supplies actual
 `aarch64-apple-ios` no-host bridge strict compilation; it is not simulator
-execution or a full app build. Windows x64 all-target check/strict pass, including
-the three Task Scheduler regressions, with **zero Windows test executions**.
+execution or a full app build. Windows x64 **festerm-windows-security / host-service
+only** all-target check/strict pass, including the three Task Scheduler regressions,
+with **zero Windows test executions**.
 No new target/toolchain, default override, dependency version or OS permission
 was installed/changed by this lane.
 
