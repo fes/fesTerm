@@ -8789,6 +8789,14 @@ resource, and late cancellation retains cleanup truth without restoring access.
 This provisions no shell and starts no endpoint or service; observed cloud
 presence is explicitly not Ready.
 
+Recovery now distinguishes local preflight/no-send/definitive rejection from
+uncertain transport outcomes. Only explicit still-active foreground intent plus
+authenticated exact absence can retry the identical unpinned conditional
+reservation/body; background reconciliation never creates. Equivalent service
+timestamp precision is normalized. A disappeared pinned resource retains its
+binding and requires exact native stop before cleanup, never silent recreation.
+Crash-window uncertainty after revoked consent remains manual-required.
+
 Research also found a destructive-operation boundary that cannot honestly be
 papered over: the official API offers ID-only deletion without a documented
 incarnation-atomic precondition. The adapter verifies exact ownership, but refuses

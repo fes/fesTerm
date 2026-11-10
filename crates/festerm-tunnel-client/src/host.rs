@@ -82,6 +82,31 @@ pub enum Observation {
     Absent,
 }
 
+/// Built and validated before the setup journal records a possible submission.
+/// The request owns its short-lived sensitive authorization header.
+pub struct PreparedCreate {
+    request: Request,
+    resource: Resource,
+}
+
+impl PreparedCreate {
+    pub fn resource(&self) -> &Resource {
+        &self.resource
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CreateError {
+    /// The transport future was never polled.
+    NotSent(Error),
+    /// A complete service response definitively rejected this create.
+    Rejected(Error),
+    /// A conditional conflict requires observation, never ID freshening.
+    Conflict,
+    /// The request may have been accepted; retain its durable reservation.
+    Uncertain(Error),
+}
+
 struct Reply {
     status: u16,
     bytes: Zeroizing<Vec<u8>>,
@@ -131,14 +156,20 @@ impl Management {
         recommend(&self.0, identity, cancel).await
     }
 
-    pub async fn create(
-        &self,
+    pub fn prepare_create(
         identity: &Identity,
         resource: &Resource,
         description: &str,
+    ) -> Result<PreparedCreate, Error> {
+        prepare_create(identity, resource, description)
+    }
+
+    pub async fn submit(
+        &self,
+        prepared: PreparedCreate,
         cancel: &CancellationToken,
-    ) -> Result<Receipt, Error> {
-        create(&self.0, identity, resource, description, cancel).await
+    ) -> Result<Receipt, CreateError> {
+        submit(&self.0, prepared, cancel).await
     }
 
     pub async fn observe(
@@ -253,13 +284,11 @@ fn resource_request(
     Ok(request)
 }
 
-async fn create(
-    http: &impl Transport,
+fn prepare_create(
     identity: &Identity,
     resource: &Resource,
     description: &str,
-    cancel: &CancellationToken,
-) -> Result<Receipt, Error> {
+) -> Result<PreparedCreate, Error> {
     if description.trim().is_empty()
         || description.len() > 80
         || description.chars().any(char::is_control)
@@ -307,11 +336,44 @@ async fn create(
             .map_err(|_| Error::Response)?
             .into(),
     );
-    let reply = send(http, request, cancel).await?;
-    if !(200..=299).contains(&reply.status) {
-        return Err(Error::Response);
+    Ok(PreparedCreate {
+        request,
+        resource: resource.clone(),
+    })
+}
+
+async fn submit(
+    http: &impl Transport,
+    prepared: PreparedCreate,
+    cancel: &CancellationToken,
+) -> Result<Receipt, CreateError> {
+    let PreparedCreate { request, resource } = prepared;
+    let mut polled = false;
+    let transport = async {
+        polled = true;
+        http.send(request).await
+    };
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => None,
+        reply = transport => Some(reply),
+    };
+    let reply = match result {
+        None if !polled => return Err(CreateError::NotSent(Error::Cancelled)),
+        None => return Err(CreateError::Uncertain(Error::Cancelled)),
+        Some(Err(error)) => return Err(CreateError::Uncertain(error)),
+        Some(Ok(reply)) => reply,
+    };
+    if reply.bytes.len() > crate::RESPONSE_LIMIT {
+        return Err(CreateError::Uncertain(Error::Response));
     }
-    receipt(&reply.bytes, resource)
+    match reply.status {
+        200..=299 => receipt(&reply.bytes, &resource).map_err(CreateError::Uncertain),
+        400 => Err(CreateError::Rejected(Error::Response)),
+        401 | 403 => Err(CreateError::Rejected(Error::Denied)),
+        409 | 412 => Err(CreateError::Conflict),
+        _ => Err(CreateError::Uncertain(Error::Network)),
+    }
 }
 
 async fn observe(
@@ -403,11 +465,14 @@ mod tests {
         }
     }
     fn identity() -> Identity {
+        identity_with_expiry(None)
+    }
+    fn identity_with_expiry(expires_at: Option<u64>) -> Identity {
         let body = serde_json::json!({
             "account": {"id": 42, "login": "fixture"},
             "client_id": crate::identity::SERVICE_CLIENT_ID,
             "access_token": "PRIVATE_SYNTHETIC_GITHUB_ACCESS",
-            "refresh_token": null, "expires_at": null, "refresh_expires_at": null,
+            "refresh_token": null, "expires_at": expires_at, "refresh_expires_at": null,
         });
         let bytes = [
             b"FESTERM_GITHUB_IDENTITY_V2\0".as_slice(),
@@ -444,20 +509,21 @@ mod tests {
 
     #[tokio::test]
     async fn host_cloud_requests_use_fixed_authority_private_owner_acl_and_zero_shell_port() {
+        let mut get_response = response();
+        get_response["created"] = "2026-11-09T00:00:00.0000000+00:00".into();
         let http = Fake::new(vec![
             (
                 200,
                 serde_json::json!({"recommendedClusterId":"usw2","isFallback":false,"recommendations":[]}),
             ),
             (201, response()),
-            (200, response()),
+            (200, get_response),
         ]);
         let cancel = CancellationToken::new();
         let identity = identity();
         assert_eq!(recommend(&http, &identity, &cancel).await.unwrap(), "usw2");
-        let receipt = create(&http, &identity, &resource(), "Fixture host", &cancel)
-            .await
-            .unwrap();
+        let prepared = prepare_create(&identity, &resource(), "Fixture host").unwrap();
+        let receipt = submit(&http, prepared, &cancel).await.unwrap();
         assert_eq!(
             observe(&http, &identity, &resource(), &cancel)
                 .await
@@ -561,5 +627,100 @@ mod tests {
             Err(Error::Cancelled)
         );
         assert!(http.requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_cloud_create_distinguishes_preflight_not_sent_rejection_conflict_and_uncertainty()
+    {
+        let resource = resource();
+        assert!(matches!(
+            prepare_create(&identity_with_expiry(Some(1)), &resource, "Fixture"),
+            Err(Error::Expired)
+        ));
+        let http = Fake::new(vec![]);
+        let cancel = CancellationToken::new();
+        let prepared = prepare_create(&identity(), &resource, "Fixture").unwrap();
+        cancel.cancel();
+        assert_eq!(
+            submit(&http, prepared, &cancel).await,
+            Err(CreateError::NotSent(Error::Cancelled))
+        );
+        assert!(http.requests.lock().unwrap().is_empty());
+
+        struct CancelOnPoll(CancellationToken);
+        impl Transport for CancelOnPoll {
+            fn send(&self, _: Request) -> ReplyFuture<'_> {
+                Box::pin(async {
+                    self.0.cancel();
+                    std::future::pending().await
+                })
+            }
+        }
+        let cancel = CancellationToken::new();
+        let http = CancelOnPoll(cancel.clone());
+        let prepared = prepare_create(&identity(), &resource, "Fixture").unwrap();
+        assert_eq!(
+            submit(&http, prepared, &cancel).await,
+            Err(CreateError::Uncertain(Error::Cancelled))
+        );
+
+        for (status, expected) in [
+            (400, CreateError::Rejected(Error::Response)),
+            (401, CreateError::Rejected(Error::Denied)),
+            (403, CreateError::Rejected(Error::Denied)),
+            (409, CreateError::Conflict),
+            (412, CreateError::Conflict),
+            (500, CreateError::Uncertain(Error::Network)),
+            (201, CreateError::Uncertain(Error::IdentityChanged)),
+        ] {
+            let mut replies = vec![(status, serde_json::json!({}))];
+            if expected == CreateError::Conflict {
+                replies.push((200, response()));
+            } else if status == 400 {
+                replies.extend([(404, serde_json::json!({})), (201, response())]);
+            }
+            let http = Fake::new(replies);
+            let prepared = prepare_create(&identity(), &resource, "Fixture").unwrap();
+            let cancel = CancellationToken::new();
+            assert_eq!(submit(&http, prepared, &cancel).await, Err(expected));
+            if expected == CreateError::Conflict {
+                assert!(matches!(
+                    observe(&http, &identity(), &resource, &cancel)
+                        .await
+                        .unwrap(),
+                    Observation::Present(_)
+                ));
+            } else if status == 400 {
+                assert_eq!(
+                    observe(&http, &identity(), &resource, &cancel)
+                        .await
+                        .unwrap(),
+                    Observation::Absent
+                );
+                let retry = prepare_create(&identity(), &resource, "Fixture").unwrap();
+                submit(&http, retry, &cancel).await.unwrap();
+            }
+            let requests = http.requests.lock().unwrap();
+            assert_eq!(
+                requests.len(),
+                if status == 400 {
+                    3
+                } else if expected == CreateError::Conflict {
+                    2
+                } else {
+                    1
+                }
+            );
+            assert_eq!(requests[0].headers()[header::IF_NONE_MATCH], "*");
+            assert!(requests[0].url().path().ends_with(&resource.tunnel_id));
+            if status == 400 {
+                assert_eq!(requests[0].url(), requests[2].url());
+                assert_eq!(
+                    requests[0].body().unwrap().as_bytes(),
+                    requests[2].body().unwrap().as_bytes()
+                );
+                assert_eq!(requests[2].headers()[header::IF_NONE_MATCH], "*");
+            }
+        }
     }
 }

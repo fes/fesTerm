@@ -413,6 +413,42 @@ impl Store {
         })
     }
 
+    /// A cloud absence is not native stop evidence. Retain the exact binding,
+    /// fence enable intent and require the ordinary exact native-stop receipt.
+    #[cfg(feature = "cloud")]
+    pub(crate) fn record_missing_resource(
+        &self,
+        ticket: &Ticket,
+        binding: Binding,
+    ) -> io::Result<Phase> {
+        binding.validate()?;
+        self.change(|record| {
+            if record.installation != ticket.installation {
+                return Err(refused("host.stale_operation"));
+            }
+            if record.binding.as_ref().is_some_and(|old| old != &binding) {
+                return Err(refused("host.identity_change_requires_migration"));
+            }
+            if record.pending.is_none() && record.binding.as_ref() == Some(&binding) {
+                if record.phase != Phase::Provisioned {
+                    return Ok(record.phase);
+                }
+                if record.epoch != ticket.epoch {
+                    return Err(refused("host.stale_operation"));
+                }
+            } else {
+                pending(record, ticket)?;
+            }
+            if record.epoch == ticket.epoch {
+                advance(record)?;
+            }
+            record.binding = Some(binding);
+            record.pending = None;
+            record.phase = Phase::StopRequested;
+            Ok(record.phase)
+        })
+    }
+
     /// Adapter evidence must establish that an uncertain submission created no
     /// resources. A timeout or missing reply is not sufficient.
     pub fn confirm_no_resources(&self, ticket: &Ticket) -> io::Result<()> {

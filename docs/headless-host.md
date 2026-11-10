@@ -202,22 +202,42 @@ executable authority, and no shell/session/profile identity is created.
    account verification. Expiry/denial requires explicit foreground reauthentication;
    maintenance can refresh but never starts an interactive sign-in.
 3. `provision(&foreground, cancel)` reserves an official recommended cluster,
-   random exact tunnel ID and independent ownership label before one conditional
-   create request. The only port is TCP 2222 marked `festerm-host-v1`; its private
-   ACL selects the same GitHub subject. No anonymous/organization ACL, bearer
+   random exact tunnel ID, independent ownership label and immutable creation
+   description before a conditional create request. The only port is TCP 2222
+   marked `festerm-host-v1`; its private ACL selects the same GitHub subject.
+   No anonymous/organization ACL, bearer
    owner principal, PTY, endpoint listener or default shell is involved.
    The existing protected `HostIdentity` format is stored at
    `cloud::HOST_IDENTITY_FILE` (`host-identity`), distinct from profile identity.
    `Binding.account` is canonical `github:<numeric subject>`; it is provisioning
    metadata, never enrollment or owner-proof authority.
-4. `reconcile(cancel)` observes a previously submitted request without another
-   create. Lost/error/cancelled replies retain the exact reservation. A later
-   matching response pins the service creation timestamp before publication.
+4. `reconcile(cancel)` resolves a proven never-submitted reservation under the
+   operation lease without cloud access or a credential store, or observes a
+   possibly submitted request without another create. Request construction and
+   local expiry validation happen before journaling possible submission.
+   Cancellation before transport polling and definitive 400/401/403 rejections
+   restore only this attempt's previous submission state, never erase older
+   uncertainty. Lost/error/cancelled replies retain the exact reservation. A later
+   matching response pins the semantically parsed service creation timestamp
+   before publication; differing equivalent precision/UTC spelling is not drift.
    Revocation retains late results in StopRequested, never re-enables access.
    Observed cancellation fences only the matching lifecycle ticket/epoch.
    A UI abandoning/dropping a pending future must still call `Store::revoke`
    before dismissing it; dropping a future is not a cancellation notification.
-   A missing uncertain submission never triggers another create.
+   Only another explicit `provision` on the still-active foreground ticket may
+   retry an unpinned reservation after same-account authenticated exact absence.
+   It sends the identical ID/cluster/labels/body with `If-None-Match: *`, never a
+   fresh ID or incarnation; 409/412 triggers exact reconciliation. Maintenance,
+   denied/unknown observations and revoked consent never resubmit. An older
+   submitted journal lacking its immutable description cannot be retried by
+   guessing that body. A crash between submission journaling and transport
+   polling remains honestly uncertain; after revocation, absent unpinned
+   uncertainty requires manual resolution, not automatic new consent or deletion.
+   If a pinned resource disappears, provisioning/reconciliation retains the
+   exact receipt/binding, clears the matching pending intent and requests native
+   stop. Cloud absence is **not** native-stop proof: exact `confirm_stopped`
+   remains necessary before requesting cleanup. A pinned incarnation is never
+   recreated.
 5. `health(cancel)` really queries the exact cloud resource and reconfirms the
    account. Its only present state is `PresentEndpointUnqualified`, **not Ready**.
    An authenticated exact-ID/cluster 404 is `Absent`; denial, refresh failure,
@@ -239,8 +259,11 @@ tombstones are retained; this API does not claim complete uninstall.
 The request contract follows the vendored Microsoft Rust management client and
 the [official TypeScript SDK at reviewed source
 37956c6](https://github.com/microsoft/dev-tunnels/blob/37956c63675e3339b42c7f852a5af5da1566c5b9/ts/src/management/tunnelManagementHttpClient.ts)
-(`createTunnel` uses `If-None-Match: *`; `deleteTunnel` has no incarnation
-argument). Production network authority is fixed HTTPS, without configurable
+(`createTunnel` uses `If-None-Match: *`, whose
+[HTTP precondition semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.2)
+prevent overwriting an existing resource; `deleteTunnel` has no incarnation
+argument). These are reviewed source/HTTP contracts, not live service qualification.
+Production network authority is fixed HTTPS, without configurable
 test origins. Private fake HTTP transports exercise actual request construction
 and bounded response/ownership parsing; setup fixtures exercise consent,
 credential references and lifecycle receipts. No real sign-in, cloud operation,

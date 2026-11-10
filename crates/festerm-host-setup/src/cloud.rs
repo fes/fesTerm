@@ -9,7 +9,10 @@ use festerm_secret_store::{SecretBytes, SecretReference, SecretStore};
 use festerm_sessiond::private_storage as storage;
 use festerm_tunnel_bridge::host_identity::HostIdentity;
 use festerm_tunnel_client::{
-    host::{Management, Observation, Receipt, Resource, HOST_LABEL, HOST_PORT},
+    host::{
+        CreateError, Management, Observation, PreparedCreate, Receipt, Resource, HOST_LABEL,
+        HOST_PORT,
+    },
     identity::{self, DevicePrompt, Identity},
     Error as AccountError, Https,
 };
@@ -65,6 +68,7 @@ struct Record {
     host_id: String,
     fingerprint: String,
     resource: Option<Resource>,
+    creation_name: Option<String>,
     submitted: bool,
     receipt: Option<Receipt>,
 }
@@ -119,13 +123,19 @@ trait Network {
         identity: &Identity,
         cancel: &CancellationToken,
     ) -> Result<String, AccountError>;
-    async fn create(
+    fn prepare_create(
         &self,
         identity: &Identity,
         resource: &Resource,
         name: &str,
+    ) -> Result<PreparedCreate, AccountError> {
+        Management::prepare_create(identity, resource, name)
+    }
+    async fn create(
+        &self,
+        prepared: PreparedCreate,
         cancel: &CancellationToken,
-    ) -> Result<Receipt, AccountError>;
+    ) -> Result<Receipt, CreateError>;
     async fn observe(
         &self,
         identity: &Identity,
@@ -191,14 +201,10 @@ impl Network for NativeNetwork {
     }
     async fn create(
         &self,
-        identity: &Identity,
-        resource: &Resource,
-        name: &str,
+        prepared: PreparedCreate,
         cancel: &CancellationToken,
-    ) -> Result<Receipt, AccountError> {
-        self.management
-            .create(identity, resource, name, cancel)
-            .await
+    ) -> Result<Receipt, CreateError> {
+        self.management.submit(prepared, cancel).await
     }
     async fn observe(
         &self,
@@ -281,6 +287,7 @@ impl<'a> CloudHostAdapter<'a> {
                 host_id: identity.host_id(),
                 fingerprint: identity.fingerprint()?,
                 resource: None,
+                creation_name: None,
                 submitted: false,
                 receipt: None,
             };
@@ -418,8 +425,8 @@ impl<'a> CloudHostAdapter<'a> {
         Ok(())
     }
 
-    /// Submit at most once per durable reservation. Repeated/lost replies only
-    /// observe the same ID/cluster/label; they never create a second tunnel.
+    /// Explicit foreground provisioning/retry. An authenticated exact absence
+    /// may retry only the same unpinned conditional reservation and body.
     pub async fn provision(
         &self,
         foreground: &Foreground,
@@ -468,6 +475,7 @@ impl<'a> CloudHostAdapter<'a> {
             };
             resource.validate().map_err(account_error)?;
             record.resource = Some(resource);
+            record.creation_name = Some(record.ticket.approved_settings().friendly_name.clone());
             self.save(&record)?;
         }
         let resource = record
@@ -486,11 +494,36 @@ impl<'a> CloudHostAdapter<'a> {
                 }
                 receipt
             }
-            Observation::Absent if record.submitted => {
-                return Err(refused("host.cloud_creation_outcome_uncertain"))
+            Observation::Absent if record.receipt.is_some() => {
+                let result = network.confirm(&identity, cancel).await;
+                self.check_cancelled(&record, cancel)?;
+                result.map_err(account_error)?;
+                return self.missing_resource(&record);
             }
             Observation::Absent => {
                 self.require_foreground(&record, foreground, cancel)?;
+                let result = network.confirm(&identity, cancel).await;
+                self.check_cancelled(&record, cancel)?;
+                result.map_err(account_error)?;
+                // Earlier journals did not pin the create description. Only
+                // proven unsubmitted intent may acquire it; never guess a
+                // possibly submitted request's immutable body.
+                if record.creation_name.is_none() && !record.submitted {
+                    record.creation_name =
+                        Some(record.ticket.approved_settings().friendly_name.clone());
+                    self.save(&record)?;
+                }
+                let prepared = network
+                    .prepare_create(
+                        &identity,
+                        &resource,
+                        record
+                            .creation_name
+                            .as_deref()
+                            .ok_or_else(|| refused("host.cloud_reservation_missing"))?,
+                    )
+                    .map_err(account_error)?;
+                let was_submitted = record.submitted;
                 record.submitted = true;
                 // Fence submission under the same lifecycle lease as revoke.
                 // Do not hold it across the following network operation.
@@ -498,18 +531,39 @@ impl<'a> CloudHostAdapter<'a> {
                     current_ticket(snapshot, &record.ticket, true)?;
                     write(directory, &record)
                 })?;
-                let result = network
-                    .create(
-                        &identity,
-                        &resource,
-                        &record.ticket.approved_settings().friendly_name,
-                        cancel,
-                    )
-                    .await;
+                let result = network.create(prepared, cancel).await;
+                if matches!(
+                    result,
+                    Err(CreateError::NotSent(_) | CreateError::Rejected(_))
+                ) {
+                    // This attempt provably created nothing. Earlier uncertain
+                    // attempts, if any, still retain their reservation.
+                    record.submitted = was_submitted;
+                    self.save(&record)?;
+                }
                 if cancel.is_cancelled() {
                     self.store.cancel_enable(&record.ticket)?;
                 }
-                result.map_err(account_error)?
+                match result {
+                    Ok(receipt) => receipt,
+                    Err(
+                        CreateError::NotSent(error)
+                        | CreateError::Rejected(error)
+                        | CreateError::Uncertain(error),
+                    ) => return Err(account_error(error)),
+                    Err(CreateError::Conflict) => {
+                        let observed = network.observe(&identity, &resource, cancel).await;
+                        if cancel.is_cancelled() {
+                            self.store.cancel_enable(&record.ticket)?;
+                        }
+                        match observed.map_err(account_error)? {
+                            Observation::Present(receipt) => receipt,
+                            Observation::Absent => {
+                                return Err(refused("host.cloud_conditional_conflict_unresolved"))
+                            }
+                        }
+                    }
+                }
             }
         };
         pin_receipt(&mut record, receipt)?;
@@ -523,9 +577,16 @@ impl<'a> CloudHostAdapter<'a> {
         Ok(self.store.snapshot()?.phase)
     }
 
-    /// Recover a submitted pending operation without initiating interactive
-    /// authentication or creating another resource.
+    /// Recover a pending operation without interactive authentication or
+    /// another create. Proven unsubmitted reservations need no credential store.
     pub async fn reconcile(&self, cancel: &CancellationToken) -> io::Result<Phase> {
+        {
+            let _operation = self.operation()?;
+            let record = self.load()?;
+            if !record.submitted {
+                return self.resolve_no_submission(&record);
+            }
+        }
         let network = NativeNetwork::new()?;
         let secrets = festerm_secret_store::native_store()
             .map_err(|_| refused("host.secure_store_unavailable"))?;
@@ -541,7 +602,7 @@ impl<'a> CloudHostAdapter<'a> {
         let _operation = self.operation()?;
         let mut record = self.load()?;
         if !record.submitted {
-            return Err(refused("host.cloud_no_submission"));
+            return self.resolve_no_submission(&record);
         }
         let identity = self
             .load_identity(&mut record, network, secrets, cancel)
@@ -556,6 +617,12 @@ impl<'a> CloudHostAdapter<'a> {
             .map_err(account_error)?
         {
             Observation::Present(receipt) => receipt,
+            Observation::Absent if record.receipt.is_some() => {
+                let result = network.confirm(&identity, cancel).await;
+                self.check_cancelled(&record, cancel)?;
+                result.map_err(account_error)?;
+                return self.missing_resource(&record);
+            }
             Observation::Absent => return Err(refused("host.cloud_creation_outcome_uncertain")),
         };
         pin_receipt(&mut record, receipt)?;
@@ -566,6 +633,20 @@ impl<'a> CloudHostAdapter<'a> {
             .await
             .map_err(account_error)?;
         Ok(self.store.snapshot()?.phase)
+    }
+
+    // Both callers hold the operation lease: no local create can still be
+    // in flight when the durable journal proves submission never happened.
+    fn resolve_no_submission(&self, record: &Record) -> io::Result<Phase> {
+        let snapshot = self.store.snapshot()?;
+        if snapshot.phase == Phase::Disabled
+            && snapshot.binding.is_none()
+            && snapshot.pending_ticket().is_none()
+        {
+            return Ok(Phase::Disabled);
+        }
+        self.store.confirm_no_resources(&record.ticket)?;
+        Ok(Phase::Disabled)
     }
 
     fn publish(&self, record: &Record) -> io::Result<Phase> {
@@ -579,6 +660,15 @@ impl<'a> CloudHostAdapter<'a> {
             return Ok(snapshot.phase);
         }
         self.store.record_provisioned(&record.ticket, binding)
+    }
+
+    fn missing_resource(&self, record: &Record) -> io::Result<Phase> {
+        let receipt = record
+            .receipt
+            .as_ref()
+            .ok_or_else(|| refused("host.cloud_receipt_missing"))?;
+        self.store
+            .record_missing_resource(&record.ticket, binding(record, receipt))
     }
 
     pub async fn health(&self, cancel: &CancellationToken) -> io::Result<Health> {
@@ -772,6 +862,10 @@ fn validate(record: &Record, snapshot: &Snapshot, directory: &File) -> io::Resul
         || record.account_id == 0
         || record.ticket.epoch() > snapshot.epoch
         || record.submitted && record.resource.is_none()
+        || record.resource.is_none() && record.creation_name.is_some()
+        || record.creation_name.as_ref().is_some_and(|name| {
+            name.trim().is_empty() || name.len() > 80 || name.chars().any(char::is_control)
+        })
         || record.receipt.is_some() && !record.submitted
     {
         return Err(refused("host.cloud_scope_changed"));
@@ -876,6 +970,9 @@ mod tests {
         revoke_sign_in: bool,
         observe_error: Option<AccountError>,
         confirm_error: Option<AccountError>,
+        prepare_error: Option<AccountError>,
+        create_error: Option<CreateError>,
+        cancel_before_send: bool,
     }
     struct FixtureNetwork<'a> {
         store: &'a Store,
@@ -942,19 +1039,37 @@ mod tests {
         ) -> Result<String, AccountError> {
             Ok("usw2".into())
         }
+        fn prepare_create(
+            &self,
+            identity: &Identity,
+            resource: &Resource,
+            name: &str,
+        ) -> Result<PreparedCreate, AccountError> {
+            if let Some(error) = self.state.borrow().prepare_error {
+                return Err(error);
+            }
+            Management::prepare_create(identity, resource, name)
+        }
         async fn create(
             &self,
-            _: &Identity,
-            resource: &Resource,
-            _: &str,
+            prepared: PreparedCreate,
             cancel: &CancellationToken,
-        ) -> Result<Receipt, AccountError> {
+        ) -> Result<Receipt, CreateError> {
             let mut state = self.state.borrow_mut();
+            if state.cancel_before_send {
+                cancel.cancel();
+                return Err(CreateError::NotSent(AccountError::Cancelled));
+            }
             state.creates += 1;
             let receipt = Receipt {
-                resource: resource.clone(),
+                resource: prepared.resource().clone(),
                 created: "2026-11-09T00:00:00Z".into(),
             };
+            if let Some(error @ (CreateError::Rejected(_) | CreateError::NotSent(_))) =
+                state.create_error
+            {
+                return Err(error);
+            }
             state.created = Some(receipt.clone());
             if state.revoke_create {
                 self.store.revoke().unwrap();
@@ -963,7 +1078,10 @@ mod tests {
                 cancel.cancel();
             }
             if state.lose_reply {
-                return Err(AccountError::Network);
+                return Err(CreateError::Uncertain(AccountError::Network));
+            }
+            if let Some(error) = state.create_error {
+                return Err(error);
             }
             Ok(receipt)
         }
@@ -1220,10 +1338,14 @@ mod tests {
                 }
             );
             network.state.borrow_mut().created = None;
-            assert!(adapter
+            let result = adapter
                 .provision_with(&foreground, &CancellationToken::new(), &network, &secrets)
-                .await
-                .is_err());
+                .await;
+            if lose_reply {
+                assert!(result.is_err());
+            } else {
+                assert_eq!(result.unwrap(), Phase::StopRequested);
+            }
             assert_eq!(network.state.borrow().creates, 1);
         }
     }
@@ -1311,5 +1433,228 @@ mod tests {
             .health_with(&cancel, &network, &secrets)
             .await
             .is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_local_no_send_and_rejection_resolve_without_widening_consent() {
+        for scenario in 0..3 {
+            let (_root, store, secrets) = fixture();
+            let adapter = CloudHostAdapter::new(&store);
+            let foreground = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&foreground, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            {
+                let mut state = network.state.borrow_mut();
+                match scenario {
+                    0 => state.prepare_error = Some(AccountError::Expired),
+                    1 => state.cancel_before_send = true,
+                    _ => state.create_error = Some(CreateError::Rejected(AccountError::Response)),
+                }
+            }
+            assert!(adapter
+                .provision_with(&foreground, &cancel, &network, &secrets)
+                .await
+                .is_err());
+            let reserved = adapter.load().unwrap();
+            assert!(!reserved.submitted);
+            assert!(network.state.borrow().created.is_none());
+            assert_eq!(
+                adapter
+                    .reconcile_with(&CancellationToken::new(), &network, &secrets)
+                    .await
+                    .unwrap(),
+                Phase::Disabled
+            );
+            assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
+            assert_eq!(network.state.borrow().creates, usize::from(scenario == 2));
+            let mut settings = store.snapshot().unwrap().settings;
+            settings.friendly_name = "Renewed foreground name".into();
+            store.configure(settings).unwrap();
+            let next = super::tests::foreground(&adapter);
+            {
+                let mut state = network.state.borrow_mut();
+                state.prepare_error = None;
+                state.cancel_before_send = false;
+                state.create_error = None;
+            }
+            assert!(adapter
+                .provision_with(&foreground, &CancellationToken::new(), &network, &secrets)
+                .await
+                .is_err());
+            assert_eq!(
+                adapter
+                    .provision_with(&next, &CancellationToken::new(), &network, &secrets)
+                    .await
+                    .unwrap(),
+                Phase::Provisioned
+            );
+            let recovered = adapter.load().unwrap();
+            assert_eq!(recovered.resource, reserved.resource);
+            assert_eq!(recovered.creation_name, reserved.creation_name);
+            assert!(!store.snapshot().unwrap().settings.allow_creation);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_retry_requires_authenticated_absence_and_same_immutable_reservation() {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::new(&store);
+        let foreground = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&foreground, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        network.state.borrow_mut().lose_reply = true;
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
+        let original = adapter.load().unwrap();
+        {
+            let mut state = network.state.borrow_mut();
+            state.created = None;
+            state.lose_reply = false;
+            state.observe_error = Some(AccountError::Denied);
+        }
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
+        network.state.borrow_mut().observe_error = None;
+        network.state.borrow_mut().confirm_error = Some(AccountError::AccountChanged);
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert_eq!(network.state.borrow().creates, 1);
+        network.state.borrow_mut().confirm_error = None;
+        // A non-foreground reconcile cannot submit, even after an exact 404.
+        assert!(adapter
+            .reconcile_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert_eq!(network.state.borrow().creates, 1);
+        let mut legacy = original.clone();
+        legacy.creation_name = None;
+        adapter.save(&legacy).unwrap();
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert_eq!(network.state.borrow().creates, 1);
+        adapter.save(&original).unwrap();
+        network.state.borrow_mut().create_error =
+            Some(CreateError::Rejected(AccountError::Response));
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert!(adapter.load().unwrap().submitted);
+        assert_eq!(network.state.borrow().creates, 2);
+        network.state.borrow_mut().create_error = None;
+        assert_eq!(
+            adapter
+                .provision_with(&foreground, &cancel, &network, &secrets)
+                .await
+                .unwrap(),
+            Phase::Provisioned
+        );
+        let recovered = adapter.load().unwrap();
+        assert_eq!(network.state.borrow().creates, 3);
+        assert_eq!(recovered.resource, original.resource);
+        assert_eq!(recovered.creation_name, original.creation_name);
+        assert_eq!(recovered.credential, original.credential);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_conditional_conflict_reconciles_exact_reservation_without_another_create() {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::new(&store);
+        let foreground = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&foreground, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        network.state.borrow_mut().create_error = Some(CreateError::Conflict);
+        assert_eq!(
+            adapter
+                .provision_with(&foreground, &cancel, &network, &secrets)
+                .await
+                .unwrap(),
+            Phase::Provisioned
+        );
+        assert_eq!(network.state.borrow().creates, 1);
+        assert_eq!(
+            adapter.load().unwrap().receipt,
+            network.state.borrow().created
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup() {
+        for reconcile in [false, true] {
+            let (_root, store, secrets) = fixture();
+            let adapter = CloudHostAdapter::new(&store);
+            let initial = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&initial, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            adapter
+                .provision_with(&initial, &cancel, &network, &secrets)
+                .await
+                .unwrap();
+            let binding = store.snapshot().unwrap().binding.unwrap();
+            let receipt = adapter.load().unwrap().receipt;
+            store.revoke().unwrap();
+            store
+                .confirm_stopped(store.snapshot().unwrap().epoch, &binding)
+                .unwrap();
+            network.state.borrow_mut().created = None;
+            let next = foreground(&adapter);
+            let phase = if reconcile {
+                store.revoke().unwrap();
+                adapter
+                    .reconcile_with(&cancel, &network, &secrets)
+                    .await
+                    .unwrap()
+            } else {
+                adapter
+                    .provision_with(&next, &cancel, &network, &secrets)
+                    .await
+                    .unwrap()
+            };
+            assert_eq!(phase, Phase::StopRequested);
+            let stopped = store.snapshot().unwrap();
+            assert_eq!(stopped.binding.as_ref(), Some(&binding));
+            assert!(stopped.pending_ticket().is_none());
+            assert_eq!(adapter.load().unwrap().receipt, receipt);
+            assert_eq!(network.state.borrow().creates, 1);
+            assert!(store.request_cleanup().is_err());
+            assert!(store.confirm_no_resources(&next.record.ticket).is_err());
+            let mut wrong = binding.clone();
+            wrong.host_key_fingerprint = format!("{}x", wrong.host_key_fingerprint);
+            assert!(store.confirm_stopped(stopped.epoch, &wrong).is_err());
+            store.confirm_stopped(stopped.epoch, &binding).unwrap();
+            store.request_cleanup().unwrap();
+            assert_eq!(
+                adapter
+                    .cleanup_with(&cancel, &network, &secrets)
+                    .await
+                    .unwrap(),
+                Cleanup::Removed
+            );
+            assert_eq!(store.snapshot().unwrap().phase, Phase::Removed);
+        }
     }
 }
