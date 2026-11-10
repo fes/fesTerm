@@ -3304,6 +3304,12 @@ These gates belong to the owner-authorized `feat/powershell` work under
 Backend/CLI fixtures do not establish a finished GUI workflow, corporate
 authorization, broker support, or enrolled-phone acceptance.
 
+Remote-session discovery and Enterprise GUI entry points are deliberately
+hidden pending explicit owner approval. CP-24 and CP-21 retain their backend
+and internal-surface evidence, but public native-GUI qualification is deferred
+until that exposure is authorized. PowerShell profiles and local Running
+Sessions remain exposed and retain their existing gates.
+
 | ID | Workflow and oracle | Evidence class | Prerequisite / tracking |
 | --- | --- | --- | --- |
 | CP-24 | Query helper capabilities and current-user discovery using an isolated registry. Native SSH exec pins host/account/source and an exact live generation; explicit takeover, binary snapshot adoption and detach preserve the daemon. In the desktop picker, change endpoints, cancel discovery, reject stale selection, confirm takeover, use the normal terminal, and close/move tabs while work is pending. No workspace restores credentials, inventories or selected remote generations. | Automated helper, native loopback SSH/daemon and desktop routing contracts; cross-host/platform and native GUI usability remain separate | #256. The SSH path does not implement PSRP attachment or enterprise authorization. Windows OpenSSH/named-pipe and cross-host macOS/Linux interoperability need separate native records; existing CP-11 local policy remains unchanged. |
