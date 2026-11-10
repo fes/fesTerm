@@ -1,5 +1,42 @@
 # Milestone Progress Narrative
 
+## Selecting private migration-fixture roots on Windows
+
+Required Windows CI at exact `bb0888d0adb2e7799f9a00200609809f80254b58`,
+run `42913318773` / job `130169270190`, passes host-main **9/0/0** (0.18s)
+and CLI **10/0/0** (0.22s). Both cleanup unit cases and both previously failing
+cleanup/update CLI cases actually pass. The successful CLI output does not
+identify which independently checked native-admission branch ran.
+The next host-setup aggregate is **126 passed / 13 failed / one ignored**
+(27.05s). All 13 failures unwrap migration fixture root creation at tests.rs23
+with explicit `PermissionDenied: private storage ancestor policy refused`.
+The 217517-byte raw log is retained with SHA-256
+`25ed90bc519d5f5ac61f12ca03260b4628592176abe331a01db9f5254684d510`.
+The particular refused ancestor, ACL and principal subtype remain unknown.
+
+This normal backend child changes only fixture root selection/lifetime:
+Windows uses the existing `private_test_directory` candidate-parent factory
+and keeps its private owner alive with the fixture. The existing explicit
+nonretained cleanup assertion remains on both platforms; retained native
+evidence is not removed by that owner. Unix keeps its original short checkout
+path and cleanup. All test bodies, admission/ownership/claim/rollback assertions,
+native opt-in markers and retention decisions remain unchanged. Production
+private-storage/ACL policy, cloud/controller/native account admission, defaults,
+dependencies and CI are untouched. This is direct repository-prior-art parity,
+not a merge of the separately reviewed binding fixture correction.
+
+Actual macOS Rust/Cargo **1.99.1**, jobs1/debug0/incremental0, passes targeted
+`owned_migration::tests::`: **14 passed / zero failed / one existing native
+opt-in ignored**, 151 filtered, 11.11s. Every one of the 13 original Windows
+failure names has an actual passing Mac counterpart. Host-setup all-target
+strict Clippy passes with all features and separately without default features
+with `cloud`; fmt, traceability and diff checks pass. The native opt-in was not
+executed. No native14/full suite/helper rebuild, Windows SDK retry, VM or
+permission/account repair occurred. This current-milestone CI-fixture correction
+changes no ADR/graph/manual classification and grants no new Windows/native
+acceptance; fresh required Windows CI remains pending. The separate native
+macOS/Linux 13/1 failure is not diagnosed or fixed here.
+
 ## Keeping CLI fixtures honest about native-account admission
 
 Required Windows CI at exactfd0, run `42904552105` / job `130139015769`,

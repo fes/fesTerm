@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 struct Fixture {
     root: PathBuf,
+    #[cfg(windows)]
+    private_root: Option<storage::PrivateTestDirectory>,
     inventory: Inventory,
     destination: Store,
     selection: Selection,
@@ -14,11 +16,17 @@ struct Fixture {
 
 impl Fixture {
     fn new(desktop: bool) -> Self {
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
         let project = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
             .unwrap();
+        #[cfg(unix)]
         let root = project.join(format!("mi-{}", &Uuid::new_v4().simple().to_string()[..8]));
         storage::private_directory(&root, true).unwrap();
         let inventory = Inventory {
@@ -136,6 +144,8 @@ impl Fixture {
         .unwrap();
         Self {
             root,
+            #[cfg(windows)]
+            private_root: Some(private_root),
             inventory,
             destination,
             source,
@@ -189,6 +199,10 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         if !self.retain {
             std::fs::remove_dir_all(&self.root).unwrap();
+        }
+        #[cfg(windows)]
+        if let (true, Some(root)) = (self.retain, self.private_root.take()) {
+            std::mem::forget(root);
         }
     }
 }
