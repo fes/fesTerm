@@ -3731,9 +3731,21 @@ The read-only ignored Windows PKI fixture
 requires an independently authenticated current signed host pathname in
 `FESTERM_ADR84_SIGNED_HOST_FIXTURE` and
 `cargo test -p festerm-windows-security --features host-service windows_publisher_native_opt_in -- --ignored --nocapture`.
-It is included in `scripts/run-optional-validation.ps1` only when
+The repository-owned public-fixture route is included in
+`scripts/run-optional-validation.ps1` only when
 `FESTERM_RUN_ADR84_PUBLISHER_NATIVE=1` is explicitly selected (in addition to the
 aggregate's normal opt-in); otherwise its result is skipped.
+`-WindowsPublisherOnly` selects only the bounded fixed-v0.16.0 acquisition/PKI
+route, never other optional suites. The existing CI's default-false
+`windows_native_pki` dispatch runs it on hosted Windows only after exact-source
+review/three gates and a separate one-run owner authorization. See
+[the fixed inputs, evidence and operator contract](host-release-artifacts.md#opt-in-windows-public-pki-fixture).
+Public ZIP/member hashes establish integrity, not independent publisher/updater
+authentication; the existing compiled policy/native OS trust must pass.
+The legacy binary is never executed, and no new-host/whole-bundle acceptance is
+implied. This increment has offline source-contract/pure-policy evidence only,
+**zero workflow dispatches or genuine Windows runs**. Preserve any genuine
+policy mismatch as failure; hosted evidence is not ordinary-user VM proof.
 It invokes native online-enabled verification only, never registration/start,
 signing, Azure credentials or OS settings. It was **not run on macOS**.
 For a separately authorized ordinary-user Windows lab, record positive approved

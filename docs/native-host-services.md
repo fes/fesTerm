@@ -140,6 +140,12 @@ The retained-file native worker is bounded to one in-flight verification and a
 15-second caller budget; timeout retains its file until native completion.
 Failure never returns an executable receipt or bypasses updater provenance.
 
+The existing ignored native publisher test has a default-false, separately
+authorized [public-fixture workflow](host-release-artifacts.md#opt-in-windows-public-pki-fixture).
+It never executes its pinned legacy binary or changes this policy. Source-only
+offline contracts are not native evidence; any later hosted pass is PKI-only,
+not ordinary-user VM, task/runtime/daemon or new-host/bundle qualification.
+
 Windows stop reuses the existing protected lifecycle channel, not new IPC or
 name/PID authority. Revoke commits the installation/origin/current snapshot first;
 the reserved host runtime watches that exact snapshot, cancels and awaits only

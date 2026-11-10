@@ -253,6 +253,13 @@ availability before login. Pre-login is rejected until the OS user-service,
 secure credential availability and non-system shell identity are qualified.
 No platform startup acceptance is established by local fixtures.
 
+The separately opt-in [public Windows publisher fixture](host-release-artifacts.md#opt-in-windows-public-pki-fixture)
+checks only the existing native PKI policy against fixed legacy data after
+source review and separate run authorization. It never executes that binary,
+enables a host or substitutes for whole-bundle/updater authentication or
+ordinary-user native service/daemon qualification. No such hosted run is
+included in the source-only workflow preparation.
+
 ## Shared desktop/endpoint integration API
 
 `festerm_host_setup::lifecycle` is opt-in via the `lifecycle` Cargo feature;

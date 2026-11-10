@@ -947,6 +947,13 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   fail-closed revocation (see the canonical native/release policy). Generic
   native signature validity is not publisher acceptance. These refusal gates
   and native-independent fixtures do not qualify real native services.
+  The existing ignored Windows native publisher test also has a separately
+  authorized, default-false hosted PKI-only dispatch with fixed public v0.16.0
+  legacy fixture acquisition and retained command/exit/log-hash provenance.
+  Its binary is never executed; integrity hashes are not updater authentication.
+  Source contracts do not establish native evidence, and a later hosted pass
+  would not qualify ordinary-user VM, tasks, daemons, GUI or whole-bundle release
+  acceptance. Genuine policy mismatches remain failures without waivers.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic

@@ -254,3 +254,62 @@ publisher/runtime acceptance or Windows compilation of the host-setup integratio
 The [exact commands and SDK limitation](milestone-progress.md#windows-native-admission-without-destructive-stop)
 are recorded separately. This policy neither authorizes signing/releases,
 OS changes or VM execution nor grants host-owner/client trust.
+
+### Opt-in Windows public PKI fixture
+
+The existing CI workflow has a default-false `windows_native_pki` dispatch
+input for the existing ignored
+`windows_publisher_native_opt_in_approved_signed_host_and_unsigned_rejection`
+test. It selects only the bounded `windows-native-pki` hosted `windows-latest`
+job; ordinary CI, privileged security tests and sampler/GUI jobs are excluded
+from this dispatch. PR/push checks are unchanged. Mixed sampler/PKI requests
+fail before acquisition. The Ubuntu `pinned helper signer compatibility` job
+tests synthetic cargo-packager interoperability, **not Windows native trust**.
+
+**Operator gate:** first publish/review the exact source and obtain all three
+exact-source gates, then obtain a separate owner authorization for one
+read-only PKI run. This source change is not that authorization. After it:
+
+```sh
+gh workflow run ci.yml --ref <reviewed-ref> -f windows_native_pki=true -f windows_sampler_diagnostics=false
+```
+
+The repository-owned `scripts/run_windows_publisher_validation.py`, also reached
+through `scripts/run-optional-validation.ps1 -WindowsPublisherOnly`, acquires only:
+
+| Public read-only data fixture | Fixed value |
+| --- | --- |
+| URL | `https://github.com/fes/fesTerm/releases/download/v0.16.0/fesTerm-tunnel-0.16.0-windows-x86_64.zip` |
+| ZIP SHA256 | `3edfbf5a0725b70a0bc56448d81bb3745e25d745a2cd670978ecc1f33f51e896` |
+| Exact member | `festerm-sessiond.exe` |
+| Member SHA256 | `4cd3e1b12026412717848cef2a872e110c50039bc0a6464ce8bb05a2781a481b` |
+
+These public research pins provide **integrity only**, not independent updater
+authentication; cohosted checksums are not fetched or promoted to authentication.
+The existing compiled approved-publisher policy and native OS trust are the
+authentication check. The legacy binary is opened as data and **never executed**.
+It is not a new `Package::Host` bundle or a first-verifier/release qualification.
+
+Acquisition has a 150-second parent-owned hard deadline, a 120-second body
+deadline and 15-second network timeouts. HTTPS redirects are limited to the
+public GitHub release-assets authority. ZIP/member bytes are capped at 128 MiB,
+total declared expansion at 512 MiB and entries at 64; all entries must be
+plain regular root files without duplicates, traversal or links. Only the exact
+member is extracted, exclusively into a new checkout-relative directory; stale
+evidence is never overwritten or reused. The selected facade-only Cargo test
+has a 600-second limit and the hosted job a 20-minute limit. No SDK workaround,
+policy waiver, alternate fixture or automatic retry is provided.
+
+Both `FESTERM_RUN_OPTIONAL_VALIDATION=1` and
+`FESTERM_RUN_ADR84_PUBLISHER_NATIVE=1` are required for local opt-in.
+The single-suite aggregate returns before other optional/native/GUI suites.
+The evidence artifact retains `report.json`, source/tool-version/command logs,
+actual exit codes, timeouts and SHA256 log hashes even on failure; binaries and
+build outputs are not uploaded. Verify its exact source HEAD against the
+reviewed head and its run ID/attempt against the authorized dispatch; old
+reports are not new evidence. Zero selected tests cannot pass; genuine-fixture/policy failures
+remain failures. A hosted PKI pass would prove only this public signed fixture
+and unsigned-test-binary rejection under that runner's current OS trust and
+online revocation—not ordinary-user VM, Task Scheduler, daemon, GUI, whole-bundle
+or new-host/release acceptance. **No dispatch or genuine Windows execution has
+been performed for this source increment.**

@@ -1,5 +1,52 @@
 # Milestone Progress Narrative
 
+## Preparing a narrowly authorized Windows public PKI evidence route
+
+The existing ignored Windows publisher test had no bounded hosted acquisition/
+operator route; Ubuntu's pinned cargo-packager interoperability job is synthetic
+manifest signing, not WinTrust. Exact all-three-source-gated `9e5c7902` now has
+a source-only child preparing a default-false `windows_native_pki` input in the
+existing CI workflow. On a future separately authorized dispatch it selects
+only one 20-minute, read-only `windows-latest` PKI job, not primary CI,
+privileged security tests, sampler or GUI work. PR/push checks are unchanged.
+The [operator contract](host-release-artifacts.md#opt-in-windows-public-pki-fixture)
+requires three exact-source gates and a separate owner grant before one run.
+This preparation neither dispatches CI nor grants that run.
+
+A standard-library repository script acquires only the fixed public v0.16.0
+legacy x64 ZIP/member and approved integrity hashes. It bounds redirects,
+download/decompression time/bytes, ZIP entry types/names/counts and fresh
+checkout-relative publication; stale evidence is refused, not overwritten.
+Only `festerm-sessiond.exe` is extracted as data, **never executed**. The script
+runs the unchanged existing facade-only signed-fixture/unsigned-test-binary
+test under the compiled native policy, with online fail-closed revocation.
+It preserves actual command exits/timeouts, source/tool versions, runner/run
+metadata and SHA256 log hashes; zero selected tests or policy mismatch cannot
+pass. Both the single-suite and full optional PowerShell aggregate reuse it;
+the single-suite path returns before any unrelated native/GUI suite.
+Public research hashes are integrity only, not cohosted-checksum authentication.
+The compiled publisher policy/native OS trust must independently pass; no policy
+or production capability changes are included.
+
+Fresh local macOS validation is **21 offline Python contracts**, **four pure
+publisher policy tests**, affected facade all-target strict Clippy, workspace
+formatting and traceability. Directly affected existing sampler/Markdown
+contracts have **six passes, 27 Windows/PowerShell skips**. CI YAML parses using
+the existing system Psych AST parser; five additional existing privilege/helper/
+CI source contracts pass (**32 passes, 27 skips** in the combined Python run).
+Python source compiles. PowerShell/native
+Windows runtime execution is unavailable locally and is not claimed. No package,
+SDK or framework was installed, no known Windows/ring cross-check was retried,
+and the private target uses exact Rust/Cargo 1.99.1, jobs=1, debug=0,
+incremental=0. Logs are retained in `.pki-validation/`.
+
+**Zero public-fixture downloads, workflow dispatches or genuine Windows PKI
+executions** occurred for this increment. A later authorized hosted pass would
+qualify only the legacy fixture's PKI and unsigned rejection under that runner,
+not ordinary-user VM proof, InteractiveToken/ACL/task stop, daemon/GUI behavior,
+new-host whole-bundle authentication, updater provenance or release acceptance.
+Genuine fixture/policy incompatibility must remain a failure without a waiver.
+
 ## Aligning the frozen core's Windows cfg boundaries
 
 Fresh Windows primary CI for `b5e3bead` found two strict-build failures:
