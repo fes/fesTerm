@@ -3474,6 +3474,13 @@ passed 245 tests with 7 existing ignored, including all 26 host-control and
 6 real SSH cases. Original CI failures are preserved; fresh exact-head primary
 CI remains required. Separately assigned Windows legacy fixture failures are
 not corrected or qualified by this session-only change.
+Fresh Windows primary job `129938153330` at `181eb572` then retained 62 daemon
+binary passes and two private-registry fixture failures at ancestor validation.
+Those two fixtures now select their root through the existing private-storage
+policy-checked helper, with handle-safe fixture lifetime; production checkout
+refusal/DACL checks and all publication-lock/rebase assertions remain unchanged.
+Local macOS registry/storage selectors passed 6/3 respectively. This is a fixture
+correction, not Windows acceptance; fresh exact-head Windows CI remains required.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot

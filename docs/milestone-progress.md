@@ -1,5 +1,45 @@
 # Milestone Progress Narrative
 
+## Selecting policy-compliant roots for Windows registry fixtures
+
+Fresh Windows primary job `129938153330` at exact `181eb572` failed two daemon
+binary tests before reaching their lock/publication barriers: 62 passed,
+2 failed. Both created their private fixture under the checkout, whose ancestor
+policy correctly refused it. The retained raw log is
+`adr84-session181-windows-primary-failed.log`; Ubuntu primary success at the same
+source does not exonerate this Windows failure.
+
+Only `private_registry_snapshot_read_does_not_pin_publication_lock` and
+`registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers`
+now use the existing policy-checked `private_test_directory` fixture.
+That helper already passed the private-state creation and aborted-checkpoint
+tests in this same Windows job; the two new callers do not relax its policy.
+Its lifetime outlasts the retained directory/lock handles, so cleanup occurs
+after they close. A dev-only self dependency enables the existing `test-support`
+feature for isolated binary tests, with only that self edge added to the lockfile.
+No production path, ancestor/DACL policy, permissions, deadline or assertion
+changes. The real exclusive/shared lock checks, concurrent publication, merged
+two-writer result and exactly-once effect oracle remain unchanged.
+
+With one warm-target job, zero dev/test debug info and incremental compilation
+off, the affected macOS qualification commands are:
+
+```sh
+cargo test --locked -p festerm-sessiond --bin festerm-sessiond registry_ -- --nocapture --test-threads=2
+cargo test --locked -p festerm-sessiond --lib private_storage::tests -- --nocapture --test-threads=2
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+The registry selector passed all 6 cases, including both failures and retained
+directory/same-name-conflict guards; private storage passed 3, including unsafe
+parent refusal and owned-staging cleanup. Strict affected Clippy, format,
+traceability (311 edges) and diff checks pass. Evidence is retained as
+`target/adr84-windows-correction/private-root-*.log`. The first locked attempt
+correctly refused the new dev-only lock edge; `cargo update --offline -p
+festerm-sessiond` added only that edge, without changing package versions.
+Fresh corrected-head Windows CI remains required; no new VM execution,
+Windows/native acceptance or full-workspace qualification is claimed.
+
 ## Combining the narrow primary-CI corrections
 
 The session branch normally merges exact Windows fixture checkpoint
