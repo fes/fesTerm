@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Keeping capability publication strict on Windows
+
+Required Windows CI found an always-success directory-sync closure after cfg
+removal. Only Unix now composes directory sync onto the write/file-sync result;
+publication order and exact-owner error cleanup are unchanged. Focused capability
+regressions remain the local gate; the new Windows CI run remains independently
+required, not inferred from macOS strict checks.
+
 ## Serializing retired-generation key cleanup
 
 Follow-up review found that Unix's permissive same-handle relock concealed a

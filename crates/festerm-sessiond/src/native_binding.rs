@@ -292,13 +292,9 @@ impl CapabilityOwner {
     }
 
     fn publish(mut self, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<Self> {
-        let result = write(&mut self.file)
-            .and_then(|()| self.file.sync_all())
-            .and_then(|()| {
-                #[cfg(unix)]
-                self.directory.sync_all()?;
-                Ok(())
-            });
+        let result = write(&mut self.file).and_then(|()| self.file.sync_all());
+        #[cfg(unix)]
+        let result = result.and_then(|()| self.directory.sync_all());
         if let Err(error) = result {
             return match self.cleanup() {
                 Ok(()) => Err(error),
