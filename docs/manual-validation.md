@@ -67,6 +67,12 @@ Prepared grant after interrupted commit; an unreferenced Prepared grant is
 available for explicit protected cleanup, not automatic deletion. These remain
 native/real-service/usability checks; the isolated ACL, restart, inventory,
 account and UI regressions do not qualify live servicing or browser delivery.
+With a local or remote client attached, verify an ordinary hosted open does not
+disconnect it. Check the separate profile-editor and Running Sessions takeover
+confirmations default to Cancel and target the displayed generation, and that
+later hosted reconnects do not silently take over again. Verify selected
+generations on older daemons are refused without disconnecting a client and
+remain accessible or endable with their compatible fesTerm version.
 
 HOST-06's [authenticated helper foundation](host-release-artifacts.md) has
 synthetic-key rejection/allowlist tests and Python manifest/recovery fixtures.
