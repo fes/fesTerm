@@ -2098,6 +2098,24 @@ impl FesTermApp {
 mod tests {
     use super::*;
 
+    fn trusted_hosting_fixture() -> tempfile::TempDir {
+        #[cfg(unix)]
+        let fixture = tempfile::Builder::new()
+            .prefix("festerm-hosting-test-")
+            .tempdir_in(std::env::current_dir().unwrap());
+        #[cfg(windows)]
+        let fixture = tempfile::tempdir();
+        fixture.unwrap()
+    }
+
+    fn trusted_hosting_root(fixture: &tempfile::TempDir) -> PathBuf {
+        #[cfg(unix)]
+        let root = std::fs::canonicalize(fixture.path()).unwrap();
+        #[cfg(windows)]
+        let root = fixture.path().to_path_buf();
+        root
+    }
+
     #[test]
     fn unbound_profile_uses_legacy_and_refuses_unverified_hosted_sessions() {
         let fixture = tempfile::tempdir().unwrap();
@@ -2299,8 +2317,8 @@ mod tests {
 
     #[test]
     fn prepared_hosting_remembers_a_legacy_session_that_exits_before_commit() {
-        let fixture = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(fixture.path()).unwrap();
+        let fixture = trusted_hosting_fixture();
+        let root = trusted_hosting_root(&fixture);
         let legacy = root.join("legacy").join("sessiond");
         std::fs::create_dir_all(&legacy).unwrap();
         let pid = std::process::id();
@@ -2342,8 +2360,8 @@ mod tests {
 
     #[test]
     fn hosting_preparation_waits_for_an_inflight_legacy_start() {
-        let fixture = tempfile::tempdir().unwrap();
-        let root = std::fs::canonicalize(fixture.path()).unwrap();
+        let fixture = trusted_hosting_fixture();
+        let root = trusted_hosting_root(&fixture);
         let legacy = root.join("legacy").join("sessiond");
         std::fs::create_dir_all(&legacy).unwrap();
         let guard = festerm_sessiond::lock_legacy_start_in(&legacy, "fixture").unwrap();
@@ -2397,9 +2415,8 @@ mod tests {
     fn fresh_approval_checks_deferred_exit_without_stopping_a_session() {
         const CHILD: &str = "FESTERM_TEST_FRESH_AFTER_EXIT";
         if std::env::var_os(CHILD).is_none() {
-            let fixture = tempfile::tempdir().unwrap();
-            let root = std::fs::canonicalize(fixture.path())
-                .unwrap()
+            let fixture = trusted_hosting_fixture();
+            let root = trusted_hosting_root(&fixture)
                 .join("legacy")
                 .join("sessiond");
             let output = std::process::Command::new(std::env::current_exe().unwrap())
