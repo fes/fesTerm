@@ -43,8 +43,9 @@ gates remain open. Legacy Dev Tunnels behavior is unchanged.
 Protected local owner enrollment, compact native-vault anchors, validated forward
 recovery and explicit headless-only private-file credentials have fixture
 coverage (file mode has weaker whole-store rollback protection and is never a
-native failure fallback); real pinned SSH streams still refuse owner authentication until a
-shared connection/channel binding exporter is implemented and reviewed.
+native failure fallback). Optional owner proof helpers now bind the actual pinned
+inner SSH connection/channel and transfer server authority with that exact
+stream; independent review, endpoint integration and native acceptance remain open.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, offline pinned-CLI staging and

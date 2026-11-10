@@ -786,9 +786,11 @@ strict. A projection retains its receiver's in-memory issuer watermark without
 changing permission epochs or enrolled keys. Fresh enrollment reloads have no
 such watermark; rollback protection across reservations belongs to the protected
 durable backend, not cached owner policy.
-The real pinned SSH stream lacks a shared connection/channel transcript
-exporter, so both client/server owner-channel gates explicitly refuse.
-Pinned-channel integration and independent security review are mandatory before
+Vendored russh now derives immutable bindings from its signed original session
+identifier and role-ordered actual channel IDs, excluding no-KEX outer relays.
+Client signing requires its privately captured actual pin and matching current
+stream; server authentication transfers that stream and owner/guard together.
+Endpoint integration and independent security review are mandatory before
 new remote capabilities; all new capabilities default denied. No session routing,
 creation, migration or lifetime-supervisor implementation is claimed by this slice.
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal

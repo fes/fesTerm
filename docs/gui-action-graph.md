@@ -1584,10 +1584,11 @@ These edges are design contracts, not overall implemented behavior or acceptance
 Existing TUNNEL edges retain their current coverage until implementation migrates them.
 
 HOST-01–03 also have protected enrollment/native-vault-reference fixtures.
-Actual verified SSH client/server streams explicitly refuse owner authentication
-until a shared connection-and-channel exporter exists; this is a tested blocker,
-not authenticated endpoint coverage. First-connect controls/native vault
-qualification remain deferred.
+Actual pinned SSH proof helpers bind the signed connection and role-ordered
+channel IDs, transferring authority only with that exact stream. Failure retains
+the unauthenticated stream for bounded denial and close. These are tested
+helpers, not authenticated endpoint coverage; first-connect controls/native
+vault qualification remain deferred.
 
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |

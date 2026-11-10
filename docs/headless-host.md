@@ -96,7 +96,7 @@ rollback is not resisted in this weaker mode. `reconcile()` only forward-publish
 the exact digest/revision committed by the selected store; it cannot invent
 consent. Initialization requires the existing exact Provisioned account/host
 binding. No CLI storage/enrollment controls are exposed yet.
-See the [API and concrete channel blocker](host-protocol.md#concrete-transport-blocker--no-owner-signing-adapter-yet).
+See the [actual pinned-channel proof API](host-protocol.md#real-pinned-ssh-channel-owner-proof).
 First-connect foreground handoff versus advanced explicit public-key import
 remains a bounded UX prerequisite. Neither bearer presence nor a provisioning
 account string enrolls an owner.

@@ -613,18 +613,34 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `native_owner_vault_failure_never_creates_a_fallback_key` exercise actual
   local persistence/native-reference APIs with synthetic vaults and keys.
   `encrypted_transport_pins_host_and_exports_only_one_preconfigured_port` now
-  additionally proves both real pinned SSH stream endpoints refuse owner
-  authentication without a shared connection/channel exporter; the changed-key
-  fixture still refuses before authentication. This is a concrete remaining
-  transport prerequisite, not successful channel-bound proof qualification.
+  additionally proves matching real inner-SSH channel exporters and distinct
+  sibling channels; the changed-key fixture still refuses before authentication.
+  `host_owner_real_ssh_channel_binding_rejects_relay_replay_and_stale_authority`
+  exercises actual pinned transport proof, exact stream transfer, foreign
+  credentials, cross-connection relay/replay, old unbound signatures,
+  expiry/revocation and public stream replacement. The vendor exporter uses the
+  signed original KEX identifier and role-ordered actual channel IDs, never
+  caller-generated identity bytes. This closes the missing exporter/helper seam,
+  not endpoint/native/first-connect qualification.
+  The vendored-library regression
+  `ssh_channel_binding_separates_connection_and_role_ordered_channel_ids`
+  additionally checks connection/role/channel separation and refusal of empty
+  or short session identifiers.
+  `host_owner_authentication_failure_retains_stream_for_bounded_denial`
+  exercises actual Denied/Stale failures retaining their unauthenticated SSH
+  stream for bounded replies before closing; no owner authority is returned.
   `host_owner_permission_templates_require_runtime_projection_for_creation`
   separates persistent consent from strict runtime advertisements;
   `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`
-  preserves original issued operations across fixture issuer projection and
-  refuses unadvertised future epochs. Native composition
+  reuses a live owner proof across actual issuer projection, preserves original
+  issued operations and refuses unadvertised future epochs. Native composition
   must obtain that issuer under the actual protected backend reservation.
   Fresh enrollment templates have no observed issuer watermark; durable backend
   fencing, not cached owner policy, protects across reservations.
+  Frozen projection source `91cf2880` passes protocol13, owner/channel15 and
+  protected-enrollment12 focused tests plus strict protocol, relay/owner-auth,
+  portable client/owner-auth and enrollment clippy. These are portable/synthetic
+  prerequisite results, not native endpoint or first-connect acceptance.
   `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
   no UI, listener, broad pairing service or full ADR acceptance is claimed.
   Reliability remediation adds
