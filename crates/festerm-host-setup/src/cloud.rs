@@ -747,6 +747,66 @@ impl<'a> CloudHostAdapter<'a> {
         self.health_with(cancel, &network, &*secrets).await
     }
 
+    /// Read-only adoption of an acknowledged uncertain submission for removal.
+    /// Never enables access, requests sign-in, creates a resource or asserts
+    /// absence after an uncertain submission. Native stop remains required.
+    pub async fn adopt_uncertain_for_cleanup(
+        &self,
+        cancel: &CancellationToken,
+    ) -> io::Result<Phase> {
+        let network = NativeNetwork::new()?;
+        let secrets =
+            festerm_secret_store::native_store().map_err(|_| refused("host.sign_in_required"))?;
+        self.adopt_uncertain_for_cleanup_with(cancel, &network, &*secrets)
+            .await
+    }
+
+    async fn adopt_uncertain_for_cleanup_with(
+        &self,
+        cancel: &CancellationToken,
+        network: &impl Network,
+        secrets: &dyn SecretStore,
+    ) -> io::Result<Phase> {
+        let _operation = self.operation()?;
+        let mut record = self.load()?;
+        let snapshot = self.store.snapshot()?;
+        if snapshot.phase != Phase::Disabled
+            || snapshot.binding.is_some()
+            || snapshot.pending_ticket().is_some()
+            || snapshot.epoch <= record.ticket.epoch()
+            || !record.submitted
+        {
+            return Err(refused("host.cloud_cleanup_adoption_unavailable"));
+        }
+        let identity = self
+            .load_identity(&mut record, network, secrets, cancel)
+            .await?;
+        let resource = record
+            .resource
+            .as_ref()
+            .ok_or_else(|| refused("host.cloud_reservation_missing"))?;
+        let observed = network
+            .observe(&identity, resource, cancel)
+            .await
+            .map_err(account_error)?;
+        network
+            .confirm(&identity, cancel)
+            .await
+            .map_err(account_error)?;
+        if cancel.is_cancelled() {
+            return Err(refused("host.cloud_cancelled"));
+        }
+        let Observation::Present(receipt) = observed else {
+            return Err(refused("host.cloud_creation_outcome_uncertain"));
+        };
+        pin_receipt(&mut record, receipt.clone())?;
+        // Retain authoritative identity before changing the lifecycle. A crash
+        // or epoch race retries this same receipt, never new creation consent.
+        self.save(&record)?;
+        self.store
+            .adopt_for_cleanup(&record.ticket, snapshot.epoch, binding(&record, &receipt))
+    }
+
     async fn health_with(
         &self,
         cancel: &CancellationToken,
@@ -1070,6 +1130,7 @@ mod tests {
         get_created: Option<&'static str>,
         observe_error_after_create: Option<AccountError>,
         observes: usize,
+        revoke_observe: bool,
     }
     struct FixtureNetwork<'a> {
         store: &'a Store,
@@ -1196,6 +1257,9 @@ mod tests {
         ) -> Result<Observation, AccountError> {
             let mut state = self.state.borrow_mut();
             state.observes += 1;
+            if state.revoke_observe {
+                self.store.revoke().unwrap();
+            }
             if let Some(error) = state.observe_error {
                 return Err(error);
             }
@@ -1230,6 +1294,187 @@ mod tests {
         let settings = adapter.store.snapshot().unwrap().settings;
         let ticket = adapter.store.request_enable(&settings).unwrap();
         adapter.foreground(&ticket, 42).unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create() {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::new(&store);
+        let initial = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&initial, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        network.state.borrow_mut().lose_reply = true;
+        assert!(adapter
+            .provision_with(&initial, &cancel, &network, &secrets)
+            .await
+            .is_err());
+        store.revoke().unwrap();
+        let recovery = adapter
+            .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
+            .unwrap();
+        adapter.acknowledge_uncertain_submission(&recovery).unwrap();
+        let before = adapter.load().unwrap();
+        let epoch = store.snapshot().unwrap().epoch;
+        assert_eq!(
+            adapter
+                .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+                .await
+                .unwrap(),
+            Phase::StopRequested
+        );
+        let snapshot = store.snapshot().unwrap();
+        assert!(snapshot.epoch > epoch);
+        assert!(snapshot.pending_ticket().is_none());
+        assert!(!snapshot.settings.allow_creation);
+        let pinned = adapter.load().unwrap();
+        assert_eq!(pinned.resource, before.resource);
+        assert_eq!(pinned.credential, before.credential);
+        assert_eq!(pinned.ticket, before.ticket);
+        assert_eq!(network.state.borrow().creates, 1);
+        assert_eq!(network.state.borrow().sign_ins, 1);
+        assert!(store.request_cleanup().is_err());
+        let exact = snapshot.binding.unwrap();
+        store.confirm_stopped(snapshot.epoch, &exact).unwrap();
+        store.request_cleanup().unwrap();
+        assert_eq!(
+            adapter
+                .cleanup_with(&cancel, &network, &secrets)
+                .await
+                .unwrap(),
+            Cleanup::GenerationConditionalDeleteUnavailable
+        );
+        assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts() {
+        let (_root, store, secrets) = fixture();
+        let adapter = CloudHostAdapter::new(&store);
+        let initial = foreground(&adapter);
+        let network = FixtureNetwork::new(&store);
+        let cancel = CancellationToken::new();
+        adapter
+            .sign_in_with(&initial, &cancel, |_| {}, &network, &secrets)
+            .await
+            .unwrap();
+        {
+            let mut state = network.state.borrow_mut();
+            state.lose_reply = true;
+            state.create_without_resource = true;
+        }
+        assert!(adapter
+            .provision_with(&initial, &cancel, &network, &secrets)
+            .await
+            .is_err());
+        store.revoke().unwrap();
+        let recovery = adapter
+            .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
+            .unwrap();
+        adapter.acknowledge_uncertain_submission(&recovery).unwrap();
+        let original = adapter.load().unwrap();
+        assert!(adapter
+            .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert!(adapter.load().unwrap() == original);
+        assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
+        {
+            let mut state = network.state.borrow_mut();
+            state.created = Some(Receipt {
+                resource: original.resource.clone().unwrap(),
+                created: "2026-11-09T00:00:00Z".into(),
+            });
+            state.revoke_observe = true;
+        }
+        assert!(adapter
+            .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert!(adapter.load().unwrap().receipt.is_some());
+        assert!(store.snapshot().unwrap().binding.is_none());
+        let pinned = adapter.load().unwrap();
+        {
+            let mut state = network.state.borrow_mut();
+            state.revoke_observe = false;
+            state.created.as_mut().unwrap().created = "foreign-incarnation".into();
+        }
+        assert!(adapter
+            .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert!(adapter.load().unwrap() == pinned);
+        network.state.borrow_mut().created = pinned.receipt.clone();
+        assert_eq!(
+            adapter
+                .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+                .await
+                .unwrap(),
+            Phase::StopRequested
+        );
+        assert_eq!(network.state.borrow().creates, 1);
+        assert_eq!(network.state.borrow().sign_ins, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource() {
+        for refusal in ["cancelled", "missing-credential", "account", "resource"] {
+            let (_root, store, secrets) = fixture();
+            let adapter = CloudHostAdapter::new(&store);
+            let initial = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&initial, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            network.state.borrow_mut().lose_reply = true;
+            assert!(adapter
+                .provision_with(&initial, &cancel, &network, &secrets)
+                .await
+                .is_err());
+            store.revoke().unwrap();
+            let recovery = adapter
+                .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
+                .unwrap();
+            adapter.acknowledge_uncertain_submission(&recovery).unwrap();
+            let before = adapter.load().unwrap();
+            let epoch = store.snapshot().unwrap().epoch;
+            match refusal {
+                "cancelled" => cancel.cancel(),
+                "missing-credential" => {
+                    secrets.delete(&reference(&before).unwrap()).unwrap();
+                }
+                "account" => {
+                    network.state.borrow_mut().confirm_error = Some(AccountError::AccountChanged);
+                }
+                "resource" => {
+                    network
+                        .state
+                        .borrow_mut()
+                        .created
+                        .as_mut()
+                        .unwrap()
+                        .resource
+                        .account_id = 99;
+                }
+                _ => unreachable!(),
+            }
+            assert!(adapter
+                .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+                .await
+                .is_err());
+            assert!(adapter.load().unwrap() == before);
+            let snapshot = store.snapshot().unwrap();
+            assert_eq!(snapshot.phase, Phase::Disabled);
+            assert_eq!(snapshot.epoch, epoch);
+            assert!(snapshot.binding.is_none());
+            assert_eq!(network.state.borrow().creates, 1);
+            assert_eq!(network.state.borrow().sign_ins, 1);
+        }
     }
 
     #[tokio::test(start_paused = true)]

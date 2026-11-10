@@ -488,6 +488,27 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The native/headless management follow-up adds actual functions
+`headless_disable_fences_unbound_intent_without_touching_native_services`,
+`headless_native_and_vault_diagnostics_are_specific_and_sanitized`,
+`headless_native_management_refuses_missing_receipts_without_ready_or_cleanup_claims`,
+`headless_native_publication_rejects_untrusted_inputs_without_service_effects`,
+`host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create`
+and `host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts`.
+`host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource`
+adds cancellation, missing credentials and wrong account/resource refusal cases.
+`protected_owner_policy_source_reacquires_selected_storage_and_fresh_revocation_lease`
+covers the lease-backed selected-store runtime authority seam (fresh consent,
+Busy, revocation and corrupt-state refusal); trait/listener integration remains
+dependent on the separately gated runtime source.
+These cover HOST-04/HOST-05 revocation, actionable unavailable credentials,
+native management/publication refusals and read-only cleanup adoption, not
+successful endpoint startup or cloud deletion.
+`native_service_live_exact_owned_lifecycle_preserves_independent_child` is
+ignored by default and requires an explicitly authorized disposable Unix guest.
+Its synthetic executable/native-manager evidence is not release publisher,
+native vault, real sessiond or whole-ADR qualification.
+
 **Stage 4 boundary progress (#681):** `festerm-host-setup` now has an opt-in
 protected lifecycle journal; the separate GUI-free `festerm-host` supports
 disabled configure, recorded status, offline official-CLI pin staging and

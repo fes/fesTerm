@@ -89,4 +89,64 @@ fn headless_acquisition_rejects_provenance_overrides_without_network_or_state() 
         assert!(!error.contains("fixture-do-not-echo"));
         assert!(!cache.exists());
     }
+
+    #[test]
+    fn headless_native_management_refuses_missing_receipts_without_ready_or_cleanup_claims() {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        let state = root.path().join("headless");
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .args(["configure", "--name", "Fixture", "--state-dir"])
+            .arg(&state)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        for operation in ["service-status", "cleanup-local"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+                .args([operation, "--state-dir"])
+                .arg(&state)
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+            assert!(!String::from_utf8_lossy(&output.stderr).contains("Ready"));
+            assert!(!state.join("native-service.json").exists());
+        }
+    }
+
+    #[test]
+    fn headless_native_publication_rejects_untrusted_inputs_without_service_effects() {
+        let root = festerm_sessiond::private_storage::private_test_directory();
+        let source = root.path().join("source");
+        let directory =
+            festerm_sessiond::private_storage::private_directory(&source, true).unwrap();
+        festerm_sessiond::private_storage::write_new_private(
+            &directory,
+            std::path::Path::new("unsigned"),
+            b"not authenticated",
+        )
+        .unwrap();
+        let input = source.join("unsigned");
+        let cache = root.path().join("cache");
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .arg("qualify-package")
+            .arg("--manifest")
+            .arg(&input)
+            .arg("--signature")
+            .arg(&input)
+            .arg("--archive")
+            .arg(&input)
+            .arg("--cache-root")
+            .arg(&cache)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!cache.exists());
+        let diagnostic = String::from_utf8(output.stderr).unwrap();
+        assert!(diagnostic.contains(if cfg!(windows) {
+            "publisher_policy_unconfigured"
+        } else {
+            "artifact_authentication_failed"
+        }));
+    }
 }

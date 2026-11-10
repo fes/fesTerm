@@ -492,6 +492,31 @@ impl Store {
         })
     }
 
+    #[cfg(feature = "cloud")]
+    pub(crate) fn adopt_for_cleanup(
+        &self,
+        ticket: &Ticket,
+        expected_epoch: u64,
+        binding: Binding,
+    ) -> io::Result<Phase> {
+        binding.validate()?;
+        self.change(|record| {
+            if record.phase != Phase::Disabled
+                || record.epoch != expected_epoch
+                || record.epoch <= ticket.epoch
+                || record.installation != ticket.installation
+                || record.binding.is_some()
+                || record.pending.is_some()
+            {
+                return Err(refused("host.cleanup_adoption_scope_changed"));
+            }
+            advance(record)?;
+            record.binding = Some(binding);
+            record.phase = Phase::StopRequested;
+            Ok(record.phase)
+        })
+    }
+
     /// Uninstall is separate from disable and requires confirmed local stop.
     pub fn request_cleanup(&self) -> io::Result<()> {
         self.change(|record| {

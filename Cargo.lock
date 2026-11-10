@@ -2593,6 +2593,8 @@ dependencies = [
  "festerm-sessiond",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

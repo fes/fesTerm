@@ -1,6 +1,125 @@
 use super::*;
 use std::cell::RefCell;
 
+#[cfg(all(
+    feature = "native-service-fixtures",
+    any(target_os = "linux", target_os = "macos")
+))]
+#[test]
+#[ignore = "mutates exact-owned native services: disposable guest and explicit lab inputs required"]
+fn native_service_live_exact_owned_lifecycle_preserves_independent_child() {
+    use std::time::{Duration, Instant};
+    assert_eq!(
+        std::env::var("FESTERM_ADR84_NATIVE_LAB").as_deref(),
+        Ok("1")
+    );
+    let root = PathBuf::from(std::env::var_os("FESTERM_ADR84_NATIVE_ROOT").unwrap());
+    let child = PathBuf::from(std::env::var_os("FESTERM_ADR84_NATIVE_CHILD").unwrap());
+    assert!(root.is_absolute() && child.is_absolute());
+    assert!(
+        !root.exists(),
+        "preserve prior evidence; use a fresh private root"
+    );
+    assert_eq!(
+        child.file_name().unwrap(),
+        "festerm-host-service-test-child"
+    );
+    assert!(std::fs::symlink_metadata(&child).unwrap().is_file());
+    let bytes = std::fs::read(&child).unwrap();
+    assert!(!bytes.is_empty() && bytes.len() <= crate::artifacts::MAX_ENTRY_BYTES as usize);
+    let directory = storage::private_directory(&root, true).unwrap();
+    let state = root.join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let services = Services::current_user(&store, &state).unwrap();
+    struct Cleanup<'a> {
+        services: &'a Services<'a>,
+        state: &'a Path,
+    }
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            let _ = (|| -> io::Result<()> {
+                let store = self.services.store;
+                let snapshot = store.snapshot()?;
+                if snapshot.phase == Phase::Provisioned {
+                    store.revoke()?;
+                }
+                let snapshot = store.snapshot()?;
+                if snapshot.phase == Phase::StopRequested {
+                    self.services.stop(snapshot.epoch)?;
+                    store.confirm_stopped(snapshot.epoch, snapshot.binding.as_ref().unwrap())?;
+                }
+                if store.snapshot()?.phase == Phase::Disabled {
+                    store.request_cleanup()?;
+                }
+                let snapshot = store.snapshot()?;
+                if snapshot.phase == Phase::CleanupPending {
+                    self.services.cleanup(snapshot.epoch)?;
+                }
+                Ok(())
+            })();
+            if let Ok(directory) = storage::private_directory(self.state, false) {
+                let _ = storage::write_new_private(&directory, Path::new("fixture-stop"), b"stop");
+            }
+        }
+    }
+    let _cleanup = Cleanup {
+        services: &services,
+        state: &state,
+    };
+    let stage = trusted::lab_fixture(&root, &bytes);
+    services.install(&stage, snapshot.epoch).unwrap();
+    assert!(
+        !state.join("fixture-host-started").exists(),
+        "install must launch no process"
+    );
+    let observed = services
+        .start_with(&stage, snapshot.epoch, || Ok(()))
+        .unwrap();
+    assert_eq!(observed.process, ProcessState::Running);
+    let wait = |check: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !check() {
+            assert!(
+                Instant::now() < deadline,
+                "native fixture observation deadline"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    };
+    wait(&|| {
+        state.join("fixture-host-started").exists()
+            && state.join("fixture-daemon-heartbeat").exists()
+    });
+    store.revoke().unwrap();
+    let revoked = store.snapshot().unwrap();
+    services.stop(revoked.epoch).unwrap();
+    store
+        .confirm_stopped(revoked.epoch, revoked.binding.as_ref().unwrap())
+        .unwrap();
+    store.request_cleanup().unwrap();
+    let pending = store.snapshot().unwrap();
+    services.cleanup(pending.epoch).unwrap();
+    assert_eq!(services.status().unwrap().process, ProcessState::Absent);
+    let heartbeat = std::fs::read(state.join("fixture-daemon-heartbeat")).unwrap();
+    wait(&|| {
+        std::fs::read(state.join("fixture-daemon-heartbeat"))
+            .is_ok_and(|current| current != heartbeat)
+    });
+    store
+        .confirm_removed(pending.epoch, pending.binding.as_ref().unwrap())
+        .unwrap();
+    let state_directory = storage::private_directory(&state, false).unwrap();
+    storage::write_new_private(&state_directory, Path::new("fixture-stop"), b"stop").unwrap();
+    wait(&|| state.join("fixture-daemon-stopped").exists());
+    storage::write_new_private(
+        &directory,
+        Path::new("native-lifecycle-qualified"),
+        b"manager-only; synthetic fixture, not publisher/vault/cloud acceptance",
+    )
+    .unwrap();
+}
+
 struct FakeRunner {
     definition: PathBuf,
     state: RefCell<FakeState>,

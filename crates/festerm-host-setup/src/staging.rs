@@ -31,6 +31,15 @@ pub fn stage_release_files(
     archive: &Path,
     root: &Path,
 ) -> io::Result<StagedArtifact> {
+    let artifact = verify_release_files(manifest, signature, archive)?;
+    stage_artifact(&artifact, root)
+}
+
+pub(crate) fn verify_release_files(
+    manifest: &Path,
+    signature: &Path,
+    archive: &Path,
+) -> io::Result<VerifiedArtifact> {
     let platform = match std::env::consts::OS {
         "linux" => Platform::Linux,
         "macos" => Platform::Macos,
@@ -45,7 +54,7 @@ pub fn stage_release_files(
     let manifest = read_input(manifest, artifacts::MAX_MANIFEST_BYTES)?;
     let signature = read_input(signature, artifacts::MAX_SIGNATURE_BYTES)?;
     let archive = read_input(archive, artifacts::MAX_ARCHIVE_BYTES)?;
-    let artifact = artifacts::verify(
+    artifacts::verify(
         &manifest,
         &signature,
         &archive,
@@ -56,8 +65,7 @@ pub fn stage_release_files(
             package: Package::Host,
         },
     )
-    .map_err(|_| io::Error::other("host.artifact_authentication_failed"))?;
-    stage_artifact(&artifact, root)
+    .map_err(|_| io::Error::other("host.artifact_authentication_failed"))
 }
 
 fn read_input(path: &Path, max: usize) -> io::Result<Vec<u8>> {

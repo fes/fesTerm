@@ -1,5 +1,27 @@
 # Milestone Progress Narrative
 
+## Making headless cleanup observable without granting access again
+
+The native lane normally integrates current main, reviewed packaging/enrollment
+and the frozen cloud adapter rather than replacing their account/storage rules.
+The moved atomic publication helper retains its shared interrupted-write test;
+the setup wrapper additionally checks no-replace behavior.
+
+Headless management now separates journal intent, exact native observations and
+unavailable endpoint readiness. Disable fences before native stop; local cleanup
+cannot manufacture cloud removal. Acknowledged uncertain cloud creation can be
+adopted for cleanup by read-only authenticated observation without enabling
+access or requesting another create. Authoritative receipts precede lifecycle
+binding and survive epoch races; absence remains uncertain. Signed native
+admission has a standalone no-registration command.
+
+A feature-gated, ignored disposable-guest test exercises real user-manager
+install/start/stop/removal and an independently surviving bounded child without
+shells, credentials or cloud. Source/portable fixture evidence is kept separate
+from native execution and release-signer qualification. Windows still requires
+approved publisher/rotation/revocation policy and graceful exact-host stop;
+endpoint startup and safe update switching remain explicit dependencies.
+
 ## Preserving published helper ABI while adding bounded host acquisition
 
 The GUI-free host now has its own schema-2 `festerm-host` identity and

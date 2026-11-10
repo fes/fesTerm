@@ -9,8 +9,10 @@ description = "Headless host lifecycle configuration and diagnostics (ADR 0084).
 publish = false
 
 [dependencies]
-festerm-host-setup = { path = "../../crates/festerm-host-setup", features = ["acquisition"] }
+festerm-host-setup = { path = "../../crates/festerm-host-setup", features = ["acquisition", "native-services", "cloud"] }
 serde_json = "1"
+tokio = { version = "1", features = ["rt", "net", "time"] }
+tokio-util = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

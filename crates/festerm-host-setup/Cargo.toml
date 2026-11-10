@@ -11,6 +11,7 @@ publish = false
 [features]
 default = []
 native-services = ["owner-enrollment", "dep:tokio", "festerm-windows-security/host-service"]
+native-service-fixtures = ["native-services"]
 cloud = ["lifecycle", "dep:festerm-tunnel-client", "dep:festerm-secret-store", "dep:tokio-util"]
 owner-enrollment = ["lifecycle", "festerm-tunnel-bridge/owner-auth", "dep:festerm-host-protocol", "dep:festerm-secret-store"]
 acquisition = ["lifecycle", "dep:reqwest", "dep:tokio"]
@@ -29,6 +30,11 @@ artifacts = [
 name = "festerm-verify-artifact"
 path = "src/bin/festerm-verify-artifact.rs"
 required-features = ["artifacts"]
+
+[[bin]]
+name = "festerm-host-service-test-child"
+path = "src/bin/festerm-host-service-test-child.rs"
+required-features = ["native-service-fixtures"]
 
 [dependencies]
 base64 = { version = "0.22", optional = true }

@@ -6,7 +6,7 @@ use crate::{
     protected_state,
 };
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
-use festerm_host_protocol::{Capabilities, Epoch, PrincipalId, Validate};
+use festerm_host_protocol::{Capabilities, ContractError, Epoch, PrincipalId, Validate};
 use festerm_secret_store::{native_store, SecretBytes, SecretReference, SecretStore};
 use festerm_sessiond::private_storage as storage;
 use festerm_tunnel_bridge::host_identity::HostIdentity;
@@ -15,7 +15,7 @@ use festerm_tunnel_bridge::owner_auth::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs::File, io, path::Path};
+use std::{fs::File, io, path::Path, sync::Arc};
 
 const RECORD: &str = "owner-enrollment.json";
 const ANCHOR: &str = "owner-enrollment-vault-ref";
@@ -273,6 +273,35 @@ pub struct CurrentOwnerPolicy {
 impl CurrentOwnerPolicy {
     pub fn verifier(&self) -> &OwnerVerifier {
         &self.verifier
+    }
+}
+
+/// Fresh selected-store authority for runtime admission, never a cached verifier.
+/// The returned lease must be dropped before network or native startup waits.
+pub struct CurrentOwnerPolicySource {
+    installation: Arc<Store>,
+    storage: OwnerStorage,
+}
+
+impl CurrentOwnerPolicySource {
+    pub fn new(installation: Arc<Store>, storage: OwnerStorage) -> Self {
+        Self {
+            installation,
+            storage,
+        }
+    }
+
+    pub fn current_policy(&self) -> Result<CurrentOwnerPolicy, ContractError> {
+        self.installation
+            .owner_enrollment_with_storage(self.storage)
+            .and_then(|enrollment| enrollment.current_policy())
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::WouldBlock {
+                    ContractError::Busy
+                } else {
+                    ContractError::Denied
+                }
+            })
     }
 }
 
@@ -1497,6 +1526,68 @@ mod tests {
             )
             .is_err());
         assert_eq!(enrollment.reconcile().unwrap(), state);
+    }
+
+    #[test]
+    fn protected_owner_policy_source_reacquires_selected_storage_and_fresh_revocation_lease() {
+        fn assert_source<T: Send + Sync + 'static>() {}
+        assert_source::<CurrentOwnerPolicySource>();
+        let (_root, store, _vault) = setup();
+        let store = Arc::new(store);
+        let source =
+            CurrentOwnerPolicySource::new(store.clone(), OwnerStorage::HeadlessProtectedFile);
+        assert!(matches!(
+            source.current_policy(),
+            Err(ContractError::Denied)
+        ));
+        let enrollment = store
+            .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        let initial = initialize(&enrollment);
+        let key = OwnerSigningKey::from_seed(&[81; 32]);
+        let state = enroll(&enrollment, &initial, &key);
+        let state = enrollment
+            .approve_permissions(
+                state.revision,
+                true,
+                Capabilities {
+                    inventory: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let guard = source.current_policy().unwrap();
+        let epoch = guard.verifier().policy().host_epoch;
+        assert!(guard.verifier().policy().remote_access);
+        assert!(matches!(source.current_policy(), Err(ContractError::Busy)));
+        assert!(store
+            .snapshot()
+            .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock));
+        drop(guard);
+        store.revoke().unwrap();
+        let guard = source.current_policy().unwrap();
+        assert!(!guard.verifier().policy().remote_access);
+        assert!(guard.verifier().policy().host_epoch > epoch);
+        drop(guard);
+        enrollment.revoke(state.revision, key.public_key()).unwrap();
+        assert!(matches!(
+            source.current_policy(),
+            Err(ContractError::Denied)
+        ));
+        let native = CurrentOwnerPolicySource::new(store.clone(), OwnerStorage::NativeVault);
+        assert!(matches!(
+            native.current_policy(),
+            Err(ContractError::Denied)
+        ));
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(directory, Path::new(RECORD), b"corrupt")
+            })
+            .unwrap();
+        assert!(matches!(
+            source.current_policy(),
+            Err(ContractError::Denied)
+        ));
     }
 
     #[test]

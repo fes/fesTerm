@@ -5620,6 +5620,8 @@
         "interrupted_enable_recovers_exact_ticket_to_confirm_no_resources",
         "recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence",
         "interrupted_private_publication_never_exposes_torn_final_bytes",
+        "private_publication_preserves_shared_atomic_no_replace_boundary",
+        "protected_owner_policy_source_reacquires_selected_storage_and_fresh_revocation_lease",
         "offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache",
         "bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache",
         "bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation",
@@ -5632,6 +5634,10 @@
         "unavailable_host_operations_and_unsafe_options_fail_closed",
         "headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments",
         "headless_binary_status_is_a_journal_not_a_ready_claim",
+        "headless_disable_fences_unbound_intent_without_touching_native_services",
+        "headless_native_and_vault_diagnostics_are_specific_and_sanitized",
+        "headless_native_management_refuses_missing_receipts_without_ready_or_cleanup_claims",
+        "headless_native_publication_rejects_untrusted_inputs_without_service_effects",
         "authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries",
         "authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache",
         "headless_package_staging_refuses_unauthenticated_input_before_writing",
@@ -5662,7 +5668,10 @@
         "host_cloud_pinned_absence_requires_exact_native_stop_before_cleanup",
         "host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource",
         "host_cloud_uncertain_acknowledgement_refuses_receipts_and_native_stop_states",
-        "host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt"
+        "host_cloud_put_success_pins_only_authoritative_get_and_retains_cancelled_receipt",
+        "host_cloud_cleanup_adopts_acknowledged_uncertainty_without_enable_or_create",
+        "host_cloud_cleanup_adoption_retains_unknown_and_epoch_raced_receipts",
+        "host_cloud_cleanup_adoption_refuses_cancelled_missing_foreign_account_and_resource"
       ],
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",
@@ -5674,7 +5683,8 @@
         "Native Windows/macOS/Linux startup, locked vault, origin collision and cleanup qualification, plus desktop sharing-triggered setup/cancellation usability; boundary fixtures do not establish native acceptance",
         "Official cloud API exposes ID-only delete, not a documented incarnation-atomic precondition; found-resource cleanup reports GenerationConditionalDeleteUnavailable and retains CleanupPending without DELETE",
         "Live-service creation-incarnation stability across repeated authoritative GETs, If-None-Match atomicity, authenticated exact-cluster 404/ownership semantics, cluster routing/no-redirect behavior and native-vault behavior remain unqualified; fixtures do not establish live/native acceptance",
-        "HOSTSETUP-01: uninstall from acknowledged unbound uncertainty is unsupported until read-only exact-resource adoption/cleanup binding exists without enable/creation consent; retain the protected record and credential, do not delete the installation directory or grant creation consent just to uninstall; generation-atomic deletion remains separately gated"
+        "HOSTSETUP-01: read-only exact-resource cleanup adoption exists without enable/creation consent, retaining uncertainty on missing/failed observations and pinning raced receipts for retry. Real signed service/vault/cloud qualification remains required; no lifecycle tombstone until exact native stop and conditional cloud cleanup",
+        "Opt-in disposable Unix guest test native_service_live_exact_owned_lifecycle_preserves_independent_child exercises the real manager with a synthetic test executable only, not production publisher/vault/cloud or full sessiond lifetime acceptance"
       ]
     },
     {

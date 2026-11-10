@@ -1,5 +1,5 @@
 //! Same-user native host control. Process observations are never host readiness.
-//! No CLI setup/run command calls these adapters until endpoint integration lands.
+//! CLI management never treats a native process observation as endpoint readiness.
 mod definitions;
 pub mod native;
 mod trusted;
@@ -102,7 +102,8 @@ struct Registration {
 }
 
 /// Observed local manager state only; no cloud, vault or endpoint availability.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ProcessState {
     Absent,
     Stopped,
@@ -112,6 +113,7 @@ pub enum ProcessState {
 }
 
 /// Typed result still requiring endpoint/cloud reconciliation by the controller.
+#[derive(Serialize)]
 pub struct Observation {
     pub process: ProcessState,
     pub installation: String,

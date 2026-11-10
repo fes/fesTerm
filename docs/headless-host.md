@@ -114,6 +114,16 @@ evidence, executable-publication qualification and the new endpoint remain separ
 
 ## Explicitly unavailable operations
 
+Supported management is deliberately narrower than installation:
+`service-status` observes exact receipt-owned native state, `disable` fences
+before native stop, and `cleanup-local` retires only an already requested exact
+native cleanup. None confirms cloud deletion or commits Removed.
+`recover-cleanup` reads and pins an acknowledged uncertain cloud reservation
+without renewed enable/create consent; missing/unknown observations remain
+uncertain. `qualify-package` verifies the current authenticated native publisher
+and publishes private executable bytes without registration or launch.
+See [native management and lab commands](native-host-services.md).
+
 The off-default `native-services` library now provides real same-user
 registration/control and authenticated executable-publication APIs, with
 deterministic native-adapter fixtures. It is not connected to CLI commands or
@@ -314,13 +324,14 @@ foreground exit, not a directory-deletion/manual workaround:
   bound; otherwise only authenticated exact absence permits the same conditional
   request. No new resource ID/incarnation is silently selected.
 
-**Uninstall from acknowledged, unbound uncertainty is unsupported.** It requires
-a deferred read-only exact-resource adoption/cleanup-binding operation that does
-not enable the host or grant creation consent (`HOSTSETUP-01`). Do not request
-enable/creation consent just to uninstall. Retain the protected cloud record,
-credential and installation directory while this debt is unresolved; deleting
-them is not a recovery/uninstall procedure. The generation-atomic deletion
-qualification below remains a separate prerequisite even after cleanup binding.
+`adopt_uncertain_for_cleanup(cancel)` and headless `recover-cleanup` now
+perform read-only exact-resource adoption from acknowledged unbound uncertainty
+without enabling access or granting creation consent (`HOSTSETUP-01`). Missing,
+foreign or uncertain evidence cannot bind. Present authoritative evidence is
+pinned before StopRequested, allowing retry after an epoch race. Retain the
+protected cloud record, credential and installation directory; deleting them is
+not a recovery/uninstall procedure. The generation-atomic deletion qualification
+below remains a separate prerequisite even after cleanup binding.
 
 `cleanup(cancel)` requires the lifecycle's exact binding, current cleanup epoch
 and confirmed native stop. It rechecks current account, exact ID/cluster,

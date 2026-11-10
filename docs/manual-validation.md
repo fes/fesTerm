@@ -3477,15 +3477,23 @@ Successful PUT receipts are pinned only after authoritative GET, including late
 cancelled results. Live-service incarnation stability across repeated GETs still
 requires qualification; these fixtures perform no real cloud or vault mutations.
 
-**HOSTSETUP-01 deferred uninstall prerequisite:** acknowledged unbound
-uncertainty cannot currently be adopted/bound for cleanup through a read-only
-operation. Uninstall from that state is unsupported until exact-resource
-adoption/cleanup binding exists without enable/creation consent. Retain its
-protected record and credential; do not delete the installation directory or
-grant creation consent just to uninstall. Generation-atomic cloud deletion
-remains independently gated. Live GET stability, `If-None-Match: *` atomicity,
+**HOSTSETUP-01 cleanup recovery:** `recover-cleanup` can now bind an
+acknowledged uncertain exact resource through read-only observation, without
+enable/creation consent. Unknown/absent observations retain uncertainty;
+epoch-raced authoritative receipts remain pinned for retry. Native stop and
+generation-atomic cloud deletion remain independently gated. Retain protected
+records/credentials; do not delete the installation directory or grant creation
+consent just to uninstall. Live GET stability, `If-None-Match: *` atomicity,
 authenticated exact-cluster 404/ownership, cluster routing/no-redirect and native
 vault behavior still require live/native qualification.
+
+The ignored Unix guest test
+`native_service_live_exact_owned_lifecycle_preserves_independent_child`
+is an opt-in real-manager check with synthetic test-only executable authority.
+Its exact commands and evidence boundaries are in
+[native services](native-host-services.md#disposable-native-manager-fixture).
+No native execution of that test, positive signed release admission or actual
+sessiond lifetime result is claimed by this source change.
 
 ## ADR 0084 owner enrollment qualification
 

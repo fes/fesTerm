@@ -22,6 +22,17 @@ pub struct TrustedStage {
 }
 
 impl TrustedStage {
+    pub fn publish_release_files(
+        manifest: &Path,
+        signature: &Path,
+        archive: &Path,
+        root: &Path,
+    ) -> io::Result<Self> {
+        native_publisher_admission(std::env::consts::OS)?;
+        let artifact = staging::verify_release_files(manifest, signature, archive)?;
+        Self::publish(&artifact, root)
+    }
+
     pub fn publish(artifact: &VerifiedArtifact, root: &Path) -> io::Result<Self> {
         native_publisher_admission(std::env::consts::OS)?;
         Self::publish_with(artifact, root, native_publisher_qualification)
@@ -176,6 +187,28 @@ pub(super) fn fixture(root: &Path) -> TrustedStage {
         |_, _| Ok(()),
     )
     .unwrap()
+}
+
+#[cfg(all(test, feature = "native-service-fixtures", unix))]
+pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
+    use std::os::unix::fs::PermissionsExt;
+    let artifact = crate::artifacts::host_staging_fixture();
+    let staged = staging::stage_artifact(&artifact, &root.join("synthetic-provenance")).unwrap();
+    let directory = storage::private_directory(&root.join("executable"), true).unwrap();
+    let name = Path::new("festerm-host-service-test-child");
+    crate::protected_state::publish_new(&directory, name, bytes).unwrap();
+    let path = root.join("executable").join(name);
+    let file = open(&path).unwrap();
+    file.set_permissions(std::fs::Permissions::from_mode(0o700))
+        .unwrap();
+    file.sync_all().unwrap();
+    TrustedStage {
+        path,
+        digest: digest(bytes),
+        file,
+        _directory: directory,
+        _staged: staged,
+    }
 }
 
 impl TrustedStage {

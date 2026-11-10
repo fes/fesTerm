@@ -3,8 +3,42 @@
 ADR [0084](adr/0084-host-based-dev-tunnels.md), stage 4, remains partial under
 [#681](https://github.com/fes/fesTerm/issues/681). The off-default
 `festerm-host-setup` feature `native-services` supplies actual native control
-adapters, not a complete installer or a readiness gate. No desktop control or
-headless CLI command invokes them while the new endpoint is incomplete.
+adapters, not a complete installer or a readiness gate. Headless management
+can observe, revoke/stop and retire already receipt-owned native resources.
+It cannot install/start the incomplete endpoint or claim Ready.
+
+## Headless management and recovery
+
+`festerm-host service-status --state-dir PATH` reports a native process
+observation separately from lifecycle intent. `disable` durably advances
+revocation before attempting exact-owned stop; failure leaves the protected
+StopRequested/Reconciling evidence. It does not confirm cloud cleanup or reset
+the installation to a Ready-shaped state. Repeating a StopRequested disable
+reuses its epoch. `cleanup-local` requires an existing CleanupPending journal
+and never commits Removed or deletes cloud/identity/grant/daemon state.
+
+`recover-cleanup` performs authenticated read-only adoption of an acknowledged
+uncertain cloud submission without an enable ticket or another create. Present
+exact-resource evidence is pinned before the lifecycle moves to StopRequested.
+A crash or epoch race retains that receipt for retry. An absent/unknown response
+is not proof that a late uncertain submission cannot still complete. Native
+stop and generation-conditional cloud cleanup remain separate prerequisites.
+Missing/locked credentials report SignInRequired; there is no background prompt
+or storage fallback.
+
+`enrollment::CurrentOwnerPolicySource::new(Arc<Store>, OwnerStorage)` is the
+narrow runtime authority source. Every `current_policy()` freshly selects the
+explicit original store and obtains an owned protected lease; contention is
+`ContractError::Busy`, while missing/corrupt/foreign/revoked authority is Denied.
+It never caches a verifier or retries native failure using files. Runtime trait
+wiring still requires normally integrating the separately gated runtime source;
+this source-only checkpoint does not activate a listener.
+
+`qualify-package` consumes private absolute `--manifest`, `--signature`,
+`--archive`, `--cache-root` inputs, uses the same embedded updater/native
+publisher policy and publishes private executable bytes only. It registers
+nothing. This command makes positive signed-release admission directly
+testable without exposing an unqualified endpoint.
 
 ## Authenticated executable admission
 
@@ -157,6 +191,41 @@ endpoint process rather than its independent daemon process group. Cleanup does
 not delete identities, grants,
 vault entries, authenticated artifacts, cloud resources or persistent daemons.
 Actual Windows daemon/job independence still requires native endpoint evidence.
+
+## Disposable native-manager fixture
+
+Only a disposable Linux systemd-user or macOS GUI-login guest may opt in:
+
+```sh
+cargo build --locked -p festerm-host-setup --features native-service-fixtures \
+  --bin festerm-host-service-test-child
+FESTERM_ADR84_NATIVE_LAB=1 \
+FESTERM_ADR84_NATIVE_ROOT="$PWD/evidence/native-fresh" \
+FESTERM_ADR84_NATIVE_CHILD="$PWD/target-native/debug/festerm-host-service-test-child" \
+cargo test --locked -p festerm-host-setup --features native-service-fixtures \
+  services::tests::native_service_live_exact_owned_lifecycle_preserves_independent_child \
+  -- --ignored --exact
+```
+
+Set `CARGO_TARGET_DIR="$PWD/target-native"`, `CARGO_BUILD_JOBS=2`,
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`
+for both commands; obtain the coordinator's guest build slot first. The evidence
+parent must already be a trusted private directory; the final root must not
+exist. This fixture uses only its random installation/resource receipt, creates
+no shell and never invokes sign-in/vault/cloud. Its deliberately synthetic
+test-only executable receipt bypasses publisher policy **only inside the test
+module**. No production trust override is added. An independent bounded
+heartbeat child must survive exact host stop and removal. Normal completion
+requests that child exit; failure retains private journals/evidence, attempts
+only receipt-owned cleanup and the child has a 60-second lifetime ceiling.
+The helper is feature-gated and absent from release packages.
+
+This proves native-manager process ownership only, not signed publisher
+admission, actual sessiond lifetime or whole-ADR acceptance. Separately run
+`qualify-package` with real current-version schema-2 release-signed inputs:
+Linux requires the updater signature; macOS also requires Developer ID/team/
+hardened runtime; Windows must refuse until approved publisher policy exists.
+Unsigned/ad-hoc/foreign/changed inputs must not register or start anything.
 
 ## Evidence and remaining prerequisites
 
