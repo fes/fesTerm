@@ -25,6 +25,8 @@ pub mod enrollment;
 pub mod lifecycle;
 #[cfg(feature = "lifecycle")]
 pub mod owned_migration;
+#[cfg(feature = "owner-enrollment")]
+pub mod private_session_sharing;
 #[cfg(feature = "lifecycle")]
 mod protected_state;
 #[cfg(feature = "native-services")]

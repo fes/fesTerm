@@ -230,6 +230,8 @@ impl LeaseGuard {
 /// rollback or a contended lease lock extending a running lease indefinitely.
 #[doc(hidden)]
 pub struct DaemonWatch {
+    preserve_on_fault: bool,
+    binding_revocation: Cell<bool>,
     root: PathBuf,
     name: String,
     generation: GenerationId,
@@ -241,6 +243,80 @@ pub struct DaemonWatch {
 }
 
 impl DaemonWatch {
+    pub fn imported_remote_revoked(&self) -> bool {
+        self.preserve_on_fault && self.binding_revocation.get()
+    }
+    pub(crate) fn seal_binding(&self) {
+        if self.preserve_on_fault {
+            self.binding_revocation.set(true);
+        }
+    }
+    pub(crate) fn open_binding(root: &Path, name: &str, generation: u128) -> io::Result<Self> {
+        let mut watch = Self::open(root, name, generation)?;
+        watch.preserve_on_fault = true;
+        Ok(watch)
+    }
+    fn binding_lease(&self, binding: &crate::native_binding::Binding) -> io::Result<DaemonLease> {
+        let lease = LeaseGuard::acquire(&self.root, self.generation)?.read()?;
+        if binding.runtime_root != self.root
+            || binding.identity.name != self.name
+            || binding.identity.created_at_unix_ms != self.generation.get()
+            || lease.name != self.name
+            || lease.native_pid != Some(binding.identity.pid)
+            || lease.native_pid != Some(std::process::id())
+            || lease.grant.owner != binding.principal
+            || lease.grant.logical != binding.logical
+            || lease.lifetime != (Lifetime::Persistent {})
+            || lease.stopped
+        {
+            return Err(invalid());
+        }
+        self.observe_binding_revocation(&lease);
+        Ok(lease)
+    }
+    fn observe_binding_revocation(&self, lease: &DaemonLease) {
+        if self.preserve_on_fault && lease.remote_revoked && lease.grant.revision.get() > 1 {
+            self.binding_revocation.set(true);
+        }
+    }
+
+    pub(crate) fn verify_binding(
+        &self,
+        binding: &crate::native_binding::Binding,
+    ) -> io::Result<()> {
+        let lease = self.binding_lease(binding)?;
+        if !lease.remote_revoked || lease.grant.revision.get() != 1 || lease.pending.is_some() {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn verify_released_binding(
+        &self,
+        binding: &crate::native_binding::Binding,
+    ) -> io::Result<()> {
+        let lease = self.binding_lease(binding)?;
+        if !lease.remote_revoked || lease.pending.is_some() {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn binding_active(
+        &self,
+        binding: &crate::native_binding::Binding,
+    ) -> io::Result<bool> {
+        Ok(!self.binding_lease(binding)?.remote_revoked && !self.binding_revocation.get())
+    }
+    pub(crate) fn binding_revoked(
+        &self,
+        binding: &crate::native_binding::Binding,
+    ) -> io::Result<bool> {
+        let lease = self.binding_lease(binding)?;
+        self.observe_binding_revocation(&lease);
+        Ok(self.binding_revocation.get())
+    }
+
     pub fn open(root: &Path, name: &str, generation: u128) -> io::Result<Self> {
         let generation = GenerationId::new(generation).map_err(|_| invalid())?;
         let guard = LeaseGuard::acquire(root, generation)?;
@@ -258,6 +334,8 @@ impl DaemonWatch {
         }
 
         let mut watch = Self {
+            preserve_on_fault: false,
+            binding_revocation: Cell::new(false),
             root: root.into(),
             name: name.into(),
             generation,
@@ -291,13 +369,19 @@ impl DaemonWatch {
 
     /// Validate a local admission ticket without changing lease ownership.
     pub fn allows_attachment(&self, ticket: Option<&OperationId>, remote: bool) -> bool {
+        // HOST always supplies an issued ticket. Unticketed admission retains
+        // the ordinary generation's pre-existing local/legacy authority path.
+        if self.preserve_on_fault && ticket.is_none() {
+            return true;
+        }
         let Ok(guard) = LeaseGuard::acquire(&self.root, self.generation) else {
             return false;
         };
         let Ok(lease) = guard.read() else {
             return false;
         };
-        if lease.expired() || (remote && lease.remote_revoked) {
+        self.observe_binding_revocation(&lease);
+        if lease.expired() || (remote && (lease.remote_revoked || self.binding_revocation.get())) {
             return false;
         }
         match ticket {
@@ -319,6 +403,9 @@ impl DaemonWatch {
 
     /// Contention is not cancellation; commit still performs a strict check.
     pub fn attachment_cancelled(&self, ticket: Option<&OperationId>, remote: bool) -> bool {
+        if self.preserve_on_fault && ticket.is_none() {
+            return false;
+        }
         let guard = match LeaseGuard::acquire(&self.root, self.generation) {
             Ok(guard) => guard,
             Err(error) if crate::lock_is_contended(&error) => return false,
@@ -327,7 +414,8 @@ impl DaemonWatch {
         let Ok(lease) = guard.read() else {
             return true;
         };
-        if lease.expired() || (remote && lease.remote_revoked) {
+        self.observe_binding_revocation(&lease);
+        if lease.expired() || (remote && (lease.remote_revoked || self.binding_revocation.get())) {
             return true;
         }
         match ticket {
@@ -346,6 +434,9 @@ impl DaemonWatch {
         ticket: Option<&OperationId>,
         remote: bool,
     ) -> io::Result<()> {
+        if self.preserve_on_fault && ticket.is_none() {
+            return Ok(());
+        }
         let deadline = self
             .attachment_deadline
             .get()
@@ -365,7 +456,8 @@ impl DaemonWatch {
             }
         };
         let mut lease = guard.read()?;
-        if lease.expired() || (remote && lease.remote_revoked) {
+        self.observe_binding_revocation(&lease);
+        if lease.expired() || (remote && (lease.remote_revoked || self.binding_revocation.get())) {
             return Err(invalid());
         }
         if lease.temporary.is_none() && ticket.is_none() {
@@ -398,6 +490,19 @@ impl DaemonWatch {
     /// Called even while terminal output is backpressured. Any malformed or
     /// missing protected state fails closed; ordinary legacy shells never opt in.
     pub fn should_stop(&mut self) -> bool {
+        if self.preserve_on_fault {
+            if Instant::now() >= self.next_poll {
+                self.next_poll = Instant::now() + Duration::from_millis(100);
+                match LeaseGuard::acquire(&self.root, self.generation)
+                    .and_then(|guard| guard.read())
+                {
+                    Ok(lease) => self.observe_binding_revocation(&lease),
+                    Err(error) if crate::lock_is_contended(&error) => {}
+                    Err(_) => self.seal_binding(),
+                }
+            }
+            return false;
+        }
         if self.stopped
             || self
                 .deadline
@@ -480,6 +585,33 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn imported_binding_fault_seals_host_access_without_stopping_or_changing_legacy_admission() {
+        let fixture = Fixture::new();
+        let generation = fixture.lease(1, now_ms() + 60_000);
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        lease.lifetime = Lifetime::Persistent {};
+        lease.temporary = None;
+        lease.deadline_ms = None;
+        lease.remote_revoked = true;
+        lease.grant.remote_access = false;
+        lease.grant.state = festerm_host_protocol::LogicalState::Revoked;
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        let mut watch = DaemonWatch::open_binding(&fixture.0, "fixture", 1).unwrap();
+        std::fs::remove_file(fixture.0.join("host-daemon-1.json")).unwrap();
+        assert!(!watch.should_stop());
+        assert!(watch.imported_remote_revoked());
+        assert!(watch.allows_attachment(None, false));
+        assert!(watch.allows_attachment(None, true));
+        assert!(!watch.attachment_cancelled(None, true));
+        watch.commit_attachment(None, true).unwrap();
+        let ticket = OperationId::new();
+        assert!(!watch.allows_attachment(Some(&ticket), true));
+        assert!(watch.commit_attachment(Some(&ticket), true).is_err());
     }
 
     #[test]

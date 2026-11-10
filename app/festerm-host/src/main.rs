@@ -58,6 +58,16 @@ migration-defer --state-dir PATH
     Retain the reservation and leave legacy use unchanged.
 migration-rollback --state-dir PATH --consent rollback
     Release only this operation's local claims. Never restores revoked grants or deletes resources.
+migration-owner-init --state-dir PATH --operation UUID --account-id ID --owner-storage native-vault|headless-protected-file --consent initialize-owner
+    Initialize a zero-grant owner for the exact reserved host; no service or cloud operation.
+migration-owner-approve --state-dir PATH --operation UUID --public-key HEX --fingerprint FINGERPRINT --owner-storage native-vault|headless-protected-file --consent approve
+    Separate explicit owner/key approval: inventory/attach/detach only, no create/end/temporary permission.
+migration-bind --state-dir PATH --owner-storage native-vault|headless-protected-file --consent bind
+    Authenticate selected current daemons and prepare private bindings without acquiring a frontend.
+migration-switch --state-dir PATH --owner-storage native-vault|headless-protected-file --consent switch
+    Publish only exact authenticated bindings; ordinary host enable remains separately consented.
+migration-binding-status --state-dir PATH
+    Protected per-generation binding/switch/release history, not endpoint readiness.
 
 Manual startup requires an explicit run. Sign-in is user sign-in, NOT pre-login.
 No native startup registration is performed by configure. Paths must be absolute,
@@ -103,9 +113,36 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             "--preview-id",
             "--consent",
         ],
-        "migration-status" | "migration-resume" | "migration-defer" => &["--state-dir"],
+        "migration-status" | "migration-defer" => &["--state-dir"],
+        "migration-resume" => &["--state-dir", "--owner-storage"],
         "migration-rollback" => &["--state-dir", "--consent"],
-        "migration-switch" => {
+        #[cfg(feature = "owner-routing")]
+        "migration-owner-init" => &[
+            "--state-dir",
+            "--operation",
+            "--account-id",
+            "--owner-storage",
+            "--consent",
+        ],
+        #[cfg(feature = "owner-routing")]
+        "migration-owner-approve" => &[
+            "--state-dir",
+            "--operation",
+            "--public-key",
+            "--fingerprint",
+            "--owner-storage",
+            "--consent",
+        ],
+        #[cfg(feature = "owner-routing")]
+        "migration-bind" | "migration-switch" => &["--state-dir", "--owner-storage", "--consent"],
+        #[cfg(feature = "owner-routing")]
+        "migration-binding-status" => &["--state-dir"],
+        #[cfg(not(feature = "owner-routing"))]
+        "migration-owner-init"
+        | "migration-owner-approve"
+        | "migration-bind"
+        | "migration-switch"
+        | "migration-binding-status" => {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "host.migration_authenticated_binding_unavailable",
@@ -178,6 +215,93 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         Ok(path)
     };
     match command {
+        #[cfg(feature = "owner-routing")]
+        "migration-owner-init"
+        | "migration-owner-approve"
+        | "migration-bind"
+        | "migration-switch"
+        | "migration-binding-status" => {
+            let state = path("--state-dir")?;
+            let store = Store::open(&state, Origin::Headless)?;
+            if command == "migration-binding-status" {
+                return serde_json::to_string(&owned_migration::binding_status(&store)?)
+                    .map_err(|_| invalid());
+            }
+            let storage = migration_storage(&options)?;
+            let consent = options.get("--consent").and_then(|value| value.to_str());
+            match command {
+                "migration-owner-init" => {
+                    if consent != Some("initialize-owner") {
+                        return Err(invalid());
+                    }
+                    let operation = options
+                        .get("--operation")
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(invalid)?;
+                    let account = options
+                        .get("--account-id")
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(invalid)?;
+                    serde_json::to_string(
+                        &store
+                            .owner_enrollment_with_storage(storage)?
+                            .initialize_for_migration(operation, account.into())?,
+                    )
+                    .map_err(|_| invalid())
+                }
+                "migration-owner-approve" => {
+                    if consent != Some("approve") {
+                        return Err(invalid());
+                    }
+                    let operation = options
+                        .get("--operation")
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(invalid)?;
+                    let public = options
+                        .get("--public-key")
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(invalid)?;
+                    if public.len() != 64 || !public.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                        return Err(invalid());
+                    }
+                    let mut key = [0; 32];
+                    for (index, byte) in key.iter_mut().enumerate() {
+                        *byte = u8::from_str_radix(&public[index * 2..index * 2 + 2], 16)
+                            .map_err(|_| invalid())?;
+                    }
+                    let fingerprint = options
+                        .get("--fingerprint")
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(invalid)?;
+                    serde_json::to_string(&owned_migration::approve_migration_owner(
+                        &store,
+                        operation,
+                        storage,
+                        key,
+                        fingerprint,
+                    )?)
+                    .map_err(|_| invalid())
+                }
+                "migration-bind" | "migration-switch" => {
+                    let required = if command == "migration-bind" {
+                        "bind"
+                    } else {
+                        "switch"
+                    };
+                    if consent != Some(required) {
+                        return Err(invalid());
+                    }
+                    let inventory = owned_migration::Inventory::current_user()?;
+                    let journal = if command == "migration-bind" {
+                        inventory.bind_existing(&store, &state, storage)?
+                    } else {
+                        inventory.switch_existing(&store, &state, storage)?
+                    };
+                    serde_json::to_string(&journal).map_err(|_| invalid())
+                }
+                _ => Err(invalid()),
+            }
+        }
         "migration-inventory" | "migration-preview" | "migration-reserve" => {
             let account = options
                 .get("--account-id")
@@ -214,13 +338,37 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             } else {
                 let inventory = owned_migration::Inventory::current_user()?;
                 match command {
-                    "migration-resume" => inventory.resume(&store)?,
+                    "migration-resume" => {
+                        #[cfg(feature = "owner-routing")]
+                        if owned_migration::has_bindings(&store)? {
+                            if owned_migration::status(&store)?.phase
+                                == owned_migration::Phase::RollbackPending
+                            {
+                                inventory.release_bindings(&store, &state)?;
+                                return serde_json::to_string(&inventory.rollback(&store)?)
+                                    .map_err(|_| invalid());
+                            }
+                            let storage = migration_storage(&options)?;
+                            if owned_migration::binding_status(&store)?.switch_requested {
+                                inventory.switch_existing(&store, &state, storage)?;
+                            } else {
+                                inventory.bind_existing(&store, &state, storage)?;
+                            }
+                            return serde_json::to_string(&owned_migration::status(&store)?)
+                                .map_err(|_| invalid());
+                        }
+                        inventory.resume(&store)?
+                    }
                     "migration-defer" => inventory.defer(&store)?,
                     "migration-rollback" => {
                         if options.get("--consent").and_then(|value| value.to_str())
                             != Some("rollback")
                         {
                             return Err(invalid());
+                        }
+                        #[cfg(feature = "owner-routing")]
+                        if owned_migration::has_bindings(&store)? {
+                            inventory.release_bindings(&store, &state)?;
                         }
                         inventory.rollback(&store)?
                     }
@@ -527,6 +675,22 @@ fn unavailable() -> io::Error {
 }
 
 #[cfg(feature = "owner-routing")]
+fn migration_storage(
+    options: &BTreeMap<String, OsString>,
+) -> io::Result<festerm_host_setup::enrollment::OwnerStorage> {
+    match options
+        .get("--owner-storage")
+        .and_then(|value| value.to_str())
+    {
+        Some("native-vault") => Ok(festerm_host_setup::enrollment::OwnerStorage::NativeVault),
+        Some("headless-protected-file") => {
+            Ok(festerm_host_setup::enrollment::OwnerStorage::HeadlessProtectedFile)
+        }
+        _ => Err(invalid()),
+    }
+}
+
+#[cfg(feature = "owner-routing")]
 fn owner_permissions(
     options: &BTreeMap<String, OsString>,
 ) -> io::Result<festerm_host_protocol::Capabilities> {
@@ -656,6 +820,18 @@ fn diagnostic(error: &io::Error) -> &'static str {
         _ => {}
     }
     match error.to_string().as_str() {
+        "host.migration_binding_uncertain_resume_same_operation" =>
+            "host.migration_binding_uncertain_resume_same_operation; preserve the exact journal and legacy session; resume the same operation or request exact rollback, never recreate",
+        "host.migration_binding_busy" =>
+            "host.migration_binding_busy; protected source/native authority is busy; no queued retry or takeover",
+        "host.migration_binding_revoked" =>
+            "host.migration_binding_revoked; revoked/released binding cannot be restored; preserve legacy use and request exact rollback",
+        "host.migration_binding_refused_preserve_legacy" | "host.migration_binding_stale" =>
+            "host.migration_binding_refused_preserve_legacy; require exact current owner/source/namespace/generation authority; never attach, restart or recreate",
+        "native.binding_older_helper_defer" | "native.binding_transport_unqualified" | "native.binding_current_daemon_already_managed" =>
+            "host.migration_authenticated_binding_unavailable; selected helper does not permit this in-place import; defer and preserve strict legacy use",
+        "native.binding_untrusted_stale_or_unsupported" =>
+            "host.migration_native_binding_untrusted; refuse changed/corrupt native capability or proof; preserve exact evidence and legacy use",
         "host.migration_authenticated_binding_unavailable"
         | "host.migration_native_binding_required_or_rollback" =>
             "host.migration_authenticated_binding_unavailable; defer or roll back the protected reservation; no daemon restart, attachment or exposure switch was performed",
@@ -1198,6 +1374,13 @@ mod tests {
                 "host.service_windows_authenticated_graceful_stop_unavailable",
                 "no destructive",
             ),
+            (
+                "host.migration_binding_uncertain_resume_same_operation",
+                "never recreate",
+            ),
+            ("host.migration_binding_busy", "no queued retry"),
+            ("host.migration_binding_revoked", "cannot be restored"),
+            ("native.binding_current_daemon_already_managed", "defer"),
         ] {
             assert!(diagnostic(&io::Error::other(error)).contains(expected));
         }
@@ -1214,14 +1397,24 @@ mod tests {
             "migration-resume",
             "migration-defer",
             "migration-rollback",
+            "migration-owner-init",
+            "migration-owner-approve",
+            "migration-bind",
+            "migration-switch",
+            "migration-binding-status",
         ] {
             for flag in ["--stop", "--restart", "--takeover", "--yes", "--token"] {
                 assert!(execute(arguments(&[command, flag, "fixture-do-not-echo"])).is_err());
             }
         }
         let error = execute(arguments(&["migration-switch"])).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-        assert!(diagnostic(&error).contains("authenticated_binding_unavailable"));
+        #[cfg(not(feature = "owner-routing"))]
+        {
+            assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+            assert!(diagnostic(&error).contains("authenticated_binding_unavailable"));
+        }
+        #[cfg(feature = "owner-routing")]
+        assert!(diagnostic(&error).contains("invalid_arguments"));
         assert!(!HELP.contains("migration-stop"));
     }
 }

@@ -251,6 +251,48 @@ pub(crate) fn remove_private_file(directory: &File, name: &Path) -> io::Result<(
     }
 }
 
+/// Removes only the retained creation/recovery handle's exact private entry.
+/// The caller must fence its generation's writers for the entire operation.
+pub(crate) fn remove_private_file_if_same(
+    directory: &File,
+    name: &Path,
+    expected: &File,
+) -> io::Result<()> {
+    let current = match open_private_file(directory, name, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    #[cfg(unix)]
+    {
+        let expected = nix::sys::stat::fstat(expected).map_err(io::Error::from)?;
+        let current = nix::sys::stat::fstat(&current).map_err(io::Error::from)?;
+        let entry =
+            nix::sys::stat::fstatat(directory, name, nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW)
+                .map_err(io::Error::from)?;
+        if expected.st_dev != current.st_dev
+            || expected.st_ino != current.st_ino
+            || entry.st_dev != expected.st_dev
+            || entry.st_ino != expected.st_ino
+        {
+            return Err(invalid());
+        }
+        festerm_unix_security::remove_private_staging_file(directory, name)?;
+        directory.sync_all()
+    }
+    #[cfg(windows)]
+    {
+        if !festerm_windows_security::same_file_identity(expected, &current)? {
+            return Err(invalid());
+        }
+        let deleting = festerm_windows_security::open_file_no_reparse_for_move(directory, name)?;
+        if !festerm_windows_security::same_file_identity(expected, &deleting)? {
+            return Err(invalid());
+        }
+        festerm_windows_security::remove_private_staging_file(&deleting)
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn remove_private_socket(directory: &File, name: &Path) -> io::Result<()> {
     file_name(name)?;

@@ -31,6 +31,9 @@ use std::{
 
 const STATE_LIMIT: usize = 4 * 1024 * 1024;
 const STATE_FILE: &str = "host-sessions.json";
+#[path = "host_binding.rs"]
+mod binding;
+pub use binding::ImportedBinding;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlError {
@@ -62,6 +65,100 @@ fn storage_error(error: io::Error) -> ControlError {
         ControlError::Busy
     } else {
         ControlError::Storage
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy)]
+enum AttachFailureDiagnostic<'a> {
+    ReservePublish(&'a io::Error),
+    UnwindAcquire(&'a io::Error),
+    UnwindRead(&'a io::Error),
+    UnwindCommitted,
+    UnwindPublish(&'a io::Error),
+    PublicationReadmit(ControlError),
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl AttachFailureDiagnostic<'_> {
+    fn message(self, enabled: bool) -> Option<String> {
+        if !enabled {
+            return None;
+        }
+        let uncertain = ControlError::CommittedButNotPublished;
+        let (step, error, control) = match self {
+            Self::ReservePublish(error) => ("reserve-publish", Some(error), uncertain),
+            Self::UnwindAcquire(error) => ("unwind-acquire", Some(error), uncertain),
+            Self::UnwindRead(error) => ("unwind-read", Some(error), uncertain),
+            Self::UnwindCommitted => ("unwind-already-committed", None, uncertain),
+            Self::UnwindPublish(error) => ("unwind-publish", Some(error), uncertain),
+            Self::PublicationReadmit(control) => ("publication-readmit", None, control),
+        };
+        Some(match error {
+            Some(error) => format!(
+                "host attach boundary={step} control={control:?} io_kind={:?} raw_os={:?}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+            None => format!("host attach boundary={step} control={control:?}"),
+        })
+    }
+
+    fn report(self, enabled: bool) {
+        if let Some(message) = self.message(enabled) {
+            eprintln!("{message}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod attach_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn native_attachment_failure_diagnostics_are_redacted_and_boundary_exact() {
+        let error = io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "SECRET /private/path account fingerprint receipt operation key input credential",
+        );
+        for (diagnostic, step) in [
+            (
+                AttachFailureDiagnostic::ReservePublish(&error),
+                "reserve-publish",
+            ),
+            (
+                AttachFailureDiagnostic::UnwindAcquire(&error),
+                "unwind-acquire",
+            ),
+            (AttachFailureDiagnostic::UnwindRead(&error), "unwind-read"),
+            (
+                AttachFailureDiagnostic::UnwindPublish(&error),
+                "unwind-publish",
+            ),
+        ] {
+            assert!(diagnostic.message(false).is_none());
+            assert_eq!(
+                diagnostic.message(true).unwrap(),
+                format!("host attach boundary={step} control=CommittedButNotPublished io_kind=PermissionDenied raw_os=None")
+            );
+        }
+        assert_eq!(
+            AttachFailureDiagnostic::UnwindCommitted
+                .message(true)
+                .unwrap(),
+            "host attach boundary=unwind-already-committed control=CommittedButNotPublished"
+        );
+        assert_eq!(
+            AttachFailureDiagnostic::PublicationReadmit(ControlError::Denied)
+                .message(true)
+                .unwrap(),
+            "host attach boundary=publication-readmit control=Denied"
+        );
+        let os_error = io::Error::from_raw_os_error(5);
+        assert_eq!(
+            AttachFailureDiagnostic::ReservePublish(&os_error).message(true).unwrap(),
+            format!("host attach boundary=reserve-publish control=CommittedButNotPublished io_kind={:?} raw_os=Some(5)", os_error.kind())
+        );
     }
 }
 
@@ -136,6 +233,8 @@ pub struct PendingAttachment {
 #[derive(Clone, Debug)]
 pub struct AttachmentAuthority {
     root: PathBuf,
+    native_root: PathBuf,
+    binding: Option<crate::native_binding::Binding>,
     target: Target,
     identity: NativeSessionIdentity,
     grant: SessionGrant,
@@ -245,9 +344,16 @@ struct Record {
     phase: Phase,
     identity: Option<Identity>,
     artifacts_retired: bool,
+    #[serde(default)]
+    binding: Option<ImportedBinding>,
 }
 
 impl Record {
+    fn root<'a>(&'a self, root: &'a Path) -> &'a Path {
+        self.binding
+            .as_ref()
+            .map_or(root, |binding| binding.binding.runtime_root.as_path())
+    }
     fn grant(&self) -> SessionGrant {
         SessionGrant {
             logical: self.logical.clone(),
@@ -328,6 +434,8 @@ struct State {
     sessions: BTreeMap<LogicalSessionId, Record>,
     operations: BTreeMap<OperationId, Operation>,
     last_generation: u128,
+    #[serde(default)]
+    namespace: Option<OperationId>,
 }
 
 impl Default for State {
@@ -338,6 +446,7 @@ impl Default for State {
             sessions: BTreeMap::new(),
             operations: BTreeMap::new(),
             last_generation: 0,
+            namespace: Some(OperationId::new()),
         }
     }
 }
@@ -346,6 +455,11 @@ struct Transaction {
     directory: File,
     _lock: File,
     state: State,
+}
+
+struct NativeAdmission<G> {
+    _policy: G,
+    _source: Option<crate::native_binding::SourceFence>,
 }
 
 impl Transaction {
@@ -378,6 +492,30 @@ pub struct SessionControl {
 }
 
 impl SessionControl {
+    /// Binding/observation only: this handle cannot create or recreate shells.
+    pub fn existing_only(root: &Path) -> Result<Self, ControlError> {
+        if !root.is_absolute() {
+            return Err(ControlError::Invalid);
+        }
+        detached::prepare_native_runtime(root).map_err(|_| ControlError::Storage)?;
+        Ok(Self {
+            root: root.into(),
+            helper: PathBuf::new(),
+        })
+    }
+
+    /// Lazy non-launching handle. No filesystem effects; trusted composition
+    /// must gate namespace initialization with current protected consent.
+    pub fn retained_namespace(root: &Path) -> Result<Self, ControlError> {
+        if !root.is_absolute() {
+            return Err(ControlError::Invalid);
+        }
+        Ok(Self {
+            root: root.into(),
+            helper: PathBuf::new(),
+        })
+    }
+
     pub fn open(root: &Path) -> Result<Self, ControlError> {
         let helper =
             crate::daemon_executable_for_root(Some(root)).map_err(|_| ControlError::Storage)?;
@@ -445,6 +583,19 @@ impl SessionControl {
             }
             Err(error) => return Err(storage_error(error)),
         };
+        match storage::read_private(&directory, Path::new("host-binding-namespace.json"), 256) {
+            Ok(bytes)
+                if state.namespace.as_ref().is_some_and(|namespace| {
+                    serde_json::from_slice::<OperationId>(&bytes).ok().as_ref() == Some(namespace)
+                }) => {}
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && !state
+                        .sessions
+                        .values()
+                        .any(|record| record.binding.is_some()) => {}
+            _ => return Err(ControlError::Storage),
+        }
         if state.version != 2
             || state.sessions.len() > MAX_SESSIONS
             || state.operations.len() > MAX_IDEMPOTENCY_RECORDS
@@ -454,7 +605,27 @@ impl SessionControl {
         }
         for (logical, record) in &state.sessions {
             if logical != &record.logical
-                || !(0..MAX_SESSIONS).any(|slot| record.name == native_slot(slot))
+                || (record.binding.is_none()
+                    && !(0..MAX_SESSIONS).any(|slot| record.name == native_slot(slot)))
+                || record.binding.as_ref().is_some_and(|binding| {
+                    binding.binding.validate().is_err()
+                        || binding.binding.logical != record.logical
+                        || Some(&binding.binding.namespace) != state.namespace.as_ref()
+                        || binding.binding.control_root != self.root
+                        || binding.binding.principal != record.owner
+                        || binding.binding.operation != record.launch
+                        || binding.binding.spawn_fingerprint != record.fingerprint
+                        || binding.binding.issuance_epoch.get() > state.issuance_epoch.get()
+                        || binding.acknowledged && !binding.lease_reserved
+                        || binding.activated && !binding.acknowledged
+                        || binding.released && !record.revoked
+                        || !binding.activated && !record.revoked
+                        || !record.revoked && record.epoch.get() < 2
+                        || binding.binding.identity.name != record.name
+                        || binding.binding.identity.created_at_unix_ms != record.generation.get()
+                        || record.native().as_ref() != Some(&binding.binding.identity)
+                        || record.lifetime != (Lifetime::Persistent {})
+                })
                 || record.recipe.validate().is_err()
                 || record.effective_recipe.validate().is_err()
                 || record.lifetime.validate().is_err()
@@ -467,14 +638,14 @@ impl SessionControl {
             if state
                 .sessions
                 .values()
-                .map(|record| &record.name)
+                .map(|record| (record.root(&self.root), &record.name))
                 .collect::<std::collections::BTreeSet<_>>()
                 .len()
                 != state.sessions.len()
                 || state
                     .sessions
                     .values()
-                    .map(|record| record.generation.get())
+                    .map(|record| (record.root(&self.root), record.generation.get()))
                     .collect::<std::collections::BTreeSet<_>>()
                     .len()
                     != state.sessions.len()
@@ -513,6 +684,26 @@ impl SessionControl {
         owner: &PrincipalId,
         effect: Effect,
         admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<NativeAdmission<G>, ControlError> {
+        if record.is_some_and(|record| &record.owner != owner) {
+            return Err(ControlError::Denied);
+        }
+        let source = record
+            .and_then(|record| record.binding.as_ref())
+            .map(|imported| Self::binding_source(&imported.binding))
+            .transpose()?;
+        let guard = Self::policy_admission(record, owner, effect, admit)?;
+        Ok(NativeAdmission {
+            _policy: guard,
+            _source: source,
+        })
+    }
+
+    fn policy_admission<G>(
+        record: Option<&Record>,
+        owner: &PrincipalId,
+        effect: Effect,
+        admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<G, ControlError> {
         if record.is_some_and(|record| &record.owner != owner) {
             return Err(ControlError::Denied);
@@ -530,14 +721,65 @@ impl SessionControl {
         Ok(guard)
     }
 
+    fn binding_source(
+        binding: &crate::native_binding::Binding,
+    ) -> Result<crate::native_binding::SourceFence, ControlError> {
+        match binding.source_fence() {
+            Ok(guard) => Ok(guard),
+            Err(error) if crate::lock_is_contended(&error) => Err(ControlError::Busy),
+            // Private sources have no legacy consent receipt whose loss means
+            // revocation. Failed proof stays unavailable; only exact protected
+            // reduction may revoke/release its retained grant.
+            Err(_) if !binding.source_authority.is_legacy() => Err(ControlError::Unknown),
+            Err(_) => {
+                let generation = GenerationId::new(binding.identity.created_at_unix_ms)
+                    .map_err(|_| ControlError::Invalid)?;
+                let guard = LeaseGuard::acquire(&binding.runtime_root, generation)
+                    .map_err(storage_error)?;
+                let mut lease = guard.read().map_err(storage_error)?;
+                if lease.name != binding.identity.name
+                    || lease.native_pid != Some(binding.identity.pid)
+                    || lease.grant.logical != binding.logical
+                    || lease.grant.owner != binding.principal
+                {
+                    return Err(ControlError::Unknown);
+                }
+                if !lease.remote_revoked || lease.grant.revision.get() == 1 {
+                    lease.remote_revoked = true;
+                    lease.pending = None;
+                    lease.grant.remote_access = false;
+                    lease.grant.state = LogicalState::Revoked;
+                    lease.grant.revision = lease
+                        .grant
+                        .revision
+                        .next()
+                        .map_err(|_| ControlError::Storage)?;
+                    guard.replace(&mut lease).map_err(storage_error)?;
+                }
+                Err(ControlError::Revoked)
+            }
+        }
+    }
+
     fn reconcile(&self, record: &mut Record) -> Result<(), ControlError> {
         if record.revoked || record.artifacts_retired {
             return Ok(());
         }
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let lease = guard.read().map_err(|_| ControlError::Unknown)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
+        }
+        if record
+            .binding
+            .as_ref()
+            .is_some_and(|binding| binding.activated)
+            && !record.revoked
+            && lease.remote_revoked
+            && lease.grant.revision.get() == 1
+        {
+            return Err(ControlError::Busy);
         }
         if lease.remote_revoked {
             record.revoked = true;
@@ -555,7 +797,8 @@ impl SessionControl {
     }
 
     fn sync_grant(&self, record: &mut Record) -> Result<(), ControlError> {
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
@@ -582,6 +825,24 @@ impl SessionControl {
             return Ok(());
         }
         let previous = record.phase.clone();
+        if let Some(binding) = &record.binding {
+            if binding.released {
+                return Err(ControlError::Revoked);
+            }
+            if !detached::host_generation_state(
+                record.root(&self.root),
+                &binding.binding.identity,
+                &record.fingerprint,
+            )
+            .map_err(|_| ControlError::Unknown)?
+            {
+                record.phase = Phase::Absent;
+            }
+            if record.phase != previous {
+                record.epoch = record.epoch.next().map_err(|_| ControlError::Storage)?;
+            }
+            return Ok(());
+        }
         // A pending reservation can only adopt its exact journaled incarnation.
         // It must never enter the spawning path again after restart/lost reply.
         if matches!(record.phase, Phase::Launching | Phase::Ending) && record.identity.is_none() {
@@ -701,8 +962,27 @@ impl SessionControl {
         for record in tx.state.sessions.values().filter(|record| {
             &record.owner == owner && !record.revoked && !matches!(record.phase, Phase::Absent)
         }) {
-            let _admission = Self::admission(Some(record), owner, Effect::Lookup, &mut admit)?;
-            let summary = if uncertain.contains(&record.logical) {
+            let (_source, source_uncertain) = match record
+                .binding
+                .as_ref()
+                .map(|imported| Self::binding_source(&imported.binding))
+                .transpose()
+            {
+                Ok(source) => (source, false),
+                Err(ControlError::Unknown | ControlError::Busy)
+                    if record
+                        .binding
+                        .as_ref()
+                        .is_some_and(|imported| !imported.binding.source_authority.is_legacy()) =>
+                {
+                    (None, true)
+                }
+                Err(error) => return Err(error),
+            };
+            // Source uncertainty may hide this summary, never owner-policy denial.
+            let _admission =
+                Self::policy_admission(Some(record), owner, Effect::Lookup, &mut admit)?;
+            let summary = if source_uncertain || uncertain.contains(&record.logical) {
                 None
             } else {
                 self.summary(record).ok()
@@ -762,10 +1042,21 @@ impl SessionControl {
         cancelled: &AtomicBool,
         admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<EnsureResult, ControlError> {
+        if self.helper.as_os_str().is_empty() {
+            return Err(ControlError::Denied);
+        }
         creation.validate().map_err(|_| ControlError::Invalid)?;
         let mut tx = self.transaction()?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
         let logical = &creation.logical;
+        if tx
+            .state
+            .sessions
+            .get(logical)
+            .is_some_and(|record| record.binding.is_some())
+        {
+            return Err(ControlError::Denied);
+        }
         Self::admission(
             tx.state.sessions.get(logical),
             owner,
@@ -943,6 +1234,7 @@ impl SessionControl {
                 .ok_or(ControlError::Busy)?,
         };
         let record = Record {
+            binding: None,
             owner: owner.clone(),
             logical: logical.clone(),
             display_name: creation
@@ -1054,7 +1346,7 @@ impl SessionControl {
 
     fn summary(&self, record: &Record) -> Result<SessionSummary, ControlError> {
         let identity = record.native().ok_or(ControlError::Unknown)?;
-        let attached = detached::host_generation_attached(&self.root, &identity)
+        let attached = detached::host_generation_attached(record.root(&self.root), &identity)
             .map_err(|_| ControlError::Unknown)?;
         Ok(SessionSummary {
             target: record.target(),
@@ -1115,7 +1407,7 @@ impl SessionControl {
         target: &Target,
         effect: Effect,
         admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
-    ) -> Result<(&'a mut Record, G), ControlError> {
+    ) -> Result<(&'a mut Record, NativeAdmission<G>), ControlError> {
         let record = tx
             .state
             .sessions
@@ -1202,8 +1494,48 @@ impl SessionControl {
         if authority.root != self.root {
             return Err(ControlError::Denied);
         }
-        let guard =
-            LeaseGuard::acquire(&self.root, authority.target.generation).map_err(storage_error)?;
+        if let Some(binding) = &authority.binding {
+            let tx = self.transaction()?;
+            let record = tx
+                .state
+                .sessions
+                .get(&binding.logical)
+                .ok_or(ControlError::Unknown)?;
+            if tx.state.namespace.as_ref() != Some(&binding.namespace)
+                || record.revoked
+                || record.binding.as_ref().is_none_or(|current| {
+                    current.binding != *binding || !current.activated || current.released
+                })
+            {
+                return Err(ControlError::Revoked);
+            }
+            let directory =
+                storage::private_directory(&binding.runtime_root, false).map_err(storage_error)?;
+            let bytes = storage::read_private(
+                &directory,
+                Path::new(&format!(
+                    "native-binding-{}-{}.json",
+                    binding.identity.pid, binding.identity.created_at_unix_ms
+                )),
+                16 * 1024,
+            )
+            .map_err(storage_error)?;
+            let receipt: crate::native_binding::Receipt =
+                serde_json::from_slice(&bytes).map_err(|_| ControlError::Storage)?;
+            if receipt.version != 1
+                || receipt.binding != *binding
+                || receipt.phase != crate::native_binding::BindingPhase::Active
+            {
+                return Err(ControlError::Revoked);
+            }
+        }
+        let _source = authority
+            .binding
+            .as_ref()
+            .map(Self::binding_source)
+            .transpose()?;
+        let guard = LeaseGuard::acquire(&authority.native_root, authority.target.generation)
+            .map_err(storage_error)?;
         let lease = guard.read().map_err(storage_error)?;
         if lease.remote_revoked {
             return Err(ControlError::Revoked);
@@ -1224,7 +1556,7 @@ impl SessionControl {
             return Err(ControlError::Ended);
         }
         if !(allow_stopped_receipt && lease.stopped)
-            && !detached::host_generation_lease_live(&self.root, &authority.identity)
+            && !detached::host_generation_lease_live(&authority.native_root, &authority.identity)
                 .map_err(|_| ControlError::Unknown)?
         {
             return Err(ControlError::Ended);
@@ -1258,12 +1590,16 @@ impl SessionControl {
         let mut tx = self.transaction()?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
         let (record, admission) = self.exact(&mut tx, owner, target, Effect::Attach, &mut admit)?;
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         if lease.expired() {
             return Err(ControlError::Ended);
         }
 
+        // Persistent adoption records a ticket without setting temporary.connected.
+        #[cfg(any(test, feature = "test-support"))]
+        let diagnose = !takeover && lease.last_attachment.is_some();
         let transfer = lease
             .temporary
             .as_ref()
@@ -1291,12 +1627,20 @@ impl SessionControl {
             binding.epoch = binding.epoch.next().map_err(|_| ControlError::Storage)?;
             binding.attachment = attachment.clone();
         }
-        guard
-            .replace(&mut lease)
-            .map_err(|_| ControlError::CommittedButNotPublished)?;
+        let publication = guard.replace(&mut lease);
+        #[cfg(any(test, feature = "test-support"))]
+        if let Err(error) = &publication {
+            AttachFailureDiagnostic::ReservePublish(error).report(diagnose);
+        }
+        publication.map_err(|_| ControlError::CommittedButNotPublished)?;
         let identity = record.native().ok_or(ControlError::Unknown)?;
         let authority = AttachmentAuthority {
             root: self.root.clone(),
+            native_root: record.root(&self.root).into(),
+            binding: record
+                .binding
+                .as_ref()
+                .map(|imported| imported.binding.clone()),
             target: record.target(),
             identity: identity.clone(),
             grant: record.grant(),
@@ -1312,7 +1656,7 @@ impl SessionControl {
         let connected = match &ticket {
             Some(ticket) => PersistentSession::resume_host_reserved_in(
                 &identity,
-                &self.root,
+                record.root(&self.root),
                 takeover,
                 maximum_recovery_bytes,
                 ticket,
@@ -1320,7 +1664,7 @@ impl SessionControl {
             ),
             None => PersistentSession::resume_remote_in(
                 &identity,
-                &self.root,
+                record.root(&self.root),
                 takeover,
                 maximum_recovery_bytes,
                 notifier,
@@ -1330,12 +1674,21 @@ impl SessionControl {
             Ok(session) => session,
             Err(_) => {
                 if let Some(ticket) = &ticket {
-                    let guard = LeaseGuard::acquire(&self.root, record.generation)
-                        .map_err(|_| ControlError::CommittedButNotPublished)?;
-                    let mut lease = guard
-                        .read()
-                        .map_err(|_| ControlError::CommittedButNotPublished)?;
+                    let acquired = LeaseGuard::acquire(record.root(&self.root), record.generation);
+                    #[cfg(any(test, feature = "test-support"))]
+                    if let Err(error) = &acquired {
+                        AttachFailureDiagnostic::UnwindAcquire(error).report(diagnose);
+                    }
+                    let guard = acquired.map_err(|_| ControlError::CommittedButNotPublished)?;
+                    let read = guard.read();
+                    #[cfg(any(test, feature = "test-support"))]
+                    if let Err(error) = &read {
+                        AttachFailureDiagnostic::UnwindRead(error).report(diagnose);
+                    }
+                    let mut lease = read.map_err(|_| ControlError::CommittedButNotPublished)?;
                     if lease.last_attachment.as_ref() == Some(ticket) {
+                        #[cfg(any(test, feature = "test-support"))]
+                        AttachFailureDiagnostic::UnwindCommitted.report(diagnose);
                         return Err(ControlError::CommittedButNotPublished);
                     }
                     if lease
@@ -1344,16 +1697,23 @@ impl SessionControl {
                         .is_some_and(|pending| &pending.ticket == ticket)
                     {
                         lease.pending = None;
-                        guard
-                            .replace(&mut lease)
-                            .map_err(|_| ControlError::CommittedButNotPublished)?;
+                        let publication = guard.replace(&mut lease);
+                        #[cfg(any(test, feature = "test-support"))]
+                        if let Err(error) = &publication {
+                            AttachFailureDiagnostic::UnwindPublish(error).report(diagnose);
+                        }
+                        publication.map_err(|_| ControlError::CommittedButNotPublished)?;
                     }
                 }
                 return Err(ControlError::Busy);
             }
         };
-        let _publication = Self::admission(Some(record), owner, Effect::Attach, &mut admit)
-            .map_err(|_| ControlError::CommittedButNotPublished)?;
+        let publication = Self::admission(Some(record), owner, Effect::Attach, &mut admit);
+        #[cfg(any(test, feature = "test-support"))]
+        if let Err(error) = &publication {
+            AttachFailureDiagnostic::PublicationReadmit(*error).report(diagnose);
+        }
+        let _publication = publication.map_err(|_| ControlError::CommittedButNotPublished)?;
         Ok(PendingAttachment {
             session,
             ticket,
@@ -1513,7 +1873,11 @@ impl SessionControl {
         let mut tx = self.transaction()?;
         let mut admit = scoped_issuance(tx.state.issuance_epoch, admit);
         let (record, _admission) = self.exact(&mut tx, owner, target, Effect::End, &mut admit)?;
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        if record.binding.is_some() {
+            return Err(ControlError::Denied);
+        }
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
@@ -1596,7 +1960,8 @@ impl SessionControl {
             record.revoked = true;
             return tx.save();
         }
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
+            .map_err(storage_error)?;
         let mut lease = guard.read().map_err(storage_error)?;
         lease.pending = None;
         lease.remote_revoked = true;
@@ -1618,6 +1983,9 @@ impl SessionControl {
         logical: &LogicalSessionId,
     ) -> Result<(), ControlError> {
         let record = tx.state.sessions.get(logical).ok_or(ControlError::Denied)?;
+        if record.binding.is_some() {
+            return Err(ControlError::Denied);
+        }
         let _start = detached::lock_native_start_in(&self.root, &record.name)
             .map_err(|_| ControlError::Busy)?;
         let mut native_pid = record.identity.as_ref().map(|identity| identity.pid);
@@ -1833,6 +2201,9 @@ impl SessionControl {
         }
         if record.generation != target.generation {
             return Err(ControlError::Stale);
+        }
+        if record.binding.is_some() {
+            return Err(ControlError::Denied);
         }
         if matches!(record.phase, Phase::Absent) {
             return Err(ControlError::Ended);

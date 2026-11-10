@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc,
     },
     thread,
@@ -78,13 +78,19 @@ fn sessiond_trace(message: impl std::fmt::Display) {
 
 const CLIENT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 static DAEMON_GENERATION: OnceLock<u128> = OnceLock::new();
-static DAEMON_HOST_WATCH: OnceLock<std::sync::Mutex<festerm_sessiond::host_lease::DaemonWatch>> =
+static DAEMON_HOST_WATCH: OnceLock<
+    std::sync::Mutex<Option<festerm_sessiond::host_lease::DaemonWatch>>,
+> = OnceLock::new();
+static HOST_CLIENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+static DAEMON_BINDING: OnceLock<std::sync::Mutex<festerm_sessiond::native_binding::DaemonBinding>> =
     OnceLock::new();
 
 fn host_daemon_should_stop() -> bool {
-    DAEMON_HOST_WATCH
-        .get()
-        .is_some_and(|watch| watch.lock().map_or(true, |mut watch| watch.should_stop()))
+    DAEMON_HOST_WATCH.get().is_some_and(|watch| {
+        watch.lock().map_or(true, |mut watch| {
+            watch.as_mut().is_some_and(|watch| watch.should_stop())
+        })
+    })
 }
 static DAEMON_LOG: OnceLock<(PathBuf, festerm_sessiond::NativeSessionIdentity)> = OnceLock::new();
 
@@ -101,9 +107,11 @@ fn host_allows_attachment(
     kind: AttachKind,
 ) -> bool {
     match DAEMON_HOST_WATCH.get() {
-        Some(watch) => watch
-            .lock()
-            .is_ok_and(|watch| watch.allows_attachment(ticket, kind == AttachKind::Remote)),
+        Some(watch) => watch.lock().is_ok_and(|watch| {
+            watch.as_ref().map_or(ticket.is_none(), |watch| {
+                watch.allows_attachment(ticket, kind == AttachKind::Remote)
+            })
+        }),
         None => ticket.is_none(),
     }
 }
@@ -113,10 +121,15 @@ fn host_commit_attachment(
     kind: AttachKind,
 ) -> io::Result<()> {
     match DAEMON_HOST_WATCH.get() {
-        Some(watch) => watch
+        Some(watch) => match watch
             .lock()
             .map_err(|_| io::Error::other("host lease unavailable"))?
-            .commit_attachment(ticket, kind == AttachKind::Remote),
+            .as_mut()
+        {
+            Some(watch) => watch.commit_attachment(ticket, kind == AttachKind::Remote),
+            None if ticket.is_none() => Ok(()),
+            None => Err(io::Error::other("host lease unavailable")),
+        },
         None if ticket.is_none() => Ok(()),
         None => Err(io::Error::other("host lease unavailable")),
     }
@@ -128,7 +141,9 @@ fn host_attachment_cancelled(
 ) -> bool {
     match DAEMON_HOST_WATCH.get() {
         Some(watch) => watch.lock().map_or(true, |watch| {
-            watch.attachment_cancelled(ticket, kind == AttachKind::Remote)
+            watch.as_ref().map_or(ticket.is_some(), |watch| {
+                watch.attachment_cancelled(ticket, kind == AttachKind::Remote)
+            })
         }),
         None => ticket.is_some(),
     }
@@ -1229,7 +1244,7 @@ fn run_daemon(
         if watch.should_stop() {
             return Err("host lease already ended before shell launch".into());
         }
-        let _ = DAEMON_HOST_WATCH.set(std::sync::Mutex::new(watch));
+        let _ = DAEMON_HOST_WATCH.set(std::sync::Mutex::new(Some(watch)));
     }
     let mut record = generation_record(
         &runtime_root,
@@ -1264,7 +1279,7 @@ fn run_daemon(
         created_at_unix_ms: generation,
         endpoint: record.socket.clone(),
     };
-    let _ = DAEMON_LOG.set((runtime_root.clone(), identity));
+    let _ = DAEMON_LOG.set((runtime_root.clone(), identity.clone()));
     lifecycle_event(LifecycleEvent::Starting);
     #[cfg(windows)]
     match env::var("FESTERM_SESSIOND_BREAKAWAY").as_deref() {
@@ -1279,57 +1294,88 @@ fn run_daemon(
     }));
     #[cfg(unix)]
     session_socket_path(&runtime_root, &format!("{}-{generation}", process::id()))?;
-    let result = with_daemon_generation(&runtime_root, &record, |socket_owned| {
-        #[cfg(unix)]
-        {
-            let socket_path = Path::new(&record.socket);
-            let listener = bind_unix_listener(socket_path)?;
-            *socket_owned = true;
-            set_file_mode(socket_path, 0o600)?;
-            let mut spawned = spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
-                .inspect_err(|error| {
-                    lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
-                })?;
-            let mut terminal = Terminal::with_scrollback_limit(
-                Dimensions::new(cols as usize, rows as usize)?,
-                scrollback_limit_bytes,
-            )?;
-            save_registry_record(record.clone())?;
-            lifecycle_event(LifecycleEvent::Ready);
-            let reader = spawned.master()?.try_clone_reader()?;
-            let writer = spawned.master()?.take_writer()?;
-            daemon_client_loop(listener, reader, writer, &mut spawned, &name, &mut terminal)?;
-        }
+    let result = with_daemon_generation(
+        &runtime_root,
+        &record,
+        |socket_owned, preserve_artifacts| {
+            let mut capability_owner = None;
+            let result = (|| {
+                if DAEMON_HOST_WATCH.get().is_none() {
+                    if let Some(fingerprint) = &record.spawn_fingerprint {
+                        let (binding, owner) =
+                            festerm_sessiond::native_binding::DaemonBinding::create(
+                                &runtime_root,
+                                identity.clone(),
+                                fingerprint.clone(),
+                            )?;
+                        capability_owner = Some(owner);
+                        DAEMON_BINDING
+                            .set(std::sync::Mutex::new(binding))
+                            .map_err(|_| "native binding capability already initialized")?;
+                    }
+                }
+                #[cfg(unix)]
+                {
+                    let socket_path = Path::new(&record.socket);
+                    let listener = bind_unix_listener(socket_path)?;
+                    *socket_owned = true;
+                    set_file_mode(socket_path, 0o600)?;
+                    let mut spawned =
+                        spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
+                            .inspect_err(|error| {
+                                lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
+                            })?;
+                    let mut terminal = Terminal::with_scrollback_limit(
+                        Dimensions::new(cols as usize, rows as usize)?,
+                        scrollback_limit_bytes,
+                    )?;
+                    save_registry_record(record.clone())?;
+                    lifecycle_event(LifecycleEvent::Ready);
+                    let reader = spawned.master()?.try_clone_reader()?;
+                    let writer = spawned.master()?.take_writer()?;
+                    daemon_client_loop(
+                        listener,
+                        reader,
+                        writer,
+                        &mut spawned,
+                        &name,
+                        &mut terminal,
+                    )?;
+                }
 
-        #[cfg(windows)]
-        {
-            let _ = socket_owned;
-            let initial_listener = create_secure_pipe_listener(&record.socket, true)?;
-            let mut spawned = spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
-                .inspect_err(|error| {
-                    lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
-                })?;
-            let mut terminal = Terminal::with_scrollback_limit(
-                Dimensions::new(cols as usize, rows as usize)?,
-                scrollback_limit_bytes,
-            )?;
-            save_registry_record(record.clone())?;
-            lifecycle_event(LifecycleEvent::Ready);
-            let reader = spawned.master()?.try_clone_reader()?;
-            let writer = spawned.master()?.take_writer()?;
-            daemon_client_loop_windows(
-                &record.socket,
-                initial_listener,
-                reader,
-                writer,
-                &mut spawned,
-                &name,
-                &mut terminal,
-            )?;
-        }
-        lifecycle_event(LifecycleEvent::Stopping);
-        Ok(())
-    });
+                #[cfg(windows)]
+                {
+                    let _ = socket_owned;
+                    let initial_listener = create_secure_pipe_listener(&record.socket, true)?;
+                    let mut spawned =
+                        spawn_shell(&shell, cols, rows, record.correlation_id.as_deref())
+                            .inspect_err(|error| {
+                                lifecycle_failure(FailureStage::ShellSpawn, error.as_ref());
+                            })?;
+                    let mut terminal = Terminal::with_scrollback_limit(
+                        Dimensions::new(cols as usize, rows as usize)?,
+                        scrollback_limit_bytes,
+                    )?;
+                    save_registry_record(record.clone())?;
+                    lifecycle_event(LifecycleEvent::Ready);
+                    let reader = spawned.master()?.try_clone_reader()?;
+                    let writer = spawned.master()?.take_writer()?;
+                    daemon_client_loop_windows(
+                        &record.socket,
+                        initial_listener,
+                        reader,
+                        writer,
+                        &mut spawned,
+                        &name,
+                        &mut terminal,
+                    )?;
+                }
+                lifecycle_event(LifecycleEvent::Stopping);
+                Ok(())
+            })();
+            finish_daemon_capability(result, capability_owner, preserve_artifacts)
+        },
+    );
     if let Err(error) = &result {
         lifecycle_failure(FailureStage::Daemon, error.as_ref());
     }
@@ -1413,7 +1459,16 @@ fn combine_cleanup_result(
 fn with_daemon_generation(
     root: &Path,
     record: &SessionRecord,
-    serve: impl FnOnce(&mut bool) -> Result<(), Box<dyn std::error::Error>>,
+    serve: impl FnOnce(&mut bool, &mut bool) -> Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    with_daemon_generation_before_cleanup(root, record, serve, || {})
+}
+
+fn with_daemon_generation_before_cleanup(
+    root: &Path,
+    record: &SessionRecord,
+    serve: impl FnOnce(&mut bool, &mut bool) -> Result<(), Box<dyn std::error::Error>>,
+    before_cleanup: impl FnOnce(),
 ) -> Result<(), Box<dyn std::error::Error>> {
     validate_artifact_root(root)?;
     let lease_path = generation_lease_path(root, record);
@@ -1430,19 +1485,60 @@ fn with_daemon_generation(
             .open(&lease_path)?,
     };
     let mut socket_owned = false;
+    let mut preserve_artifacts = false;
     let result = (|| {
         lease.lock_exclusive()?;
         set_file_mode(&lease_path, 0o600)?;
-        serve(&mut socket_owned)
+        serve(&mut socket_owned, &mut preserve_artifacts)
     })();
     // Release before taking the registry lock: kill holds that lock while
     // waiting for this generation's lease to become available.
     drop(lease);
-    let cleanup = with_registry_lock(|registry| {
-        cleanup_dead_generation(root, record, socket_owned)?;
-        remove_registry_record_if_generation_matches(registry, record);
-        Ok(())
+    let mut before_cleanup = Some(before_cleanup);
+    let mut cleanup = Ok(());
+    let publication = with_registry_lock_in(
+        root,
+        |registry| {
+            if let Some(before_cleanup) = before_cleanup.take() {
+                before_cleanup();
+            }
+            cleanup = if preserve_artifacts {
+                Err(
+                    "native binding capability cleanup incomplete; generation artifacts retained"
+                        .into(),
+                )
+            } else {
+                cleanup_dead_generation(root, record, socket_owned)
+            };
+            if cleanup.is_err() {
+                if !registry.sessions.contains_key(&record.name)
+                    && !registry.foreign.contains_key(&record.name)
+                {
+                    registry
+                        .sessions
+                        .insert(record.name.clone(), record.clone());
+                }
+            } else {
+                remove_registry_record_if_generation_matches(registry, record);
+            }
+            Ok(())
+        },
+        || {},
+    );
+    combine_cleanup_result(result, combine_cleanup_result(cleanup, publication))
+}
+
+fn finish_daemon_capability(
+    result: Result<(), Box<dyn std::error::Error>>,
+    owner: Option<festerm_sessiond::native_binding::CapabilityOwner>,
+    preserve_artifacts: &mut bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cleanup = owner.map_or(Ok(()), |owner| {
+        owner.cleanup().map_err(|error| {
+            format!("native binding capability cleanup failed: {error}; generation retained; retry kill").into()
+        })
     });
+    *preserve_artifacts = cleanup.is_err();
     combine_cleanup_result(result, cleanup)
 }
 
@@ -2183,6 +2279,19 @@ fn admit_client(
             Err(error) => return Err(error),
         }
     }
+    if offset == request.len() && &request[..4] == b"FSB1" {
+        if let Some(binding) = DAEMON_BINDING.get() {
+            if let (Ok(mut binding), Ok(mut watch)) = (
+                binding.lock(),
+                DAEMON_HOST_WATCH
+                    .get_or_init(|| std::sync::Mutex::new(None))
+                    .lock(),
+            ) {
+                let _ = binding.serve(&request, stream, &mut watch);
+            }
+        }
+        return Ok(None);
+    }
     let ticket = if offset == request.len() && &request[..4] == b"FSA5" {
         let mut bytes = [0; 36];
         let mut offset = 0;
@@ -2390,6 +2499,14 @@ fn poll_replacement(
     let candidate = pending.candidate.take().expect("checked candidate");
     retire_active(active, retired, true);
     pending.staged = candidate.delta;
+    HOST_CLIENT_GENERATION.store(
+        if candidate.ticket.is_some() {
+            candidate.client.generation
+        } else {
+            0
+        },
+        Ordering::Release,
+    );
     *active = Some(candidate.client);
     if candidate.activate.try_send(()).is_err() {
         retire_active(active, retired, false);
@@ -2432,12 +2549,30 @@ fn retire_active_if_finished(
     active: &mut Option<ActiveClient>,
     retired_clients: &mut Vec<thread::JoinHandle<io::Result<()>>>,
 ) {
-    if active
-        .as_ref()
-        .is_some_and(|client| client.thread.is_finished())
-    {
+    if active.as_ref().is_some_and(|client| {
+        client.thread.is_finished()
+            || ticketed_host_client(
+                client.kind,
+                client.generation,
+                HOST_CLIENT_GENERATION.load(Ordering::Acquire),
+            ) && (DAEMON_BINDING.get().is_some_and(|binding| {
+                binding
+                    .lock()
+                    .map_or(true, |binding| binding.imported_remote_revoked())
+            }) || DAEMON_HOST_WATCH.get().is_some_and(|watch| {
+                watch.lock().map_or(true, |watch| {
+                    watch.as_ref().is_some_and(
+                        festerm_sessiond::host_lease::DaemonWatch::imported_remote_revoked,
+                    )
+                })
+            }))
+    }) {
         retire_active(active, retired_clients, false);
     }
+}
+
+fn ticketed_host_client(kind: AttachKind, generation: u64, ticketed_generation: u64) -> bool {
+    kind == AttachKind::Remote && ticketed_generation != 0 && generation == ticketed_generation
 }
 
 fn send_to_active(
@@ -4801,15 +4936,29 @@ fn cleanup_dead_generation(
     }
     validate_artifact_root(root)?;
     let lease_path = generation_lease_path(root, record);
-    let lease = open_generation_lease(&lease_path)?;
-    if let Some(lease) = &lease {
-        lease.try_lock_exclusive().map_err(|error| {
+    let lease = open_generation_lease(&lease_path)?
+        .map(festerm_sessiond::native_binding::DeadGenerationLease::acquire)
+        .transpose()
+        .map_err(|error| {
             format!(
                 "cannot clean session '{}' lease {}: {error}; record retained; retry kill",
                 record.name,
                 lease_path.display()
             )
         })?;
+    if record.spawn_fingerprint.is_some() {
+        let directory = festerm_sessiond::private_storage::private_directory(root, false)?;
+        festerm_sessiond::native_binding::cleanup_dead_capability(
+            &directory,
+            &festerm_sessiond::NativeSessionIdentity {
+                name: record.name.clone(),
+                pid: record.pid,
+                created_at_unix_ms: record.created_at_unix_ms,
+                endpoint: record.socket.clone(),
+            },
+            record.spawn_fingerprint.as_deref(),
+            lease.as_ref(),
+        )?;
     }
     #[cfg(unix)]
     if socket_owned {
@@ -4843,20 +4992,32 @@ fn cleanup_failed_start(
             }
             thread::sleep(CLIENT_POLL_INTERVAL);
         }
-        cleanup_dead_generation(root, record, true)
+        Ok(())
     })();
     // Preserve a precise retry handle even when startup never registered.
-    let registry_result = with_registry_lock(|registry| {
-        if stopped.is_ok() {
-            remove_registry_record_if_generation_matches(registry, record);
-        } else if !registry.sessions.contains_key(&record.name) {
-            registry
-                .sessions
-                .insert(record.name.clone(), record.clone());
-        }
-        Ok(())
-    });
-    combine_cleanup_result(stopped, registry_result)
+    let mut cleanup = Ok(());
+    let publication = with_registry_lock_in(
+        root,
+        |registry| {
+            cleanup = if stopped.is_ok() {
+                cleanup_dead_generation(root, record, true)
+            } else {
+                Ok(())
+            };
+            if stopped.is_ok() && cleanup.is_ok() {
+                remove_registry_record_if_generation_matches(registry, record);
+            } else if !registry.sessions.contains_key(&record.name)
+                && !registry.foreign.contains_key(&record.name)
+            {
+                registry
+                    .sessions
+                    .insert(record.name.clone(), record.clone());
+            }
+            Ok(())
+        },
+        || {},
+    );
+    combine_cleanup_result(stopped, combine_cleanup_result(cleanup, publication))
 }
 
 #[cfg(unix)]
@@ -4979,6 +5140,14 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_binding_release_targets_only_ticketed_host_frontend_not_legacy_remote_or_local() {
+        assert!(ticketed_host_client(AttachKind::Remote, 7, 7));
+        assert!(!ticketed_host_client(AttachKind::Remote, 7, 0));
+        assert!(!ticketed_host_client(AttachKind::Remote, 8, 7));
+        assert!(!ticketed_host_client(AttachKind::Local, 7, 7));
+    }
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
@@ -7462,6 +7631,231 @@ mod tests {
     impl Drop for GenerationFixture {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn generation_binding_dead_cleanup_reuses_callers_exclusive_lifetime_guard() {
+        let fixture = GenerationFixture::new();
+        let mut record = fixture.record("retired", 123);
+        record.spawn_fingerprint = Some(format!("v1:{}", "a".repeat(64)));
+        let _lease = fixture.artifacts(&record, false);
+        let (_binding, owner) = festerm_sessiond::native_binding::DaemonBinding::create(
+            &fixture.0,
+            festerm_sessiond::NativeSessionIdentity {
+                name: record.name.clone(),
+                pid: record.pid,
+                created_at_unix_ms: record.created_at_unix_ms,
+                endpoint: record.socket.clone(),
+            },
+            record.spawn_fingerprint.clone().unwrap(),
+        )
+        .unwrap();
+        // The real caller acquires once, then passes the already-held typed
+        // guard to capability cleanup. Windows locks are not recursive.
+        cleanup_dead_generation(&fixture.0, &record, true).unwrap();
+        fixture.assert_removed(&record);
+        assert!(!fixture
+            .0
+            .join(format!("native-binding-{}-123.key", record.pid))
+            .exists());
+        owner.cleanup().unwrap();
+    }
+
+    #[test]
+    fn generation_binding_exit_serializes_cleanup_with_concurrent_registry_pruner() {
+        let fixture = GenerationFixture::new();
+        let root = &fixture.0;
+        let mut record = fixture.record("exiting", 123);
+        record.spawn_fingerprint = Some(format!("v1:{}", "a".repeat(64)));
+        thread::scope(|scope| {
+            let mut pruner = None;
+            let mut owner = None;
+            let mut registry_was_locked = false;
+            let mut lifetime_was_released = false;
+            let result = with_daemon_generation_before_cleanup(
+                root,
+                &record,
+                |socket_owned, _| {
+                    let (_binding, created) =
+                        festerm_sessiond::native_binding::DaemonBinding::create(
+                            root,
+                            festerm_sessiond::NativeSessionIdentity {
+                                name: record.name.clone(),
+                                pid: record.pid,
+                                created_at_unix_ms: record.created_at_unix_ms,
+                                endpoint: record.socket.clone(),
+                            },
+                            record.spawn_fingerprint.clone().unwrap(),
+                        )?;
+                    owner = Some(created);
+                    #[cfg(unix)]
+                    {
+                        drop(UnixListener::bind(&record.socket)?);
+                        *socket_owned = true;
+                    }
+                    #[cfg(windows)]
+                    let _ = socket_owned;
+                    with_registry_lock_in(
+                        root,
+                        |registry| {
+                            registry
+                                .sessions
+                                .insert(record.name.clone(), record.clone());
+                            registry
+                                .foreign
+                                .insert("unrelated".into(), serde_json::json!({"future": 1}));
+                            Ok(())
+                        },
+                        || {},
+                    )
+                },
+                || {
+                    let directory =
+                        festerm_sessiond::private_storage::private_directory(root, false).unwrap();
+                    let probe = festerm_sessiond::private_storage::open_private_file(
+                        &directory,
+                        Path::new("registry.lock"),
+                        false,
+                    )
+                    .unwrap();
+                    registry_was_locked = match probe.try_lock_exclusive() {
+                        Err(error) if festerm_sessiond::lock_is_contended(&error) => true,
+                        Ok(()) => {
+                            FileExt::unlock(&probe).unwrap();
+                            false
+                        }
+                        Err(error) => panic!("registry probe failed: {error}"),
+                    };
+                    let lifetime = open_generation_lease(&generation_lease_path(root, &record))
+                        .unwrap()
+                        .unwrap();
+                    lifetime_was_released = lifetime.try_lock_exclusive().is_ok();
+                    drop(lifetime);
+                    let (attempting, ready) = mpsc::channel();
+                    pruner = Some(scope.spawn(move || {
+                        let contended = match probe.try_lock_exclusive() {
+                            Err(error) if festerm_sessiond::lock_is_contended(&error) => true,
+                            Ok(()) => {
+                                FileExt::unlock(&probe).unwrap();
+                                false
+                            }
+                            Err(error) => panic!("pruner registry probe failed: {error}"),
+                        };
+                        attempting.send(contended).unwrap();
+                        with_registry_lock_in(
+                            root,
+                            |registry| prune_dead_records_in(root, registry),
+                            || {},
+                        )
+                        .map_err(|error| error.to_string())
+                    }));
+                    assert!(
+                        ready.recv_timeout(Duration::from_secs(2)).unwrap(),
+                        "concurrent pruner did not observe the exit transaction's registry lock"
+                    );
+                },
+            );
+            result.unwrap();
+            pruner.take().unwrap().join().unwrap().unwrap();
+            assert!(
+                registry_was_locked,
+                "exit cleanup ran outside registry serialization"
+            );
+            assert!(
+                lifetime_was_released,
+                "exit held the lifetime lease while acquiring registry"
+            );
+            let registry =
+                with_registry_lock_in(root, |registry| Ok(registry.clone()), || {}).unwrap();
+            assert!(
+                !registry.sessions.contains_key(&record.name),
+                "removed generation was reinserted"
+            );
+            assert_eq!(
+                registry.foreign["unrelated"],
+                serde_json::json!({"future": 1})
+            );
+            fixture.assert_removed(&record);
+            assert!(!root
+                .join(format!("native-binding-{}-123.key", record.pid))
+                .exists());
+            owner.take().unwrap().cleanup().unwrap();
+        });
+    }
+
+    #[test]
+    fn generation_binding_capability_cleanup_normal_failed_start_and_replacement_retains_retry_handle(
+    ) {
+        for outcome in ["normal", "failed-start", "replacement", "foreign-record"] {
+            let fixture = GenerationFixture::new();
+            let mut record = fixture.record("owned", 123);
+            record.spawn_fingerprint = Some(format!("v1:{}", "a".repeat(64)));
+            let key = format!("native-binding-{}-123.key", record.pid);
+            let result = with_daemon_generation(&fixture.0, &record, |_, preserve| {
+                let (_daemon, owner) = festerm_sessiond::native_binding::DaemonBinding::create(
+                    &fixture.0,
+                    festerm_sessiond::NativeSessionIdentity {
+                        name: record.name.clone(),
+                        pid: record.pid,
+                        created_at_unix_ms: record.created_at_unix_ms,
+                        endpoint: record.socket.clone(),
+                    },
+                    record.spawn_fingerprint.clone().unwrap(),
+                )?;
+                if matches!(outcome, "replacement" | "foreign-record") {
+                    festerm_sessiond::private_storage::replace_private(
+                        &festerm_sessiond::private_storage::private_directory(&fixture.0, false)?,
+                        Path::new(&key),
+                        b"foreign-replacement",
+                    )?;
+                }
+                if outcome == "foreign-record" {
+                    with_registry_lock_in(
+                        &fixture.0,
+                        |registry| {
+                            registry
+                                .foreign
+                                .insert(record.name.clone(), serde_json::json!({"future": 1}));
+                            Ok(())
+                        },
+                        || {},
+                    )?;
+                }
+                let result = if outcome == "normal" {
+                    Ok(())
+                } else {
+                    Err("fixture failed start".into())
+                };
+                finish_daemon_capability(result, Some(owner), preserve)
+            });
+            let registry =
+                with_registry_lock_in(&fixture.0, |registry| Ok(registry.clone()), || {}).unwrap();
+            if matches!(outcome, "replacement" | "foreign-record") {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("generation retained"));
+                assert_eq!(
+                    fs::read(fixture.0.join(&key)).unwrap(),
+                    b"foreign-replacement"
+                );
+                assert!(generation_lease_path(&fixture.0, &record).exists());
+                if outcome == "replacement" {
+                    assert_eq!(registry.sessions.get(&record.name), Some(&record));
+                } else {
+                    assert!(!registry.sessions.contains_key(&record.name));
+                    assert_eq!(
+                        registry.foreign[&record.name],
+                        serde_json::json!({"future": 1})
+                    );
+                }
+            } else {
+                assert_eq!(result.is_ok(), outcome == "normal");
+                assert!(!fixture.0.join(&key).exists());
+                fixture.assert_removed(&record);
+                assert!(!registry.sessions.contains_key(&record.name));
+            }
         }
     }
 

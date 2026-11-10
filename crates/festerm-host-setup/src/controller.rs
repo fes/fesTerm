@@ -1468,6 +1468,7 @@ mod tests {
         .err()
         .unwrap();
         assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(error.to_string(), "host.runtime_stop_pending");
         assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
         assert!(store.snapshot().unwrap().epoch > before.epoch);
         drop(lease);
@@ -1524,10 +1525,15 @@ mod tests {
         drop(lease);
         std::fs::remove_file(state.join(LOCK)).unwrap();
         assert!(reserve(&store).is_err());
-        assert!(disable_with(&store, Duration::ZERO, |epoch| {
+        let error = disable_with(&store, Duration::ZERO, |epoch| {
             crate::services::fixture_services(&store, &state)?.stop(epoch)
         })
-        .is_err());
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "host.runtime_lock_missing_reconciliation_required"
+        );
         assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
         assert!(store.request_cleanup().is_err());
         assert_eq!(last_run(&store).unwrap().unwrap(), record);
@@ -1580,6 +1586,23 @@ mod tests {
             .join("native-service.json")
             .exists());
         assert!(!root.path().join("host").join("host-cloud.json").exists());
+    }
+
+    #[tokio::test]
+    async fn host_runtime_native_cleanup_denial_never_polls_cloud_cleanup() {
+        let (root, store) = fixture();
+        provision(&store);
+        let error = uninstall_with_native(
+            &store,
+            &CancellationToken::new(),
+            || fixture_disable(&store, &root.path().join("host")),
+            |_| Err(io::ErrorKind::PermissionDenied.into()),
+            async { panic!("native cleanup denial must not poll cloud cleanup") },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
     }
 
     #[tokio::test]

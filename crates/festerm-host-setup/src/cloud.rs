@@ -1634,6 +1634,25 @@ mod tests {
             .unwrap();
     }
 
+    #[test]
+    fn host_cloud_fixture_account_never_authorizes_native_or_foreign_adapter() {
+        let (_root, store, _secrets) = fixture();
+        let adapter = CloudHostAdapter::fixture(&store);
+        let _foreground = foreground(&adapter);
+        let before = store.snapshot().unwrap();
+        let record = adapter.load().unwrap();
+        let native = CloudHostAdapter::new(&store);
+        assert!(native.fixture_user.is_none());
+        assert!(native.load().is_err());
+        let foreign = CloudHostAdapter {
+            store: &store,
+            fixture_user: Some("fixture:another-account"),
+        };
+        assert!(foreign.load().is_err());
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert!(adapter.load().unwrap() == record);
+    }
+
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     struct ControllerBoundary<'a> {
         network: FixtureNetwork<'a>,

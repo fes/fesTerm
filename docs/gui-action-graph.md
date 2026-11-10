@@ -1706,10 +1706,10 @@ Detailed contract and fixture coverage:
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state/framed dispatcher tests; UI/endpoint/H,N deferred |
 | `HOST-02` | Local recipe → resumed/new remote shell | Offline save/edit/duplicate/import/export/delete; separate future Connect with atomic resume-or-create or strict attach | Public metadata; stable host/account/logical IDs and fresh duplicates; future-only edits; deletion preserves shell; authoritative absence/current creation permission; exact generation; no input replay | Failed saves retain state; mobile skips/reports invalid entries without losing valid recipes; typed conflicts and export-specific outcomes; legacy remains exact-generation; reconcile uncertain live ensure; no duplicate spawn | P; partial metadata/command/recovery/codec/absence/admission and real-daemon ensure/crash/conflict/cancellation/issuance/retirement/Unknown inventory fixtures; live execution/H,N deferred |
-| `HOST-03` | Session → shared/detached/ended | Exact local persistent tab/profile/native generation review; explicit share/unshare | Private by default; no metadata/PID authority, conversion, restart or share-all; missing authenticated bind/release seam refuses without effects | Revalidate selection at dispatch; preserve shell/draft and independent daemon lifetime; existing generation-fenced detach/temporary behavior retained | P; command/default-private/capability-refusal and lifetime/native-daemon fixtures; actual binding, endpoint and H/N remain deferred |
+| `HOST-03` | Session → shared/detached/ended | Exact local persistent tab/profile/native generation review; explicit private Bind, separate Switch, original-operation Resume/Release/rollback | Private by default; connected-local provenance and authenticated current NativeVault Desktop authority, never metadata/PID authority or legacy receipt fabrication | Negative selection/command fences; interrupted Bind reuses original operation; exact reduction preserves frontend/PTY and independent lifetime; no implicit Switch, conversion, restart or share-all | P; command/lifetime/private-source/current-policy and controlled Local-native fixtures; installed endpoint/GUI/actual-native-vault H,N deferred |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings Remote access typed review/confirm; signed helper/account and separate owner approval | Shared origin/account/OS-user authority; full-snapshot/settings/epoch CAS; bounded primary plus independent revoke worker; native vault only; creation and sign-in startup off by default; zero shells; native process/history never Ready | Reconfirm edited/stale consent; cancelled workers retain admission and original issued scope, late results cannot grant; explicit recovery, revoke/drain disable and typed manual cloud-cleanup guidance preserve drafts/daemons; no browser/DELETE or uncertain removal target | P,H,N; reachable Settings/headless-render/command and actual controller/Services/CLI-origin fixtures; matching signed bundles, real native/vault/cloud usability, readiness and exact existing-shell binding remain open |
 | `HOST-05` | Headless package → configured service | Configure/status/acquisition/staging/native qualification; explicit setup → public owner context → host-local approve-owner → run/run-status; service-status/disable/cleanup-local/uninstall/recover-cleanup; authenticated stopped update/update-status | Shared origin/account/exact-owned receipt policy; disabled configuration, zero-shell access-off setup; independent default-No creation/end/temporary, temporary never creates; exact signed bundle/helper and fresh vault policy; watchdog retries installation contention, never cached permission; update strictly newer current release + explicit signed from-version, existing identity/binding, stopped host/runtime, protected old/new native reservation; history/native Running/cloud presence is not Ready; Linux UserSignIn requires current-logon proof | Revoke before exact native stop/runtime-lease release; never-published absence requires full lease/phase/epoch/instance fences and no replacement history, including Committed/Aborted journals; status stays no-observation; corrupt/foreign/uncertain evidence is not absence; update Prepared/Applying retains unknown old/new state, same-intent retry only, no automatic enable/rollback/repair or daemon kill; partial-update cleanup reconciles both resources; unsuccessful cloud CleanupPending/deletion remains separate | P,H,N; core removal fixtures retain explicit fake cloud/account/native contexts, real Services/private lifecycle and a panic-on-manager runner; update cores use typed fake native/network/credentials and synthetic signatures; coupled daemon launches authenticated old cached entry in installation namespace, preserving PID/generation/endpoint, frontend/control and helper path/bytes with negative controls; current-source binary tagged old is not genuine older-release/publisher/native switching or Windows account acceptance; separate client trust/index/chooser, first bootstrap, platform and cloud-deletion gates remain |
-| `HOST-06` | Existing installation → updated/migrated host | Authenticated stopped update; headless owned inventory/preview/reservation/resume/defer/local rollback | Exact signed old/new artifacts; protected source/account/key/namespace/generation and preview/destination epoch; original receipts retained; no grant expansion; live stop needs separate default-No exact-generation consent, never setup/sharing/reservation consent | Same-operation identity/claims resume, rollback only matching claims; retain cleanup/revocation evidence and legacy use; unsupported binding is explicit, never attachment/restart/create; manual provider review alone does not complete cloud removal | P: stopped-update, manifest/verifier/private executable publication, receipt-bound manual guidance and owned reservation/recovery fixtures; H,N: genuine cross-version/native switching, real daemon binding, exposure switch and native migration acceptance deferred |
+| `HOST-06` | Existing installation → updated/migrated host | Authenticated stopped update; owned inventory/preview/reservation; separate owner approval; current-daemon bind/switch/resume/defer/exact release/rollback | Exact signed old/new artifacts; protected source/account/key/claim/namespace/generation, owner/principal/issuer and preview/destination epoch; no grant expansion or frontend acquisition; live stop requires separate default-No exact-generation consent, never setup/sharing/migration consent | Same-operation immutable binding/activation/release intent; revoke before exact release/claims rollback; retain cleanup/revocation evidence and legacy use; old helpers defer without restart/create; manual provider review does not complete removal | P: stopped-update, authenticity/publication, receipt-bound guidance, reservation/authentication/recovery fixtures; controlled current-source live binding/frontend/PTY is separate from genuine cross-version/installed Windows/macOS/Linux switching, cloud/vault/GUI acceptance |
 
 HOST-05 additionally permits never-published receipt absence only under the
 exclusive Services lease and current phase/epoch/full-snapshot/directory fences;
@@ -1750,6 +1750,17 @@ promote HOST-04/05/06 or the known-blocked Windows PKI/native-manager gates.
 The subsequently normal-merged exact5d timestamp source fix is
 [Mac compiled-input-equivalent, not a new14-route run](milestone-progress.md#exact-source-only-windows-timestamp-follow-up);
 its mandatory Windows16-vector execution and genuine PKI remain pending.
+HOST-03's private-session adapter is distinct from HOST-06's legacy migration:
+it consumes an already-Provisioned Desktop host and never synthesizes legacy
+installation/claim receipts. Lookup phase is protected observation, not readiness
+or cached permission; interrupted Bind reuses its original operation and never
+implies Switch. See [ADR 0084 §7](adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing).
+The controlled real-daemon fixture is not actual native-vault/installed/GUI or
+provider acceptance, and does not resolve existing native CI contention failures.
+HOST-01 additionally has a deterministic private-source uncertainty regression:
+healthy authorized entries remain visible beside authorized Unknown target
+metadata, while record/global/publication authority refusals still fail closed.
+Private liveness is point-in-time, unlike legacy shared installer-lock exclusion.
 
 HOST-06 currently has the independently testable
 [helper authenticity boundary](host-release-artifacts.md) and separate
@@ -1768,15 +1779,26 @@ Genuine release availability, trusted first-verifier delivery and native
 publisher/installed qualification remain gates. The seam does not
 implement service switching, rollback or migration; the legacy Linux script
 path is not promoted to authenticated setup.
-The [owned-installation reservation](owned-installation-migration.md)
-also implements protected explicit inventory/mapping, new host-identity and
-per-source claims, partial-progress resume, deferral and local rollback without
-reviving source authority. Its CLI never acquires a frontend or launches/stops a
-daemon. Ordinary legacy helpers have no authenticated in-place HOST binding API
-at this base, so verified generations truthfully report unsupported and cannot
-switch exposure. Authenticated stopped update and protected local-claim rollback
-are source paths, not qualified native service switching or complete migration
-acceptance; the legacy Linux script path is not promoted to authenticated setup.
+[Owned migration](owned-installation-migration.md) now authenticates
+explicitly selected capability-enabled current daemons, installs/releases a
+persistent watch in place, and routes exact retained roots through existing
+shared authorization/adoption. Separate owner approval and switch do not enable
+the disabled installation. Its CLI never acquires a frontend or launches/stops a
+daemon; older helpers defer. Observed source/claim revocation cannot be resumed
+into an active grant. Generation keys have creation-owner-only normal/failed-start
+cleanup; live release retains the key and released receipt tombstones. An ordinary
+shell exit permits release/claims rollback only with authoritative exact-generation
+absence; Busy/corrupt/unknown outcomes remain pending, not failed-I/O-as-absence.
+The reused actual-binding fixture selects both pre-existing Local and Remote
+frontends; the Local proof is not the earlier reservation-only fixture.
+Dead-key cleanup uses one retained exclusive lifetime-lease acquisition, not a
+recursive Windows lock. Actual ordinary-exit caller regressions fence cleanup
+and exact record removal/retention with the registry lock against a concurrent
+pruner, while releasing the live lease before that lock; failed-start process
+waiting remains outside it. Native Windows lock execution remains a gate.
+Controlled live fixtures are not service switching/rollback,
+installed/old-release or complete migration acceptance; the legacy Linux script
+path is not promoted to authenticated setup.
 
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after

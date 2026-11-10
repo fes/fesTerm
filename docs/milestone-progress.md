@@ -2279,6 +2279,193 @@ Linux native service, persistent-logout survival, Ready or ADR acceptance.
 The host Cargo slot is released at this fixed checkpoint. The owned-worktree
 compiler/query/sessiond/PTY-helper CWD process check found zero matches.
 No push, PR creation or integration of a moving dependency was performed.
+## Keeping healthy inventory visible beside an uncertain private source
+
+Review found a concrete coupled gap: protected inventory recorded a private
+generation's uncertainty, then the source fence's Unknown aborted the whole
+aggregate before that entry could join the existing Unknown list. A deterministic
+mixed-record counterexample reproduced the failure. Inventory now isolates only
+private-source Unknown/Busy; current per-entry owner policy and final publication
+remain hard fences, including when those callbacks return Unknown/Busy.
+Foreign/revoked filtering, strict lookup, no-absence/no-auto-revocation semantics
+and exact reduction are unchanged. The regression uses structured native metadata
+and held lifetime files, not a real helper or an authorization fallback.
+
+The qualified fixture sibling is integrated through a normal exact-parent merge.
+Documentation distinguishes pinned helper/root environment inheritance, private
+point-in-time liveness versus legacy installer-lock exclusion, and the actual
+Desktop protected-file-selection refusal. The ordinary-private preservation
+evidence remains the retained exact-183 native execution, not merely an ignored
+test declaration or new platform acceptance.
+
+## Sharing an ordinary private generation without inventing migration authority
+
+Desktop sharing exposed a missing seam: legacy migration correctly required
+installation receipts and a fresh destination, whereas a running ordinary shell
+has neither and must join the already-Provisioned Desktop host. A separate
+private-source discriminator now binds connected-local provenance, protected
+live-generation evidence and authenticated capability possession to the existing
+host's fresh NativeVault policy. The original protected SessionControl journal
+owns reservation, explicit switch, same-operation resume and exact irreversible
+reduction; sharing never acquires the frontend or changes shell lifetime.
+Opening/lookup cannot initialize a namespace, and lookup is observation rather
+than readiness. Legacy migration policy remains unchanged.
+
+Deterministic tests cover authority/provenance/domain refusal and older-helper
+compatibility. The retained exact-183 execution of the controlled ordinary-private
+Local fixture passed its unchanged PID/generation/frontend/PTY assertions through
+bind/switch/resume/revocation/release/rollback; see the exact counts/source/raw
+hashes in [manual validation](manual-validation.md).
+Its NativeVault is in-memory: actual vault, installed platforms, GUI/endpoint and
+provider acceptance remain separate. Existing required native CI contention
+failures remain unresolved and are not attributed to or fixed by this adapter.
+
+## Repairing the Windows binding-lane fixture boundaries
+
+Required Windows run `42907905048` / job `130150627385` at exact
+`e44a004c80553c0318a73699db7f37f88c95aa06` passes strict Clippy, then reports
+72 host-setup passes / 41 failures / one ignore. The retained 227240-byte raw
+log has SHA-256
+`d32cfbd803b83e30176960a15a112e8759adb9a75dec1bcaebfd078c85bf9c6b`.
+All 41 original failures remain recorded: 24 fake-cloud cases, two controller
+cases and 15 migration fixtures. Migration setup explicitly reports ancestor
+policy refusal beneath the checkout. The bare native-boundary
+`PermissionDenied` results do not prove a specific inner denial/principal subtype.
+
+The migration fixture now uses the existing policy-validated candidate-parent
+`private_test_directory` helper on Windows, retaining its owner until cleanup
+or deliberate failed-native-fixture preservation. Unix keeps its original short
+paths and native artifact-retention behavior. No ancestor/ACL policy is relaxed,
+no existing directory is repaired, and all migration test bodies remain unchanged.
+
+Fake-network orchestration reuses the established core fixture pattern:
+per-instance, cfg(test)-only cloud accounts; a cfg(test) override on the existing
+private setup boundary; and a private cfg(test) service factory whose runner
+panics on any native-manager command. These instances still execute the actual
+protected service stop/cleanup, lifecycle, epoch and run-lease logic. Production
+constructors retain real native admission, including inside cfg(test) builds.
+The user comparison remains lazy at the same validation predicate position.
+Private uninstall extraction reinlines to the parent implementation exactly;
+all legacy Services code is byte-identical after excluding the test-only factory.
+No public fake-authority constructor, production fallback or trait framework
+is introduced. Private adapter, protocol/sessiond and moving provenance work
+remain untouched, with four-file nonoverlap confirmed by their owner.
+
+All original cloud assertions survive exact factory-call inversion. The
+WouldBlock/run-lease oracle remains required and now also checks its exact
+stop-pending code; the missing-lock case requires its exact reconciliation
+refusal. Added guards verify native/foreign adapters cannot authenticate fixture
+records, and native cleanup denial never polls cloud cleanup. They are unit
+orchestration evidence, not native Task/service/provider acceptance.
+
+Bounded actual macOS Rust/Cargo1.99.1 qualification passes **53 selected tests /
+zero failures / four existing ignored native migration opt-ins**, 34.50s;
+72 unrelated tests are filtered. Every one of the original 41 Windows-failing
+names actually passes its macOS counterpart in that selection. Full-feature and
+standalone-cloud all-target strict Clippy, fmt and traceability pass. The first
+formatter attempt exited1 before compilation because a proposed let-chain
+requires edition2024; its raw SHA-256
+`f166daaafe75cf0ce55694036abfa76f6950b0579f64a34008b5a9756d1c0b47`
+is retained, and the fixture uses an edition2021-compatible tuple pattern.
+This child does not qualify the Windows aggregate, ordinary-user admission,
+native migration/manager/provider behavior or the separate native macOS13/1
+failure. Fresh required Windows CI remains necessary; no native14 retry occurs.
+
+## Locating uncertain second-attachment failures without exposing authority
+
+The required macOS native bridge run retained an unresolved 13-pass/1-fail
+second non-takeover attachment result. Existing test-support builds now label
+only its failed reservation/publication/unwind boundaries, recording fieldless
+control codes and available I/O kind/OS integers, never error text or protected
+context. Normal builds omit diagnostics. Refusals, guards, retries, budgets and
+assertions are unchanged; these diagnostics are not a fix or CI acceptance.
+
+## Keeping capability publication strict on Windows
+
+Required Windows CI found an always-success directory-sync closure after cfg
+removal. Only Unix now composes directory sync onto the write/file-sync result;
+publication order and exact-owner error cleanup are unchanged. Focused capability
+regressions remain the local gate; the new Windows CI run remains independently
+required, not inferred from macOS strict checks.
+
+## Serializing retired-generation key cleanup
+
+Follow-up review found that Unix's permissive same-handle relock concealed a
+Windows cleanup failure, and ordinary exit cleaned artifacts outside registry
+serialization. A retained typed lease guard now proves one exclusive acquisition
+without recursive locking. Ordinary exit drops its live lease first, then
+cleans artifacts and removes/retains the exact record in the registry
+transaction; failed-start termination/wait remains outside that transaction.
+Uncertain artifacts and same-name foreign/replacement records stay protected.
+Focused caller-path fixtures cover the held-lease handoff and a concurrent
+registry pruner without phantom record reinsertion. The selected current-source
+Prepared/Active ordinary-exit fixture remains separate native evidence, not
+Windows lock execution, installed-platform or complete migration acceptance.
+
+## Proving actual binding with the original Local frontend
+
+The authenticated live migration proof originally exercised an unticketed Remote
+frontend; its Local predecessor proved only reservation, not binding. The same
+bounded fixture now explicitly selects Local admission and executes the complete
+bind/switch/resume/source-revocation/release/rollback sequence under the current
+namespace. It preserves original PID/generation, original frontend PTY I/O and
+the live generation capability bytes, without introducing a fixture framework or
+production behavior. Prepared/Active ordinary-exit rollback remains a separate
+safe-absence proof. This does not claim Desktop Local sharing, installed helpers,
+old releases, vault/provider or GUI acceptance.
+
+## Closing migration capability ownership and ordinary-exit cleanup
+
+Review found two lifecycle gaps in the current-daemon migration increment:
+unused ordinary generations retained their disk capability, and an imported
+shell exiting before rollback could leave its claims permanently pending.
+Exclusive capability creation now returns a separate cleanup owner; readers
+only zeroize memory. Normal/failed-start unwind removes the retained file
+identity, while uncertain cleanup preserves a diagnosed exact retry handle.
+Dead-generation recovery is narrow and lease/identity/fingerprint-fenced; it
+does not sweep keys or prune released receipt tombstones.
+
+Release still revokes the existing HOST lease and repeats protected admission.
+Only authoritative exact-generation absence can substitute for a native reply,
+including an already-missing HOST lease. Unknown/Busy/corrupt observations stay
+pending. Focused deterministic fixtures cover both fixes, and a controlled
+current-source shell exits in each Prepared/Active phase before rollback,
+proving key removal, one-way claim release and an unblocked separate enable
+gate without a replacement shell. Installed-platform and old-release gates
+remain open; this follow-up does not repeat the full earlier qualification.
+
+## Authenticating current-daemon migration without taking its frontend
+
+The frozen reservation foundation correctly refused ordinary-daemon adoption:
+there was no authenticated bind or retained-root routing seam. The explicitly
+authorized follow-up supplies that seam, not an `ensure` workaround. Current
+ordinary daemons create a private generation capability before publication;
+bounded nonce/MAC exchanges authenticate the actual process while its existing
+writer and PTY remain untouched. Migration independently rechecks original
+source/account/key/claim and anchored owner/principal/epoch/namespace authority,
+without holding broad store locks through IPC.
+
+Binding prepares a revoked persistent lease. Explicit switch journals its intent
+and activates only that preparation; per-frame source fencing and one-way native
+revocation/release prevent rollback from reviving exposure. Imported records
+retain their exact native root and forbid ensure/recreate/end. Rollback revokes,
+authenticates release and only then releases claims. Separate owner approval
+grants no create/end/temporary permission and never bypasses Disabled or normal
+provider setup consent. Older helpers without startup capability still defer.
+
+The new controlled current-source live fixture executes actual bind, defer,
+switch, resume, revocation, release and rollback with original frontend PTY I/O,
+unchanged PID/generation and no duplicate identity. Foreign/stale descriptors and
+held native leases refuse without disturbing that frontend. This is executable
+local evidence with a pre-existing unticketed **remote legacy** frontend, including
+lost binding/release checkpoint recovery and exact retained-root inventory. The
+separate ticketed HOST retirement fence survives native release without treating
+ordinary legacy remote clients as HOST clients. This remains
+current-source evidence, not installed Windows/macOS/Linux, old-release, native-vault,
+provider or GUI acceptance. `HOSTMIG-01` retains those gates and separate
+default-No exact-generation consent for any future live stop. No service/account/
+OS/provider operations, VM access, releases or signing were performed.
+
 ## Reserving owned migration without inventing daemon adoption
 
 ADR 0084 §11 previously had no executable owned-migration transaction. The new

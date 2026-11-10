@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 struct Fixture {
     root: PathBuf,
+    #[cfg(windows)]
+    private_root: Option<storage::PrivateTestDirectory>,
     inventory: Inventory,
     destination: Store,
     selection: Selection,
@@ -14,12 +16,19 @@ struct Fixture {
 
 impl Fixture {
     fn new(desktop: bool) -> Self {
-        let project = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let root = project.join(format!("mi-{}", &Uuid::new_v4().simple().to_string()[..8]));
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
+        let root = {
+            let project = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap();
+            project.join(format!("mi-{}", &Uuid::new_v4().simple().to_string()[..8]))
+        };
         storage::private_directory(&root, true).unwrap();
         let inventory = Inventory {
             desktop: root.join("profile-hosts"),
@@ -136,6 +145,8 @@ impl Fixture {
         .unwrap();
         Self {
             root,
+            #[cfg(windows)]
+            private_root: Some(private_root),
             inventory,
             destination,
             source,
@@ -187,6 +198,11 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        if let (true, Some(root)) = (self.retain, self.private_root.take()) {
+            std::mem::forget(root);
+        }
+        #[cfg(unix)]
         if !self.retain {
             std::fs::remove_dir_all(&self.root).unwrap();
         }
@@ -197,6 +213,189 @@ impl Drop for Fixture {
 #[test]
 #[ignore = "requires an explicitly supplied current-source helper; no installed runtime or services"]
 fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existing_frontend() {
+    native_migration_fixture(false, None, festerm_sessiond::AttachKind::Local);
+}
+
+#[cfg(feature = "owner-enrollment")]
+#[test]
+fn owned_migration_owner_initialization_and_separate_approval_never_enable_or_widen_grants() {
+    use crate::enrollment::OwnerStorage;
+    let fixture = Fixture::new(true);
+    let reserved = fixture.reserve();
+    let owners = fixture
+        .destination
+        .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+        .unwrap();
+    assert!(owners
+        .initialize_for_migration(&uuid::Uuid::new_v4().to_string(), "42".into())
+        .is_err());
+    assert!(owners
+        .initialize_for_migration(&reserved.operation, "43".into())
+        .is_err());
+    let initial = owners
+        .initialize_for_migration(&reserved.operation, "42".into())
+        .unwrap();
+    assert!(initial.keys.is_empty());
+    assert!(!initial.remote_access);
+    assert_eq!(
+        initial.capabilities,
+        festerm_host_protocol::Capabilities::default()
+    );
+    let key = ed25519_dalek::SigningKey::from_bytes(&[9; 32])
+        .verifying_key()
+        .to_bytes();
+    assert!(approve_migration_owner(
+        &fixture.destination,
+        &reserved.operation,
+        OwnerStorage::HeadlessProtectedFile,
+        key,
+        "wrong"
+    )
+    .is_err());
+    let fingerprint = crate::enrollment::owner_key_fingerprint(&key).unwrap();
+    let approved = approve_migration_owner(
+        &fixture.destination,
+        &reserved.operation,
+        OwnerStorage::HeadlessProtectedFile,
+        key,
+        &fingerprint,
+    )
+    .unwrap();
+    assert_eq!(
+        approved.capabilities,
+        festerm_host_protocol::Capabilities {
+            inventory: true,
+            attach: true,
+            detach: true,
+            ..Default::default()
+        }
+    );
+    assert!(
+        !owners
+            .current_policy()
+            .unwrap()
+            .verifier()
+            .policy()
+            .remote_access
+    );
+    assert!(approve_migration_owner(
+        &fixture.destination,
+        &reserved.operation,
+        OwnerStorage::HeadlessProtectedFile,
+        key,
+        "wrong"
+    )
+    .is_err());
+    owners.revoke(approved.revision, key).unwrap();
+    assert!(owners.migration_policy(&reserved.operation, false).is_err());
+    assert!(approve_migration_owner(
+        &fixture.destination,
+        &reserved.operation,
+        OwnerStorage::HeadlessProtectedFile,
+        key,
+        &fingerprint
+    )
+    .is_err());
+    assert_eq!(
+        fixture.destination.snapshot().unwrap().phase,
+        HostPhase::Disabled
+    );
+}
+
+#[cfg(feature = "owner-enrollment")]
+#[test]
+fn owned_migration_unsupported_helper_defers_without_binding_checkpoint_or_source_mutation() {
+    use crate::enrollment::OwnerStorage;
+    let fixture = Fixture::new(true);
+    let reserved = fixture.reserve();
+    let owners = fixture
+        .destination
+        .owner_enrollment_with_storage(OwnerStorage::HeadlessProtectedFile)
+        .unwrap();
+    owners
+        .initialize_for_migration(&reserved.operation, "42".into())
+        .unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[9; 32])
+        .verifying_key()
+        .to_bytes();
+    let fingerprint = crate::enrollment::owner_key_fingerprint(&key).unwrap();
+    approve_migration_owner(
+        &fixture.destination,
+        &reserved.operation,
+        OwnerStorage::HeadlessProtectedFile,
+        key,
+        &fingerprint,
+    )
+    .unwrap();
+    let original = raw(&fixture.source_directory(), "installation.json").unwrap();
+    let target = fixture.preview().mappings[0].target.clone().unwrap();
+    let runtime = storage::private_directory(&target.runtime_root, false).unwrap();
+    write(
+        &runtime,
+        "registry.json",
+        &json!({"sessions": {
+            target.name.clone(): {"name": target.name, "pid": target.pid,
+                "created_at_unix_ms": target.generation, "socket": target.endpoint,
+                "spawn_fingerprint": format!("v1:{}", "a".repeat(64))}
+        }}),
+    );
+    let error = fixture
+        .inventory
+        .bind_existing(
+            &fixture.destination,
+            &fixture.root.join("host"),
+            OwnerStorage::HeadlessProtectedFile,
+        )
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    assert!(!has_bindings(&fixture.destination).unwrap());
+    assert_eq!(
+        original,
+        raw(&fixture.source_directory(), "installation.json").unwrap()
+    );
+    assert_eq!(
+        fixture.inventory.defer(&fixture.destination).unwrap().phase,
+        Phase::Deferred
+    );
+    assert_eq!(
+        fixture
+            .inventory
+            .rollback(&fixture.destination)
+            .unwrap()
+            .destination_host_id,
+        reserved.destination_host_id
+    );
+}
+
+#[cfg(all(unix, feature = "owner-enrollment"))]
+#[test]
+#[ignore = "explicit current-source binaries and test-owned daemon only; no installed runtime or services"]
+fn owned_migration_native_authenticated_binding_switch_resume_release_preserve_frontend() {
+    native_migration_fixture(true, None, festerm_sessiond::AttachKind::Remote);
+}
+
+#[cfg(all(unix, feature = "owner-enrollment"))]
+#[test]
+#[ignore = "explicit current-source binaries and test-owned daemon only; no installed runtime or services"]
+fn owned_migration_native_authenticated_binding_preserves_local_frontend() {
+    native_migration_fixture(true, None, festerm_sessiond::AttachKind::Local);
+}
+
+#[cfg(all(unix, feature = "owner-enrollment"))]
+#[test]
+#[ignore = "explicit current-source binaries and test-owned daemon only; no installed runtime or services"]
+fn owned_migration_native_prepared_and_active_shell_exit_release_claims_and_unblock_enable() {
+    for active in [false, true] {
+        native_migration_fixture(true, Some(active), festerm_sessiond::AttachKind::Remote);
+    }
+}
+
+#[cfg(unix)]
+fn native_migration_fixture(
+    _binding: bool,
+    _exit_after_switch: Option<bool>,
+    frontend: festerm_sessiond::AttachKind,
+) {
     use std::{
         io::{Read, Write},
         os::unix::net::UnixStream,
@@ -263,6 +462,151 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
         panic!("no response on the original frontend");
     }
 
+    #[cfg(feature = "owner-enrollment")]
+    fn exit_and_rollback(
+        fixture: &Fixture,
+        stream: &mut UnixStream,
+        selected: &festerm_sessiond::UnattachedSession,
+        active: bool,
+    ) {
+        let runtime = &fixture.inventory.legacy_runtime;
+        let journal = binding_status(&fixture.destination).unwrap();
+        let binding = journal.bindings.values().next().unwrap();
+        assert_eq!(journal.switched.len(), usize::from(active));
+        let runtime_directory = storage::private_directory(runtime, false).unwrap();
+        let key = format!(
+            "native-binding-{}-{}.key",
+            selected.pid, selected.created_at_unix_ms
+        );
+        assert!(runtime.join(&key).exists());
+        input(stream, b"MIGRATION-EXIT\n");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if !festerm_sessiond::daemon_generation_is_live(
+                runtime,
+                selected.pid,
+                selected.created_at_unix_ms,
+                &selected.endpoint,
+            )
+            .unwrap()
+                && festerm_sessiond::list_running_sessions_strict_in(runtime)
+                    .unwrap()
+                    .is_empty()
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "ordinary shell exit did not finish"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !runtime.join(&key).exists(),
+            "ordinary exit retained generation secret"
+        );
+        assert!(!runtime
+            .join(format!(
+                "lease-{}-{}",
+                selected.pid, selected.created_at_unix_ms
+            ))
+            .exists());
+        assert!(!Path::new(&selected.endpoint).exists());
+        let host_lock = format!("host-daemon-{}.lock", selected.created_at_unix_ms);
+        let lock =
+            storage::open_private_file(&runtime_directory, Path::new(&host_lock), false).unwrap();
+        fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+        assert!(fixture
+            .inventory
+            .release_bindings(&fixture.destination, &fixture.root.join("host"))
+            .is_err());
+        assert_eq!(
+            status(&fixture.destination).unwrap().phase,
+            Phase::RollbackPending
+        );
+        assert!(binding_status(&fixture.destination)
+            .unwrap()
+            .released
+            .is_empty());
+        assert!(fixture.inventory.rollback(&fixture.destination).is_err());
+        drop(lock);
+
+        let registry =
+            storage::read_private(&runtime_directory, Path::new("registry.json"), LIMIT).unwrap();
+        storage::replace_private(&runtime_directory, Path::new("registry.json"), b"broken")
+            .unwrap();
+        assert!(fixture
+            .inventory
+            .release_bindings(&fixture.destination, &fixture.root.join("host"))
+            .is_err());
+        assert!(binding_status(&fixture.destination)
+            .unwrap()
+            .released
+            .is_empty());
+        assert!(
+            !read::<Claim>(&fixture.source_directory(), CLAIM, LIMIT)
+                .unwrap()
+                .released
+        );
+        storage::replace_private(&runtime_directory, Path::new("registry.json"), &registry)
+            .unwrap();
+
+        if active {
+            std::fs::remove_file(runtime.join(&host_lock)).unwrap();
+            std::fs::remove_file(
+                runtime.join(format!("host-daemon-{}.json", selected.created_at_unix_ms)),
+            )
+            .unwrap();
+        }
+        let released = fixture
+            .inventory
+            .release_bindings(&fixture.destination, &fixture.root.join("host"))
+            .unwrap();
+        assert_eq!(released.released.len(), 1);
+        assert_eq!(
+            fixture
+                .inventory
+                .release_bindings(&fixture.destination, &fixture.root.join("host"))
+                .unwrap(),
+            released
+        );
+        assert_eq!(
+            fixture
+                .inventory
+                .rollback(&fixture.destination)
+                .unwrap()
+                .phase,
+            Phase::RolledBack
+        );
+        assert!(
+            read::<Claim>(&fixture.source_directory(), CLAIM, LIMIT)
+                .unwrap()
+                .released
+        );
+        fixture.destination.with_locked(admit_enable).unwrap();
+        assert!(fixture
+            .inventory
+            .bind_existing(
+                &fixture.destination,
+                &fixture.root.join("host"),
+                crate::enrollment::OwnerStorage::HeadlessProtectedFile
+            )
+            .is_err());
+        assert!(
+            festerm_sessiond::host_control::SessionControl::existing_only(
+                &fixture.root.join("host/daemon")
+            )
+            .unwrap()
+            .switch_binding(binding, |_| Ok(()))
+            .is_err()
+        );
+        assert!(festerm_sessiond::list_running_sessions_strict_in(runtime)
+            .unwrap()
+            .is_empty());
+        println!("ordinary native shell exit: phase={} pid={} generation={}; exact key/lease/socket removed; Busy/corrupt proof pending; authoritative absence releases claims/unblocks enable; no rebind/duplicate shell",
+            if active { "active" } else { "prepared" }, selected.pid, selected.created_at_unix_ms);
+    }
+
     struct NativeCleanup {
         helper: PathBuf,
         runtime: PathBuf,
@@ -272,6 +616,20 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
 
     impl Drop for NativeCleanup {
         fn drop(&mut self) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                match festerm_sessiond::list_unattached_sessions_in(&self.runtime) {
+                    Ok(sessions) if sessions.iter().any(|session| session == &self.selected) => {
+                        break
+                    }
+                    Ok(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+                    Ok(_) => return,
+                    Err(error) => {
+                        eprintln!("owned native fixture cleanup observation failed: {error}");
+                        return;
+                    }
+                }
+            }
             let mut command = Command::new(&self.helper);
             command
                 .env("FESTERM_SESSIOND_RUNTIME_ROOT", &self.runtime)
@@ -306,6 +664,11 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
     let mut fixture = Fixture::new(false);
     fixture.retain = true;
     fixture.inventory.native_evidence = None;
+    fixture.inventory.legacy_runtime = fixture.root.join("sessiond");
+    storage::private_directory(&fixture.inventory.legacy_runtime, true).unwrap();
+    fixture.change("installation.json", |record| {
+        record["runtime_root"] = json!(fixture.inventory.legacy_runtime);
+    });
     let runtime = &fixture.inventory.legacy_runtime;
     let installation = fixture.selection.source.installation();
     let name = format!(
@@ -331,7 +694,7 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
             "--arg",
             "-c",
             "--arg",
-            "while IFS= read -r line; do printf 'MIGRATION-INPUT:%s\\n' \"$line\"; done",
+            "while IFS= read -r line; do if [ \"$line\" = 'MIGRATION-EXIT' ]; then exit 0; fi; printf 'MIGRATION-INPUT:%s\\n' \"$line\"; done",
             "--cwd",
         ])
         .arg(&fixture.root)
@@ -368,10 +731,11 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
         .set_write_timeout(Some(Duration::from_secs(5)))
         .unwrap();
     stream
-        .write_all(&festerm_sessiond::encode_admission(
+        .write_all(&festerm_sessiond::encode_admission_for(
             selected.pid,
             selected.created_at_unix_ms,
             false,
+            frontend,
             768 * 1024 * 1024,
         ))
         .unwrap();
@@ -391,7 +755,15 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
     input(&mut stream, b"before\n");
     marker(&mut stream, b"MIGRATION-INPUT:before");
     let before = festerm_sessiond::list_running_sessions_strict_in(runtime).unwrap();
-    assert!(before[0].attached_by.is_some());
+    assert_eq!(before[0].attached_by, Some(frontend));
+    let runtime_directory = storage::private_directory(runtime, false).unwrap();
+    let capability_name = format!(
+        "native-binding-{}-{}.key",
+        selected.pid, selected.created_at_unix_ms
+    );
+    let capability_digest = Sha256::digest(
+        &*storage::read_private(&runtime_directory, Path::new(&capability_name), 4096).unwrap(),
+    );
     let source_bytes = raw(&fixture.source_directory(), "installation.json").unwrap();
     write(
         &log_directory,
@@ -419,7 +791,8 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
         let output = process.args(extra).output().unwrap();
         assert!(
             output.status.success(),
-            "CLI {command}: {}",
+            "CLI {command}, fixture {}: {}",
+            fixture.root.display(),
             String::from_utf8_lossy(&output.stderr)
         );
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
@@ -427,7 +800,11 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
     let cli_inventory = cli("migration-inventory", &[]);
     assert_eq!(
         cli_inventory[0]["availability"],
-        "authenticated-binding-unavailable"
+        if cfg!(feature = "owner-enrollment") {
+            "authenticated-binding-available"
+        } else {
+            "authenticated-binding-unavailable"
+        }
     );
     let preview = fixture.preview();
     assert_eq!(
@@ -436,7 +813,11 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
     );
     assert_eq!(
         preview.mappings[0].availability,
-        Availability::AuthenticatedBindingUnavailable
+        if cfg!(feature = "owner-enrollment") {
+            Availability::AuthenticatedBindingAvailable
+        } else {
+            Availability::AuthenticatedBindingUnavailable
+        }
     );
     let reserved = fixture.reserve();
     let cli_reserved = cli(
@@ -461,6 +842,193 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
         source_bytes,
         raw(&fixture.source_directory(), "installation.json").unwrap()
     );
+    #[cfg(feature = "owner-enrollment")]
+    if _binding {
+        use festerm_sessiond::{
+            host_control::SessionControl,
+            native_binding::{self, BindingPhase},
+        };
+        let storage = ["--owner-storage", "headless-protected-file"];
+        cli(
+            "migration-owner-init",
+            &[
+                "--operation",
+                &reserved.operation,
+                "--account-id",
+                "42",
+                storage[0],
+                storage[1],
+                "--consent",
+                "initialize-owner",
+            ],
+        );
+        let owners = fixture
+            .destination
+            .owner_enrollment_with_storage(crate::enrollment::OwnerStorage::HeadlessProtectedFile)
+            .unwrap();
+        let initialized = owners.snapshot().unwrap();
+        assert!(initialized.keys.is_empty());
+        assert!(!initialized.remote_access);
+        assert_eq!(
+            initialized.capabilities,
+            festerm_host_protocol::Capabilities::default()
+        );
+        let key = [9u8; 32];
+        let public = ed25519_dalek::SigningKey::from_bytes(&key)
+            .verifying_key()
+            .to_bytes();
+        let hex = public
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let fingerprint = crate::enrollment::owner_key_fingerprint(&public).unwrap();
+        cli(
+            "migration-owner-approve",
+            &[
+                "--operation",
+                &reserved.operation,
+                "--public-key",
+                &hex,
+                "--fingerprint",
+                &fingerprint,
+                storage[0],
+                storage[1],
+                "--consent",
+                "approve",
+            ],
+        );
+        cli(
+            "migration-bind",
+            &[storage[0], storage[1], "--consent", "bind"],
+        );
+        let prepared = binding_status(&fixture.destination).unwrap();
+        assert_eq!(prepared.bound.len(), 1);
+        assert!(prepared.switched.is_empty());
+        assert!(!prepared.switch_requested);
+        let binding = prepared.bindings.values().next().unwrap();
+        assert_eq!(binding.identity.pid, selected.pid);
+        assert_eq!(
+            binding.identity.created_at_unix_ms,
+            selected.created_at_unix_ms
+        );
+        assert_eq!(&binding.runtime_root, runtime);
+        assert_eq!(
+            native_binding::probe(runtime, &binding.identity, &binding.spawn_fingerprint)
+                .unwrap()
+                .unwrap()
+                .phase,
+            BindingPhase::Prepared
+        );
+        input(&mut stream, b"after-binding\n");
+        marker(&mut stream, b"MIGRATION-INPUT:after-binding");
+        if _exit_after_switch == Some(false) {
+            exit_and_rollback(&fixture, &mut stream, &selected, false);
+            fixture.retain = false;
+            return;
+        }
+        let control_directory =
+            storage::private_directory(&fixture.root.join("host/daemon"), false).unwrap();
+        let mut interrupted: serde_json::Value =
+            serde_json::from_str(&raw(&control_directory, "host-sessions.json").unwrap()).unwrap();
+        interrupted["sessions"][binding.logical.as_str()]["binding"]["acknowledged"] = json!(false);
+        write(&control_directory, "host-sessions.json", &interrupted);
+        let mut interrupted = prepared.clone();
+        interrupted.bound.clear();
+        write(
+            &storage::private_directory(&fixture.root.join("host"), false).unwrap(),
+            "host-migration-bindings.json",
+            &interrupted,
+        );
+        cli("migration-resume", &storage);
+        assert_eq!(binding_status(&fixture.destination).unwrap(), prepared);
+        input(&mut stream, b"after-lost-checkpoint-resume\n");
+        marker(&mut stream, b"MIGRATION-INPUT:after-lost-checkpoint-resume");
+        cli("migration-defer", &[]);
+        assert_eq!(status(&fixture.destination).unwrap().phase, Phase::Deferred);
+        cli("migration-resume", &storage);
+        assert!(binding_status(&fixture.destination)
+            .unwrap()
+            .switched
+            .is_empty());
+        let sessions = SessionControl::existing_only(&fixture.root.join("host/daemon")).unwrap();
+        let mut foreign = binding.clone();
+        foreign.namespace = festerm_host_protocol::OperationId::new();
+        assert!(sessions.switch_binding(&foreign, |_| Ok(())).is_err());
+        foreign = binding.clone();
+        foreign.principal = festerm_host_protocol::PrincipalId::new();
+        assert!(sessions.switch_binding(&foreign, |_| Ok(())).is_err());
+        let mut stale = binding.identity.clone();
+        stale.created_at_unix_ms += 1;
+        assert!(native_binding::probe(runtime, &stale, &binding.spawn_fingerprint).is_err());
+        let lease_lock = festerm_sessiond::private_storage::open_private_file(
+            &festerm_sessiond::private_storage::private_directory(runtime, false).unwrap(),
+            Path::new(&format!("host-daemon-{}.lock", selected.created_at_unix_ms)),
+            false,
+        )
+        .unwrap();
+        fs2::FileExt::try_lock_exclusive(&lease_lock).unwrap();
+        assert!(fixture
+            .inventory
+            .switch_existing(
+                &fixture.destination,
+                &fixture.root.join("host"),
+                crate::enrollment::OwnerStorage::HeadlessProtectedFile
+            )
+            .is_err());
+        drop(lease_lock);
+        input(&mut stream, b"after-uncertain\n");
+        marker(&mut stream, b"MIGRATION-INPUT:after-uncertain");
+        cli(
+            "migration-switch",
+            &[storage[0], storage[1], "--consent", "switch"],
+        );
+        let switched = binding_status(&fixture.destination).unwrap();
+        assert_eq!(switched.switched.len(), 1);
+        assert!(switched.switch_requested);
+        assert_eq!(
+            native_binding::probe(runtime, &binding.identity, &binding.spawn_fingerprint)
+                .unwrap()
+                .unwrap()
+                .phase,
+            BindingPhase::Active
+        );
+        assert_eq!(status(&fixture.destination).unwrap().phase, Phase::Switched);
+        let inventory = sessions
+            .inventory(&binding.principal, |_| {
+                owners
+                    .migration_policy(&reserved.operation, false)
+                    .map_err(|_| festerm_sessiond::host_control::ControlError::Denied)
+            })
+            .unwrap();
+        assert_eq!(inventory.sessions.len(), 1);
+        assert!(inventory.unknown.is_empty());
+        assert_eq!(inventory.sessions[0].grant.logical, binding.logical);
+        assert!(
+            !owners
+                .current_policy()
+                .unwrap()
+                .verifier()
+                .policy()
+                .remote_access
+        );
+        cli("migration-resume", &storage);
+        assert_eq!(binding_status(&fixture.destination).unwrap(), switched);
+        input(&mut stream, b"after-switch-resume\n");
+        marker(&mut stream, b"MIGRATION-INPUT:after-switch-resume");
+        assert_eq!(
+            before,
+            festerm_sessiond::list_running_sessions_strict_in(runtime).unwrap()
+        );
+        assert_eq!(
+            status(&fixture.destination).unwrap().destination_host_id,
+            reserved.destination_host_id
+        );
+        if _exit_after_switch == Some(true) {
+            exit_and_rollback(&fixture, &mut stream, &selected, true);
+            fixture.retain = false;
+            return;
+        }
+    }
     fixture.change("installation.json", |record| {
         record["target"]["generation"] = json!(selected.created_at_unix_ms + 1);
         record["target"]["endpoint"] = json!(runtime.join(format!(
@@ -470,6 +1038,54 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
         )));
     });
     assert!(fixture.inventory.resume(&fixture.destination).is_err());
+    #[cfg(feature = "owner-enrollment")]
+    if _binding {
+        use festerm_sessiond::{
+            host_control::SessionControl,
+            native_binding::{self, BindingPhase},
+        };
+        let journal = binding_status(&fixture.destination).unwrap();
+        let binding = journal.bindings.values().next().unwrap();
+        let sessions = SessionControl::existing_only(&fixture.root.join("host/daemon")).unwrap();
+        assert!(sessions.inventory(&binding.principal, |_| Ok(())).is_err());
+        assert_eq!(
+            native_binding::probe(runtime, &binding.identity, &binding.spawn_fingerprint)
+                .unwrap()
+                .unwrap()
+                .phase,
+            BindingPhase::Revoked
+        );
+        assert!(sessions.switch_binding(binding, |_| Ok(())).is_err());
+        input(&mut stream, b"after-revocation\n");
+        marker(&mut stream, b"MIGRATION-INPUT:after-revocation");
+        fixture
+            .inventory
+            .release_bindings(&fixture.destination, &fixture.root.join("host"))
+            .unwrap();
+        input(&mut stream, b"after-release\n");
+        marker(&mut stream, b"MIGRATION-INPUT:after-release");
+        assert!(
+            runtime
+                .join(format!(
+                    "native-binding-{}-{}.key",
+                    selected.pid, selected.created_at_unix_ms
+                ))
+                .exists(),
+            "live release removed the server capability"
+        );
+        let mut interrupted = binding_status(&fixture.destination).unwrap();
+        interrupted.released.clear();
+        write(
+            &storage::private_directory(&fixture.root.join("host"), false).unwrap(),
+            "host-migration-bindings.json",
+            &interrupted,
+        );
+        cli("migration-resume", &[]);
+        assert_eq!(
+            status(&fixture.destination).unwrap().phase,
+            Phase::RolledBack
+        );
+    }
     assert_eq!(
         cli("migration-rollback", &["--consent", "rollback"])["phase"],
         "rolled-back"
@@ -478,6 +1094,13 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
     assert_eq!(rollback.destination_host_id, reserved.destination_host_id);
     input(&mut stream, b"after-rollback\n");
     marker(&mut stream, b"MIGRATION-INPUT:after-rollback");
+    assert_eq!(
+        capability_digest,
+        Sha256::digest(
+            &*storage::read_private(&runtime_directory, Path::new(&capability_name), 4096).unwrap(),
+        ),
+        "binding/switch/resume/revocation/release/rollback changed the live capability",
+    );
     assert_eq!(
         before,
         festerm_sessiond::list_running_sessions_strict_in(runtime).unwrap()
@@ -492,9 +1115,34 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
             selected.pid, selected.created_at_unix_ms
         ))
         .exists());
-    assert!(!fixture.root.join("host").join("daemon").exists());
+    if !_binding {
+        assert!(!fixture.root.join("host").join("daemon").exists());
+    }
+    #[cfg(feature = "owner-enrollment")]
+    if _binding {
+        use festerm_sessiond::native_binding::{self, BindingPhase};
+        let released = binding_status(&fixture.destination).unwrap();
+        assert_eq!(released.released.len(), 1);
+        let binding = released.bindings.values().next().unwrap();
+        assert_eq!(
+            native_binding::probe(runtime, &binding.identity, &binding.spawn_fingerprint)
+                .unwrap()
+                .unwrap()
+                .phase,
+            BindingPhase::Released
+        );
+        assert!(fixture
+            .inventory
+            .bind_existing(
+                &fixture.destination,
+                &fixture.root.join("host"),
+                crate::enrollment::OwnerStorage::HeadlessProtectedFile
+            )
+            .is_err());
+        println!("authenticated current-source native binding: pid={} generation={} frontend={:?} namespace={}; prepared/switch/resume/revoked/released; retained runtime={}; live capability unchanged; no stop/restart/frontend acquisition", selected.pid, selected.created_at_unix_ms, before[0].attached_by, binding.namespace.as_str(), runtime.display());
+    }
     println!(
-            "current-source native fixture: helper={} host={} pid={} generation={} frontend={:?}; reservation={} retained-host={:?}; binding=UNSUPPORTED, no migration-switch acceptance",
+            "current-source native fixture: helper={} host={} pid={} generation={} frontend={:?}; reservation={} retained-host={:?}; reservation-only fixture does not establish remote endpoint readiness",
             helper.display(), host.display(), selected.pid, selected.created_at_unix_ms,
             before[0].attached_by, reserved.operation, reserved.destination_host_id,
         );
@@ -538,6 +1186,12 @@ fn owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existin
         assert!(Instant::now() < deadline);
         thread::sleep(Duration::from_millis(20));
     }
+    assert!(!runtime
+        .join(format!(
+            "native-binding-{}-{}.key",
+            selected.pid, selected.created_at_unix_ms
+        ))
+        .exists());
     fixture.retain = false;
 }
 

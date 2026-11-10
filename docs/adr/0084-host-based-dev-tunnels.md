@@ -302,6 +302,50 @@ would require separate default-No exact-generation consent. Protected host-local
 consent, not portable TOML, authorizes exposure; startup/update cannot reconstruct
 revoked grants. Existing legacy behavior remains separate until explicit migration.
 
+An ordinary **private** persistent local generation joins the **current**
+Provisioned Desktop host through `private_session_sharing`, not §11's legacy
+installation inventory or fresh Disabled destination. Its explicit
+`private-session-v1` source discriminator excludes legacy ownership/claim fields;
+never fabricate those files or treat a profile, name, same-user process, or
+`NativeSessionIdentity` alone as source authority. The opaque connected-local
+target retains the actual admitted runtime root together with its generation;
+remote/unknown transports cannot manufacture that provenance.
+
+Admission additionally verifies protected recorded launch evidence, the live
+generation's PID/start/lifetime lease and capability, and an authenticated
+private-generation probe. Capability version 2 advertises that probe; version 1
+helpers remain usable for legacy binding but are explicitly unsupported here,
+without restart or frontend acquisition. A separate `native-private-source-v1`
+MAC domain binds the entire original operation/target/namespace/host/account/
+principal/epoch context. Managed or previously bound generations cannot silently
+be adopted as new private sources.
+
+Fresh NativeVault/Desktop authority, full current installation snapshot,
+canonical `github:<numeric>` account, owner revision and already-approved narrow
+inventory/attach/detach permission fence effects and publication. Recheck the
+current state directory identity as well as policy; retain short protected leases
+only across local durable admission, never native waits. Opening the adapter is
+read-only; namespace initialization occurs lazily under reviewed bind consent and
+the current-selection/cancellation fence. Neither setup nor owner approval is
+performed as a fallback.
+
+Bind reserves/prepares privately; Switch is a separate explicit action.
+Original-operation lookup reports protected journal phase, **not** native
+readiness/admission; incomplete Prepared work resumes through the same original
+Bind, never an implicit Switch or replacement operation. Exact release/rollback
+revalidates protected ownership and permits newer revocation solely for reduction.
+Unknown/partial outcomes retain that operation for recovery. Reduction preserves
+the original local frontend, PTY, PID, generation and persistent lifetime and
+cannot resurrect revoked exposure. No new journal, endpoint or creation grant
+is introduced.
+
+Private source liveness is rechecked point-in-time, not protected by the legacy
+shared installer/consent exclusion lock. Unknown/Busy source observations in
+inventory retain only authorized per-target Unknown metadata alongside healthy
+entries; fresh owner/account/namespace/permission and publication denials remain
+hard refusals. Unknown is never absence, attach permission or automatic source
+revocation.
+
 Offer accurately labeled startup choices: manual, at user sign-in, and after
 reboot before interactive login only on qualified platforms/configurations.
 The owner explicitly approved Linux graphical and interactive TTY/SSH eligibility
@@ -859,6 +903,17 @@ native passes. Portable checks and Linux compilation are not native execution.
 The read-only [operator contract](../native-host-services.md#read-only-linux-logind-smoke-opt-in-native-execution-pending)
 does not qualify activation, transport/last-logout or daemon/cgroup survival;
 those HOSTSETUP-01 gates remain pending. No production behavior changes.
+`HOST-03` additionally covers the distinct private-generation/current-Desktop
+adapter: deterministic source-domain/compatibility, connected-root provenance and
+NativeVault-fixture admission tests, plus the opt-in ordinary-private Local
+preservation fixture. `HOST-04` retains separate setup/owner consent gates and
+`HOST-06` retains unchanged legacy migration authority. The real-daemon fixture
+uses an in-memory NativeVault implementation, **not** actual native-vault,
+installed service, GUI, remote endpoint or provider acceptance. Required native
+CI contention failures remain independently unresolved; this adapter is not
+their fix.
+`HOST-01` additionally covers the deterministic mixed healthy/private-uncertain
+inventory regression and per-record/publication denial checks.
 
 The owned-installation increment adds executable headless protected inventory,
 exact preview mapping, destination identity/source-claim reservation, interrupted
@@ -870,12 +925,43 @@ refuse; rollback releases only exact operation claims and cannot revive exposure
 No live stop operation is added; separate default-No exact-generation consent
 remains mandatory for any future stop. The
 [migration contract and source limits](../owned-installation-migration.md)
-identify the actual missing authenticated daemon bind/retained-root routing API.
-Ordinary legacy daemons are explicitly unsupported, not silently restarted or
-reported bound. Native fixture preservation is current-source local evidence,
-not supported binding, an exposure switch, old-release or signed cross-platform
-migration acceptance. `HOSTMIG-01` remains deferred until that API, fresh protected
-owner/issuer admission, real binding/switch/rollback and native acceptance exist.
+document the authenticated current-daemon binding/retained-root routing API.
+Separate zero-grant owner initialization and explicit fingerprint approval precede
+private binding and an explicitly journaled switch. Fresh anchored owner/source/
+claim/account/principal/namespace/issuer admission surrounds durable publication,
+never native IPC. Per-frame source fencing, one-way native revocation/release and
+same-operation recovery preserve original issued evidence without recreate/end
+authority. The Disabled master gate stays off until ordinary separately consented
+setup. Older helpers without startup capability remain explicitly deferred.
+The controlled live fixture exercises actual bind/defer/switch/resume/revocation/
+release/rollback and original PTY I/O with unchanged PID/generation/frontend.
+The same actual-binding fixture additionally selects an original Local frontend,
+not the reservation-only Local case: current namespace admission, switch,
+resume, source revocation, release and rollback preserve its original PTY and
+generation-local capability bytes. Prepared/Active ordinary-exit absence cases
+remain separate from this live-frontend preservation proof.
+This is not old-release, signed installed-platform, provider, vault or GUI
+acceptance; those `HOSTMIG-01` gates remain open.
+
+The generation-capability lifecycle correction separates exclusive creation
+ownership from non-owning client readers. Normal/failed-start cleanup removes
+only the retained key identity; exact dead-generation recovery refuses
+live/foreign/corrupt/untrusted artifacts and leaves observable retry evidence
+on uncertainty. Released native receipt tombstones are retained. The ordinary
+shell-exit regression covers both prepared and active bindings: only existing
+authoritative exact-generation absence permits protected local release without
+a daemon acknowledgement, including an already-missing HOST lease. Busy and
+corrupt observations remain pending; claim release/rollback unblocks enable
+without rebinding or spawning. These focused fixtures do not close installed
+platform or old-release acceptance.
+The cleanup serialization correction exercises the actual generation-exit
+caller, with an already-acquired typed lifetime-lease guard and a concurrent
+registry pruner. Key cleanup cannot recursively acquire that lease; artifact
+cleanup and exact record removal/retry retention share the registry transaction,
+after releasing the live lease. Failed-start termination/wait stays outside the
+transaction. Foreign/replacement and uncertain artifacts remain protected.
+These deterministic caller-path checks and the selected current-source
+Prepared/Active exit fixture do not claim native Windows `LockFileEx` execution.
 
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation

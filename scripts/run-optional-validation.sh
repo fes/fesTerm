@@ -33,6 +33,19 @@ if { [ "$(uname -s)" = Linux ] || [ "$(uname -s)" = Darwin ]; } &&
 else
     printf 'suite=host-update-owned-daemon status=skipped reason=unix-and-explicit-owned-helper-required\n' >>"$result_path"
 fi
+if { [ "$(uname -s)" = Darwin ] || [ "$(uname -s)" = Linux ]; } &&
+    [ -n "${FESTERM_PRIVATE_SHARING_HELPER:-}" ]; then
+    if cargo test --locked -p festerm-host-setup --features owner-enrollment --lib \
+        private_session_sharing::tests::private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_preserves_frontend \
+        -- --exact --ignored --test-threads=1; then
+        printf 'suite=private-session-sharing-native status=pass\n' >>"$result_path"
+    else
+        printf 'suite=private-session-sharing-native status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=private-session-sharing-native status=skipped reason=unix-and-explicit-current-source-helper-required\n' >>"$result_path"
+fi
 printf 'suite=six-session-aging status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"
@@ -151,9 +164,9 @@ fi
 if [ "${FESTERM_RUN_OWNED_MIGRATION_NATIVE:-}" = 1 ]; then
     if [ -n "${FESTERM_ADR84_MIGRATION_HELPER:-}" ] &&
         [ -n "${FESTERM_ADR84_MIGRATION_HOST:-}" ] &&
-        cargo test --locked -p festerm-host-setup --features lifecycle --lib \
-            owned_migration::tests::owned_migration_native_reservation_deferral_rollback_preserve_pid_and_existing_frontend \
-            -- --ignored --exact --nocapture --test-threads=1; then
+        cargo test --locked -p festerm-host-setup --features owner-enrollment --lib \
+            owned_migration::tests::owned_migration_native_ \
+            -- --ignored --nocapture --test-threads=1; then
         printf 'suite=owned-migration-native status=pass\n' >>"$result_path"
     else
         printf 'suite=owned-migration-native status=fail\n' >>"$result_path"

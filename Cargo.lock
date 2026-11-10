@@ -2947,6 +2947,7 @@ dependencies = [
  "festerm-windows-runtime",
  "festerm-windows-security",
  "fs2",
+ "hmac 0.12.1",
  "nix 0.31.3",
  "portable-pty",
  "rpassword",

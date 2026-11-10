@@ -204,6 +204,11 @@ pages alongside the healthy session page. `capture_with_unknowns` filters both
 sets by protected owner/sharing/revocation before publication. One uncertain
 record cannot hide healthy peers, and a partial/omitted inventory never proves
 absence; exact Lookup/Ensure must still reconcile protected native evidence.
+In protected native inventory, a private-source fence's Unknown/Busy becomes
+only that entry's Unknown metadata, without its label/summary. Fresh per-record
+owner policy and aggregate publication admission still run; their errors,
+including Unknown/Busy, remain hard refusals. Foreign/revoked records stay
+filtered. This never grants attachment, declares absence or revokes the source.
 
 The unreleased HOST envelope additionally carries `issuance_epoch` on
 Ensure/Create requests, which require it. All other requests must omit it;
@@ -1048,19 +1053,55 @@ strict `client,owner-auth` lib clippy step disables default features to preserve
 the portable client-only boundary. This is
 portable regression coverage, not native enrollment/channel/service acceptance.
 
-There is no legacy daemon binding or exposure switch: existing profiles/protocol/
-host-key/vault/grants remain unchanged. The separate
-[owned-installation reservation](owned-installation-migration.md) implements
-protected explicit inventory/preview, destination identity/source claims,
-resume/defer and local rollback, not a fabricated live-binding receipt.
-No legacy import acquires an owner enrollment,
-creation permission or HOST marker. Codec refusal is not migration acceptance.
+Ordinary private local sharing uses the distinct
+[`private_session_sharing` boundary](adr/0084-host-based-dev-tunnels.md#7-desktop-host-setup-and-sharing)
+into an already-Provisioned NativeVault/Desktop host. Binding descriptors
+explicitly discriminate `private-session-v1` from legacy installation authority;
+legacy wire descriptors omit the default discriminator unchanged. Version-2
+generation capabilities advertise authenticated `ProbePrivate`; version-1
+helpers are explicitly unsupported for this source kind, without affecting
+legacy use. The separate `native-private-source-v1` MAC binds the whole exact
+operation/host/account/principal/namespace/epoch/generation descriptor.
+Connected-local root metadata alone never authorizes sharing. Existing protected
+records provide private preparation, separate explicit activation and exact
+irreversible reduction; journal lookup is observation, never admission/readiness.
+No owner-key, creation grant, new endpoint, legacy receipt fabrication or frontend
+attachment is introduced.
+
+Ordinary `connect_or_start` resolves its runtime root once and deliberately pins
+`FESTERM_SESSIOND_RUNTIME_ROOT` in the helper's inherited environment, matching
+the existing detached launch path. Its normal shell children consequently see
+that same namespace, not a second/default-resolved root. No process-global
+environment is mutated and the path is metadata, not sharing authority.
+
+Private source fencing is a point-in-time capability/MAC and live held-lifetime
+observation. Retained directory/lifetime handles do not hold a shared installer
+lock or freeze the process/capability after that observation. Fresh operation
+and frame admission must recheck it. Legacy installation sources instead hold
+their shared installer/consent locks against cooperating writers; these distinct
+exclusion guarantees must not be conflated.
+
+The separate local [owned-migration boundary](owned-installation-migration.md#authenticated-binding-and-retained-root-boundary)
+authenticates explicitly selected capability-enabled current daemons over their
+original native endpoint, without entering frontend admission. Its `FSB1`
+nonce/MAC exchange is local binding control, not a HOST client request or proof
+of owner role. Anchored owner approval is separate from original source metadata;
+bind/switch consume fresh protected owner/account/key/principal/claim/namespace/
+epoch guards and actual native generation proof. Imported persistent records
+route existing inventory, strict attachment and frame authorization to their
+exact retained root; ensure/recreate/end/retirement are denied. Source revocation
+seals remote access without stopping the ordinary shell or replacing its local
+frontend. Release retains an exact one-way receipt before claims rollback.
+The disabled lifecycle remains master-gated until normal separately consented
+setup; older helpers without startup capability defer. Neither source grants nor
+imported metadata mint owner/create authority. Codec refusal and controlled
+current-source binding are not installed migration acceptance.
 Migration must preserve protected state/account binding and offer manual
 deferral. Stopping a live legacy session requires a **separate, default-No**
 confirmation for that exact generation; setup/sharing consent never authorizes
 restart. The existing codec fixture also refuses a purported remote migration/
 restart request carrying setup/sharing assertions. It does not implement or
-qualify the future local confirmation flow. Migration reservation adds no stop
+qualify the future local confirmation flow. Owned migration adds no stop
 operation; its CLI rejects stop/restart/takeover flags.
 
 Independent security review must evaluate enrollment/storage/revocation, domain

@@ -785,6 +785,30 @@ pub fn verify_spawn_fingerprint_in(
     check_evidence(record, expected)
 }
 
+pub(crate) fn private_generation_fingerprint(
+    root: &Path,
+    selected: &NativeSessionIdentity,
+) -> io::Result<String> {
+    let unknown = || io::Error::other("native.private_generation_unknown");
+    let directory = storage::private_directory(root, false)?;
+    let records = registry(&directory).map_err(|_| unknown())?;
+    let record = matching_record(&records, &selected.name)
+        .map_err(|_| unknown())?
+        .ok_or_else(unknown)?;
+    if NativeSessionIdentity::from_record(record) != *selected
+        || !verified_live(root, &directory, record).map_err(|_| unknown())?
+    {
+        return Err(unknown());
+    }
+    let fingerprint = record.spawn_fingerprint.as_deref().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native.private_generation_requires_startup_evidence",
+        )
+    })?;
+    check_evidence(record, fingerprint).map_err(|_| unknown())?;
+    Ok(fingerprint.into())
+}
 /// Authoritative absence only for a previously bound incarnation. Missing
 /// metadata with a held lease remains unknown; PID reuse alone is never live.
 pub(crate) fn host_generation_state(

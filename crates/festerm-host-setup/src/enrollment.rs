@@ -261,6 +261,18 @@ pub struct CurrentOwnerPolicy {
     verifier: OwnerVerifier,
 }
 
+pub(crate) struct MigrationOwnerPolicy {
+    pub(crate) _lease: protected_state::Lease,
+    pub(crate) enrollment: EnrollmentSnapshot,
+    pub(crate) installation: Snapshot,
+}
+
+pub(crate) struct PrivateSessionPolicy {
+    _lease: protected_state::Lease,
+    pub(crate) enrollment: EnrollmentSnapshot,
+    pub(crate) installation: Snapshot,
+}
+
 impl CurrentOwnerPolicy {
     pub fn verifier(&self) -> &OwnerVerifier {
         &self.verifier
@@ -363,6 +375,39 @@ impl Store {
 }
 
 impl OwnerEnrollment<'_> {
+    pub(crate) fn private_session_policy(&self, state: &Path) -> io::Result<PrivateSessionPolicy> {
+        self.installation
+            .with_owned_lease(|directory, installation, lease| {
+                if self.storage != OwnerStorage::NativeVault
+                    || installation.origin != Origin::Desktop
+                {
+                    return Err(refused(
+                        "owner.private_sharing_requires_desktop_native_vault",
+                    ));
+                }
+                let selected = storage::private_directory(state, false)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let actual = directory.metadata()?;
+                    let current = selected.metadata()?;
+                    if (actual.dev(), actual.ino()) != (current.dev(), current.ino()) {
+                        return Err(refused("owner.private_sharing_state_replaced"));
+                    }
+                }
+                #[cfg(windows)]
+                if !festerm_windows_security::same_file_identity(directory, &selected)? {
+                    return Err(refused("owner.private_sharing_state_replaced"));
+                }
+                let (_, enrollment) = self.read(directory, installation)?;
+                Ok(PrivateSessionPolicy {
+                    _lease: lease,
+                    enrollment,
+                    installation: installation.clone(),
+                })
+            })
+    }
+
     fn storage_error(&self, error: festerm_secret_store::SecretStoreError) -> io::Error {
         match self.storage {
             OwnerStorage::NativeVault => vault_error(error),
@@ -399,6 +444,7 @@ impl OwnerEnrollment<'_> {
             identity_file,
             account,
             Some(expected_epoch),
+            None,
             |directory, reference| {
                 protected_state::publish_new(directory, Path::new(ANCHOR), reference)
             },
@@ -411,7 +457,25 @@ impl OwnerEnrollment<'_> {
         account: String,
         publish_reference: impl FnOnce(&File, &[u8]) -> io::Result<()>,
     ) -> io::Result<EnrollmentSnapshot> {
-        self.initialize_fenced_with(identity_file, account, None, publish_reference)
+        self.initialize_fenced_with(identity_file, account, None, None, publish_reference)
+    }
+
+    /// Separate explicit owner initialization for an exact private migration
+    /// reservation. It grants no key, access, provisioning or remote capability.
+    pub fn initialize_for_migration(
+        &self,
+        operation: &str,
+        account: String,
+    ) -> io::Result<EnrollmentSnapshot> {
+        self.initialize_fenced_with(
+            Path::new("host-identity"),
+            account,
+            None,
+            Some(operation),
+            |directory, reference| {
+                protected_state::publish_new(directory, Path::new(ANCHOR), reference)
+            },
+        )
     }
 
     fn initialize_fenced_with(
@@ -419,19 +483,26 @@ impl OwnerEnrollment<'_> {
         identity_file: &Path,
         account: String,
         expected_epoch: Option<u64>,
+        migration: Option<&str>,
         publish_reference: impl FnOnce(&File, &[u8]) -> io::Result<()>,
     ) -> io::Result<EnrollmentSnapshot> {
         self.installation.with_locked(|directory, installation| {
             if expected_epoch.is_some_and(|epoch| installation.epoch != epoch) {
                 return Err(refused("owner.stale_operation"));
             }
-            let provisioned = installation
-                .binding
-                .as_ref()
-                .filter(|binding| {
-                    installation.phase == Phase::Provisioned && binding.account == account
-                })
-                .ok_or_else(|| refused("owner.exact_provisioned_account_consent_required"))?;
+            let provisioned = installation.binding.as_ref().filter(|binding| {
+                installation.phase == Phase::Provisioned && binding.account == account
+            });
+            if let Some(operation) = migration {
+                crate::owned_migration::check_owner_initialization(
+                    directory,
+                    installation,
+                    operation,
+                    &account,
+                )?;
+            } else if provisioned.is_none() {
+                return Err(refused("owner.exact_provisioned_account_consent_required"));
+            }
             for name in [ANCHOR, RECORD] {
                 match storage::open_private_file(directory, Path::new(name), false) {
                     Ok(_) => return Err(refused("owner.already_initialized_or_incomplete")),
@@ -444,10 +515,12 @@ impl OwnerEnrollment<'_> {
                 host: identity.host_id().try_into()?,
                 host_key_fingerprint: identity.fingerprint()?,
             };
-            if provisioned.host_id != host.host.as_str()
-                || provisioned.host_key_fingerprint != host.host_key_fingerprint
-            {
-                return Err(refused("owner.provisioned_host_identity_mismatch"));
+            if let Some(provisioned) = provisioned {
+                if provisioned.host_id != host.host.as_str()
+                    || provisioned.host_key_fingerprint != host.host_key_fingerprint
+                {
+                    return Err(refused("owner.provisioned_host_identity_mismatch"));
+                }
             }
             let record = EnrollmentSnapshot {
                 version: 1,
@@ -861,6 +934,40 @@ impl OwnerEnrollment<'_> {
                 })
             })
     }
+
+    pub(crate) fn migration_policy(
+        &self,
+        operation: &str,
+        reduction: bool,
+    ) -> io::Result<MigrationOwnerPolicy> {
+        self.installation
+            .with_owned_lease(|directory, installation, lease| {
+                let (_, record) = self.read(directory, installation)?;
+                crate::owned_migration::check_migration_owner(
+                    directory,
+                    installation,
+                    operation,
+                    &record.binding.account,
+                    reduction,
+                )?;
+                if !reduction
+                    && (!record.remote_access
+                        || !record.capabilities.inventory
+                        || !record.capabilities.attach
+                        || !record.capabilities.detach
+                        || !record.keys.iter().any(|key| !key.revoked))
+                {
+                    return Err(refused(
+                        "owner.migration_current_explicit_owner_consent_required",
+                    ));
+                }
+                Ok(MigrationOwnerPolicy {
+                    _lease: lease,
+                    enrollment: record,
+                    installation: installation.clone(),
+                })
+            })
+    }
 }
 
 fn revoke_key(record: &mut EnrollmentSnapshot, public_key: [u8; 32]) -> io::Result<()> {
@@ -895,7 +1002,7 @@ fn add_key(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     #[test]
     fn owner_key_fingerprint_compatibility_path_is_the_same_client_safe_function() {
@@ -917,9 +1024,9 @@ mod tests {
         Arc,
     };
 
-    struct Vault {
+    pub(crate) struct Vault {
         memory: MemorySecretStore,
-        locked: AtomicBool,
+        pub(crate) locked: AtomicBool,
     }
     struct SharedVault(Arc<Vault>);
     impl SecretStore for SharedVault {
@@ -970,10 +1077,24 @@ mod tests {
         }
     }
     fn setup() -> (storage::PrivateTestDirectory, Store, Arc<Vault>) {
+        setup_origin(Origin::Headless)
+    }
+
+    pub(crate) fn fixture_owners(installation: &Store, vault: Arc<Vault>) -> OwnerEnrollment<'_> {
+        OwnerEnrollment {
+            installation,
+            vault: Box::new(SharedVault(vault)),
+            storage: OwnerStorage::NativeVault,
+        }
+    }
+
+    pub(crate) fn setup_origin(
+        origin: Origin,
+    ) -> (storage::PrivateTestDirectory, Store, Arc<Vault>) {
         let root = storage::private_test_directory();
         let store = Store::create(
             &root.path().join("installation"),
-            Origin::Headless,
+            origin,
             Settings {
                 friendly_name: "owner fixture".into(),
                 allow_creation: false,
