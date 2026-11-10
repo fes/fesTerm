@@ -1686,3 +1686,10 @@ I/O barrier and an unadopted takeover reservation establish the competing
 attachment's Busy state; its one refusal preserves the entire lease/journal.
 Only subsequent adoption may advance the exact writer epoch once, retaining
 native PID/generation/grant and all stale/no-input-replay assertions.
+The committed-creation publication fixture separately proves original-operation
+replay Busy under the exact generation lease, unchanged complete checkpoints,
+and mandatory same-generation/original-result success after contention using
+the original deadline. Unexpected replies are printed, not accepted. Unix
+fixture roots also bind the maximum PID/HOST-generation socket pathname with
+exclusive private creation; this is not native Windows or installed-service
+acceptance. The distinct Linux `920715a5` CI reply remains unprinted/unknown.

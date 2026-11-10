@@ -3613,10 +3613,34 @@ OutcomeUncertain, with a secondary cleanup Storage diagnostic; macOS also
 returned actual precommit Busy where its fixture assumed durable stop intent.
 Controlled lease/commit/pending-adoption barriers correct the fixture state
 assumptions without accepting arbitrary refusals or changing production policy.
-The corrected macOS source passes all fourteen actual routes, zero failed or
+At immutable `1947c416`, the corrected macOS source passes all fourteen actual
+routes, zero failed or
 ignored, in 166.28 seconds from one aggregate execution; portable controls pass
 16 with nine unchanged native ignores. Two focused native passes are a subset.
 The retirement CI error remains separately unknown, not labeled by these logs.
+The normal core/session/Windows-fixture fan-in initially exposed a separate
+local socket-path boundary: its first aggregate passed two/failed twelve in
+27.36 seconds. A real maximum-PID/HOST-generation socket bind is retained RED
+against the old root and GREEN after shortening only the exclusively created,
+policy-checked Unix fixture child. Production path policy and Windows selection
+are unchanged; the same native helper binary is used on both sides.
+First-run Linux `920715a5`, run `42869778017`, job `130017607117`, separately
+passed 13/failed one native route in 165.00 seconds. Its committed-creation
+Ensure replay assertion did not print its actual response: it remains unknown.
+A controlled held-generation lease independently reproduces typed Busy at that
+assertion. The corrected fixture requires unchanged full journal/lease, then
+same-operation/same-generation/original-Created success within the original
+deadline; other replies fail with their actual typed values. This neither
+identifies that CI error nor qualifies a new Linux run.
+The final bounded core/session/Windows-fixture union passes one complete macOS
+native aggregate: 14 passed/zero failed/zero ignored in 178.74 seconds, using
+the same native helper executable as the first failed local aggregate.
+Selected macOS groups additionally pass six session cases, four storage cases,
+31 Windows-derived/new setup cases, 12 standalone-cloud cases and 16 portable
+bridge cases with nine existing native ignores; the focused replay pass and
+maximum-socket pass are subsets, not extra native/storage cases. Both affected
+strict feature configurations pass. Exact source/commands/names and retained
+first-failure/RED evidence are in `target/adr84-core-fanin-evidence/`.
 Corrected owned Unix route evidence does not establish Windows, native-manager,
 installed service, cloud/vault or whole-ADR acceptance.
 HOST-04–06 setup/update/migration retain partial foundations described below;
@@ -3683,7 +3707,8 @@ exposed native account discovery inside these otherwise pure fixtures, not a
 private-root creation error. Explicit per-adapter test accounts and typed fake
 Windows context now isolate them; any manager request panics. Real Services,
 private state identity, epoch/runtime-lock and foreign-receipt checks remain.
-Fresh macOS-only results are 110 library passes with one existing ignore,
+At immutable `34db0136`, macOS-only results are 110 library passes with one
+existing ignore,
 12 standalone-cloud passes and two strict feature checks; all 26 original
 failing names pass locally. See milestone progress for raw-log SHA and commands.
 This is not fresh Windows execution; Windows primary CI and native ordinary-user

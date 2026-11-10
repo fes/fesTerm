@@ -1049,6 +1049,14 @@ not by repeatedly retrying an intentional occupied-writer refusal. Real old
 writer I/O, unchanged pending/committed authority, exactly one adoption epoch,
 stale generation and no input replay remain mandatory. No production refusal,
 admission or native transport behavior changes in this fixture correction.
+The committed-creation publication fixture additionally holds the real exact
+generation lease during original-operation replay: Busy must preserve the whole
+journal/lease, then the same original operation must publish its original Created
+result within the existing deadline. Other refusals remain typed failures.
+The Unix fixture-root regression binds the maximum HOST generation/PID socket
+identity, with exclusive private creation and unchanged production path policy.
+The distinct Linux `920715a5` assertion did not print its actual response;
+controlled Busy evidence does not retroactively label that CI failure.
 
 The unexposed paired terminal slice adds bounded binary framing, explicit
 frontend adoption/observed native writer admission, immutable client bindings,

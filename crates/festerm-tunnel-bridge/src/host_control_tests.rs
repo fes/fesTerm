@@ -1385,14 +1385,78 @@ pub(crate) mod native_routes {
                 }
             }
         }
-        assert!(matches!(
-            first
-                .request_issued(&operation, Request::Ensure { creation }, &cancel)
+        let journal = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
+        let generation: GenerationId = serde_json::from_value(
+            journal["sessions"][creation.logical.as_str()]["generation"].clone(),
+        )
+        .unwrap();
+        let directory = private_storage::private_directory(&fixture.root, false).unwrap();
+        let held_lease = private_storage::open_private_file(
+            &directory,
+            std::path::Path::new(&format!("host-daemon-{}.lock", generation.get())),
+            false,
+        )
+        .unwrap();
+        fs2::FileExt::lock_exclusive(&held_lease).unwrap();
+        let lease_name = format!("host-daemon-{}.json", generation.get());
+        let lease = fixture.checkpoint(&lease_name, 16 * 1024);
+        assert_eq!(journal["sessions"].as_object().unwrap().len(), 1);
+        assert_eq!(journal["operations"].as_object().unwrap().len(), 1);
+        let body = Request::Ensure {
+            creation: creation.clone(),
+        };
+        let response = first
+            .request_issued(&operation, body.clone(), &cancel)
+            .await
+            .unwrap();
+        assert_eq!(
+            response.body,
+            Response::Refused {
+                reason: Refusal::Busy
+            },
+            "{response:?}"
+        );
+        assert_eq!(
+            fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
+            journal
+        );
+        assert_eq!(fixture.checkpoint(&lease_name, 16 * 1024), lease);
+        drop(held_lease);
+        loop {
+            let response = first
+                .request_issued(&operation, body.clone(), &cancel)
                 .await
-                .unwrap()
-                .body,
-            Response::Ensured { .. }
-        ));
+                .unwrap();
+            assert!(Instant::now() < deadline, "{response:?}");
+            match &response.body {
+                Response::Ensured {
+                    session,
+                    disposition,
+                    ..
+                } => {
+                    assert_eq!(session.target.logical, creation.logical);
+                    assert_eq!(session.target.generation, generation);
+                    assert_eq!(*disposition, EnsureDisposition::Created);
+                    break;
+                }
+                Response::Refused {
+                    reason: Refusal::Busy,
+                } => {
+                    assert_eq!(
+                        fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
+                        journal,
+                        "{response:?}"
+                    );
+                    tokio::task::yield_now().await;
+                }
+                _ => panic!("committed original-operation replay: {response:?}"),
+            }
+        }
+        assert_eq!(
+            fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
+            journal
+        );
+        assert_eq!(fixture.checkpoint(&lease_name, 16 * 1024), lease);
         assert_eq!(
             festerm_sessiond::list_running_sessions_in(&fixture.root)
                 .unwrap()

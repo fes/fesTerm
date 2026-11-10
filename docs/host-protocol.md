@@ -374,6 +374,13 @@ at physical delivery and retire revoked connections/attachments.
   journaled, resent or replayed. A temporary unadopted result also supplies opaque
   `initial_lease_authority`: `cancel_initial_lease` can stop only that original
   creation before any pending/adopted transfer, never authorize terminal access.
+- Replaying an already committed Ensure still reconciles its exact native lease
+  under nonblocking locks. A held generation lease can therefore return Busy
+  before publishing the stored result, without changing its journal, lease or
+  issued ledger. Retain the original issued operation and immutable creation
+  intent across that contention; do not submit another spawn or infer absence.
+  Success must retain the exact generation and original creation disposition.
+  Busy is not success, and another refusal is not an interchangeable retry hint.
 - Reconciliation with no exact launch journal cannot write a fresh reservation
   or execute a helper, even when an active persistent daemon lease exists.
   Revoked records do no native reconciliation. Transient native observation
