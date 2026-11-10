@@ -56,7 +56,7 @@ def require_opt_in():
 
 def fresh_directory(relative):
     relative = Path(relative)
-    if relative.is_absolute() or relative.drive or not relative.parts or any(
+    if relative.anchor or not relative.parts or any(
         part in (".", "..") for part in relative.parts
     ):
         raise ValidationFailure("Evidence directory must be a new checkout-relative path.")

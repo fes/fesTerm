@@ -1,5 +1,25 @@
 # Milestone Progress Narrative
 
+## Rejecting Windows rooted evidence paths before checkout binding
+
+Parent functional review of frozen `408bec4d` found that Windows root-relative
+`/outside` and `\outside` have neither an absolute-path result nor a drive, yet
+joining them to the checkout escapes to the drive root. The workflow's fixed
+default was safe, but the advertised CLI contract was not. The guard now
+rejects every nonempty path anchor before joining ROOT or accessing the
+filesystem, covering POSIX absolute and Windows rooted/drive-relative/UNC forms.
+
+A portable `PureWindowsPath` regression places a failing trap at ROOT join.
+Against the byte-exact `408` guard it produces a retained **controlled RED**
+(exit 1, two rooted-path subtest failures), not a misleading POSIX
+missing-parent refusal. The corrected guard passes all **22 offline publisher
+contracts**, including positive/new-directory, existing-output preservation and
+link refusal. Python syntax, base-408 traceability and diff checks pass.
+Raw red/green logs, source and log hashes remain in `.pki-path-validation/`.
+No Rust rebuild, workflow/download/native execution or policy change is included.
+The prior source reviews do not lift the functional execution hold: the child
+requires fresh exact-source review and a separate run authorization.
+
 ## Preparing a narrowly authorized Windows public PKI evidence route
 
 The existing ignored Windows publisher test had no bounded hosted acquisition/

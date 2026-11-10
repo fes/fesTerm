@@ -296,7 +296,10 @@ public GitHub release-assets authority. ZIP/member bytes are capped at 128 MiB,
 total declared expansion at 512 MiB and entries at 64; all entries must be
 plain regular root files without duplicates, traversal or links. Only the exact
 member is extracted, exclusively into a new checkout-relative directory; stale
-evidence is never overwritten or reused. The selected facade-only Cargo test
+evidence is never overwritten or reused. Evidence paths with nonempty anchors
+(POSIX absolute or Windows rooted, drive-relative/absolute or UNC) are rejected
+lexically before any checkout
+join or filesystem access. The selected facade-only Cargo test
 has a 600-second limit and the hosted job a 20-minute limit. No SDK workaround,
 policy waiver, alternate fixture or automatic retry is provided.
 

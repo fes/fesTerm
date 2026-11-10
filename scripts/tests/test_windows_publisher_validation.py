@@ -5,7 +5,7 @@ import importlib.util
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import shutil
 import stat
@@ -102,6 +102,20 @@ class FixtureContracts(unittest.TestCase):
                 PKI.main()
             acquire.assert_not_called()
             run.assert_not_called()
+
+    def test_windows_anchors_are_refused_before_root_join_or_filesystem(self):
+        for value in ("/outside", r"\outside", "C:outside", r"C:\outside",
+                      r"\\server\share\outside"):
+            lexical = PureWindowsPath(value)
+            self.assertTrue(lexical.anchor)
+            root = mock.MagicMock()
+            root.__truediv__.side_effect = AssertionError("guard reached ROOT join")
+            with self.subTest(path=value), mock.patch.object(
+                PKI, "Path", return_value=lexical
+            ), mock.patch.object(PKI, "ROOT", root):
+                with self.assertRaises(PKI.ValidationFailure):
+                    PKI.fresh_directory(value)
+                root.__truediv__.assert_not_called()
 
     def test_cli_has_no_url_member_hash_or_policy_override(self):
         for flag in ("--url", "--member", "--sha256", "--allow-offline"):
