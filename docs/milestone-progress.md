@@ -1,5 +1,60 @@
 # Milestone Progress Narrative
 
+## Completing two narrow login-recovery races
+
+The published `aeedeac7ee919b16f831e8806f4a31e28d227e24` remains immutable.
+Its review-cleared login-only restart contract had two availability races:
+owned cancellation after cloud account confirmation reached an untyped stale
+operation refusal, and a briefly contended post-login-loss snapshot read
+permanently lost automatic login recovery.
+
+The final locked relay-authorization check now distinguishes its existing
+private typed `CloudCancelled` from a genuinely changed snapshot, retaining
+the same error display. The owned hosting drain can recognize cancellation,
+while stale/revoked consent still refuses. A fixture cancels immediately after
+the successful final account-confirmation response and before the locked check;
+the companion case changes protected consent instead. Both retain identity and
+cloud-journal bytes and create/sign in exactly once.
+
+Only the post-login-loss snapshot read now uses a bounded async variant of the
+existing WouldBlock-only, 25-ms contention pattern: at most 250 ms, reacquiring
+the real protected read on every attempt with no lease spanning a sleep.
+The fresh full snapshot must still equal the original, followed by the same
+bundle/helper and current protected owner-policy checks before exit75.
+There is no retry of owner validation, bundle checks, cloud effects, initial
+admission, or other failures, and no cached authority or error-string inference.
+Persistent Busy, corrupt/non-Busy state and changed/revoked consent retain
+non-retryable refusal. A failed read is not journaled as proven login loss.
+
+The lease/barrier fixture proves the read stays pending under an actual Store
+lease and succeeds after release; subsequent real bundle validation still
+rejects that fixture's missing authenticated stage instead of granting exit75.
+Other held-lease fixtures prove the deadline, immediate non-Busy refusal and
+fresh revocation/changed-settings detection, including re-enabled Provisioned
+state with a different epoch/settings. These are isolated protected-state
+fixtures, not signed/native-vault or installed-manager acceptance.
+
+Both regressions first failed with **Cargo101, zero passes/one failure each**;
+raw logs and exit receipts are `target/adr84-login-evidence/login-races-red-*`.
+Fresh final selected source passes are **15 runtime / 3 cloud relay /
+9 login parser-watcher / 1 identity / 7 controller / 1 exit mapping /
+1 typed cancellation / 5 CLI**: **42 invocations, 42 distinct passes**,
+zero failures/ignores. Strict affected two-package all-target and cloud-only
+Clippy, fmt, base-aeede trace311/zero broken and diff checks pass.
+Prior Services/full-suite/native totals remain attributed to their old heads.
+Exact commands, private compiler paths/versions, source and raw-log hashes
+are in `target/adr84-login-evidence/login-races-provenance.json`;
+raw final logs are adjacent `login-races-{runtime,cloud-relay,login,identity,controller,mapping,cancellation,cli,clippy,cloud-only-clippy}.log`.
+
+The existing private Rust/Cargo1.99.1 jobs1/debug0/incremental0 warm environment
+is unchanged; memory was 49% free before qualification. No VM, native manager,
+native credential, cloud, signing, linger/OS-setting operation or cross-C retry
+ran. The prior Cargo101/aws-lc-sys/missing `x86_64-linux-gnu-gcc` evidence is
+preserved. Genuine logind/last-logout/repeated-probe/cgroup/daemon-survival gates
+remain pending. No new retry policy, grant, cleanup-absence or daemon termination
+authority is introduced. The host Cargo slot is released at the fixed
+checkpoint, with zero owned compiler/query/daemon CWD matches; no push is made.
+
 ## Restricting Linux sign-in restart to typed login-proof loss
 
 Review of published Linux head `64e9d0e1` found that `Restart=on-failure`

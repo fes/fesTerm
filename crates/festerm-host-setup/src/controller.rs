@@ -553,7 +553,7 @@ async fn run_reserved(
     if cancel.is_cancelled() {
         return Ok(());
     }
-    let stage = authorize_run(&store, state, expected, record)?;
+    let stage = authorize_run(&store, state, expected, record, &store.snapshot()?)?;
     record.failure = Some(RunFailure::LoginProofUnavailable);
     let hosting_cancel = cancel.child_token();
     let result = if let Err(error) = startup_admission(expected.settings.startup, &cancel).await {
@@ -605,10 +605,30 @@ async fn run_reserved(
     }) {
         // Login loss never authorizes retry after a concurrent revoke or
         // bundle/owner change while the owned hosting future was draining.
-        authorize_run(&store, state, expected, record)?;
+        record.failure = Some(RunFailure::RuntimeFailed);
+        let current = login_retry_snapshot(&store).await?;
+        authorize_run(&store, state, expected, record, &current)?;
         record.failure = Some(RunFailure::LoginProofUnavailable);
     }
     result
+}
+
+async fn login_retry_snapshot(store: &Store) -> io::Result<Snapshot> {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+    loop {
+        match store.snapshot() {
+            Err(error)
+                if error.kind() == io::ErrorKind::WouldBlock
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep_until(
+                    (tokio::time::Instant::now() + Duration::from_millis(25)).min(deadline),
+                )
+                .await;
+            }
+            result => return result,
+        }
+    }
 }
 
 fn authorize_run(
@@ -616,9 +636,10 @@ fn authorize_run(
     state: &Path,
     expected: &Snapshot,
     record: &mut RunRecord,
+    current: &Snapshot,
 ) -> io::Result<crate::services::TrustedStage> {
     record.failure = Some(RunFailure::RuntimeFailed);
-    if store.snapshot()? != *expected {
+    if current != expected {
         return Err(refused("host.runtime_consent_changed"));
     }
     record.failure = Some(RunFailure::AuthenticatedBundleRequired);
@@ -780,6 +801,114 @@ mod tests {
         assert!(!linux_login::required("linux", Startup::Manual));
         assert!(linux_login::required("linux", Startup::UserSignIn));
         assert!(!linux_login::required("macos", Startup::UserSignIn));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_login_retry_snapshot_waits_for_short_held_lease() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (_run_lease, expected, mut record) = reserve(&store).unwrap();
+        let policy_lease = store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap();
+        let current = login_retry_snapshot(&store);
+        tokio::pin!(current);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut current)
+                .await
+                .is_err()
+        );
+        drop(policy_lease);
+        let current = current.await.unwrap();
+        assert_eq!(current, expected);
+        assert!(authorize_run(
+            &store,
+            &root.path().join("host"),
+            &expected,
+            &mut record,
+            &current
+        )
+        .is_err());
+        assert_eq!(
+            record.failure,
+            Some(RunFailure::AuthenticatedBundleRequired)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_login_retry_snapshot_persistent_busy_and_nonbusy_errors_refuse() {
+        let (_root, store) = fixture();
+        provision(&store);
+        let lease = store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap();
+        let started = tokio::time::Instant::now();
+        let error = login_retry_snapshot(&store).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+        assert!(started.elapsed() >= Duration::from_millis(250));
+        assert!(started.elapsed() <= Duration::from_millis(275));
+        drop(lease);
+        assert!(last_run(&store).unwrap().is_none());
+        store
+            .with_locked(|directory, _| {
+                storage::replace_private(directory, Path::new("host-lifecycle.json"), b"invalid")
+            })
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        let error = login_retry_snapshot(&store).await.unwrap_err();
+        assert_ne!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_login_retry_snapshot_rechecks_revoked_or_changed_consent() {
+        for change_settings in [false, true] {
+            let (root, store) = fixture();
+            provision(&store);
+            let (_run_lease, expected, mut record) = reserve(&store).unwrap();
+            let policy_lease = store.with_owned_lease(|_, _, lease| Ok(lease)).unwrap();
+            let current = login_retry_snapshot(&store);
+            tokio::pin!(current);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), &mut current)
+                    .await
+                    .is_err()
+            );
+            drop(policy_lease);
+            store.revoke().unwrap();
+            if change_settings {
+                let stopped = store.snapshot().unwrap();
+                let binding = stopped.binding.unwrap();
+                store.confirm_stopped(stopped.epoch, &binding).unwrap();
+                let mut settings = expected.settings.clone();
+                settings.allow_creation = !settings.allow_creation;
+                store.configure(settings.clone()).unwrap();
+                let ticket = store.request_enable(&settings).unwrap();
+                store.record_provisioned(&ticket, binding).unwrap();
+            }
+            let current = current.await.unwrap();
+            assert_ne!(current, expected);
+            assert_eq!(
+                current.phase,
+                if change_settings {
+                    Phase::Provisioned
+                } else {
+                    Phase::StopRequested
+                }
+            );
+            let error = match authorize_run(
+                &store,
+                &root.path().join("host"),
+                &expected,
+                &mut record,
+                &current,
+            ) {
+                Ok(_) => panic!("changed protected consent cannot authorize login retry"),
+                Err(error) => error,
+            };
+            assert_eq!(error.to_string(), "host.runtime_consent_changed");
+            assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+            assert_eq!(store.snapshot().unwrap(), current);
+            assert!(last_run(&store).unwrap().is_none());
+        }
     }
 
     #[tokio::test(start_paused = true)]

@@ -3686,6 +3686,12 @@ exit 75 triggers `RestartForceExitStatus=75` under `Restart=no`, while exits
 0/1, disabled/stopping/cleanup, missing/revoked/changed owner consent and
 bundle/cloud failures do not loop. Portable disposition/unit-text and protected
 lifecycle fixtures cover those refusals, not genuine manager execution.
+Portable final-account-confirmation cancellation and held-real-Store-lease
+fixtures now cover the two narrow login-recovery races. The post-loss snapshot
+read waits at most 250 ms for WouldBlock only; success still requires fresh
+bundle and owner proof. Persistent contention, malformed state, revocation and
+changed consent refuse retry. These tests are not OS timing/load or native
+credential/manager acceptance.
 Repeated no-login probe load under an already lingering manager remains a native
 evidence boundary; do not enable linger or change OS policy to qualify it.
 An already lingering user manager is

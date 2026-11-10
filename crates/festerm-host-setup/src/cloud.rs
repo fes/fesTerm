@@ -341,7 +341,12 @@ impl<'a> CloudHostAdapter<'a> {
             .await
             .map_err(account_error)?;
         let identity = self.store.with_locked(|directory, current| {
-            if cancel.is_cancelled() || current != &snapshot {
+            if cancel.is_cancelled() {
+                return Err(io::Error::other(CloudCancelled(
+                    "host.service_stale_or_unapproved_operation",
+                )));
+            }
+            if current != &snapshot {
                 return Err(refused("host.service_stale_or_unapproved_operation"));
             }
             let identity = HostIdentity::load_from_private_directory(
@@ -1288,6 +1293,9 @@ mod tests {
         observe_error_after_create: Option<AccountError>,
         observes: usize,
         revoke_observe: bool,
+        host_tokens: usize,
+        cancel_relay_confirm: bool,
+        revoke_relay_confirm: bool,
     }
     struct FixtureNetwork<'a> {
         store: &'a Store,
@@ -1320,6 +1328,7 @@ mod tests {
             if self.state.borrow().revoke_observe {
                 self.store.revoke().unwrap();
             }
+            self.state.borrow_mut().host_tokens += 1;
             Ok(zeroize::Zeroizing::new(
                 "PRIVATE_FIXTURE_SCOPED_HOST".into(),
             ))
@@ -1361,7 +1370,16 @@ mod tests {
             let http = IdentityFixture(Mutex::new(
                 [r#"{"id":42,"login":"renamed-display-only"}"#].into(),
             ));
-            identity.confirm_account(&http, cancel).await
+            identity.confirm_account(&http, cancel).await?;
+            if self.state.borrow().host_tokens > 0 {
+                if self.state.borrow().cancel_relay_confirm {
+                    cancel.cancel();
+                }
+                if self.state.borrow().revoke_relay_confirm {
+                    self.store.revoke().unwrap();
+                }
+            }
+            Ok(())
         }
         async fn refresh(
             &self,
@@ -1959,6 +1977,71 @@ mod tests {
         std::fs::remove_file(&missing).unwrap();
         assert!(other_adapter.foreground(&other.record.ticket, 42).is_err());
         assert!(!missing.exists());
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_cloud_relay_final_confirm_cancellation_is_owned_not_stale_consent() {
+        for cancel_confirm in [true, false] {
+            let (root, store, secrets) = fixture();
+            let adapter = CloudHostAdapter::new(&store);
+            let approval = foreground(&adapter);
+            let network = FixtureNetwork::new(&store);
+            let cancel = CancellationToken::new();
+            adapter
+                .sign_in_with(&approval, &cancel, |_| {}, &network, &secrets)
+                .await
+                .unwrap();
+            adapter
+                .provision_with(&approval, &cancel, &network, &secrets)
+                .await
+                .unwrap();
+            let snapshot = store.snapshot().unwrap();
+            let cloud = store
+                .with_locked(|directory, _| {
+                    storage::read_private(directory, Path::new(RECORD), 16384)
+                })
+                .unwrap();
+            let identity_path = root.path().join("host").join(HOST_IDENTITY_FILE);
+            let identity_bytes = std::fs::read(&identity_path).unwrap();
+            network.state.borrow_mut().cancel_relay_confirm = cancel_confirm;
+            network.state.borrow_mut().revoke_relay_confirm = !cancel_confirm;
+            let error = match adapter
+                .relay_authorization_with(&cancel, &network, &secrets)
+                .await
+            {
+                Ok(_) => panic!("late cancellation or revocation must refuse relay authorization"),
+                Err(error) => error,
+            };
+            assert_eq!(
+                error.to_string(),
+                "host.service_stale_or_unapproved_operation"
+            );
+            assert_eq!(is_cancelled(&error), cancel_confirm);
+            assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+            assert_eq!(cancel.is_cancelled(), cancel_confirm);
+            let state = network.state.borrow();
+            assert_eq!(state.host_tokens, 1);
+            assert_eq!(state.sign_ins, 1);
+            assert_eq!(state.creates, 1);
+            drop(state);
+            if cancel_confirm {
+                assert_eq!(store.snapshot().unwrap(), snapshot);
+            } else {
+                assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+            }
+            assert_eq!(std::fs::read(&identity_path).unwrap(), identity_bytes);
+            assert_eq!(
+                store
+                    .with_locked(|directory, _| storage::read_private(
+                        directory,
+                        Path::new(RECORD),
+                        16384
+                    ))
+                    .unwrap(),
+                cloud
+            );
+        }
     }
 
     #[cfg(feature = "host-runtime")]

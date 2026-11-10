@@ -188,10 +188,19 @@ exit 75 is shared by the runtime/CLI and unit renderer; all other errors exit 1,
 normal stop exits 0. No error-text match or cached run history grants retry.
 Signed helper provenance and current owner consent are checked before login
 admission and rechecked before a login-loss error can authorize retry.
+Only that post-login-loss snapshot read tolerates short installation-lock
+contention: the existing 25-ms WouldBlock-only deadline pattern is bounded to
+250 ms here. Each attempt reacquires current protected state; no guard spans
+the async wait. A successful read must still match the original full snapshot,
+then pass fresh bundle/helper and owner-policy validation before exit75.
+Persistent Busy, any non-Busy error or failed validation refuses retry.
 Disabled/StopRequested/CleanupPending, missing or revoked owner consent, changed
 consent, bundle, cloud, Busy and other errors never request automatic restart.
 Draining preserves non-login hosting errors; only an exact typed cloud
 cancellation induced by the login watcher is normalized within its owned run.
+This includes cancellation after final cloud account confirmation but before
+the locked relay-identity read; a changed snapshot remains a non-cancellation
+failure with the same diagnostic. No provisioning or cloud operation is retried.
 No listener is admitted without current proof and owner consent.
 This is automatic current-logon activation,
 not Manual startup or pre-login exposure. Manual retains `Restart=no` and no

@@ -612,6 +612,12 @@ The retry correction adds typed CLI/unit exit-disposition coverage,
 `linux_login_loss_never_masks_non_retryable_host_failure_while_draining`.
 Only login-proof unavailability requests the reserved systemd restart code;
 other failures retain diagnostics and fail without automatic restart.
+The recovery-race follow-up adds
+`host_cloud_relay_final_confirm_cancellation_is_owned_not_stale_consent`
+and three `host_runtime_login_retry_snapshot_` regressions for lease release,
+bounded persistent Busy/non-Busy refusal and revoked/changed consent.
+Only the post-login-loss current snapshot read waits briefly for contention;
+fresh bundle and owner validation remains mandatory before the login-only exit.
 
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation
