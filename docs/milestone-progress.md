@@ -38,6 +38,27 @@ PermissionDenied. Native startup/service acceptance remains separately gated.
 The shared multi-command helper validation step explicitly uses fail-fast Bash
 on all platforms, so a later successful clippy cannot hide failed Windows tests.
 
+## Enabling desktop hosting without disturbing legacy sessions
+
+Older Windows installations could not enable profile hosting because shared
+product/native-runtime directories had inherited permissions. The fix creates a
+dedicated protected hosted runtime without repairing those directories or their
+registries. A live legacy session is retained; hosting is deferred until the
+user ends it and explicitly reopens the profile. The exact-generation gate
+survives interrupted authorization and clears only after a replacement is
+bound. Local tabs retain root-aware routing, while the user shell still
+addresses its original frontend IPC.
+
+The exposure checkbox now opens GitHub account selection immediately rather
+than discovering sign-in only after Save. A bounded editor receipt and protected
+numeric identity bind the initial creation; the browser path refuses account
+switching while known desktop/default-script bindings depend on the shared CLI
+sign-in. Custom-state legacy script hosts cannot be inventoried, are disclosed
+as potentially affected, and have a documented manual removal procedure.
+Isolated regressions cover inherited Windows ACLs, interrupted restart and stale
+account selection. Native signed servicing and real-service qualification remain
+DT-08 work; no live installation is migrated by these tests. See ADR 0085.
+
 ## Establishing helper publisher authenticity without a second trust root
 
 ADR 0084 stage 7 needs independent Linux publisher authentication, not a hash

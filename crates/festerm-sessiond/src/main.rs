@@ -4840,6 +4840,13 @@ fn spawn_shell(
 }
 
 fn apply_terminal_environment(command: &mut CommandBuilder, correlation: Option<&str>) {
+    if let Some(root) = command
+        .get_env(festerm_sessiond::CALLER_RUNTIME_ROOT_ENV)
+        .map(ToOwned::to_owned)
+    {
+        command.env("FESTERM_SESSIOND_RUNTIME_ROOT", root);
+    }
+    command.env_remove(festerm_sessiond::CALLER_RUNTIME_ROOT_ENV);
     command.env("TERM", "xterm-256color");
     command.env("TERM_PROGRAM", "fesTerm");
     command.env("COLORTERM", "truecolor");
@@ -7526,6 +7533,11 @@ mod tests {
         command.env("TERM_PROGRAM", "tmux");
         command.env("COLORTERM", "stale");
         command.env("TERM_SESSION_ID", "stale-session");
+        command.env("FESTERM_SESSIOND_RUNTIME_ROOT", "isolated-daemon-runtime");
+        command.env(
+            festerm_sessiond::CALLER_RUNTIME_ROOT_ENV,
+            "frontend-runtime",
+        );
 
         command.env(
             festerm_sessiond::SESSION_CORRELATION_ENV,
@@ -7546,6 +7558,14 @@ mod tests {
             Some(std::ffi::OsStr::new("truecolor"))
         );
         assert_eq!(command.get_env("TERM_SESSION_ID"), None);
+        assert_eq!(
+            command.get_env("FESTERM_SESSIOND_RUNTIME_ROOT"),
+            Some(std::ffi::OsStr::new("frontend-runtime"))
+        );
+        assert_eq!(
+            command.get_env(festerm_sessiond::CALLER_RUNTIME_ROOT_ENV),
+            None
+        );
         assert_eq!(
             command.get_env(festerm_sessiond::SESSION_CORRELATION_ENV),
             None
