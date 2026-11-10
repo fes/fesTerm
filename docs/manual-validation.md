@@ -60,6 +60,15 @@ touch credentials. Explicit browser request tests cover cancellation, account
 switches, supersession and obsolete browser instances. These are logic/state
 tests, not native UI or real-service evidence.
 
+Additional config/mobile regressions preserve legacy account, hosting/consent
+references and exact-generation destination metadata across recipe commands.
+They do not access protected grant storage or operate a live legacy shell.
+The future migration qualification must separately verify preserved protected
+state/account binding, a default-No stop confirmation for the exact generation,
+Cancel/stale-generation refusal and manual deferral. Setup/sharing approval
+must not authorize restart. This remains deferred under #681/ADR 0084 section
+11; no dialog or live migration acceptance is claimed here.
+
 The new host card/launcher, verified-principal/trust binding, authorized
 inventory, resume-or-create/always-new execution and temporary leases remain
 **deferred behind the reviewed host endpoint and UI wiring**, not passed.

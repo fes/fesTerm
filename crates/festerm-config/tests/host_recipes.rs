@@ -1,7 +1,7 @@
 use festerm_config::{
     host_recipes::{
-        AccountReference, HostId, HostReference, MetadataCommand, MetadataOutcome, PublicRecipe,
-        Recipe,
+        AccountReference, DuplicatePolicy, HostId, HostReference, MetadataCommand, MetadataOutcome,
+        PublicRecipe, Recipe,
     },
     Configuration, Profile,
 };
@@ -20,6 +20,81 @@ fn recipe() -> PublicRecipe {
         },
     )
     .unwrap()
+}
+
+#[test]
+fn host_recipe_commands_preserve_legacy_account_and_hosting_references() {
+    let original = Configuration::parse(
+        r#"schema_version = 1
+[[accounts]]
+id = "github-owner"
+provider = "github"
+account_id = 42
+login = "owner"
+credential_id = "550e8400-e29b-41d4-a716-446655440000"
+[[profiles]]
+kind = "dev_tunnel"
+id = "legacy-peer"
+tunnel_name = "owned.usw3"
+account = "github-owner"
+credential_id = "550e8400-e29b-41d4-a716-446655440001"
+[profiles.trusted_host]
+tunnel_id = "owned"
+cluster = "usw3"
+host_id = "legacy-host"
+public_key = "owned-pin"
+port = 47461
+[[profiles]]
+kind = "local"
+id = "legacy-host"
+executable = "sh"
+[profiles.persistence]
+provider = "festerm-sessiond"
+session_name = "legacy-shell"
+[profiles.tunnel_hosting]
+installation = "550e8400-e29b-41d4-a716-446655440002"
+consent = "550e8400-e29b-41d4-a716-446655440003"
+enabled = true
+"#,
+    )
+    .unwrap();
+    let public = recipe();
+    let (saved, _) = original
+        .with_host_recipe_command(MetadataCommand::Save(public.clone()))
+        .unwrap();
+    let mut edited = public.clone();
+    edited.launch.cwd = Some("/remote/next-create".into());
+    for command in [
+        MetadataCommand::Save(recipe()),
+        MetadataCommand::Edit(edited),
+        MetadataCommand::Duplicate {
+            source: public.id.clone(),
+            name: "Separate recipe".into(),
+            policy: DuplicatePolicy::FreshLogicalSession,
+        },
+        MetadataCommand::Export(public.id.clone()),
+        MetadataCommand::Import(recipe().export().unwrap()),
+        MetadataCommand::Delete(public.id.clone()),
+    ] {
+        let (candidate, outcome) = saved.with_host_recipe_command(command).unwrap();
+        assert_eq!(candidate.profiles(), original.profiles());
+        assert_eq!(candidate.accounts(), original.accounts());
+        assert_eq!(
+            Configuration::parse(&candidate.to_toml().unwrap()).unwrap(),
+            candidate
+        );
+        if let MetadataOutcome::Exported(text) = outcome {
+            for protected in [
+                "credential",
+                "consent",
+                "installation",
+                "github-owner",
+                "owned-pin",
+            ] {
+                assert!(!text.contains(protected), "{protected}");
+            }
+        }
+    }
 }
 
 #[test]

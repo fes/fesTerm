@@ -1887,6 +1887,13 @@ display cached hosts as online. Actual controls/workers, account/key binding,
 trust, authorized inventory, Connect and native qualification remain deferred
 behind the reviewed host endpoint contract, not simulated in this foundation.
 
+Migrating a legacy host must preserve protected state/account binding. Any
+stop/restart of its live shell requires a separate, default-No confirmation
+for that exact generation; setup or sharing approval cannot substitute for
+it. Cancellation or unsafe migration preserves the live session and permits
+manual deferral. No migration/restart control is supplied by the metadata
+foundation.
+
 Profile creation and editing is separate from the immediate launch path. The
 common case requires one selection or a small amount of connection information,
 not completion of a large settings form.

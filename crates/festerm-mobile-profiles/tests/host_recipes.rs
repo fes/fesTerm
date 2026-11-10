@@ -5,7 +5,8 @@ use festerm_mobile_profiles::{
         AccountReference, DuplicatePolicy, HostId, HostReference, MetadataCommand, MetadataOutcome,
         PublicRecipe, Recipe,
     },
-    ProfileStore, PROFILES_FILE,
+    AccountProvider, DestinationEndpoint, DestinationTarget, DevTunnelProfile, PathStyle,
+    ProfileKind, ProfileStore, PublicDestination, SecretRef, TunnelSource, PROFILES_FILE,
 };
 use festerm_secret_store::{SecretBytes, SecretReference, SecretStore, SecretStoreError};
 
@@ -62,6 +63,77 @@ fn recipe() -> PublicRecipe {
         },
     )
     .unwrap()
+}
+
+#[test]
+fn mobile_recipe_commands_preserve_legacy_generation_and_account_binding() {
+    let fixture = Fixture::new();
+    let mut store = fixture.open();
+    let credential = SecretRef::parse("550e8400-e29b-41d4-a716-446655440000").unwrap();
+    let account = store
+        .upsert_account(AccountProvider::Github, 42, "owner", credential)
+        .unwrap();
+    store
+        .create(
+            "Legacy shell",
+            ProfileKind::DevTunnel(DevTunnelProfile {
+                account: Some(account),
+                session: None,
+                take_over_if_attached: false,
+                auto_reconnect: false,
+                source: TunnelSource::Imported {
+                    destination: Box::new(PublicDestination {
+                        file_read: false,
+                        path_style: PathStyle::Posix,
+                        version: 1,
+                        tunnel_id: "owned".into(),
+                        cluster: "usw3".into(),
+                        port: 47461,
+                        target: DestinationTarget {
+                            name: "legacy-shell".into(),
+                            pid: 77,
+                            generation: "123".into(),
+                        },
+                        endpoint: DestinationEndpoint {
+                            id: None,
+                            connection_mode: "TunnelRelay".into(),
+                            host_id: "legacy-host".into(),
+                            host_public_keys: vec![
+                                "AAAAC3NzaC1lZDI1NTE5AAAAINdamAGCsQq31Uv+08lkBzoO4XLz2qYjJa8CGmj3B1Ea".into()
+                            ],
+                            client_relay_uri:
+                                "wss://usw3.rel.tunnels.api.visualstudio.com/owned".into(),
+                            host_relay_uri: None,
+                        },
+                    }),
+                },
+            }),
+        )
+        .unwrap();
+    let legacy_profiles = store.profiles().to_vec();
+    let accounts = store.accounts().to_vec();
+    let public = recipe();
+    store
+        .apply_host_recipe_command(MetadataCommand::Save(public.clone()))
+        .unwrap();
+    let mut edited = public.clone();
+    edited.launch.cwd = Some("/remote/next-create".into());
+    for command in [
+        MetadataCommand::Edit(edited),
+        MetadataCommand::Duplicate {
+            source: public.id.clone(),
+            name: "Separate recipe".into(),
+            policy: DuplicatePolicy::FreshLogicalSession,
+        },
+        MetadataCommand::Export(public.id.clone()),
+        MetadataCommand::Import(recipe().export().unwrap()),
+        MetadataCommand::Delete(public.id.clone()),
+    ] {
+        store.apply_host_recipe_command(command).unwrap();
+        let reopened = fixture.open();
+        assert_eq!(reopened.profiles(), legacy_profiles);
+        assert_eq!(reopened.accounts(), accounts);
+    }
 }
 
 #[test]

@@ -453,13 +453,20 @@ changes are introduced by this design or the client-local metadata foundation.
   `mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation`,
   and `local_browser_requires_explicit_scoped_requests_and_fences_stale_results`.
   The trace registry includes transactional failure/quarantine and compatibility
-  tests as well. These do not prove network execution, actual shell creation
+  tests as well, including
+  `host_recipe_commands_preserve_legacy_account_and_hosting_references` and
+  `mobile_recipe_commands_preserve_legacy_generation_and_account_binding`.
+  These do not prove protected-state migration, a live-shell stop confirmation,
+  network execution, actual shell creation
   or stage 6 end-to-end acceptance; the remaining matrix is still required.
 - **Native/manual evidence required:** Extend DT-05, DT-07, DT-08, CP-11 and
   MOB-03/MOB-06 during implementation with host setup, principal isolation,
   reboot, update and physical-device disconnect evidence. The new trace entries
   are deferred behind reviewed endpoint/identity contracts and actual native
   desktop/iOS/Android UI wiring. Existing native/manual evidence remains required.
+  Migration must preserve protected state/account binding and separately qualify
+  default-No exact-generation stop confirmation and manual deferral; setup or
+  sharing consent is never restart consent.
 - **Coverage superseded:** None by the client-local foundation. Retire legacy
   coverage only when its replacement is implemented and traced.
 

@@ -148,6 +148,15 @@ and launch path. They do not acquire a host recipe, remote-create permission,
 or local hosting exposure. Legacy automatic discovery preferences remain
 legacy-only until an explicit, reviewed migration exists.
 
+That future migration must preserve protected state and account binding. It
+must not stop a live legacy shell without a **separate, default-No confirmation
+bound to that exact generation**. Host setup or sharing consent is not restart
+consent. If the operation cannot proceed safely, retain the live legacy
+session and defer migration manually. Recipe metadata commands are not a
+migration/restart command and never collect or consume such confirmation.
+The metadata-preservation tests do not qualify an actual migration dialog or
+live-shell stop; that evidence remains deferred under #681.
+
 `HostBrowser` is a request/state seam, not a worker: opening/rendering local
 rows and selecting an account produces no request or online status. Only
 explicit Find hosts, single-host inspection and Refresh produce scoped intent;

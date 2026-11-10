@@ -5485,9 +5485,11 @@
         "book_deserialization_rejects_duplicate_and_invalid_candidates",
         "local_browser_requires_explicit_scoped_requests_and_fences_stale_results",
         "host_recipe_toml_round_trip_keeps_legacy_profiles_separate",
+        "host_recipe_commands_preserve_legacy_account_and_hosting_references",
         "host_recipe_invalid_commands_and_documents_do_not_replace_configuration",
         "host_recipe_app_commands_persist_metadata_only_and_publish_after_save",
         "mobile_host_recipe_commands_persist_without_vault_or_legacy_mutation",
+        "mobile_recipe_commands_preserve_legacy_generation_and_account_binding",
         "mobile_host_recipe_failed_write_keeps_previous_metadata_and_invalid_load_is_quarantined",
         "dev_tunnel_import_defaults_take_over_and_never_replaces"
       ],
@@ -5520,7 +5522,8 @@
       "prerequisites": [
         "Implement ADR 0084's seven staged slices, including verified principal binding and atomic generation reservation",
         "Register actual deterministic tests and native/manual scenarios before each slice claims implemented coverage",
-        "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect"
+        "Qualify signed desktop/headless installation, multi-session service operation, update/migration and physical mobile reconnect",
+        "Issue #681 / ADR 0084 section 11: preserve protected state and account binding; separately qualify default-No exact-generation live legacy stop confirmation, stale-generation refusal and manual deferral; setup/sharing consent does not authorize restart"
       ]
     }
   ]
