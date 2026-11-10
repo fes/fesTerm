@@ -8674,9 +8674,17 @@ pending record revision/generation changes, framing/correlation and cancellation
 Admission precedes worker allocation; late blocking work retains its resource
 charges until reconciliation. No terminal input is replayed.
 
+The core now calls real sessiond through its scoped protected-policy callbacks,
+with an off-by-default headless adapter to actual local enrollment. Three
+explicitly invoked owned Unix daemon fixtures exercise real creation/retry,
+nonattaching inventory, denial without false absence, and exact end
+reconciliation. A withheld committed reply does not block independent control
+or authorize a duplicate spawn. Attach/Detach remain Unsupported and only
+inventory is advertised until adopted terminal routing is integrated.
+
 This is deliberately not an exposed host endpoint. The actual inner SSH stream
 does not yet carry a shared session/channel exporter needed to prevent owner
-proof forwarding. Native session/enrollment adapters and separate fair terminal
+proof forwarding. Actual channel authentication and separate fair terminal
 routing remain integration prerequisites. Legacy behavior and native acceptance
 are unchanged; no credentials, services or cloud resources were modified.
 

@@ -17,6 +17,9 @@ use std::sync::{
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 
+#[cfg(feature = "relay")]
+pub mod native;
+
 #[cfg(test)]
 #[path = "host_control_tests.rs"]
 mod tests;
@@ -28,6 +31,27 @@ pub trait AuthorizationSource: Send + Sync + 'static {
         &self,
         check: &mut dyn FnMut(&OwnerVerifier) -> Result<(), ContractError>,
     ) -> Result<(), ContractError>;
+}
+
+/// An owned policy lease keeps protected consent stable through a native
+/// reservation/publication, but is dropped before native startup/IPC waits.
+pub trait PolicyGuard {
+    fn verifier(&self) -> &OwnerVerifier;
+}
+
+pub trait ProtectedPolicySource: Send + Sync + 'static {
+    type Guard: PolicyGuard;
+    fn current_policy(&self) -> Result<Self::Guard, ContractError>;
+}
+
+impl<A: ProtectedPolicySource> AuthorizationSource for A {
+    fn with_current(
+        &self,
+        check: &mut dyn FnMut(&OwnerVerifier) -> Result<(), ContractError>,
+    ) -> Result<(), ContractError> {
+        let guard = self.current_policy()?;
+        check(guard.verifier())
+    }
 }
 
 /// Small trusted session-manager seam, not a second registry or spawn policy.
@@ -49,6 +73,27 @@ pub struct OperationAdmission {
     source: Arc<dyn AuthorizationSource>,
     request: Envelope<Request>,
     cancelled: Arc<AtomicBool>,
+    #[cfg(feature = "relay")]
+    inventory: Arc<std::sync::Mutex<Option<InventoryCapture>>>,
+}
+
+#[cfg(feature = "relay")]
+struct InventoryCapture {
+    snapshot: festerm_host_protocol::AuthorizedInventory,
+    grants: Vec<SessionGrant>,
+    expires: std::time::Instant,
+}
+
+#[cfg(feature = "relay")]
+struct InventoryLifetime(Arc<std::sync::Mutex<Option<InventoryCapture>>>);
+
+#[cfg(feature = "relay")]
+impl Drop for InventoryLifetime {
+    fn drop(&mut self) {
+        if let Ok(mut snapshot) = self.0.lock() {
+            *snapshot = None;
+        }
+    }
 }
 
 impl OperationAdmission {
@@ -83,6 +128,7 @@ impl OperationAdmission {
         if self.cancelled() {
             return Err(ContractError::Stale);
         }
+
         let mut fence = None;
         self.source.with_current(&mut |current| {
             if self.cancelled() {
@@ -95,6 +141,21 @@ impl OperationAdmission {
             Ok(())
         })?;
         fence.ok_or(ContractError::Denied)
+    }
+
+    #[cfg(feature = "relay")]
+    fn authorize_current(
+        &self,
+        current: &OwnerVerifier,
+        request: &Envelope<Request>,
+        grant: Option<&SessionGrant>,
+        operation_epoch: Epoch,
+    ) -> Result<AdmissionFence, ContractError> {
+        if self.cancelled() {
+            return Err(ContractError::Stale);
+        }
+        self.owner
+            .authorize(current, request, operation_epoch, grant)
     }
 
     pub fn revalidate(
@@ -130,8 +191,22 @@ pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
     shutdown: CancellationToken,
 ) -> Result<(), Error> {
     let owner = Arc::new(owner);
+    #[cfg(feature = "relay")]
+    let inventory = Arc::new(std::sync::Mutex::new(None));
+    #[cfg(feature = "relay")]
+    let _inventory_lifetime = InventoryLifetime(inventory.clone());
     let mut handshaken = false;
     loop {
+        #[cfg(feature = "relay")]
+        {
+            let mut retained = inventory.lock().map_err(|_| ContractError::Denied)?;
+            if retained
+                .as_ref()
+                .is_some_and(|snapshot| std::time::Instant::now() >= snapshot.expires)
+            {
+                *retained = None;
+            }
+        }
         let deadline = tokio::time::Instant::now()
             + std::time::Duration::from_secs(u64::from(CONTROL_DEADLINE_SECONDS));
         let frame = tokio::select! {
@@ -162,6 +237,8 @@ pub async fn serve_control<S: AsyncRead + AsyncWrite + Unpin>(
             source: source.clone(),
             request: request.clone(),
             cancelled,
+            #[cfg(feature = "relay")]
+            inventory: inventory.clone(),
         });
         admission.check_host()?;
         let worker_admission = admission.clone();

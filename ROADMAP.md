@@ -20,6 +20,13 @@ See [the implementation and prerequisite guide](docs/powershell-enterprise.md).
 
 ## Milestone Issue Review
 
+Issue #681 is staged owner-authorized ADR 0084 work, not whole-host acceptance.
+The reviewed contracts, local durable session control, protected enrollment and
+unexposed bounded framed dispatcher/native-control adapters now have focused
+evidence. Actual same-channel owner proof, adopted terminal routing/detach, fair
+output/control scheduling and native service/device qualification remain gates.
+No new HOST listener or Ready state is enabled by these foundations.
+
 Issue #65 is owner-authorized desktop split-pane work (ADR 0078).
 The presentation slice adds live composition, bounded layouts, focused input,
 group chrome, transient handles/explicit rearrangement, atomic live-view swaps

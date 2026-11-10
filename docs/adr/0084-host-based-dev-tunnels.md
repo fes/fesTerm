@@ -629,8 +629,15 @@ Stage-3 core evidence adds real-proof owned-duplex dispatcher tests
 paired transport deadline/cancellation/correlation/legacy-refusal tests in
 `festerm-tunnel-client::host_control`. These qualify only the unexposed bounded
 core, not native endpoint or whole-ADR acceptance. Actual inner SSH
-session/channel binding export, protected native adapters and fair terminal
-routing remain prerequisites. No listener or capabilities are published.
+session/channel binding export and fair adopted terminal routing remain
+prerequisites. Real native-control/scoped-policy adapters add
+`native_framed_ensure_create_inventory_and_exact_end_use_real_daemons`,
+`native_creation_denial_does_not_register_virgin_identity_or_claim_absence`, and
+`native_lost_reply_disconnect_retry_and_independent_control_never_duplicate_spawn`.
+These explicitly invoked owned Unix fixtures qualify local control routing,
+not actual encrypted owner-channel proof, terminal attachment or native service
+acceptance. No listener advertises HOST; the partial adapter reports only
+inventory capability and refuses unsupported attachment/detach.
 
 | Area | Required evidence (planned test names are illustrative) |
 | --- | --- |

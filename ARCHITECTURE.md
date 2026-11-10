@@ -725,9 +725,13 @@ The opt-in bridge `host-routing` module and paired
 for bounded framed control RPC. The bridge consumes non-serializable verified
 owner proof and delegates reservation/grant checks to the session backend;
 the client owns immutable account/endpoint/host correlation, not authority.
-No listener uses these modules. Actual same-channel authentication export,
-native backend/policy integration and separately bounded terminal scheduling
-remain gates; legacy exact-generation relay and independent grants are unchanged.
+`host_control::native::NativeControl` uses actual sessiond reservations and owned
+policy guards; the off-by-default headless `owner-routing` composition adapts
+protected enrollment, not portable configuration. Owned native fixtures cover
+control routing/retry without frontend leases. No listener uses these modules.
+Actual same-channel authentication export, adopted terminal attachment/detach
+and fair bounded terminal scheduling remain gates; legacy exact-generation relay
+and independent grants are unchanged.
 
 The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small
 `festerm-host-protocol` serde/UUID crate for shared HOST identities, bounded

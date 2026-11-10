@@ -2578,8 +2578,10 @@ dependencies = [
 name = "festerm-host"
 version = "0.16.0"
 dependencies = [
+ "festerm-host-protocol",
  "festerm-host-setup",
  "festerm-sessiond",
+ "festerm-tunnel-bridge",
  "serde_json",
  "tempfile",
 ]

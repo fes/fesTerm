@@ -171,6 +171,16 @@ there is no new desktop control in this slice.
 
 ## Evidence
 
+The off-by-default `festerm-host/owner-routing` library feature adds only the
+`routing::EnrollmentPolicy` composition adapter. It owns a protected `Store`;
+each backend callback acquires actual native-vault-fenced `CurrentOwnerPolicy`
+and returns an owned `EnrollmentGuard` implementing bridge `PolicyGuard`.
+Missing/busy/revoked enrollment fails closed. It does not expose a listener,
+change CLI `run`, advertise Ready or bypass the actual SSH channel-binding gate.
+The native control adapter's owned-daemon tests use synthetic protected policy,
+not the user's vault; compilation of this composition is not native vault or
+service acceptance.
+
 Focused journal, staging and executable CLI tests cover inert configuration,
 origin isolation, stale completions, exact stop/removal receipts, immutable
 identity, pre-login refusal, private/corrupt/busy state, pin mismatch and refusal

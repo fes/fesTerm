@@ -423,15 +423,54 @@ protected grants/revisions under its reservation, not two copies of a fence.
 Owned duplex fixtures exercise real cryptographic owner proof, private/foreign
 inventory filtering, unknown/private lookup denial, pending revision/generation
 changes, protected revocation, capacity release and paired transport failures.
-They do **not** establish native routing or authenticated endpoint readiness.
+They do **not** establish authenticated endpoint readiness.
 The low-level client stream constructor supplies framing only, not a credential.
+
+#### Real native-control and protected-policy composition
+
+With `relay,host-routing`, `host_control::native::NativeControl<A>` calls the
+actual `festerm_sessiond::host_control::SessionControl`: nonattaching protected
+inventory/lookup, durable ensure/create/retry and exact-generation end. Its
+`ProtectedPolicySource::current_policy() -> Guard` obtains fresh protected
+consent. `PolicyGuard::verifier()` is used inside each backend reservation;
+returning that owned guard keeps consent stable through durable effects, while
+the backend drops it before startup waits and reacquires it before publication.
+Virgin logical IDs get a provisional grant only inside the authoritative
+creation reservation, under current authenticated execution permission. Missing
+lookup grants are denied, not returned as public absence.
+
+Each connection retains at most one 15-second inventory snapshot. Continuations
+refresh actual protected metadata and refuse changed logical revisions or
+generations before paging; inventory never acquires frontend leases.
+`StopRequested` returns `OutcomeUncertain`, not fabricated `Ended`; a caller can
+reconcile the actual later absence through Lookup.
+
+The headless composition library's **off-by-default** `owner-routing` feature
+adapts the real `Store::owner_enrollment().current_policy()`/`CurrentOwnerPolicy`
+to these traits (`EnrollmentPolicy`/`EnrollmentGuard`). It adds no command,
+vault write, authentication bypass, listener or Ready state. Production native
+vault/channel/service acceptance is not inferred from compilation.
+
+Three explicitly invoked Unix owned-daemon duplex fixtures prove actual
+ensure/create replies and lost-reply retry without duplicate native generations,
+nonattaching inventory, denied virgin creation without false absence, exact
+generation end, and independent control while a committed reply is withheld.
+CI builds the repository helper/fixture child and runs these fixtures explicitly
+on Linux/macOS; they use a newly created project-local private root and verify
+owned daemons stop before removing it. They do not use installed/user sessions.
+
+**Partial adapter boundary:** native capabilities advertise inventory only.
+Attach/Detach return Unsupported rather than claiming an adopted frontend or
+lease exists. Ensure/Create handlers are exercised through the low-level framed
+core with real protected authorization, but are not advertised while the
+terminal attachment path remains incomplete. The legacy exact-generation bridge
+continues unchanged; it is not silently selected as a HOST default session.
 
 **Exposure remains blocked:** the actual inner SSH channel currently does not
 export its shared session/channel binding to both peers. A host-key pin alone
 cannot supply the required same-channel non-forwardable owner proof. Enrollment
 integration must provide that actual binding; no asserted principal, bearer,
-arbitrary trusted boolean or random substitute is acceptable. Native reservation
-and scoped protected-policy adapters, separate terminal attachment routing and
+arbitrary trusted boolean or random substitute is acceptable. Separate terminal attachment routing and
 fair terminal/control scheduling remain integration gates. No default listener,
 HOST advertisement, terminal/file/observation/MCP grant expansion, or legacy
 reinterpretation is added by this core.

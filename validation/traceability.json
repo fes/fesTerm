@@ -5509,6 +5509,9 @@
         "dropped_exchange_cannot_adopt_a_late_reply",
         "frame_lengths_refuse_without_reading_body_and_release_budget",
         "legacy_protocol_and_wrong_reply_shape_have_no_fallback",
+        "native_framed_ensure_create_inventory_and_exact_end_use_real_daemons",
+        "native_creation_denial_does_not_register_virgin_identity_or_claim_absence",
+        "native_lost_reply_disconnect_retry_and_independent_control_never_duplicate_spawn",
         "concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon",
         "crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generation",
         "absence_denial_revocation_cancellation_and_generations_remain_distinct",
@@ -5536,7 +5539,7 @@
       "status": "partial",
       "prerequisites": [
         "Issue #681: contracts and unexposed framed dispatcher/paired transport core only; no HOST endpoint or GUI control is exposed. Actual inner SSH session/channel exporter is absent; independently security-review local owner enrollment/storage, pinned-channel non-forwarding, replay/revocation and atomic admission integration before exposure",
-        "Integrate the stage-2 local durable session-control backend with reviewed protected admission and routing; unbound uncertain reservations remain Unknown, never infer absence from denial/offline/partial inventory",
+        "Local native-control and scoped protected-enrollment adapters implemented with owned-daemon framed fixtures; native capabilities remain inventory-only until adopted terminal Attach/Detach, fair scheduling and actual owner-channel integration. Unbound uncertain reservations remain Unknown, never infer absence from denial/offline/partial inventory",
         "Issue #681 stages 1/3: protected local enrollment/native-vault APIs implemented, no HOST endpoint or GUI controls. Existing real pinned SSH stream gates refuse owner authentication because shared connection/channel transcript export is missing; implement and independently review role-bound anti-relay/reflection signing adapter before exposure",
         "Native vault locked/unavailable/restart qualification, protected policy interrupted-commit reconciliation and first-connect foreground public-key consent UX remain deferred under HOSTAUTH-01; no portable config adoption, bearer auto-enrollment or plaintext seed fallback",
         "Implement authenticated multi-session routing, fair output/control scheduling, aggregate permit/deadline integration and legacy adapter without grant expansion",
