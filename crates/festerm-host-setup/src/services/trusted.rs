@@ -256,7 +256,7 @@ pub(super) fn fixture(root: &Path) -> TrustedStage {
     .unwrap()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn version_fixture(root: &Path, version: &str) -> TrustedStage {
     TrustedStage::publish_version_with(
         &crate::artifacts::host_version_fixture(version),
@@ -380,7 +380,7 @@ impl TrustedStage {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn authenticate_fixture_registered(
         record: &super::Registration,
         version: &str,

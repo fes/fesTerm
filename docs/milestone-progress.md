@@ -1,5 +1,37 @@
 # Milestone Progress Narrative
 
+## Aligning acquisition test-helper cfgs and redacting Ensure diagnostics
+
+The normal child of qualified `0d9a8da9` addresses the three unused Unix-only
+helpers reported by Windows required job `130101987445`. Only
+`host_version_fixture`, `version_fixture`, `authenticate_fixture_registered`
+and the first helper's necessary re-export gain Unix guards. Their callers
+belong to the already Unix-only replacement test module. The acquisition
+tests still consume `verify_staging_fixture` across platforms; its definition
+and re-export remain unchanged. This adapts only the necessary cfg prior art
+from exact `20c4b085`, without importing backend changes.
+
+The separate Linux required failure (job `130101987441`, 13 passed / one failed)
+still has an **unknown** actual Ensure reply. Adapting the public classifier
+from exact `a8113f6a` adds only static response-variant/fieldless-refusal
+diagnostics to the existing native contention fixture, including its actual
+strict Ensured assertion. The earlier retry diagnostics no longer dump the
+response. Predicates, request counts, eight-second deadline, 25-ms retry wait
+and one-daemon assertion remain unchanged; this is not a speculative backend
+fix. Test identities and trace relationships do not change.
+
+Qualification is limited to the current-cfg deadline selector, affected test
+compilation/listing, existing strict configurations, fmt and traceability.
+The deadline selector passes one / 127 filtered; 13 replacement tests and the
+one affected native fixture compile and list without executing that fixture.
+Minimal acquisition and affected three-package all-target strict Clippy,
+fmt and trace311/zero-broken-reference gates exit 0 on pinned Rust 1.99.1.
+Evidence is retained separately in `target/adr84-acquisition-cfg-diag-evidence/`.
+No native fixture is rerun solely for diagnostics, and no Windows execution,
+required-CI-green, genuine HTTPS/CDN or publisher/installed acceptance is
+claimed. Earlier `0d` and `7fa` evidence and their remaining native/release gates
+are preserved.
+
 ## Synchronizing the official-acquisition shared-deadline regression
 
 Required macOS CI for exact published `7fa17f01` (run `42893943871`, job

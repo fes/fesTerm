@@ -1267,6 +1267,19 @@ pub(crate) mod native_routes {
     #[tokio::test]
     #[ignore = "requires explicitly built owned native helper and fixture child"]
     async fn native_committed_creation_policy_contention_is_uncertain_not_disconnect() {
+        fn public_response_kind(response: &Response) -> (&'static str, Option<Refusal>) {
+            match response {
+                Response::Capabilities { .. } => ("capabilities", None),
+                Response::Inventory { .. } => ("inventory", None),
+                Response::Lookup { .. } => ("lookup", None),
+                Response::Ensured { .. } => ("ensured", None),
+                Response::Attached { .. } => ("attached", None),
+                Response::Detached { .. } => ("detached", None),
+                Response::Ended { .. } => ("ended", None),
+                Response::Refused { reason } => ("refused", Some(*reason)),
+            }
+        }
+
         let fixture = NativeFixture::new(true);
         let (native, source) = fixture.backend();
         let backend = Arc::new(LostReply {
@@ -1299,8 +1312,9 @@ pub(crate) mod native_routes {
             tokio::select! {
                 result = &mut request => {
                     let response = result.unwrap();
-                    assert!(matches!(response.body, Response::Refused { reason: Refusal::Busy | Refusal::Unknown | Refusal::OutcomeUncertain }), "{response:?}");
-                    assert!(Instant::now() < deadline, "{response:?}");
+                    let (variant, refusal_code) = public_response_kind(&response.body);
+                    assert!(matches!(response.body, Response::Refused { reason: Refusal::Busy | Refusal::Unknown | Refusal::OutcomeUncertain }), "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
+                    assert!(Instant::now() < deadline, "first Ensure response variant={variant}, refusal_code={refusal_code:?}");
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }
                 _ = backend.committed.notified() => {
@@ -1315,14 +1329,15 @@ pub(crate) mod native_routes {
                 }
             }
         }
-        assert!(matches!(
-            first
-                .request_issued(&operation, Request::Ensure { creation }, &cancel)
-                .await
-                .unwrap()
-                .body,
-            Response::Ensured { .. }
-        ));
+        let response = first
+            .request_issued(&operation, Request::Ensure { creation }, &cancel)
+            .await
+            .unwrap();
+        let (variant, refusal_code) = public_response_kind(&response.body);
+        assert!(
+            matches!(response.body, Response::Ensured { .. }),
+            "first Ensure retry response variant={variant}, refusal_code={refusal_code:?}"
+        );
         assert_eq!(
             festerm_sessiond::list_running_sessions_in(&fixture.root)
                 .unwrap()
