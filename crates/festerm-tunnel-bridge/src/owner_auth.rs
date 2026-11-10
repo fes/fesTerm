@@ -247,6 +247,7 @@ impl PendingOwnerChallenge {
 pub struct OwnerVerifier {
     policy: OwnerPolicy,
     keys: Vec<VerifyingKey>,
+    highest_issuance_epoch: Option<Epoch>,
 }
 
 impl OwnerVerifier {
@@ -269,6 +270,7 @@ impl OwnerVerifier {
             verified.push(key);
         }
         Ok(Self {
+            highest_issuance_epoch: policy.capabilities.issuance_epoch,
             policy,
             keys: verified,
         })
@@ -282,12 +284,20 @@ impl OwnerVerifier {
             || policy.principal != self.policy.principal
             || policy.host_epoch.get() < self.policy.host_epoch.get()
             || policy.grant_epoch.get() < self.policy.grant_epoch.get()
+            || matches!(
+                (self.highest_issuance_epoch, policy.capabilities.issuance_epoch),
+                (Some(previous), Some(next)) if next.get() < previous.get()
+            )
             || (policy.host_epoch == self.policy.host_epoch
                 && policy.grant_epoch == self.policy.grant_epoch)
         {
             return Err(ContractError::Stale);
         }
-        *self = Self::new(policy, keys)?;
+        let mut replacement = Self::new(policy, keys)?;
+        replacement.highest_issuance_epoch = replacement
+            .highest_issuance_epoch
+            .or(self.highest_issuance_epoch);
+        *self = replacement;
         Ok(())
     }
 
@@ -611,6 +621,42 @@ mod tests {
             ),
             Err(ContractError::Stale)
         ));
+    }
+
+    #[test]
+    fn host_owner_policy_replacement_retains_issuance_high_water_mark() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        let mut allowed = policy();
+        allowed.capabilities = Capabilities {
+            issuance_epoch: Some(Epoch::new(5).unwrap()),
+            ensure: true,
+            attach: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        };
+        let mut verifier = OwnerVerifier::new(allowed.clone(), &[key.public_key()]).unwrap();
+        allowed.grant_epoch = allowed.grant_epoch.next().unwrap();
+        allowed.capabilities.issuance_epoch = Some(Epoch::new(3).unwrap());
+        assert_eq!(
+            verifier.replace(allowed.clone(), &[key.public_key()]),
+            Err(ContractError::Stale)
+        );
+        assert_eq!(
+            verifier.policy.capabilities.issuance_epoch,
+            Some(Epoch::new(5).unwrap())
+        );
+
+        let mut disabled = allowed.clone();
+        disabled.capabilities = Capabilities::default();
+        verifier.replace(disabled, &[key.public_key()]).unwrap();
+        allowed.grant_epoch = allowed.grant_epoch.next().unwrap();
+        allowed.capabilities.issuance_epoch = Some(Epoch::new(4).unwrap());
+        assert_eq!(
+            verifier.replace(allowed.clone(), &[key.public_key()]),
+            Err(ContractError::Stale)
+        );
+        allowed.capabilities.issuance_epoch = Some(Epoch::new(6).unwrap());
+        verifier.replace(allowed, &[key.public_key()]).unwrap();
     }
 
     #[test]
