@@ -489,8 +489,8 @@ fn exact_binding(record: &Snapshot, epoch: u64, exact: &Binding) -> io::Result<(
 mod tests {
     use super::*;
 
-    fn fixture() -> (tempfile::TempDir, Store) {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    fn fixture() -> (storage::PrivateTestDirectory, Store) {
+        let root = storage::private_test_directory();
         let store = Store::create(&root.path().join("host"), Origin::Headless, settings()).unwrap();
         (root, store)
     }
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence() {
-        let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        let root = storage::private_test_directory();
         let path = root.path().join("host");
         let directory = storage::private_directory(&path, true).unwrap();
         assert_eq!(

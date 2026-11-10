@@ -587,6 +587,12 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker`,
   `host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty`,
   `host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity`.
+  Windows configuration/journal/staging fixtures share the existing
+  policy-validated private-storage fixture-root selection, not an assumption
+  that checkout ancestors are safe. The native
+  `staging_parent_rejects_a_dacl_that_allows_child_substitution` regression
+  retains strict ancestor refusal; fixture selection does not qualify startup
+  or service behavior.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic

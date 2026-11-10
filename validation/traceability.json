@@ -5559,7 +5559,8 @@
         "host_cloud_lost_reply_recovers_exact_late_resource_without_duplicate_or_reenable",
         "host_cloud_health_observes_resource_and_cleanup_retains_exact_generation_blocker",
         "host_cloud_cancelled_submission_journals_late_success_and_never_resubmits_uncertainty",
-        "host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity"
+        "host_cloud_reenable_and_credential_recovery_reuse_only_the_original_identity",
+        "staging_parent_rejects_a_dacl_that_allows_child_substitution"
       ],
       "manual_scenarios": ["HOSTSETUP-01"],
       "status": "partial",
