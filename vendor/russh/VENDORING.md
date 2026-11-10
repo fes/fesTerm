@@ -15,7 +15,9 @@ that do not consume it and explicitly consume the PKCS#5 `sec` value when RSA
 support is disabled. `LICENSE-APACHE` was added from the canonical Apache-2.0
 text because the published crate declares that license but does not include a
 license file. Two trailing spaces in the upstream README were removed to
-satisfy the repository diff policy.
+satisfy the repository diff policy. Unix agent tests wait for a successful
+socket connection, with a bounded deadline and child-exit check, rather than
+assuming that the socket's existence means the agent is listening.
 
 Keep these changes when updating the vendored crate and rerun the fesTerm SSH,
 credential-lifecycle, security, vendored-russh, and workspace Clippy gates.

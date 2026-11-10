@@ -374,6 +374,11 @@ continue working through the legacy adapter. Do not silently add creation
 permission, convert a strict legacy attachment into resume-or-create, or merge
 tunnels by display name.
 
+Any hosted-runtime migration must preserve protected state and account binding.
+It must not stop a live legacy session without a separate, default-No
+confirmation for that exact generation; manual deferral remains available.
+Host setup or sharing consent alone is not consent to restart a session.
+
 Provide an explicit owned-installation migration: inventory, preview mapping,
 verify account/key/ownership, reserve new host records, bind selected existing
 daemons without frontend takeover, then switch and retain rollback evidence.
@@ -382,11 +387,6 @@ only by explicit selection, never account-wide cleanup. Cleanup deletes only
 verified owned cloud incarnations. Interrupted migration is resumable and cannot
 provision duplicate hosts/shells. A failed migration leaves legacy use available
 where possible without resurrecting revoked exposure.
-
-Preserve protected state and account binding during migration. Do not stop a
-live legacy session without a separate, default-No confirmation for that exact
-generation. Setup or sharing consent does not authorize restart. Manual deferral
-remains available; missing confirmation is never implicit permission to stop.
 
 New recipes default to resume-or-create; legacy imports default to their old
 strict behavior until deliberately converted. Old clients get a clear unsupported

@@ -660,7 +660,10 @@ closing tabs cannot accumulate unbounded background sessions.
 
 ### Remote and enterprise discovery
 
-Launcher cards open ephemeral **Remote Sessions** and **Enterprise** tabs.
+**Remote Sessions** and **Enterprise** have no user-facing entry points pending
+explicit owner approval. Do not expose them through Launcher/New Session,
+menus, shortcuts, settings or the command palette. Their internal commands,
+ephemeral tabs and backend functionality remain available to development tests.
 Merely opening either surface performs no network or credential operation.
 Typed actions route through the active tab identity; cancellation remains
 available when the shared background-worker limit is reached. Closed tabs

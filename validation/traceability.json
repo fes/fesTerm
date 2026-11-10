@@ -1413,7 +1413,7 @@
       "decisions": ["ADR-0014", "ADR-0038", "ADR-0082"],
       "automated_tests": [
         "discovery_surfaces_open_without_workers_and_never_enter_workspace_metadata",
-        "remote_and_enterprise_cards_route_to_typed_discovery_actions",
+        "unreleased_discovery_cards_are_hidden_at_narrow_and_wide_tab_sizes",
         "remote_picker_target_opens_normal_terminal_adopts_snapshot_and_stays_ephemeral",
         "closing_discovery_tabs_retains_cleanup_until_worker_exit",
         "discovery_action_guard_rejects_stale_owners_and_caps_only_new_workers",
@@ -1423,6 +1423,7 @@
       "manual_scenarios": ["CP-24", "CP-21"],
       "status": "partial",
       "prerequisites": [
+        "owner approval to expose remote-session and enterprise discovery in the GUI; entry points are deliberately hidden",
         "native desktop focus/accessibility and real remote Windows OpenSSH/named-pipe qualification",
         "approved enterprise tenant/application registration and policy-authorized Dev Center access",
         "broker/device claims and enrolled-phone workflow remain separate implementation and qualification"
