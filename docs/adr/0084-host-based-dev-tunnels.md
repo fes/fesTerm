@@ -97,8 +97,19 @@ Creation neither enables rooted file access, observation, MCP nor broader ACLs.
 Those capabilities retain separate grants and generation/source bindings.
 
 Stage 1 chooses the additional authentication path: explicitly enrolled,
-per-host owner Ed25519 keys, protected local consent and native-vault/private-file
-seed boundaries, with a fresh consumed challenge on the same host-key-pinned
+per-host owner Ed25519 keys, protected local consent and native-vault seed storage
+by default. Explicit headless-only protected-file credential/anchor storage is
+also allowed by local selection; it is never a fallback after vault failure and
+never changes desktop/GUI policy. Its owner-only files have weaker rollback
+protection: full protected-store/home rollback can restore old consent and is
+not claimed resisted. Portable configuration/public metadata cannot select or
+reconstruct credentials or grants. The host Store enforces protected Headless
+origin; the lower-level bridge/client constructor's marker is only a namespace.
+Trusted composition roots must enforce headless-only explicit selection; the
+library cannot attest GUI/CLI caller origin. Future desktop/mobile composition
+must remain native-only and future headless CLI selection requires protected
+deliberate opt-in (`HOSTAUTH-01`).
+Both modes use a fresh consumed challenge on the same host-key-pinned
 channel. Host/key/principal/connection/nonces and monotonic epochs are signed;
 current protected session grants are checked separately at admission. This is
 proof of the configured enrolled owner, **not** an asserted GitHub identity or
@@ -531,6 +542,8 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   `host_operations_roundtrip_without_conflating_detach_end_or_absence`,
   `host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values`,
   `host_response_correlation_rejects_wrong_target_operation_and_temporary_lease`,
+  `host_issued_operation_requires_captured_epoch_and_correlates_responses`,
+  `host_inventory_preserves_filtered_bounded_per_target_uncertainty`,
   `host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors`,
   `host_inventory_response_requires_exact_forward_cursor_progression`,
   `host_aggregate_budgets_refuse_saturation_and_release_exact_permits`,
@@ -538,10 +551,16 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   `host_owner_authentication_matches_domain_bound_signature_fixture`,
   `host_owner_proof_rejects_foreign_key_tampering_and_cross_connection_replay`,
   `host_owner_challenge_expiry_revocation_and_epoch_rollback_fail_closed`,
+  `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`,
+  `host_owner_mutating_policy_requires_advertised_issuance_epoch`,
+  `host_owner_permission_templates_require_runtime_projection_for_creation`,
+  `host_owner_policy_replacement_retains_issuance_high_water_mark`,
   `host_owner_admission_requires_current_shared_exact_generation_and_absence`,
   `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
   `host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes`
   additionally proves current-authorize state/generation/ABA revision fencing.
+  `host_owner_fence_rejects_changed_intent_for_the_same_operation` covers
+  takeover and recipe changes under a reused operation ID.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
 - **Protected enrollment prerequisite evidence (stages 1/3):**
@@ -559,8 +578,30 @@ signed/staged bytes alone are not Ready or a trusted launch receipt.
   authentication without a shared connection/channel exporter; the changed-key
   fixture still refuses before authentication. This is a concrete remaining
   transport prerequisite, not successful channel-bound proof qualification.
+  `host_owner_permission_templates_require_runtime_projection_for_creation`
+  separates persistent consent from strict runtime advertisements;
+  `host_owner_creation_epoch_refuses_future_without_refreshing_older_requests`
+  preserves original issued operations across fixture issuer projection and
+  refuses unadvertised future epochs. Native composition
+  must obtain that issuer under the actual protected backend reservation.
+  Fresh enrollment templates have no observed issuer watermark; durable backend
+  fencing, not cached owner policy, protects across reservations.
   `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
   no UI, listener, broad pairing service or full ADR acceptance is claimed.
+  Reliability remediation adds
+  `protected_owner_initialization_requires_exact_provisioned_account_and_recovers_receipt`,
+  `protected_owner_creation_settings_mask_preserves_revocation_and_permission_removal`,
+  `protected_owner_compact_anchor_supports_all_64_history_entries_in_2560_byte_vault`,
+  `protected_owner_headless_file_selection_is_explicit_bound_and_not_desktop_fallback`,
+  `protected_owner_observed_epoch_commit_recovers_only_forward_after_disk_failure`
+  and `reserved_secret_creation_never_replaces_existing_authority`.
+  Prepared records and pre-reserved references permit explicit validated forward
+  recovery without a large native credential blob, rollback or account adoption.
+  `protected_owner_interrupted_initialization_cannot_switch_credential_storage`
+  preserves receipt/prepared evidence across refused native/file mode changes;
+  the real private-store key fixture exercises deletion and subsequent Missing.
+  Cross-platform CI selects it for Windows DELETE-capable no-reparse handles,
+  but a passing native Windows run remains required.
 - **Automated tests required:** Planned tests and acceptance matrix below.
   Implemented stage-4 boundary coverage:
   `headless_configuration_is_inert_and_origin_is_not_adopted`,

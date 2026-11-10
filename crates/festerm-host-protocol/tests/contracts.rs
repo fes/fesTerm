@@ -2,6 +2,93 @@ use festerm_host_protocol::*;
 use serde_json::{json, Value};
 use std::str::FromStr;
 
+#[test]
+fn host_issued_operation_requires_captured_epoch_and_correlates_responses() {
+    let body = Request::Ensure {
+        creation: creation(),
+    };
+    assert_eq!(
+        Envelope::new(id(1), id(3), body.clone()).validate(),
+        Err(ContractError::Malformed)
+    );
+    let operation = IssuedOperation {
+        id: id(3),
+        epoch: Epoch::new(7).unwrap(),
+    };
+    let request = Envelope::issued(id(1), &operation, body);
+    let decoded: Envelope<Request> = decode(&encode(&request).unwrap()).unwrap();
+    assert_eq!(decoded.issued_operation().unwrap(), operation);
+    let mut response = Envelope::issued(
+        id(1),
+        &operation,
+        Response::Refused {
+            reason: Refusal::Stale,
+        },
+    );
+    response.validate_for(&decoded).unwrap();
+    response.issuance_epoch = Some(Epoch::new(8).unwrap());
+    assert_eq!(response.validate_for(&decoded), Err(ContractError::Stale));
+    let mut malformed = serde_json::to_value(&request).unwrap();
+    malformed["issuance_epoch"] = json!(0);
+    assert!(decode::<Envelope<Request>>(&serde_json::to_vec(&malformed).unwrap()).is_err());
+    let mut capabilities = Capabilities {
+        ensure: true,
+        attach: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        Response::Capabilities { capabilities }.validate(),
+        Err(ContractError::Malformed)
+    );
+    capabilities.issuance_epoch = Some(operation.epoch);
+    Response::Capabilities { capabilities }.validate().unwrap();
+}
+
+#[test]
+fn host_inventory_preserves_filtered_bounded_per_target_uncertainty() {
+    let snapshot = AuthorizedInventory::capture_with_unknowns(
+        id(1),
+        id(7),
+        Epoch::new(1).unwrap(),
+        id(8),
+        [InventoryEntry {
+            owner: id(7),
+            shared: true,
+            revoked: false,
+            session: session(1),
+        }],
+        [
+            UnknownInventoryEntry {
+                owner: id(7),
+                shared: true,
+                revoked: false,
+                target: session(2).target,
+            },
+            UnknownInventoryEntry {
+                owner: id(9),
+                shared: true,
+                revoked: false,
+                target: session(3).target,
+            },
+            UnknownInventoryEntry {
+                owner: id(7),
+                shared: true,
+                revoked: true,
+                target: session(4).target,
+            },
+        ],
+    )
+    .unwrap();
+    let mut page = snapshot
+        .page(&id(1), &id(7), Epoch::new(1).unwrap(), None)
+        .unwrap();
+    assert_eq!(page.sessions.len(), 1);
+    assert_eq!(page.unknown, [session(2).target]);
+    page.validate().unwrap();
+    page.unknown = vec![session(2).target; MAX_SESSIONS + 1];
+    assert_eq!(page.validate(), Err(ContractError::Limit));
+}
+
 fn id<T: FromStr>(n: u32) -> T
 where
     T::Err: std::fmt::Debug,
@@ -37,9 +124,20 @@ fn creation() -> Creation {
     }
 }
 
+fn issued<T: Validate>(host: HostId, operation: OperationId, body: T) -> Envelope<T> {
+    Envelope::issued(
+        host,
+        &IssuedOperation {
+            id: operation,
+            epoch: Epoch::new(1).unwrap(),
+        },
+        body,
+    )
+}
+
 #[test]
 fn host_wire_fixture_is_canonical_and_not_legacy_protocol() {
-    let frame = Envelope::new(
+    let frame = issued(
         id(1),
         id(3),
         Request::Ensure {
@@ -74,7 +172,7 @@ fn host_wire_fixture_is_canonical_and_not_legacy_protocol() {
 
 #[test]
 fn host_wire_rejects_malformed_oversized_and_version_mismatched_input() {
-    let original = serde_json::to_value(Envelope::new(
+    let original = serde_json::to_value(issued(
         id(1),
         id(3),
         Request::Ensure {
@@ -148,7 +246,15 @@ fn host_operations_roundtrip_without_conflating_detach_end_or_absence() {
         Request::ExplicitEnd { target },
     ];
     for request in requests {
-        let frame = Envelope::new(id(1), id(3), request);
+        let frame = if request.issuance_epoch_required() {
+            issued(id(1), id(3), request)
+        } else {
+            let frame = Envelope::new(id(1), id(3), request);
+            let mut invalid = frame.clone();
+            invalid.issuance_epoch = Some(Epoch::new(1).unwrap());
+            assert_eq!(encode(&invalid), Err(ContractError::Malformed));
+            frame
+        };
         assert_eq!(
             decode::<Envelope<Request>>(&encode(&frame).unwrap()).unwrap(),
             frame
@@ -209,7 +315,7 @@ fn host_zero_field_variants_reject_embedded_authority_and_lifetime_fields() {
         decode::<Envelope<Request>>(&serde_json::to_vec(&capabilities).unwrap()),
         Err(ContractError::Malformed)
     );
-    let mut persistent = serde_json::to_value(Envelope::new(
+    let mut persistent = serde_json::to_value(issued(
         id(1),
         id(3),
         Request::Ensure {
@@ -273,7 +379,7 @@ fn host_response_correlation_rejects_wrong_target_operation_and_temporary_lease(
     creation.lifetime = Lifetime::Temporary {
         reconnect_grace_seconds: 60,
     };
-    let request = Envelope::new(
+    let request = issued(
         id(1),
         id(3),
         Request::Ensure {
@@ -282,7 +388,7 @@ fn host_response_correlation_rejects_wrong_target_operation_and_temporary_lease(
     );
     let mut summary = session(2);
     summary.lifetime = creation.lifetime;
-    let response = Envelope::new(
+    let response = issued(
         id(1),
         id(3),
         Response::Ensured {
@@ -384,6 +490,7 @@ fn host_inventory_response_requires_exact_forward_cursor_progression() {
         },
     );
     let page = InventoryPage {
+        unknown: Vec::new(),
         snapshot: id(8),
         authorization_epoch: Epoch::new(1).unwrap(),
         sessions: (1..=16).map(session).collect(),
@@ -495,6 +602,7 @@ fn host_aggregate_budgets_refuse_saturation_and_release_exact_permits() {
 #[test]
 fn host_admission_fence_rejects_revocation_replacement_and_operation_change() {
     let fence = AdmissionFence {
+        issuance_epoch: Some(Epoch::new(1).unwrap()),
         host: id(1),
         principal: id(7),
         connection: id(6),
@@ -503,6 +611,12 @@ fn host_admission_fence_rejects_revocation_replacement_and_operation_change() {
         grant_epoch: Epoch::new(3).unwrap(),
         operation_epoch: Epoch::new(4).unwrap(),
         operation: id(8),
+        intent: (&Request::Attach {
+            target: session(2).target,
+            attachment: id(4),
+            takeover: false,
+        })
+            .into(),
         logical: Some(id(2)),
         logical_state: Some(LogicalState::Running(GenerationId::new(3).unwrap())),
         logical_revision: Some(Epoch::new(1).unwrap()),

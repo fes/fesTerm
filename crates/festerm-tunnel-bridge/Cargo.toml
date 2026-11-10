@@ -41,6 +41,7 @@ ed25519-dalek = { version = "3", optional = true }
 getrandom = { version = "0.3", optional = true }
 
 [dev-dependencies]
+festerm-sessiond = { path = "../festerm-sessiond", features = ["test-support"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "ring", "std", "tls12"] }
 
 [[bin]]

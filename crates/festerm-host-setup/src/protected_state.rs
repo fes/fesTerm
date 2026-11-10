@@ -2,8 +2,8 @@ use festerm_sessiond::private_storage as storage;
 use fs2::FileExt;
 use std::{
     fs::File,
-    io::{self, Read, Write},
-    path::{Path, PathBuf},
+    io::{self, Read},
+    path::Path,
 };
 
 pub(crate) struct Lease(File);
@@ -33,41 +33,7 @@ impl Drop for Lease {
 }
 
 pub(crate) fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
-    publish_new_with(directory, name, bytes, |file, bytes| file.write_all(bytes))
-}
-
-fn publish_new_with(
-    directory: &File,
-    name: &Path,
-    bytes: &[u8],
-    write: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
-) -> io::Result<()> {
-    match storage::open_private_file(directory, name, false) {
-        Ok(_) => return Err(io::ErrorKind::AlreadyExists.into()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    let staging = PathBuf::from(format!(".stage-{}", uuid::Uuid::new_v4()));
-    let mut output = storage::open_private_file(directory, &staging, true)?;
-    let result = (|| {
-        write(&mut output, bytes)?;
-        output.sync_all()?;
-        #[cfg(unix)]
-        {
-            festerm_unix_security::rename_noreplace(directory, &staging, directory, name)?;
-            directory.sync_all()?;
-        }
-        #[cfg(windows)]
-        festerm_windows_security::rename_file_noreplace(&output, directory, name)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        #[cfg(unix)]
-        let _ = festerm_unix_security::remove_private_staging_file(directory, &staging);
-        #[cfg(windows)]
-        let _ = festerm_windows_security::remove_private_staging_file(&output);
-    }
-    result
+    festerm_tunnel_bridge::setup_storage::publish_new_private(directory, name, bytes)
 }
 
 pub(crate) fn publish_immutable(

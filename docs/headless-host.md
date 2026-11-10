@@ -128,8 +128,15 @@ The opt-in library `owner-enrollment` API supports protected local public-key
 enrollment/revocation/status and separate permission consent under the same
 installation lease. It does not expose a CLI enrollment command, enable a
 listener or turn `status` into an authentication/readiness claim. Client signing
-keys and host policy rollback anchors require the native vault; no file seed
-fallback exists. See the [API and concrete channel blocker](host-protocol.md#concrete-transport-blocker--no-owner-signing-adapter-yet).
+keys and policy anchors use the native vault by default. The library's explicit
+`OwnerStorage::HeadlessProtectedFile` selection offers owner-only credential/
+anchor files bound to that headless installation/origin, never fallback from a
+failed vault or portable configuration adoption. Full protected-store/home
+rollback is not resisted in this weaker mode. `reconcile()` only forward-publishes
+the exact digest/revision committed by the selected store; it cannot invent
+consent. Initialization requires the existing exact Provisioned account/host
+binding. No CLI storage/enrollment controls are exposed yet.
+See the [API and concrete channel blocker](host-protocol.md#concrete-transport-blocker--no-owner-signing-adapter-yet).
 First-connect foreground handoff versus advanced explicit public-key import
 remains a bounded UX prerequisite. Neither bearer presence nor a provisioning
 account string enrolls an owner.
