@@ -1,5 +1,14 @@
 # Milestone Progress Narrative
 
+## Stabilizing SSH-agent test startup
+
+The vendored SSH tests could connect between the agent creating its Unix
+socket and listening on it, producing intermittent connection refusals in CI.
+Their shared startup helper now waits for an actual connection, reports an
+early agent exit or a bounded timeout, and cleans up the child on failure.
+Focused tests cover a socket that exists but is not listening and an exited
+agent; production SSH behavior is unchanged.
+
 ## Investigating Windows inherited stdout
 
 A separate, job-supervised native probe measures inherited stdout pipe mode
