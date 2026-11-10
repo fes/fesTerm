@@ -89,6 +89,27 @@ An operation ID identifies a journaled request/result; retries must compare
 the entire owner/logical/recipe/lifetime intent and return conflict if it
 changed. This stage supplies representations, not the journal/spawn algorithm.
 
+The unreleased HOST envelope additionally carries optional `issuance_epoch`;
+Ensure/Create require it. `IssuedOperation { id, epoch }` captures the current
+protected namespace from authenticated capabilities for a **new explicit
+action**. `Envelope::issued` constructs that request; the server obtains the
+same pair with `issued_operation`. Responses echo the epoch and correlation
+checks it, including refusals. Admission fences bind it independently of the
+per-operation cancellation epoch. Bare OperationId client APIs must refuse
+Ensure/Create. An uncertain retry retains the original pair and immutable
+intent; reconnect, capability refresh, Stale or Unknown must never automatically
+replace its epoch. A retired namespace yields Stale/Unknown, never a new create.
+Only host-local journal serialization can rotate the namespace and safely retire
+its operation ledger. Rotation cannot discard active generations or revocation
+fences. Exact-target lifecycle operations remain generation/lease fenced and do
+not require a creation-issuance epoch. Legacy daemon/bridge wire is unchanged.
+
+Inventory pages contain bounded per-target `unknown` metadata, repeated across
+pages alongside the healthy session page. `capture_with_unknowns` filters both
+sets by protected owner/sharing/revocation before publication. One uncertain
+record cannot hide healthy peers, and a partial/omitted inventory never proves
+absence; exact Lookup/Ensure must still reconcile protected native evidence.
+
 `Recipe { shell, args, cwd }` uses an argument vector, never a shell command
 string. Optional shell means the host's default and requires an empty argument
 vector. Shell/cwd are nonempty when present, at most 4,096 bytes; at most 32
@@ -342,9 +363,12 @@ JSON; this slice chooses neither new controls nor a pairing service.
   intent under the manager's journal lock; absence cannot be inferred by deleting
   a denied/uncertain record. Manager integration must compare recipes and
   serialize reservations before effects.
-- Capture connection/host/grant/operation epochs, host/principal/logical/
-  generation/operation IDs and admitted logical state/record revision in
-  `AdmissionFence`. `SessionGrant.revision` is a protected nonzero `Epoch` that
+- Capture the complete admitted request, connection/host/grant/operation epochs,
+  host/principal/logical/generation/operation IDs and admitted logical
+  state/record revision in `AdmissionFence`. Request contents are redacted from
+  its debug output. A reused operation ID cannot change a recipe, attachment,
+  takeover flag or other intent during reauthorization. The durable journal
+  must still compare the entire intent on retries. `SessionGrant.revision` is a protected nonzero `Epoch` that
   advances on every record transition, including Absent → Running → Absent.
   Ensure/Lookup captures must change on a running-generation replacement even
   though their requests do not carry a generation pin. Revalidate against fresh
@@ -399,7 +423,7 @@ fixture, malformed/version/legacy refusal, real operation/absence roundtrips,
 recipes/lifetimes, privacy/pagination fences, concurrent aggregate budgets and
 epoch/generation/operation changes. Bridge `owner_auth::tests` covers a pinned
 signature fixture, foreign-key/tampered/cross-connection proof, deadlines,
-revocation/rollback, exact shared-generation grants, default deny and
+revocation/rollback, exact shared-generation grants, request-intent fencing, default deny and
 creation-disabled resume. Fixture seed `[7; 32]` is synthetic test-only material.
 Review regressions exercise real current reauthorization across logical-state,
 generation and revision changes, version-first refusal of actual legacy/future

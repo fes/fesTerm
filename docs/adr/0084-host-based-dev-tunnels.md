@@ -524,6 +524,8 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `host_owner_authentication_rejects_changed_trust_assertions_and_invalid_keys`.
   `host_owner_fence_reauthorization_rejects_logical_state_and_revision_changes`
   additionally proves current-authorize state/generation/ABA revision fencing.
+  `host_owner_fence_rejects_changed_intent_for_the_same_operation` covers
+  takeover and recipe changes under a reused operation ID.
   The acceptance matrix below remains required later-stage evidence, not
   coverage claimed by these codec/authentication primitives.
 - **Protected enrollment prerequisite evidence (stages 1/3):**

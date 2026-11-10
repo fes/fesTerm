@@ -1,6 +1,6 @@
 use crate::{
-    ContractError, Cursor, Epoch, HostId, OperationId, PrincipalId, SessionSummary, Validate,
-    MAX_SESSIONS, PAGE_SIZE,
+    ContractError, Cursor, Epoch, HostId, OperationId, PrincipalId, SessionSummary, Target,
+    Validate, MAX_SESSIONS, PAGE_SIZE,
 };
 use serde::{Deserialize, Serialize};
 
@@ -10,12 +10,15 @@ pub struct InventoryPage {
     pub snapshot: OperationId,
     pub authorization_epoch: Epoch,
     pub sessions: Vec<SessionSummary>,
+    /// Repeated across pages: these admitted targets could not be observed.
+    /// Neither omission nor an incomplete inventory establishes absence.
+    pub unknown: Vec<Target>,
     pub next: Option<Cursor>,
 }
 
 impl Validate for InventoryPage {
     fn validate(&self) -> Result<(), ContractError> {
-        if self.sessions.len() > PAGE_SIZE {
+        if self.sessions.len() > PAGE_SIZE || self.unknown.len() > MAX_SESSIONS {
             return Err(ContractError::Limit);
         }
         let mut previous = None;
@@ -25,6 +28,18 @@ impl Validate for InventoryPage {
                 return Err(ContractError::Malformed);
             }
             previous = Some(&session.target.logical);
+        }
+        let mut previous = None;
+        for target in &self.unknown {
+            if previous.is_some_and(|id| id >= &target.logical)
+                || self
+                    .sessions
+                    .iter()
+                    .any(|session| session.target.logical == target.logical)
+            {
+                return Err(ContractError::Malformed);
+            }
+            previous = Some(&target.logical);
         }
         if let Some(cursor) = &self.next {
             cursor.validate()?;
@@ -44,6 +59,13 @@ pub struct InventoryEntry {
     pub session: SessionSummary,
 }
 
+pub struct UnknownInventoryEntry {
+    pub owner: PrincipalId,
+    pub shared: bool,
+    pub revoked: bool,
+    pub target: Target,
+}
+
 /// In-memory snapshot bound to already authenticated owner and current grants.
 /// Construction is filtering, not authentication. Retain at most one snapshot
 /// per admitted client; retire on disconnect/deadline or any epoch transition.
@@ -53,6 +75,7 @@ pub struct AuthorizedInventory {
     epoch: Epoch,
     snapshot: OperationId,
     sessions: Vec<SessionSummary>,
+    unknown: Vec<Target>,
 }
 
 impl AuthorizedInventory {
@@ -62,6 +85,17 @@ impl AuthorizedInventory {
         epoch: Epoch,
         snapshot: OperationId,
         entries: impl IntoIterator<Item = InventoryEntry>,
+    ) -> Result<Self, ContractError> {
+        Self::capture_with_unknowns(host, principal, epoch, snapshot, entries, [])
+    }
+
+    pub fn capture_with_unknowns(
+        host: HostId,
+        principal: PrincipalId,
+        epoch: Epoch,
+        snapshot: OperationId,
+        entries: impl IntoIterator<Item = InventoryEntry>,
+        uncertain: impl IntoIterator<Item = UnknownInventoryEntry>,
     ) -> Result<Self, ContractError> {
         let mut sessions = Vec::new();
         for (index, entry) in entries.into_iter().enumerate() {
@@ -80,12 +114,37 @@ impl AuthorizedInventory {
         {
             return Err(ContractError::Malformed);
         }
+        let mut unknown = Vec::new();
+        for (index, entry) in uncertain.into_iter().enumerate() {
+            if index >= MAX_SESSIONS {
+                return Err(ContractError::Limit);
+            }
+            if entry.owner == principal && entry.shared && !entry.revoked {
+                unknown.push(entry.target);
+            }
+        }
+        unknown.sort_by(|a, b| a.logical.cmp(&b.logical));
+        if sessions.len() + unknown.len() > MAX_SESSIONS {
+            return Err(ContractError::Limit);
+        }
+        if unknown
+            .windows(2)
+            .any(|pair| pair[0].logical == pair[1].logical)
+            || unknown.iter().any(|target| {
+                sessions
+                    .iter()
+                    .any(|session| session.target.logical == target.logical)
+            })
+        {
+            return Err(ContractError::Malformed);
+        }
         Ok(Self {
             host,
             principal,
             epoch,
             snapshot,
             sessions,
+            unknown,
         })
     }
 
@@ -116,6 +175,7 @@ impl AuthorizedInventory {
             snapshot: self.snapshot.clone(),
             authorization_epoch: self.epoch,
             sessions: self.sessions[offset..end].to_vec(),
+            unknown: self.unknown.clone(),
             next: (end < self.sessions.len()).then(|| Cursor {
                 snapshot: self.snapshot.clone(),
                 offset: end as u16,

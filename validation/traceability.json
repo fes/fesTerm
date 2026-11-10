@@ -5530,6 +5530,8 @@
         "host_operations_roundtrip_without_conflating_detach_end_or_absence",
         "host_recipe_and_temporary_lifetime_reject_unsafe_or_unqualified_values",
         "host_response_correlation_rejects_wrong_target_operation_and_temporary_lease",
+        "host_issued_operation_requires_captured_epoch_and_correlates_responses",
+        "host_inventory_preserves_filtered_bounded_per_target_uncertainty",
         "host_inventory_filters_before_pagination_and_fences_foreign_or_revoked_cursors",
         "host_inventory_response_requires_exact_forward_cursor_progression",
         "host_aggregate_budgets_refuse_saturation_and_release_exact_permits",
@@ -5558,7 +5560,8 @@
         "native_owner_reference_reopens_only_exact_approved_binding",
         "native_owner_vault_failure_never_creates_a_fallback_key",
         "encrypted_transport_pins_host_and_exports_only_one_preconfigured_port",
-        "encrypted_transport_refuses_changed_host_key_before_authentication"
+        "encrypted_transport_refuses_changed_host_key_before_authentication",
+        "host_owner_fence_rejects_changed_intent_for_the_same_operation"
       ],
       "manual_scenarios": ["DT-07", "DT-08", "CP-11", "MOB-03", "MOB-06", "HOSTAUTH-01"],
       "status": "partial",
