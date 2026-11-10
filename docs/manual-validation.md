@@ -3352,12 +3352,17 @@ storage contention, foreign generations and revision rollback.
 
 Antagonist regressions also cover active-lease/missing-journal reconciliation
 without helper execution, preserved Running phase after transient observation,
-128-operation/64-logical active-capacity retirement, exact-request replay fences,
-local abandonment of both pending-create slots, interrupted retirement recovery,
-bounded adoption-lock contention, and guarded pending/committed relay actions.
-These are local fixture evidence, not terminal endpoint readiness. Historical
-receipts/fences remain on disk; globally bounded authenticated expiry is not
-implemented, and operators must not delete them to reclaim active slots.
+128-operation issuance rotation without archive growth, minimum own-record
+64-logical reclamation without cross-owner/revoked-fence sweeping, and exact
+retired-scope rejection. Positive native absence proof gates pending abandonment;
+lock contention, malformed evidence, delayed helpers and interrupted artifact
+retirement remain fenced. Generation churn reuses a fixed slot and removes old
+artifacts. Real two-generation fixtures cover healthy-plus-Unknown inventory,
+relay/heartbeat progress while the global journal is locked, concurrent other
+generation revocation, stopped-detach publication-only receipts, initial
+temporary cancellation and revoked-live local end/reconsent. Missing/unsupported
+journals never reset issuance. These are local fixture evidence, not endpoint
+readiness or complete disk-fault/native lifecycle qualification.
 
 HOST-01–03 retain deferred end-to-end/native gates: independently reviewed
 enrollment/vault/channel/admission integration, authoritative journal/reboot

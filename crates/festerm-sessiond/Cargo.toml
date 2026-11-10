@@ -28,7 +28,7 @@ zeroize = "1"
 
 [target.'cfg(unix)'.dependencies]
 festerm-unix-security = { path = "../festerm-unix-security" }
-nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["process", "signal", "fs", "user"] }
 socket2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]

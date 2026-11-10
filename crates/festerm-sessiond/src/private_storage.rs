@@ -178,6 +178,50 @@ pub fn read_private(directory: &File, name: &Path, max: usize) -> io::Result<Zer
     Ok(bytes)
 }
 
+/// Removes only an existing private regular file inside the retained directory.
+/// The caller must fence every writer and prove the artifact is retired.
+pub(crate) fn remove_private_file(directory: &File, name: &Path) -> io::Result<()> {
+    let file = match open_private_file(directory, name, false) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    #[cfg(unix)]
+    {
+        let _retained = file;
+        festerm_unix_security::remove_private_staging_file(directory, name)?;
+        directory.sync_all()
+    }
+    #[cfg(windows)]
+    {
+        let deleting = festerm_windows_security::open_file_no_reparse_for_move(directory, name)?;
+        if !festerm_windows_security::same_file_identity(&file, &deleting)? {
+            return Err(invalid());
+        }
+        festerm_windows_security::remove_private_staging_file(&deleting)
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn remove_private_socket(directory: &File, name: &Path) -> io::Result<()> {
+    file_name(name)?;
+    private(directory, true)?;
+    let stat =
+        match nix::sys::stat::fstatat(directory, name, nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW) {
+            Ok(stat) => stat,
+            Err(nix::errno::Errno::ENOENT) => return Ok(()),
+            Err(error) => return Err(io::Error::from(error)),
+        };
+    if stat.st_uid != nix::unistd::geteuid().as_raw()
+        || stat.st_mode & nix::libc::S_IFMT != nix::libc::S_IFSOCK
+        || stat.st_mode & 0o077 != 0
+    {
+        return Err(invalid());
+    }
+    festerm_unix_security::remove_private_staging_file(directory, name)?;
+    directory.sync_all()
+}
+
 /// Exclusively creates and synchronizes a private file. A partial failed write
 /// is left in place for explicit owner recovery, never silently overwritten.
 /// Concurrent readers can fail closed while creation is still in progress.

@@ -1,6 +1,8 @@
 //! Private generation-scoped daemon supervision. No network authority lives here.
 use crate::private_storage as storage;
-use festerm_host_protocol::{AttachmentId, GenerationId, Lifetime, OperationId, TemporaryLease};
+use festerm_host_protocol::{
+    AttachmentId, Epoch, GenerationId, Lifetime, OperationId, SessionGrant, TemporaryLease,
+};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -37,13 +39,78 @@ pub(crate) struct DaemonLease {
     pub remote_revoked: bool,
     pub pending: Option<PendingAttachment>,
     pub last_attachment: Option<OperationId>,
+    #[serde(with = "grant_storage")]
+    pub grant: SessionGrant,
+    pub writer_epoch: Epoch,
+    pub native_pid: Option<u32>,
+}
+
+mod grant_storage {
+    use super::*;
+    use festerm_host_protocol::{LogicalSessionId, LogicalState, PrincipalId};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Stored {
+        owner: PrincipalId,
+        logical: LogicalSessionId,
+        revision: Epoch,
+        remote_access: bool,
+        state: State,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    enum State {
+        Unknown,
+        Absent,
+        Running(GenerationId),
+        Revoked,
+    }
+
+    pub fn serialize<S: serde::Serializer>(
+        grant: &SessionGrant,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        Stored {
+            owner: grant.owner.clone(),
+            logical: grant.logical.clone(),
+            revision: grant.revision,
+            remote_access: grant.remote_access,
+            state: match grant.state {
+                LogicalState::Unknown => State::Unknown,
+                LogicalState::Absent => State::Absent,
+                LogicalState::Running(generation) => State::Running(generation),
+                LogicalState::Revoked => State::Revoked,
+            },
+        }
+        .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<SessionGrant, D::Error> {
+        let stored = Stored::deserialize(deserializer)?;
+        Ok(SessionGrant {
+            owner: stored.owner,
+            logical: stored.logical,
+            revision: stored.revision,
+            remote_access: stored.remote_access,
+            state: match stored.state {
+                State::Unknown => LogicalState::Unknown,
+                State::Absent => LogicalState::Absent,
+                State::Running(generation) => LogicalState::Running(generation),
+                State::Revoked => LogicalState::Revoked,
+            },
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PendingAttachment {
     pub ticket: OperationId,
-    pub previous: TemporaryLease,
+    pub writer_epoch: Epoch,
+    pub previous: Option<TemporaryLease>,
     pub attachment: AttachmentId,
     pub deadline_ms: u128,
 }
@@ -53,20 +120,29 @@ impl DaemonLease {
         self.lifetime.validate().map_err(|_| invalid())?;
         if self.version != 1
             || self.revision == 0
+            || self.native_pid == Some(0)
             || festerm_ssh::PersistentSessionName::new(&self.name).is_err()
         {
             return Err(invalid());
         }
+        if self.grant.remote_access == self.remote_revoked
+            || matches!(
+                self.grant.state,
+                festerm_host_protocol::LogicalState::Revoked
+            ) != self.remote_revoked
+            || matches!(self.grant.state, festerm_host_protocol::LogicalState::Running(generation) if generation != self.generation)
+        {
+            return Err(invalid());
+        }
         match (self.lifetime, &self.temporary, self.deadline_ms) {
-            (Lifetime::Persistent {}, None, None) if self.pending.is_none() => {}
+            (Lifetime::Persistent {}, None, None) => {}
             (Lifetime::Temporary { .. }, Some(_), Some(_)) => {}
             _ => return Err(invalid()),
         }
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| Some(&pending.previous) != self.temporary.as_ref())
-        {
+        if self.pending.as_ref().is_some_and(|pending| {
+            pending.previous.as_ref() != self.temporary.as_ref()
+                || pending.writer_epoch != self.writer_epoch
+        }) {
             return Err(invalid());
         }
         Ok(())
@@ -99,9 +175,22 @@ fn open_lock(directory: &File, name: &Path) -> io::Result<File> {
 
 impl LeaseGuard {
     pub fn acquire(root: &Path, generation: GenerationId) -> io::Result<Self> {
+        Self::open(root, generation, false)
+    }
+
+    pub fn reserve(root: &Path, generation: GenerationId) -> io::Result<Self> {
+        Self::open(root, generation, true)
+    }
+
+    fn open(root: &Path, generation: GenerationId, create: bool) -> io::Result<Self> {
         let directory = storage::private_directory(root, false)?;
         let stem = format!("host-daemon-{}", generation.get());
-        let lock = open_lock(&directory, Path::new(&format!("{stem}.lock")))?;
+        let name = format!("{stem}.lock");
+        let lock = if create {
+            open_lock(&directory, Path::new(&name))?
+        } else {
+            storage::open_private_file(&directory, Path::new(&name), false)?
+        };
         // Never queue a daemon or a control worker behind a stalled bridge.
         FileExt::try_lock_exclusive(&lock)?;
         Ok(Self {
@@ -155,9 +244,17 @@ impl DaemonWatch {
     pub fn open(root: &Path, name: &str, generation: u128) -> io::Result<Self> {
         let generation = GenerationId::new(generation).map_err(|_| invalid())?;
         let guard = LeaseGuard::acquire(root, generation)?;
-        let lease = guard.read()?;
+        let mut lease = guard.read()?;
         if lease.name != name || lease.generation != generation {
             return Err(invalid());
+        }
+        let pid = std::process::id();
+        if lease.native_pid.is_some_and(|previous| previous != pid) {
+            return Err(invalid());
+        }
+        if lease.native_pid.is_none() {
+            lease.native_pid = Some(pid);
+            guard.replace(&mut lease)?;
         }
 
         let mut watch = Self {
@@ -203,9 +300,9 @@ impl DaemonWatch {
         if lease.expired() || (remote && lease.remote_revoked) {
             return false;
         }
-        match (&lease.temporary, ticket) {
-            (None, None) => true,
-            (Some(_), Some(ticket)) => lease.pending.as_ref().is_some_and(|pending| {
+        match ticket {
+            None => lease.temporary.is_none(),
+            Some(ticket) => lease.pending.as_ref().is_some_and(|pending| {
                 if &pending.ticket != ticket || pending.deadline_ms <= now_ms() {
                     return false;
                 }
@@ -217,7 +314,6 @@ impl DaemonWatch {
                 ));
                 true
             }),
-            _ => false,
         }
     }
 
@@ -234,13 +330,12 @@ impl DaemonWatch {
         if lease.expired() || (remote && lease.remote_revoked) {
             return true;
         }
-        match (&lease.temporary, ticket) {
-            (None, None) => false,
-            (Some(_), Some(ticket)) => !lease
+        match ticket {
+            None => lease.temporary.is_some(),
+            Some(ticket) => !lease
                 .pending
                 .as_ref()
                 .is_some_and(|pending| &pending.ticket == ticket && pending.deadline_ms > now_ms()),
-            _ => true,
         }
     }
 
@@ -274,21 +369,28 @@ impl DaemonWatch {
             return Err(invalid());
         }
         if lease.temporary.is_none() && ticket.is_none() {
-            return Ok(());
+            lease.writer_epoch = lease.writer_epoch.next().map_err(|_| invalid())?;
+            lease.pending = None;
+            lease.last_attachment = None;
+            guard.replace(&mut lease)?;
+            return self.adopt(&lease);
         }
         let pending = lease.pending.take().ok_or_else(invalid)?;
         if Some(&pending.ticket) != ticket
             || pending.deadline_ms <= now_ms()
-            || lease.temporary.as_ref() != Some(&pending.previous)
+            || lease.temporary != pending.previous
+            || lease.writer_epoch != pending.writer_epoch
         {
             return Err(invalid());
         }
-        let binding = lease.temporary.as_mut().ok_or_else(invalid)?;
-        binding.epoch = binding.epoch.next().map_err(|_| invalid())?;
-        binding.attachment = pending.attachment;
+        if let Some(binding) = lease.temporary.as_mut() {
+            binding.epoch = binding.epoch.next().map_err(|_| invalid())?;
+            binding.attachment = pending.attachment;
+            lease.connected = true;
+            lease.deadline_ms = Some(now_ms() + 60_000);
+        }
         lease.last_attachment = Some(pending.ticket);
-        lease.connected = true;
-        lease.deadline_ms = Some(now_ms() + 60_000);
+        lease.writer_epoch = lease.writer_epoch.next().map_err(|_| invalid())?;
         guard.replace(&mut lease)?;
         self.adopt(&lease)
     }
@@ -356,8 +458,17 @@ mod tests {
                 remote_revoked: false,
                 pending: None,
                 last_attachment: None,
+                grant: SessionGrant {
+                    owner: festerm_host_protocol::PrincipalId::new(),
+                    logical: festerm_host_protocol::LogicalSessionId::new(),
+                    revision: Epoch::new(1).unwrap(),
+                    remote_access: true,
+                    state: festerm_host_protocol::LogicalState::Running(generation),
+                },
+                writer_epoch: Epoch::new(1).unwrap(),
+                native_pid: None,
             };
-            LeaseGuard::acquire(&self.0, generation)
+            LeaseGuard::reserve(&self.0, generation)
                 .unwrap()
                 .create(&lease)
                 .unwrap();
@@ -428,7 +539,8 @@ mod tests {
             let mut lease = guard.read().unwrap();
             lease.pending = Some(PendingAttachment {
                 ticket: ticket.clone(),
-                previous: lease.temporary.clone().unwrap(),
+                writer_epoch: lease.writer_epoch,
+                previous: lease.temporary.clone(),
                 attachment: AttachmentId::new(),
                 deadline_ms: now_ms() + 15_000,
             });

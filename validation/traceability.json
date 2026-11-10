@@ -5515,9 +5515,17 @@
         "scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_committed",
         "reconciliation_without_launch_journal_never_executes_helper_even_with_active_lease",
         "transient_native_observation_preserves_bound_running_phase_and_revision",
-        "operation_capacity_retires_receipts_without_resurrection_or_resume_outage",
+        "operation_capacity_rotates_scopes_without_resurrection_or_resume_outage",
         "logical_capacity_retires_absent_records_but_never_erases_revocation_or_generation_fences",
-        "local_quarantine_retirement_releases_pending_budget_without_asserting_absence",
+        "local_pending_retirement_requires_positive_native_absence_and_fences_old_scopes",
+        "interrupted_retirement_keeps_original_operation_noncreating_after_artifact_removal",
+        "incomplete_inventory_preserves_healthy_sessions_and_noncreating_unknown_targets",
+        "per_generation_actions_and_heartbeats_do_not_take_global_journal_or_other_generation_locks",
+        "revoked_live_generation_remains_accounted_and_requires_exact_local_end_and_reconsent",
+        "generation_churn_reuses_fixed_native_slot_and_reclaims_only_proven_dead_artifacts",
+        "pending_retirement_seals_delayed_helpers_but_waits_for_native_lifetime_lock",
+        "intentional_initial_cancellation_cannot_stop_pending_or_transferred_temporary_ownership",
+        "missing_or_unsupported_durable_journal_never_resets_issuance_or_infers_absence",
         "attachment_commit_retries_lease_contention_but_not_past_pending_deadline",
         "guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation",
         "registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers",
@@ -5537,7 +5545,7 @@
         "Native DT-07/DT-08, CP-11 and MOB-03/MOB-06 host/vault/service, reboot, cross-platform lifecycle and physical-device reconnect evidence remains deferred; portable codec/auth and Unix owned daemon fixtures do not qualify it",
         "PendingAttachment is not Attached; remote recovery adoption and observed daemon lease/writer commit must precede success. StopRequested is not Ended; reconcile process absence before success. The endpoint must retire already established revoked relays",
         "Native reboot, Windows ConPTY/job/breakaway, Linux service startup, update/uninstall independence and physical-device 60-second grace remain DT-07/DT-08, CP-11 and MOB-03/MOB-06 gates; Unix owned fixtures do not qualify them",
-        "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment, not journal deletion/automatic respawn; archived receipts/fences reclaim active capacity but historical disk grows until a reviewed authenticated issuance-epoch expiry contract exists"
+        "Ambiguous unbound reservations require local investigation or protected exact-generation local abandonment with positive native absence proof, not journal deletion/automatic respawn. Captured issuance rotation and fixed native slots bound operation/native history; missing or unsupported journals fail closed. Native disk-fault/reboot and migration qualification remains deferred"
       ]
     },
     {

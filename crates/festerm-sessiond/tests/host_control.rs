@@ -1,13 +1,14 @@
 #![cfg(unix)]
 
 use festerm_host_protocol::{
-    AttachmentId, Creation, DetachKind, GenerationId, Lifetime, LogicalSessionId, OperationId,
-    PrincipalId, Recipe, Target,
+    AttachmentId, Creation, DetachKind, GenerationId, IssuedOperation, Lifetime, LogicalSessionId,
+    OperationId, PrincipalId, Recipe, Target,
 };
 use festerm_session::noop_session_event_notifier;
 use festerm_sessiond::{
     host_control::{
-        AdmissionState, ControlError, Effect, Lookup, PendingAttachment, SessionControl,
+        AdmissionState, AttachmentAuthority, ControlError, Effect, Lookup, PendingAttachment,
+        SessionControl,
     },
     host_lease::DaemonWatch,
     list_running_sessions_in, private_storage as storage,
@@ -76,6 +77,10 @@ impl Fixture {
         .unwrap()
     }
 
+    fn issued(&self) -> IssuedOperation {
+        IssuedOperation::new(self.control().issuance_epoch(&self.owner, allow).unwrap())
+    }
+
     fn failing_control(&self) -> (SessionControl, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
         let helper = self.root.join("owned-failing-helper");
@@ -136,7 +141,7 @@ impl Fixture {
 fn reconciliation_without_launch_journal_never_executes_helper_even_with_active_lease() {
     let fixture = Fixture::new();
     let creation = fixture.creation(Lifetime::Persistent {});
-    let operation = OperationId::new();
+    let operation = fixture.issued();
     let (control, marker) = fixture.failing_control();
     assert!(matches!(
         control.ensure(
@@ -151,7 +156,7 @@ fn reconciliation_without_launch_journal_never_executes_helper_even_with_active_
     ));
     assert!(marker.exists());
     fs::remove_file(&marker).unwrap();
-    let launch = fixture.root.join(format!("launch-{operation}.json"));
+    let launch = fixture.root.join(format!("launch-{}.json", operation.id));
     fs::remove_file(&launch).unwrap();
     let state = fixture.state();
     let generation = state["sessions"][creation.logical.as_str()]["generation"]
@@ -171,7 +176,9 @@ fn reconciliation_without_launch_journal_never_executes_helper_even_with_active_
             .unwrap(),
         Lookup::Unknown
     );
-    assert!(control.inventory(&fixture.owner, allow).unwrap().is_empty());
+    let inventory = control.inventory(&fixture.owner, allow).unwrap();
+    assert!(inventory.sessions.is_empty());
+    assert_eq!(inventory.unknown.len(), 1);
     for (cancelled, deny) in [(true, false), (false, true)] {
         assert!(control
             .ensure(
@@ -195,7 +202,8 @@ fn reconciliation_without_launch_journal_never_executes_helper_even_with_active_
         control.lookup(&fixture.owner, &creation.logical, allow),
         Err(ControlError::Revoked)
     ));
-    assert!(control.inventory(&fixture.owner, allow).unwrap().is_empty());
+    let inventory = control.inventory(&fixture.owner, allow).unwrap();
+    assert!(inventory.sessions.is_empty() && inventory.unknown.is_empty());
     assert!(
         !marker.exists(),
         "reconciliation invoked the creation helper"
@@ -233,87 +241,85 @@ fn transient_native_observation_preserves_bound_running_phase_and_revision() {
 }
 
 #[test]
-fn operation_capacity_retires_receipts_without_resurrection_or_resume_outage() {
+fn operation_capacity_rotates_scopes_without_resurrection_or_resume_outage() {
     use festerm_host_protocol::MAX_IDEMPOTENCY_RECORDS;
     let fixture = Fixture::new();
     let creation = fixture.creation(Lifetime::Persistent {});
-    let running = fixture.ensure(&creation);
-    let mut state = fixture.state();
-    let ids: Vec<_> = (0..MAX_IDEMPOTENCY_RECORDS)
-        .map(|_| OperationId::new())
-        .collect();
-    for id in &ids {
-        state["operations"][id.as_str()] = serde_json::json!({
-            "owner": fixture.owner,
-            "creation": creation,
-            "generation": running.target.generation,
-            "created": false,
-            "recreated": false,
-            "create_only": false,
-        });
-    }
-    fixture.save_state(&state);
+    let original = fixture.issued();
+    let running = fixture
+        .control()
+        .ensure(
+            &fixture.owner,
+            &original,
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow,
+        )
+        .unwrap();
     for _ in 0..MAX_IDEMPOTENCY_RECORDS + 2 {
         assert_eq!(fixture.ensure(&creation).target, running.target);
     }
-    assert!(fixture.state()["operations"]
-        .as_object()
-        .unwrap()
-        .is_empty());
-    assert_eq!(
-        fixture
-            .control()
-            .ensure(
-                &fixture.owner,
-                &ids[0],
-                &creation,
-                false,
-                &AtomicBool::new(false),
-                allow
-            )
-            .unwrap()
-            .target,
-        running.target,
+    assert!(fixture.state()["operations"].as_object().unwrap().len() <= MAX_IDEMPOTENCY_RECORDS);
+    assert!(fixture.state()["issuance_epoch"].as_u64().unwrap() > original.epoch.get());
+    assert!(
+        !fs::read_dir(&fixture.root).unwrap().flatten().any(|entry| {
+            let name = entry.file_name();
+            name.to_string_lossy().starts_with("host-receipt-")
+                || name.to_string_lossy().starts_with("host-retired-")
+        })
     );
+    assert!(matches!(
+        fixture.control().ensure(
+            &fixture.owner,
+            &original,
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Stale)
+    ));
     fixture
         .control()
         .end(&fixture.owner, &running.target, allow)
         .unwrap();
     fixture.wait_absent(&running.target);
     let replacement = fixture.ensure(&creation);
+    assert!(replacement.recreated);
     assert_ne!(replacement.target.generation, running.target.generation);
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &ids[0],
+            &original,
             &creation,
             false,
             &AtomicBool::new(false),
             allow
         ),
-        Err(ControlError::Ended)
+        Err(ControlError::Stale)
     ));
     let mut changed = creation.clone();
     changed.recipe.args.push("changed".into());
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &ids[0],
+            &original,
             &changed,
             false,
             &AtomicBool::new(false),
             allow
         ),
-        Err(ControlError::OperationConflict)
+        Err(ControlError::Stale)
     ));
 }
 
 #[test]
 fn logical_capacity_retires_absent_records_but_never_erases_revocation_or_generation_fences() {
     use festerm_host_protocol::MAX_SESSIONS;
-    use sha2::{Digest, Sha256};
     let fixture = Fixture::new();
-    let creation = fixture.creation(Lifetime::Persistent {});
+    let mut creation = fixture.creation(Lifetime::Persistent {});
+    creation.logical = "ffffffff-ffff-4fff-8fff-ffffffffffff".parse().unwrap();
     let running = fixture.ensure(&creation);
     fixture
         .control()
@@ -322,42 +328,72 @@ fn logical_capacity_retires_absent_records_but_never_erases_revocation_or_genera
     fixture.wait_absent(&running.target);
     let mut state = fixture.state();
     let original = state["sessions"][creation.logical.as_str()].clone();
+    let other_owner = PrincipalId::new();
     let mut revoked = None;
     for index in 1..MAX_SESSIONS {
-        let logical = LogicalSessionId::new();
+        let logical: LogicalSessionId = format!("{index:08x}-0000-4000-8000-000000000001")
+            .parse()
+            .unwrap();
         let mut record = original.clone();
         record["logical"] = logical.as_str().into();
-        let mut hash = Sha256::new();
-        hash.update(b"festerm-host-session-v1\0");
-        hash.update(fixture.owner.as_str());
-        hash.update(logical.as_str());
-        record["name"] = format!("hs-{:x}", hash.finalize())[..51].into();
+        record["name"] = format!("hs-slot-{index:02}").into();
+        record["generation"] = serde_json::json!(GenerationId::new(
+            running.target.generation.get() + index as u128
+        )
+        .unwrap());
+        record["identity"] = serde_json::Value::Null;
+        record["artifacts_retired"] = true.into();
+        record["launch"] = serde_json::json!(OperationId::new());
+        if index >= MAX_SESSIONS / 2 {
+            record["owner"] = serde_json::json!(other_owner);
+        }
         record["revoked"] = (index == 1).into();
         if index == 1 {
             revoked = Some(logical.clone());
         }
         state["sessions"][logical.as_str()] = record;
     }
+    state["last_generation"] =
+        serde_json::json!(running.target.generation.get() + MAX_SESSIONS as u128);
     fixture.save_state(&state);
+    let foreign_before: Vec<_> = state["sessions"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|record| record["owner"] == serde_json::json!(other_owner))
+        .cloned()
+        .collect();
     let next = fixture.creation(Lifetime::Persistent {});
-    let replacement = fixture
-        .control()
-        .ensure(
+    let retired_scope = fixture.issued();
+    assert!(matches!(
+        fixture.control().ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &retired_scope,
             &next,
             false,
             &AtomicBool::new(false),
-            allow,
-        )
-        .unwrap_or_else(|error| {
-            panic!(
-                "after logical capacity retirement: {error}; active journal: {}",
-                fixture.state()
-            )
-        });
+            allow
+        ),
+        Err(ControlError::Stale)
+    ));
+    assert_eq!(
+        fixture.state()["sessions"].as_object().unwrap().len(),
+        MAX_SESSIONS - 1
+    );
+    let foreign_after: Vec<_> = fixture.state()["sessions"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|record| record["owner"] == serde_json::json!(other_owner))
+        .cloned()
+        .collect();
+    assert_eq!(foreign_before, foreign_after);
+    let replacement = fixture.ensure(&next);
     assert!(replacement.target.generation > running.target.generation);
-    assert_eq!(fixture.state()["sessions"].as_object().unwrap().len(), 1);
+    assert_eq!(
+        fixture.state()["sessions"].as_object().unwrap().len(),
+        MAX_SESSIONS
+    );
     assert_eq!(
         fixture
             .control()
@@ -371,28 +407,31 @@ fn logical_capacity_retires_absent_records_but_never_erases_revocation_or_genera
             .lookup(&fixture.owner, &revoked.unwrap(), allow),
         Err(ControlError::Revoked)
     ));
+    let recreated = fixture.ensure(&creation);
+    assert!(recreated.recreated);
+    assert!(recreated.target.generation > replacement.target.generation);
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &OperationId::new(),
-            &creation,
+            &retired_scope,
+            &next,
             false,
             &AtomicBool::new(false),
             allow
         ),
-        Err(ControlError::Ended)
+        Err(ControlError::Stale)
     ));
 }
 
 #[test]
-fn local_quarantine_retirement_releases_pending_budget_without_asserting_absence() {
+fn local_pending_retirement_requires_positive_native_absence_and_fences_old_scopes() {
     use festerm_host_protocol::MAX_PENDING_CREATES;
     let fixture = Fixture::new();
     let (control, marker) = fixture.failing_control();
     let mut pending = Vec::new();
     for _ in 0..MAX_PENDING_CREATES {
         let creation = fixture.creation(Lifetime::Persistent {});
-        let operation = OperationId::new();
+        let operation = fixture.issued();
         assert!(matches!(
             control.ensure(
                 &fixture.owner,
@@ -415,7 +454,7 @@ fn local_quarantine_retirement_releases_pending_budget_without_asserting_absence
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &next,
             false,
             &AtomicBool::new(false),
@@ -425,6 +464,22 @@ fn local_quarantine_retirement_releases_pending_budget_without_asserting_absence
     ));
     fs::remove_file(&marker).unwrap();
     let interrupted = fixture.state();
+    let first = &pending[0];
+    let first_target = Target {
+        logical: first.0.logical.clone(),
+        generation: first.2,
+    };
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    storage::replace_private(&directory, Path::new("registry.json"), b"invalid").unwrap();
+    assert!(matches!(
+        control.retire_local(&fixture.owner, &first_target),
+        Err(ControlError::Unknown)
+    ));
+    assert_eq!(
+        fixture.state()["sessions"].as_object().unwrap().len(),
+        MAX_PENDING_CREATES
+    );
+    fs::remove_file(fixture.root.join("registry.json")).unwrap();
     for (creation, _, generation) in &pending {
         let target = Target {
             logical: creation.logical.clone(),
@@ -442,11 +497,8 @@ fn local_quarantine_retirement_releases_pending_budget_without_asserting_absence
                 .unwrap(),
             generation.get()
         )
-        .unwrap()
-        .should_stop());
+        .is_err());
     }
-    // Crash after durable tombstones but before active-journal deletion.
-    fixture.save_state(&interrupted);
     let running = fixture.ensure(&next);
     assert_eq!(fixture.state()["sessions"].as_object().unwrap().len(), 1);
     for (creation, operation, _) in &pending {
@@ -454,7 +506,7 @@ fn local_quarantine_retirement_releases_pending_budget_without_asserting_absence
             control
                 .lookup(&fixture.owner, &creation.logical, allow)
                 .unwrap(),
-            Lookup::Unknown
+            Lookup::Absent
         );
         assert!(matches!(
             control.ensure(
@@ -465,7 +517,7 @@ fn local_quarantine_retirement_releases_pending_budget_without_asserting_absence
                 &AtomicBool::new(false),
                 allow
             ),
-            Err(ControlError::Unknown)
+            Err(ControlError::Stale)
         ));
     }
     assert!(!marker.exists());
@@ -479,18 +531,79 @@ fn local_quarantine_retirement_releases_pending_budget_without_asserting_absence
     );
 }
 
+#[test]
+fn interrupted_retirement_keeps_original_operation_noncreating_after_artifact_removal() {
+    let fixture = Fixture::new();
+    let (control, marker) = fixture.failing_control();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let operation = fixture.issued();
+    assert!(matches!(
+        control.ensure(
+            &fixture.owner,
+            &operation,
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Unknown)
+    ));
+    let mut before_rotation = fixture.state();
+    let record = &mut before_rotation["sessions"][creation.logical.as_str()];
+    let generation: GenerationId = serde_json::from_value(record["generation"].clone()).unwrap();
+    let target = Target {
+        logical: creation.logical.clone(),
+        generation,
+    };
+    control.retire_local(&fixture.owner, &target).unwrap();
+    record["phase"] = "Absent".into();
+    record["artifacts_retired"] = true.into();
+    record["epoch"] = (record["epoch"].as_u64().unwrap() + 1).into();
+    fixture.save_state(&before_rotation);
+    fs::remove_file(&marker).unwrap();
+    assert!(matches!(
+        control.ensure(
+            &fixture.owner,
+            &operation,
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Ended)
+    ));
+    assert!(!marker.exists());
+    assert!(list_running_sessions_in(&fixture.root).unwrap().is_empty());
+    let recreated = fixture.ensure(&creation);
+    assert!(recreated.recreated);
+    assert!(recreated.target.generation > generation);
+}
+
 impl Fixture {
+    #[track_caller]
     fn ensure(&self, creation: &Creation) -> festerm_sessiond::host_control::EnsureResult {
-        self.control()
-            .ensure(
+        let issued = self.issued();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            match self.control().ensure(
                 &self.owner,
-                &OperationId::new(),
+                &issued,
                 creation,
                 false,
                 &AtomicBool::new(false),
                 allow,
-            )
-            .unwrap()
+            ) {
+                Err(ControlError::Busy) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(20))
+                }
+                Ok(result) => return result,
+                Err(error) => panic!(
+                    "owned ensure failed: {error}; record={:?}; native={:?}",
+                    self.state()["sessions"].get(creation.logical.as_str()),
+                    list_running_sessions_in(&self.root)
+                ),
+            }
+        }
     }
 
     fn edit_lease(&self, target: &Target, edit: impl FnOnce(&mut serde_json::Value)) {
@@ -514,7 +627,7 @@ impl Fixture {
 
     fn adopt(
         &self,
-        target: &Target,
+        _target: &Target,
         pending: PendingAttachment,
     ) -> (
         festerm_sessiond::PersistentSession,
@@ -522,22 +635,28 @@ impl Fixture {
     ) {
         eventually(|| pending.session.take_recovered_terminal_deferred().is_some());
         pending.session.acknowledge_recovery_adoption();
-        if let (Some(ticket), Some(expected)) = (&pending.ticket, &pending.reserved_lease) {
-            eventually(|| {
-                match self.control().attachment_outcome(
-                    &self.owner,
-                    target,
-                    ticket,
-                    expected,
-                    allow,
-                ) {
-                    Ok(_) => true,
-                    Err(ControlError::Busy | ControlError::Storage) => false,
-                    Err(error) => panic!("attachment commit failed: {error}"),
-                }
-            });
-        }
+        eventually(
+            || match self.control().attachment_outcome(&pending.authority, allow) {
+                Ok(_) => true,
+                Err(ControlError::Busy | ControlError::Storage) => false,
+                Err(error) => panic!("attachment commit failed: {error}"),
+            },
+        );
         (pending.session, pending.reserved_lease)
+    }
+
+    fn adopt_authorized(
+        &self,
+        target: &Target,
+        pending: PendingAttachment,
+    ) -> (
+        festerm_sessiond::PersistentSession,
+        Option<festerm_host_protocol::TemporaryLease>,
+        AttachmentAuthority,
+    ) {
+        let authority = pending.authority.clone();
+        let (session, lease) = self.adopt(target, pending);
+        (session, lease, authority)
     }
 
     fn attach(
@@ -598,6 +717,9 @@ impl Drop for Fixture {
                 {
                     if let Ok(bytes) = storage::read_private(&directory, Path::new(&name), 4096) {
                         if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                            if let Some(pid) = value["native_pid"].as_u64() {
+                                pids.push(pid as u32);
+                            }
                             value["stopped"] = true.into();
                             value["revision"] = (value["revision"].as_u64().unwrap() + 1).into();
                             let _ = storage::replace_private(
@@ -636,7 +758,7 @@ impl Drop for Fixture {
 fn concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon() {
     let fixture = Fixture::new();
     let creation = Arc::new(fixture.creation(Lifetime::Persistent {}));
-    let operation = Arc::new(OperationId::new());
+    let operation = Arc::new(fixture.issued());
     let barrier = Arc::new(Barrier::new(6));
     let workers: Vec<_> = (0..6)
         .map(|index| {
@@ -644,7 +766,7 @@ fn concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon() {
             let owner = fixture.owner.clone();
             let creation = creation.clone();
             let operation = if index % 2 == 0 {
-                Arc::new(OperationId::new())
+                Arc::new(fixture.issued())
             } else {
                 operation.clone()
             };
@@ -697,7 +819,7 @@ fn concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon() {
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &changed,
             false,
             &AtomicBool::new(false),
@@ -722,7 +844,7 @@ fn concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon() {
 fn crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generation() {
     let fixture = Fixture::new();
     let creation = fixture.creation(Lifetime::Persistent {});
-    let operation = OperationId::new();
+    let operation = fixture.issued();
     let running = fixture
         .control()
         .ensure(
@@ -762,7 +884,7 @@ fn crash_before_spawn_stays_unknown_and_after_spawn_adopts_only_reserved_generat
     fixture.wait_absent(&running.target);
     // Restore the pre-spawn journal image with no native launch journal. This
     // is an intentionally ambiguous crash boundary, not permission to respawn.
-    let launch = fixture.root.join(format!("launch-{operation}.json"));
+    let launch = fixture.root.join(format!("launch-{}.json", operation.id));
     fs::remove_file(launch).unwrap();
     storage::replace_private(&directory, name, &serde_json::to_vec(&state).unwrap()).unwrap();
     assert!(matches!(
@@ -793,7 +915,7 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &creation,
             false,
             &AtomicBool::new(false),
@@ -805,7 +927,7 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &creation,
             false,
             &cancelled,
@@ -818,7 +940,7 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
         .control()
         .ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &creation,
             false,
             &cancelled,
@@ -866,7 +988,7 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &creation,
             false,
             &AtomicBool::new(false),
@@ -874,6 +996,379 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
         ),
         Err(ControlError::Revoked)
     ));
+    assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
+}
+
+#[test]
+fn incomplete_inventory_preserves_healthy_sessions_and_noncreating_unknown_targets() {
+    let fixture = Fixture::new();
+    let healthy = fixture.ensure(&fixture.creation(Lifetime::Persistent {}));
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let uncertain = fixture.ensure(&creation);
+    let before = fixture.state();
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let original =
+        storage::read_private(&directory, Path::new("registry.json"), 4 * 1024 * 1024).unwrap();
+    let mut registry: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    registry["sessions"][&uncertain.identity.name]["spawn_fingerprint"] = serde_json::Value::Null;
+    storage::replace_private(
+        &directory,
+        Path::new("registry.json"),
+        &serde_json::to_vec(&registry).unwrap(),
+    )
+    .unwrap();
+    let inventory = fixture.control().inventory(&fixture.owner, allow).unwrap();
+    assert_eq!(inventory.sessions.len(), 1);
+    assert_eq!(inventory.sessions[0].summary.target, healthy.target);
+    assert_eq!(inventory.unknown.len(), 1);
+    assert_eq!(inventory.unknown[0].target, uncertain.target);
+    assert_eq!(
+        inventory.unknown[0].grant.state,
+        festerm_host_protocol::LogicalState::Unknown
+    );
+    assert!(matches!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &creation.logical, allow),
+        Err(ControlError::Unknown)
+    ));
+    assert!(matches!(
+        fixture.control().ensure(
+            &fixture.owner,
+            &fixture.issued(),
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Unknown)
+    ));
+    assert_eq!(fixture.state()["sessions"], before["sessions"]);
+    storage::replace_private(&directory, Path::new("registry.json"), &original).unwrap();
+    assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 2);
+}
+
+#[test]
+fn per_generation_actions_and_heartbeats_do_not_take_global_journal_or_other_generation_locks() {
+    let fixture = Fixture::new();
+    let first_creation = fixture.creation(Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    });
+    let first = fixture.ensure(&first_creation);
+    let pending = fixture.attach(&first.target, &first_creation.attachment, false);
+    let (_first_session, _, first_authority) = fixture.adopt_authorized(&first.target, pending);
+    let second_creation = fixture.creation(Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    });
+    let second = fixture.ensure(&second_creation);
+    let pending = fixture.attach(&second.target, &second_creation.attachment, false);
+    let (_second_session, _, second_authority) = fixture.adopt_authorized(&second.target, pending);
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let journal =
+        storage::open_private_file(&directory, Path::new("host-sessions.lock"), false).unwrap();
+    fs2::FileExt::try_lock_exclusive(&journal).unwrap();
+    for authority in [&first_authority, &second_authority] {
+        eventually(|| {
+            fixture
+                .control()
+                .with_attachment_authorized(
+                    authority,
+                    |state| {
+                        assert!(state.issuance_epoch.is_none());
+                        Ok(())
+                    },
+                    || Ok(()),
+                )
+                .is_ok()
+        });
+        eventually(|| {
+            fixture
+                .control()
+                .maintain_lease(authority, None, allow)
+                .is_ok()
+        });
+    }
+    drop(journal);
+    let barrier = Arc::new(Barrier::new(2));
+    let peer = barrier.clone();
+    let control = fixture.control();
+    let worker = thread::spawn(move || {
+        peer.wait();
+        for _ in 0..16 {
+            eventually(|| {
+                control
+                    .with_attachment_authorized(&second_authority, allow, || Ok(()))
+                    .is_ok()
+            });
+            eventually(|| {
+                control
+                    .maintain_lease(&second_authority, None, allow)
+                    .is_ok()
+            });
+            thread::sleep(Duration::from_millis(2));
+        }
+    });
+    barrier.wait();
+    fixture
+        .control()
+        .revoke_local(&fixture.owner, &first.target.logical)
+        .unwrap();
+    assert!(matches!(
+        fixture.control().with_attachment_authorized(
+            &first_authority,
+            allow,
+            || -> Result<(), ControlError> { panic!("revoked action") }
+        ),
+        Err(ControlError::Revoked)
+    ));
+    worker.join().unwrap();
+}
+
+#[test]
+fn revoked_live_generation_remains_accounted_and_requires_exact_local_end_and_reconsent() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let running = fixture.ensure(&creation);
+    let before_revoke = fixture.state();
+    fixture
+        .control()
+        .revoke_local(&fixture.owner, &creation.logical)
+        .unwrap();
+    // Lease publication committed, but model a crash before journal publication.
+    fixture.save_state(&before_revoke);
+    let observation = fixture
+        .control()
+        .observe_local(&fixture.owner, &running.target)
+        .unwrap();
+    assert!(observation.revoked);
+    assert_eq!(observation.state, Lookup::Running(running.target.clone()));
+    assert_eq!(fixture.state()["sessions"].as_object().unwrap().len(), 1);
+    assert_eq!(
+        fixture
+            .control()
+            .retire_local(&fixture.owner, &running.target),
+        Err(ControlError::Revoked)
+    );
+    assert_eq!(
+        fixture
+            .control()
+            .reconfirm_local(&fixture.owner, &running.target, observation.revision),
+        Err(ControlError::Busy)
+    );
+    assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
+    fixture
+        .control()
+        .end_local(&fixture.owner, &running.target)
+        .unwrap();
+    eventually(|| {
+        fixture
+            .control()
+            .observe_local(&fixture.owner, &running.target)
+            .is_ok_and(|value| value.state == Lookup::Absent)
+    });
+    let absent = fixture
+        .control()
+        .observe_local(&fixture.owner, &running.target)
+        .unwrap();
+    assert!(absent.revoked);
+    assert_eq!(
+        fixture
+            .control()
+            .reconfirm_local(&fixture.owner, &running.target, observation.revision),
+        Err(ControlError::Stale)
+    );
+    assert_eq!(
+        fixture
+            .control()
+            .retire_local(&fixture.owner, &running.target),
+        Err(ControlError::Revoked)
+    );
+    fixture
+        .control()
+        .reconfirm_local(&fixture.owner, &running.target, absent.revision)
+        .unwrap();
+    assert_eq!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &creation.logical, allow)
+            .unwrap(),
+        Lookup::Absent
+    );
+    assert!(fixture.ensure(&creation).target.generation > running.target.generation);
+}
+
+#[test]
+fn generation_churn_reuses_fixed_native_slot_and_reclaims_only_proven_dead_artifacts() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let mut running = fixture.ensure(&creation);
+    let name = running.identity.name.clone();
+    for _ in 0..6 {
+        fixture
+            .control()
+            .end(&fixture.owner, &running.target, allow)
+            .unwrap();
+        fixture.wait_absent(&running.target);
+        let previous = running.target.generation;
+        running = fixture.ensure(&creation);
+        assert_eq!(running.identity.name, name);
+        assert!(running.recreated);
+        assert!(running.target.generation > previous);
+        let names = fs::read_dir(&fixture.root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!names
+            .iter()
+            .any(|name| name.contains(&previous.get().to_string())));
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.starts_with("launch-") && name.ends_with(".json"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.starts_with("host-daemon-") && name.ends_with(".json"))
+                .count(),
+            1
+        );
+        assert!(
+            names.len() < 24,
+            "unbounded generation artifacts: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn pending_retirement_seals_delayed_helpers_but_waits_for_native_lifetime_lock() {
+    let fixture = Fixture::new();
+    let (control, _) = fixture.failing_control();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    assert!(matches!(
+        control.ensure(
+            &fixture.owner,
+            &fixture.issued(),
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Unknown)
+    ));
+    let state = fixture.state();
+    let record = &state["sessions"][creation.logical.as_str()];
+    let target = Target {
+        logical: creation.logical.clone(),
+        generation: serde_json::from_value(record["generation"].clone()).unwrap(),
+    };
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let name = record["name"].as_str().unwrap();
+    let daemon =
+        storage::open_private_file(&directory, Path::new(&format!("{name}.daemon.lock")), true)
+            .unwrap();
+    fs2::FileExt::try_lock_exclusive(&daemon).unwrap();
+    assert_eq!(
+        control.retire_local(&fixture.owner, &target),
+        Err(ControlError::Busy)
+    );
+    let lease = storage::read_private(
+        &directory,
+        Path::new(&format!("host-daemon-{}.json", target.generation.get())),
+        4096,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&lease).unwrap()["stopped"],
+        true
+    );
+    assert_eq!(fixture.state()["sessions"].as_object().unwrap().len(), 1);
+    drop(daemon);
+    control.retire_local(&fixture.owner, &target).unwrap();
+    assert!(DaemonWatch::open(&fixture.root, name, target.generation.get()).is_err());
+}
+
+#[test]
+fn intentional_initial_cancellation_cannot_stop_pending_or_transferred_temporary_ownership() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    });
+    let running = fixture.ensure(&creation);
+    let authority = running.initial_lease_authority.as_ref().unwrap();
+    let pending = fixture.attach(&running.target, &creation.attachment, false);
+    assert_eq!(
+        fixture.control().cancel_initial_lease(authority, allow),
+        Err(ControlError::Stale)
+    );
+    let (session, _, attached) = fixture.adopt_authorized(&running.target, pending);
+    assert_eq!(
+        fixture.control().cancel_initial_lease(authority, allow),
+        Err(ControlError::Stale)
+    );
+    fixture
+        .control()
+        .with_attachment_authorized(&attached, allow, || Ok(()))
+        .unwrap();
+    drop(session);
+    let next = fixture.ensure(&fixture.creation(Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    }));
+    fixture
+        .control()
+        .cancel_initial_lease(next.initial_lease_authority.as_ref().unwrap(), allow)
+        .unwrap();
+    fixture.wait_absent(&next.target);
+    assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
+}
+
+#[test]
+fn missing_or_unsupported_durable_journal_never_resets_issuance_or_infers_absence() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let running = fixture.ensure(&creation);
+    let original = fixture.state();
+    fs::remove_file(fixture.root.join("host-sessions.json")).unwrap();
+    assert_eq!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &creation.logical, allow),
+        Err(ControlError::Storage)
+    );
+    assert!(matches!(
+        fixture.control().issuance_epoch(&fixture.owner, allow),
+        Err(ControlError::Storage)
+    ));
+    assert!(!fixture.root.join("host-sessions.json").exists());
+    fixture.save_state(&original);
+    for field in ["last_generation", "issuance_epoch"] {
+        let mut malformed = original.clone();
+        malformed.as_object_mut().unwrap().remove(field);
+        fixture.save_state(&malformed);
+        assert!(matches!(
+            fixture.control().issuance_epoch(&fixture.owner, allow),
+            Err(ControlError::Storage)
+        ));
+    }
+    let mut unsupported = original.clone();
+    unsupported["version"] = 1.into();
+    fixture.save_state(&unsupported);
+    assert_eq!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &creation.logical, allow),
+        Err(ControlError::Storage)
+    );
+    fixture.save_state(&original);
+    assert_eq!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &creation.logical, allow)
+            .unwrap(),
+        Lookup::Running(running.target)
+    );
     assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
 }
 
@@ -898,16 +1393,12 @@ fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease(
         )
         .unwrap();
     assert!(matches!(
-        fixture.control().attachment_outcome(
-            &fixture.owner,
-            &running.target,
-            pending.ticket.as_ref().unwrap(),
-            pending.reserved_lease.as_ref().unwrap(),
-            allow,
-        ),
+        fixture
+            .control()
+            .attachment_outcome(&pending.authority, allow,),
         Err(ControlError::Busy)
     ));
-    let (first, first_lease) = fixture.adopt(&running.target, pending);
+    let (first, first_lease, first_authority) = fixture.adopt_authorized(&running.target, pending);
     let first_lease = first_lease.unwrap();
     assert_ne!(first_lease.epoch, initial.epoch);
     let next_attachment = AttachmentId::new();
@@ -937,70 +1428,83 @@ fn temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease(
         .unwrap();
     fixture
         .control()
-        .maintain_lease(&fixture.owner, &running.target, &first_lease, None, allow)
+        .maintain_lease(&first_authority, None, allow)
         .unwrap();
-    let (second, second_lease) = fixture.adopt(&running.target, pending);
-    let second_lease = second_lease.unwrap();
-    assert_eq!(
-        fixture.control().maintain_lease(
-            &fixture.owner,
-            &running.target,
-            &first_lease,
-            Some(DetachKind::Intentional),
-            allow
-        ),
+    let (second, _, second_authority) = fixture.adopt_authorized(&running.target, pending);
+    assert!(matches!(
+        fixture
+            .control()
+            .maintain_lease(&first_authority, Some(DetachKind::Intentional), allow),
         Err(ControlError::Stale)
-    );
+    ));
     fixture
         .control()
-        .maintain_lease(&fixture.owner, &running.target, &second_lease, None, allow)
+        .maintain_lease(&second_authority, None, allow)
         .unwrap();
     drop(first);
     fixture
         .control()
-        .maintain_lease(
-            &fixture.owner,
-            &running.target,
-            &second_lease,
-            Some(DetachKind::TransportLost),
-            allow,
-        )
+        .maintain_lease(&second_authority, Some(DetachKind::TransportLost), allow)
         .unwrap();
-    assert_eq!(
-        fixture.control().maintain_lease(
-            &fixture.owner,
-            &running.target,
-            &second_lease,
-            None,
-            allow
-        ),
+    assert!(matches!(
+        fixture
+            .control()
+            .maintain_lease(&second_authority, None, allow),
         Err(ControlError::Stale)
-    );
+    ));
+    let receipt = fixture
+        .control()
+        .maintain_lease(&second_authority, Some(DetachKind::Intentional), allow)
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        fixture.control().with_detachment_receipt_authorized(
+            &receipt,
+            |_| Err::<(), _>(ControlError::Denied),
+            || -> Result<(), ControlError> { panic!("denied detach publication") }
+        ),
+        Err(ControlError::Denied)
+    ));
     fixture
         .control()
-        .maintain_lease(
-            &fixture.owner,
-            &running.target,
-            &second_lease,
-            Some(DetachKind::Intentional),
-            allow,
-        )
+        .with_detachment_receipt_authorized(&receipt, allow, || Ok(()))
         .unwrap();
+    assert!(matches!(
+        fixture
+            .control()
+            .with_attachment_authorized(&second_authority, allow, || Ok(())),
+        Err(ControlError::Ended)
+    ));
     drop(second);
     fixture.wait_absent(&running.target);
+    assert!(matches!(
+        fixture
+            .control()
+            .with_detachment_receipt_authorized(&receipt, allow, || Ok(())),
+        Err(ControlError::Stale)
+    ));
 
     let persistent = fixture.ensure(&fixture.creation(Lifetime::Persistent {}));
     assert!(persistent.lease.is_none());
-    assert_eq!(
-        fixture.control().maintain_lease(
-            &fixture.owner,
-            &persistent.target,
-            &second_lease,
-            Some(DetachKind::Intentional),
-            allow
-        ),
+    let pending = fixture.attach(&persistent.target, &AttachmentId::new(), false);
+    let (active, lease, authority) = fixture.adopt_authorized(&persistent.target, pending);
+    assert!(lease.is_none());
+    let receipt = fixture
+        .control()
+        .maintain_lease(&authority, Some(DetachKind::Intentional), allow)
+        .unwrap()
+        .unwrap();
+    fixture
+        .control()
+        .with_detachment_receipt_authorized(&receipt, allow, || Ok(()))
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .control()
+            .with_attachment_authorized(&authority, allow, || Ok(())),
         Err(ControlError::Stale)
-    );
+    ));
+    drop(active);
     assert!(matches!(
         fixture
             .control()
@@ -1021,15 +1525,15 @@ fn daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor() {
     fixture.edit_lease(&running.target, |lease| {
         lease["deadline_ms"] = ((now_ms() + 1200) as u64).into()
     });
-    let mut restarted = DaemonWatch::open(
+    // A second process may not impersonate this already-owned generation.
+    assert!(DaemonWatch::open(
         &fixture.root,
         &running.identity.name,
         running.target.generation.get(),
     )
-    .unwrap();
+    .is_err());
     drop(fixture.control());
     thread::sleep(Duration::from_millis(1400));
-    assert!(restarted.should_stop());
     fixture.wait_absent(&running.target);
     assert!(matches!(
         fixture
@@ -1055,7 +1559,7 @@ fn current_absence_requires_fresh_create_permission_but_live_resume_does_not() {
         .control()
         .ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &creation,
             false,
             &AtomicBool::new(false),
@@ -1071,7 +1575,7 @@ fn current_absence_requires_fresh_create_permission_but_live_resume_does_not() {
     assert!(matches!(
         fixture.control().ensure(
             &fixture.owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &creation,
             false,
             &AtomicBool::new(false),
@@ -1093,7 +1597,7 @@ fn failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create() {
         Path::new(creation.recipe.shell.as_ref().unwrap()),
     )
     .unwrap();
-    let operation = OperationId::new();
+    let operation = fixture.issued();
     assert!(matches!(
         broken.ensure(
             &fixture.owner,
@@ -1105,7 +1609,7 @@ fn failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create() {
         ),
         Err(ControlError::Unknown)
     ));
-    for next in [&operation, &OperationId::new()] {
+    for next in [&operation, &fixture.issued()] {
         assert!(matches!(
             fixture.control().ensure(
                 &fixture.owner,
@@ -1137,11 +1641,11 @@ fn cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner() {
     });
     let running = fixture.ensure(&creation);
     let pending = fixture.attach(&running.target, &creation.attachment, false);
-    let ticket = pending.ticket.clone().unwrap();
+    let authority = pending.authority.clone();
     assert_eq!(
         fixture
             .control()
-            .cancel_attachment(&fixture.owner, &running.target, &ticket, allow,)
+            .cancel_attachment(&authority, allow)
             .unwrap(),
         AttachmentCancellation::CancelledBeforeCommit
     );
@@ -1150,15 +1654,15 @@ fn cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner() {
     // The daemon loop rejects the cancelled ticket without taking the writer.
     thread::sleep(Duration::from_millis(100));
     let pending = fixture.attach(&running.target, &creation.attachment, false);
-    let ticket = pending.ticket.clone().unwrap();
+    let authority = pending.authority.clone();
     let (active, lease) = fixture.adopt(&running.target, pending);
     let lease = lease.unwrap();
     assert_eq!(
         fixture
             .control()
-            .cancel_attachment(&fixture.owner, &running.target, &ticket, allow,)
+            .cancel_attachment(&authority, allow)
             .unwrap(),
-        AttachmentCancellation::Committed(lease.clone())
+        AttachmentCancellation::Committed(Some(lease.clone()))
     );
     let pending = fixture.attach(&running.target, &AttachmentId::new(), true);
     fixture
@@ -1198,7 +1702,7 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
         .control()
         .ensure(
             &other_owner,
-            &OperationId::new(),
+            &fixture.issued(),
             &other,
             false,
             &AtomicBool::new(false),
@@ -1206,11 +1710,12 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
         )
         .unwrap();
     let inventory = fixture.control().inventory(&fixture.owner, allow).unwrap();
-    assert_eq!(inventory.len(), 1);
-    assert_eq!(inventory[0].summary.name, "owned label");
-    assert_eq!(inventory[0].summary.target, running.target);
-    assert!(!inventory[0].summary.attached);
-    assert_eq!(inventory[0].grant.owner, fixture.owner);
+    assert!(inventory.unknown.is_empty());
+    assert_eq!(inventory.sessions.len(), 1);
+    assert_eq!(inventory.sessions[0].summary.name, "owned label");
+    assert_eq!(inventory.sessions[0].summary.target, running.target);
+    assert!(!inventory.sessions[0].summary.attached);
+    assert_eq!(inventory.sessions[0].grant.owner, fixture.owner);
     let inspected = fixture
         .control()
         .inspect(&fixture.owner, &creation.logical, allow)
@@ -1218,7 +1723,7 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
     assert_eq!(inspected.summary.unwrap(), running.summary);
     assert_eq!(
         inspected.grant.unwrap().revision,
-        inventory[0].grant.revision
+        inventory.sessions[0].grant.revision
     );
     assert!(matches!(
         fixture
@@ -1238,12 +1743,14 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
         .control()
         .inventory(&fixture.owner, allow)
         .unwrap()
+        .sessions
         .is_empty());
     assert_eq!(
         fixture
             .control()
             .inventory(&other_owner, allow)
             .unwrap()
+            .sessions
             .len(),
         1
     );
@@ -1258,27 +1765,9 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
     let running = fixture.ensure(&creation);
     let control = fixture.control();
     let pending = fixture.attach(&running.target, &creation.attachment, false);
-    let ticket = pending.ticket.as_ref().unwrap();
-    let expected = pending.reserved_lease.as_ref().unwrap();
+    let authority = pending.authority.clone();
     assert!(matches!(
-        control.with_attachment_authorized(
-            &fixture.owner,
-            &running.target,
-            Some(expected),
-            allow,
-            || Ok(())
-        ),
-        Err(ControlError::Stale)
-    ));
-    assert!(matches!(
-        control.with_pending_attachment_authorized(
-            &fixture.owner,
-            &running.target,
-            &OperationId::new(),
-            expected,
-            allow,
-            || Ok(())
-        ),
+        control.with_attachment_authorized(&authority, allow, || Ok(())),
         Err(ControlError::Stale)
     ));
     struct Guard(Arc<AtomicBool>);
@@ -1290,40 +1779,31 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
     let held = Arc::new(AtomicBool::new(false));
     control
         .with_pending_attachment_authorized(
-            &fixture.owner,
-            &running.target,
-            ticket,
-            expected,
+            &authority,
             |_| {
                 held.store(true, Ordering::Release);
                 Ok(Guard(held.clone()))
             },
             || {
                 assert!(held.load(Ordering::Acquire));
-                assert!(matches!(
-                    control.lookup(&fixture.owner, &creation.logical, allow),
-                    Err(ControlError::Busy)
-                ));
+                // Per-generation admission never holds the global journal.
+                let directory = storage::private_directory(&fixture.root, false).unwrap();
+                let lock =
+                    storage::open_private_file(&directory, Path::new("host-sessions.lock"), false)
+                        .unwrap();
+                fs2::FileExt::try_lock_exclusive(&lock).unwrap();
                 Ok(())
             },
         )
         .unwrap();
     assert!(!held.load(Ordering::Acquire));
-    let (active, committed) = fixture.adopt(&running.target, pending);
+    let (active, _) = fixture.adopt(&running.target, pending);
     control
-        .with_attachment_authorized(
-            &fixture.owner,
-            &running.target,
-            committed.as_ref(),
-            allow,
-            || Ok(()),
-        )
+        .with_attachment_authorized(&authority, allow, || Ok(()))
         .unwrap();
     assert!(matches!(
         control.with_attachment_authorized(
-            &fixture.owner,
-            &running.target,
-            committed.as_ref(),
+            &authority,
             |_| Err::<(), _>(ControlError::Denied),
             || -> Result<(), ControlError> { panic!("denied action ran") }
         ),
@@ -1333,13 +1813,9 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
         .revoke_local(&fixture.owner, &creation.logical)
         .unwrap();
     assert!(matches!(
-        control.with_attachment_authorized(
-            &fixture.owner,
-            &running.target,
-            committed.as_ref(),
-            allow,
-            || -> Result<(), ControlError> { panic!("revoked action ran") }
-        ),
+        control.with_attachment_authorized(&authority, allow, || -> Result<(), ControlError> {
+            panic!("revoked action ran")
+        }),
         Err(ControlError::Revoked)
     ));
     drop(active);
@@ -1385,13 +1861,15 @@ fn scoped_admission_guard_covers_reservation_not_spawn_and_late_denial_is_commit
     let fixture = Fixture::new();
     let creation = fixture.creation(Lifetime::Persistent {});
     let released = Arc::new(AtomicBool::new(false));
+    let issued = fixture.issued();
     let outcome = fixture.control().ensure(
         &fixture.owner,
-        &OperationId::new(),
+        &issued,
         &creation,
         false,
         &AtomicBool::new(false),
         |state| {
+            assert_eq!(state.issuance_epoch, Some(issued.epoch));
             if let (Effect::Resume, Some(grant)) = (state.effect, &state.grant) {
                 assert!(released.load(Ordering::Acquire));
                 assert!(matches!(
