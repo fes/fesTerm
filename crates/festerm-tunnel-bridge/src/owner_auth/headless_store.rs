@@ -21,6 +21,9 @@ struct Binding {
 /// Owner-only files provide weaker rollback protection than the native vault:
 /// restoring this whole private directory can restore old anchor/secret state.
 /// Desktop composition roots must not select this backend.
+/// This library cannot identify a GUI/CLI caller: selection is a composition-root
+/// responsibility. Its marker is a namespace binding, not verified headless
+/// origin. The host Store wrapper separately enforces protected journal origin.
 pub struct ExplicitHeadlessFileStore {
     directory: File,
     installation: String,
@@ -28,7 +31,8 @@ pub struct ExplicitHeadlessFileStore {
 
 impl ExplicitHeadlessFileStore {
     /// Explicit local selection, never invoked after a native-vault failure.
-    /// The caller verifies the installation's headless origin under its lease.
+    /// The caller must verify protected headless origin and deliberate opt-in.
+    /// This method only checks private storage and namespace consistency.
     pub fn select(directory: &File, installation: &str) -> io::Result<Self> {
         HostId::try_from(installation.to_owned())?;
         let expected = Binding {
@@ -141,7 +145,12 @@ impl SecretStore for ExplicitHeadlessFileStore {
     fn delete(&self, reference: &SecretReference) -> Result<bool, SecretStoreError> {
         let _lease = self.lease()?;
         let name = Self::name(reference);
-        let file = match storage::open_private_file(&self.directory, &name, false) {
+        #[cfg(unix)]
+        let opened = storage::open_private_file(&self.directory, &name, false);
+        #[cfg(windows)]
+        let opened =
+            festerm_windows_security::open_file_no_reparse_for_verification(&self.directory, &name);
+        let file = match opened {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(map_error(error)),
@@ -153,7 +162,14 @@ impl SecretStore for ExplicitHeadlessFileStore {
                 .map_err(map_error)?;
         }
         #[cfg(windows)]
-        festerm_windows_security::remove_private_staging_file(&file).map_err(map_error)?;
+        {
+            if !file.metadata().map_err(map_error)?.is_file()
+                || !festerm_windows_security::is_current_user_only(&file).map_err(map_error)?
+            {
+                return Err(SecretStoreError::LockedOrUnavailable);
+            }
+            festerm_windows_security::remove_private_staging_file(&file).map_err(map_error)?;
+        }
         Ok(true)
     }
 }

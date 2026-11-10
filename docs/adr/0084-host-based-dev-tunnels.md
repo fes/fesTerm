@@ -103,7 +103,13 @@ also allowed by local selection; it is never a fallback after vault failure and
 never changes desktop/GUI policy. Its owner-only files have weaker rollback
 protection: full protected-store/home rollback can restore old consent and is
 not claimed resisted. Portable configuration/public metadata cannot select or
-reconstruct credentials or grants. Both modes use a fresh consumed challenge on the same host-key-pinned
+reconstruct credentials or grants. The host Store enforces protected Headless
+origin; the lower-level bridge/client constructor's marker is only a namespace.
+Trusted composition roots must enforce headless-only explicit selection; the
+library cannot attest GUI/CLI caller origin. Future desktop/mobile composition
+must remain native-only and future headless CLI selection requires protected
+deliberate opt-in (`HOSTAUTH-01`).
+Both modes use a fresh consumed challenge on the same host-key-pinned
 channel. Host/key/principal/connection/nonces and monotonic epochs are signed;
 current protected session grants are checked separately at admission. This is
 proof of the configured enrolled owner, **not** an asserted GitHub identity or
@@ -560,6 +566,11 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   and `reserved_secret_creation_never_replaces_existing_authority`.
   Prepared records and pre-reserved references permit explicit validated forward
   recovery without a large native credential blob, rollback or account adoption.
+  `protected_owner_interrupted_initialization_cannot_switch_credential_storage`
+  preserves receipt/prepared evidence across refused native/file mode changes;
+  the real private-store key fixture exercises deletion and subsequent Missing.
+  Cross-platform CI selects it for Windows DELETE-capable no-reparse handles,
+  but a passing native Windows run remains required.
 - **Automated tests required:** Planned tests and acceptance matrix below.
   Implemented stage-4 boundary coverage:
   `headless_configuration_is_inert_and_origin_is_not_adopted`,

@@ -76,6 +76,8 @@ pub struct ClientOwnerKey {
 }
 
 impl ClientOwnerKey {
+    /// The composition root must approve headless-only file storage. The store
+    /// marker is not proof of caller origin; this API checks exact installation.
     #[cfg(feature = "relay")]
     pub fn generate_headless(
         selected: &super::ExplicitHeadlessFileStore,
@@ -90,6 +92,7 @@ impl ClientOwnerKey {
     }
 
     #[cfg(feature = "relay")]
+    /// Requires the same explicit headless composition-root selection as generation.
     pub fn open_headless(
         selected: &super::ExplicitHeadlessFileStore,
         reference: SecretReference,

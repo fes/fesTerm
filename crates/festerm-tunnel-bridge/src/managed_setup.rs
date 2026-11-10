@@ -1807,8 +1807,11 @@ async fn run_worker(state: &Path, log: &WorkerLog) -> io::Result<()> {
             command.arg("--observe-root").arg(root);
         }
     }
+    if record.origin.is_none() {
+        command.env(variable, base);
+    }
     command
-        .env(variable, base)
+        .env("FESTERM_SESSIOND_RUNTIME_ROOT", &record.runtime_root)
         .args([
             "--experimental",
             "--tunnel-id",

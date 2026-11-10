@@ -142,6 +142,8 @@ pub trait SecretStore: Send + Sync {
     /// Creates a secret at a cryptographically random opaque reference already
     /// reserved in the caller's durable private journal. The caller serializes
     /// that reference under its resource lease. Never replaces existing data.
+    /// Native get/set is not a cross-process compare-and-create: its guarantee
+    /// requires this exact-reference lease and cryptographically random names.
     /// Unsupported backends must fail, not fall back to another store.
     fn create_reserved(
         &self,
