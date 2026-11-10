@@ -40,6 +40,8 @@ festerm-windows-security = { path = "../festerm-windows-security" }
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
 
 [dev-dependencies]
+# Isolated daemon-bin tests reuse the library's policy-checked private fixture.
+festerm-sessiond = { path = ".", features = ["test-support"] }
 # The loopback test drives a real daemon through the bridge host and the mobile API.
 festerm-mobile-profiles = { path = "../festerm-mobile-profiles" }
 festerm-mobile-tunnels = { path = "../festerm-mobile-tunnels", features = ["testing"] }

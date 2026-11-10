@@ -7212,10 +7212,9 @@ mod tests {
 
     #[test]
     fn private_registry_snapshot_read_does_not_pin_publication_lock() {
-        let root = env::current_dir()
-            .unwrap()
-            .join(format!("registry-reader-{}", uuid::Uuid::new_v4()));
-        let directory = festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+        let fixture = festerm_sessiond::private_storage::private_test_directory();
+        let root = fixture.path().to_path_buf();
+        let directory = festerm_sessiond::private_storage::private_directory(&root, false).unwrap();
         let (ready_tx, ready_rx) = mpsc::channel();
         let (continue_tx, continue_rx) = mpsc::channel();
         thread::scope(|scope| {
@@ -7251,7 +7250,6 @@ mod tests {
             .map_err(|error| error.to_string());
             continue_tx.send(()).unwrap();
             let observed = reader.join().unwrap();
-            fs::remove_dir_all(&root).unwrap();
             assert!(available, "snapshot reading pinned the publication lock");
             published.unwrap();
             assert!(observed.unwrap().foreign.contains_key("published"));
@@ -7309,10 +7307,9 @@ mod tests {
 
     #[test]
     fn registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers() {
-        let root = env::current_dir()
-            .unwrap()
-            .join(format!("registry-publication-{}", uuid::Uuid::new_v4()));
-        let directory = festerm_sessiond::private_storage::private_directory(&root, true).unwrap();
+        let fixture = festerm_sessiond::private_storage::private_test_directory();
+        let root = fixture.path().to_path_buf();
+        let directory = festerm_sessiond::private_storage::private_directory(&root, false).unwrap();
         let (ready_tx, ready_rx) = mpsc::channel();
         let (continue_tx, continue_rx) = mpsc::channel();
         let effects = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -7375,7 +7372,6 @@ mod tests {
         );
         let registry = open_registry_lock_file_in(&root).unwrap().read().unwrap();
         assert_eq!(registry.foreign.len(), 2);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -2,11 +2,14 @@
 
 ## Explicit desktop Create and atomic resume-or-create
 
-The creation lane normally consumes exact qualified #695 repair `602f19f8`
-on the accepted client/core union (#693 `1debea97` plus #691 metadata). It adds
-actual typed Create/Ensure execution, not new profile authority or placeholder
-sessions. No moving core/native/platform source, stopped-update c75, pending
-Windows warning repair or Linux retirement correction is consumed.
+The creation lane normally merges exact corrected #693
+`9b1d2a688e35cad8dead2afa4b228c152c2cadb9` with qualified #695 repair
+`602f19f83cd26748d6580f4e041781190b3150ba` and its #691 metadata ancestor.
+It adds actual typed Create/Ensure execution, not new profile authority or
+placeholder sessions. The fixed core includes the separately owned private-root,
+COM and cfg corrections documented below. No moving source, stopped-update c75,
+later CORE918 fan-in or active root native-route/Windows-fixture correction is
+consumed or duplicated here.
 
 The existing foreground recipe review now shows host capabilities and independent
 creation/temporary grants, exact shell/argv/cwd/lifetime and a separate launch
@@ -52,7 +55,7 @@ opening native vault/cloud credentials. Both earlier collector/frontend
 adoption/isolation oracles and production 15-second auth-Busy/original-issued
 lost-reply sources are unchanged.
 
-### Creation qualification and retained diagnostics
+### Pre-9b creation qualification and retained diagnostics
 
 Qualification uses the existing official private Rust **1.98.0**, not a
 Homebrew binary receiving an ineffective `+1.98.0` argument. Source
@@ -81,7 +84,7 @@ no-default bridge check passed; corresponding receipts are
 Existing vendor warnings and private `rust-objcopy`'s missing-LLVM debug-strip
 fallback warning are retained, not suppressed or described as warning-free.
 
-Two complete native aggregates each passed fourteen cases and failed one
+Three complete native aggregates each passed fourteen cases and failed one
 **unchanged** inherited oracle. The first final persistent-session count could
 not acquire its 500 ms registry lock
 (`target/create-qualified-native-all.log`); its exact isolated rerun passed
@@ -89,7 +92,11 @@ not acquire its 500 ms registry lock
 OutcomeUncertain instead of the required Busy on an already-owned attachment
 (`target/create-qualified-native-all-final.log`); its exact isolated rerun
 passed (`target/create-qualified-unmodified-takeover-rerun.log`). Neither error
-was converted to absence or accepted as the expected refusal. No production
+was converted to absence or accepted as the expected refusal. A third aggregate
+failed the other inherited two-terminal oracle's inventory observation with
+OutcomeUncertain (`target/create-qualified-native-all-confirmation.log`).
+The new creation case passed in all three aggregates; that is not a claim that
+any of those aggregates passed. No production
 backend or old assertion was changed, and these REDs remain evidence of
 intermittent native-fixture/observation behavior, not a flake-free claim.
 `target/create-source-oracle-audit-final.log` verifies the original native
@@ -484,6 +491,254 @@ JSON without pretending it was saved. No interaction starts sign-in, a shell,
 sharing or migration. Live host inventory, protected trust/Connect, mobile UI
 and native qualification remain open; ADR 0084 is still Proposed and stage 6
 is incomplete.
+## Aligning the frozen core's Windows cfg boundaries
+
+Fresh Windows primary CI for `b5e3bead` found two strict-build failures:
+definition-file verification named a registration used only on Unix, and the
+native control capability-override constructor was compiled without its sole
+Unix relay-test consumer. The verification parameter now has a binding only
+on Unix; other platforms accept the same argument anonymously. The existing
+Windows fast path and unsupported-platform refusal are unchanged. The private
+override constructor, field, initializers and branches now share their actual
+`test + relay + unix` consumer gate. No production capability, receipt,
+manager, ownership or cleanup behavior changes; there are no warning waivers.
+
+Using the explicitly pinned Rust/Cargo 1.99.1 and Clippy 0.1.99 environment
+documented below, fresh selected results are **14 Services tests** and **10
+control tests**, zero failures, with **five existing native-helper tests
+explicitly ignored**. Strict all-target Clippy passes for both affected packages
+with acquisition, native-services, cloud, host-runtime and host-routing enabled.
+The portable no-default client/owner-auth bridge library also passes strict
+Clippy.
+
+```sh
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib services::tests
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib host_control::tests
+cargo clippy --locked -p festerm-host-setup -p festerm-tunnel-bridge --features festerm-host-setup/acquisition,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/host-runtime,festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo clippy --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-host-setup -p festerm-tunnel-bridge --features festerm-host-setup/acquisition,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/host-runtime,festerm-tunnel-bridge/host-routing --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-host-setup -p festerm-tunnel-bridge --features festerm-host-setup/acquisition,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/host-runtime,festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base b5e3bead12732cda335764e79e4b234bee1509d0
+git diff --check
+```
+
+Both broad Windows MSVC attempts above **exit 101 before completing affected
+package checking**: `ring 0.17.14` cannot find Windows C SDK `assert.h`.
+No SDK/toolchain was installed, no dependency was bypassed, and neither attempt
+is Windows compilation success. Exact logs and exit receipts remain in
+`.runtime-validation/windows-cfg-*`; existing vendor and rust-objcopy warnings
+are retained. Format, base-`b5` traceability and diff checks pass. There are
+**zero Windows executions** and no fresh fourteen-native-route claim. Fresh
+actual Windows primary CI remains required; no native manager/cloud/vault/VM
+operation, pending sibling integration or product acceptance is included.
+
+## Qualifying the narrow core CI build-correction union
+
+The no-registration removal correction `9293c2f7` is preserved, then local
+build-only correction `c3d898e8` normally merges exact standalone Windows
+`154b26f21fd417df24bf2366647c951ebb243770` at `5379d5e6` and exact session
+`dbe998d0e94f014a24d3ff65f95f0f6480841283` at
+`a12073f2350db36ed046611da6d49add3ac3e58f`. Only additive milestone prose
+conflicted; both source/evidence histories remain. Host-setup bytes match
+`9293c2f7`, the Windows API source matches `154b26f2`, and corrected daemon
+binary/manifest bytes match `dbe998d0`. No native update or client producer is
+included. The dev-only session self-dependency/lock edge is retained.
+
+Fresh `1de` Linux CI exposed a supported-compiler deprecation in the test
+Busy-policy counter; it now uses the existing checked compare-exchange loop
+with unchanged sequentially consistent ordering, exact decrement and zero
+behavior, rather than a newer `try_update` API or warning suppression.
+The no-host iOS build exposed an unconditional bounded generic JSON helper
+whose only consumers are host-routing terminal actors. Its gate now matches
+those consumers. Shared `LimitedJson` and snapshot codecs stay unconditional;
+an exact encoded-byte-budget test covers the host helper. No authentication
+deadline, proof, authority, lifetime or terminal oracle changes.
+
+The installed rustup named stable toolchain is **Rust/Cargo 1.99.1 and Clippy
+0.1.99**; PATH also contains Homebrew 1.97.1. The first `rustup run stable cargo
+clippy` attempt still selected Homebrew's external Clippy, so those logs are
+not credited as genuine newer-toolchain strict proof. Final qualification
+explicitly pins Cargo's subprocess compiler, rustdoc and toolchain bin PATH:
+
+```sh
+export RUSTC="$(rustup which --toolchain stable rustc)"
+export RUSTDOC="$(rustup which --toolchain stable rustdoc)"
+export PATH="$(dirname "$RUSTC"):$PATH"
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/.runtime-target"
+rustc --version
+cargo --version
+cargo clippy --version
+cargo test --locked -p festerm-host -p festerm-host-setup
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib authenticated_runtime_policy_
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib protocol::tests
+cargo test --locked -p festerm-sessiond --bin festerm-sessiond registry_ -- --test-threads=2
+cargo test --locked -p festerm-sessiond --lib private_storage::tests -- --test-threads=2
+cargo clippy --locked -p festerm-sessiond -p festerm-tunnel-bridge -p festerm-tunnel-client -p festerm-host -p festerm-host-setup --features festerm-tunnel-bridge/host-routing,festerm-host/owner-routing,festerm-host-setup/host-runtime --all-targets -- -D warnings
+cargo clippy --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
+cargo test --locked -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib protocol::tests
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets -- -D warnings
+cargo clippy --locked --target aarch64-apple-ios -p festerm-tunnel-bridge --no-default-features --features client,owner-auth --lib -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 1debea976d62c32344c0d79cbfa74026a152264d
+git diff --check
+```
+
+Final combined-source actual passes: **118 host/setup tests**, with **one existing
+dedicated cargo-packager signer ignore** (105 setup, five host units/eight CLI);
+**four authentication Busy**, **six host protocol/codec**, **six registry**,
+**four private storage** and **five no-host portable protocol/codec** tests,
+all selected cases zero ignored. Five-package strict all-target Clippy and
+standalone no-host/client+owner-auth strict Clippy pass on the genuinely pinned
+toolchain. The existing iOS device standard-library target supplies actual
+`aarch64-apple-ios` no-host bridge strict compilation; it is not simulator
+execution or a full app build. Windows x64 **festerm-windows-security / host-service
+only** all-target check/strict pass, including the three Task Scheduler regressions,
+with **zero Windows test executions**.
+No new target/toolchain, default override, dependency version or OS permission
+was installed/changed by this lane.
+
+Exact logs are `.runtime-validation/core-supported-*.log`; executable versions
+are recorded in `build-compat-pinned-toolchain.log`. Separate premerge Homebrew
+1.97.1 runs passed the four auth and six codec tests, without a new compiler
+minimum. The installed newer toolchain's `rust-objcopy` cannot locate its
+`libLLVM.dylib` during stripping and emits retained warnings; the test/build
+commands still succeed. Existing vendor and portable test-only unused-helper
+warnings are likewise retained, not suppressed or repaired. These warnings do
+not replace the actual strict source checks above.
+
+Format, base-`1de` traceability and diff checks accompany the handoff. This
+selected qualification does not relabel the `e49bb89a` fourteen-route aggregate
+as fresh or clear required all-three primary/iOS CI, Windows fixture/COM
+execution, signed/native/cloud/vault/VM/device or product acceptance. Independent
+follow-up reviews and publication remain parent-owned; no force/push or update
+feature integration is performed.
+
+## Unblocking removal before native registration publication
+
+The complete frozen-core reliability review found a HIGH functional dead end:
+cloud provisioning/adoption could bind an installation before native registration,
+but real Services stop and cleanup rejected every missing receipt. Existing cloud
+and controller fixtures directly confirmed lifecycle stop, hiding the broken
+composition after cancellation, owner-store failure or an abandoned Provisioned
+installation. A new real Services regression reproduced `host.service_not_installed`;
+the RED remains in `.runtime-validation/no-receipt-red.log`.
+
+StopRequested stop and CleanupPending cleanup now accept only this installation's
+unpublished-registration absence. The existing exclusive Services lease prevents
+registration effects while the full lifecycle snapshot, current epoch and exact
+state-directory instance are revalidated and the missing receipt is reread under
+the short lifecycle lock. Registration publishes before native effects and retains
+its receipt/tombstone. The absence path creates no receipt, queries no native
+manager and never probes or removes a foreign definition. Status retains its
+explicit no-observation error. Corrupt/foreign/non-file evidence, stale phase/epoch,
+directory mismatch or lease contention still refuse; controller revoke-first and
+runtime-lease/missing-lock-plus-history guards remain unchanged.
+
+Three Services regressions cover all three typed platform contexts with an
+untouched foreign running definition/zero manager calls, exclusive-lease and
+current-instance/epoch fences, and fourteen corrupt/foreign/non-file/missing-lock
+stop/cleanup cases. A new shared-controller regression uses actual Services after
+ordinary provisioning and cancellation, then reaches real controller uninstall's
+cloud cleanup through only substituted network/credentials. The existing
+acknowledged-uncertainty adoption case now follows that same real path.
+Successful direct `confirm_stopped` shortcuts were removed from the cloud/controller
+integration tests; they explicitly require the combined controller features.
+Lifecycle transition-unit tests and the negative wrong-binding assertion remain.
+Present cloud resources retain unsuccessful CleanupPending without DELETE;
+authenticated absence alone completes Removed. The production uninstall path
+shares its exact native/lifecycle body with the crate-private cloud-future test
+seam; no generic manager/transport redesign or public signature change is added.
+
+Qualification uses private `.runtime-target`, jobs1, dev/test debug0 and
+incremental0, with exact commands and logs:
+
+```sh
+export CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$PWD/.runtime-target"
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib services::tests
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib cloud::tests
+cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib controller::tests
+cargo test --locked -p festerm-host -p festerm-host-setup
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo check --locked -p festerm-host-setup --no-default-features --features native-services --lib
+cargo test --locked -p festerm-host --no-default-features
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 1debea976d62c32344c0d79cbfa74026a152264d
+git diff --check
+```
+
+Focused passes: **14 Services**, **25 cloud/controller integration** and **10
+runtime-controller**. The subsequent complete affected-package union passes
+**118 tests/one existing dedicated-signer ignore** (105 setup, five host units,
+eight CLI integrations); the ignored pinned cargo-packager manifest case requires
+cargo-packager 0.11.8 and runs in its dedicated normal-CI signer job. The focused
+cases are subsets, not extra aggregate passes. Compatibility passes **10**
+(four units/six CLI), strict affected
+all-target Clippy and standalone native-services check pass. Logs are retained
+as `.runtime-validation/no-receipt-*.log`; existing optional-feature/vendor
+warnings are not suppressed. Format, base-`1de` traceability and diff checks
+accompany the handoff. No actual OS manager, production cloud/vault, VM or device
+operation was performed. The prior 14-route SSH aggregate remains attributed to
+`e49bb89a`; this no-registration correction does not relabel or rerun that proof.
+No native update/client branch is merged, no Ready/ADR completion is claimed,
+and independent exact-head follow-up reviews/primary CI remain parent-owned.
+Postcommit range checking caught separately paragraphed trailers; the corrected
+single Git-parsed trailer block changes no source. The failed trace is retained
+as `no-receipt-range-trace-first.log`, alongside the final passing trace.
+
+## Correcting the pinned Windows Task Scheduler XML output binding
+
+A sibling branch starts at exact core
+`1debea976d62c32344c0d79cbfa74026a152264d`; qualified update head
+`7cb89be911df8873914f29fdb038f1e26ec002d2` is untouched. Windows x64 package
+job `129946451560` exposed four E0061/E0308 errors at the two `XmlText()` calls.
+Pinned `windows` 0.62.2 requires an initialized owning `BSTR` output parameter
+and returns HRESULT success/failure, not the string. The same four errors were
+reproduced locally before the fix; raw CI and local RED evidence remain.
+
+Both prepare and observed-definition reads now use one private output helper.
+It initializes the owned `BSTR`, checks the getter result before publishing any
+output, retains the existing sanitized error, 64K UTF-16-code-unit limit and
+64-KiB UTF-8 limit,
+and releases the allocation on success or error. Three Windows-only regressions
+cover initialized/empty output, failure after partial output and both size
+bounds. All three are cross-compiled, **not executed**. No scheduler operation,
+release/publisher policy, native lifecycle or update behavior was added.
+
+The existing named `stable-aarch64-apple-darwin` toolchain is
+**rustc 1.99.1 (58cf8f9c3 2026-10-13)**, Cargo 1.99.1 and Clippy 0.1.99.
+Only its official `x86_64-pc-windows-msvc` standard-library target was installed,
+after the original check reported missing `core`. The first post-install check
+still selected PATH's Homebrew rustc 1.97.1; that failure is also retained.
+Pinning Cargo's subprocess compiler to the existing named toolchain produced
+the four actual API REDs and then the successful checks below. No default
+toolchain, dependency, lockfile or target configuration was changed.
+
+With jobs1, private `target/adr84-com-check`, dev/test debug0, incremental0 and
+`TMPDIR="$PWD/target/adr84-com-evidence"`:
+
+```sh
+export RUSTC="$(rustup which --toolchain stable rustc)"
+export RUSTDOC="$(rustup which --toolchain stable rustdoc)"
+export PATH="$(dirname "$RUSTC"):$PATH"
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets -- -D warnings
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 1debea976d62c32344c0d79cbfa74026a152264d
+git diff --check
+```
+
+Windows x64 all-target checking and strict Clippy pass, including the three new
+test functions; **zero Windows tests were executed**. Format, traceability
+311 edges/zero broken references and diff checks pass. Logs are retained under
+`target/adr84-com-evidence/`. Actual Windows COM execution, ARM compilation,
+native manager/signing/cloud/vault and product acceptance remain pending.
+No VM, native manager, credential or signing operation was performed.
+The host Cargo slot is released; the owned-worktree Cargo/rustc/Clippy CWD
+process check found zero matches. There was no push or PR creation.
 
 ## Freezing the runtime/native core with exact primary-CI corrections
 
@@ -540,6 +795,46 @@ native/cloud/vault/device acceptance remain open. This frozen source handoff
 does not claim Ready or ADR completion. Parent owns the new stacked Draft
 publication; no push, force update, administrative merge or service operation
 is performed by this lane.
+
+## Selecting policy-compliant roots for Windows registry fixtures
+
+Fresh Windows primary job `129938153330` at exact `181eb572` failed two daemon
+binary tests before reaching their lock/publication barriers: 62 passed,
+2 failed. Both created their private fixture under the checkout, whose ancestor
+policy correctly refused it. The retained raw log is
+`adr84-session181-windows-primary-failed.log`; Ubuntu primary success at the same
+source does not exonerate this Windows failure.
+
+Only `private_registry_snapshot_read_does_not_pin_publication_lock` and
+`registry_checkpoint_prepare_releases_discovery_lock_and_rebases_disjoint_writers`
+now use the existing policy-checked `private_test_directory` fixture.
+That helper already passed the private-state creation and aborted-checkpoint
+tests in this same Windows job; the two new callers do not relax its policy.
+Its lifetime outlasts the retained directory/lock handles, so cleanup occurs
+after they close. A dev-only self dependency enables the existing `test-support`
+feature for isolated binary tests, with only that self edge added to the lockfile.
+No production path, ancestor/DACL policy, permissions, deadline or assertion
+changes. The real exclusive/shared lock checks, concurrent publication, merged
+two-writer result and exactly-once effect oracle remain unchanged.
+
+With one warm-target job, zero dev/test debug info and incremental compilation
+off, the affected macOS qualification commands are:
+
+```sh
+cargo test --locked -p festerm-sessiond --bin festerm-sessiond registry_ -- --nocapture --test-threads=2
+cargo test --locked -p festerm-sessiond --lib private_storage::tests -- --nocapture --test-threads=2
+cargo clippy --locked -p festerm-sessiond --all-targets -- -D warnings
+```
+
+The registry selector passed all 6 cases, including both failures and retained
+directory/same-name-conflict guards; private storage passed 3, including unsafe
+parent refusal and owned-staging cleanup. Strict affected Clippy, format,
+traceability (311 edges) and diff checks pass. Evidence is retained as
+`target/adr84-windows-correction/private-root-*.log`. The first locked attempt
+correctly refused the new dev-only lock edge; `cargo update --offline -p
+festerm-sessiond` added only that edge, without changing package versions.
+Fresh corrected-head Windows CI remains required; no new VM execution,
+Windows/native acceptance or full-workspace qualification is claimed.
 
 ## Combining the narrow primary-CI corrections
 

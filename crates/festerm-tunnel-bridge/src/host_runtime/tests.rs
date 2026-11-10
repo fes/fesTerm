@@ -120,13 +120,18 @@ impl ProtectedPolicySource for BusyPolicy {
 
     fn current_policy(&self) -> Result<Self::Guard, ContractError> {
         use std::sync::atomic::Ordering::SeqCst;
-        if self
-            .remaining
-            .fetch_update(SeqCst, SeqCst, |remaining| remaining.checked_sub(1))
-            .is_ok()
-        {
-            self.simulated_busy.fetch_add(1, SeqCst);
-            return Err(ContractError::Busy);
+        let mut remaining = self.remaining.load(SeqCst);
+        while let Some(next) = remaining.checked_sub(1) {
+            match self
+                .remaining
+                .compare_exchange_weak(remaining, next, SeqCst, SeqCst)
+            {
+                Ok(_) => {
+                    self.simulated_busy.fetch_add(1, SeqCst);
+                    return Err(ContractError::Busy);
+                }
+                Err(current) => remaining = current,
+            }
         }
         let current = self.inner.current_policy();
         if matches!(current, Err(ContractError::Busy)) {
