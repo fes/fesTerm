@@ -223,6 +223,15 @@ claimed resisted; likewise native-store rollback itself is outside the native
 anchor guarantee. Native private-path/credential/service qualification remains
 manual; the library option exposes no setup UI or remote enrollment endpoint.
 
+The host `Store` wrapper hard-enforces its protected journal's Headless origin.
+The lower-level bridge/client file-store constructor cannot identify GUI versus
+CLI callers: its `origin=headless` marker binds a namespace, not verified origin.
+Client library selection is explicitly the trusted composition root's
+responsibility. No desktop/mobile composition selects it today; future ones must
+remain native-only. Any future headless CLI must obtain protected deliberate
+opt-in and validate origin before selecting files, never infer consent from
+portable settings, this marker or a vault failure (`HOSTAUTH-01`).
+
 `ClientOwnerKey::generate_native/open_native` store the generated seed and exact
 `OwnerBinding` together through the existing native store. The handle exposes
 only public bytes and an opaque reference for protected local credential

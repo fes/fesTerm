@@ -8724,6 +8724,13 @@ Windows credential deletion now opens the exact no-reparse file with DELETE
 access and validates its privacy; the real private-store fixture verifies
 create/reopen/delete/Missing rather than treating an API call as deletion proof.
 
+Scope review clarified one important trust boundary: the host Store really checks
+protected Headless journal origin, but a general library cannot identify whether
+its caller is a GUI or CLI. The bridge/client file-store marker is a namespace,
+not an origin capability. Explicit headless-only selection therefore remains a
+trusted composition-root obligation, with no GUI/default caller added and a
+named future desktop/mobile/headless-CLI acceptance gate under `HOSTAUTH-01`.
+
 The transport investigation also found a real stop condition: pinned inner SSH
 verifies its host key, but the handed-off streams do not expose a shared
 connection-and-channel transcript. Both real endpoints now explicitly refuse

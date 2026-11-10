@@ -3373,6 +3373,12 @@ claimed by the stage-1 protocol refusal fixture.
 
 ## ADR 0084 host setup qualification
 
+`HOSTAUTH-01` also gates composition: future desktop/mobile callers must never
+select file credentials. A future headless CLI must verify protected origin and
+explicit local opt-in. The host Store enforces journal origin; the lower-level
+bridge/client marker is only a namespace, not a headless-origin capability.
+No current GUI/default path selects file storage or falls back after vault failure.
+
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;
 that needs separate default-No confirmation for its exact generation. That
