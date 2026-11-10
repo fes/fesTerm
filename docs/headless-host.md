@@ -315,6 +315,15 @@ Normal first-connect UX and runtime/service composition remain separate gates.
 
 ## Evidence
 
+The merged cloud/main/enrollment/channel tree at `a2da40e` passed the bounded
+Rust 1.99.0 package validation: setup with `cloud,owner-enrollment` had 49 passed
+and one existing external-signer test ignored; the tunnel client had 20 passed.
+Strict package all-target clippy and the no-default setup check passed. A
+diagnosed stale protocol dev artifact required package-only invalidation;
+unchanged source then passed. No cloud fixture migration or policy relaxation
+was needed. This is local fixture evidence, not any live/native qualification
+listed above.
+
 Focused journal, staging and executable CLI tests cover inert configuration,
 origin isolation, stale completions, exact stop/removal receipts, immutable
 identity, pre-login refusal, private/corrupt/busy state, pin mismatch and refusal
