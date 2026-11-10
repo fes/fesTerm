@@ -192,6 +192,14 @@ or bridge starts until the user explicitly requests one.
 
 ### Clean-machine host installer (release prerequisite)
 
+The additive [authenticated helper release protocol](host-release-artifacts.md)
+provides a GUI-free verifier and signed manifest for each existing helper
+archive, using the embedded updater key. This does **not** retrofit the legacy
+scripts below with independent Linux publisher authentication or install the
+new host endpoint. New setup integration must consume verified immutable bytes
+without checksum-only fallback; first-verifier trust and native install evidence
+remain explicit prerequisites under [#681](https://github.com/fes/fesTerm/issues/681).
+
 In the app, choose **Dev Tunnel: Set up a host…** from the command palette (or
 **Set up a host…** in the Dev Tunnel profile editor) to pick the host platform,
 decide whether a remote device may take over a session, copy the version-pinned

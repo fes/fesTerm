@@ -93,6 +93,23 @@ credentials remain outside the repository.
 Do not publish unsigned output as a production release. The release workflow
 must fail closed when its protected signing environment is incomplete.
 
+## Authenticated standalone helper metadata
+
+The six unchanged native helper archives retain their `.sha256` files and gain
+`.manifest.json` plus cargo-packager `.manifest.json.sig` sidecars. The protected
+publish job signs with the **existing updater identity**, checks the configured
+public key against `packaging/updater.pub`, and runs the GUI-free Rust verifier
+against every target before upload. Existing native executable signing,
+notarization and dependency-notice checks remain mandatory.
+
+See [the exact manifest, verifier, bounds and bootstrap contract](../docs/host-release-artifacts.md).
+These assets authenticate the existing helper package, not the new headless
+host CLI. Legacy installers do not silently switch trust schemes or fall back
+from the new verifier. Explicit recovery of old tags preserves their original
+source/payload contract without claiming authenticated-helper coverage.
+Stage-7 switching/rollback and migration remain tracked in
+[#681](https://github.com/fes/fesTerm/issues/681).
+
 ## Optional terminal font release assets
 
 JetBrains Mono remains embedded. Iosevka Term, JuliaMono, and Maple Mono are

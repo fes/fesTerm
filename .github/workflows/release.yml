@@ -44,6 +44,7 @@ jobs:
       source_commit: ${{ steps.release.outputs.source_commit }}
       recovery: ${{ steps.release.outputs.recovery }}
       helper_sha256: ${{ steps.release.outputs.helper_sha256 }}
+      authenticated_helpers: ${{ steps.release.outputs.authenticated_helpers }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -84,6 +85,17 @@ jobs:
             [[ "$(git rev-list -n 1 "$tag")" == "$GITHUB_SHA" ]]
           fi
           helper_sha256=$(sha256sum scripts/build_tunnel_bundle.py | cut -d ' ' -f1)
+          authenticated_helpers=true
+          if ! git cat-file -e "$source_commit:scripts/build_host_manifest.py" 2>/dev/null; then
+            # Recovery must preserve the tagged source contract. Do not copy a
+            # new verifier/manifest scheme into an older runtime's release.
+            if [[ "$recovery" != true ]]; then
+              echo "::error::Release source lacks authenticated helper tooling"
+              exit 1
+            fi
+            authenticated_helpers=false
+            echo "::notice::Legacy tag recovery: no authenticated-helper claim for this source"
+          fi
           {
             echo "publish=$publish"
             echo "tag=$tag"
@@ -91,6 +103,7 @@ jobs:
             echo "source_commit=$source_commit"
             echo "recovery=$recovery"
             echo "helper_sha256=$helper_sha256"
+            echo "authenticated_helpers=$authenticated_helpers"
           } >> "$GITHUB_OUTPUT"
       - name: Install Linux validation dependencies
         run: |
@@ -102,6 +115,10 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Validate authenticated helper artifacts
+        run: |
+          cargo test --locked -p festerm-host-setup --features artifacts
+          cargo clippy --locked -p festerm-host-setup --features artifacts --all-targets -- -D warnings
       - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - run: python3 scripts/manage_bundled_font.py
       - name: Stage release-specific optional font assets
@@ -847,7 +864,7 @@ jobs:
     if: needs.validate.outputs.publish == 'true'
     needs: [validate, macos, windows, linux, helper-bundles, helper-windows-sign]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     environment: release
     permissions:
       contents: write
@@ -913,6 +930,38 @@ jobs:
           # 13 desktop assets, 12 helper archives/checksums, 2 installers.
           test "${#expected[@]}" -eq 27
           test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq "${#expected[@]}"
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        if: needs.validate.outputs.authenticated_helpers == 'true'
+      - name: Install pinned cargo-packager for helper metadata signatures
+        if: needs.validate.outputs.authenticated_helpers == 'true'
+        run: cargo install cargo-packager --version "$CARGO_PACKAGER_VERSION" --locked
+      - name: Authenticate standalone helper release metadata
+        if: needs.validate.outputs.authenticated_helpers == 'true'
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+          FESTERM_UPDATE_PUBLIC_KEY: ${{ vars.FESTERM_UPDATE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"
+          test -n "$CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD"
+          test -n "$FESTERM_UPDATE_PUBLIC_KEY"
+          test "$FESTERM_UPDATE_PUBLIC_KEY" = "$(cat packaging/updater.pub)"
+          cargo build --locked --release -p festerm-host-setup --features artifacts --bin festerm-verify-artifact
+          for platform in linux macos windows; do
+            extension=tar.gz
+            if [[ "$platform" == windows ]]; then extension=zip; fi
+            for arch in x86_64 aarch64; do
+              archive="dist/fesTerm-tunnel-${VERSION}-${platform}-${arch}.${extension}"
+              python3 scripts/build_host_manifest.py \
+                --version "$VERSION" --platform "$platform" --arch "$arch" "$archive"
+              cargo packager signer sign "$archive.manifest.json"
+              test -s "$archive.manifest.json.sig"
+              target/release/festerm-verify-artifact "$VERSION" "$platform" "$arch" "$archive"
+            done
+          done
+          # Existing 27 payloads plus six signed manifests and six signatures.
+          test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 39
       - name: Generate release notes and signed update manifest
         run: |
           set -euo pipefail
