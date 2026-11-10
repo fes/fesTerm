@@ -2575,6 +2575,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-host-protocol"
+version = "0.16.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "festerm-host-setup"
 version = "0.16.0"
 dependencies = [

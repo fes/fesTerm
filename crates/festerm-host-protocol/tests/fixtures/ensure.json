@@ -1,0 +1,1 @@
+{"protocol":"festerm-host-v1","version":1,"host":"00000001-0000-4000-8000-000000000001","operation":"00000003-0000-4000-8000-000000000001","body":{"kind":"ensure","creation":{"logical":"00000002-0000-4000-8000-000000000001","name":"Build","recipe":{"shell":"/bin/sh","args":["-l"],"cwd":"/work"},"lifetime":{"kind":"persistent"}}}}

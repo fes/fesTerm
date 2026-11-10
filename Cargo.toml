@@ -47,6 +47,7 @@ members = [
     "crates/festerm-markdown",
     "crates/festerm-document",
     "crates/festerm-host-setup",
+    "crates/festerm-host-protocol",
     "crates/festerm-syntax",
 ]
 resolver = "2"
