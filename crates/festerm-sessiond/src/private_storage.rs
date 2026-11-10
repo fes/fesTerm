@@ -323,9 +323,39 @@ pub fn private_test_directory() -> PrivateTestDirectory {
     PrivateTestDirectory(test_directory())
 }
 
+/// Keeps Unix socket fixture paths short without changing process-wide cwd.
+/// Windows always retains the policy-validated candidate-parent selection.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn private_test_directory_in(unix_parent: &Path) -> PrivateTestDirectory {
+    #[cfg(unix)]
+    {
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let path = unix_parent.join(format!("ft-{}", &nonce[..16]));
+        drop(private_directory(&path, true).expect("private fixture directory refused"));
+        PrivateTestDirectory(path)
+    }
+    #[cfg(windows)]
+    {
+        let _ = unix_parent;
+        private_test_directory()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn private_fixture_short_unix_parent_supports_native_socket_and_owned_cleanup() {
+        let root = private_test_directory_in(&std::env::current_dir().unwrap());
+        let path = root.path().to_owned();
+        let socket = std::os::unix::net::UnixListener::bind(path.join("host.sock")).unwrap();
+        drop(socket);
+        drop(root);
+        assert!(!path.exists());
+    }
 
     #[test]
     fn private_state_creation_and_replacement_are_bounded_and_exclusive() {
