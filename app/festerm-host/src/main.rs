@@ -12,7 +12,7 @@ festerm-host — ADR 0084 headless lifecycle boundary
 configure --state-dir PATH --name NAME [--creation allow|deny] [--startup manual|sign-in]
     Save disabled host-local settings only; no sign-in, service or shell is started.
 status --state-dir PATH
-    Read the protected headless lifecycle journal as JSON. This is not a liveness probe.
+    Read protected lifecycle JSON; pending cleanup shows unverified receipt context only, never removal authority or liveness.
 service-status --state-dir PATH
     Observe only the exact receipt-owned native process; Running is not Ready.
 disable --state-dir PATH
@@ -38,7 +38,7 @@ run --state-dir PATH
 run-status --state-dir PATH
     Durable last-run history, not a liveness or endpoint-ready claim.
 uninstall --state-dir PATH --consent remove
-    Revoke, observe exact host stop and remove owned native registration; unqualified cloud deletion remains CleanupPending and exits unsuccessfully.
+    Revoke and remove exact stopped native registration; verified present cloud resources show explicit manual provider review, remain CleanupPending and exit unsuccessfully. Retry verifies absence only; never deletes.
 update
     Unavailable until the authenticated stopped-version replacement transaction is integrated.
 
@@ -50,6 +50,20 @@ private, symlink-free and belong to the configured non-system OS user.
 fn invalid() -> io::Error {
     io::Error::other("host.invalid_arguments (use --help)")
 }
+
+#[cfg(feature = "owner-routing")]
+#[derive(Debug)]
+struct ManualCleanupRequired(festerm_host_setup::cloud::CleanupContext);
+
+#[cfg(feature = "owner-routing")]
+impl std::fmt::Display for ManualCleanupRequired {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("host.native_removed_cloud_cleanup_pending")
+    }
+}
+
+#[cfg(feature = "owner-routing")]
+impl std::error::Error for ManualCleanupRequired {}
 
 fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     let mut args = args.into_iter();
@@ -136,8 +150,8 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                     Ok("Exact owned native registration and cloud endpoint absence confirmed. Revocation evidence and persistent sessions retained.\n".into()),
                 festerm_host_setup::controller::UninstallResult::AlreadyRemovedNotReobserved =>
                     Ok("Recorded removed tombstone retained; resources were not reobserved. Persistent sessions unchanged.\n".into()),
-                festerm_host_setup::controller::UninstallResult::NativeRemovedCloudCleanupPending =>
-                    Err(io::Error::other("host.native_removed_cloud_cleanup_pending")),
+                festerm_host_setup::controller::UninstallResult::NativeRemovedCloudCleanupPending { context } =>
+                    Err(io::Error::other(ManualCleanupRequired(context))),
             }
         }
         #[cfg(feature = "owner-routing")]
@@ -272,10 +286,8 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             )
         }
         "status" => {
-            let snapshot = Store::open(&path("--state-dir")?, Origin::Headless)?.snapshot()?;
-            serde_json::to_string_pretty(&snapshot)
-                .map(|s| format!("{s}\n"))
-                .map_err(|_| io::Error::other("host.status_serialization"))
+            let store = Store::open(&path("--state-dir")?, Origin::Headless)?;
+            status_report(&store)
         }
         "service-status" | "disable" | "cleanup-local" => {
             let state = path("--state-dir")?;
@@ -432,10 +444,45 @@ fn main() -> ExitCode {
         }
         Err(error) => {
             // OS errors may contain paths or native details; never relay them.
-            eprintln!("{}", diagnostic(&error));
+            eprintln!("{}", render_diagnostic(&error));
             ExitCode::FAILURE
         }
     }
+}
+
+fn status_report(store: &Store) -> io::Result<String> {
+    let snapshot = store.snapshot()?;
+    let mut report = serde_json::to_value(&snapshot)
+        .map_err(|_| io::Error::other("host.status_serialization"))?;
+    if snapshot.phase == Phase::CleanupPending {
+        let context = festerm_host_setup::cloud::CloudHostAdapter::new(store)
+            .pending_cleanup_context(&snapshot)
+            .ok();
+        report.as_object_mut().unwrap().remove("binding");
+        report["binding_withheld"] = true.into();
+        report["cloud_cleanup"] = serde_json::json!({
+            "state": if context.is_some() { "stored-receipt-unverified" } else { "uncertain" },
+            "receipt_context": context,
+            "action": "Do not remove resources from this journal alone. Preserve the original protected receipt and account. Retry explicit uninstall --state-dir PATH --consent remove using a compatible owner-routing-enabled host build to authenticate and verify current ownership or absence; no sign-in or provider removal is started by status.",
+        });
+    }
+    serde_json::to_string_pretty(&report)
+        .map(|report| format!("{report}\n"))
+        .map_err(|_| io::Error::other("host.status_serialization"))
+}
+
+fn render_diagnostic(error: &io::Error) -> String {
+    #[cfg(feature = "owner-routing")]
+    if let Some(pending) = error
+        .get_ref()
+        .and_then(|error| error.downcast_ref::<ManualCleanupRequired>())
+    {
+        return format!(
+            "host.native_removed_cloud_cleanup_pending; exact native registration removed; cloud CleanupPending, NOT Removed.\nReceipt-bound context verified during this foreground attempt: {}\nExplicit manual action: independently open the provider's resource management interface using the displayed numeric account; review cluster, tunnel ID, ownership label and creation incarnation against this protected installation. Only if ALL still match, deliberately remove that exact resource there. Stop if anything changed or ownership is uncertain; this observation is not deletion authority. No browser or portal was opened; no provider deletion was performed by fesTerm.\nThen retry uninstall --state-dir PATH --consent remove with the original protected state and account. Only authenticated verified absence commits Removed; denial/offline/unknown remains CleanupPending.",
+            serde_json::to_string(&pending.0).expect("public string metadata serializes"),
+        );
+    }
+    diagnostic(error).into()
 }
 
 fn diagnostic(error: &io::Error) -> &'static str {
@@ -465,7 +512,7 @@ fn diagnostic(error: &io::Error) -> &'static str {
             "host.cloud_reconciliation_required; access revoked, uncertain creation retained; no new create or cleanup proof"
         }
         "host.cloud_offline_or_unknown" => {
-            "host.cloud_offline_or_unknown; preserve the exact receipt and retry read-only reconciliation"
+            "host.cloud_offline_or_unknown; preserve the exact receipt and retry read-only reconciliation; no verified manual removal target"
         }
         "host.cloud_denied" => {
             "host.cloud_denied; authenticated authority refused, retain protected cleanup evidence"
@@ -474,7 +521,16 @@ fn diagnostic(error: &io::Error) -> &'static str {
             "host.cloud_account_or_identity_changed; original account and installation authority required"
         }
         "host.cloud_generation_changed" | "host.cloud_binding_changed" => {
-            "host.cloud_generation_changed; observed resource does not match the retained exact cleanup receipt"
+            "host.cloud_generation_changed; observed resource does not match the retained exact cleanup receipt; do not remove it"
+        }
+        "host.cloud_cleanup_scope_changed"
+        | "host.cloud_cleanup_context_unavailable"
+        | "host.cloud_scope_changed"
+        | "host.cloud_journal_invalid"
+        | "host.cloud_host_identity_changed"
+        | "host.cloud_receipt_missing"
+        | "host.cloud_not_configured" => {
+            "host.cloud_cleanup_uncertain; no verified owned removal target; preserve original protected state and account, reconcile receipt/identity/current lifecycle before retrying; do not remove resources by name"
         }
         "host.cloud_rate_limited" => {
             "host.cloud_rate_limited; preserve receipt and retry later, outcome not confirmed"
@@ -581,6 +637,171 @@ mod tests {
 
     fn arguments(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
+    }
+
+    #[cfg(feature = "owner-routing")]
+    fn cleanup_fixture() -> (
+        festerm_sessiond::private_storage::PrivateTestDirectory,
+        Store,
+    ) {
+        use festerm_sessiond::private_storage as storage;
+        use std::path::Path;
+
+        let root = storage::private_test_directory();
+        let state = root.path().join("host");
+        let store = Store::create(
+            &state,
+            Origin::Headless,
+            Settings {
+                friendly_name: "Cleanup fixture".into(),
+                allow_creation: false,
+                startup: Startup::Manual,
+            },
+        )
+        .unwrap();
+        let ticket = store
+            .request_enable(&store.snapshot().unwrap().settings)
+            .unwrap();
+        festerm_host_setup::cloud::CloudHostAdapter::new(&store)
+            .foreground(&ticket, 42)
+            .unwrap();
+        let directory = storage::private_directory(&state, false).unwrap();
+        let mut record: serde_json::Value = serde_json::from_slice(
+            &storage::read_private(&directory, Path::new("host-cloud.json"), 16384).unwrap(),
+        )
+        .unwrap();
+        let resource = serde_json::json!({
+            "tunnel_id": "fixture-owned",
+            "cluster": "usw2",
+            "account_id": 42,
+            "ownership_label": "festerm-owned-22222222222242228222222222222222",
+            "port": 2222,
+            "labels": ["festerm-host-v1", "festerm-owned-22222222222242228222222222222222"],
+        });
+        record["resource"] = resource.clone();
+        record["receipt"] = serde_json::json!({
+            "resource": resource,
+            "created": "2026-11-09T00:00:00Z",
+        });
+        record["authenticated"] = true.into();
+        record["submitted"] = true.into();
+        storage::replace_private(
+            &directory,
+            Path::new("host-cloud.json"),
+            &serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        store
+            .record_provisioned(
+                &ticket,
+                festerm_host_setup::lifecycle::Binding {
+                    host_id: record["host_id"].as_str().unwrap().into(),
+                    account: "github:42".into(),
+                    qualified_tunnel: "fixture-owned.usw2".into(),
+                    cloud_incarnation: "2026-11-09T00:00:00Z".into(),
+                    host_key_fingerprint: record["fingerprint"].as_str().unwrap().into(),
+                },
+            )
+            .unwrap();
+        festerm_host_setup::controller::disable(&store, &state).unwrap();
+        store.request_cleanup().unwrap();
+        (root, store)
+    }
+
+    #[cfg(feature = "owner-routing")]
+    #[test]
+    fn headless_cleanup_status_is_read_only_unverified_receipt_context() {
+        let (root, store) = cleanup_fixture();
+        let path = root.path().join("host");
+        let record = std::fs::read(path.join("host-cloud.json")).unwrap();
+        let before = store.snapshot().unwrap();
+        let report = execute(arguments(&[
+            "status",
+            "--state-dir",
+            path.to_str().unwrap(),
+        ]))
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&report).unwrap();
+        assert_eq!(value["phase"], "cleanup-pending");
+        assert_eq!(value["cloud_cleanup"]["state"], "stored-receipt-unverified");
+        let context = &value["cloud_cleanup"]["receipt_context"];
+        assert_eq!(context["account_id"], 42);
+        assert_eq!(context["cluster"], "usw2");
+        assert_eq!(context["tunnel_id"], "fixture-owned");
+        assert_eq!(context["installation"], before.installation);
+        assert_eq!(context["epoch"], before.epoch);
+        assert!(value["cloud_cleanup"]["action"]
+            .as_str()
+            .unwrap()
+            .contains("Do not remove"));
+        assert!(value.get("binding").is_none());
+        assert_eq!(value["binding_withheld"], true);
+        assert!(!report.contains("Explicit manual action:"));
+        assert!(!report.contains("credential"));
+        assert!(!report.contains("https://"));
+        assert_eq!(store.snapshot().unwrap(), before);
+        assert_eq!(std::fs::read(path.join("host-cloud.json")).unwrap(), record);
+    }
+
+    #[cfg(feature = "owner-routing")]
+    #[test]
+    fn headless_cleanup_uninstall_diagnostics_are_typed_and_uncertainty_safe() {
+        use festerm_sessiond::private_storage as storage;
+        use std::path::Path;
+
+        let (root, store) = cleanup_fixture();
+        let context = festerm_host_setup::cloud::CloudHostAdapter::new(&store)
+            .pending_cleanup_context(&store.snapshot().unwrap())
+            .unwrap();
+        let rendered = render_diagnostic(&io::Error::other(ManualCleanupRequired(context)));
+        for expected in [
+            "CleanupPending, NOT Removed",
+            "Explicit manual action:",
+            "\"account_id\":42",
+            "\"cluster\":\"usw2\"",
+            "\"tunnel_id\":\"fixture-owned\"",
+            "\"incarnation\":\"2026-11-09T00:00:00Z\"",
+            "Only if ALL still match",
+            "Only authenticated verified absence commits Removed",
+        ] {
+            assert!(rendered.contains(expected), "{expected}");
+        }
+        assert!(!rendered.contains("https://"));
+        for error in [
+            "host.cloud_offline_or_unknown",
+            "host.cloud_denied",
+            "host.cloud_binding_changed",
+            "host.cloud_cleanup_scope_changed",
+            "host.cloud_receipt_missing",
+            "host.native_removed_cloud_cleanup_pending https://private.invalid/?token=DO_NOT_ECHO",
+        ] {
+            let rendered = render_diagnostic(&io::Error::other(error));
+            assert!(!rendered.contains("Explicit manual action:"));
+            assert!(!rendered.contains("DO_NOT_ECHO"));
+            assert!(!rendered.contains("https://"));
+        }
+        let state = root.path().join("host");
+        let directory = storage::private_directory(&state, false).unwrap();
+        let mut record: serde_json::Value = serde_json::from_slice(
+            &storage::read_private(&directory, Path::new("host-cloud.json"), 16384).unwrap(),
+        )
+        .unwrap();
+        record["receipt"]["created"] = "https://private.invalid/?token=DO_NOT_ECHO".into();
+        storage::replace_private(
+            &directory,
+            Path::new("host-cloud.json"),
+            &serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        let report = status_report(&store).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&report).unwrap();
+        assert_eq!(value["cloud_cleanup"]["state"], "uncertain");
+        assert!(value["cloud_cleanup"]["receipt_context"].is_null());
+        assert!(!report.contains("DO_NOT_ECHO"));
+        assert!(!report.contains("https://"));
+        assert!(!report.contains("Explicit manual action:"));
+        assert!(value.get("binding").is_none());
+        assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
     }
 
     #[cfg(feature = "owner-routing")]

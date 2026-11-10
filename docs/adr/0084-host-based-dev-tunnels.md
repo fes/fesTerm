@@ -143,6 +143,25 @@ Late setup/create completions cannot restore revoked access. If cloud cleanup
 fails offline, local access remains disabled and a protected cleanup receipt
 survives. Disable is not cloud deletion; uninstall/remove is a separate action.
 
+**Owner decision — `allow_explicit_manual_fallback` (2026-11-10):** The pinned
+provider SDK has no documented generation-atomic DELETE contract. Automatic
+removal stays unavailable: never issue ID-only DELETE, GET-then-DELETE or infer a
+DELETE precondition from PUT's `If-Match` support. After exact local stop/removal,
+an authenticated same-account observation of the complete protected receipt may
+offer an explicit **manual provider review/remove** action. Show only sanitized
+installation/epoch, numeric account, cluster, tunnel ID, ownership label and
+creation-incarnation identifiers; never tokens, seeds, credential references or
+raw diagnostic URLs. Revalidate the full current lifecycle and protected receipt
+after network I/O before presenting that observed context. The user must
+independently review current provider ownership and incarnation and stop on any
+change; no browser, portal, sign-in or destructive provider action is automatic.
+Local journal status is unverified reference context, not removal authority.
+Missing, corrupt, foreign, changed, denied, offline or stale evidence offers
+uncertainty/reconciliation guidance, never a purported verified deletion target.
+Present/unknown cloud state retains CleanupPending and unsuccessful uninstall;
+only a subsequent authenticated exact absence observation commits Removed.
+Manual removal itself is neither a local tombstone nor acceptance evidence.
+
 ### 4. Session state and lifetime
 
 Naming, sharing permission, runtime existence and attachment are separate axes.
@@ -415,7 +434,13 @@ verify account/key/ownership, reserve new host records, bind selected existing
 daemons without frontend takeover, then switch and retain rollback evidence.
 Preserve grants narrowly. Multiple old per-session tunnels may be consolidated
 only by explicit selection, never account-wide cleanup. Cleanup deletes only
-verified owned cloud incarnations. Interrupted migration is resumable and cannot
+verified owned cloud incarnations. The explicit manual fallback above is also an
+allowed migration acceptance path when its own protected source receipts,
+account, incarnation and consent are verified; it never authorizes legacy or
+foreign cleanup by a display name. Migration retains unresolved cleanup until
+authenticated exact absence, and may explicitly defer it without claiming
+removal. This HOST receipt implementation does not supply legacy migration
+inventory, binding or consent. Interrupted migration is resumable and cannot
 provision duplicate hosts/shells. A failed migration leaves legacy use available
 where possible without resurrecting revoked exposure.
 
@@ -758,7 +783,24 @@ controller integration fixtures; active runtime ownership and missing-lock/histo
 guards still block Disabled. These tests require the explicit combined controller
 features; standalone cloud tests do not substitute lifecycle confirmation.
 Native status still refuses absent receipts, and real native-manager/cloud/vault
-qualification and generation-conditional deletion remain separate gates.
+qualification and automatic generation-conditional deletion remain separate gates.
+The manual fallback decision adds
+`host_cloud_manual_cleanup_context_is_exact_read_only_and_epoch_fenced`,
+`host_cloud_manual_cleanup_refuses_unknown_foreign_and_raced_authority` and
+`host_cloud_manual_cleanup_never_displays_raw_receipt_urls`.
+They exercise the actual protected receipt and post-network epoch/account/
+incarnation fences with fake cloud/credential boundaries, not provider removal.
+The existing controller uninstall/adopted-uncertainty tests now propagate the
+typed context and require authenticated absence before Removed.
+`headless_cleanup_status_is_read_only_unverified_receipt_context`,
+`headless_cleanup_uninstall_diagnostics_are_typed_and_uncertainty_safe` and
+`headless_binary_cleanup_without_receipt_is_uncertain_not_removal_guidance`
+cover local-only status, sanitized actionable CLI output and refusal to turn
+missing/changed evidence or a raw error string into a removal instruction.
+HOST-04/HOST-05 and migration HOST-06 remain partial; HOSTSETUP-01 must separately
+qualify actual provider review/removal and authenticated retry, with persistent
+daemons/grants preserved. No real cloud, vault or native-manager effect is
+established by these fixtures.
 `native_service_live_exact_owned_lifecycle_preserves_independent_child` is
 ignored by default and requires an explicitly authorized disposable Unix guest.
 Its synthetic executable/native-manager evidence is not release publisher,
@@ -840,8 +882,10 @@ re-enable. Cloud presence is explicitly endpoint-unqualified, never Ready.
 Found-resource deletion remains fail-closed: official ID-only delete has no
 documented incarnation-atomic precondition, so cleanup retains its receipt and
 reports `GenerationConditionalDeleteUnavailable`; only authenticated exact
-absence can commit removal. This is a genuine qualification prerequisite,
-not successful uninstall. See the [cloud adapter contract](../headless-host.md#in-process-cloud-adapter-library-only).
+absence can commit removal. The approved explicit manual review/removal fallback
+is now actionable after fresh ownership verification; automated deletion remains
+blocked and a pending result is not successful uninstall. See the
+[cloud adapter contract](../headless-host.md#in-process-cloud-adapter-shared-clilibrary-api).
 
 - **Invariants introduced or changed:** One host endpoint can expose multiple
   authorized sessions; explicit remote creation and client-local resume-or-create
@@ -1211,7 +1255,7 @@ publication; these interfaces do not enable a product endpoint.
 | Profiles | Metadata-only save, serialization, duplicate/shortcut identity and compatibility tests above; first create, later resume, post-reboot replacement toast and actual second-client attachment remain deferred |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
 | Integrity | Implemented: schema-2 authenticated `stage-package` including the GUI-free host CLI, pinned official-CLI offline staging and bounded HTTPS acquisition, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, six-target Python producer/actual signer/Rust verifier interop; separate authenticated executable-publication component. Deferred: Microsoft native-publisher qualification/redistribution review, endpoint installer integration, trusted first-verifier delivery and signed native executable/install/update evidence |
-| Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
+| Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients; explicit receipt/account/incarnation-verified manual provider cleanup may satisfy removal only after authenticated exact absence, never an ID-only DELETE |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 
 Planned tests must be replaced by actual registered test functions as slices land.

@@ -96,6 +96,60 @@ fn headless_binary_status_is_a_journal_not_a_ready_claim() {
     assert_eq!(std::fs::read_dir(state).unwrap().count(), 2);
 }
 
+#[cfg(feature = "owner-routing")]
+#[test]
+fn headless_binary_cleanup_without_receipt_is_uncertain_not_removal_guidance() {
+    use festerm_host_setup::lifecycle::{Binding, Origin, Settings, Startup, Store};
+
+    let root = festerm_sessiond::private_storage::private_test_directory();
+    let state = root.path().join("headless");
+    let store = Store::create(
+        &state,
+        Origin::Headless,
+        Settings {
+            friendly_name: "Cleanup fixture".into(),
+            allow_creation: false,
+            startup: Startup::Manual,
+        },
+    )
+    .unwrap();
+    let ticket = store
+        .request_enable(&store.snapshot().unwrap().settings)
+        .unwrap();
+    store
+        .record_provisioned(
+            &ticket,
+            Binding {
+                host_id: "22222222-2222-4222-8222-222222222222".into(),
+                account: "github:42".into(),
+                qualified_tunnel: "unverified-target.usw2".into(),
+                cloud_incarnation: "2026-11-09T00:00:00Z".into(),
+                host_key_fingerprint: "sha256:fixture".into(),
+            },
+        )
+        .unwrap();
+    festerm_host_setup::controller::disable(&store, &state).unwrap();
+    store.request_cleanup().unwrap();
+    let before = store.snapshot().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+        .args(["status", "--state-dir"])
+        .arg(&state)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["phase"], "cleanup-pending");
+    assert_eq!(report["cloud_cleanup"]["state"], "uncertain");
+    assert!(report["cloud_cleanup"]["receipt_context"].is_null());
+    assert!(report.get("binding").is_none());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("unverified-target"));
+    assert!(report["cloud_cleanup"]["action"]
+        .as_str()
+        .unwrap()
+        .contains("Do not remove"));
+    assert_eq!(store.snapshot().unwrap(), before);
+}
+
 #[test]
 fn headless_package_staging_refuses_unauthenticated_input_before_writing() {
     let root = festerm_sessiond::private_storage::private_test_directory();

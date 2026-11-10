@@ -345,11 +345,13 @@ fn disable_with(
     })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UninstallResult {
     Removed,
     AlreadyRemovedNotReobserved,
-    NativeRemovedCloudCleanupPending,
+    NativeRemovedCloudCleanupPending {
+        context: crate::cloud::CleanupContext,
+    },
 }
 
 /// Remove exact stopped registration, then reconcile authenticated cloud state.
@@ -384,8 +386,8 @@ pub(crate) async fn uninstall_with(
     Services::current_user(store, state)?.cleanup(epoch)?;
     match cleanup.await? {
         Cleanup::Removed => Ok(UninstallResult::Removed),
-        Cleanup::GenerationConditionalDeleteUnavailable => {
-            Ok(UninstallResult::NativeRemovedCloudCleanupPending)
+        Cleanup::GenerationConditionalDeleteUnavailable { context } => {
+            Ok(UninstallResult::NativeRemovedCloudCleanupPending { context })
         }
     }
 }
