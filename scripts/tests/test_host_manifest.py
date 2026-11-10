@@ -100,3 +100,14 @@ class HostManifestTests(unittest.TestCase):
                         workflow.index("gh release upload"))
         self.assertIn("cargo install cargo-packager --version \"$CARGO_PACKAGER_VERSION\" --locked",
                       workflow)
+
+    def test_normal_ci_runs_cross_language_and_real_pinned_signer_checks(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("cargo test --locked -p festerm-host-setup --features artifacts", workflow)
+        job = workflow.split("  helper-signature-compatibility:\n", 1)[1]
+        job = job.split("  conformance:\n", 1)[0]
+        self.assertIn("runs-on: ubuntu-latest", job)
+        self.assertIn("cargo install cargo-packager --version 0.11.8 --locked", job)
+        self.assertIn("pinned_cargo_packager_signatures_authenticate_python_produced_manifest", job)
+        self.assertIn("-- --exact --ignored", job)
+        self.assertNotIn("secrets.", job)

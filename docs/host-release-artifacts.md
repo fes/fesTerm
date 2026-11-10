@@ -124,6 +124,23 @@ six generated manifests, unchanged legacy bytes, overwrite refusal, target
 rejection and workflow signing/verification order. Recovery fixtures exercise
 the explicit old-tag exception and fail-closed ordinary releases.
 
+`python_produced_six_bundles_and_manifests_authenticate_in_rust` invokes the real
+Python bundle **and** manifest producers for all six targets, signs their exact
+manifest bytes with a synthetic test identity, and passes those archives and
+signatures through the Rust verifier. This cross-language test runs with the
+artifact feature on every CI platform; it does not use Rust-built archives.
+These artifact-feature tests require Python 3.11+ on PATH (`python` on Windows,
+`python3` elsewhere); this is a test dependency, not a verifier runtime dependency.
+The separate Linux normal-CI signer job installs **cargo-packager 0.11.8
+--locked**, then explicitly runs
+`pinned_cargo_packager_signatures_authenticate_python_produced_manifest`.
+That test generates its own throwaway key using the real CLI, signs a
+Python-produced manifest, checks modern prehashed mode and verifies with the
+private test-only key seam. It also confirms the shipping embedded-key API
+rejects the throwaway publisher and that changed signed bytes fail. The
+expensive external-tool test is ignored in ordinary Rust runs, not omitted
+from normal CI. No production trust override is exposed.
+
 No actual release key, release dispatch or live installation is used by tests.
 Native protected-release signing/download/rejection evidence on all six targets,
 headless CLI package inclusion, installer integration, private atomic staging,

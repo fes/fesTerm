@@ -438,7 +438,51 @@ fn validate_archive(
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use std::io::Write;
+    use std::{
+        io::Write,
+        path::{Path, PathBuf},
+        process::{Command, Output},
+    };
+
+    fn command_succeeds(command: &mut Command) -> Output {
+        let output = command
+            .output()
+            .unwrap_or_else(|error| panic!("could not start {command:?}: {error}"));
+        assert!(
+            output.status.success(),
+            "{command:?} failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn python_produced_bundles() -> (tempfile::TempDir, PathBuf) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let directory = tempfile::Builder::new()
+            .prefix(".artifact-interop-")
+            .tempdir_in(&root)
+            .unwrap();
+        let produced = directory.path().join("produced");
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        command_succeeds(
+            Command::new(python)
+                .arg(root.join("scripts/tests/produce_host_artifact_fixtures.py"))
+                .arg("--output-dir")
+                .arg(&produced)
+                .args(["--version", "1.2.3"]),
+        );
+        (directory, produced.join("dist"))
+    }
+
+    fn packager() -> Command {
+        let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        command
+            .arg("packager")
+            .env_remove("CARGO_PACKAGER_SIGN_PRIVATE_KEY")
+            .env_remove("CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD");
+        command
+    }
 
     fn expected(platform: Platform, architecture: Architecture) -> ExpectedArtifact<'static> {
         ExpectedArtifact {
@@ -556,6 +600,82 @@ mod tests {
         let data = serde_json::to_vec(manifest).unwrap();
         let (key, signature) = sign(&data, 42);
         verify_with_key(&data, &signature, archive, expected, &key)
+    }
+
+    #[test]
+    fn python_produced_six_bundles_and_manifests_authenticate_in_rust() {
+        let (_directory, produced) = python_produced_bundles();
+        for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {
+            for architecture in [Architecture::X86_64, Architecture::Aarch64] {
+                let expected = expected(platform, architecture);
+                let filename = filename(&expected);
+                let archive = std::fs::read(produced.join(&filename)).unwrap();
+                let metadata =
+                    std::fs::read(produced.join(format!("{filename}.manifest.json"))).unwrap();
+                let (key, signature) = sign(&metadata, 42);
+                let verified =
+                    verify_with_key(&metadata, &signature, &archive, &expected, &key).unwrap();
+                assert_eq!(verified.manifest_bytes(), metadata);
+                assert_eq!(verified.archive_bytes(), archive);
+                assert_eq!(verified.entries().len(), allowed_names(platform).len());
+                for entry in verified.entries().iter().filter(|entry| entry.executable()) {
+                    assert_eq!(
+                        entry.bytes(),
+                        format!("Repository-owned synthetic helper: {}\n", entry.name()).as_bytes()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires cargo-packager 0.11.8; run by the dedicated normal-CI signer job"]
+    fn pinned_cargo_packager_signatures_authenticate_python_produced_manifest() {
+        let version = command_succeeds(packager().arg("--version"));
+        assert_eq!(
+            String::from_utf8(version.stdout).unwrap().trim(),
+            "cargo-packager 0.11.8"
+        );
+        let (directory, produced) = python_produced_bundles();
+        let key_path = directory.path().join("throwaway-test.key");
+        command_succeeds(
+            packager()
+                .args(["signer", "generate", "--ci", "--password", "synthetic-only"])
+                .arg("--path")
+                .arg(&key_path),
+        );
+        let expected = expected(Platform::Linux, Architecture::X86_64);
+        let filename = filename(&expected);
+        let manifest_path = produced.join(format!("{filename}.manifest.json"));
+        command_succeeds(
+            packager()
+                .args(["signer", "sign", "--password", "synthetic-only"])
+                .arg("--private-key")
+                .arg(&key_path)
+                .arg(&manifest_path),
+        );
+        let archive = std::fs::read(produced.join(&filename)).unwrap();
+        let metadata = std::fs::read(&manifest_path).unwrap();
+        let signature =
+            std::fs::read(produced.join(format!("{filename}.manifest.json.sig"))).unwrap();
+        let key = std::fs::read_to_string(directory.path().join("throwaway-test.key.pub")).unwrap();
+        let signature_text = String::from_utf8(STANDARD.decode(&signature).unwrap()).unwrap();
+        let packet = STANDARD
+            .decode(signature_text.lines().nth(1).unwrap())
+            .unwrap();
+        assert_eq!(&packet[..2], b"ED", "signer must use modern prehashed mode");
+        verify_with_key(&metadata, &signature, &archive, &expected, &key).unwrap();
+        // The shipping API must still refuse this throwaway publisher.
+        assert_eq!(
+            verify(&metadata, &signature, &archive, &expected).unwrap_err(),
+            ArtifactError::Signature
+        );
+        let mut changed = metadata;
+        changed.push(b' ');
+        assert_eq!(
+            verify_with_key(&changed, &signature, &archive, &expected, &key).unwrap_err(),
+            ArtifactError::Signature
+        );
     }
 
     #[test]

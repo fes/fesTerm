@@ -5501,6 +5501,8 @@
       ],
       "decisions": ["ADR-0084"],
       "automated_tests": [
+        "python_produced_six_bundles_and_manifests_authenticate_in_rust",
+        "pinned_cargo_packager_signatures_authenticate_python_produced_manifest",
         "authenticates_six_targets_and_returns_only_immutable_allowlisted_bytes",
         "rejects_unsigned_wrong_key_and_tampered_metadata_before_archive_parsing",
         "rejects_wrong_version_arch_platform_filename_length_and_hash",
