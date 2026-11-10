@@ -1,5 +1,51 @@
 # Milestone Progress Narrative
 
+## Keeping CLI fixtures honest about native-account admission
+
+Required Windows CI at exactfd0, run `42904552105` / job `130139015769`,
+passes workspace strict Clippy and all nine host binary unit tests, including
+both corrected cleanup cases. It then reports eight CLI passes and two failures.
+The retained 189892-byte raw log has SHA-256
+`ac49a141c799464d65df09213a457f6968bdcfdb5dba2a30180160b84283be70`.
+Cleanup fails at its synthetic fixture's production `controller::disable` call;
+that operation enters native-account admission before observing stop. The
+update case fails its `update-status` success assertion without printing stderr:
+its actual diagnostic and denied inner call/principal subtype remain **UNKNOWN**.
+Desktop6614 separately reports nine CLI passes/two failures at equivalent sites,
+not the same aggregate count (raw SHA-256
+`f2f50c3cf1017cfb04b938a5bb38d5b9d880290b64e44e364d620cfd626be285`).
+
+The missing-receipt fixture now advances only its synthetic Store through revoke
+and confirmed-stop to CleanupPending; it never registered a native resource.
+All actual CLI uncertainty, no-removal-guidance, binding-withholding, target
+redaction and unchanged-journal assertions remain. The update test independently
+constructs the real `Services::current_user` adapter against its protected state
+before invoking the binary. Construction performs no manager operation. Admitted
+accounts must still return successful null update history with empty stderr;
+only an independently observed `PermissionDenied` requires CLI exit1, empty
+stdout and the exact sanitized private-storage/account diagnostic. Every other
+probe error fails, rather than being caught as an acceptable CLI failure. Both
+paths require the same unchanged snapshot and two-file state inventory, and
+continue through the original explicit-update refusal and status checks.
+No production code, ACL/account check, default feature or CI waiver changes.
+
+Bounded actual macOS Rust/Cargo1.99.1 passes both original CLI test names
+(two passed, zero failed/ignored, eight filtered), all-feature and no-default
+host all-target strict Clippy, fmt and traceability. This is not new Windows
+or denied-Windows-principal execution proof; fresh required Windows CI is pending.
+No native14, broad suite, helper rebuild or cross-SDK attempt is attributed here.
+
+Separate immutable binding source `e44a004c80553c0318a73699db7f37f88c95aa06`
+has at least two fixture families, not one globally waivable failure: migration
+tests create roots beneath the checkout and explicitly hit ancestor-policy
+refusal; fake-cloud setup and exact-run-lease tests still enter production native
+admission. Bare `PermissionDenied` does not identify a principal subtype. Those
+fixtures need their owning lane's protected test-root and per-instance fake
+boundary corrections; this CLI child does not fix or qualify their 72/41/1
+aggregate. Its raw SHA-256 remains
+`d32cfbd803b83e30176960a15a112e8759adb9a75dec1bcaebfd078c85bf9c6b`.
+The separate macOS native13/1 response/root cause remains unknown.
+
 ## Isolating headless cleanup display fixtures from native account admission
 
 Required Windows CI at exact `a8113f6a15fe99f9604bb977635409e645f21723`,
