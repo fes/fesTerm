@@ -182,9 +182,18 @@ daemon, edits an owner grant or confirms native/cloud absence.
 
 For UserSignIn only, the receipt-owned unit is enabled with `--now` so an already
 running/lingering user manager can observe the current and later eligible logins.
-Its `Restart=on-failure`, two-second delay and per-unit start-limit exemption
-retry fresh admission after logout/query failure; no listener is admitted without
-current proof and owner consent. This is automatic current-logon activation,
+Its `Restart=no` plus `RestartForceExitStatus=75`, two-second delay and per-unit
+start-limit exemption retry **only** typed login-proof unavailability. Reserved
+exit 75 is shared by the runtime/CLI and unit renderer; all other errors exit 1,
+normal stop exits 0. No error-text match or cached run history grants retry.
+Signed helper provenance and current owner consent are checked before login
+admission and rechecked before a login-loss error can authorize retry.
+Disabled/StopRequested/CleanupPending, missing or revoked owner consent, changed
+consent, bundle, cloud, Busy and other errors never request automatic restart.
+Draining preserves non-login hosting errors; only an exact typed cloud
+cancellation induced by the login watcher is normalized within its owned run.
+No listener is admitted without current proof and owner consent.
+This is automatic current-logon activation,
 not Manual startup or pre-login exposure. Manual retains `Restart=no` and no
 enable/start effect. No linger, root/system-wide setting or permission is changed.
 Existing differently rendered sign-in receipts require explicit owned

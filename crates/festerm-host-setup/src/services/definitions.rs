@@ -69,9 +69,12 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
     match record.platform {
         Platform::Linux => {
             let (limits, restart) = if record.settings.startup == Startup::UserSignIn {
-                ("StartLimitIntervalSec=0\n", "Restart=on-failure\nRestartSec=2s")
+                ("StartLimitIntervalSec=0\n", format!(
+                    "Restart=no\nRestartForceExitStatus={}\nRestartSec=2s",
+                    crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
+                ))
             } else {
-                ("", "Restart=no")
+                ("", "Restart=no".into())
             };
             Ok(format!(
                 "[Unit]\nDescription=fesTerm host {}\n{}[Service]\nType=exec\nExecStart={} run --state-dir {}\n{}\nTimeoutStartSec=10s\nTimeoutStopSec=10s\nSendSIGKILL=no\nKillMode=process\nStandardOutput=null\nStandardError=null\n[Install]\nWantedBy=default.target\n",

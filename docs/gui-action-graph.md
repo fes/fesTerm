@@ -1621,6 +1621,13 @@ reconnects, refuse account/endpoint/host changes before writing, reject
 missing/forbidden or wrongly echoed scopes, and preserve privacy-filtered
 Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
 
+HOST-05 Linux sign-in retry is restricted to typed login-proof unavailability
+(reserved CLI exit 75, `Restart=no`/`RestartForceExitStatus=75`). Bundle/current
+owner validation precedes login admission and is refreshed before retry.
+Disabled/StopRequested/CleanupPending, missing/revoked/changed consent and
+cloud/bundle/other failures never authorize automatic retry. HOSTSETUP-01 must
+still verify real-manager behavior and OS logout/cgroup survival independently.
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state/framed dispatcher tests; UI/endpoint/H,N deferred |

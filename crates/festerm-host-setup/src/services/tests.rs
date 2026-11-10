@@ -729,9 +729,11 @@ fn native_service_linux_sign_in_activation_is_owned_and_manual_remains_inert() {
         assert!(record.definition.contains("SendSIGKILL=no\n"));
         let calls = &services.runner.state.borrow().calls;
         if startup == Startup::UserSignIn {
-            assert!(record
-                .definition
-                .contains("Restart=on-failure\nRestartSec=2s"));
+            assert!(record.definition.contains(&format!(
+                "Restart=no\nRestartForceExitStatus={}\nRestartSec=2s",
+                crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
+            )));
+            assert!(!record.definition.contains("Restart=on-failure"));
             assert!(record.definition.contains("StartLimitIntervalSec=0\n"));
             assert!(calls.iter().any(|request| matches!(request,
                 NativeRequest::Process { args, .. }
@@ -739,6 +741,8 @@ fn native_service_linux_sign_in_activation_is_owned_and_manual_remains_inert() {
                     .map(std::ffi::OsString::from))));
         } else {
             assert!(record.definition.contains("Restart=no\n"));
+            assert!(!record.definition.contains("RestartForceExitStatus="));
+            assert!(!record.definition.contains("StartLimitIntervalSec="));
             assert!(!calls.iter().any(|request| matches!(request,
                 NativeRequest::Process { args, .. }
                 if args.iter().any(|arg| arg == "--now" || arg == "enable" || arg == "start"))));

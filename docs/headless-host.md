@@ -157,6 +157,11 @@ closes hosting, never daemon sessions or grants. An enabled/lingering user manag
 is not login proof. Manual is unchanged. No linger/permission setting is changed.
 See the [current-login fence and native gates](native-host-services.md#linux-current-login-fence);
 real manager/logind/cgroup/logout survival remains unqualified.
+The owned Linux sign-in unit retries only reserved exit **75**, emitted for
+typed current-login-proof unavailability after bundle/owner validation.
+It uses `Restart=no` and `RestartForceExitStatus=75`; lifecycle refusal,
+revoked/missing/changed consent, bundle/cloud failure and other errors exit 1,
+not an automatic background retry. Normal cancellation exits 0.
 
 `run --state-dir PATH` reauthenticates retained signed bundle provenance, selects
 only its same-version daemon helper and reopens existing native account/owner

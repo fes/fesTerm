@@ -605,6 +605,13 @@ cancellation tests and exact-owned activation/revocation fixtures. HOST-04/05
 and HOSTSETUP-01 remain partial: the real logind/manager/last-logout and retained
 daemon PID/generation/child-I/O/cgroup evidence is still required. Manual remains
 inert; no synthetic fixture establishes OS logout survival.
+The retry correction adds typed CLI/unit exit-disposition coverage,
+`host_runtime_manager_restart_after_disabled_stop_or_cleanup_is_not_retryable`,
+`host_runtime_sign_in_bad_bundle_is_not_a_login_retry`,
+`linux_login_missing_initial_proof_is_typed_retryable` and
+`linux_login_loss_never_masks_non_retryable_host_failure_while_draining`.
+Only login-proof unavailability requests the reserved systemd restart code;
+other failures retain diagnostics and fail without automatic restart.
 
 The authentication contention follow-up adds actual signed-SSH regressions for
 first-N Busy and held protected guards at both policy phases, fresh revocation

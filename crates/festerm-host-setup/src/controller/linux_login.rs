@@ -2,12 +2,11 @@
 use std::{future::Future, io, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-const REASON: &str = "host.linux_current_login_proof_required";
 const BUDGET: Duration = Duration::from_secs(2);
 const INTERVAL: Duration = Duration::from_secs(1);
 
 fn refused() -> io::Error {
-    io::Error::other(REASON)
+    io::Error::other(crate::run_exit::LoginProofUnavailable)
 }
 
 pub(super) trait Query {
@@ -69,12 +68,12 @@ pub(super) async fn guard(
     tokio::pin!(hosting);
     let outcome = tokio::select! {
         biased;
+        result = &mut hosting => return result,
         _ = cancel.cancelled() => Ok(()),
         result = watch(query, &cancel) => result,
-        result = &mut hosting => return result,
     };
     hosting_cancel.cancel();
-    let _ = hosting.await;
+    hosting.await?;
     outcome
 }
 
@@ -539,6 +538,17 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn linux_login_missing_initial_proof_is_typed_retryable() {
+        let query = Script(RefCell::new(vec![Ok(false)]), Cell::new(0));
+        let error = admit(&query, &CancellationToken::new()).await.unwrap_err();
+        assert_eq!(
+            crate::run_exit::error_exit_code(&error),
+            crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
+        );
+        assert_eq!(query.1.get(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn linux_login_last_logout_or_uncertainty_cancels_and_drains_only_host() {
         for last in [Ok(false), Err(refused())] {
             let query = Script(RefCell::new(vec![Ok(true), Ok(true), last]), Cell::new(0));
@@ -549,14 +559,43 @@ mod tests {
                 drained.set(true);
                 Ok(())
             };
-            assert!(
-                guard(&query, CancellationToken::new(), shutdown.clone(), serving)
-                    .await
-                    .is_err()
+            let error = guard(&query, CancellationToken::new(), shutdown.clone(), serving)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                crate::run_exit::error_exit_code(&error),
+                crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
             );
             assert!(drained.get());
             assert!(shutdown.is_cancelled());
             assert_eq!(query.1.get(), 3);
+        }
+    }
+
+    #[tokio::test]
+    async fn linux_login_loss_never_masks_non_retryable_host_failure_while_draining() {
+        for reason in [
+            "host.runtime_current_provisioned_consent_required",
+            "host.runtime_current_owner_consent_required",
+            "host.runtime_consent_changed",
+            "host.authenticated_bundle_required",
+            "host.runtime_daemon_boundary_unavailable",
+            "host.cloud_offline_or_unknown",
+            "host.runtime_stream_closed",
+            "host.runtime_failed",
+        ] {
+            let query = Script(RefCell::new(vec![Ok(false)]), Cell::new(0));
+            let shutdown = CancellationToken::new();
+            let serving = async {
+                shutdown.cancelled().await;
+                Err(io::Error::other(reason))
+            };
+            let error = guard(&query, CancellationToken::new(), shutdown.clone(), serving)
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), reason);
+            assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+            assert!(shutdown.is_cancelled());
         }
     }
 

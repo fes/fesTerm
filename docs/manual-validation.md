@@ -3681,7 +3681,14 @@ absent key through production `CloudHostAdapter::foreground`, not preseeded by a
 fixture. Identity loss under an existing cloud record refuses regeneration.
 Linux UserSignIn has source-level bounded current-logon admission and per-run
 supervision under the owner's explicit graphical/interactive TTY/SSH and
-retain-until-last-eligible-logout approval. An already lingering user manager is
+retain-until-last-eligible-logout approval. HOSTSETUP-01 must verify that only typed login-proof
+exit 75 triggers `RestartForceExitStatus=75` under `Restart=no`, while exits
+0/1, disabled/stopping/cleanup, missing/revoked/changed owner consent and
+bundle/cloud failures do not loop. Portable disposition/unit-text and protected
+lifecycle fixtures cover those refusals, not genuine manager execution.
+Repeated no-login probe load under an already lingering manager remains a native
+evidence boundary; do not enable linger or change OS policy to qualify it.
+An already lingering user manager is
 not proof; Manual setup/run remains unchanged. HOSTSETUP-01 still requires a
 separately granted ordinary-user real-manager/logind window: actual eligible
 graphical/PAM TTY/SSH sessions, lock/idle, multiple logins, last logout, missing/

@@ -26,7 +26,28 @@ const LOCK: &str = "host-cloud.lock";
 pub const HOST_IDENTITY_FILE: &str = "host-identity";
 
 fn refused(stage: &'static str) -> io::Error {
-    io::Error::other(stage)
+    match stage {
+        "host.cloud_cancelled" => io::Error::other(CloudCancelled(stage)),
+        _ => io::Error::other(stage),
+    }
+}
+
+#[derive(Debug)]
+struct CloudCancelled(&'static str);
+
+impl std::fmt::Display for CloudCancelled {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl std::error::Error for CloudCancelled {}
+
+#[cfg(all(feature = "host-runtime", feature = "native-services"))]
+pub(crate) fn is_cancelled(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<CloudCancelled>())
 }
 
 fn account_error(error: AccountError) -> io::Error {
@@ -275,7 +296,13 @@ impl<'a> CloudHostAdapter<'a> {
             ) => result.map_err(|_| refused("host.relay_establishment_timeout"))?
                 .map_err(|_| refused("host.relay_establishment_failed"))?,
         };
-        if cancel.is_cancelled() || self.store.snapshot()? != snapshot {
+        if cancel.is_cancelled() {
+            drop(connection);
+            return Err(io::Error::other(CloudCancelled(
+                "host.service_stale_or_unapproved_operation",
+            )));
+        }
+        if self.store.snapshot()? != snapshot {
             drop(connection);
             return Err(refused("host.service_stale_or_unapproved_operation"));
         }
@@ -1181,6 +1208,34 @@ mod tests {
     use festerm_secret_store::{MemorySecretStore, SecretStoreError};
     use festerm_tunnel_client::{IdentityRequest, IdentityTransport, ResponseFuture};
     use std::{cell::RefCell, collections::VecDeque, sync::Mutex};
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[test]
+    fn host_cloud_cancellation_is_typed_without_changing_failure_disposition() {
+        let error = account_error(AccountError::Cancelled);
+        assert!(is_cancelled(&error));
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "host.cloud_cancelled");
+        assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+        let late = io::Error::other(CloudCancelled("host.service_stale_or_unapproved_operation"));
+        assert!(is_cancelled(&late));
+        assert_eq!(
+            late.to_string(),
+            "host.service_stale_or_unapproved_operation"
+        );
+        assert_eq!(crate::run_exit::error_exit_code(&late), 1);
+        assert!(!is_cancelled(&io::Error::other("host.cloud_cancelled")));
+        for error in [
+            AccountError::Network,
+            AccountError::Denied,
+            AccountError::AccountChanged,
+            AccountError::Store,
+        ] {
+            let error = account_error(error);
+            assert!(!is_cancelled(&error));
+            assert_eq!(crate::run_exit::error_exit_code(&error), 1);
+        }
+    }
 
     struct IdentityFixture(Mutex<VecDeque<&'static str>>);
     impl IdentityTransport for IdentityFixture {
