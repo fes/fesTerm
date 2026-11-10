@@ -8756,7 +8756,9 @@ Real encrypted fixtures exercise relay/replay, unbound signatures, foreign
 credentials, expiry/revocation and swapped streams. Strict release-profile
 Clippy passes for host/all-target and portable client-only builds; normal/build
 iOS, Android and headless graphs exclude inappropriate desktop dependencies and
-production test-support. This is not permission to
+production test-support. Final merged-source validation passes all 11 selected
+owner/paired-channel/sibling/publication tests and the vendored exporter
+regression. This is not permission to
 expose HOST: independent review, native qualification, foreground first-connect
 consent and endpoint routing integration remain prerequisites. No services,
 cloud resources, normal setup controls or legacy capabilities change.

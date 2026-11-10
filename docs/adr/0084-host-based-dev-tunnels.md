@@ -546,6 +546,10 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   signed original KEX identifier and role-ordered actual channel IDs, never
   caller-generated identity bytes. This closes the missing exporter/helper seam,
   not endpoint/native/first-connect qualification.
+  The vendored-library regression
+  `ssh_channel_binding_separates_connection_and_role_ordered_channel_ids`
+  additionally checks connection/role/channel separation and refusal of empty
+  or short session identifiers.
   `HOSTAUTH-01` classifies native/first-connect/routing evidence still required;
   no UI, listener, broad pairing service or full ADR acceptance is claimed.
   Reliability remediation adds
