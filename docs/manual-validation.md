@@ -3889,14 +3889,22 @@ review/three gates and a separate one-run owner authorization. See
 Public ZIP/member hashes establish integrity, not independent publisher/updater
 authentication; the existing compiled policy/native OS trust must pass.
 The legacy binary is never executed, and no new-host/whole-bundle acceptance is
-implied. At its initial source checkpoint this increment had offline contracts
-only. Parent-retained exact3030 run42881664804 attempt1 subsequently passed25
-preflight cases with zero skips, started the genuine positive and aborted on a
-misaligned timestamp pointer at native.rs416:20; the unsigned negative was
-unreached. **Native PKI is blocked, not accepted.** The separately owned FFI
-correction is not included in this backend union. Preserve the actual crash and
-any genuine policy mismatch as failures; hosted evidence is not ordinary-user
-VM proof. See the [combined-source boundary](milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins).
+implied. Historical exact-`3030` run `42881664804`/attempt 1 passed 25
+preflight tests with no skips (including both real PowerShell 0/37 fixtures)
+and acquired both pinned hashes, then its genuine signed-positive test
+**started 1 / completed 0 / aborted 1** at an unaligned timestamp `ftTime`
+read, native exit `3221226505`. The unsigned negative was not reached.
+The [raw-field source correction and alignment regression](native-host-services.md)
+at exact5d now have three independent source gates and historical x64-facade
+cross-compilation, not executed Windows-fix or PKI evidence;
+the old-pattern isolated Windows RED was not run locally. Both historical
+attempt grants are consumed. Three fresh exact-source gates and a separate
+new run grant precede further native qualification. The exact5d source-only
+normal follow-up preserves both mandatory platform CI steps; its Windows-only
+Rust delta is absent from the actual Mac artifact inputs, so the one14-route
+result remains attributed to exact28c, not rerun or relabeled. Preserve any genuine
+policy mismatch as failure; hosted evidence is not ordinary-user VM proof.
+See the [combined-source boundary](milestone-progress.md#normally-integrating-the-six-gated-backend-source-pins).
 It invokes native online-enabled verification only, never registration/start,
 signing, Azure credentials or OS settings. It was **not run on macOS**.
 For a separately authorized ordinary-user Windows lab, record positive approved
@@ -3931,7 +3939,10 @@ digests match after the run. These are file measurements, not per-child exec
 audit/sealed retention, installed-manager or real-provider proof. See
 [fresh build/source/lifecycle and complete command evidence](milestone-progress.md#fresh-helper-provenance-backend-normal-fan-in).
 Existing ignored native fixtures and the cfg-excluded be8 Linux opt-in were not
-executed. Windows native PKI remains blocked by the actual3030 timestamp crash;
+executed. Windows native PKI remains unqualified after the actual3030 timestamp
+crash; exact5d's source-only fix and mandatory16-vector unit have not been
+executed on Windows. The [effective Mac input-equivalent follow-up](milestone-progress.md#exact-source-only-windows-timestamp-follow-up)
+does not rerun or relabel the actual28c aggregate;
 ordinary Windows services, genuine cross-version switching, OS logout/cgroup
 survival, migration binding and full ADR acceptance remain deferred.
 

@@ -332,3 +332,30 @@ fixture or PKI result exists. Raw logs/artifact and their hashes remain retained
 that one-run authorization is consumed. The source-only launcher correction is
 not a retry or PKI acceptance and requires three fresh exact-source gates and a
 separate new one-run authorization before any further dispatch.
+
+A separate grant at exact `3030bcd7008e300a90b67fa6c6bc6c0a37ce88c1`
+produced [run 42881664804, attempt 1](https://github.com/fes/fesTerm/actions/runs/42881664804):
+25 preflight passes / zero skips, including both real PowerShell 0/37 fixtures;
+acquisition exit 0 and both exact integrity hashes verified. The facade built,
+then one genuine signed-positive test started / completed 0 / aborted 1 at
+`native.rs:416:20`, a misaligned `CRYPT_TIMESTAMP_INFO.ftTime` read.
+Native Cargo/report exit was `3221226505` (`0xc0000409`); publisher step/watch
+exit 1, dispatch CLI exit 0. The unsigned negative was unreached; no publisher,
+RFC3161 or signer/TSA-revocation acceptance follows. Only PKI ran; six other
+jobs skipped. The legacy EXE was never executed. This grant is consumed too.
+
+Retained SHA256 provenance:
+
+| Evidence | SHA256 |
+| --- | --- |
+| Original job log | `7a781b4ccd6b018e24b75aaa414d10d7019fcf2d76bb8ff82253ee1fd1daea2e` |
+| Native test log | `8493cc729f0b9e41cc6ef48b17f81632b23d826eff0dec4c704609d996b7c2c2` |
+| `report.json` | `cfa7486458612b8df4db8cf1295d959d3c40e10194350ea20f561d1ed91ec63a` |
+| Original artifact ZIP | `533a127051f8dc4e73763d7bf50ba043c4f4a602c9b68ddfa643eb5bb847f714` |
+
+The [source-only raw-field correction](native-host-services.md) preserves the
+SDK layout/owned lifetime and every cryptographic/revocation check; its new
+alignment regression is cross-compiled, not executed locally. No new dispatch,
+fixture download or genuine Windows execution accompanies that correction. Both
+historical failures remain failures; fresh exact-source reviews and a separate
+new one-run grant remain mandatory. Required three-platform CI is separate.

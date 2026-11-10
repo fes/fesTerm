@@ -45,14 +45,15 @@ not through production account/storage waivers.
 preflight cases with zero skips, including PowerShell0/37 and acquisition
 integrity. The genuine positive started, then aborted on a misaligned timestamp
 pointer at native.rs416:20; the unsigned negative was unreached. No PKI
-acceptance is claimed. Its separately owned FFI correction/security assessment
-and any moving child are excluded from this fan-in.
+acceptance is claimed. At preserved native source28c/documentationd338, its
+separately owned FFI correction was excluded; the subsequently source-gated
+exact5d follow-up below is now the only additionally authorized Windows source.
 
 Bounded **macOS-only** combined qualification uses actual Rust/Cargo1.99.1,
 Clippy0.1.99, the exclusive warm session target, jobs1, dev/test debug0 and
 incremental0. The full-feature suite compiles/runs at exacte157; its1055
 Rust/native/build input hashes remain identical through the CI-only28c merge
-and final documentation child. Other commands, fresh helper build and the
+and first documentation childd338. Other commands, fresh helper build and the
 one actual native aggregate run at exact28c, not old61:
 
 | Selected group | Actual result |
@@ -95,6 +96,39 @@ It is retained non-evidence. Selecting registered `host_control::tests` and
 `host_terminal::tests` produces the16 actual passes above without assertion or
 source changes. The actual native aggregate is a single run, not isolated
 successes, a retry, old61 evidence or that zero-test command.
+
+### Exact source-only Windows timestamp follow-up
+
+After all bounded commands finished, a normal merge consumes only the newly
+authorized, three-source-gated
+`5d2c00ae44f7617a767d6ae590d7e587903415f3` (3030→8556→5d). The original
+qualification child `d338f478dfaec412272c8bebcb5e629741990134` and actual native
+run source `28c56d96812f2ba3132403abc5b24267f3ceea3d` remain immutable ancestors.
+The minimal SDK raw-field unaligned copy is the incoming owner's fix, not a
+second repair; publisher/profile/pins/revocation policy is unchanged.
+
+Exactly one of the1055 recorded Rust/native/build inputs changes:
+`crates/festerm-windows-security/src/host_publisher/native.rs`.
+Its parent declares `#[cfg(windows)] mod native`. That file is absent from
+all1668 scanned actual Mac dependency files, including the actual native-test
+executable and both default helper dependency records; the actual artifacts are
+ARM64 Mach-O. All other1054 inputs, manifests and build scripts remain identical.
+Build/source receipts establish origin; dependency target paths alone do not.
+This proves effective Mac compiled-input equivalence, **not all-platform source
+identity**. There is no helper rebuild or14-route rerun merely for this
+Windows-excluded/CI/documentation delta. The result remains **14/0/0,172.56s
+at28c**, not a new-head run. Retained helpers and their measurements are unchanged.
+
+CI retains **both**35's mandatory Ubuntu compile/exact-one-list prerequisite and
+5d's mandatory Windows exact-one owned-memory regression before workspace work.
+The latter's16 vectors call no WinTrust/network/publisher policy and remain
+**unexecuted on Windows**; mocked-Cargo contracts are not that execution.
+Three source gates do not establish Windows runtime or genuine PKI acceptance.
+The historical3030 crash/unsigned-negative nonexecution remains retained;
+future genuine PKI requires separate authorization. No SDK cross-check retry,
+VM, native manager, cloud, mobile, desktop or moving binding source is added.
+The private Cargo lane remains released. Exact before/after source/input proof
+and bounded follow-up commands are in the final evidence receipt.
 
 ### Fresh helper provenance (backend normal fan-in)
 
@@ -1185,6 +1219,148 @@ Linux native service, persistent-logout survival, Ready or ADR acceptance.
 The host Cargo slot is released at this fixed checkpoint. The owned-worktree
 compiler/query/sessiond/PTY-helper CWD process check found zero matches.
 No push, PR creation or integration of a moving dependency was performed.
+## Reserving owned migration without inventing daemon adoption
+
+ADR 0084 §11 previously had no executable owned-migration transaction. The new
+shared lifecycle module and headless commands now inventory only explicitly
+selected canonical desktop/script installations, verify protected account/key/
+ownership and native generation evidence, hash an exact preview and reserve the
+normal destination host identity plus per-source claims. Original receipt bytes,
+IDs, incarnation and narrow legacy policies remain evidence, never imported
+owner/session/create authority. Ordered existing installer/consent leases,
+immutable operation intent and per-source checkpoints make partial reservation,
+same-operation resume, deferral and local rollback durable. Missing/corrupt/
+foreign/revoked/stale state refuses; rollback releases only its own claims,
+retains identity/history and cannot restore revoked exposure or clear provider
+cleanup. An outstanding reservation cannot be bypassed through normal enable.
+
+The investigation also established a real API blocker, independently confirmed
+by the session owner: `SessionControl` has no authenticated `bind_existing`,
+records assume their own runtime root, and ordinary daemons create the HOST
+watch only under the launch-time contract. Existing `ensure`, PID checks,
+metadata and fabricated lease files are not adoption. Consequently valid
+generations truthfully say `authenticated-binding-unavailable`; reservation is
+working source, **not** a fabricated bound/switch result. No frontend, shell
+creation/restart/stop, service, account sign-in, permission repair or cloud API
+is part of migration. The concrete
+[bind/retained-root routing contract](owned-installation-migration.md#concrete-missing-binding-boundary)
+must be supplied by the owning session/runtime lane before actual binding,
+current owner/issuer admission and exposure switching. Old helpers remain
+usable/deferred; separate default-No exact-generation stop consent is not
+replaced by setup/sharing/reservation consent.
+
+The focused protected suite passes **14 deterministic tests**; its one opt-in
+native fixture is separately executed and passes. It covers both source origins,
+exact receipts,
+foreign account/key/name collisions, multi-source partial failures and foreign
+claim preservation, stale epochs/settings, missing/corrupt/future/released
+evidence, PID-only legacy refusal, interruption before identity/after claim,
+rollback after source revocation and untrusted no-follow/private files. Exact
+in-progress first compiler, fixture-parent and undersized native-attachment
+recovery-budget failures remain in the private
+worktree's ignored `target/adr84-owned-migration-evidence`, alongside subsequent
+successful logs; they are not discarded or reported as qualified passes.
+The failed native fixture was cleaned only after its exact generation was
+stopped, its registry was empty and its lifetime/lease locks were uncontended.
+The corrected real current-source native/CLI fixture preserves the original
+PID, generation and frontend with round-trip input/output through reservation,
+deferral, same-operation resume, stale-generation refusal and rollback, then
+cleans up only that test generation. This does not prove authenticated binding.
+The existing lifecycle regressions pass **8 tests**; headless unit/CLI regression
+commands pass **6 + 8 tests**.
+Strict affected-package all-target Clippy and the portable no-default headless
+Clippy/library check pass without warning waivers. Format, shell syntax,
+whitespace and the 311-edge traceability check pass. Existing dependency/vendor
+warnings and the installed toolchain's missing-`libLLVM.dylib` rust-objcopy
+stripping warning remain in the raw logs; no toolchain repair was attempted.
+
+```sh
+cargo test --locked -p festerm-host-setup --features lifecycle --lib owned_migration -- --nocapture --test-threads=1
+cargo test --locked -p festerm-host-setup --features lifecycle --lib lifecycle::tests
+cargo test --locked -p festerm-host --bin festerm-host --test cli
+cargo clippy --locked -p festerm-host-setup -p festerm-host --features festerm-host-setup/host-runtime,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/acquisition --all-targets -- -D warnings
+cargo clippy --locked -p festerm-host --no-default-features --all-targets -- -D warnings
+cargo check --locked -p festerm-host-setup --no-default-features
+cargo fmt --all -- --check
+sh -n scripts/run-optional-validation.sh
+python3 scripts/check_validation_traceability.py --base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9
+git diff --check
+```
+
+The separately executed [native fixture command](owned-installation-migration.md#concrete-missing-binding-boundary)
+uses helpers built from this exact source and records their SHA-256 hashes.
+All Cargo work uses explicit Rust/Cargo 1.99.1, jobs 1, debug 0, incremental 0
+and this worktree's own target, with the host-memory floor checked before gates.
+`HOSTMIG-01` remains partial/deferred for real authenticated binding/switch,
+old-release and signed native Windows/macOS/Linux acceptance; current-source
+reservation preservation is not those claims.
+
+## Making the timestamp alignment unit reachable in ordinary Windows CI
+
+The frozen `8556e33a` root fix added a deterministic 16-vector owned-memory
+regression, but ordinary Windows quality selected only the unrelated default-
+feature temporary-file test. The separate opt-in PKI command's exact ignored
+selector also could not reach the new non-ignored alignment unit.
+
+This CI-only child pins that unit in the existing Windows `quality` job after
+Python setup and before heavy workspace work. The narrow repository-owned
+driver lists with `--locked`, `host-service`, `--lib` and the full exact selector;
+it requires exactly one listed test, then executes once without `--ignored`.
+Only one actual passed test, zero ignored and the exact success identity can
+produce success. Empty/duplicate/foreign listings, list errors, skipped/zero
+execution and nonzero execution preserve failure without retry. Standard-library
+unittest contracts mock Cargo; no extra framework, dependency or tool is added.
+
+All crates, app code and manifests remain byte-identical to `8556`.
+The prior four portable publisher-policy passes and x64 metadata/strict checks
+are retained history, **not execution of this alignment unit**. This child runs
+only local syntax/contracts/trace checks: no Rust rebuild, actual Windows,
+dispatch or PKI. Ordinary Windows CI must supply the alignment-unit proof at
+the reviewed source before a separately granted future genuine PKI attempt;
+the test body calls no WinTrust, network, fixture acquisition or publisher
+policy. Both earlier failed PKI grants remain consumed, and PKI qualification
+stays blocked. The new CI route does not change policy, pins or revocation.
+
+## Copying the RFC3161 time field without assuming SDK pointee alignment
+
+The separately authorized exact-`3030bcd7`
+[run 42881664804, attempt 1](https://github.com/fes/fesTerm/actions/runs/42881664804)
+passed **25 preflight tests / zero skips**, including both real PowerShell
+first-only exit-0/37 fixtures. Pinned ZIP/member acquisition passed and the
+native facade built with official Rust/Cargo 1.99.1. The genuine signed-positive
+test **started 1 / completed 0 / aborted 1**: the returned timestamp-info
+address was 5-mod-8, and an ordinary Rust `ftTime` field read triggered a
+non-unwinding misalignment panic at `native.rs:416:20`, exit `3221226505`
+(`0xc0000409`). Unsigned rejection was unreached. The report/raw native log
+hashes are retained in the [canonical evidence ledger](host-release-artifacts.md#opt-in-windows-public-pki-fixture);
+neither this abort nor the earlier launcher failure is a PKI pass.
+
+Microsoft's SDK declarations and the existing `windows-sys 0.61.2` C bindings
+agree on the context/info/FILETIME field types and ownership contract. The
+minimal source-only fix projects just the time field's raw address and copies
+its eight bytes unaligned into a local `FILETIME`. It does not invent a packed
+layout, borrow the unaligned parent, catch a panic or relax a trust check.
+`TimestampProof` keeps the allocation live through the copy and unchanged
+imprint/TSA fingerprint/exact time/leaf-validity checks; both current-time
+revocation chains and all publisher pins are unchanged.
+
+A co-located Windows regression initializes actual SDK structs at offsets 0–7,
+including 4-mod-8 and the observed 5-mod-8, and preserves two exact low/high bit
+patterns. The existing official x64 MSVC facade-only check/strict compile it
+and x64 ABI assertions; no Windows test or isolated old-expression RED runs on
+this macOS host. Portable publisher-policy tests remain separate from that
+compiled-only regression, from the prior **26 local source passes / 2 PS
+skips**, and from the actual **25 hosted preflight passes**. This child performs
+no dispatch/fixture download/native guest execution and does not qualify the fix or
+publisher on Windows. The two failed grants are consumed; three root-fix
+source gates and a separate new one-run grant are required.
+
+Current checks execute **4 portable publisher-policy tests**; facade-only
+portable/x64 strict Clippy, x64 checking, formatting and traceability pass.
+The portable test command exits 0 despite a retained, non-fatal private-toolchain
+`rust-objcopy` debug-stripping warning (missing `libLLVM.dylib`); its four tests
+still execute/pass. No toolchain or SDK repair is included.
+
 ## Selecting one Python application before launching public PKI validation
 
 The separately authorized `2ff42e25` hosted Windows run
@@ -1276,111 +1452,6 @@ qualify only the legacy fixture's PKI and unsigned rejection under that runner,
 not ordinary-user VM proof, InteractiveToken/ACL/task stop, daemon/GUI behavior,
 new-host whole-bundle authentication, updater provenance or release acceptance.
 Genuine fixture/policy incompatibility must remain a failure without a waiver.
-
-## Windows native admission without destructive stop
-
-Windows registration/start require the compiled runtime controller.
-Protected lifecycle revocation cancels the existing host watcher; stop confirms
-exclusive run-lease release and exact native task quiescence, never Scheduler
-Stop or process-tree termination. Timeout remains pending. The portable
-supervision regression proves serving shutdown and run-lease release only,
-not independent daemon survival.
-
-Windows promotion implements the independently owner-approved Artifact Signing
-subject/profile and Microsoft chain, trusted RFC3161 and online-enabled
-fail-closed revocation. At `2d3a7894`, actual Rust/Cargo 1.99.1 on macOS passed
-only these official x64 MSVC **security-facade** checks:
-
-```sh
-cargo check --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets
-cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets -- -D warnings
-```
-
-These compile the facade library/tests, not the Windows `festerm-host-setup`
-integration in `services.rs`, `services/native.rs`, `trusted.rs` or the combined
-headless host. Earlier broader check and Clippy attempts at core `9b1d2a68`
-both exited 101 in `ring` because Windows SDK `assert.h` was missing; they were
-not retried at `2d3a7894`. That Windows integration remains locally uncompiled.
-Pure policy/runtime fixtures are not real Windows PKI/COM/task/runtime/daemon
-qualification; there were zero native Windows executions. Required CI and
-ordinary-user signed-release evidence remain open.
-
-
-## Reserving owned migration without inventing daemon adoption
-
-ADR 0084 §11 previously had no executable owned-migration transaction. The new
-shared lifecycle module and headless commands now inventory only explicitly
-selected canonical desktop/script installations, verify protected account/key/
-ownership and native generation evidence, hash an exact preview and reserve the
-normal destination host identity plus per-source claims. Original receipt bytes,
-IDs, incarnation and narrow legacy policies remain evidence, never imported
-owner/session/create authority. Ordered existing installer/consent leases,
-immutable operation intent and per-source checkpoints make partial reservation,
-same-operation resume, deferral and local rollback durable. Missing/corrupt/
-foreign/revoked/stale state refuses; rollback releases only its own claims,
-retains identity/history and cannot restore revoked exposure or clear provider
-cleanup. An outstanding reservation cannot be bypassed through normal enable.
-
-The investigation also established a real API blocker, independently confirmed
-by the session owner: `SessionControl` has no authenticated `bind_existing`,
-records assume their own runtime root, and ordinary daemons create the HOST
-watch only under the launch-time contract. Existing `ensure`, PID checks,
-metadata and fabricated lease files are not adoption. Consequently valid
-generations truthfully say `authenticated-binding-unavailable`; reservation is
-working source, **not** a fabricated bound/switch result. No frontend, shell
-creation/restart/stop, service, account sign-in, permission repair or cloud API
-is part of migration. The concrete
-[bind/retained-root routing contract](owned-installation-migration.md#concrete-missing-binding-boundary)
-must be supplied by the owning session/runtime lane before actual binding,
-current owner/issuer admission and exposure switching. Old helpers remain
-usable/deferred; separate default-No exact-generation stop consent is not
-replaced by setup/sharing/reservation consent.
-
-The focused protected suite passes **14 deterministic tests**; its one opt-in
-native fixture is separately executed and passes. It covers both source origins,
-exact receipts,
-foreign account/key/name collisions, multi-source partial failures and foreign
-claim preservation, stale epochs/settings, missing/corrupt/future/released
-evidence, PID-only legacy refusal, interruption before identity/after claim,
-rollback after source revocation and untrusted no-follow/private files. Exact
-in-progress first compiler, fixture-parent and undersized native-attachment
-recovery-budget failures remain in the private
-worktree's ignored `target/adr84-owned-migration-evidence`, alongside subsequent
-successful logs; they are not discarded or reported as qualified passes.
-The failed native fixture was cleaned only after its exact generation was
-stopped, its registry was empty and its lifetime/lease locks were uncontended.
-The corrected real current-source native/CLI fixture preserves the original
-PID, generation and frontend with round-trip input/output through reservation,
-deferral, same-operation resume, stale-generation refusal and rollback, then
-cleans up only that test generation. This does not prove authenticated binding.
-The existing lifecycle regressions pass **8 tests**; headless unit/CLI regression
-commands pass **6 + 8 tests**.
-Strict affected-package all-target Clippy and the portable no-default headless
-Clippy/library check pass without warning waivers. Format, shell syntax,
-whitespace and the 311-edge traceability check pass. Existing dependency/vendor
-warnings and the installed toolchain's missing-`libLLVM.dylib` rust-objcopy
-stripping warning remain in the raw logs; no toolchain repair was attempted.
-
-```sh
-cargo test --locked -p festerm-host-setup --features lifecycle --lib owned_migration -- --nocapture --test-threads=1
-cargo test --locked -p festerm-host-setup --features lifecycle --lib lifecycle::tests
-cargo test --locked -p festerm-host --bin festerm-host --test cli
-cargo clippy --locked -p festerm-host-setup -p festerm-host --features festerm-host-setup/host-runtime,festerm-host-setup/native-services,festerm-host-setup/cloud,festerm-host-setup/acquisition --all-targets -- -D warnings
-cargo clippy --locked -p festerm-host --no-default-features --all-targets -- -D warnings
-cargo check --locked -p festerm-host-setup --no-default-features
-cargo fmt --all -- --check
-sh -n scripts/run-optional-validation.sh
-python3 scripts/check_validation_traceability.py --base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9
-git diff --check
-```
-
-The separately executed [native fixture command](owned-installation-migration.md#concrete-missing-binding-boundary)
-uses helpers built from this exact source and records their SHA-256 hashes.
-All Cargo work uses explicit Rust/Cargo 1.99.1, jobs 1, debug 0, incremental 0
-and this worktree's own target, with the host-memory floor checked before gates.
-`HOSTMIG-01` remains partial/deferred for real authenticated binding/switch,
-old-release and signed native Windows/macOS/Linux acceptance; current-source
-reservation preservation is not those claims.
 
 ## Aligning the frozen core's Windows cfg boundaries
 
@@ -2065,6 +2136,35 @@ Cargo emits UTF-8 metadata independently of the Windows console code page.
 The host notice check now decodes that transport explicitly as UTF-8. A portable
 subprocess regression preserves non-ASCII dependency metadata while forcing a
 CP1252 default decoder; no lossy decoding or production locale override is used.
+
+## Windows native admission without destructive stop
+
+Windows registration/start require the compiled runtime controller.
+Protected lifecycle revocation cancels the existing host watcher; stop confirms
+exclusive run-lease release and exact native task quiescence, never Scheduler
+Stop or process-tree termination. Timeout remains pending. The portable
+supervision regression proves serving shutdown and run-lease release only,
+not independent daemon survival.
+
+Windows promotion implements the independently owner-approved Artifact Signing
+subject/profile and Microsoft chain, trusted RFC3161 and online-enabled
+fail-closed revocation. At `2d3a7894`, actual Rust/Cargo 1.99.1 on macOS passed
+only these official x64 MSVC **security-facade** checks:
+
+```sh
+cargo check --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets
+cargo clippy --locked --target x86_64-pc-windows-msvc -p festerm-windows-security --features host-service --all-targets -- -D warnings
+```
+
+These compile the facade library/tests, not the Windows `festerm-host-setup`
+integration in `services.rs`, `services/native.rs`, `trusted.rs` or the combined
+headless host. Earlier broader check and Clippy attempts at core `9b1d2a68`
+both exited 101 in `ring` because Windows SDK `assert.h` was missing; they were
+not retried at `2d3a7894`. That Windows integration remains locally uncompiled.
+Pure policy/runtime fixtures are not real Windows PKI/COM/task/runtime/daemon
+qualification; there were zero native Windows executions. Required CI and
+ordinary-user signed-release evidence remain open.
+
 
 ## Capturing issuance before remote shell creation
 
