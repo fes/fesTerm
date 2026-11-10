@@ -1,5 +1,73 @@
 # Milestone Progress Narrative
 
+## Stacking stopped-version update on the fixed published core
+
+Normal merge `7ff65a69d315dcdf430b21fc2b9a2e9c48f755dc` has first parent
+`c75d03d7627832b2b9c6f43f5ddeb1eb2f51d2c4` and second parent exactly
+`1debea976d62c32344c0d79cbfa74026a152264d` (published core Draft #693).
+The only conflict was additive milestone prose; both histories are retained.
+Host/setup implementation and native owner-policy proposals are byte-identical
+to `c75d03d7`; sessiond, bridge and Windows-security bodies are byte-identical to
+`1debea97`. ADR 0085 remains intact. This is the separate stopped-update increment,
+not publication or a new qualification of the core's entire runtime suite.
+
+The update still requires explicit stopped consent, authenticated retained old
+provenance and strict forward version selection by the independently trusted
+new-version updater. Exact identity/account/resource/grants, old complete helper
+caches and persistent daemons survive; no automatic enable, grant reconstruction,
+silent rollback or destructive child cleanup was added. Public stop/status and
+durable unknown/CleanupPending behavior are unchanged. The core's original
+15-second authentication Busy budget, same-issued-operation/lost-reply and
+two-daemon isolation/adoption/detach oracles are preserved, not reimplemented.
+
+Fresh bounded qualification at merged source `7ff65a69` used jobs1,
+`CARGO_TARGET_DIR="$PWD/target/adr84-native"`, dev/test debug0, incremental0 and
+`TMPDIR="$PWD/target/adr84-native-evidence"`:
+
+```sh
+cargo test --locked -p festerm-host -p festerm-host-setup
+cargo build --locked -p festerm-sessiond --bin festerm-sessiond -p festerm-pty-test-child --bin festerm-pty-test-child
+FESTERM_ADR84_UPDATE_HELPER="$PWD/target/adr84-native/debug/festerm-sessiond" cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib native_host_update_preserves_actual -- --ignored --test-threads=1
+cargo test --locked -p festerm-host --no-default-features
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo check --locked -p festerm-host-setup --no-default-features --features native-services --lib
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 1debea976d62c32344c0d79cbfa74026a152264d
+git diff --check
+```
+
+Fresh results, independently executed rather than inherited from `c75d03d7`:
+
+- Host/setup default union: **124 passed / 2 explicit ignored / zero failed**:
+  five CLI units, nine CLI integrations and 110 setup tests, including all nine
+  update-journal/failure-injection cases. Setup execution took 32.50 seconds.
+  The two ignores remain the dedicated cargo-packager signer and opt-in
+  owned-daemon case; the latter was then selected separately below.
+- Owned-daemon selector: **exactly one passed / zero ignored / zero failed**,
+  2.65 seconds. Actual owned sessiond/PTY helpers retain the original persistent
+  daemon PID/generation/inventory and helper bytes across the transaction core;
+  exact-generation cleanup completes. This still uses synthetic signed bundle
+  fixtures and a fake Linux manager, not real native manager switching or genuine
+  old-release/new-release compatibility.
+- No-default-feature compatibility: **10 passed / zero ignored / zero failed**.
+- Strict affected two-package all-target Clippy and standalone native-services
+  check pass. Format, traceability **311 edges / zero broken references**, and
+  diff checks pass. Logs: `target/adr84-native-evidence/stack-1de-*.log`.
+
+The earlier `c75d03d7` 124-pass/two-ignore and separately selected 2.17-second
+daemon result remain historical; they are not relabeled as this fresh run.
+This evidence-only child changes no tested implementation. No full runtime
+14-native aggregate, session full suite, GUI, OS manager/install, cloud, native
+vault, release signing or true cross-version acceptance is claimed here.
+
+**No Linux eligibility/lifetime or Windows public publisher, rotation,
+revocation-freshness/offline or graceful-stop proposal has been approved.**
+The existing fail-closed platform prerequisites remain unchanged. An update
+receipt supplies neither a new client trust grant nor new enrollment authority.
+The host Cargo slot is released at this fixed checkpoint: owned Cargo/rustc/
+sessiond/PTY-helper CWD matches are zero and no owned `hu-*` fixture root remains.
+There was no push, PR creation or OS-service/cloud/vault/signing operation.
+
 ## Freezing the runtime/native core with exact primary-CI corrections
 
 The frozen publication union normally merges exact
