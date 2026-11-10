@@ -26,7 +26,8 @@ NOTICE_SPEC = importlib.util.spec_from_file_location(
 )
 reviewed_notices = importlib.util.module_from_spec(NOTICE_SPEC)
 NOTICE_SPEC.loader.exec_module(reviewed_notices)
-BINARIES = ("festerm-sessiond", "festerm-tunnel-bridge", "festerm-tunnel-setup")
+BINARIES = ("festerm-sessiond", "festerm-tunnel-bridge", "festerm-tunnel-setup", "festerm-host")
+PACKAGES = ("festerm-sessiond", "festerm-tunnel-bridge", "festerm-host")
 PLATFORMS = ("linux", "macos", "windows")
 ARCHITECTURES = ("x86_64", "aarch64")
 WINDOWS_WORKER = "festerm-tunnel-worker.exe"
@@ -88,12 +89,12 @@ def validate_version(version, root):
         raise ValueError("workspace license changed; update the bundle license")
 
 
-def third_party_notices(metadata, version, root):
+def third_party_notices(metadata, version, root, *, legacy=False):
     """Retain dependency license/notice files, including vendored native code."""
     packages = {package["id"]: package for package in metadata["packages"]}
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
     pending = []
-    for name in BINARIES[:2]:
+    for name in PACKAGES if not legacy else PACKAGES[:2]:
         matches = [p for p in packages.values() if p["name"] == name]
         if len(matches) != 1 or matches[0]["version"] != version:
             raise ValueError(f"missing or wrong-version package metadata: {name}")
@@ -167,26 +168,26 @@ def third_party_notices(metadata, version, root):
     return "".join(notices).encode("utf-8")
 
 
-def entry_names(platform):
-    return binary_names(platform) + (
+def entry_names(platform, *, legacy=False):
+    return binary_names(platform, legacy=legacy) + (
         "VERSION", "LICENSE", "THIRD_PARTY_NOTICES.txt",
     )
 
 
-def binary_names(platform):
+def binary_names(platform, *, legacy=False):
     suffix = ".exe" if platform == "windows" else ""
-    names = tuple(name + suffix for name in BINARIES)
+    names = tuple(name + suffix for name in BINARIES if not legacy or name != "festerm-host")
     return names + (WINDOWS_WORKER,) if platform == "windows" else names
 
 
-def verify_bundle(archive, version, platform):
-    expected = entry_names(platform)
+def verify_bundle(archive, version, platform, *, legacy=False):
+    expected = entry_names(platform, legacy=legacy)
     if platform != "windows":
         with tarfile.open(archive, "r:gz") as bundle:
             if sorted(bundle.getnames()) != sorted(expected):
                 raise ValueError("bundle must contain exactly the allowlisted entries")
             for entry in bundle.getmembers():
-                expected_mode = 0o755 if entry.name in binary_names(platform) else 0o644
+                expected_mode = 0o755 if entry.name in binary_names(platform, legacy=legacy) else 0o644
                 if not entry.isfile() or entry.mode != expected_mode:
                     raise ValueError(f"unexpected bundle entry mode/type: {entry.name}")
                 content = bundle.extractfile(entry).read()
@@ -202,7 +203,7 @@ def verify_bundle(archive, version, platform):
                 raise ValueError("bundle VERSION does not match release version")
             for entry in bundle.infolist():
                 mode = entry.external_attr >> 16
-                expected_mode = 0o755 if entry.filename in binary_names(platform) else 0o644
+                expected_mode = 0o755 if entry.filename in binary_names(platform, legacy=legacy) else 0o644
                 if not stat.S_ISREG(mode) or stat.S_IMODE(mode) != expected_mode:
                     raise ValueError(f"unexpected bundle entry mode: {entry.filename}")
                 if not bundle.read(entry):
@@ -211,12 +212,12 @@ def verify_bundle(archive, version, platform):
                 raise ValueError("bundle CRC verification failed")
 
 
-def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata=None, notices=None):
+def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata=None, notices=None, *, legacy=False):
     validate_version(version, root)
     if platform not in PLATFORMS or arch not in ARCHITECTURES:
         raise ValueError("unsupported platform or architecture")
     entries = {}
-    for name in binary_names(platform):
+    for name in binary_names(platform, legacy=legacy):
         path = binary_dir / name
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"missing regular helper binary: {name}")
@@ -228,7 +229,7 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
     if (metadata is None) == (notices is None):
         raise ValueError("provide exactly one of dependency metadata or staged notices")
     entries["THIRD_PARTY_NOTICES.txt"] = (
-        third_party_notices(metadata, version, root) if metadata is not None else notices
+        third_party_notices(metadata, version, root, legacy=legacy) if metadata is not None else notices
     )
     if not entries["THIRD_PARTY_NOTICES.txt"].strip():
         raise ValueError("empty dependency notices")
@@ -246,7 +247,7 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
                 for name in sorted(entries):
                     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
                     info.create_system = 3
-                    mode = 0o755 if name in binary_names(platform) else 0o644
+                    mode = 0o755 if name in binary_names(platform, legacy=legacy) else 0o644
                     info.external_attr = (stat.S_IFREG | mode) << 16
                     bundle.writestr(
                         info, entries[name], compress_type=zipfile.ZIP_DEFLATED,
@@ -257,11 +258,11 @@ def build_bundle(root, binary_dir, output_dir, version, platform, arch, metadata
                 with tarfile.open(fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT) as bundle:
                     for name in sorted(entries):
                         info = tarfile.TarInfo(name)
-                        info.mode = 0o755 if name in binary_names(platform) else 0o644
+                        info.mode = 0o755 if name in binary_names(platform, legacy=legacy) else 0o644
                         info.size = len(entries[name])
                         bundle.addfile(info, io.BytesIO(entries[name]))
         archive_file.close()
-        verify_bundle(archive, version, platform)
+        verify_bundle(archive, version, platform, legacy=legacy)
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         with checksum.open("x", encoding="ascii", newline="\n") as output:
             owns_checksum = True
@@ -280,6 +281,8 @@ def main():
     parser.add_argument("--version", required=True)
     parser.add_argument("--platform", required=True, choices=PLATFORMS)
     parser.add_argument("--arch", required=True, choices=ARCHITECTURES)
+    parser.add_argument("--legacy-helpers", action="store_true",
+                        help="old-tag recovery only; excludes host CLI and cannot produce schema-2 metadata")
     parser.add_argument("--binary-dir", type=Path, default=ROOT / "target/release")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     source = parser.add_mutually_exclusive_group(required=True)
@@ -294,6 +297,7 @@ def main():
             args.arch,
             metadata=json.loads(args.metadata.read_text(encoding="utf-8")) if args.metadata else None,
             notices=args.notices.read_bytes() if args.notices else None,
+            legacy=args.legacy_helpers,
         )
     except (ValueError, KeyError, OSError, zipfile.BadZipFile, tarfile.TarError) as error:
         parser.exit(1, f"tunnel bundle failed: {error}\n")

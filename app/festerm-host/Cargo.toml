@@ -9,7 +9,7 @@ description = "Headless host lifecycle configuration and diagnostics (ADR 0084).
 publish = false
 
 [dependencies]
-festerm-host-setup = { path = "../../crates/festerm-host-setup", features = ["lifecycle"] }
+festerm-host-setup = { path = "../../crates/festerm-host-setup", features = ["acquisition"] }
 serde_json = "1"
 
 [dev-dependencies]

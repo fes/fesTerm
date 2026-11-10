@@ -5561,6 +5561,11 @@
         "recordless_initialization_requires_manual_review_without_adopting_or_replacing_evidence",
         "interrupted_private_publication_never_exposes_torn_final_bytes",
         "offline_cli_staging_refuses_changed_bytes_and_never_overwrites_a_cache",
+        "bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache",
+        "bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation",
+        "bounded_http_acquisition_deadline_and_production_origin_fail_closed",
+        "headless_acquisition_rejects_provenance_overrides_without_network_or_state",
+        "reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback",
         "headless_commands_configure_and_report_only_disabled_state",
         "unavailable_host_operations_and_unsafe_options_fail_closed",
         "headless_binary_exits_unsuccessfully_without_endpoint_or_echoing_arguments",
@@ -5600,7 +5605,7 @@
       "manual_scenarios": ["DT-05", "DT-08"],
       "status": "partial",
       "prerequisites": [
-        "Issue #681: headless CLI release package inclusion and consuming new endpoint installer integration; private authenticated staging exists but does not switch services",
+        "Issue #681: consuming new endpoint installer/native executable publication integration; schema-2 includes the headless CLI and private authenticated staging exists but does not authorize launch or switch services",
         "Issue #681: host service switching/rollback, referenced-daemon retention and explicit legacy migration await the endpoint",
         "Protected native release signing/download/rejection on all six targets and independently authenticated first-verifier delivery remain required; synthetic keys do not provide this evidence",
         "Issue #681 / ADR 0084 section 11: migration preserves protected state/account binding and manual deferral. Stopping a live legacy session requires separate default-No exact-generation confirmation; setup/sharing consent does not authorize restart. Implement and qualify this local confirmation flow, including stale-generation refusal, before migration exposure"

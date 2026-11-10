@@ -2,18 +2,20 @@
 
 This is the independent authenticity foundation of [ADR 0084 §9](adr/0084-host-based-dev-tunnels.md#9-packaging-integrity-and-upgrades),
 tracked in [#681](https://github.com/fes/fesTerm/issues/681), not completion of
-stage 7. The existing helper package contains sessiond, tunnel bridge and setup
-(plus the Windows worker), VERSION, LICENSE and THIRD_PARTY_NOTICES.txt.
-The new host-management CLI is **not** claimed to be in this package.
+stage 7. The schema-2 helper package contains sessiond, tunnel bridge, setup and
+the GUI-free `festerm-host` CLI (plus the Windows worker), VERSION, LICENSE and
+THIRD_PARTY_NOTICES.txt. These six native targets use the existing helper build,
+macOS signing/notarization and Windows Authenticode paths; Linux uses the shared
+updater signature. Native release qualification is not established by fixtures.
 
 ## Wire contract and trust
 
 For each unchanged `fesTerm-tunnel-VERSION-PLATFORM-ARCH.tar.gz` (Windows `.zip`),
 publish its unchanged `.sha256`, an additive `.manifest.json`, and
-`.manifest.json.sig`. Schema 1 is strict JSON with exactly these typed fields:
+`.manifest.json.sig`. Schema 2 is strict JSON with exactly these typed fields:
 
 ```json
-{"schema":1,"package":"festerm-helpers","version":"1.2.3","platform":"linux","architecture":"aarch64","filename":"fesTerm-tunnel-1.2.3-linux-aarch64.tar.gz","length":12345,"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+{"schema":2,"package":"festerm-helpers","version":"1.2.3","platform":"linux","architecture":"aarch64","filename":"fesTerm-tunnel-1.2.3-linux-aarch64.tar.gz","length":12345,"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 ```
 
 The example's length/hash are illustrative, not download pins. Versions are
@@ -21,6 +23,7 @@ exact stable numeric semver (no prefix, prerelease, build suffix or leading
 zeroes); platforms are `linux`, `macos`, `windows`; architectures are `x86_64`,
 `aarch64`. Package identity is only `festerm-helpers`. Unknown/duplicate fields,
 unknown schema/package/target values and noncanonical hashes are rejected.
+Schema 1 is not accepted as schema 2: it never guaranteed host CLI inclusion.
 
 `scripts/build_host_manifest.py` binds the actual archive length and SHA-256
 after the existing package/notice checks. The protected release publish job
@@ -66,7 +69,7 @@ Bounds: manifest/signature each 4 KiB, compressed archive 256 MiB, expanded
 archive 512 MiB, executable entry 128 MiB, each metadata/notice entry 16 MiB;
 version at most 32 bytes. Downloaders must enforce the same limits while
 receiving bytes and apply their own time/cancellation limits.
-The verifier enforces the exact six Unix/seven Windows allowlisted entries,
+The verifier enforces the exact seven Unix/eight Windows allowlisted entries,
 nonempty regular files, exact 0755/0644 modes and exact VERSION contents.
 It refuses duplicates, missing/extra/nested/absolute/traversal names,
 symlinks, hardlinks, special files, tar extension records, encrypted ZIPs,
@@ -108,14 +111,48 @@ owner must compare against installed policy and reject lower versions by default
 Any future explicit rollback needs separate compatibility/state/grant checks;
 this API does not authorize rollback or override revocation.
 
-Legacy filenames, archives, checksums and scripts are unchanged. Existing
+Legacy filenames, helper entries, checksums and scripts are retained; current
+archives add the host CLI and its dependency notices. Existing
 scripts still use their legacy integrity/native-signer path and do not gain
 independent Linux publisher authentication from these additive assets. New
 typed consumers fail if a manifest/signature is absent, including old releases.
 Explicit protected recovery of a pre-authentication tag retains its old payload
 contract and emits a notice, not an authenticated-helper claim. Normal releases
-missing this tooling fail. Recovery still pins tagged runtime source and keeps
-its existing tooling-only change allowlist and CI requirements.
+missing this tooling fail. Recovery still pins tagged runtime source and keeps its existing tooling-only
+change allowlist and CI requirements. The protected workflow detects schema 2
+from that exact source, never the download. Schema-1/pre-authentication recovery
+retains the old helper set without claiming host inclusion; the reviewed macOS
+packager override uses explicit `--legacy-helpers` only on this recovery path.
+That payload cannot receive a schema-2 manifest.
+
+## Microsoft CLI acquisition
+
+The optional shared `acquisition` feature and explicit headless `acquire-cli`
+command download **only** pinned raw Microsoft bytes into protected,
+non-executable staging. See [bounds and command semantics](headless-host.md).
+The versioned origin is
+`https://tunnelsassetsprod.blob.core.windows.net/cli/1.0.2115+e16833f284/`;
+no mutable `aka.ms` redirect, version-output inspection or adjacent metadata
+is a trust source. Existing reviewed executable SHA-256 values are retained.
+The Windows x64 raw asset is `devtunnel.exe`; Unix assets are
+`osx-{x64,arm64}-devtunnel` and `linux-{x64,arm64}-devtunnel`.
+Windows ARM64 is explicitly unsupported.
+
+Textual provenance, verified without downloading/executing dependency binaries:
+[version-specific winget manifest](https://github.com/microsoft/winget-pkgs/tree/master/manifests/m/Microsoft/devtunnel/1.0.2115%2Be16833f284)
+for Windows x64, and
+[commit-pinned Homebrew source](https://github.com/Homebrew/homebrew-cask/blob/fb0b862b488a16d3413d0087f2a495ed39069e8a/Casks/d/devtunnel.rb)
+for macOS/Linux. These sources corroborate the build's existing reviewed hashes;
+they are not an independent Microsoft native-publisher qualification or a grant
+of redistribution rights. No dependency binary is bundled.
+
+The acquired path is **not** a trusted-executable/service-registration receipt.
+The shared staging owner does not execute, chmod, sign in, modify services or
+grant access. Future execution must additionally enforce platform-native
+publisher/signing policy on retained verified handles before executable
+publication. This qualification and the authenticated delivery of the initial
+Fes verifier/host CLI remain blocked; downloaded binaries cannot authenticate a
+new trust root fetched beside themselves.
 
 ## Evidence and remaining work
 
@@ -138,8 +175,8 @@ These artifact-feature tests require Python 3.11+ on PATH (`python` on Windows,
 The separate Linux normal-CI signer job installs **cargo-packager 0.11.8
 --locked**, then explicitly runs
 `pinned_cargo_packager_signatures_authenticate_python_produced_manifest`.
-That test generates its own throwaway key using the real CLI, signs a
-Python-produced manifest, checks modern prehashed mode and verifies with the
+That test generates its own throwaway key using the real CLI, signs all six
+Python-produced manifests, checks modern prehashed mode and verifies with the
 private test-only key seam. It also confirms the shipping embedded-key API
 rejects the throwaway publisher and that changed signed bytes fail. The
 expensive external-tool test is ignored in ordinary Rust runs, not omitted
@@ -147,10 +184,11 @@ from normal CI. No production trust override is exposed.
 
 No actual release key, release dispatch or live installation is used by tests.
 Native protected-release signing/download/rejection evidence on all six targets,
-headless CLI package inclusion, native installer/executable publication,
+native installer/executable publication,
 service switching/rollback, legacy migration and independently trusted first
 Linux installation remain required under HOST-06/DT-05/DT-08 and #681.
 The [shared setup boundary](headless-host.md) implements private atomic
-no-replace offline staging for authenticated helper entries and reviewed
-Microsoft CLI pins. Network acquisition, native installation and service
-switching remain deferred; cache files are not executable publication.
+no-replace staging for authenticated helper entries and reviewed Microsoft CLI
+pins, with bounded HTTP acquisition covered by local synthetic fixtures.
+Native installation/publisher qualification and service switching remain
+deferred; cache files are not executable publication.

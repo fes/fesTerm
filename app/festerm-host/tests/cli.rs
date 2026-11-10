@@ -69,3 +69,24 @@ fn headless_package_staging_refuses_unauthenticated_input_before_writing() {
         .contains("artifact_authentication_failed"));
     assert!(!cache.exists());
 }
+
+#[test]
+fn headless_acquisition_rejects_provenance_overrides_without_network_or_state() {
+    let root = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let cache = root.path().join("cache");
+    for option in ["--url", "--sha256", "--key", "--token"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_festerm-host"))
+            .arg("acquire-cli")
+            .arg("--cache-dir")
+            .arg(&cache)
+            .args([option, "fixture-do-not-echo"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("invalid_arguments"));
+        assert!(!error.contains("fixture-do-not-echo"));
+        assert!(!cache.exists());
+    }
+}

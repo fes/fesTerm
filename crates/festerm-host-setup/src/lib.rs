@@ -5,6 +5,8 @@
 
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "acquisition")]
+pub mod acquisition;
 #[cfg(feature = "artifacts")]
 pub mod artifacts;
 #[cfg(feature = "owner-enrollment")]

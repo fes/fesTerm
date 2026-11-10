@@ -10,6 +10,7 @@ use std::{
 };
 
 pub const DOWNLOAD_LIMIT: u64 = 128 * 1024 * 1024;
+pub const DOWNLOAD_VERSION: &str = "1.0.2115+e16833f284";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,21 +31,45 @@ struct Manifest {
 }
 
 pub fn current() -> io::Result<CliPin> {
+    for_target(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn for_target(platform: &str, architecture: &str) -> io::Result<CliPin> {
     let manifest: Manifest = serde_json::from_str(include_str!("../devtunnel-cli-pins.json"))
         .map_err(|_| io::Error::other("profile_host.cli_manifest"))?;
     if manifest.reviewed.is_empty() {
         return Err(io::Error::other("profile_host.cli_manifest"));
     }
-    let architecture = if cfg!(windows) {
-        "x86_64"
-    } else {
-        std::env::consts::ARCH
-    };
     manifest
         .pins
         .into_iter()
-        .find(|pin| pin.platform == std::env::consts::OS && pin.architecture == architecture)
+        .find(|pin| pin.platform == platform && pin.architecture == architecture)
         .ok_or_else(|| io::Error::other("profile_host.cli_platform"))
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::*;
+
+    #[test]
+    fn reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback() {
+        for (platform, architecture) in [
+            ("windows", "x86_64"),
+            ("linux", "x86_64"),
+            ("linux", "aarch64"),
+            ("macos", "x86_64"),
+            ("macos", "aarch64"),
+        ] {
+            let pin = for_target(platform, architecture).unwrap();
+            assert!(pin.download.starts_with(&format!(
+                "https://tunnelsassetsprod.blob.core.windows.net/cli/{DOWNLOAD_VERSION}/"
+            )));
+            assert_eq!(pin.format, "executable");
+            assert_eq!(pin.archive_sha256, pin.executable_sha256);
+        }
+        assert!(for_target("windows", "aarch64").is_err());
+        assert!(for_target("linux", "riscv64").is_err());
+    }
 }
 
 /// Keep the trusted directory and no-follow executable handles alive while
@@ -219,7 +244,7 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let result = verify(&path);
+        let result = verify_with_pin(&path, &for_target("windows", "x86_64").unwrap());
         let _ = child.kill();
         child.wait().unwrap();
         let Err(error) = result else {

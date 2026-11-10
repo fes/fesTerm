@@ -329,14 +329,19 @@ The first downloaded verifier/package needs a documented authenticity path too;
 an unauthenticated bootstrap cannot establish its own trust.
 
 The implemented independent [existing-helper authenticity slice](../host-release-artifacts.md)
-uses strict per-archive schema-1 metadata signed by pinned cargo-packager with
+uses strict per-archive schema-2 metadata signed by pinned cargo-packager with
 the embedded existing updater key. The GUI-free shared verifier binds all
 identity fields and returns bounded immutable regular-file entries, not an
 archive path to reopen. No auto key discovery, unsigned fallback or downgrade
 is permitted; source-reviewed updater-key rotation and installation-owner
-version/rollback policy remain explicit. Headless host CLI inclusion, consuming
-native installer/executable publication and service switching are not
-claimed by this foundation. Legacy scripts and old-tag recovery retain their
+version/rollback policy remain explicit. Schema 2 requires the GUI-free host CLI
+alongside the legacy helpers, built and native-signed in the existing six-target
+release matrix. Acquisition-only `acquire-cli` uses the existing reviewed raw
+executable hashes with versioned official HTTPS URLs, no redirects/proxy or
+provenance overrides, bounded length/time and protected non-executable staging.
+Microsoft native-publisher qualification/redistribution rights, consuming
+native installer/executable publication and service switching are not claimed.
+Legacy scripts and old-tag recovery retain their
 old contracts, without a new Linux authentication claim (#681).
 
 Desktop updates stage compatible helpers in immutable versioned private paths and
@@ -483,6 +488,14 @@ uninstall explicitly fail until real endpoint, sign-in/native adapters and
 authenticated-package integration exist. No Ready or native acceptance is claimed.
 See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 
+**Bounded stage 7 progress (#681):** Helper schema 2 requires `festerm-host` on
+all six existing targets. Optional shared HTTP acquisition and headless
+`acquire-cli` stage only the pinned official Microsoft executable, never execute
+it or modify account/service state. Windows ARM dependency acquisition is
+explicitly unavailable, without x64 fallback. Native publisher qualification,
+trusted first delivery and executable/service publication remain blocked;
+signed/staged bytes alone are not Ready or a trusted launch receipt.
+
 - **Invariants introduced or changed:** One host endpoint can expose multiple
   authorized sessions; explicit remote creation and client-local resume-or-create
   recipes; no implicit launcher network; shared setup and independent daemon
@@ -554,6 +567,12 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   `authenticated_staging_preserves_exact_bytes_and_refuses_partial_or_changed_entries`,
   `authenticated_artifact_staging_retains_signed_provenance_and_revalidates_cache`,
   `headless_package_staging_refuses_unauthenticated_input_before_writing`.
+  Acquisition-only coverage adds
+  `bounded_http_acquisition_stages_only_pinned_bytes_and_preserves_cache`,
+  `bounded_http_acquisition_rejects_redirects_status_size_hash_and_truncation`,
+  `bounded_http_acquisition_deadline_and_production_origin_fail_closed`,
+  `headless_acquisition_rejects_provenance_overrides_without_network_or_state`
+  and `reviewed_cli_pins_use_versioned_raw_assets_and_no_windows_arm_fallback`.
   The existing cancellation fixture reopens and recovers the exact pending
   ticket before revocation and late provisioning. Exact-generation default-No
   migration confirmation remains deferred until the migration API; no generic
@@ -571,7 +590,8 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
   signer job runs the otherwise-ignored
   `pinned_cargo_packager_signatures_authenticate_python_produced_manifest`
   using cargo-packager 0.11.8, a generated throwaway key and the private test
-  verifier seam; it proves the real signing mode without release secrets.
+  verifier seam for all six host-containing bundles; it proves the real signing
+  mode without release secrets.
   Python `test_host_manifest.py`, `test_tunnel_bundle.py` and
   `test_recover_desktop_release.py` cover producer compatibility and release
   wiring/recovery. The remaining matrix is planned, not implemented evidence.
@@ -627,7 +647,7 @@ See [API/dependencies](../headless-host.md); the ADR remains Proposed.
 | Setup | `setup_cancel_preserves_profile_draft`; failure at every stage, disabled reuse, no shell on install, outgoing profile does not install host |
 | Profiles | Metadata-only save, serialization, duplicate/shortcut identity and compatibility tests above; first create, later resume, post-reboot replacement toast and actual second-client attachment remain deferred |
 | Updates | `host_update_preserves_identity_and_sessions`; active old daemon, incompatible protocol, rollback, referenced-binary retention |
-| Integrity | Implemented: authenticated `stage-package`, pinned official-CLI offline staging, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, actual Python producer interop and pinned signer's throwaway-key mode check in normal CI. Deferred: network acquisition, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
+| Integrity | Implemented: schema-2 authenticated `stage-package` including the GUI-free host CLI, pinned official-CLI offline staging and bounded HTTPS acquisition, private atomic no-replace publication with interrupted-write/cache-corruption fixtures, six-target Python producer/actual signer/Rust verifier interop. Deferred: Microsoft native-publisher qualification/redistribution review, native installer/executable publication, trusted first-verifier delivery and signed native install/update evidence |
 | Migration | `migration_never_broadens_grants`; foreign resources, name collision, revoked records, partial failure, legacy clients |
 | Native | Signed Windows/macOS and Linux package install/update/uninstall; boot vs sign-in; locked/missing vault; real service and physical mobile reconnect |
 

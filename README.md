@@ -43,10 +43,10 @@ coverage; real pinned SSH streams still refuse owner authentication until a
 shared connection/channel binding exporter is implemented and reviewed.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
-GUI-free disabled configuration, journal status, offline pinned-CLI staging and
-authenticated helper-artifact staging without execution.
+GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition
+and authenticated schema-2 headless/helper staging without execution.
 New host setup/run/update/uninstall remain unavailable pending endpoint and
-authenticated-package integration ([#681](https://github.com/fes/fesTerm/issues/681));
+native executable/endpoint integration ([#681](https://github.com/fes/fesTerm/issues/681));
 the legacy installer is unchanged.
 
 Desktop split-pane composition is available as a staged feature
@@ -146,8 +146,9 @@ remains [#27](https://github.com/fes/fesTerm/issues/27).
 [Authenticated helper manifests and an offline verifier](docs/host-release-artifacts.md)
 reuse the updater trust root for all six standalone helper targets
 ([#681](https://github.com/fes/fesTerm/issues/681), proposed ADR 0084).
-Headless CLI inclusion, installer integration, service switching/rollback and
-legacy migration remain separate gates; existing Linux scripts are not upgraded
+Schema 2 includes the headless CLI; native executable/installer integration,
+service switching/rollback and legacy migration remain separate gates.
+Existing Linux scripts are not upgraded
 to publisher authentication by merely publishing these additive manifests.
 
 An optional, fesTerm-owned local session-persistence daemon

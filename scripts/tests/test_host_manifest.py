@@ -49,7 +49,7 @@ class HostManifestTests(unittest.TestCase):
                     encoded = output.read_bytes()
                     self.assertLessEqual(len(encoded), manifest.MAX_MANIFEST_BYTES)
                     self.assertEqual(json.loads(encoded), {
-                        "schema": 1,
+                        "schema": 2,
                         "package": "festerm-helpers",
                         "version": "1.2.3",
                         "platform": platform,
@@ -101,6 +101,22 @@ class HostManifestTests(unittest.TestCase):
         self.assertIn("cargo install cargo-packager --version \"$CARGO_PACKAGER_VERSION\" --locked",
                       workflow)
 
+    def test_host_is_required_by_manifest_producer_and_native_signer_paths(self):
+        legacy = bundle.build_bundle(
+            self.root, self.binary_dir, self.root / "legacy", "1.2.3",
+            "linux", "x86_64", notices=b"synthetic notice\n", legacy=True,
+        )
+        with self.assertRaisesRegex(ValueError, "exactly"):
+            manifest.build_manifest(legacy, "1.2.3", "linux", "x86_64")
+        self.assertFalse(legacy.with_name(legacy.name + ".manifest.json").exists())
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        helpers = workflow.split("  helper-bundles:\n", 1)[1]
+        self.assertIn("packages+=(-p festerm-host)", helpers)
+        self.assertIn("binaries+=(festerm-host)", helpers)
+        self.assertIn("$expected += 'festerm-host.exe'", helpers)
+        self.assertIn(r"format('{0}\helper-input\festerm-host.exe', github.workspace)", helpers)
+        self.assertIn("$names += 'festerm-host'", helpers)
+
     def test_signing_secrets_are_absent_from_build_generation_and_verification_steps(self):
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         publish_environment = workflow.split("  publish:\n", 1)[1].split("    steps:\n", 1)[0]
@@ -133,7 +149,7 @@ class HostManifestTests(unittest.TestCase):
 
     def test_normal_ci_runs_cross_language_and_real_pinned_signer_checks(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        self.assertIn("cargo test --locked -p festerm-host-setup --features artifacts", workflow)
+        self.assertIn("cargo test --locked -p festerm-host-setup --features acquisition -p festerm-host", workflow)
         job = workflow.split("  helper-signature-compatibility:\n", 1)[1]
         job = job.split("  conformance:\n", 1)[0]
         self.assertIn("runs-on: ubuntu-latest", job)

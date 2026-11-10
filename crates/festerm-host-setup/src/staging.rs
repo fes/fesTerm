@@ -145,13 +145,23 @@ fn stage_with_pin(
     let name = Path::new(&name);
     let input = storage::private_directory(source, false)?;
     let bytes = storage::read_private(&input, name, cli_pins::DOWNLOAD_LIMIT as usize)?;
-    if !cli_pins::matches_digest(bytes.as_slice(), &pin.executable_sha256)? {
+    stage_cli_bytes(&bytes, destination, pin)
+}
+
+pub(crate) fn stage_cli_bytes(
+    bytes: &[u8],
+    destination: &Path,
+    pin: &cli_pins::CliPin,
+) -> io::Result<PathBuf> {
+    let name = format!("devtunnel{}", std::env::consts::EXE_SUFFIX);
+    let name = Path::new(&name);
+    if !cli_pins::matches_digest(bytes, &pin.executable_sha256)? {
         return Err(io::Error::other(
             "host.cli_pin_mismatch_dependency_update_required",
         ));
     }
     let output = storage::private_directory(destination, true)?;
-    protected_state::publish_immutable(&output, name, &bytes, "host.cached_cli_mismatch")?;
+    protected_state::publish_immutable(&output, name, bytes, "host.cached_cli_mismatch")?;
     // New files remain non-executable. Execution adapters must reopen and verify
     // via cli_pins::verify before setting executable permissions/using the CLI.
     Ok(destination.join(name))
@@ -249,7 +259,14 @@ mod tests {
         let name = Path::new(&name);
         let bytes = b"fixture only, never executed";
         storage::write_new_private(&directory, name, bytes).unwrap();
-        let mut pin = cli_pins::current().unwrap();
+        let mut pin = cli_pins::CliPin {
+            platform: std::env::consts::OS.into(),
+            architecture: std::env::consts::ARCH.into(),
+            download: String::new(),
+            format: "executable".into(),
+            archive_sha256: "0".repeat(64),
+            executable_sha256: "0".repeat(64),
+        };
         assert!(stage_with_pin(&source, &destination, &pin).is_err());
         assert!(!destination.exists());
         pin.executable_sha256 = Sha256::digest(bytes)

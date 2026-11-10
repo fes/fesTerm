@@ -14,6 +14,7 @@ Build from the same source/tag as fesTerm: `cargo build -p festerm-host`.
 festerm-host configure --state-dir /absolute/private/new-host --name "My computer"
 festerm-host status --state-dir /absolute/private/new-host
 festerm-host stage-cli --source-dir /absolute/private/source --cache-dir /absolute/private/cache
+festerm-host acquire-cli --cache-dir /absolute/private/cache
 festerm-host stage-package --manifest /absolute/private/download/helpers.manifest.json --signature /absolute/private/download/helpers.manifest.json.sig --archive /absolute/private/download/helpers.tar.gz --cache-root /absolute/private/releases
 ```
 
@@ -58,6 +59,29 @@ Execution adapters must reopen it with
 Changed official bytes require a reviewed pin update, not an override.
 This does not authenticate fesTerm release bundles.
 
+`acquire-cli` is an explicit acquisition-only network operation using
+`festerm_host_setup::acquisition::acquire_cli(&cache_dir)` (optional
+`acquisition` feature, enabled by the headless binary). It selects only this
+build's embedded native-target pin, downloads the raw executable directly from
+the versioned official Microsoft blob origin over HTTPS, and uses the same
+hash admission and private atomic no-replace publication as `stage-cli`.
+All redirects (including same-origin redirects), proxies from the environment,
+unexpected content encoding, non-200 responses, empty/oversized/truncated
+responses and changed bytes fail closed. Connect timeout is 15 seconds; the
+entire request/body has a 120-second deadline, no retries, and a 128 MiB cap
+even without Content-Length. No URL/hash/key/environment provenance override
+is accepted. Use a blocking worker when calling this API from a GUI/runtime.
+Errors do not echo response bodies, URLs, credentials or paths.
+
+The pin is `1.0.2115+e16833f284`, using the executable hashes already reviewed
+for offline staging; see [provenance and qualification](host-release-artifacts.md#microsoft-cli-acquisition).
+Windows ARM64 has no established pin and fails explicitly; it never falls back
+to x64. No Microsoft executable is redistributed in the helper bundle.
+Acquisition neither makes bytes executable nor performs native publisher
+qualification, sign-in, service/account changes or readiness checks.
+Native executable admission/publication remains a separate blocked gate, not a
+property of the returned cache path.
+
 `stage-package` authenticates a helper manifest with the existing updater public
 key, verifies the exact current build version, native platform/architecture,
 archive length/hash and bounded exact regular entries, then stages immutable
@@ -77,10 +101,11 @@ that provenance and compare **every** staged entry before use; `.complete` is
 only a completion receipt, not authority. There is no unauthenticated execution
 or downgrade override.
 
-The authenticated package kind currently contains the existing legacy helpers.
+The authenticated schema-2 package contains `festerm-host` plus the existing legacy helpers.
 Staging them does **not** make them a new zero-shell host endpoint or run their
-one-shell setup policy. A signed `festerm-host` release package and the new
-endpoint remain separate integration work.
+one-shell setup policy. Release CI requires native signing/notarization of the host CLI on the
+same paths as the other helpers. Actual protected release/native rejection
+evidence, executable publication and the new endpoint remain separate gates.
 
 ## Explicitly unavailable operations
 
@@ -105,8 +130,9 @@ never dispatch to the legacy one-shell scripts/helpers. Requirements still open:
 - Same-user native registration/start/stop/status adapters proving exact
   installation/service ownership; privileges confined to explicit registration.
   Persistent daemon lifetime must not depend on these adapters.
-- Authenticated **new host endpoint/headless** release artifacts, compatible
-  switching/rollback and referenced-helper retention. Existing helper artifacts
+- Authenticated **new host endpoint** release artifacts, native executable
+  publisher admission/publication, compatible switching/rollback and
+  referenced-helper retention. The headless CLI and legacy helper artifacts
   can be staged now, but checksums beside downloads cannot authorize a release.
 - Qualified cleanup observations before committing exact-owned cloud removal.
 
