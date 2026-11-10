@@ -882,6 +882,11 @@ pub(crate) mod tests {
     #[test]
     fn authenticated_binding_receipt_publication_resumes_exact_commit_and_never_rewrites_released_or_missing_state(
     ) {
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
         let root = std::env::current_dir()
             .unwrap()
             .join(format!("target/binding-receipt-{}", uuid::Uuid::new_v4()));
@@ -935,6 +940,11 @@ pub(crate) mod tests {
     {
         use crate::host_lease::{DaemonLease, LeaseGuard};
         use festerm_host_protocol::{GenerationId, Lifetime, LogicalState, SessionGrant};
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
         let root = std::env::current_dir()
             .unwrap()
             .join(format!("target/binding-managed-{}", uuid::Uuid::new_v4()));

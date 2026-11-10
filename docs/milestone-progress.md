@@ -1,5 +1,55 @@
 # Milestone Progress Narrative
 
+## Separating Windows binding root failures from file-lifetime fixture blockers
+
+Required Windows run `42916663709` / job `130180758230` at exact
+`d25844f12f7e36d10bc3ad39f89505c142f9e6e0` reports sessiond library
+**99 passed / seven failed / zero ignored**, 2.99s. Its 934788-byte raw log
+is retained with SHA-256
+`97e9648306de76445713246a5023c24674ec143671ed61b54d58362c20702bb0`.
+All seven original failures remain recorded, not reclassified as cache noise.
+
+Four fixtures construct roots under checkout `target`: both imported namespace
+tests fail `existing_only` with opaque `Storage`, while receipt publication and
+already-managed-daemon refusal fail directory preparation with explicit private
+ancestor-policy refusal. Only their Windows root selection changes to the
+existing policy-validated `private_test_directory` factory, retaining its owner
+until the fixture finishes. Unix root paths, every original test body/oracle,
+explicit cleanup, publication/admission and namespace-loss checks remain exact.
+The checkout-path helper remains Unix-only to match its remaining consumers.
+No production, storage/ACL/account policy, feature, dependency or CI changes.
+The specific refused ancestor/principal and the inner cause of opaque `Storage`
+remain unrecorded.
+
+**Three failures remain blockers, unchanged by this root-only correction.**
+They already use private roots. Failed publication reaches its second error
+assertion at original line1103: its earlier partial-write failure and cleanup
+assertions succeeded, but the second closure replaces a still-open target before
+injecting the intended error. The replaced-key case fails that replacement at
+original line1136 with OS5. Both conflict with the Windows replacement helper's
+documented requirement to release existing target handles. The dead-generation
+case expects immediate absence at original line1238 while retaining its original
+owner handle; the Windows deletion helper documents deletion after the last
+handle closes. These are source-contract conflicts, not independently traced
+inner Windows syscall or delete-pending diagnoses. Their assertions and cleanup
+are not weakened, keys are not pre-deleted, and no production filesystem policy
+is rewritten. A truthful file-lifetime fixture correction is separate from root
+parity; this child does not claim to fix all seven Windows failures.
+
+Actual macOS Rust/Cargo1.99.1 qualification passes both complete in-process
+binding unit modules: **17 passed / zero failed / zero ignored**, 114 filtered,
+7.99s, including every seven-failure Mac counterpart and ten direct module guards.
+Affected all-target strict Clippy, fmt, traceability and diff checks pass.
+The first selector command exited1 before compilation because Cargo accepts
+only one filter before `--`; its raw/receipt are preserved, and both module
+filters now go after `--` to libtest. Jobs1/debug0/incremental0 uses a distinct
+APFS-cloned target, never writing the released original, with a 25%-free-memory
+pause guard. No real native daemon/helper, native14/full suite, SDK/VM/provider,
+account or permission repair ran. PrivateCore/709 moving source was not consumed.
+This current-milestone test-fixture correction changes no ADR/graph/manual
+classification or acceptance; fresh Windows CI and the three remaining
+file-lifetime fixture blockers are still required.
+
 ## Repairing the Windows binding-lane fixture boundaries
 
 Required Windows run `42907905048` / job `130150627385` at exact
