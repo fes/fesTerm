@@ -193,14 +193,17 @@ mod tests {
         drop(staged);
         assert_eq!(stage_artifact(&verified, &cache).unwrap().path(), path);
         let name = Path::new(verified.entries()[0].name());
-        storage::replace_private(&directory, name, b"changed").unwrap();
-        assert!(stage_artifact(&verified, &cache).is_err());
-        assert_eq!(
-            storage::read_private(&directory, name, 32)
-                .unwrap()
-                .as_slice(),
-            b"changed"
-        );
+        for changed in [
+            b"changed".to_vec(),
+            [verified.entries()[0].bytes(), b"extra"].concat(),
+        ] {
+            storage::replace_private(&directory, name, &changed).unwrap();
+            assert_eq!(
+                stage_artifact(&verified, &cache).err().unwrap().to_string(),
+                "host.staged_artifact_mismatch"
+            );
+            assert_eq!(std::fs::read(path.join(name)).unwrap(), changed);
+        }
         assert!(path.join(".complete").exists());
     }
 
@@ -257,8 +260,15 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), bytes);
         stage_with_pin(&source, &destination, &pin).unwrap();
         let output = storage::private_directory(&destination, false).unwrap();
-        storage::replace_private(&output, name, b"foreign").unwrap();
-        assert!(stage_with_pin(&source, &destination, &pin).is_err());
-        assert_eq!(std::fs::read(destination.join(name)).unwrap(), b"foreign");
+        for changed in [b"foreign".to_vec(), [bytes.as_slice(), b"extra"].concat()] {
+            storage::replace_private(&output, name, &changed).unwrap();
+            assert_eq!(
+                stage_with_pin(&source, &destination, &pin)
+                    .unwrap_err()
+                    .to_string(),
+                "host.cached_cli_mismatch"
+            );
+            assert_eq!(std::fs::read(destination.join(name)).unwrap(), changed);
+        }
     }
 }

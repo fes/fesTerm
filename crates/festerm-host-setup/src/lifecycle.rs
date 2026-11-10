@@ -244,7 +244,6 @@ impl Store {
             directory: storage::private_directory(path, false)?,
             origin,
         };
-        store.read()?;
         store.snapshot()?;
         Ok(store)
     }
@@ -607,6 +606,14 @@ mod tests {
         storage::write_new_private(&directory, Path::new(LOCK), b"").unwrap();
         storage::write_new_private(&directory, Path::new(".stage-interrupted"), b"partial")
             .unwrap();
+        let lease = Lease::exclusive(
+            storage::open_private_file(&directory, Path::new(LOCK), false).unwrap(),
+        )
+        .unwrap();
+        let busy = Store::open(&path, Origin::Headless).err().unwrap();
+        assert_eq!(busy.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(busy.to_string(), "host.installation_busy");
+        drop(lease);
         assert_eq!(
             Store::open(&path, Origin::Headless)
                 .err()

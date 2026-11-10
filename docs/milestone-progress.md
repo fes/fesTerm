@@ -8725,3 +8725,8 @@ pinned CLI copies now share atomic no-replace publication with helper staging,
 and recordless directories require explicit manual ownership review. Generic
 setup refusal is not claimed as generation-specific migration confirmation;
 that workflow remains deferred until its real API exists.
+
+The incremental reliability pass also distinguishes an initializer holding its
+lease from an abandoned recordless directory. Protected cache comparisons now
+classify oversized entries as the same specific mismatch as other changed
+bytes, keeping bounded reads and refusing overwrite for CLI and helper staging.
