@@ -1,5 +1,37 @@
 # Milestone Progress Narrative
 
+## Requalifying Linux sign-in over the exact core cfg correction
+
+Normal merge `e74259e1d843d27c56366cf7287f121e4aea9c41` has first parent
+`42e11bd87646137f1463059c1ee7e6ce6c559963` and second parent exactly
+`9b1d2a688e35cad8dead2afa4b228c152c2cadb9`. Only additive milestone prose
+conflicted; both evidence histories remain. The core's platform-parameter and
+Unix-only native-fixture cfg corrections integrate without source conflicts.
+Approved Linux eligibility/lifetime, Manual behavior and fenced absence are
+unchanged. No stopped-update, client or manual cloud-fallback feature is added.
+
+Fresh qualification on that merge uses the same absolute private Rust/Cargo
+1.99.1 paths and jobs1/debug0/incremental0 warm environment recorded below.
+The same five selected test commands pass **12 Linux / 10 runtime /
+7 controller / 1 registration / 1 diagnostic**, zero failures/ignores:
+**31 successful invocations, 30 distinct tests** because Linux/runtime overlap
+once. Strict all-target Clippy passes for `festerm-host`, `festerm-host-setup`
+and the additionally affected `festerm-tunnel-bridge`; fmt, traceability with
+`--base 9b1d2a688e35cad8dead2afa4b228c152c2cadb9` (311 edges, zero broken)
+and diff checks pass. Exact commands, toolchain paths/versions and raw log
+hashes are in `target/adr84-login-evidence/combined-9b-provenance.json`;
+raw logs are adjacent `combined-9b-*.log`. Earlier full-suite/native totals
+are not relabeled as fresh combined-head qualification.
+
+The known Linux cross-C blocker was **not retried**: the prior Cargo101,
+`aws-lc-sys 0.47.0` build-script1/missing `x86_64-linux-gnu-gcc` evidence is
+preserved. Linux-target compilation and actual manager/logind/last-logout/
+cgroup/daemon-survival acceptance remain pending. The bridge cancellation
+contract does not guarantee survival through OS-owned user-logout teardown;
+fixtures cannot prove that boundary or authorize OS-setting changes.
+No actual native manager, VM, credential, cloud, signing or OS operation ran.
+The host Cargo slot is released at this fixed checkpoint; no push is performed.
+
 ## Qualifying Linux sign-in on the exact corrected core
 
 Normal merge `c635a194c02f10db229631861f841bbb569f500c` preserves first parent
