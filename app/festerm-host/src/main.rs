@@ -39,8 +39,10 @@ run-status --state-dir PATH
     Durable last-run history, not a liveness or endpoint-ready claim.
 uninstall --state-dir PATH --consent remove
     Revoke, observe exact host stop and remove owned native registration; unqualified cloud deletion remains CleanupPending and exits unsuccessfully.
-update
-    Unavailable until the authenticated stopped-version replacement transaction is integrated.
+update --state-dir PATH --from-version VERSION --manifest PATH --signature PATH --archive PATH --cache-root PATH --consent replace
+    Authenticated stopped-only forward replacement; retain identity/grants/daemons, never automatic enable or rollback.
+update-status --state-dir PATH
+    Durable old/new reservation history and recovery provenance, not liveness or Ready.
 
 Manual startup requires an explicit run. Sign-in is user sign-in, NOT pre-login.
 No native startup registration is performed by configure. Paths must be absolute,
@@ -95,9 +97,20 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         "run" | "run-status" => &["--state-dir"],
         #[cfg(feature = "owner-routing")]
         "uninstall" => &["--state-dir", "--consent"],
+        #[cfg(feature = "owner-routing")]
+        "update" => &[
+            "--state-dir",
+            "--from-version",
+            "--manifest",
+            "--signature",
+            "--archive",
+            "--cache-root",
+            "--consent",
+        ],
+        #[cfg(feature = "owner-routing")]
+        "update-status" => &["--state-dir"],
         #[cfg(not(feature = "owner-routing"))]
-        "setup" | "run" | "uninstall" => return Err(unavailable()),
-        "update" => return Err(unavailable()),
+        "setup" | "run" | "uninstall" | "update" | "update-status" => return Err(unavailable()),
         _ => return Err(invalid()),
     };
     let mut options = BTreeMap::new();
@@ -117,6 +130,40 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         Ok(path)
     };
     match command {
+        #[cfg(feature = "owner-routing")]
+        "update-status" => {
+            let state = path("--state-dir")?;
+            let store = Store::open(&state, Origin::Headless)?;
+            let report = Services::current_user(&store, &state)?.replacement_status()?;
+            serde_json::to_string_pretty(&report)
+                .map(|report| format!("{report}\n"))
+                .map_err(|_| io::Error::other("host.status_serialization"))
+        }
+        #[cfg(feature = "owner-routing")]
+        "update" => {
+            if options.get("--consent").and_then(|value| value.to_str()) != Some("replace") {
+                return Err(invalid());
+            }
+            let from = options
+                .get("--from-version")
+                .and_then(|value| value.to_str())
+                .ok_or_else(invalid)?;
+            let state = path("--state-dir")?;
+            let store = Store::open(&state, Origin::Headless)?;
+            if store.snapshot()?.phase != Phase::Disabled {
+                return Err(io::Error::other("host.update_confirmed_stop_required"));
+            }
+            let stage = TrustedStage::publish_release_files(
+                &path("--manifest")?,
+                &path("--signature")?,
+                &path("--archive")?,
+                &path("--cache-root")?,
+            )?;
+            let report = festerm_host_setup::controller::update(&store, &state, &stage, from)?;
+            serde_json::to_string_pretty(&report)
+                .map(|report| format!("{report}\n"))
+                .map_err(|_| io::Error::other("host.status_serialization"))
+        }
         #[cfg(feature = "owner-routing")]
         "uninstall" => {
             if options.get("--consent").and_then(|value| value.to_str()) != Some("remove") {
@@ -362,6 +409,7 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
     }
 }
 
+#[cfg(not(feature = "owner-routing"))]
 fn unavailable() -> io::Error {
     io::Error::new(
         io::ErrorKind::Unsupported,
@@ -488,6 +536,15 @@ fn diagnostic(error: &io::Error) -> &'static str {
             "host.runtime_current_owner_consent_required; complete reviewed host-local owner key and permission approval",
         "host.runtime_lock_missing_reconciliation_required" =>
             "host.runtime_lock_missing_reconciliation_required; preserve runtime history and reconcile exact ownership; no restart or stopped claim",
+        "host.update_recovery_required"
+        | "host.update_conflicting_recovery_intent"
+        | "host.update_superseded_reconcile_owned_resources" =>
+            "host.update_recovery_required; inspect update-status, preserve both signed bundles/receipts, retry the same explicit stopped update or revoke and perform exact-owned cleanup; no automatic enable or rollback",
+        "host.update_confirmed_stop_required" =>
+            "host.update_confirmed_stop_required; explicitly disable and confirm exact host/runtime stop before replacement; persistent daemons are not stop targets",
+        "host.update_strictly_newer_current_release_required"
+        | "host.update_stable_version_required" =>
+            "host.update_strictly_newer_current_release_required; use the independently trusted newer release updater and exact signed --from-version; downgrade and inferred version are forbidden",
         "host.service_signed_provenance_required" =>
             "host.service_signed_provenance_required; original signed release provenance required for runtime; old receipt remains cleanup-only",
         "host.native_removed_cloud_cleanup_pending" =>
@@ -630,7 +687,7 @@ mod tests {
     fn unavailable_host_operations_and_unsafe_options_fail_closed() {
         for command in ["setup", "run", "update", "uninstall"] {
             let expected = if cfg!(feature = "owner-routing")
-                && matches!(command, "setup" | "run" | "uninstall")
+                && matches!(command, "setup" | "run" | "uninstall" | "update")
             {
                 io::ErrorKind::Other
             } else {

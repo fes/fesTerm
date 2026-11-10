@@ -9587,3 +9587,77 @@ documentation does not change those tested bytes. Runtime's separate
 integration must retain its original authentication deadline and both
 same-issued-operation/lost-reply and actual two-daemon adoption/detach oracles,
 then qualify the new combined head independently.
+
+### ADR 0084 authenticated stopped-version replacement
+
+The shared native lane now implements `update --consent replace --from-version`
+and read-only `update-status`, not an Unsupported stub. It uses the independently
+trusted **new release's** updater, authenticates the complete current-version new
+bundle and the explicitly selected retained signed old version, and refuses
+downgrade, missing/changed helpers/provenance or missing current HostIdentity.
+No cached digest, observed process or candidate-derived version becomes trust.
+
+After explicit disable, an exclusive native-operation lease and free foreground
+runtime lease fence the transaction. A protected old/new native reservation is
+durable before effects. Prepared/Applying preserve unknown outcomes; exact old
+native stop/definition retirement precedes separately reserved new publication,
+observed stopped registration and atomic active-receipt commit, then Committed.
+The version-3 native receipt adds a unique reserved resource while preserving
+installation/origin/account/resource binding, settings, identity and grants.
+Both cached releases remain. No automatic enable, sign-in, rollback, grant
+reconstruction, cache overwrite or persistent-daemon/child stop is performed.
+
+Failure injection covers unknown manager reloads, lifecycle epoch revocation,
+same-target retry, corrupt/missing mutex/journal evidence, changed candidate or
+signed provenance and interruption **after** the active new receipt commits.
+Pending native cleanup observes and retires both reserved resources; it does not
+permit cloud DELETE or fabricate Removed. Repeated update reconciles only the
+same signed intent. Normal run/start/install/service-status refuses a pending
+update; update-status reports history and exact cached recovery provenance.
+An absent update journal is read without creating a native lock.
+
+Nine deterministic transaction cases use real protected lifecycle/identity/
+enrollment and test-key-signed archives with a typed fake Linux manager. The
+explicitly selected owned-daemon case additionally creates a real persistent
+daemon, observes its PID/generation/inventory and original helper bytes unchanged
+across the actual replacement core, and performs exact-generation cleanup.
+This is not real signed native manager switching or old-release compatibility.
+The first daemon selector accidentally selected zero nested test items; that
+warning/run is retained and **not evidence**. Moving it to module scope and
+requiring exactly one selected pass produced fresh actual daemon evidence.
+Compiler/Clippy REDs (mis-scoped helper, fixture permission field, needless borrow,
+default-build unused compatibility helper) remain in the owned logs.
+
+Final bounded jobs1 qualification, private warm `target/adr84-native`,
+dev/test debug0, incremental0 and repository-owned fixture root:
+
+- `cargo test --locked -p festerm-host -p festerm-host-setup` — **124 passed / 2 explicit ignored** (110 setup, 5 CLI units, 9 CLI integrations).
+- `FESTERM_ADR84_UPDATE_HELPER="$PWD/target/adr84-native/debug/festerm-sessiond" cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib native_host_update_preserves_actual -- --ignored` — **1 actual case passed / 0 ignored**, 2.17 seconds.
+- `cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings` — passed.
+- `cargo test --locked -p festerm-host --no-default-features` — **10 passed**.
+- `cargo check --locked -p festerm-host-setup --no-default-features --features native-services --lib` — passed.
+
+The owned helper/PTY pair was built with
+`cargo build --locked -p festerm-sessiond --bin festerm-sessiond -p festerm-pty-test-child --bin festerm-pty-test-child`.
+Logs use `target/adr84-native-evidence/update-*`; final source logs end in `3.log`.
+The optional POSIX aggregator registers the fixture only with an explicitly
+supplied owned helper; PowerShell records its Unix-only prerequisite. Broad
+optional/GUI/native service suites were not run.
+Packaging metadata and the same three Python packaging modules pass
+66 cases (59 passed / 7 skipped); fmt, traceability311, diff and POSIX runner
+syntax pass. PowerShell runner execution was unavailable/unrun. Existing vendored
+proxy/optional transport warnings remain without changing dependency source or
+weakening strict affected-package Clippy.
+
+Linux UserSignIn is still an unfinished current-logon prerequisite, not completed
+by update. Native-service documentation now proposes exact login1
+class/type/UID/session activation and asks the owner to decide tty/SSH eligibility
+and inactive/locked-session lifetime before implementation/VM qualification.
+Windows documentation derives a concrete compiled publisher/rotation/revocation/
+timestamp proposal from the existing release account/profile, requests an
+independently approved public policy export and explicit offline/freshness
+approval, and specifies same-user PID-plus-creation-identity graceful stop.
+No publisher subject/OID/pin or revocation exception is invented or accepted.
+Actual signed release, cloud/vault/native manager switching/compatibility,
+client first-connect, Windows/Linux/macOS and physical-device acceptance remain
+separate gates. Runtime/session/client moving source was not consumed.

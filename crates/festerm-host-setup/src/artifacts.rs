@@ -470,6 +470,9 @@ pub(crate) fn host_staging_fixture() -> VerifiedArtifact {
     tests::host_staging_fixture()
 }
 
+#[cfg(all(test, feature = "native-services"))]
+pub(crate) use tests::{host_version_fixture, verify_staging_fixture};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,8 +658,28 @@ mod tests {
         staging_fixture_for_package(Package::Host)
     }
 
+    #[cfg(feature = "native-services")]
+    pub(crate) fn host_version_fixture(version: &str) -> VerifiedArtifact {
+        staging_version_fixture(Package::Host, version)
+    }
+
+    #[cfg(feature = "native-services")]
+    pub(crate) fn verify_staging_fixture(
+        manifest: &[u8],
+        signature: &[u8],
+        archive: &[u8],
+        expected: &ExpectedArtifact<'_>,
+    ) -> Result<VerifiedArtifact, ArtifactError> {
+        verify_with_key(manifest, signature, archive, expected, &sign(b"", 42).0)
+    }
+
     #[cfg(feature = "lifecycle")]
     fn staging_fixture_for_package(package: Package) -> VerifiedArtifact {
+        staging_version_fixture(package, crate::VERSION)
+    }
+
+    #[cfg(feature = "lifecycle")]
+    fn staging_version_fixture(package: Package, version: &str) -> VerifiedArtifact {
         let platform = match std::env::consts::OS {
             "windows" => Platform::Windows,
             "macos" => Platform::Macos,
@@ -667,14 +690,22 @@ mod tests {
             _ => Architecture::X86_64,
         };
         let expected = ExpectedArtifact {
-            version: crate::VERSION,
+            version,
             platform,
             architecture,
             package,
         };
         let mut files = files_for_package(platform, package);
         files.iter_mut().find(|file| file.0 == "VERSION").unwrap().1 =
-            format!("{}\n", crate::VERSION).into_bytes();
+            format!("{version}\n").into_bytes();
+        if version != crate::VERSION {
+            for entry in files
+                .iter_mut()
+                .filter(|entry| entry.0.starts_with("festerm-"))
+            {
+                entry.1.extend_from_slice(version.as_bytes());
+            }
+        }
         let archive = if platform == Platform::Windows {
             zip(&files)
         } else {

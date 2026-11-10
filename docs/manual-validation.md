@@ -3631,6 +3631,26 @@ all-target Clippy and the setup library's standalone `native-services` check.
 Packaging metadata and Python66 (59 passed / 7 skipped), fmt, trace311 and diff
 checks pass. These do not replace the real native prerequisites above.
 
+The authenticated stopped-update slice adds deterministic transaction-core
+coverage for signed old/new complete helpers, preserved identity/account/resource/
+grants, stopped/runtime-lease admission, version/downgrade refusal, native reload
+unknowns, same-target retry, epoch revocation, candidate/provenance tamper,
+post-receipt interruption, missing mutex/corrupt journal and exact cleanup of
+both reservations. Synthetic archives use a cfg(test)-only signer/qualifier and
+typed fake native manager; no real service or credential store is touched.
+The explicitly selected owned-daemon case separately proves the same actual
+persistent PID/generation, original helper bytes and running inventory survive
+the actual replacement core, then observes exact-generation cleanup. It is not
+positive signed native manager switching or old-release daemon compatibility.
+HOSTSETUP-01 remains partial/native; Windows policy and Linux current-logon
+eligibility decisions are specified in native-host-services, not accepted or
+bypassed. Client first-connect/mobile/GPU/live cloud evidence is unchanged.
+Final source qualification: 124 host/setup tests passed with 2 explicit ignores;
+the actual owned-daemon case was separately selected and passed (0 ignored).
+Compatibility CLI10, strict affected all-target Clippy, standalone native-services
+check, Python59/7skipped, packaging/fmt/trace311/diff and optional POSIX syntax pass.
+The broad optional/GUI suite and PowerShell runner execution were not performed.
+
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;
 that needs separate default-No confirmation for its exact generation. That

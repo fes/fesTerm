@@ -370,6 +370,20 @@ silently. Keep referenced binaries and rollback information. Rollback must not
 restore revoked grants or incompatible state. A failed update leaves the working
 version usable where safe and reports repair-required accurately.
 
+The shared stopped-version transaction is now implemented through explicit
+headless `update --consent replace --from-version ...` and `update-status`.
+The independently trusted new release updater admits only its compiled current
+bundle and strictly newer stable version, reauthenticates all retained old/new
+executables against signed provenance, and preserves protected HostIdentity/
+account/resource/grants plus independent persistent daemon state. A protected
+old/new native reservation journals Prepared/Applying/Committed/Aborted; native
+unknowns and interrupted receipt commit are reconciled only against that same
+intent. No background sign-in, automatic reenable/rollback, grant reconstruction
+or daemon/child kill is added. Revoke-first stop/cleanup covers both pending native
+resources, leaving cloud CleanupPending separate. Deterministic failure-injection
+and actual owned-daemon PID/generation survival are source/fixture evidence, not
+real signed manager switching, old-daemon compatibility or native acceptance.
+
 ### 10. Protocol, resource and failure contract
 
 Introduce an explicitly versioned host marker/capability handshake distinct from

@@ -676,6 +676,7 @@ if ($env:FESTERM_RUN_SURFACE_PROFILE -eq '1') {
     Write-OptionalResult "`nsuite=interactive-surface-profile status=skipped reason=explicit-opt-in"
 }
 
+Write-OptionalResult "`nsuite=host-update-owned-daemon status=skipped reason=use-posix-runner-with-explicit-owned-helper"
 Write-OptionalResult "`nsuite=android-native status=skipped reason=use-posix-runner-with-selected-emulator"
 
 if ($IsMacOS) {

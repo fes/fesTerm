@@ -25,7 +25,10 @@ The contracts, local durable session control, protected enrollment and bounded
 framed/native-control adapters have focused evidence, including actual signed
 SSH owner proof and adopted terminal routing/detach. The default headless build
 now composes explicit signed setup, foreground account consent, separate
-owner-key/permission approval and run. Configuration defaults disabled; no
+owner-key/permission approval, run and authenticated stopped-version update.
+The update transaction preserves exact identity/grants, retained helpers and
+independent persistent daemons; native signed switching remains unqualified.
+Configuration defaults disabled; no
 listener starts from compilation/import. Combined-source review, real release/
 cloud/vault/service/device qualification and foreground client trust/session
 chooser evidence remain open. This source is not a native Ready/acceptance claim.
