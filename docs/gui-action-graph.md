@@ -1606,7 +1606,11 @@ for in-process retry, and uses the same frontend snapshot/adoption path.
 HOST-01/02 remain partial. The subsequent opt-in shared mobile `host-clients`
 route adds explicit account-scoped discovery/refresh, protected owner review,
 inventory, Create/Ensure and installed-frontend adoption; it cancels HOST work
-from native callbacks without another frame. Framed mobile tests and the
+from native callbacks without another frame. Non-relay receipt crash/race
+regressions cover staged atomic no-replace
+publication, inert abandoned staging and exactly-one-key recovery; malformed
+finals remain Storage rather than absence. These do not prove native vault or
+actual jetsam behavior. Framed mobile tests and the
 separate signed-SSH/native-PTY adapter fixture are automated evidence. Combined
 source `c5f2d024` passes all sixteen individual actual-helper routes once,
 with fresh private1.98 helper-copy hashes preserved before/after each command,

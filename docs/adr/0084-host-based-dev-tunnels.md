@@ -909,7 +909,13 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `HostSession` frontend adoption. Callback-owned cancellation precedes worker
   admission and does not wait for a UI frame. Original creation actions remain
   process-local and are retired only after frontend adoption plus activation,
-  not merely worker admission. Combined fixed source `c5f2d024` passes all
+  not merely worker admission. The non-relay Unix protected receipt publisher
+  now stages/syncs complete bytes before anchored atomic no-replace publication
+  and directory sync; interrupted writes and final-name races cannot poison or
+  overwrite the final receipt. Abandoned staging remains inert; malformed
+  finals remain Storage without key creation. Focused non-relay regressions
+  cover those boundaries; native vault/jetsam/device acceptance remains open.
+  Combined fixed source `c5f2d024` passes all
   sixteen separately selected actual-helper SSH/native-PTY routes, including
   mobile adoption, original-operation replay and both collector/frontend
   isolation oracles, with fresh private1.98 helper copies and per-command

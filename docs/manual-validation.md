@@ -71,6 +71,11 @@ gates are in [the qualification receipt](milestone-progress.md#qualifying-the-co
 
 In an explicitly owned iOS/Android native window, still verify:
 
+- jetsam/disk-full receipt preparation: deterministic non-relay fixtures now
+  prove staged atomic no-replace publication, write/rename cleanup, inert
+  abandoned staging and exactly-one-key recovery, but actual native
+  filesystem/quota/jetsam and vault execution remain unrun; malformed final
+  metadata must remain Storage rather than being repaired or treated absent;
 - opening/importing/saving while offline performs no discovery, sign-in or
   trust/enrollment; only explicit Find/refresh uses the chosen signed-in account;
   service omissions are not session absence;

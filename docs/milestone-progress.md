@@ -1,5 +1,51 @@
 # Milestone Progress Narrative
 
+## Publishing portable owner receipts atomically
+
+The retained #705 reliability gate found a real crash/ENOSPC defect in the
+non-relay Unix receipt backend: it exclusively created the **final** JSON name
+before writing/syncing. A partial write or jetsam could permanently poison
+Prepare/Load with Storage before any owner key existed. The separately
+implemented relay publisher already staged safely; its prior actual native
+qualification does not prove this mobile path.
+
+A minimal child of frozen `0747f13b` now applies the existing anchored Unix
+private-file and atomic `rename_noreplace` primitives locally: exclusively
+create a unique private `.stage-*` entry, write completely, sync the file,
+publish without overwriting and sync the directory. Write/rename failure
+removes only this call's staging entry and syncs that removal; cleanup errors
+are returned. A post-rename sync failure never deletes the complete final
+receipt. A crash-abandoned staging entry is not authority and is not adopted
+or indiscriminately deleted. A malformed final is still Storage, not Missing
+or a reason to regenerate a key. No relay/setup dependency, new filesystem
+framework, public API, fallback or live vault use is introduced.
+
+The private writer seam follows `setup_storage.rs`'s existing narrow fixture
+pattern. Keeping the original final-before-write algorithm, the exact
+partial-write regression produced **0 pass/1 fail**, exit101, exposing the
+three truncated final bytes. An earlier short-name `--exact` selector ran
+zero tests and is retained as **non-evidence**. After the atomic change the
+non-relay approval selection passes **12/0/0**. Its four new regressions cover
+write interruption plus cleanup/retry, an actual final-name race plus
+no-overwrite/cleanup, abandoned partial staging followed by exactly one
+reserved key across Prepare/Load/reopen, and malformed final refusal with zero
+key creation. These are deterministic file/memory-vault tests, not actual
+jetsam, ENOSPC hardware or native-vault acceptance.
+
+Work is isolated in `fesTerm-adr84-mobile-receipt-atomic-nov10`; the frozen
+mobile tree and all native artifacts remain untouched. Before cloning its
+released warm target into a distinct private target, the original Simulator
+executable was also preserved and measured as
+`bc93642364e6359081102108f806aa0230820d00c052aac08574c8ef93fcb133`.
+Original helpers remain the previously measured913f/7901 bytes. Their sixteen
+actual route passes belong only to source `c5f2d024`, not this receipt child;
+no native-route rerun is justified or claimed for this non-relay-only fix.
+Final fixed-source private1.98 test/lint/Simulator receipts follow separately.
+Source-level reviews and required three-OS CI, physical mobile/privacy/vault,
+GUI/cloud, sharing/end/restart and runtime-owned desktop Settings gates remain
+open. No package/tool install, OS/device/provider/release operation or push
+is involved.
+
 ## Qualifying the combined executable mobile HOST client
 
 Qualified source is normal two-parent merge

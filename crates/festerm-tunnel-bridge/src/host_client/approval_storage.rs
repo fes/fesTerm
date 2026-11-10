@@ -85,10 +85,37 @@ pub(super) fn read_private(directory: &File, name: &Path, max: usize) -> io::Res
 }
 
 pub(super) fn publish_new(directory: &File, name: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = private_file(directory, name, true)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    directory.sync_all()
+    publish_new_with(directory, name, bytes, |file, bytes| file.write_all(bytes))
+}
+
+fn publish_new_with(
+    directory: &File,
+    name: &Path,
+    bytes: &[u8],
+    write: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
+    match private_file(directory, name, false) {
+        Ok(_) => return Err(io::ErrorKind::AlreadyExists.into()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let staging = format!(".stage-{}", festerm_host_protocol::OperationId::new());
+    let staging = Path::new(&staging);
+    let mut file = private_file(directory, staging, true)?;
+    let result = (|| {
+        write(&mut file, bytes)?;
+        file.sync_all()?;
+        unix::rename_noreplace(directory, staging, directory, name)?;
+        directory.sync_all()
+    })();
+    if result.is_err() {
+        match unix::remove_private_staging_file(directory, staging) {
+            Ok(()) => directory.sync_all()?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -107,4 +134,58 @@ pub(super) fn replace_private(directory: &File, name: &Path, bytes: &[u8]) -> io
     }
     result?;
     directory.sync_all()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portable_receipt_interrupted_write_never_publishes_final() {
+        let parent = std::env::current_dir().unwrap().join("target");
+        std::fs::create_dir_all(&parent).unwrap();
+        let root = private_test_directory_in(&parent);
+        let directory = private_directory(root.path(), false).unwrap();
+        let name = Path::new("receipt.json");
+        assert!(
+            publish_new_with(&directory, name, b"complete", |file, bytes| {
+                file.write_all(&bytes[..3])?;
+                Err(io::Error::other("fixture.interrupted_write"))
+            })
+            .is_err()
+        );
+        assert_eq!(
+            read_private(&directory, name, 32).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        publish_new(&directory, name, b"complete").unwrap();
+        assert_eq!(read_private(&directory, name, 32).unwrap(), b"complete");
+    }
+
+    #[test]
+    fn portable_receipt_racing_final_is_never_overwritten_and_staging_is_removed() {
+        let parent = std::env::current_dir().unwrap().join("target");
+        std::fs::create_dir_all(&parent).unwrap();
+        let root = private_test_directory_in(&parent);
+        let directory = private_directory(root.path(), false).unwrap();
+        let name = Path::new("receipt.json");
+        let error = publish_new_with(&directory, name, b"replacement", |file, bytes| {
+            let mut existing = private_file(&directory, name, true)?;
+            existing.write_all(b"original")?;
+            existing.sync_all()?;
+            file.write_all(bytes)
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(read_private(&directory, name, 32).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+        assert_eq!(
+            publish_new(&directory, name, b"another")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(read_private(&directory, name, 32).unwrap(), b"original");
+    }
 }

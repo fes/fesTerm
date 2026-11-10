@@ -39,6 +39,134 @@ fn fixture() -> (
     (root, index, MemorySecretStore::new())
 }
 
+#[cfg(all(unix, not(feature = "relay")))]
+struct CountingVault {
+    inner: MemorySecretStore,
+    creates: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(all(unix, not(feature = "relay")))]
+impl SecretStore for CountingVault {
+    fn create_reserved(
+        &self,
+        reference: &SecretReference,
+        secret: &festerm_secret_store::SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        self.creates
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.create_reserved(reference, secret)
+    }
+
+    fn put(
+        &self,
+        _: &festerm_secret_store::SecretBytes,
+    ) -> Result<SecretReference, SecretStoreError> {
+        panic!("receipt preparation must use its reserved reference")
+    }
+
+    fn get(
+        &self,
+        reference: &SecretReference,
+    ) -> Result<festerm_secret_store::SecretBytes, SecretStoreError> {
+        self.inner.get(reference)
+    }
+
+    fn update(
+        &self,
+        reference: &SecretReference,
+        secret: &festerm_secret_store::SecretBytes,
+    ) -> Result<(), SecretStoreError> {
+        self.inner.update(reference, secret)
+    }
+
+    fn delete(&self, reference: &SecretReference) -> Result<bool, SecretStoreError> {
+        self.inner.delete(reference)
+    }
+}
+
+#[cfg(all(unix, not(feature = "relay")))]
+#[test]
+fn selected_host_portable_receipt_abandoned_staging_recovers_exactly_one_key() {
+    use std::{io::Write, sync::atomic::Ordering};
+    let (_root, index, inner) = fixture();
+    let vault = CountingVault {
+        inner,
+        creates: 0.into(),
+    };
+    let binding = binding();
+    let directory = index.directory(true).unwrap();
+    let staging = format!(".stage-{}", festerm_host_protocol::OperationId::new());
+    let staging = Path::new(&staging);
+    let mut interrupted =
+        festerm_unix_security::open_private_file(&directory, staging, true).unwrap();
+    interrupted.write_all(b"{\"v").unwrap();
+    interrupted.sync_all().unwrap();
+    drop(interrupted);
+    assert!(matches!(
+        index.load_with(&vault, &binding.host.host, &binding.account),
+        Err(Error::Missing)
+    ));
+    assert_eq!(vault.creates.load(Ordering::SeqCst), 0);
+    let receipt = index.prepare_with(&vault, review(&binding)).unwrap();
+    let name = ReceiptIndex::name(&binding.host.host, &binding.account, "json").unwrap();
+    let original = storage::read_private(&directory, &name, MAX_RECEIPT_BYTES).unwrap();
+    assert_eq!(
+        storage::publish_new(&directory, &name, b"replacement")
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::AlreadyExists
+    );
+    assert_eq!(
+        storage::read_private(&directory, &name, MAX_RECEIPT_BYTES).unwrap(),
+        original
+    );
+    let reopened = index.prepare_with(&vault, review(&binding)).unwrap();
+    assert_eq!(reopened.public_key(), receipt.public_key());
+    assert_eq!(
+        reopened.reference().to_persisted_string(),
+        receipt.reference().to_persisted_string()
+    );
+    assert_eq!(
+        index
+            .load_with(&vault, &binding.host.host, &binding.account)
+            .unwrap()
+            .public_key(),
+        receipt.public_key()
+    );
+    assert_eq!(vault.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        storage::read_private(&directory, staging, 32).unwrap(),
+        b"{\"v"
+    );
+}
+
+#[cfg(all(unix, not(feature = "relay")))]
+#[test]
+fn selected_host_portable_receipt_malformed_final_remains_storage_without_key_creation() {
+    let (_root, index, inner) = fixture();
+    let vault = CountingVault {
+        inner,
+        creates: 0.into(),
+    };
+    let binding = binding();
+    let directory = index.directory(true).unwrap();
+    let name = ReceiptIndex::name(&binding.host.host, &binding.account, "json").unwrap();
+    storage::write_new_private(&directory, &name, b"{\"v").unwrap();
+    assert!(matches!(
+        index.load_with(&vault, &binding.host.host, &binding.account),
+        Err(Error::Storage)
+    ));
+    assert!(matches!(
+        index.prepare_with(&vault, review(&binding)),
+        Err(Error::Storage)
+    ));
+    assert_eq!(vault.creates.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        storage::read_private(&directory, &name, 32).unwrap(),
+        b"{\"v"
+    );
+}
+
 #[test]
 fn selected_host_receipt_review_requires_exact_account_host_and_independent_pin() {
     let binding = binding();
