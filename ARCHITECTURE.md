@@ -747,6 +747,13 @@ Its local `host_control::SessionControl` journals owner/logical identity,
 immutable launch intent, reserved generations, operation results and revocation
 revisions through the existing private no-follow/atomic storage boundary. It
 uses the real detached native launcher and single-writer daemon admission.
+Read-only reconciliation cannot create a fresh reservation. Completed operation
+receipts and retired logical fences reclaim active journal slots through
+bounded exact-key records; uncertain local abandonment seals a generation
+without declaring absence. History is never blindly deleted and its total disk
+use is not bounded by the active journal limits. Per-action relay helpers retain
+current policy, journal and exact daemon lease guards only over nonblocking
+local actions, never network waits.
 The daemon's own loop enforces temporary heartbeat/grace deadlines from
 generation/lease-fenced private records, independently of bridge/client lifetime.
 Temporary ownership changes commit beside the writer replacement only after

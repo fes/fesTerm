@@ -76,6 +76,41 @@ impl Fixture {
         .unwrap()
     }
 
+    fn failing_control(&self) -> (SessionControl, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let helper = self.root.join("owned-failing-helper");
+        let marker = self.root.join("helper-called");
+        fs::write(
+            &helper,
+            format!("#!/bin/sh\nprintf called >'{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        (
+            SessionControl::with_helper(&self.root, &helper).unwrap(),
+            marker,
+        )
+    }
+
+    fn state(&self) -> serde_json::Value {
+        let directory = storage::private_directory(&self.root, false).unwrap();
+        serde_json::from_slice(
+            &storage::read_private(&directory, Path::new("host-sessions.json"), 4 * 1024 * 1024)
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn save_state(&self, state: &serde_json::Value) {
+        let directory = storage::private_directory(&self.root, false).unwrap();
+        storage::replace_private(
+            &directory,
+            Path::new("host-sessions.json"),
+            &serde_json::to_vec(state).unwrap(),
+        )
+        .unwrap();
+    }
+
     fn creation(&self, lifetime: Lifetime) -> Creation {
         let child = Path::new(env!("CARGO_BIN_EXE_festerm-sessiond"))
             .with_file_name("festerm-pty-test-child");
@@ -95,7 +130,356 @@ impl Fixture {
             lifetime,
         }
     }
+}
 
+#[test]
+fn reconciliation_without_launch_journal_never_executes_helper_even_with_active_lease() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let operation = OperationId::new();
+    let (control, marker) = fixture.failing_control();
+    assert!(matches!(
+        control.ensure(
+            &fixture.owner,
+            &operation,
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Unknown)
+    ));
+    assert!(marker.exists());
+    fs::remove_file(&marker).unwrap();
+    let launch = fixture.root.join(format!("launch-{operation}.json"));
+    fs::remove_file(&launch).unwrap();
+    let state = fixture.state();
+    let generation = state["sessions"][creation.logical.as_str()]["generation"]
+        .as_str()
+        .unwrap()
+        .parse::<u128>()
+        .unwrap();
+    let lease: serde_json::Value = serde_json::from_slice(
+        &fs::read(fixture.root.join(format!("host-daemon-{generation}.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(lease["stopped"], false);
+    assert_eq!(lease["deadline_ms"], serde_json::Value::Null);
+    assert_eq!(
+        control
+            .lookup(&fixture.owner, &creation.logical, allow)
+            .unwrap(),
+        Lookup::Unknown
+    );
+    assert!(control.inventory(&fixture.owner, allow).unwrap().is_empty());
+    for (cancelled, deny) in [(true, false), (false, true)] {
+        assert!(control
+            .ensure(
+                &fixture.owner,
+                &operation,
+                &creation,
+                false,
+                &AtomicBool::new(cancelled),
+                |_| if deny {
+                    Err(ControlError::Denied)
+                } else {
+                    Ok(())
+                },
+            )
+            .is_err());
+    }
+    let mut revoked = fixture.state();
+    revoked["sessions"][creation.logical.as_str()]["revoked"] = true.into();
+    fixture.save_state(&revoked);
+    assert!(matches!(
+        control.lookup(&fixture.owner, &creation.logical, allow),
+        Err(ControlError::Revoked)
+    ));
+    assert!(control.inventory(&fixture.owner, allow).unwrap().is_empty());
+    assert!(
+        !marker.exists(),
+        "reconciliation invoked the creation helper"
+    );
+    assert!(
+        !launch.exists(),
+        "reconciliation wrote a new launch journal"
+    );
+    assert!(list_running_sessions_in(&fixture.root).unwrap().is_empty());
+}
+
+#[test]
+fn transient_native_observation_preserves_bound_running_phase_and_revision() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let running = fixture.ensure(&creation);
+    let before = fixture.state();
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let registry =
+        storage::read_private(&directory, Path::new("registry.json"), 4 * 1024 * 1024).unwrap();
+    storage::replace_private(&directory, Path::new("registry.json"), b"invalid").unwrap();
+    let observed = fixture
+        .control()
+        .lookup(&fixture.owner, &creation.logical, allow);
+    storage::replace_private(&directory, Path::new("registry.json"), &registry).unwrap();
+    assert!(matches!(observed, Err(ControlError::Unknown)));
+    assert_eq!(fixture.state()["sessions"], before["sessions"]);
+    assert_eq!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &creation.logical, allow)
+            .unwrap(),
+        Lookup::Running(running.target)
+    );
+}
+
+#[test]
+fn operation_capacity_retires_receipts_without_resurrection_or_resume_outage() {
+    use festerm_host_protocol::MAX_IDEMPOTENCY_RECORDS;
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let running = fixture.ensure(&creation);
+    let mut state = fixture.state();
+    let ids: Vec<_> = (0..MAX_IDEMPOTENCY_RECORDS)
+        .map(|_| OperationId::new())
+        .collect();
+    for id in &ids {
+        state["operations"][id.as_str()] = serde_json::json!({
+            "owner": fixture.owner,
+            "creation": creation,
+            "generation": running.target.generation,
+            "created": false,
+            "recreated": false,
+            "create_only": false,
+        });
+    }
+    fixture.save_state(&state);
+    for _ in 0..MAX_IDEMPOTENCY_RECORDS + 2 {
+        assert_eq!(fixture.ensure(&creation).target, running.target);
+    }
+    assert!(fixture.state()["operations"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        fixture
+            .control()
+            .ensure(
+                &fixture.owner,
+                &ids[0],
+                &creation,
+                false,
+                &AtomicBool::new(false),
+                allow
+            )
+            .unwrap()
+            .target,
+        running.target,
+    );
+    fixture
+        .control()
+        .end(&fixture.owner, &running.target, allow)
+        .unwrap();
+    fixture.wait_absent(&running.target);
+    let replacement = fixture.ensure(&creation);
+    assert_ne!(replacement.target.generation, running.target.generation);
+    assert!(matches!(
+        fixture.control().ensure(
+            &fixture.owner,
+            &ids[0],
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Ended)
+    ));
+    let mut changed = creation.clone();
+    changed.recipe.args.push("changed".into());
+    assert!(matches!(
+        fixture.control().ensure(
+            &fixture.owner,
+            &ids[0],
+            &changed,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::OperationConflict)
+    ));
+}
+
+#[test]
+fn logical_capacity_retires_absent_records_but_never_erases_revocation_or_generation_fences() {
+    use festerm_host_protocol::MAX_SESSIONS;
+    use sha2::{Digest, Sha256};
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Persistent {});
+    let running = fixture.ensure(&creation);
+    fixture
+        .control()
+        .end(&fixture.owner, &running.target, allow)
+        .unwrap();
+    fixture.wait_absent(&running.target);
+    let mut state = fixture.state();
+    let original = state["sessions"][creation.logical.as_str()].clone();
+    let mut revoked = None;
+    for index in 1..MAX_SESSIONS {
+        let logical = LogicalSessionId::new();
+        let mut record = original.clone();
+        record["logical"] = logical.as_str().into();
+        let mut hash = Sha256::new();
+        hash.update(b"festerm-host-session-v1\0");
+        hash.update(fixture.owner.as_str());
+        hash.update(logical.as_str());
+        record["name"] = format!("hs-{:x}", hash.finalize())[..51].into();
+        record["revoked"] = (index == 1).into();
+        if index == 1 {
+            revoked = Some(logical.clone());
+        }
+        state["sessions"][logical.as_str()] = record;
+    }
+    fixture.save_state(&state);
+    let next = fixture.creation(Lifetime::Persistent {});
+    let replacement = fixture
+        .control()
+        .ensure(
+            &fixture.owner,
+            &OperationId::new(),
+            &next,
+            false,
+            &AtomicBool::new(false),
+            allow,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "after logical capacity retirement: {error}; active journal: {}",
+                fixture.state()
+            )
+        });
+    assert!(replacement.target.generation > running.target.generation);
+    assert_eq!(fixture.state()["sessions"].as_object().unwrap().len(), 1);
+    assert_eq!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &creation.logical, allow)
+            .unwrap(),
+        Lookup::Absent
+    );
+    assert!(matches!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &revoked.unwrap(), allow),
+        Err(ControlError::Revoked)
+    ));
+    assert!(matches!(
+        fixture.control().ensure(
+            &fixture.owner,
+            &OperationId::new(),
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Ended)
+    ));
+}
+
+#[test]
+fn local_quarantine_retirement_releases_pending_budget_without_asserting_absence() {
+    use festerm_host_protocol::MAX_PENDING_CREATES;
+    let fixture = Fixture::new();
+    let (control, marker) = fixture.failing_control();
+    let mut pending = Vec::new();
+    for _ in 0..MAX_PENDING_CREATES {
+        let creation = fixture.creation(Lifetime::Persistent {});
+        let operation = OperationId::new();
+        assert!(matches!(
+            control.ensure(
+                &fixture.owner,
+                &operation,
+                &creation,
+                false,
+                &AtomicBool::new(false),
+                allow
+            ),
+            Err(ControlError::Unknown)
+        ));
+        let state = fixture.state();
+        let generation: GenerationId = serde_json::from_value(
+            state["sessions"][creation.logical.as_str()]["generation"].clone(),
+        )
+        .unwrap();
+        pending.push((creation, operation, generation));
+    }
+    let next = fixture.creation(Lifetime::Persistent {});
+    assert!(matches!(
+        fixture.control().ensure(
+            &fixture.owner,
+            &OperationId::new(),
+            &next,
+            false,
+            &AtomicBool::new(false),
+            allow
+        ),
+        Err(ControlError::Busy)
+    ));
+    fs::remove_file(&marker).unwrap();
+    let interrupted = fixture.state();
+    for (creation, _, generation) in &pending {
+        let target = Target {
+            logical: creation.logical.clone(),
+            generation: *generation,
+        };
+        assert!(matches!(
+            control.retire_local(&PrincipalId::new(), &target),
+            Err(ControlError::Denied)
+        ));
+        control.retire_local(&fixture.owner, &target).unwrap();
+        assert!(DaemonWatch::open(
+            &fixture.root,
+            interrupted["sessions"][creation.logical.as_str()]["name"]
+                .as_str()
+                .unwrap(),
+            generation.get()
+        )
+        .unwrap()
+        .should_stop());
+    }
+    // Crash after durable tombstones but before active-journal deletion.
+    fixture.save_state(&interrupted);
+    let running = fixture.ensure(&next);
+    assert_eq!(fixture.state()["sessions"].as_object().unwrap().len(), 1);
+    for (creation, operation, _) in &pending {
+        assert_eq!(
+            control
+                .lookup(&fixture.owner, &creation.logical, allow)
+                .unwrap(),
+            Lookup::Unknown
+        );
+        assert!(matches!(
+            control.ensure(
+                &fixture.owner,
+                operation,
+                creation,
+                false,
+                &AtomicBool::new(false),
+                allow
+            ),
+            Err(ControlError::Unknown)
+        ));
+    }
+    assert!(!marker.exists());
+    assert_eq!(list_running_sessions_in(&fixture.root).unwrap().len(), 1);
+    assert_eq!(
+        fixture
+            .control()
+            .lookup(&fixture.owner, &next.logical, allow)
+            .unwrap(),
+        Lookup::Running(running.target)
+    );
+}
+
+impl Fixture {
     fn ensure(&self, creation: &Creation) -> festerm_sessiond::host_control::EnsureResult {
         self.control()
             .ensure(
@@ -863,6 +1247,102 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
             .len(),
         1
     );
+}
+
+#[test]
+fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation() {
+    let fixture = Fixture::new();
+    let creation = fixture.creation(Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    });
+    let running = fixture.ensure(&creation);
+    let control = fixture.control();
+    let pending = fixture.attach(&running.target, &creation.attachment, false);
+    let ticket = pending.ticket.as_ref().unwrap();
+    let expected = pending.reserved_lease.as_ref().unwrap();
+    assert!(matches!(
+        control.with_attachment_authorized(
+            &fixture.owner,
+            &running.target,
+            Some(expected),
+            allow,
+            || Ok(())
+        ),
+        Err(ControlError::Stale)
+    ));
+    assert!(matches!(
+        control.with_pending_attachment_authorized(
+            &fixture.owner,
+            &running.target,
+            &OperationId::new(),
+            expected,
+            allow,
+            || Ok(())
+        ),
+        Err(ControlError::Stale)
+    ));
+    struct Guard(Arc<AtomicBool>);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Release);
+        }
+    }
+    let held = Arc::new(AtomicBool::new(false));
+    control
+        .with_pending_attachment_authorized(
+            &fixture.owner,
+            &running.target,
+            ticket,
+            expected,
+            |_| {
+                held.store(true, Ordering::Release);
+                Ok(Guard(held.clone()))
+            },
+            || {
+                assert!(held.load(Ordering::Acquire));
+                assert!(matches!(
+                    control.lookup(&fixture.owner, &creation.logical, allow),
+                    Err(ControlError::Busy)
+                ));
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert!(!held.load(Ordering::Acquire));
+    let (active, committed) = fixture.adopt(&running.target, pending);
+    control
+        .with_attachment_authorized(
+            &fixture.owner,
+            &running.target,
+            committed.as_ref(),
+            allow,
+            || Ok(()),
+        )
+        .unwrap();
+    assert!(matches!(
+        control.with_attachment_authorized(
+            &fixture.owner,
+            &running.target,
+            committed.as_ref(),
+            |_| Err::<(), _>(ControlError::Denied),
+            || -> Result<(), ControlError> { panic!("denied action ran") }
+        ),
+        Err(ControlError::Denied)
+    ));
+    control
+        .revoke_local(&fixture.owner, &creation.logical)
+        .unwrap();
+    assert!(matches!(
+        control.with_attachment_authorized(
+            &fixture.owner,
+            &running.target,
+            committed.as_ref(),
+            allow,
+            || -> Result<(), ControlError> { panic!("revoked action ran") }
+        ),
+        Err(ControlError::Revoked)
+    ));
+    drop(active);
 }
 
 #[test]

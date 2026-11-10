@@ -31,6 +31,7 @@ use std::{
 
 const STATE_LIMIT: usize = 4 * 1024 * 1024;
 const STATE_FILE: &str = "host-sessions.json";
+const HISTORY_LIMIT: usize = 4096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlError {
@@ -218,12 +219,75 @@ struct Operation {
     create_only: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OperationReceipt {
+    owner: PrincipalId,
+    intent: String,
+    generation: GenerationId,
+    created: bool,
+    recreated: bool,
+}
+
+impl OperationReceipt {
+    fn intent(
+        owner: &PrincipalId,
+        creation: &Creation,
+        create_only: bool,
+    ) -> Result<String, ControlError> {
+        let bytes = serde_json::to_vec(&(owner, creation, create_only))
+            .map_err(|_| ControlError::Storage)?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
+
+    fn from_operation(operation: &Operation) -> Result<Self, ControlError> {
+        Ok(Self {
+            owner: operation.owner.clone(),
+            intent: Self::intent(&operation.owner, &operation.creation, operation.create_only)?,
+            generation: operation.generation,
+            created: operation.created,
+            recreated: operation.recreated,
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetiredSession {
+    owner: PrincipalId,
+    logical: LogicalSessionId,
+    generation: GenerationId,
+    epoch: Epoch,
+    revoked: bool,
+    uncertain: bool,
+}
+
+impl RetiredSession {
+    fn grant(&self) -> SessionGrant {
+        SessionGrant {
+            logical: self.logical.clone(),
+            owner: self.owner.clone(),
+            revision: self.epoch,
+            remote_access: !self.revoked,
+            state: if self.revoked {
+                LogicalState::Revoked
+            } else if self.uncertain {
+                LogicalState::Unknown
+            } else {
+                LogicalState::Absent
+            },
+        }
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct State {
     version: u8,
     sessions: BTreeMap<LogicalSessionId, Record>,
     operations: BTreeMap<OperationId, Operation>,
+    #[serde(default)]
+    last_generation: u128,
 }
 
 struct Transaction {
@@ -233,6 +297,109 @@ struct Transaction {
 }
 
 impl Transaction {
+    fn history<T: serde::de::DeserializeOwned>(
+        &self,
+        name: &Path,
+    ) -> Result<Option<T>, ControlError> {
+        match storage::read_private(&self.directory, name, HISTORY_LIMIT) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|_| ControlError::Storage),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(storage_error(error)),
+        }
+    }
+
+    fn write_history(&self, name: &Path, value: &impl Serialize) -> Result<(), ControlError> {
+        let bytes = serde_json::to_vec(value).map_err(|_| ControlError::Storage)?;
+        if bytes.len() > HISTORY_LIMIT {
+            return Err(ControlError::Storage);
+        }
+        // The global journal lock owns publication. Atomic replacement of a
+        // missing entry avoids exposing a partially written permanent fence.
+        match storage::read_private(&self.directory, name, HISTORY_LIMIT) {
+            Ok(old) => {
+                if old.as_slice() == bytes.as_slice() {
+                    Ok(())
+                } else {
+                    Err(ControlError::Storage)
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                storage::replace_private(&self.directory, name, &bytes).map_err(storage_error)
+            }
+            Err(error) => Err(storage_error(error)),
+        }
+    }
+
+    fn receipt(&self, operation: &OperationId) -> Result<Option<OperationReceipt>, ControlError> {
+        self.history(Path::new(&format!("host-receipt-{operation}.json")))
+    }
+
+    fn retired(&self, logical: &LogicalSessionId) -> Result<Option<RetiredSession>, ControlError> {
+        let retired: Option<RetiredSession> =
+            self.history(Path::new(&format!("host-retired-{logical}.json")))?;
+        if retired
+            .as_ref()
+            .is_some_and(|record| &record.logical != logical)
+        {
+            return Err(ControlError::Storage);
+        }
+        Ok(retired)
+    }
+
+    fn retire_operations(
+        &mut self,
+        logical: Option<&LogicalSessionId>,
+    ) -> Result<(), ControlError> {
+        let completed: Vec<_> = self
+            .state
+            .operations
+            .iter()
+            .filter(|(_, operation)| {
+                logical.is_some_and(|logical| logical == &operation.creation.logical)
+                    || self
+                        .state
+                        .sessions
+                        .get(&operation.creation.logical)
+                        .is_some_and(|record| !matches!(record.phase, Phase::Launching))
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        if completed.is_empty() {
+            return Ok(());
+        }
+        for id in completed {
+            let receipt = OperationReceipt::from_operation(&self.state.operations[&id])?;
+            self.write_history(Path::new(&format!("host-receipt-{id}.json")), &receipt)?;
+            self.state.operations.remove(&id);
+        }
+        self.save()
+    }
+
+    fn retire_record(&mut self, logical: &LogicalSessionId) -> Result<(), ControlError> {
+        let record = self
+            .state
+            .sessions
+            .get(logical)
+            .ok_or(ControlError::Denied)?;
+        let retired = RetiredSession {
+            owner: record.owner.clone(),
+            logical: logical.clone(),
+            generation: record.generation,
+            epoch: record.epoch.next().map_err(|_| ControlError::Storage)?,
+            revoked: record.revoked,
+            uncertain: !matches!(record.phase, Phase::Absent),
+        };
+        // Receipt/tombstone durability precedes removal from the active journal.
+        // A crash between these writes leaves a sealed, not reusable identity.
+        self.write_history(Path::new(&format!("host-retired-{logical}.json")), &retired)?;
+        self.retire_operations(Some(logical))?;
+        self.state.last_generation = self.state.last_generation.max(retired.generation.get());
+        self.state.sessions.remove(logical);
+        self.save()
+    }
+
     fn save(&self) -> Result<(), ControlError> {
         let bytes = serde_json::to_vec(&self.state).map_err(|_| ControlError::Storage)?;
         if bytes.len() > STATE_LIMIT {
@@ -322,11 +489,27 @@ impl SessionControl {
                 .validate()
                 .map_err(|_| ControlError::Storage)?;
         }
-        Ok(Transaction {
+        let mut tx = Transaction {
             directory,
             _lock: lock,
             state,
-        })
+        };
+        // Complete an interrupted retirement before any native work.
+        let logicals: Vec<_> = tx.state.sessions.keys().cloned().collect();
+        for logical in logicals {
+            if let Some(retired) = tx.retired(&logical)? {
+                let record = &tx.state.sessions[&logical];
+                if retired.owner != record.owner
+                    || retired.generation != record.generation
+                    || retired.epoch != record.epoch.next().map_err(|_| ControlError::Storage)?
+                {
+                    return Err(ControlError::Storage);
+                }
+                tx.retire_record(&logical)?;
+            }
+        }
+        tx.retire_operations(None)?;
+        Ok(tx)
     }
 
     fn admission<G>(
@@ -350,8 +533,28 @@ impl SessionControl {
         Ok(guard)
     }
 
+    fn admit_retired<G>(
+        retired: &RetiredSession,
+        owner: &PrincipalId,
+        effect: Effect,
+        admit: &mut impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+    ) -> Result<G, ControlError> {
+        if &retired.owner != owner {
+            return Err(ControlError::Denied);
+        }
+        let guard = admit(&AdmissionState {
+            grant: Some(retired.grant()),
+            grant_epoch: Some(retired.epoch),
+            effect,
+        })?;
+        if retired.revoked {
+            return Err(ControlError::Revoked);
+        }
+        Ok(guard)
+    }
+
     fn reconcile(&self, record: &mut Record) -> Result<(), ControlError> {
-        if matches!(record.phase, Phase::Absent) {
+        if record.revoked || matches!(record.phase, Phase::Absent) {
             return Ok(());
         }
         let previous = record.phase.clone();
@@ -384,11 +587,9 @@ impl SessionControl {
             match detached::host_generation_state(&self.root, &identity, &record.fingerprint) {
                 Ok(true) => {}
                 Ok(false) => record.phase = Phase::Absent,
-                Err(_) => {
-                    if !matches!(record.phase, Phase::Ending) {
-                        record.phase = Phase::Launching;
-                    }
-                }
+                // Observation failure is not a transition back to creation.
+                // Keep the bound incarnation and phase for a later retry.
+                Err(_) => return Err(ControlError::Unknown),
             }
         }
         if record.phase != previous {
@@ -413,6 +614,18 @@ impl SessionControl {
         mut admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
     ) -> Result<ProtectedLookup, ControlError> {
         let mut tx = self.transaction()?;
+        if let Some(retired) = tx.retired(logical)? {
+            let _publication = Self::admit_retired(&retired, owner, Effect::Lookup, &mut admit)?;
+            return Ok(ProtectedLookup {
+                state: if retired.uncertain {
+                    Lookup::Unknown
+                } else {
+                    Lookup::Absent
+                },
+                grant: Some(retired.grant()),
+                summary: None,
+            });
+        }
         if let Some(record) = tx.state.sessions.get_mut(logical) {
             if &record.owner != owner {
                 return Err(ControlError::Denied);
@@ -488,6 +701,14 @@ impl SessionControl {
         creation.validate().map_err(|_| ControlError::Invalid)?;
         let mut tx = self.transaction()?;
         let logical = &creation.logical;
+        if let Some(retired) = tx.retired(logical)? {
+            let _admission = Self::admit_retired(&retired, owner, Effect::Resume, &mut admit)?;
+            return Err(if retired.uncertain {
+                ControlError::Unknown
+            } else {
+                ControlError::Ended
+            });
+        }
         if let Some(record) = tx.state.sessions.get_mut(logical) {
             if &record.owner != owner {
                 return Err(ControlError::Denied);
@@ -501,6 +722,19 @@ impl SessionControl {
             Effect::Resume,
             &mut admit,
         )?;
+        if let Some(receipt) = tx.receipt(operation)? {
+            if receipt.owner != *owner
+                || receipt.intent != OperationReceipt::intent(owner, creation, create_only)?
+            {
+                return Err(ControlError::OperationConflict);
+            }
+            let record = tx.state.sessions.get(logical).ok_or(ControlError::Ended)?;
+            if record.generation != receipt.generation {
+                return Err(ControlError::Ended);
+            }
+            let _publication = Self::admission(Some(record), owner, Effect::Resume, &mut admit)?;
+            return self.result(record, receipt.created, receipt.recreated, cancelled);
+        }
         if let Some(previous) = tx.state.operations.get(operation) {
             if &previous.owner != owner
                 || previous.creation != *creation
@@ -565,11 +799,23 @@ impl SessionControl {
                         create_only,
                     },
                 );
-                tx.save()?;
+                tx.retire_operations(None)?;
                 return Ok(result);
             }
         } else if tx.state.sessions.len() >= MAX_SESSIONS {
-            return Err(ControlError::Busy);
+            let retired: Vec<_> = tx
+                .state
+                .sessions
+                .values()
+                .filter(|record| matches!(record.phase, Phase::Absent))
+                .map(|record| record.logical.clone())
+                .collect();
+            for logical in retired {
+                tx.retire_record(&logical)?;
+            }
+            if tx.state.sessions.len() >= MAX_SESSIONS {
+                return Err(ControlError::Busy);
+            }
         }
         if tx
             .state
@@ -599,7 +845,8 @@ impl SessionControl {
             .values()
             .map(|record| record.generation.get())
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .max(tx.state.last_generation);
         let candidate = now_ms()
             .checked_mul(1_000_000)
             .ok_or(ControlError::Storage)?
@@ -645,6 +892,7 @@ impl SessionControl {
             identity: None,
         };
         tx.state.sessions.insert(logical.clone(), record);
+        tx.state.last_generation = generation.get();
         tx.state.operations.insert(
             operation.clone(),
             Operation {
@@ -711,6 +959,8 @@ impl SessionControl {
         record.epoch = record.epoch.next().map_err(|_| ControlError::Storage)?;
         tx.save()
             .map_err(|_| ControlError::CommittedButNotPublished)?;
+        tx.retire_operations(None)
+            .map_err(|_| ControlError::CommittedButNotPublished)?;
         let record = &tx.state.sessions[logical];
         let _publication = Self::admission(Some(record), owner, Effect::Resume, &mut admit)
             .map_err(|_| ControlError::CommittedButNotPublished)?;
@@ -774,6 +1024,9 @@ impl SessionControl {
         if &record.owner != owner {
             return Err(ControlError::Denied);
         }
+        if record.revoked {
+            return Err(ControlError::Revoked);
+        }
         if record.generation != target.generation {
             return Err(ControlError::Stale);
         }
@@ -789,6 +1042,91 @@ impl SessionControl {
             .ok_or(ControlError::Storage)?;
         let guard = Self::admission(Some(record), owner, effect, admit)?;
         Ok((record, guard))
+    }
+
+    /// Run one NONBLOCKING local relay action under current journal, daemon
+    /// lease and fresh policy guards. No reconciliation, spawn, native IPC,
+    /// summary construction or network wait occurs here.
+    pub fn with_attachment_authorized<G, T>(
+        &self,
+        owner: &PrincipalId,
+        target: &Target,
+        binding: Option<&TemporaryLease>,
+        admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+        action: impl FnOnce() -> Result<T, ControlError>,
+    ) -> Result<T, ControlError> {
+        self.with_authorized_lease(owner, target, admit, |lease| {
+            if lease.temporary.as_ref() != binding {
+                return Err(ControlError::Stale);
+            }
+            action()
+        })
+    }
+
+    /// Authorizes pending recovery retrieval/adoption, NOT Attached success.
+    /// The ticket must still name the live pending transfer, or that exact
+    /// transfer must already have committed with the expected binding.
+    pub fn with_pending_attachment_authorized<G, T>(
+        &self,
+        owner: &PrincipalId,
+        target: &Target,
+        ticket: &OperationId,
+        expected: &TemporaryLease,
+        admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+        action: impl FnOnce() -> Result<T, ControlError>,
+    ) -> Result<T, ControlError> {
+        self.with_authorized_lease(owner, target, admit, |lease| {
+            let committed = lease.last_attachment.as_ref() == Some(ticket)
+                && lease.temporary.as_ref() == Some(expected);
+            let pending = lease.pending.as_ref().is_some_and(|pending| {
+                &pending.ticket == ticket
+                    && pending.deadline_ms > now_ms()
+                    && pending.previous.lease == expected.lease
+                    && pending.previous.epoch.next().ok() == Some(expected.epoch)
+                    && pending.attachment == expected.attachment
+            });
+            if !committed && !pending {
+                return Err(ControlError::Stale);
+            }
+            action()
+        })
+    }
+
+    fn with_authorized_lease<G, T>(
+        &self,
+        owner: &PrincipalId,
+        target: &Target,
+        mut admit: impl FnMut(&AdmissionState) -> Result<G, ControlError>,
+        action: impl FnOnce(&DaemonLease) -> Result<T, ControlError>,
+    ) -> Result<T, ControlError> {
+        let tx = self.transaction()?;
+        let record = tx
+            .state
+            .sessions
+            .get(&target.logical)
+            .ok_or(ControlError::Denied)?;
+        if &record.owner != owner {
+            return Err(ControlError::Denied);
+        }
+        if record.revoked {
+            return Err(ControlError::Revoked);
+        }
+        if record.generation != target.generation {
+            return Err(ControlError::Stale);
+        }
+        if !matches!(record.phase, Phase::Running) {
+            return Err(ControlError::Unknown);
+        }
+        let _admission = Self::admission(Some(record), owner, Effect::Attach, &mut admit)?;
+        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let lease = guard.read().map_err(storage_error)?;
+        if lease.remote_revoked {
+            return Err(ControlError::Revoked);
+        }
+        if lease.expired() {
+            return Err(ControlError::Ended);
+        }
+        action(&lease)
     }
 
     /// Opens the real single-writer daemon admission. A temporary transfer and
@@ -811,6 +1149,7 @@ impl SessionControl {
         if lease.expired() {
             return Err(ControlError::Ended);
         }
+
         let transfer = lease
             .temporary
             .as_ref()
@@ -1048,6 +1387,78 @@ impl SessionControl {
         record.epoch = record.epoch.next().map_err(|_| ControlError::Storage)?;
         record.revoked = true;
         tx.save()
+    }
+
+    /// Protected LOCAL maintenance, never a wire administrative operation.
+    /// Retires a known absent identity or explicitly abandons an uncertain
+    /// creation. Abandonment seals its daemon lease but does NOT assert absence.
+    /// The logical ID and all operation receipts remain permanently fenced.
+    pub fn retire_local(&self, owner: &PrincipalId, target: &Target) -> Result<(), ControlError> {
+        let mut tx = self.transaction()?;
+        if let Some(retired) = tx.retired(&target.logical)? {
+            return if &retired.owner != owner {
+                Err(ControlError::Denied)
+            } else if retired.generation != target.generation {
+                Err(ControlError::Stale)
+            } else {
+                Ok(())
+            };
+        }
+        let record = tx
+            .state
+            .sessions
+            .get(&target.logical)
+            .ok_or(ControlError::Denied)?;
+        if &record.owner != owner {
+            return Err(ControlError::Denied);
+        }
+        if record.generation != target.generation {
+            return Err(ControlError::Stale);
+        }
+        if !record.revoked && !matches!(record.phase, Phase::Absent | Phase::Launching) {
+            return Err(ControlError::Busy);
+        }
+        if matches!(record.phase, Phase::Launching) {
+            let _start = detached::lock_native_start_in(&self.root, &record.name)
+                .map_err(|_| ControlError::Busy)?;
+            let guard =
+                LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+            let mut lease = match guard.read() {
+                Ok(lease) => lease,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    let temporary =
+                        matches!(record.lifetime, Lifetime::Temporary { .. }).then(|| {
+                            TemporaryLease {
+                                lease: LeaseId::new(),
+                                epoch: Epoch::new(1).expect("nonzero epoch"),
+                                attachment: AttachmentId::new(),
+                            }
+                        });
+                    let lease = DaemonLease {
+                        version: 1,
+                        name: record.name.clone(),
+                        generation: record.generation,
+                        revision: 1,
+                        lifetime: record.lifetime,
+                        deadline_ms: temporary.as_ref().map(|_| now_ms()),
+                        temporary,
+                        connected: false,
+                        stopped: true,
+                        remote_revoked: true,
+                        pending: None,
+                        last_attachment: None,
+                    };
+                    guard.create(&lease).map_err(storage_error)?;
+                    lease
+                }
+                Err(error) => return Err(storage_error(error)),
+            };
+            lease.stopped = true;
+            lease.remote_revoked = true;
+            lease.pending = None;
+            guard.replace(&mut lease).map_err(storage_error)?;
+        }
+        tx.retire_record(&target.logical)
     }
 }
 
