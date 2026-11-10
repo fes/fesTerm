@@ -1846,8 +1846,10 @@ mod tests {
             .is_none());
         std::fs::create_dir(&hosted).unwrap();
         std::fs::create_dir(&legacy).unwrap();
+        let endpoint = fixture.path().join("legacy.sock");
+        std::fs::write(&endpoint, b"").unwrap();
         let document = serde_json::json!({ "sessions": { "shell": {
-            "name": "shell", "pid": std::process::id(), "socket": "legacy.sock",
+            "name": "shell", "pid": std::process::id(), "socket": endpoint,
             "created_at_unix_ms": 42
         } } });
         std::fs::write(
