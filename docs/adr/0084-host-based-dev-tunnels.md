@@ -381,8 +381,15 @@ unknowns and interrupted receipt commit are reconciled only against that same
 intent. No background sign-in, automatic reenable/rollback, grant reconstruction
 or daemon/child kill is added. Revoke-first stop/cleanup covers both pending native
 resources, leaving cloud CleanupPending separate. Deterministic failure-injection
-and actual owned-daemon PID/generation survival are source/fixture evidence, not
-real signed manager switching, old-daemon compatibility or native acceptance.
+and the owned-daemon regression are source/fixture evidence: the daemon launches
+the authenticated old cached sessiond entry in the installation's daemon
+namespace. Replacement preserves its PID/generation/endpoint, adopted frontend/
+control authority and exact old helper path/bytes; helper deletion/replacement
+and daemon end are negative controls. The helper is a current-source binary in
+a test-key-signed synthetic old-version package, with a test qualifier and fake
+Linux manager, not a genuine older release. Real publisher qualification,
+signed manager switching, cross-version compatibility and native acceptance
+remain open.
 
 ### 10. Protocol, resource and failure contract
 

@@ -219,8 +219,14 @@ owned cleanup reconcile **both** reserved resources; cloud cleanup remains
 separate and cannot infer generation-atomic DELETE support. There is no silent
 rollback, autorepair, automatic restart or destructive daemon/child stop.
 Real signed native manager switching, old-daemon compatibility and installed
-cross-platform recovery remain HOSTSETUP-01 gates; deterministic signed-fixture
-transactions and one actual owned-daemon survival case do not qualify them.
+cross-platform recovery remain HOSTSETUP-01 gates. The owned-daemon regression
+uses the authenticated old stage's actual sessiond path and installation-owned
+`state/daemon` record, preserving PID/generation/endpoint, adopted frontend/control
+authority and exact old cached bytes across replacement, then executing that
+cached helper's capabilities command. Its oracle rejects helper deletion/
+replacement and daemon end. This is a current-source binary packaged with
+synthetic 0.15.0 metadata/test signatures, a test qualifier and fake Linux
+manager—not genuine older-release, native publisher or native switching evidence.
 
 ## Management and remaining qualification
 

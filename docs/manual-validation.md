@@ -3673,10 +3673,20 @@ unknowns, same-target retry, epoch revocation, candidate/provenance tamper,
 post-receipt interruption, missing mutex/corrupt journal and exact cleanup of
 both reservations. Synthetic archives use a cfg(test)-only signer/qualifier and
 typed fake native manager; no real service or credential store is touched.
-The explicitly selected owned-daemon case separately proves the same actual
-persistent PID/generation, original helper bytes and running inventory survive
-the actual replacement core, then observes exact-generation cleanup. It is not
-positive signed native manager switching or old-release daemon compatibility.
+The explicitly selected owned-daemon regression now launches **the authenticated
+old stage's sessiond entry**, populated with the exact current-source helper
+before test-key signing/publication. It uses this installation's `state/daemon`
+namespace/control record and adopts a real frontend. The actual replacement
+transaction must preserve PID/generation/endpoint, frontend attachment authority,
+control-record bytes and the exact old cached helper path/bytes. Bounded PTY
+input/echo round trips prove the same frontend remains usable; that cached
+helper also executes its read-only capabilities command afterwards. The same
+oracle rejects a deleted/replaced old cached helper and an explicitly ended
+daemon, with restoration rechecked between controls. Earlier runs launched an
+unrelated external helper/namespace and did **not** prove old-cache preservation.
+Synthetic 0.15.0 metadata around a current binary, test signatures/qualifier and
+a fake Linux manager are not genuine older-release compatibility, publisher
+qualification or positive native manager switching.
 HOSTSETUP-01 remains partial/native; Windows policy and Linux current-logon
 eligibility decisions are specified in native-host-services, not accepted or
 bypassed. Client first-connect/mobile/GPU/live cloud evidence is unchanged.

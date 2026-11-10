@@ -91,7 +91,13 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = storage::private_test_directory();
+        Self::with_root_and_sessiond(storage::private_test_directory(), None)
+    }
+
+    fn with_root_and_sessiond(
+        root: storage::PrivateTestDirectory,
+        sessiond: Option<&[u8]>,
+    ) -> Self {
         let state = root.path().join("state");
         let store = Arc::new(
             Store::create(
@@ -146,7 +152,10 @@ impl Fixture {
         owners
             .approve_permissions(enrolled.revision, true, permissions)
             .unwrap();
-        let old = trusted::version_fixture(root.path(), "0.15.0");
+        let old = match sessiond {
+            Some(bytes) => trusted::version_fixture_with_sessiond(root.path(), "0.15.0", bytes),
+            None => trusted::version_fixture(root.path(), "0.15.0"),
+        };
         let next = trusted::version_fixture(root.path(), crate::VERSION);
         Self {
             root,
@@ -467,6 +476,7 @@ fn native_host_update_preserves_actual_persistent_daemon_pid_generation_and_orig
         AttachmentId, Creation, IssuedOperation, Lifetime, LogicalSessionId, PrincipalId, Recipe,
         Target,
     };
+    use festerm_session::{Session, SessionEvent, SessionLifecycle};
     use festerm_sessiond::host_control::{ControlError, Lookup, SessionControl};
     use std::{
         sync::atomic::AtomicBool,
@@ -482,6 +492,29 @@ fn native_host_update_preserves_actual_persistent_daemon_pid_generation_and_orig
                 }
                 outcome => return outcome,
             }
+        }
+    }
+
+    fn exchange(frontend: &festerm_sessiond::PersistentSession, input: &[u8], expected: &[u8]) {
+        frontend.try_send_input(input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut output = Vec::new();
+        loop {
+            if let Ok(SessionEvent::Output(bytes)) = frontend.try_recv_event() {
+                output.extend_from_slice(&bytes);
+                assert!(
+                    output.len() <= 64 * 1024,
+                    "owned frontend output exceeded bound"
+                );
+                if output
+                    .windows(expected.len())
+                    .any(|window| window == expected)
+                {
+                    return;
+                }
+            }
+            assert!(Instant::now() < deadline, "owned frontend echo timed out");
+            std::thread::sleep(Duration::from_millis(25));
         }
     }
 
@@ -514,21 +547,40 @@ fn native_host_update_preserves_actual_persistent_daemon_pid_generation_and_orig
         }
     }
 
-    let helper = PathBuf::from(
+    let built_helper = PathBuf::from(
         std::env::var_os("FESTERM_ADR84_UPDATE_HELPER").expect("explicit owned helper"),
     );
-    let child = helper.with_file_name("festerm-pty-test-child");
+    let child = built_helper.with_file_name("festerm-pty-test-child");
     let project = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap();
-    assert!(helper.starts_with(project.join("target")) && helper.is_file() && child.is_file());
-    let root = project.join(format!(
-        "hu-{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    ));
-    storage::private_directory(&root, true).unwrap();
+    assert!(
+        built_helper.starts_with(project.join("target"))
+            && built_helper.is_file()
+            && child.is_file()
+    );
+    // This is the current source binary in a synthetic old-version package,
+    // not a genuine older release or native publisher-qualified executable.
+    let helper_bytes = std::fs::read(&built_helper).unwrap();
+    let fixture = Fixture::with_root_and_sessiond(
+        storage::private_test_directory_in(project),
+        Some(&helper_bytes),
+    );
+    let services = fixture.services();
+    let stopped = fixture.installed(&services);
+    let old_registration = services.registration().unwrap().1.unwrap();
+    TrustedStage::authenticate_fixture_registered(&old_registration, "0.15.0").unwrap();
+    let helper = fixture.old.sessiond_path().unwrap().to_owned();
+    assert_ne!(helper, built_helper);
+    assert_eq!(std::fs::read(&helper).unwrap(), helper_bytes);
+    assert_eq!(old_registration.executable, fixture.old.path());
+    assert_eq!(
+        old_registration.provenance.as_deref(),
+        Some(fixture.old.provenance_path())
+    );
+    let root = services.state.join("daemon");
     let control = SessionControl::with_helper(&root, &helper).unwrap();
     let owner = PrincipalId::new();
     let issued =
@@ -539,7 +591,15 @@ fn native_host_update_preserves_actual_persistent_daemon_pid_generation_and_orig
         name: None,
         recipe: Recipe {
             shell: child.to_str().map(str::to_owned),
-            args: vec!["spin".into()],
+            args: [
+                "read-line",
+                "echo:before-update",
+                "read-line",
+                "echo:after-update",
+                "spin",
+            ]
+            .map(str::to_owned)
+            .into(),
             cwd: root.to_str().map(str::to_owned),
         },
         lifetime: Lifetime::Persistent {},
@@ -561,20 +621,150 @@ fn native_host_update_preserves_actual_persistent_daemon_pid_generation_and_orig
         target: created.target.clone(),
         root,
     };
-    let before = festerm_sessiond::list_running_sessions_in(&daemon.root).unwrap();
+    let pending = retry(|| {
+        daemon.control.attach(
+            &daemon.owner,
+            &daemon.target,
+            &creation.attachment,
+            false,
+            2 * 1024 * 1024,
+            festerm_session::noop_session_event_notifier(),
+            |_| Ok(()),
+        )
+    })
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while pending.session.take_recovered_terminal_deferred().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "owned frontend recovery timed out"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    pending.session.acknowledge_recovery_adoption();
+    assert!(retry(|| daemon
+        .control
+        .attachment_outcome(&pending.authority, |_| Ok(())))
+    .unwrap()
+    .is_none());
+    assert_eq!(
+        pending.session.native_identity(),
+        Some(created.identity.clone())
+    );
+    exchange(
+        &pending.session,
+        b"owned-before\n",
+        b"before-update:owned-before",
+    );
+    let frontend_id = pending.session.id();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let before = loop {
+        let running = festerm_sessiond::list_running_sessions_in(&daemon.root).unwrap();
+        if running.len() == 1
+            && running[0].attached_by == Some(festerm_sessiond::AttachKind::Remote)
+        {
+            break running;
+        }
+        assert!(Instant::now() < deadline, "owned frontend was not observed");
+        std::thread::sleep(Duration::from_millis(25));
+    };
     assert_eq!(before.len(), 1);
     assert_eq!(before[0].session.pid, created.identity.pid);
-    let fixture = Fixture::new();
-    let services = fixture.services();
-    fixture.installed(&services);
-    let helper_bytes = std::fs::read(&helper).unwrap();
-    fixture.update(&services).unwrap();
-    assert_eq!(std::fs::read(&helper).unwrap(), helper_bytes);
-    let after = festerm_sessiond::list_running_sessions_in(&daemon.root).unwrap();
-    assert_eq!(after, before);
-    assert!(
-        matches!(retry(|| daemon.control.lookup(&daemon.owner, &creation.logical, |_| Ok(()))).unwrap(), Lookup::Running(target) if target == daemon.target)
+    assert_eq!(
+        before[0].attached_by,
+        Some(festerm_sessiond::AttachKind::Remote)
     );
+    let control_record = std::fs::read(daemon.root.join("host-sessions.json")).unwrap();
+    let preserved = fixture.preserved();
+
+    let survives = || -> Result<(), &'static str> {
+        if fixture.old.sessiond_path().map_err(|_| "old-helper")? != helper
+            || std::fs::read(&helper).map_err(|_| "old-helper")? != helper_bytes
+        {
+            return Err("old-helper");
+        }
+        if festerm_sessiond::list_running_sessions_in(&daemon.root).map_err(|_| "daemon")? != before
+            || !matches!(
+                retry(|| daemon.control.lookup(&daemon.owner, &creation.logical, |_| Ok(()))),
+                Ok(Lookup::Running(target)) if target == daemon.target
+            )
+        {
+            return Err("daemon");
+        }
+        if pending.session.id() != frontend_id
+            || pending.session.lifecycle() != SessionLifecycle::Running
+            || pending.session.native_identity() != Some(created.identity.clone())
+            || retry(|| {
+                daemon
+                    .control
+                    .attachment_outcome(&pending.authority, |_| Ok(()))
+            })
+            .is_err()
+            || std::fs::read(daemon.root.join("host-sessions.json")).map_err(|_| "control")?
+                != control_record
+        {
+            return Err("frontend/control");
+        }
+        Ok(())
+    };
+    assert_eq!(survives(), Ok(()));
+    let report = fixture.update(&services).unwrap();
+    assert_eq!(report.state, ReplacementState::Committed);
+    assert_eq!(
+        report.previous_provenance.as_deref(),
+        Some(fixture.old.provenance_path())
+    );
+    assert_eq!(
+        services.registration().unwrap().1.unwrap().executable,
+        fixture.next.path()
+    );
+    assert_eq!(fixture.store.snapshot().unwrap(), stopped);
+    assert_eq!(fixture.preserved(), preserved);
+    assert_eq!(survives(), Ok(()));
+    exchange(
+        &pending.session,
+        b"owned-after\n",
+        b"after-update:owned-after",
+    );
+    assert_eq!(survives(), Ok(()));
+    let capabilities = std::process::Command::new(&helper)
+        .args(["capabilities", "--json"])
+        .env("FESTERM_SESSIOND_RUNTIME_ROOT", &daemon.root)
+        .output()
+        .unwrap();
+    assert!(capabilities.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&capabilities.stdout).unwrap(),
+        serde_json::to_value(festerm_sessiond::capabilities()).unwrap()
+    );
+
+    // A living mapped process alone cannot detect lost/replaced cached bytes.
+    let retained = helper.with_extension("retained");
+    std::fs::rename(&helper, &retained).unwrap();
+    assert_eq!(survives(), Err("old-helper"));
+    std::fs::write(&helper, b"wrong replacement helper").unwrap();
+    assert_eq!(survives(), Err("old-helper"));
+    std::fs::remove_file(&helper).unwrap();
+    std::fs::rename(&retained, &helper).unwrap();
+    assert_eq!(survives(), Ok(()));
+    retry(|| {
+        daemon
+            .control
+            .end(&daemon.owner, &daemon.target, |_| Ok(()))
+    })
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while !matches!(
+        retry(|| daemon
+            .control
+            .lookup(&daemon.owner, &creation.logical, |_| Ok(()))),
+        Ok(Lookup::Absent)
+    ) {
+        assert!(Instant::now() < deadline, "owned daemon did not end");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(survives(), Err("daemon"));
+    drop(pending);
     let daemon_root = daemon.root.clone();
     drop(daemon);
     assert!(

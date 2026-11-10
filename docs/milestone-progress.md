@@ -1,5 +1,57 @@
 # Milestone Progress Narrative
 
+## Coupling stopped-update evidence to the old authenticated cache
+
+Review found that the owned daemon and replacement fixtures were independent:
+the daemon launched an external helper under an unrelated root, so survival
+could not detect destruction of the old authenticated cache. The regression now
+places the exact current-source sessiond bytes into the synthetic 0.15.0 archive
+**before** test-key signing and normal authenticated executable publication.
+It launches that old stage's sessiond entry under the same installation's
+`state/daemon`, adopts a real frontend, and runs the actual stopped-replacement
+transaction against the old registered provenance. The positive oracle checks
+the same PID/generation/endpoint, running frontend ID/attachment authority,
+control-record bytes and exact old helper path/bytes. Bounded PTY input/echo
+round trips before and after update use that same adopted frontend; the retained
+cached helper executes its read-only capabilities command afterwards.
+Deleting/replacing that cached helper and explicitly ending the daemon fail the
+same oracle, with restored helper success between controls.
+
+This fixes evidence coupling only, not production behavior. The old version is
+synthetic metadata around a current-source binary, with test signatures/native
+qualifier and a fake Linux manager. No genuine older release, native publisher,
+native manager switching or cross-version compatibility is qualified.
+
+Qualification on the child of frozen `7cb89be911df8873914f29fdb038f1e26ec002d2`
+used a private, nonconcurrent target, jobs1, dev/test debug0 and incremental0:
+
+```sh
+export CARGO_TARGET_DIR="$PWD/target/adr84-update" CARGO_BUILD_JOBS=1
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
+cargo build --locked -p festerm-sessiond -p festerm-pty-test-child --bins
+FESTERM_ADR84_UPDATE_HELPER="$PWD/target/adr84-update/debug/festerm-sessiond" cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud --lib native_host_update_preserves_actual -- --ignored --test-threads=1
+cargo test --locked -p festerm-host -p festerm-host-setup
+cargo clippy --locked -p festerm-host -p festerm-host-setup --all-targets -- -D warnings
+cargo check --locked -p festerm-host-setup --no-default-features --features native-services --lib
+cargo test --locked -p festerm-host --no-default-features
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 7cb89be911df8873914f29fdb038f1e26ec002d2
+git diff --check
+```
+
+The coupled selector passes **1 / zero ignored**, including all negative
+controls and exact owned cleanup; host/setup units pass **124 / two explicit
+ignores**, compatibility **10**, strict affected Clippy and standalone
+native-services check pass. Traceability retains **311 edges / zero broken
+references**. Logs are private under `target/adr84-update-evidence/`.
+The initial selected run exposed delayed registry attachment observation;
+the test now waits boundedly for the adopted Remote frontend before freezing
+its oracle. No permission repair, proxy or production behavior changed.
+The helper was built here from the exact frozen sessiond/PTY/core source,
+not reused from another actor's target. No workspace/GUI suite, OS manager,
+native vault, cloud, signing/release, genuine older binary or cross-platform
+native qualification was run. The owned daemon and build slot are released.
+
 ## Stacking stopped-version update on the fixed published core
 
 Normal merge `7ff65a69d315dcdf430b21fc2b9a2e9c48f755dc` has first parent
@@ -43,12 +95,12 @@ Fresh results, independently executed rather than inherited from `c75d03d7`:
   update-journal/failure-injection cases. Setup execution took 32.50 seconds.
   The two ignores remain the dedicated cargo-packager signer and opt-in
   owned-daemon case; the latter was then selected separately below.
-- Owned-daemon selector: **exactly one passed / zero ignored / zero failed**,
-  2.65 seconds. Actual owned sessiond/PTY helpers retain the original persistent
-  daemon PID/generation/inventory and helper bytes across the transaction core;
-  exact-generation cleanup completes. This still uses synthetic signed bundle
-  fixtures and a fake Linux manager, not real native manager switching or genuine
-  old-release/new-release compatibility.
+- Historical owned-daemon selector: **exactly one passed / zero ignored / zero
+  failed**, 2.65 seconds. The external helper/daemon namespace was unrelated to
+  the old staged cache. This established only disconnected noninterference,
+  **not** preservation/usability of the old authenticated helper across update.
+  The coupled regression above supersedes that evidence claim; neither run
+  establishes real native manager switching or genuine cross-version compatibility.
 - No-default-feature compatibility: **10 passed / zero ignored / zero failed**.
 - Strict affected two-package all-target Clippy and standalone native-services
   check pass. Format, traceability **311 edges / zero broken references**, and
@@ -10014,10 +10066,11 @@ An absent update journal is read without creating a native lock.
 
 Nine deterministic transaction cases use real protected lifecycle/identity/
 enrollment and test-key-signed archives with a typed fake Linux manager. The
-explicitly selected owned-daemon case additionally creates a real persistent
-daemon, observes its PID/generation/inventory and original helper bytes unchanged
-across the actual replacement core, and performs exact-generation cleanup.
-This is not real signed native manager switching or old-release compatibility.
+historical owned-daemon case additionally created a real persistent daemon in
+an unrelated namespace using an external helper. Its PID/generation/inventory
+and external bytes survived, but that did not test the update's old cached
+helper. The coupled regression at the top of this document supersedes that
+claim. Neither is real signed native manager switching or old-release compatibility.
 The first daemon selector accidentally selected zero nested test items; that
 warning/run is retained and **not evidence**. Moving it to module scope and
 requiring exactly one selected pass produced fresh actual daemon evidence.

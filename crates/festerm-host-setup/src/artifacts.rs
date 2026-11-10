@@ -470,6 +470,8 @@ pub(crate) fn host_staging_fixture() -> VerifiedArtifact {
     tests::host_staging_fixture()
 }
 
+#[cfg(all(test, feature = "native-services", unix))]
+pub(crate) use tests::host_version_fixture_with_sessiond;
 #[cfg(all(test, feature = "native-services"))]
 pub(crate) use tests::{host_version_fixture, verify_staging_fixture};
 
@@ -663,6 +665,14 @@ mod tests {
         staging_version_fixture(Package::Host, version)
     }
 
+    #[cfg(all(feature = "native-services", unix))]
+    pub(crate) fn host_version_fixture_with_sessiond(
+        version: &str,
+        sessiond: &[u8],
+    ) -> VerifiedArtifact {
+        staging_version_fixture_with_sessiond(Package::Host, version, Some(sessiond))
+    }
+
     #[cfg(feature = "native-services")]
     pub(crate) fn verify_staging_fixture(
         manifest: &[u8],
@@ -680,6 +690,15 @@ mod tests {
 
     #[cfg(feature = "lifecycle")]
     fn staging_version_fixture(package: Package, version: &str) -> VerifiedArtifact {
+        staging_version_fixture_with_sessiond(package, version, None)
+    }
+
+    #[cfg(feature = "lifecycle")]
+    fn staging_version_fixture_with_sessiond(
+        package: Package,
+        version: &str,
+        sessiond: Option<&[u8]>,
+    ) -> VerifiedArtifact {
         let platform = match std::env::consts::OS {
             "windows" => Platform::Windows,
             "macos" => Platform::Macos,
@@ -705,6 +724,10 @@ mod tests {
             {
                 entry.1.extend_from_slice(version.as_bytes());
             }
+        }
+        if let Some(sessiond) = sessiond {
+            let name = format!("festerm-sessiond{}", std::env::consts::EXE_SUFFIX);
+            files.iter_mut().find(|file| file.0 == name).unwrap().1 = sessiond.to_vec();
         }
         let archive = if platform == Platform::Windows {
             zip(&files)

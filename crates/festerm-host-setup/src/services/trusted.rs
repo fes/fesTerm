@@ -267,6 +267,21 @@ pub(super) fn version_fixture(root: &Path, version: &str) -> TrustedStage {
     .unwrap()
 }
 
+#[cfg(all(test, unix))]
+pub(super) fn version_fixture_with_sessiond(
+    root: &Path,
+    version: &str,
+    sessiond: &[u8],
+) -> TrustedStage {
+    TrustedStage::publish_version_with(
+        &crate::artifacts::host_version_fixture_with_sessiond(version, sessiond),
+        &root.join("artifacts"),
+        version,
+        |_, _| Ok(()),
+    )
+    .unwrap()
+}
+
 #[cfg(all(test, feature = "native-service-fixtures", unix))]
 pub(super) fn lab_fixture(root: &Path, bytes: &[u8]) -> TrustedStage {
     use std::os::unix::fs::PermissionsExt;
