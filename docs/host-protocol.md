@@ -774,12 +774,15 @@ control-under-load evidence remain integration gates. Control capabilities
 remain inventory-only; no listener, automatic fallback, file/observation/MCP
 grant, setup authority or remote sharing/enrollment operation is added.
 
-All nine explicitly invoked owned native routing fixtures now pass, including
+At the prior `1a66a935` milestone, all nine explicitly invoked owned native
+routing fixtures passed, including
 old-writer progress while a takeover snapshot is pending, exact two-session
 bytes, temporary cancellation/detach and independent control during slow-output
 revocation. Unix CI selects both control and terminal fixture modules. This is
 local bounded fixture evidence, not production endpoint or native-service
 acceptance.
+The current main/enrollment/opaque-authority source union still requires its
+own native-nine/clippy rerun and different-source-family antagonist validation.
 
 **Exposure remains blocked:** these dispatcher/native consumers are not yet
 wired to the reviewed inner-SSH channel binding and enrolled-owner stream.

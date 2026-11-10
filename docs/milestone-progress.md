@@ -8950,7 +8950,7 @@ The native fix now queues one bounded candidate without blocking the old
 writer. It preserves post-snapshot terminal/control deltas and accepts candidate
 input only after actual adoption and writer commit; saturation cancels only
 the candidate. Rebuilding the owned helper and rerunning the unchanged routing
-fixtures passes all nine cases. Unix CI now runs the four terminal cases with
+fixtures passed all nine cases at `1a66a935`. Unix CI runs the four terminal cases with
 the five existing control cases. This resolves the local takeover regression,
 not the still-pending authority/receipt, issuance/history and consuming
 authenticated-stream integration. The terminal server remains fixture-only.
@@ -8973,3 +8973,6 @@ healthy-plus-private-filtered-Unknown inventory. Native attachment consumers
 use original opaque authorities for persistent and temporary routing and
 freshly authorize exact detach receipts before publication. This remains an
 unexposed integration milestone, not complete ADR0084 or native acceptance.
+The main/enrollment/opaque-authority union is now source-frozen only; its own
+native-nine/clippy and different-source-family antagonist checks remain pending.
+Historical nine-of-nine evidence is not qualification of this new union.

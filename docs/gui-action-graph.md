@@ -1596,11 +1596,13 @@ advertisement, not production capability widening.
 
 The unexposed paired terminal module adds bounded adoption/correlation, frame
 and byte-budget, no-replay and FIFO-turn fixtures for HOST-02/03. Native
-fixtures now pass all nine owned control/terminal cases, including unchanged
+fixtures passed all nine owned control/terminal cases at `1a66a935`, including unchanged
 old-writer progress while a takeover candidate waits and independent control
 under slow output. The bounded nonblocking candidate fixes the former native
 stall. Endpoint qualification still requires the backend hotpath/history work.
 Actual consuming owner-channel integration and all H/N gates remain deferred.
+The current source union awaits its own native-nine/clippy and cross-family
+antagonist qualification; the older result is not transferred automatically.
 
 Additional paired control fixtures bind issued creation operations across
 reconnects, refuse account/endpoint/host changes before writing, reject

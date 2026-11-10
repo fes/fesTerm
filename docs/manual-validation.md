@@ -3400,12 +3400,14 @@ advertisement; there is no production bypass or new manual acceptance.
 
 The unexposed paired terminal module adds automated portable adoption,
 correlation, strict-generation/refusal, frame/deadline, byte-budget and FIFO-turn
-fixtures. All nine owned native control/terminal fixtures now pass and run
+fixtures. All nine owned native control/terminal fixtures passed at `1a66a935` and run
 explicitly in Unix CI. The nonblocking candidate preserves old-writer progress
 while recovery is pending; its original assertion and deadlines remain.
 Do not count this local fixture evidence as DT/CP/mobile acceptance. Actual consuming
 owner-channel integration and backend hotpath/history qualification remain
 required; no production listener or readiness state is added.
+The current main/enrollment/opaque-authority union is source-only until its own
+native-nine/clippy rerun and cross-family antagonist checks complete.
 
 Paired control fixtures also retain original issued namespaces across
 reconnects, reject account/endpoint/host changes and wrongly echoed scopes, and

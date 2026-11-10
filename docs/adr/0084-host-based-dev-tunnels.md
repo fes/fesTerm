@@ -715,13 +715,15 @@ Portable fixtures cover correlated confirmation, generation/uncertainty refusal,
 legacy/file refusal, retained byte quotas and abandoned FIFO scheduling turns.
 Owned native terminal fixtures additionally exercise real routed sessions,
 pending cancellation/takeover, temporary detach and revocation under slow output.
-All nine owned native control/terminal fixtures now pass after the daemon
+All nine owned native control/terminal fixtures passed at `1a66a935` after the daemon
 candidate-adoption fix: the old writer progresses while a bounded candidate
 waits, then post-snapshot deltas reach the adopted replacement. The assertion
 and deadlines are unchanged. This is not endpoint acceptance: the backend
 hotpath/issuance-history replacement and consuming owner-channel integration
 remain pending. Cross-platform/native service and physical-device gates remain
 separate; the terminal server/scheduler are still fixture-only.
+That prior result does not qualify the current main/enrollment/opaque-authority
+union: its native-nine/clippy rerun and cross-family antagonist remain pending.
 
 The paired control API binds each issued creation operation to its original
 account/endpoint/host and negotiated namespace, including reconnect and local
