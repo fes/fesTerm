@@ -149,6 +149,19 @@ fn host_attachment_cancelled(
     }
 }
 
+fn host_persistent_client_disconnected(generation: u64) {
+    if generation == 0 || HOST_CLIENT_GENERATION.load(Ordering::Acquire) != generation {
+        return;
+    }
+    if let Some(watch) = DAEMON_HOST_WATCH.get() {
+        if let Ok(mut watch) = watch.lock() {
+            if let Some(watch) = watch.as_mut() {
+                watch.persistent_client_disconnected();
+            }
+        }
+    }
+}
+
 fn lifecycle_failure(stage: FailureStage, error: &(dyn std::error::Error + 'static)) {
     lifecycle_event(LifecycleEvent::Failure {
         stage,
@@ -2525,6 +2538,9 @@ fn retire_active(
         // re-read this flag to decide whether the retired client is owed a
         // notice, and they only run once the sender below is gone.
         previous.stolen.store(stolen, Ordering::Release);
+        if !stolen {
+            host_persistent_client_disconnected(previous.generation);
+        }
         drop(previous.output);
         retired_clients.push(previous.thread);
     }

@@ -247,6 +247,8 @@ pub struct DaemonWatch {
     next_poll: Instant,
     stopped: bool,
     attachment_deadline: Cell<Option<Instant>>,
+    persistent_writer: Option<(OperationId, festerm_host_protocol::Epoch)>,
+    disconnected_writer: Option<(OperationId, festerm_host_protocol::Epoch)>,
 }
 
 impl DaemonWatch {
@@ -351,6 +353,8 @@ impl DaemonWatch {
             next_poll: Instant::now(),
             stopped: false,
             attachment_deadline: Cell::new(None),
+            persistent_writer: None,
+            disconnected_writer: None,
         };
         watch.adopt(&lease)?;
         Ok(watch)
@@ -371,7 +375,44 @@ impl DaemonWatch {
             });
         }
         self.stopped |= lease.stopped;
+        self.persistent_writer = if lease.temporary.is_none() && lease.connected {
+            lease
+                .last_attachment
+                .clone()
+                .map(|ticket| (ticket, lease.writer_epoch))
+        } else {
+            None
+        };
         Ok(())
+    }
+
+    /// Called only when the daemon retires its exact current ticketed frontend.
+    /// Contention defers bookkeeping to the existing poll, not native admission.
+    pub fn persistent_client_disconnected(&mut self) {
+        if !self.preserve_on_fault && self.persistent_writer.is_some() {
+            self.disconnected_writer = self.persistent_writer.clone();
+            self.next_poll = Instant::now();
+        }
+    }
+
+    fn reconcile_persistent_disconnect(&mut self, guard: &LeaseGuard, lease: &mut DaemonLease) {
+        let Some((ticket, epoch)) = &self.disconnected_writer else {
+            return;
+        };
+        if lease.temporary.is_some()
+            || lease.last_attachment.as_ref() != Some(ticket)
+            || lease.writer_epoch != *epoch
+            || !lease.connected
+        {
+            self.disconnected_writer = None;
+            return;
+        }
+        let mut disconnected = lease.clone();
+        disconnected.connected = false;
+        if guard.replace(&mut disconnected).is_ok() {
+            *lease = disconnected;
+            self.disconnected_writer = None;
+        }
     }
 
     /// Validate a local admission ticket without changing lease ownership.
@@ -471,6 +512,7 @@ impl DaemonWatch {
             lease.writer_epoch = lease.writer_epoch.next().map_err(|_| invalid())?;
             lease.pending = None;
             lease.last_attachment = None;
+            lease.connected = false;
             guard.replace(&mut lease)?;
             return self.adopt(&lease);
         }
@@ -489,6 +531,9 @@ impl DaemonWatch {
             lease.deadline_ms = Some(now_ms() + 60_000);
         }
         lease.last_attachment = Some(pending.ticket);
+        if lease.temporary.is_none() && !self.preserve_on_fault {
+            lease.connected = true;
+        }
         lease.writer_epoch = lease.writer_epoch.next().map_err(|_| invalid())?;
         guard.replace(&mut lease)?;
         self.adopt(&lease)
@@ -522,7 +567,11 @@ impl DaemonWatch {
         }
         self.next_poll = Instant::now() + POLL;
         let result = match LeaseGuard::acquire(&self.root, self.generation) {
-            Ok(guard) => guard.read().and_then(|lease| self.adopt(&lease)),
+            Ok(guard) => guard.read().and_then(|mut lease| {
+                self.adopt(&lease)?;
+                self.reconcile_persistent_disconnect(&guard, &mut lease);
+                self.adopt(&lease)
+            }),
             Err(error) if crate::lock_is_contended(&error) => Ok(()),
             Err(error) => Err(error),
         };
@@ -668,6 +717,191 @@ mod tests {
         assert_eq!(lease.writer_epoch, original_writer.next().unwrap());
         assert!(lease.temporary.is_none());
         assert!(lease.deadline_ms.is_none());
+    }
+
+    #[test]
+    fn persistent_disconnect_contention_preserves_new_writer_pending_ticket_and_shell() {
+        let fixture = Fixture::new();
+        let generation = fixture.lease(1, now_ms() + 60_000);
+        let old_ticket = OperationId::new();
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        lease.lifetime = Lifetime::Persistent {};
+        lease.temporary = None;
+        lease.deadline_ms = None;
+        lease.pending = Some(PendingAttachment {
+            ticket: old_ticket.clone(),
+            writer_epoch: lease.writer_epoch,
+            previous: None,
+            attachment: AttachmentId::new(),
+            deadline_ms: now_ms() + 15_000,
+        });
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        let mut watch = DaemonWatch::open(&fixture.0, "fixture", 1).unwrap();
+        assert!(watch.allows_attachment(Some(&old_ticket), true));
+        watch.commit_attachment(Some(&old_ticket), true).unwrap();
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let active = guard.read().unwrap();
+        let name = Path::new("host-daemon-1.json");
+        let before = storage::read_private(&guard.directory, name, 4096).unwrap();
+        assert!(active.connected);
+        assert!(active.pending.is_none());
+        assert_eq!(active.last_attachment.as_ref(), Some(&old_ticket));
+        assert_eq!(active.writer_epoch.get(), 2);
+        assert!(active.deadline_ms.is_none());
+        watch.persistent_client_disconnected();
+        let delayed_old_disconnect = watch.disconnected_writer.clone();
+        assert!(!watch.should_stop());
+        assert_eq!(
+            storage::read_private(&guard.directory, name, 4096).unwrap(),
+            before
+        );
+        drop(guard);
+        watch.next_poll = Instant::now();
+        assert!(!watch.should_stop());
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut disconnected = guard.read().unwrap();
+        assert!(!disconnected.connected);
+        assert!(!disconnected.stopped);
+        assert!(disconnected.pending.is_none());
+        assert_eq!(disconnected.writer_epoch, active.writer_epoch);
+        assert_eq!(disconnected.last_attachment, active.last_attachment);
+        assert!(disconnected.temporary.is_none());
+        assert!(disconnected.deadline_ms.is_none());
+        assert_eq!(
+            serde_json::to_value(&disconnected).unwrap()["grant"],
+            serde_json::to_value(&active).unwrap()["grant"]
+        );
+        let new_ticket = OperationId::new();
+        disconnected.pending = Some(PendingAttachment {
+            ticket: new_ticket.clone(),
+            writer_epoch: disconnected.writer_epoch,
+            previous: None,
+            attachment: AttachmentId::new(),
+            deadline_ms: now_ms() + 15_000,
+        });
+        guard.replace(&mut disconnected).unwrap();
+        drop(guard);
+        assert!(watch.allows_attachment(Some(&new_ticket), true));
+        watch.commit_attachment(Some(&new_ticket), true).unwrap();
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let current = guard.read().unwrap();
+        let committed = storage::read_private(&guard.directory, name, 4096).unwrap();
+        assert!(current.connected);
+        assert_eq!(current.writer_epoch.get(), 3);
+        assert_eq!(current.last_attachment.as_ref(), Some(&new_ticket));
+        drop(guard);
+        watch.disconnected_writer = delayed_old_disconnect;
+        watch.next_poll = Instant::now();
+        assert!(!watch.should_stop());
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        assert_eq!(
+            storage::read_private(&guard.directory, name, 4096).unwrap(),
+            committed
+        );
+        let mut pending = guard.read().unwrap();
+        let takeover = PendingAttachment {
+            ticket: OperationId::new(),
+            writer_epoch: pending.writer_epoch,
+            previous: None,
+            attachment: AttachmentId::new(),
+            deadline_ms: now_ms() + 15_000,
+        };
+        pending.pending = Some(takeover.clone());
+        guard.replace(&mut pending).unwrap();
+        drop(guard);
+        watch.persistent_client_disconnected();
+        watch.next_poll = Instant::now();
+        assert!(!watch.should_stop());
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let lease = guard.read().unwrap();
+        assert!(!lease.connected);
+        assert!(!lease.stopped);
+        assert_eq!(lease.writer_epoch, pending.writer_epoch);
+        assert_eq!(lease.last_attachment, pending.last_attachment);
+        assert_eq!(
+            serde_json::to_vec(lease.pending.as_ref().unwrap()).unwrap(),
+            serde_json::to_vec(&takeover).unwrap()
+        );
+        assert!(lease.temporary.is_none());
+        assert!(lease.deadline_ms.is_none());
+        drop(guard);
+        assert!(watch.allows_attachment(None, false));
+        watch.commit_attachment(None, false).unwrap();
+        let lease = LeaseGuard::acquire(&fixture.0, generation)
+            .unwrap()
+            .read()
+            .unwrap();
+        assert!(!lease.connected);
+        assert!(lease.pending.is_none());
+        assert!(lease.last_attachment.is_none());
+        assert_eq!(lease.writer_epoch, pending.writer_epoch.next().unwrap());
+        assert!(lease.temporary.is_none());
+        assert!(lease.deadline_ms.is_none());
+    }
+
+    #[test]
+    fn persistent_disconnect_bookkeeping_does_not_change_temporary_grace_or_binding_watch() {
+        let fixture = Fixture::new();
+        let generation = fixture.lease(1, now_ms() + 60_000);
+        let ticket = OperationId::new();
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        lease.pending = Some(PendingAttachment {
+            ticket: ticket.clone(),
+            writer_epoch: lease.writer_epoch,
+            previous: lease.temporary.clone(),
+            attachment: AttachmentId::new(),
+            deadline_ms: now_ms() + 15_000,
+        });
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        let mut watch = DaemonWatch::open(&fixture.0, "fixture", 1).unwrap();
+        assert!(watch.allows_attachment(Some(&ticket), true));
+        watch.commit_attachment(Some(&ticket), true).unwrap();
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let name = Path::new("host-daemon-1.json");
+        let before = storage::read_private(&guard.directory, name, 4096).unwrap();
+        drop(guard);
+        watch.persistent_client_disconnected();
+        watch.next_poll = Instant::now();
+        assert!(!watch.should_stop());
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        assert_eq!(
+            storage::read_private(&guard.directory, name, 4096).unwrap(),
+            before
+        );
+        let mut lease = guard.read().unwrap();
+        lease.lifetime = Lifetime::Persistent {};
+        lease.temporary = None;
+        lease.deadline_ms = None;
+        lease.connected = false;
+        lease.pending = Some(PendingAttachment {
+            ticket: OperationId::new(),
+            writer_epoch: lease.writer_epoch,
+            previous: None,
+            attachment: AttachmentId::new(),
+            deadline_ms: now_ms() + 15_000,
+        });
+        let ticket = lease.pending.as_ref().unwrap().ticket.clone();
+        guard.replace(&mut lease).unwrap();
+        drop(guard);
+        let mut watch = DaemonWatch::open_binding(&fixture.0, "fixture", 1).unwrap();
+        assert!(watch.allows_attachment(Some(&ticket), true));
+        watch.commit_attachment(Some(&ticket), true).unwrap();
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let before = storage::read_private(&guard.directory, name, 4096).unwrap();
+        assert!(!guard.read().unwrap().connected);
+        drop(guard);
+        watch.persistent_client_disconnected();
+        watch.next_poll = Instant::now();
+        assert!(!watch.should_stop());
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        assert_eq!(
+            storage::read_private(&guard.directory, name, 4096).unwrap(),
+            before
+        );
     }
 
     #[test]

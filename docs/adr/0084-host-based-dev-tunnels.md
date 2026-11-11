@@ -653,6 +653,17 @@ Healthy inventory survives bounded per-target Unknown. Missing/unsupported
 journals fail closed; there is no automatic prerelease-state migration.
 Pending daemon ownership commit retries contention within its bounded deadline;
 candidate adoption no longer stalls the old writer or replays terminal input.
+An adopted HOST-managed persistent writer additionally records connected state
+with its exact ticket/writer epoch. A freshly authorized matching connected
+lease refuses non-takeover attachment before creating a pending ticket or
+opening native admission. This avoids converting an already-known occupied
+writer into a durable reservation whose failed native connection then needs a
+contended unwind. The daemon's exact-current-frontend retirement reconciles
+persistent disconnection through its existing poll, independently of bridge
+lifetime. Only the matching old ticket/epoch can clear connected state; it
+cannot clear pending takeover, transfer ownership or stop the persistent shell.
+Temporary grace and imported binding/ordinary local admission remain unchanged.
+Uncertain native connection/unwind failures are not reclassified as Busy.
 Post-snapshot staging is byte bounded, including allocation headroom, rather
 than limited to the live client's 64 frames; delayed adoption preserves ordered
 small output chunks. Closed/rejected clients cannot terminate the daemon/PTY.
@@ -1049,6 +1060,16 @@ native passes. Portable checks and Linux compilation are not native execution.
 The read-only [operator contract](../native-host-services.md#read-only-linux-logind-smoke-opt-in-native-execution-pending)
 does not qualify activation, transport/last-logout or daemon/cgroup survival;
 those HOSTSETUP-01 gates remain pending. No production behavior changes.
+
+`HOST-02`/`HOST-03` additionally require deterministic generation-lock unwind
+contention, persistent exact-writer disconnect/new-writer fencing and unchanged
+temporary/binding-watch fixtures. The original active-writer Busy and
+adoption-gated takeover native test remains unchanged, not reordered to obtain
+Busy from an already-pending takeover. Content-free native-connect and cleanup
+stages preserve the distinction between observed failures and unknown causes.
+One owned macOS case does not replace the legacy 14-case required CI selection,
+Windows/Linux proof or installed/service/vault/device acceptance.
+
 `HOST-03` additionally covers the distinct private-generation/current-Desktop
 adapter: deterministic source-domain/compatibility, connected-root provenance and
 NativeVault-fixture admission tests, plus the opt-in ordinary-private Local

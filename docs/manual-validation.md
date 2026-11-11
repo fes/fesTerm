@@ -3700,6 +3700,26 @@ native integration runs select a fresh owned root with
 `FESTERM_SESSIOND_TEST_RUNTIME_ROOT`, never production runtime state.
 The journal regression has a retained RED proof with unowned adoption restored.
 macOS automated evidence does not substitute for Linux/Windows native gates.
+Required macOS outcomes are not inferred from another baseline: acquisition
+job `130200669147` retained **13 passed/1 failed** (159.46s), and private-source
+job `130200686811` retained **13 passed/1 failed** (165.33s), both at the original
+active-writer Busy assertion before takeover. The latter directly logged
+unwind-generation-lease WouldBlock(35); its preceding native error was discarded,
+and the former has no equivalent inner-stage diagnostic. Subsequent content-free
+native-connect/cleanup stages and deterministic exact-lock/receipt fixtures
+do not retrospectively identify either missing primary error or the lock holder.
+The later binding `2f8624e1` macOS job also retained **13 passed/1 failed**
+(162.90s) at line633, with unwind WouldBlock(35) and cleanup Stale; its missing
+primary native error and actual generation-lock holder remain unknown.
+The bounded connected-persistent correction retains that original test body.
+Its exact owned macOS case, required legacy 14-case CI, cross-platform results
+and installed/native acceptance remain separately attributed. The unchanged
+original case passed **1/0/0 in 11.15s** with its matching frozen owned helper
+pair; its trace records connected-persistent refusal before reservation, not
+native-connect/unwind on that occupied path. Nine deterministic module guards
+passed **9/0/0 in 1.63s**. These do not replace fresh required CI. B7's
+17-case positive selection (172.82s) tests Busy after pending takeover and is
+not the original active-only refusal path; ordinary 151/0/17 is another run.
 Windows CI at `8ebbaf29` retained two real failures: primary run `42788442336`
 job `129735461598` rejected an unused checkpoint staging pathname under strict
 Clippy; native run `42788442164` job `129735457213` ran two bridge tests, with

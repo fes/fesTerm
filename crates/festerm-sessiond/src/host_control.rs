@@ -72,6 +72,8 @@ fn storage_error(error: io::Error) -> ControlError {
 #[derive(Clone, Copy)]
 enum AttachFailureDiagnostic<'a> {
     ReservePublish(&'a io::Error),
+    NativeConnect(&'a crate::PersistentSessionError),
+    ConnectedPersistentRefusal,
     UnwindAcquire(&'a io::Error),
     UnwindRead(&'a io::Error),
     UnwindCommitted,
@@ -85,6 +87,15 @@ impl AttachFailureDiagnostic<'_> {
         if !enabled {
             return None;
         }
+        if let Self::NativeConnect(error) = self {
+            return Some(match error.native_failure {
+                Some(failure) => format!(
+                    "host attach boundary=native-connect phase={:?} io_kind={:?} raw_os={:?}",
+                    failure.boundary, failure.io_kind, failure.raw_os
+                ),
+                None => "host attach boundary=native-connect phase=Unclassified".into(),
+            });
+        }
         let uncertain = ControlError::CommittedButNotPublished;
         let (step, error, control) = match self {
             Self::ReservePublish(error) => ("reserve-publish", Some(error), uncertain),
@@ -93,6 +104,10 @@ impl AttachFailureDiagnostic<'_> {
             Self::UnwindCommitted => ("unwind-already-committed", None, uncertain),
             Self::UnwindPublish(error) => ("unwind-publish", Some(error), uncertain),
             Self::PublicationReadmit(control) => ("publication-readmit", None, control),
+            Self::ConnectedPersistentRefusal => {
+                ("connected-persistent-refusal", None, ControlError::Busy)
+            }
+            Self::NativeConnect(_) => unreachable!("handled primary failure"),
         };
         Some(match error {
             Some(error) => format!(
@@ -154,10 +169,148 @@ mod attach_diagnostic_tests {
                 .unwrap(),
             "host attach boundary=publication-readmit control=Denied"
         );
+        assert_eq!(
+            AttachFailureDiagnostic::ConnectedPersistentRefusal
+                .message(true)
+                .unwrap(),
+            "host attach boundary=connected-persistent-refusal control=Busy"
+        );
         let os_error = io::Error::from_raw_os_error(5);
         assert_eq!(
             AttachFailureDiagnostic::ReservePublish(&os_error).message(true).unwrap(),
             format!("host attach boundary=reserve-publish control=CommittedButNotPublished io_kind={:?} raw_os=Some(5)", os_error.kind())
+        );
+        let native_error = crate::PersistentSessionError::new("SECRET /private/path")
+            .at_native_boundary(crate::NativeConnectionBoundary::AdmissionRead, Some(&error));
+        assert!(AttachFailureDiagnostic::NativeConnect(&native_error)
+            .message(false)
+            .is_none());
+        assert_eq!(
+            AttachFailureDiagnostic::NativeConnect(&native_error)
+                .message(true)
+                .unwrap(),
+            "host attach boundary=native-connect phase=AdmissionRead io_kind=Some(PermissionDenied) raw_os=None"
+        );
+        let refused = crate::PersistentSessionError::new("SECRET /private/path")
+            .at_native_boundary(crate::NativeConnectionBoundary::AdmissionRefused, None);
+        assert_eq!(
+            AttachFailureDiagnostic::NativeConnect(&refused)
+                .message(true)
+                .unwrap(),
+            "host attach boundary=native-connect phase=AdmissionRefused io_kind=None raw_os=None"
+        );
+    }
+
+    #[test]
+    fn failed_native_attach_unwind_contention_preserves_committed_writer_and_exact_pending_ticket()
+    {
+        let directory = storage::private_test_directory();
+        let root = directory.path();
+        let storage_directory = storage::private_directory(root, false).unwrap();
+        let generation = GenerationId::new(1).unwrap();
+        let old_ticket = OperationId::new();
+        let ticket = OperationId::new();
+        let mut lease = DaemonLease {
+            version: 1,
+            name: "fixture".into(),
+            generation,
+            revision: 1,
+            lifetime: Lifetime::Persistent {},
+            temporary: None,
+            deadline_ms: None,
+            connected: false,
+            stopped: false,
+            remote_revoked: false,
+            pending: Some(PendingLeaseAttachment {
+                ticket: ticket.clone(),
+                writer_epoch: Epoch::new(2).unwrap(),
+                previous: None,
+                attachment: AttachmentId::new(),
+                deadline_ms: now_ms() + 15_000,
+            }),
+            last_attachment: Some(old_ticket.clone()),
+            grant: SessionGrant {
+                owner: PrincipalId::new(),
+                logical: LogicalSessionId::new(),
+                revision: Epoch::new(1).unwrap(),
+                remote_access: true,
+                state: LogicalState::Running(generation),
+            },
+            writer_epoch: Epoch::new(2).unwrap(),
+            native_pid: Some(std::process::id()),
+        };
+        let old = AttachmentAuthority {
+            root: root.into(),
+            native_root: root.into(),
+            binding: None,
+            target: Target {
+                logical: lease.grant.logical.clone(),
+                generation,
+            },
+            identity: NativeSessionIdentity {
+                name: lease.name.clone(),
+                pid: std::process::id(),
+                created_at_unix_ms: generation.get(),
+                endpoint: "fixture".into(),
+            },
+            grant: lease.grant.clone(),
+            writer_epoch: lease.writer_epoch,
+            ticket: old_ticket,
+            expected: None,
+        };
+        let guard = LeaseGuard::reserve(root, generation).unwrap();
+        guard.create(&lease).unwrap();
+        let name = Path::new("host-daemon-1.json");
+        let before = storage::read_private(&storage_directory, name, 4096).unwrap();
+        assert_eq!(
+            SessionControl::unwind_attachment(root, generation, &ticket, true),
+            Err(ControlError::CommittedButNotPublished)
+        );
+        assert_eq!(
+            storage::read_private(&storage_directory, name, 4096).unwrap(),
+            before
+        );
+        let held = guard.read().unwrap();
+        assert_eq!(held.pending.as_ref().unwrap().ticket, ticket);
+        assert!(same_grant(&held.grant, &lease.grant));
+        assert_eq!(held.writer_epoch, old.writer_epoch);
+        SessionControl::committed(&old, &held).unwrap();
+        drop(guard);
+        SessionControl::unwind_attachment(root, generation, &OperationId::new(), true).unwrap();
+        let guard = LeaseGuard::acquire(root, generation).unwrap();
+        assert_eq!(
+            storage::read_private(&storage_directory, name, 4096).unwrap(),
+            before
+        );
+        drop(guard);
+        SessionControl::unwind_attachment(root, generation, &ticket, true).unwrap();
+        let guard = LeaseGuard::acquire(root, generation).unwrap();
+        let cleared = guard.read().unwrap();
+        assert!(cleared.pending.is_none());
+        assert_eq!(cleared.writer_epoch, lease.writer_epoch);
+        assert_eq!(cleared.last_attachment, lease.last_attachment);
+        assert_eq!(cleared.temporary, lease.temporary);
+        assert_eq!(cleared.deadline_ms, lease.deadline_ms);
+        assert_eq!(cleared.connected, lease.connected);
+        assert!(same_grant(&cleared.grant, &lease.grant));
+        SessionControl::committed(&old, &cleared).unwrap();
+        lease = cleared;
+        lease.last_attachment = Some(ticket.clone());
+        lease.writer_epoch = lease.writer_epoch.next().unwrap();
+        guard.replace(&mut lease).unwrap();
+        let committed = storage::read_private(&storage_directory, name, 4096).unwrap();
+        drop(guard);
+        assert_eq!(
+            SessionControl::unwind_attachment(root, generation, &ticket, true),
+            Err(ControlError::CommittedButNotPublished)
+        );
+        let guard = LeaseGuard::acquire(root, generation).unwrap();
+        let current = guard.read().unwrap();
+        assert_eq!(current.last_attachment.as_ref(), Some(&ticket));
+        assert_eq!(current.writer_epoch, old.writer_epoch.next().unwrap());
+        assert_eq!(
+            storage::read_private(&storage_directory, name, 4096).unwrap(),
+            committed
         );
     }
 }
@@ -202,6 +355,20 @@ fn same_grant(left: &SessionGrant, right: &SessionGrant) -> bool {
         && left.remote_access == right.remote_access
         && left.state == right.state
         && left.revision == right.revision
+}
+
+fn attachment_storage_error(boundary: &'static str, error: io::Error) -> ControlError {
+    #[cfg(any(test, feature = "test-support"))]
+    let detail = (error.kind(), error.raw_os_error());
+    let control = storage_error(error);
+    #[cfg(any(test, feature = "test-support"))]
+    eprintln!(
+        "host attachment boundary={boundary} control={control:?} io_kind={:?} raw_os={:?}",
+        detail.0, detail.1
+    );
+    #[cfg(not(any(test, feature = "test-support")))]
+    let _ = boundary;
+    control
 }
 
 #[derive(Clone, Debug)]
@@ -1750,8 +1917,10 @@ impl SessionControl {
             .map(Self::binding_source)
             .transpose()?;
         let guard = LeaseGuard::acquire(&authority.native_root, authority.target.generation)
-            .map_err(storage_error)?;
-        let lease = guard.read().map_err(storage_error)?;
+            .map_err(|error| attachment_storage_error("authority-acquire", error))?;
+        let lease = guard
+            .read()
+            .map_err(|error| attachment_storage_error("authority-read", error))?;
         if lease.remote_revoked {
             return Err(ControlError::Revoked);
         }
@@ -1812,9 +1981,24 @@ impl SessionControl {
             return Err(ControlError::Ended);
         }
 
-        // Persistent adoption records a ticket without setting temporary.connected.
         #[cfg(any(test, feature = "test-support"))]
         let diagnose = !takeover && lease.last_attachment.is_some();
+        if !record.lease_matches(&lease) || !same_grant(&lease.grant, &record.grant()) {
+            return Err(ControlError::Unknown);
+        }
+        if lease.remote_revoked {
+            return Err(ControlError::Revoked);
+        }
+        if !takeover
+            && record.binding.is_none()
+            && lease.temporary.is_none()
+            && lease.connected
+            && lease.last_attachment.is_some()
+        {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::ConnectedPersistentRefusal.report(diagnose);
+            return Err(ControlError::Busy);
+        }
         let transfer = lease
             .temporary
             .as_ref()
@@ -1887,38 +2071,19 @@ impl SessionControl {
         };
         let session = match connected {
             Ok(session) => session,
-            Err(_) => {
+            Err(error) => {
+                #[cfg(any(test, feature = "test-support"))]
+                AttachFailureDiagnostic::NativeConnect(&error).report(diagnose);
+                #[cfg(not(any(test, feature = "test-support")))]
+                let _ = error;
                 if let Some(ticket) = &ticket {
-                    let acquired = LeaseGuard::acquire(record.root(&self.root), record.generation);
-                    #[cfg(any(test, feature = "test-support"))]
-                    if let Err(error) = &acquired {
-                        AttachFailureDiagnostic::UnwindAcquire(error).report(diagnose);
-                    }
-                    let guard = acquired.map_err(|_| ControlError::CommittedButNotPublished)?;
-                    let read = guard.read();
-                    #[cfg(any(test, feature = "test-support"))]
-                    if let Err(error) = &read {
-                        AttachFailureDiagnostic::UnwindRead(error).report(diagnose);
-                    }
-                    let mut lease = read.map_err(|_| ControlError::CommittedButNotPublished)?;
-                    if lease.last_attachment.as_ref() == Some(ticket) {
+                    Self::unwind_attachment(
+                        record.root(&self.root),
+                        record.generation,
+                        ticket,
                         #[cfg(any(test, feature = "test-support"))]
-                        AttachFailureDiagnostic::UnwindCommitted.report(diagnose);
-                        return Err(ControlError::CommittedButNotPublished);
-                    }
-                    if lease
-                        .pending
-                        .as_ref()
-                        .is_some_and(|pending| &pending.ticket == ticket)
-                    {
-                        lease.pending = None;
-                        let publication = guard.replace(&mut lease);
-                        #[cfg(any(test, feature = "test-support"))]
-                        if let Err(error) = &publication {
-                            AttachFailureDiagnostic::UnwindPublish(error).report(diagnose);
-                        }
-                        publication.map_err(|_| ControlError::CommittedButNotPublished)?;
-                    }
+                        diagnose,
+                    )?;
                 }
                 return Err(ControlError::Busy);
             }
@@ -1935,6 +2100,45 @@ impl SessionControl {
             reserved_lease,
             authority,
         })
+    }
+
+    fn unwind_attachment(
+        root: &Path,
+        generation: GenerationId,
+        ticket: &OperationId,
+        #[cfg(any(test, feature = "test-support"))] diagnose: bool,
+    ) -> Result<(), ControlError> {
+        let acquired = LeaseGuard::acquire(root, generation);
+        #[cfg(any(test, feature = "test-support"))]
+        if let Err(error) = &acquired {
+            AttachFailureDiagnostic::UnwindAcquire(error).report(diagnose);
+        }
+        let guard = acquired.map_err(|_| ControlError::CommittedButNotPublished)?;
+        let read = guard.read();
+        #[cfg(any(test, feature = "test-support"))]
+        if let Err(error) = &read {
+            AttachFailureDiagnostic::UnwindRead(error).report(diagnose);
+        }
+        let mut lease = read.map_err(|_| ControlError::CommittedButNotPublished)?;
+        if lease.last_attachment.as_ref() == Some(ticket) {
+            #[cfg(any(test, feature = "test-support"))]
+            AttachFailureDiagnostic::UnwindCommitted.report(diagnose);
+            return Err(ControlError::CommittedButNotPublished);
+        }
+        if lease
+            .pending
+            .as_ref()
+            .is_some_and(|pending| &pending.ticket == ticket)
+        {
+            lease.pending = None;
+            let publication = guard.replace(&mut lease);
+            #[cfg(any(test, feature = "test-support"))]
+            if let Err(error) = &publication {
+                AttachFailureDiagnostic::UnwindPublish(error).report(diagnose);
+            }
+            publication.map_err(|_| ControlError::CommittedButNotPublished)?;
+        }
+        Ok(())
     }
 
     /// Poll after the frontend has adopted the deferred recovery snapshot.
@@ -1991,6 +2195,7 @@ impl SessionControl {
                         .next()
                         .map_err(|_| ControlError::Storage)?;
                     lease.pending = None;
+                    lease.connected = false;
                     guard.replace(&mut lease).map_err(storage_error)?;
                     let mut receipt_authority = authority.clone();
                     receipt_authority.writer_epoch = lease.writer_epoch;

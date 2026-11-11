@@ -1795,6 +1795,16 @@ promote HOST-04/05/06 or the known-blocked Windows PKI/native-manager gates.
 The subsequently normal-merged exact5d timestamp source fix is
 [Mac compiled-input-equivalent, not a new14-route run](milestone-progress.md#exact-source-only-windows-timestamp-follow-up);
 its mandatory Windows16-vector execution and genuine PKI remain pending.
+
+HOST-02/03 also require connected persistent-writer refusal before reservation
+or native admission, with fresh current-policy/record/identity/grant checks.
+Exact daemon-observed disconnect must allow a later unoccupied attachment
+without bridge cleanup, never clear a newer writer or pending takeover, and
+never stop the persistent shell. Deterministic generation-lock contention and
+unchanged temporary/binding-watch tests cover the bookkeeping; the original
+active-writer-before-takeover native oracle remains independently qualified.
+No Busy retry, timeout increase or uncertainty-to-Busy conversion is added.
+
 HOST-03's private-session adapter is distinct from HOST-06's legacy migration:
 it consumes an already-Provisioned Desktop host and never synthesizes legacy
 installation/claim receipts. Lookup phase is protected observation, not readiness
