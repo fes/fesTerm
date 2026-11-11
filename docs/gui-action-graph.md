@@ -1751,7 +1751,11 @@ of Rust's current-app root factory, not just linked symbols or direct Java calls
 The focused debug-only existing JNI-validation pattern accepts no path/UID/FD,
 requires two validated current roots and exact fixed-child creation/reopen, and
 returns only scalar success/failure. First-campaign API35 publication/Keyguard
-proof is preserved; new invocation evidence and source gates remain required.
+proof is preserved. The focused case passes at `495f700f` on fresh
+API35/enforcing/untrusted-app runtime with target36 packaging: both real Rust
+factory calls and exact fixed-child create/reopen execute before scalar success.
+Fresh full-source gates and evidence approval remain required; no physical
+device, TEE, API36 runtime or complete protected-original HOST claim follows.
 
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after

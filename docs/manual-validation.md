@@ -204,6 +204,16 @@ the debug-only, no-argument scalar native-validation hook, which uses the real
 creation/reopen. Missing/refused hooks fail; symbols alone do not qualify. Record
 the fresh target36 APK, source maps and actual API35 invocation separately;
 physical devices, TEE and full HOST recovery remain unqualified.
+The focused case now passes once at implementation freeze `495f700f` on a fresh
+API35/enforcing/untrusted-app guest. Its no-argument debug JNI entry calls the
+actual Rust factory twice and requires validated root/fixed-child identity;
+missing/refused hooks cannot report success. The target36 APK, immutable library,
+scalar native result, process-domain attribution and identical 2,037-source maps
+are retained separately from the unchanged first campaign. Package, affected
+Android Rust 1.99.1 strict, five focused host tests, fmt and trace311 pass. The
+existing Rust 1.98 toolchain lacks Android std, so no Rust 1.98 Android strict is claimed.
+Fresh source gates and evidence approval remain pending; this is not full
+native-vault/protected-original HOST or physical-device acceptance.
 The focused commands are `build-android.py --recording-validation` followed by
 `smoke-android.py --serial <owned-emulator> --root-factory-validation`, with the
 same explicit private SDK/ADB environment. The existing POSIX optional runner
@@ -221,9 +231,12 @@ This actual Android SELinux/JNI/Keystore/device smoke is required **before
 consumption**, even after corrected host and compilation gates pass.
 Historical Android Rust mobile checking passes with the
 existing NDK 27, and production Java plus smoke compile against existing API 35.
-Those are compilation only: configured API 36 APK/dex/linking and native runtime
-evidence remain required. API 36 `android.jar`/`aapt2` are absent in the qualified
-environment; none were installed. Locked native storage remains unavailable,
+That historical checkpoint was compilation only and lacked API36 tools.
+Separate disposable-emulator authorization installed only the missing API36
+platform/build-tools in a session-local SDK for the first campaign; the global
+SDK remains unchanged. The new focused continuation reuses that existing private
+SDK and records actual target36 APK/dex/linking with API35 runtime, not API36
+runtime. Locked native storage remains unavailable,
 never an empty store.
 No incomplete-anchor repair, retained-original cap change or automatic
 retirement is included: existing permanently incomplete anchors and the

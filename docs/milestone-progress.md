@@ -15,6 +15,27 @@ A focused new native case, not an unchanged whole-smoke retry, will supply the
 missing invocation evidence. No product authority or portable dependency boundary
 changes; fresh source gates and Parent proof remain required before consumption.
 
+The implementation freeze `495f700f` now passes that actual missing case once
+on a fresh disposable API35 guest, targeting API36, with enforcing SELinux and the
+real untrusted application UID. The scalar JNI hook calls the production Rust
+factory twice, validates equal pinned roots and exact fixed-child creation/reopen;
+no path, UID or descriptor is supplied by the test. The actual APK, immutable
+native library and compiler/source maps are retained. The package build, affected
+Android-target Rust 1.99.1 strict, five focused host tests, fmt and trace311 pass
+with all 2,037 source inputs unchanged during each command. Existing vendored
+dependency warnings are retained in logs, not repaired or concealed.
+
+This continuation does not rerun whole PlatformSmoke or the first Keyguard case;
+all 89 first-campaign inventory entries remain unchanged. The earlier compiled
+library is separately preserved before authorized warm-target reuse. The new
+guest/privateADB are stopped, every owned PID/loopback listener is closed, both
+target locks are available, and original SDK/license/AVD configuration hashes
+and global ADB17898 identity match. Guest credentials are destroyed; anonymous
+registry cache alone is retained. Android-target Rust 1.98 strict is unrun because that
+existing toolchain lacks Android std; no toolchain install was attempted.
+Actual API35 runtime is not API36 runtime, TEE or a full protected-original HOST
+workflow. Fresh full-source gates and evidence approval remain mandatory.
+
 ## Android reservation correction: remove the SELinux-denied publisher
 
 Independent full-source gates blocked `e462c59b`: its hard-link publication is

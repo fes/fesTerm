@@ -730,6 +730,17 @@ untrusted-app/enforcing attribution, affected strict/fmt/trace checks and fresh
 source gates are required. API35 runtime with target36 is not API36 runtime,
 TEE, full app-lock authentication or protected-original HOST workflow acceptance.
 
+The implementation freeze `495f700f` executes this focused JNI case successfully
+on fresh API35/enforcing/untrusted-app runtime, with target36 packaging. Both
+real factory calls and validated fixed-child create/reopen precede scalar success;
+the hook cannot accept a caller path/UID/FD or substitute an unvalidated root.
+The package, Android-target Rust 1.99.1 strict and five focused host tests pass
+with identical 2,037-input source maps; all 89 first-campaign inventory entries remain
+unchanged. This is actual invocation, not merely symbol qualification. The new
+source still requires independent full-source gates and evidence approval;
+physical devices, TEE, API36 runtime and full protected-original recovery remain
+separate. No unchanged native smoke or new SDK install was used in this continuation.
+
 Validation impact remains `HOST-02`, `HOST-03`, ADR0084: deterministic current
 owner/foreign scope, create versus reopen, foreign-account refusal, base/backup/
 staging collisions, concurrent creation and failure/no-overwrite/no-implicit-

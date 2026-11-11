@@ -62,6 +62,10 @@ The opt-in mobile client has a protected native-vault original-action checkpoint
 explicit cold-start review keeps the same UUID/issuance/body, never auto-retries,
 and only exact Ended retires settled originals. Native-vault/device cold-start
 acceptance (including Android reserved-reference storage) remains open.
+Isolated API35/enforcing/untrusted-app smoke now covers native publication,
+Keyguard and the actual Rust→JNI current-app root factory through a debug-only
+validation hook. Target36 packaging is not API36 runtime, TEE or full HOST
+recovery; fresh source reviews and evidence approval remain required.
 The default headless build now has explicit authenticated
 setup/owner approval/run; no listener or permission is enabled merely by
 compilation/configuration. Independent combined review and native/cloud/vault/
