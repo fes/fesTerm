@@ -816,10 +816,11 @@ batch, and exact Create/End refusal before explicit protected reopen.
 Unix feature-gated testing composition reuses the actual memory secret store, owner
 receipt/checkpoint paths and framed original Ends; it adds no production
 authority constructor or native-store selection override. Valid-scope and
-confirmed-End controls isolate the tested fences. Native acceptance remains
+confirmed-End controls isolate the tested fences. Full native HOST/workflow acceptance remains
 separate; the Android reservation boundary below removes the source-level
-Unsupported prerequisite but does not repair incomplete reservations or the
-sixteen-unresolved-action admission limit.
+Unsupported prerequisite but does not repair incomplete reservations or relax
+the deliberate sixteen-per-purpose bound. Explicit local Forget below is the
+existing capacity mitigation, never automatic pruning.
 
 Durable reconciliation is a current ADR0084 requirement, with a narrow
 client-bound checkpoint factory as its architectural enabler. A private,
@@ -920,7 +921,7 @@ disable default features and remain subject to the existing desktop-dependency
 guard. Production mobile default-No, foreground, pending/context/account and
 epoch fences remain unchanged.
 
-Validation impact: `HOST-02`, `HOST-03`, ADR0084. Packaging/static and bounded
+Design-time validation impact: `HOST-02`, `HOST-03`, ADR0084. Packaging/static and bounded
 Android-target build/strict evidence precede a frozen source review pin. Actual
 native-index instrumentation requires three fresh source gates and separate
 coordinator guest GO despite the recorded disposable-emulator authorization.
@@ -928,6 +929,54 @@ No guest/ADB/native-vault execution is permitted during this source phase.
 Full HOST recovery, GUI confirmation, cold-start/app-lock composition, physical
 devices, API36 runtime and TEE guarantees remain independent gates. Earlier
 closed publication/factory evidence is preserved, not reattributed to this case.
+
+#### Android native-index/Forget runtime evidence
+
+The bounded case is now executed at exact
+`ad219ad7a98d31931a203aefe372ca08ab1204ee`, not merely linked or a memory
+fixture. Three source gates passed before the separate guest GO. A fresh API35
+untrusted-app guest with target36 packaging executes the production native
+receipt/key/encrypted-payload store, independent production root/index reopen
+with positive Native/same-root identity, retained `OriginalStore`, review-only
+no-op, changed-record `BindingMismatch` without deletion, explicit fixture-only
+Forget of exactly one original and byte-exact unrelated-original preservation.
+Its uncertain peer remains synthetic in-memory composition, not authenticated
+HOST/provider execution.
+
+The first campaign's actual case passed once in **9.863s**, but the private
+collector incorrectly required an output marker absent from normal
+`am instrument -w` stream output. That campaign remains **exit1**, with no
+post-enforcing witness; nothing retrospectively fills that gap. Fourteen
+offline parser/control-flow tests then passed for a separate private collector,
+including failed parsing/capture and cleanup ordering. No production code or
+APK changed. A NEW fresh guest runs the same sealed inputs once:
+**1/0/0, 16.386s**, ADB/campaign **exit0**, actual **Enforcing before and after**.
+Independent post attempt/result/completion receipts precede forced-stop/cleanup.
+Scalar0 is inferred from reviewed Java's PASS-only-on-zero branch, not separately
+printed. Installed application/instrumentation APKs, native library and both Dex
+bytes match their sealed inputs; all 2,065 source inputs and tools stay equal.
+
+The v2 immutable handoff SHA256 is
+`0d971d43bc34f97b32373854bd3cd506120d5e3eed18126b6d1656b10a8d182a`;
+independent parent proof SHA256 is
+`077197b72e64c3e71d4677d7b9cb5788950baae160ef6a56e7cb7df55165f7f2`.
+The 89-entry runtime seal preserves 51 numeric command receipts plus four setup
+zeros; all 263 earlier inventory entries remain unchanged. All 67 observed
+owned PIDs are absent, 12 recorded listeners closed, three owned guest/auth
+directories destroyed and two target locks free. Synthetic residue, including
+the unrelated unresolved original, stayed until exact-owned guest/auth
+destruction; no store pruning or namespace rotation occurred.
+
+Validation impact: `HOST-02`, `HOST-03`, ADR0084. This docs-only successor
+preserves all code/Cargo bytes of `ad219ad7`; only metadata/static fmt, diff and
+trace against actual PR base `6614c99086cc71e1a4097ed738f2435539e41c69`
+are selected. Required CI for this successor is **UNRUN**; earlier `406ca499`
+green CI is not its CI. Full HOST/provider recovery, native-vault authentication,
+cold-start/app-lock composition, GUI/default-No/privacy/account/pending fences,
+different-native-namespace refusal, API36 runtime, physical devices, TEE and
+ADR completion remain unproved by this slice. Local Forget exists and the
+sixteen-per-purpose/64KiB bounds remain deliberate; incomplete-anchor repair
+is neither implemented nor authorized.
 
 **Normal source composition:** exact Desktop `e6e4b8a2` and qualified Android
 `b05bc1c0` are combined without squashing either history. Foreground Android
@@ -943,11 +992,12 @@ Validation impact remains `HOST-02`, `HOST-03`, ADR0084. The new portable
 `protected_original_forget_retains_namespace_and_snapshot_across_index_reopen`
 regression covers cloned-index reopen, same/different namespace comparison,
 stale review refusal after another opener changes the checkpoint, retained-store
-confirmation and preservation of the unrelated original. It is **unrun at the
+confirmation and preservation of the unrelated original. It was **unrun at the
 composition source freeze**. All eight existing Forget regressions are retained.
 Fresh composed secret-store/portable-bridge/mobile suites, affected all-target
 strict and Android cfg checks, fmt and actual-base `6614c990` trace/diff are
-pending, as are three fresh composed source gates. The isolated API35 factory
+historical freeze-time prerequisites, subsequently qualified at their recorded
+source pins, not new runs at this docs child. The isolated API35 factory
 case remains attributed only to `495f700f`; prior native takeover/End evidence
 is not reattributed to this merge. Explicit local Forget mitigates Desktop
 capacity only after consent; full Android HOST recovery/Forget and NativeVault,

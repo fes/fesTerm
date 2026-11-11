@@ -1,5 +1,40 @@
 # Milestone Progress Narrative
 
+## Executing the bounded Native-index/retained-backend Forget case
+
+Exact `ad219ad7a98d31931a203aefe372ca08ab1204ee` and its sealed APKs now execute
+the real Native branch on a fresh API35/target36 untrusted-app guest:
+**1/0/0, 16.386s**, ADB/campaign exit0, actual Enforcing before/after.
+Separate production root/index reopen validates same native storage identity;
+encrypted capture/reopen, retained `OriginalStore`, review-only no-op,
+changed-record `BindingMismatch` with preservation, explicit fixture-only local
+Forget and byte-exact unrelated-original preservation all pass. The uncertain
+peer remains synthetic, not HOST/provider authentication.
+
+The first campaign's native case PASS **9.863s** does not change its **exit1**
+or missing post-enforcing witness. A corrected private collector removes only
+the invented output-marker requirement and independently records post capture
+before cleanup; **14 offline tests** pass. The new campaign above uses unchanged
+source/APKs, not a production fix or retrospective evidence. Scalar0 is inferred
+from reviewed Java's PASS-only-on-zero branch, not separately printed.
+
+The 89-entry seal/parent proof preserve 51 numeric command receipts plus four
+setup zeros, all 2,065 source inputs and tools, installed APK/native/both-Dex equality
+and 263 earlier entries. All 67 observed PIDs are absent, 12 listeners closed,
+three guest/auth directories destroyed and two locks free; synthetic residue
+stays until exact-owned guest/auth destruction. See
+[canonical hashes and limits](adr/0084-host-based-dev-tunnels.md#android-native-indexforget-runtime-evidence).
+No namespace rotation, PIN/keyguard-policy change, provider operation or
+automatic repair occurs.
+
+This normal successor is docs/trace-only; all code/Cargo bytes remain `ad219ad7`.
+Only static metadata/fmt/diff/actual-`6614c990` trace checks are selected.
+Required CI is UNRUN for this successor, not inherited from `406ca499`.
+Full HOST/provider/vault-auth recovery, cold-start/app-lock and GUI/default-No/
+privacy/account/pending composition, different-native-namespace proof,
+API36 runtime, physical devices, TEE and ADR completion remain open.
+Sixteen-per-purpose/64KiB bounds are deliberate and explicit local Forget exists.
+
 ## Designing the smallest real Android native-index/Forget increment
 
 The portable retained-index regression did not execute its Native branch, and
@@ -28,8 +63,9 @@ Validation-Impact and Co-authored-by lines were not one Git trailer block.
 A normal child corrects the synthetic parameter to the protocol's `u128`,
 uses contiguous trailers, and adds a build-only instrumentation option so
 source qualification can produce both APKs without any ADB activity. No
-history or first outcome is rewritten; source gates/native execution remain
-pending.
+history or first outcome is rewritten. Source gates/native execution were
+pending at that source checkpoint; the later exact-head execution above supplies
+only its stated Native-index slice.
 
 ## Executing d454 portable/cfg checks, then freezing the diagnostic joint source
 

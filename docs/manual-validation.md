@@ -314,8 +314,9 @@ native payload, not a missing vault or a remote absence. Keep the remote session
 running and verify no End/detach/retry/replacement or other-client revocation.
 Deterministic memory-vault/action tests do not qualify these native/device flows.
 
-Android reserved creation now has a source implementation, not runtime
-acceptance. The owner-approved boundary was documented before coding:
+Android reserved creation has a source implementation and the isolated native
+evidence below, not full HOST/device-workflow acceptance. The owner-approved
+boundary was documented before coding:
 `NativeAppPrivateRoot::current` obtains an opaque, pinned current-application
 root through the secret-store facade. Java anchors the current Context's
 private data directory before validating its exact native storage child; the
@@ -325,11 +326,11 @@ workers use the capability; `OriginalStore` retains that index rather than
 reconstructing path authority. There is no public raw-root constructor,
 bridge-to-JNI dependency or file-vault fallback.
 
-**Composed source freeze (`e6e4b8a2` + `b05bc1c0`):** the native pinned index and
+**Historical composed source freeze (`e6e4b8a2` + `b05bc1c0`):** the native pinned index and
 typed local Forget reviews coexist without reconstructing path authority.
-The new portable cloned-index/Forget regression and all composed-head tests,
-strict/cfg/fmt/trace checks are unrun; three fresh composed source gates are
-also pending. The minimum execution is secret-store library, portable bridge
+At that freeze the new portable cloned-index/Forget regression and composed-head
+tests/strict/cfg/fmt/trace checks were unrun; three composed source gates were
+also pending. The minimum execution was secret-store library, portable bridge
 `--no-default-features --features testing --lib`, and mobile
 `--features host-clients --lib`, plus matching all-target strict and Android
 target checks. Record actual selected counts and per-command source maps,
@@ -342,7 +343,7 @@ Explicit Desktop Forget is a capacity mitigation, not Android full-workflow
 acceptance or permission to repair pending native material. Historical factory
 and publication campaigns below do not qualify this composed source.
 
-**Next bounded native-index increment (source first, runtime pending):**
+**Bounded native-index increment (executed at exact `ad219ad7`):**
 `smoke-android.py --native-index-validation --serial <new-owned-emulator>`
 selects only the registered `NativeIndexForgetSmoke`, requiring a debug
 `build-android.py --offline --recording-validation` APK. The packager explicitly
@@ -351,7 +352,7 @@ a debuggable APK alone is not evidence that Rust compiled the hooks.
 `smoke-android.py --build-only --sdk <existing-private-sdk>` compiles and signs
 the instrumentation APK without querying ADB, installing or running any case.
 After three source gates and separate coordinator guest GO, this fixed case
-must use real native receipt/key/payload storage, separate production root/index
+used real native receipt/key/payload storage, separate production root/index
 reopen with positively identified native same-namespace identity, an uncertain
 in-memory injected peer, review-only no-op, changed-record BindingMismatch
 without deletion, retained-store fixture-only confirmation and byte-exact
@@ -360,9 +361,33 @@ cross JNI or enter test output. No path/FD/context input, memory fallback,
 namespace rotation, remote authentication or production consent is permitted.
 `FESTERM_ANDROID_NATIVE_INDEX_VALIDATION=1` selects it in the optional runner
 only with an explicitly selected emulator. Host memory-oracle tests and Android
-compilation do not execute this case. Different-native-namespace refusal,
-full HOST recovery, GUI/default-No confirmation, app-lock/cold-start composition,
-API36 runtime, physical devices and TEE remain unproved by this increment.
+compilation do not execute this case.
+
+Actual frozen-APK execution uses direct installed instrumentation, not a rebuild
+or the optional wrapper's replace-install path. The first fresh guest's case
+passed once in **9.863s**, but its collector campaign remains **exit1/missing
+post-enforcing**, because it required an invented instrumentation marker.
+Fourteen offline parser/control-flow tests qualified a NEW private collector;
+no production fix or APK change occurred. Its separate fresh API35/target36
+guest passes **1/0/0, 16.386s**, ADB/campaign exit0, actual untrusted-app domain
+and Enforcing before/after. Post attempt/result/completion are independently
+recorded before cleanup. Scalar0 follows Java's PASS-only-on-zero assertion,
+not a separate scalar print. All installed APK/native/both-Dex bytes match;
+the 89-entry seal includes 51 numeric command receipts plus four setup zeros.
+All 67 observed PIDs depart, 12 recorded listeners close, three owned guest/auth
+directories are destroyed and two target locks are free. Synthetic leftovers
+remain until that destruction; no store pruning or namespace rotation occurs.
+The [canonical evidence/hashes](adr/0084-host-based-dev-tunnels.md#android-native-indexforget-runtime-evidence)
+retain the first failure and all prior campaigns unchanged.
+
+Different-native-namespace refusal, full HOST/provider recovery, native-vault
+authentication, GUI/default-No/privacy/account/pending fences, app-lock/
+cold-start composition, API36 runtime, physical devices, TEE and ADR completion
+remain unproved. Deliberate sixteen-per-purpose/64KiB bounds and existing
+explicit local Forget are unchanged, not an absent source mitigation.
+This successor is docs/trace-only; its required CI is UNRUN, not inherited from
+the earlier `406ca499` green head. No Cargo suite, rebuild or additional native
+execution is attributed to the docs child.
 
 **Subsequent portable qualification at exact `d454e7a7`:** secret-store
 17/0/0 (0.02s), portable bridge 101/0/0 (8.27s), mobile 229/0/4 (15.54s).

@@ -69,14 +69,20 @@ Isolated API35/enforcing/untrusted-app smoke now covers native publication,
 Keyguard and the actual Rust→JNI current-app root factory through a debug-only
 validation hook. Target36 packaging is not API36 runtime, TEE or full HOST
 recovery; fresh source reviews and evidence approval remain required.
-The next fixed debug-validation case exercises the real Android receipt index,
-same-namespace reopen and retained-store local Forget with synthetic uncertain
-End originals. It is not executed native acceptance, different-namespace proof,
-provider enrollment or production GUI consent.
+At exact `ad219ad7`, the fixed debug-validation case now passes actual API35
+native receipt-index/same-root reopen and retained-store local Forget with
+synthetic uncertain End originals: **1/0/0, 16.386s**, campaign exit0, enforcing
+before/after. The first collector campaign remains exit1/missing-post despite
+its native case PASS; the new private collector is not a production fix.
+This is not different-namespace proof, HOST/provider recovery, vault-auth/
+cold-start/app-lock composition, GUI/default-No/account/privacy/pending consent,
+API36 runtime, physical-device, TEE or ADR completion. See the
+[exact evidence and limits](docs/adr/0084-host-based-dev-tunnels.md#android-native-indexforget-runtime-evidence).
 The normal Desktop `e6e4b8a2` + Android `b05bc1c0` source composition retains
 typed local Forget reviews and the native pinned receipt index together.
-Composed-head tests, strict checks and Android target checks are still unrun;
-the earlier isolated native campaigns are not execution evidence for this merge.
+The earlier `406ca499` qualification/green CI remains attributed to that source;
+required CI for this docs-only successor of `ad219ad7` is **UNRUN**.
+Earlier isolated native campaigns are not whole-composition execution evidence.
 The default headless build now has explicit authenticated
 setup/owner approval/run; no listener or permission is enabled merely by
 compilation/configuration. Independent combined review and native/cloud/vault/

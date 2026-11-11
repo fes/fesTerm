@@ -1592,18 +1592,25 @@ base. Marker-visible state refuses read/update/delete and cannot become absence;
 collision/failure never grants replacement or clears uncertain originals.
 The earlier hard-link publisher is blocked by Android SELinux, including ordinary
 put. No hard link/replace-capable rename or authority relaxation is permitted.
-Actual Android SELinux/JNI/Keystore/device smoke remains required before
-consumption, independently of host tests, compilation and fresh source gates.
+The isolated API35 publication/factory evidence remains separately attributed;
+host tests, compilation and source gates are not substitutes for actual native
+execution. The bounded Native-index evidence below adds no full-device/HOST
+workflow acceptance.
 
-The separate fixed debug-only `NativeIndexForgetSmoke` is the next bounded
-`HOST-02`/`HOST-03` native acceptance case, not a new product action. It requires
-actual native receipt/payload storage and same-namespace production reopen,
-retained-store Forget review, stale-record refusal and unrelated-original
-preservation. Its synthetic uncertain peer is only in-memory test composition;
-fixture-only confirmation does not exercise GUI/default-No consent or its
-account/privacy/pending fences. Native execution remains pending three source
-gates and separate guest GO. Namespace rotation and different-native-namespace
-claims are explicitly excluded; the completed root-factory case is unchanged.
+The separate fixed debug-only `NativeIndexForgetSmoke` now supplies bounded
+`HOST-02`/`HOST-03` native evidence at exact `ad219ad7`, not a new product action:
+actual API35 native receipt/encrypted-payload storage and same-root production
+reopen, retained-store Forget review, stale-record refusal and unrelated-original
+preservation pass **1/0/0, 16.386s**, new campaign exit0, enforcing before/after.
+The first campaign remains exit1/missing-post despite its case PASS; a corrected
+private collector, not production code, supplies the separate new evidence.
+Its synthetic uncertain peer is only in-memory test composition; fixture-only
+confirmation does not exercise GUI/default-No consent or account/privacy/pending
+fences. Full HOST/provider/vault-auth/cold-start/app-lock acceptance, namespace
+rotation/different-native-namespace proof, API36 runtime, physical devices and
+TEE remain excluded. See the [sealed evidence](adr/0084-host-based-dev-tunnels.md#android-native-indexforget-runtime-evidence).
+The completed root-factory case is unchanged; required CI for this docs-only
+successor remains UNRUN, not inherited from `406ca499`.
 
 The portable selected-host `host_client` executor adds actual native-vault/
 relay/role-proof composition, bounded inventory and frontend-confirmed
