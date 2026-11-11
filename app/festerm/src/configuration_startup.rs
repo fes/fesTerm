@@ -2,7 +2,10 @@ use std::{
     ffi::OsString,
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex, OnceLock, TryLockError},
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc, Mutex, OnceLock, TryLockError,
+    },
 };
 
 use directories::ProjectDirs;
@@ -374,6 +377,7 @@ struct SelectedConfigurationPath {
 pub(crate) struct ConfigurationReloader {
     selected_path: Result<SelectedConfigurationPath, ConfigurationLoadFailure>,
     automation_preferences: Option<crate::automation::preferences::Shared>,
+    recording_preference: Arc<AtomicU8>,
     #[cfg(test)]
     next_save_failure: std::rc::Rc<std::cell::Cell<Option<TestSaveFailure>>>,
     save_gate: Arc<Mutex<bool>>,
@@ -468,6 +472,7 @@ impl ConfigurationReloader {
         Self {
             selected_path,
             automation_preferences: None,
+            recording_preference: Arc::new(AtomicU8::new(0)),
             #[cfg(test)]
             next_save_failure: Default::default(),
             save_gate: Arc::new(Mutex::new(false)),
@@ -501,6 +506,32 @@ impl ConfigurationReloader {
         match &self.automation_preferences {
             Some(preferences) => preferences.apply(configuration),
             None => Ok(configuration.clone()),
+        }
+    }
+
+    pub(crate) fn initialize_recording_preference(&self, enabled: bool) {
+        let value = if enabled { 2 } else { 1 };
+        let _ = self.recording_preference.compare_exchange(
+            0,
+            value,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    pub(crate) fn disable_recording_preference(&self) {
+        self.recording_preference.store(1, Ordering::Release);
+    }
+
+    pub(crate) fn recording_configuration(
+        &self,
+        configuration: &Configuration,
+    ) -> Result<Configuration, festerm_config::ConfigError> {
+        match self.recording_preference.load(Ordering::Acquire) {
+            0 => Ok(configuration.clone()),
+            1 => configuration.with_session_recording_enabled(false),
+            2 => configuration.with_session_recording_enabled(true),
+            _ => unreachable!("invalid recording preference"),
         }
     }
 
@@ -625,6 +656,23 @@ impl ConfigurationReloader {
         }
     }
 
+    pub(crate) fn save_recording_preference(
+        &self,
+        configuration: &Configuration,
+        enabled: bool,
+    ) -> (ConfigurationStartupStatus, Option<Configuration>) {
+        match self.save_configuration_with_recording_preference(configuration, Some(enabled)) {
+            Ok(saved) => (
+                ConfigurationStartupStatus::InterfaceSettingsSaved,
+                Some(saved),
+            ),
+            Err(failure) => (
+                ConfigurationStartupStatus::InterfaceSettingsSaveFailure(failure),
+                None,
+            ),
+        }
+    }
+
     /// Saves an already validated complete replacement immediately after the
     /// user accepts and remembers a host key from the host-key prompt (ADR
     /// 0020), the same automatic, no-explicit-action trigger
@@ -697,6 +745,14 @@ impl ConfigurationReloader {
         &self,
         configuration: &Configuration,
     ) -> Result<Configuration, ConfigurationLoadFailure> {
+        self.save_configuration_with_recording_preference(configuration, None)
+    }
+
+    fn save_configuration_with_recording_preference(
+        &self,
+        configuration: &Configuration,
+        recording_preference: Option<bool>,
+    ) -> Result<Configuration, ConfigurationLoadFailure> {
         let mut unresolved = match self.save_gate.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::WouldBlock) => return Err(ConfigurationLoadFailure::SaveBusy),
@@ -723,6 +779,11 @@ impl ConfigurationReloader {
         let configuration = self
             .automation_configuration(configuration)
             .map_err(|_| ConfigurationLoadFailure::Invalid)?;
+        let configuration = match recording_preference {
+            Some(enabled) => configuration.with_session_recording_enabled(enabled),
+            None => self.recording_configuration(&configuration),
+        }
+        .map_err(|_| ConfigurationLoadFailure::Invalid)?;
         let selected = match &self.selected_path {
             Ok(selected) => selected,
             Err(failure) => {
@@ -749,6 +810,10 @@ impl ConfigurationReloader {
                 if matches!(failure, Some(TestSaveFailure::AfterWrite)) {
                     *unresolved = true;
                     return Err(ConfigurationLoadFailure::OutcomeUnknown);
+                }
+                if let Some(enabled) = recording_preference {
+                    self.recording_preference
+                        .store(if enabled { 2 } else { 1 }, Ordering::Release);
                 }
                 Ok(configuration)
             }
@@ -946,6 +1011,52 @@ mod tests {
             Err(ConfigurationLoadFailure::ReconciliationRequired)
         );
         assert_eq!(Configuration::load_from_path(&path).unwrap(), installed);
+    }
+
+    #[test]
+    fn recording_opt_out_survives_stale_saves_and_failed_writes() {
+        let directory = TestDirectory::new();
+        let path = directory.file("configuration.toml");
+        let enabled = Configuration::empty()
+            .with_session_recording_enabled(true)
+            .unwrap();
+        enabled.save_to_path(&path).unwrap();
+        let first = ConfigurationReloader::from_path_for_test(path.clone());
+        let sibling = first.clone();
+        first.initialize_recording_preference(true);
+        first.disable_recording_preference();
+        first.fail_next_save_for_test(TestSaveFailure::BeforeWrite);
+        assert!(!first
+            .save_recording_preference(&enabled, false)
+            .0
+            .was_saved());
+        assert!(Configuration::load_from_path(&path)
+            .unwrap()
+            .session_recording_enabled());
+
+        let saved = sibling.save_configuration(&enabled).unwrap();
+        assert!(!saved.session_recording_enabled());
+        assert!(!Configuration::load_from_path(&path)
+            .unwrap()
+            .session_recording_enabled());
+        assert!(!first
+            .recording_configuration(&enabled)
+            .unwrap()
+            .session_recording_enabled());
+
+        first.fail_next_save_for_test(TestSaveFailure::AfterWrite);
+        assert!(first
+            .save_recording_preference(&enabled, false)
+            .0
+            .save_outcome_unknown());
+        assert_eq!(
+            sibling.save_configuration(&enabled),
+            Err(ConfigurationLoadFailure::ReconciliationRequired)
+        );
+        assert!(!sibling
+            .recording_configuration(&enabled)
+            .unwrap()
+            .session_recording_enabled());
     }
 
     #[test]

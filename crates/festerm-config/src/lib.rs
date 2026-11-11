@@ -80,6 +80,8 @@ pub struct Configuration {
     workspace: Option<WorkspaceConfiguration>,
     #[serde(default, skip_serializing_if = "InterfaceSettings::is_default")]
     settings: InterfaceSettings,
+    #[serde(default, skip_serializing_if = "is_false")]
+    session_recording_enabled: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     accounts: Vec<DevTunnelAccount>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -128,6 +130,7 @@ impl Configuration {
             workspace_enabled: false,
             workspace: None,
             settings: InterfaceSettings::DEFAULT,
+            session_recording_enabled: false,
             accounts: Vec::new(),
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
@@ -150,6 +153,7 @@ impl Configuration {
             workspace_enabled: true,
             workspace: Some(workspace),
             settings: InterfaceSettings::DEFAULT,
+            session_recording_enabled: false,
             accounts: Vec::new(),
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
@@ -639,6 +643,19 @@ impl Configuration {
         Ok(replacement)
     }
 
+    /// Returns a replacement with the explicit session-recording opt-in.
+    pub fn with_session_recording_enabled(&self, enabled: bool) -> Result<Self, ConfigError> {
+        let mut replacement = self.clone();
+        replacement.session_recording_enabled = enabled;
+        replacement.validate()?;
+        Ok(replacement)
+    }
+
+    /// Whether starting terminal-output recordings is allowed.
+    pub const fn session_recording_enabled(&self) -> bool {
+        self.session_recording_enabled
+    }
+
     /// Returns the current user-adjustable interface preferences.
     pub fn interface_settings(&self) -> &InterfaceSettings {
         &self.settings
@@ -652,6 +669,7 @@ impl Configuration {
             workspace_enabled: false,
             workspace: None,
             settings: InterfaceSettings::DEFAULT,
+            session_recording_enabled: false,
             accounts: Vec::new(),
             known_hosts: Vec::new(),
             profile_usage: Vec::new(),
@@ -670,6 +688,7 @@ impl Configuration {
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
             settings: raw.settings,
+            session_recording_enabled: raw.session_recording_enabled,
             accounts: raw.accounts,
             known_hosts: raw.known_hosts,
             profile_usage: raw.profile_usage,
@@ -930,6 +949,8 @@ struct RawConfiguration {
     #[serde(default)]
     settings: InterfaceSettings,
     #[serde(default)]
+    session_recording_enabled: bool,
+    #[serde(default)]
     accounts: Vec<DevTunnelAccount>,
     #[serde(default)]
     known_hosts: Vec<KnownHostEntry>,
@@ -953,6 +974,7 @@ impl<'de> Deserialize<'de> for Configuration {
             workspace_enabled: raw.workspace_enabled,
             workspace: raw.workspace,
             settings: raw.settings,
+            session_recording_enabled: raw.session_recording_enabled,
             accounts: raw.accounts,
             known_hosts: raw.known_hosts,
             profile_usage: raw.profile_usage,
@@ -3945,6 +3967,19 @@ schema_version = 99
             "schema_version = 1\n\n[settings]\nscrollback_limit = \"unbounded\"\n"
         )
         .is_err());
+    }
+
+    #[test]
+    fn session_recording_opt_in_defaults_off_and_round_trips() {
+        let configuration = Configuration::new(Vec::new()).unwrap();
+        assert!(!configuration.session_recording_enabled());
+
+        let enabled = configuration.with_session_recording_enabled(true).unwrap();
+        let serialized = enabled.to_toml().unwrap();
+        assert!(serialized.contains("session_recording_enabled = true"));
+        assert!(Configuration::parse(&serialized)
+            .unwrap()
+            .session_recording_enabled());
     }
 
     #[test]

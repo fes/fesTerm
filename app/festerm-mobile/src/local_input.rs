@@ -77,6 +77,7 @@ impl MobileApp {
                         .inner;
                     action = output.action;
                     if output.click {
+                        self.play_custom_keyboard_haptic();
                         if let Some(keyboard) = &self.keyboard {
                             keyboard.play_input_click();
                         }
@@ -137,6 +138,7 @@ impl MobileApp {
                                 })
                                 .inner;
                             if self.terminal_keyboard.keys.toggle(ui, &response, glyph) {
+                                self.play_custom_keyboard_haptic();
                                 action = next;
                             }
                         }
