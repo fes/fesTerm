@@ -52,8 +52,19 @@ def owned_targets(tool, output):
 
 def create_runtime_root():
     # macOS TMPDIR and checkout paths can exceed sockaddr_un.sun_path before
-    # the daemon's generation suffix is added. mkdtemp owns a private 0700 leaf.
-    return Path(tempfile.mkdtemp(prefix="fs-mux-", dir="/tmp" if os.name != "nt" else None))
+    # the daemon's generation suffix is added, so the root must stay short.
+    # The daemon rejects shared-writable ancestors such as /tmp, so prefer the
+    # owner-only XDG runtime directory and otherwise a private 0700 directory
+    # under the home directory. mkdtemp owns a private 0700 leaf.
+    if os.name == "nt":
+        return Path(tempfile.mkdtemp(prefix="fs-mux-"))
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if not base or not os.path.isdir(base) or os.stat(base).st_mode & 0o022:
+        base = Path.home() / ".fsm"
+        base.mkdir(mode=0o700, exist_ok=True)
+        if base.stat().st_mode & 0o077:
+            base.chmod(0o700)
+    return Path(tempfile.mkdtemp(prefix="fs-mux-", dir=str(base)))
 
 
 def main():

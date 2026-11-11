@@ -30,6 +30,15 @@ class RunningSessionRunnerTests(unittest.TestCase):
             finally:
                 shutil.rmtree(root)
 
+    @unittest.skipIf(running_sessions.os.name == "nt", "Unix ancestor permissions")
+    def test_runtime_has_no_shared_writable_ancestor(self):
+        root = running_sessions.create_runtime_root()
+        try:
+            for ancestor in [root, *root.resolve().parents]:
+                self.assertEqual(ancestor.stat().st_mode & 0o022, 0, ancestor)
+        finally:
+            shutil.rmtree(root)
+
     def test_long_checkout_namespace_is_cleaned_on_success_and_runner_failure(self):
         for fail in (False, True):
             with self.subTest(fail=fail), tempfile.TemporaryDirectory() as directory:
