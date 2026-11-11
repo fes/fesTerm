@@ -1,5 +1,71 @@
 # Milestone Progress Narrative
 
+## Attributing post-commit native replay contention without changing admission
+
+Required Ubuntu job `130200670371` for published `56dff3f6` reports 12 passed /
+two failed in 162.98 seconds. Both failures follow a committed creation: the
+exact framed replay comparison and the retry after intentionally uncertain
+policy publication receive Busy. The retained raw log has SHA-256
+`c7a9a10c07ce10b5a2ef042cc77de45f5a0f25f21935823cffdf08e28535aea3`.
+It does not identify the failed lease acquisition or its holder. Windows now
+succeeds; the original Windows principal/ACL cause remains unknown.
+
+This diagnostic child preserves every admission result, deadline, request count
+and uncertainty/absence oracle. Existing test-support builds print static,
+redacted stage names for the three replay-reachable generation-lease
+acquisitions; dispatcher test builds distinguish policy, budget and backend
+Busy. No identifiers, paths, requests or private state enter those messages.
+Normal builds add no logging, authority API or retry behavior. The exact replay
+assertion retains full equality while reporting only the request kind, public
+response variant and fieldless refusal code.
+
+A separate owned-native regression deliberately holds the generation lease
+after a successful Ensure. Both same-issued-operation replay and Lookup must
+refuse Busy, never claim absence. The protected journal bytes and single live
+daemon PID/generation must remain unchanged. After releasing that test-owned
+gate, a single replay must equal the original Ensured response exactly; no
+refused request is retried in this regression. Its only bounded wait acquires
+the fixture gate. This supplies a causal held-lease case, not attribution of
+the original Linux failure to daemon supervision.
+
+The two original failing native selectors are run once on changed source,
+alongside the new regression, in a separate short-path worktree and private
+target. First outcomes, compiler/source fingerprints and commands are retained
+under `target/adr84-lease-evidence/`. A local non-reproduction is not a runtime
+fix or Linux qualification. No production admission repair is asserted before
+causal runtime evidence; all earlier acquisition/update/helper proofs remain
+frozen.
+
+On the first macOS execution, the held-gate case passes 1/zero/zero in
+3.17 seconds. Both forced refusals report `reconcile.lease` then
+`dispatcher.backend`; here the holder is deliberately the test-owned file
+descriptor. Single replay after release equals the original response with
+unchanged journal and native identity/count. The two original failing selectors
+each run once and pass 2/zero/zero in 6.63 seconds. The policy-contention case
+still observes its intentional `dispatcher.policy` refusal and preserves its
+OutcomeUncertain and one-daemon assertions. These are first-run positive
+macOS observations, not reproduction or repair of the Linux failure. The exact
+original Linux acquisition site/holder remains the blocker to choosing a
+production fix.
+
+Six focused dispatcher guards also pass, covering policy contention, budget
+saturation, post-authorization uncertainty, revocation, generation fencing and
+unsupported requests. The existing acquisition-only strict profile and the
+affected current profile (including all sessiond targets) pass, as do format,
+diff and trace311/zero-broken-reference checks. An additional exploratory
+bridge `--no-default-features --features host-routing --all-targets` strict
+profile fails 101 on the unchanged `prove_owner_fixture` and
+`from_fixture_stream` test helpers. That first failure is retained, not
+suppressed or called green; no unrelated helper cfg repair is included.
+The first format check also fails before standard formatting corrects the
+new assertions. No native test is rerun, skipped or relaxed.
+
+The independent #707 exact `2566a17b6f9ac3d73ead3a3f88cb7d30295a0b05`
+failure at `host_runtime/tests.rs:474` is the unwrap of
+`crate::host_terminal::establish(...).await` in `pending`, after selecting
+`StreamRole::Terminal`. That is terminal establishment/Attach, not Ensure.
+Its Busy producer and any common cause remain unproven.
+
 ## Isolating fake cloud orchestration from native-account fixture admission
 
 After published `b986d5b7`, Windows required run `42916947510`, job

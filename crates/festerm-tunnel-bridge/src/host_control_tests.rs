@@ -812,6 +812,19 @@ pub(crate) mod native_routes {
         time::{Duration, Instant},
     };
 
+    fn public_response_kind(response: &Response) -> (&'static str, Option<Refusal>) {
+        match response {
+            Response::Capabilities { .. } => ("capabilities", None),
+            Response::Inventory { .. } => ("inventory", None),
+            Response::Lookup { .. } => ("lookup", None),
+            Response::Ensured { .. } => ("ensured", None),
+            Response::Attached { .. } => ("attached", None),
+            Response::Detached { .. } => ("detached", None),
+            Response::Ended { .. } => ("ended", None),
+            Response::Refused { reason } => ("refused", Some(*reason)),
+        }
+    }
+
     pub(crate) struct NativeFixture {
         pub(crate) root: PathBuf,
         pub(crate) helper: PathBuf,
@@ -1059,7 +1072,11 @@ pub(crate) mod native_routes {
                 .request_issued(&operation, body, &cancel)
                 .await
                 .unwrap();
-            assert_eq!(retried, first);
+            let (variant, refusal_code) = public_response_kind(&retried.body);
+            assert!(
+                retried == first,
+                "exact committed replay create_only={create_only}, variant={variant}, refusal_code={refusal_code:?}"
+            );
             let found = client
                 .request(
                     OperationId::new(),
@@ -1151,6 +1168,140 @@ pub(crate) mod native_routes {
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
         }
+        drop(client);
+        assert!(server.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicitly built owned native helper and fixture child"]
+    async fn native_held_generation_lease_refuses_replay_without_spawn_or_false_absence() {
+        let fixture = NativeFixture::new(true);
+        let (backend, source) = fixture.backend();
+        let (mut client, server) = fixture.connect(backend, source, &Budgets::default()).await;
+        let cancel = CancellationToken::new();
+        let creation = fixture.creation();
+        let operation = client.issue_operation().unwrap();
+        let request = Request::Ensure {
+            creation: creation.clone(),
+        };
+        let original = client
+            .request_issued(&operation, request.clone(), &cancel)
+            .await
+            .unwrap();
+        let Response::Ensured {
+            session,
+            disposition: EnsureDisposition::Created,
+            lease: None,
+        } = &original.body
+        else {
+            let (variant, refusal_code) = public_response_kind(&original.body);
+            panic!("initial creation variant={variant}, refusal_code={refusal_code:?}");
+        };
+        let target = session.target.clone();
+        let directory = private_storage::private_directory(&fixture.root, false).unwrap();
+        let journal = || {
+            private_storage::read_private(
+                &directory,
+                std::path::Path::new("host-sessions.json"),
+                4 * 1024 * 1024,
+            )
+            .unwrap()
+        };
+        let identities = || {
+            festerm_sessiond::list_running_sessions_in(&fixture.root)
+                .unwrap()
+                .into_iter()
+                .map(|entry| (entry.session.pid, entry.session.created_at_unix_ms))
+                .collect::<Vec<_>>()
+        };
+        let before = journal();
+        let native = identities();
+        assert_eq!(native.len(), 1);
+        assert!(
+            native[0].1 == target.generation.get(),
+            "native generation changed"
+        );
+        assert!(festerm_sessiond::process_alive(native[0].0));
+        let lock = private_storage::open_private_file(
+            &directory,
+            std::path::Path::new(&format!("host-daemon-{}.lock", target.generation.get())),
+            false,
+        )
+        .unwrap();
+        // Wait only to acquire this fixture's explicit gate, never retry a
+        // refused request or infer absence from a contended native lease.
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                match fs2::FileExt::try_lock_exclusive(&lock) {
+                    Ok(()) => break,
+                    Err(error) if festerm_sessiond::lock_is_contended(&error) => {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    Err(error) => panic!("fixture lease gate failed: {:?}", error.kind()),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let held = client
+            .request_issued(&operation, request.clone(), &cancel)
+            .await
+            .unwrap();
+        let (variant, refusal_code) = public_response_kind(&held.body);
+        assert!(
+            matches!(
+                held.body,
+                Response::Refused {
+                    reason: Refusal::Busy
+                }
+            ),
+            "held lease replay variant={variant}, refusal_code={refusal_code:?}"
+        );
+        let lookup = client
+            .request(
+                OperationId::new(),
+                Request::Lookup {
+                    logical: creation.logical,
+                },
+                &cancel,
+            )
+            .await
+            .unwrap();
+        let (variant, refusal_code) = public_response_kind(&lookup.body);
+        assert!(
+            matches!(
+                lookup.body,
+                Response::Refused {
+                    reason: Refusal::Busy
+                }
+            ),
+            "held lease lookup variant={variant}, refusal_code={refusal_code:?}"
+        );
+        assert!(journal() == before, "held lease changed protected journal");
+        assert!(
+            identities() == native,
+            "held lease changed native identity/count"
+        );
+        assert!(festerm_sessiond::process_alive(native[0].0));
+        drop(lock);
+        let replay = client
+            .request_issued(&operation, request, &cancel)
+            .await
+            .unwrap();
+        let (variant, refusal_code) = public_response_kind(&replay.body);
+        assert!(
+            replay == original,
+            "released lease exact replay variant={variant}, refusal_code={refusal_code:?}"
+        );
+        assert!(
+            journal() == before,
+            "released replay changed protected journal"
+        );
+        assert!(
+            identities() == native,
+            "released replay changed native identity/count"
+        );
+        assert!(festerm_sessiond::process_alive(native[0].0));
         drop(client);
         assert!(server.await.unwrap().is_err());
     }
@@ -1267,19 +1418,6 @@ pub(crate) mod native_routes {
     #[tokio::test]
     #[ignore = "requires explicitly built owned native helper and fixture child"]
     async fn native_committed_creation_policy_contention_is_uncertain_not_disconnect() {
-        fn public_response_kind(response: &Response) -> (&'static str, Option<Refusal>) {
-            match response {
-                Response::Capabilities { .. } => ("capabilities", None),
-                Response::Inventory { .. } => ("inventory", None),
-                Response::Lookup { .. } => ("lookup", None),
-                Response::Ensured { .. } => ("ensured", None),
-                Response::Attached { .. } => ("attached", None),
-                Response::Detached { .. } => ("detached", None),
-                Response::Ended { .. } => ("ended", None),
-                Response::Refused { reason } => ("refused", Some(*reason)),
-            }
-        }
-
         let fixture = NativeFixture::new(true);
         let (native, source) = fixture.backend();
         let backend = Arc::new(LostReply {

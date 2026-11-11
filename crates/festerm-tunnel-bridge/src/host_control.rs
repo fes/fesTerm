@@ -227,7 +227,11 @@ fn execute(
         Err(ContractError::Denied | ContractError::Stale) => {
             return Err(ContractError::Denied.into())
         }
-        Err(ContractError::Busy) => return Ok(Publication::refused(Refusal::Busy)),
+        Err(ContractError::Busy) => {
+            #[cfg(test)]
+            eprintln!("host_control.busy stage=dispatcher.policy");
+            return Ok(Publication::refused(Refusal::Busy));
+        }
         Err(_) => return Ok(Publication::refused(Refusal::Unknown)),
     }
     if capabilities.is_some_and(|caps| !caps.supports(&admission.request.body)) {
@@ -251,13 +255,21 @@ fn execute(
     })();
     if let Err(error) = reservations {
         if error == ContractError::Busy {
+            #[cfg(test)]
+            eprintln!("host_control.busy stage=dispatcher.budget");
             return Ok(publication);
         }
         return Err(error.into());
     }
     publication.body = backend
         .execute(&admission.request, admission)
-        .unwrap_or_else(|reason| Response::Refused { reason });
+        .unwrap_or_else(|reason| {
+            #[cfg(test)]
+            if reason == Refusal::Busy {
+                eprintln!("host_control.busy stage=dispatcher.backend");
+            }
+            Response::Refused { reason }
+        });
     match admission.check_host() {
         Ok(()) => {}
         Err(ContractError::Denied | ContractError::Stale) => {

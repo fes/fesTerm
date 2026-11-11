@@ -5570,6 +5570,7 @@
         "frame_lengths_refuse_without_reading_body_and_release_budget",
         "legacy_protocol_and_wrong_reply_shape_have_no_fallback",
         "native_framed_ensure_create_inventory_and_exact_end_use_real_daemons",
+        "native_held_generation_lease_refuses_replay_without_spawn_or_false_absence",
         "native_creation_denial_does_not_register_virgin_identity_or_claim_absence",
         "native_lost_reply_disconnect_retry_and_independent_control_never_duplicate_spawn",
         "handshake_preserves_typed_refusals",

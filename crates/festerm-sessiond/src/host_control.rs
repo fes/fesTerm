@@ -65,6 +65,15 @@ fn storage_error(error: io::Error) -> ControlError {
     }
 }
 
+fn lease_error_at(error: io::Error, _stage: &'static str) -> ControlError {
+    let error = storage_error(error);
+    #[cfg(feature = "test-support")]
+    if error == ControlError::Busy {
+        eprintln!("host_control.busy stage={_stage}");
+    }
+    error
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Effect {
     Lookup,
@@ -534,7 +543,8 @@ impl SessionControl {
         if record.revoked || record.artifacts_retired {
             return Ok(());
         }
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(&self.root, record.generation)
+            .map_err(|error| lease_error_at(error, "reconcile.lease"))?;
         let lease = guard.read().map_err(|_| ControlError::Unknown)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
@@ -555,7 +565,8 @@ impl SessionControl {
     }
 
     fn sync_grant(&self, record: &mut Record) -> Result<(), ControlError> {
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(&self.root, record.generation)
+            .map_err(|error| lease_error_at(error, "sync_grant.lease"))?;
         let mut lease = guard.read().map_err(storage_error)?;
         if !record.lease_matches(&lease) {
             return Err(ControlError::Unknown);
@@ -1076,7 +1087,8 @@ impl SessionControl {
             Phase::Launching | Phase::Ending => return Err(ControlError::Unknown),
             Phase::Running => {}
         }
-        let guard = LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+        let guard = LeaseGuard::acquire(&self.root, record.generation)
+            .map_err(|error| lease_error_at(error, "result.lease"))?;
         let lease = guard.read().map_err(storage_error)?;
         if lease.expired() {
             return Err(ControlError::Ended);
