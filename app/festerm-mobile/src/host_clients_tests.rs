@@ -547,6 +547,10 @@ fn creation_context() -> ApprovedContext {
 }
 
 fn creation_context_for(host: HostId) -> ApprovedContext {
+    creation_context_at(host, "fixture")
+}
+
+fn creation_context_at(host: HostId, endpoint: &str) -> ApprovedContext {
     use festerm_tunnel_bridge::owner_auth::PinnedHost;
     use russh::keys::{Algorithm, HashAlg, PrivateKey};
     let key = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
@@ -558,7 +562,341 @@ fn creation_context_for(host: HostId) -> ApprovedContext {
     }, festerm_secret_store::SecretReference::generate(),
     serde_json::from_value(serde_json::json!({"connectionMode":"TunnelRelay","hostId":"fixture",
         "hostPublicKeys":[public.split_whitespace().nth(1).unwrap()],"clientRelayUri":"wss://example.invalid/client"})).unwrap(),
-    22, Zeroizing::new("not-a-service-token".into()), Binding::new(host, "github:7".into(), "fixture".into()).unwrap()).unwrap()
+    22, Zeroizing::new("not-a-service-token".into()), Binding::new(host, "github:7".into(), endpoint.into()).unwrap()).unwrap()
+}
+
+#[cfg(unix)]
+fn recovery_fixture() -> (
+    tempfile::TempDir,
+    MobileApp,
+    TunnelAccount,
+    Arc<OriginalStore>,
+) {
+    recovery_fixture_with_login("mobile")
+}
+
+#[cfg(unix)]
+fn recovery_fixture_with_login(
+    login: &str,
+) -> (
+    tempfile::TempDir,
+    MobileApp,
+    TunnelAccount,
+    Arc<OriginalStore>,
+) {
+    let parent = std::env::current_dir().unwrap().join("target");
+    std::fs::create_dir_all(&parent).unwrap();
+    let root = tempfile::Builder::new()
+        .prefix("recovery-fence-")
+        .tempdir_in(parent)
+        .unwrap();
+    let profiles = crate::profiles::testing::profiles();
+    let profile_store = profiles.store_handle();
+    let id = festerm_mobile_tunnels::testing::seed_account(&profile_store, 7, login, false);
+    let account = profile_store
+        .lock()
+        .unwrap()
+        .accounts()
+        .iter()
+        .find(|account| account.id == id)
+        .unwrap()
+        .clone();
+    let context = creation_context_at(HostId::new(), "fixture.test");
+    let (receipt, resolved, originals) =
+        host_client::originals::testing::memory_fixture(root.path(), context).unwrap();
+    let mut app = app().with_profiles(profiles);
+    app.open_hosts();
+    app.hosts.account = id;
+    app.hosts.fingerprint = receipt.binding().host.host_key_fingerprint.clone();
+    app.hosts.receipt = Some(receipt);
+    app.hosts.resolved = Some(resolved);
+    app.hosts.approval_account = Some(account.clone());
+    app.hosts.trust = true;
+    app.hosts.enrolled = true;
+    app.hosts.selected = Some(
+        PublicRecipe::persistent(
+            "Recovery fence",
+            HostReference {
+                id: app.hosts.context().unwrap().binding().host().clone(),
+                account: AccountReference::Github { account_id: 7 },
+            },
+            Recipe::default(),
+        )
+        .unwrap(),
+    );
+    app.hosts.inventory = Some(Inventory {
+        capabilities: Capabilities {
+            create: true,
+            ensure: true,
+            explicit_end: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        },
+        sessions: Vec::new(),
+        unknown: Vec::new(),
+    });
+    assert!(app.host_foreground() && app.host_recipe_current());
+    assert_eq!(app.host_account().as_ref(), Some(&account));
+    app.hosts.context().unwrap();
+    (root, app, account, originals)
+}
+
+#[cfg(unix)]
+async fn checkpoint_end(
+    app: &MobileApp,
+    store: Arc<OriginalStore>,
+    account: TunnelAccount,
+) -> Arc<EndIntent> {
+    use festerm_host_protocol::Refusal;
+    use festerm_tunnel_client::host_control::{read_frame, write_frame};
+    let context = app.hosts.context().unwrap();
+    let intent = Arc::new(EndIntent::new(
+        &context,
+        host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(9).unwrap(),
+        },
+    ));
+    intent
+        .protect_original(
+            store,
+            OriginalReview {
+                account,
+                recipe: None,
+            }
+            .encode()
+            .unwrap(),
+        )
+        .unwrap();
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let operation = intent.operation().clone();
+    let server = tokio::spawn(async move {
+        let budgets = Budgets::default();
+        let hello: Envelope<Request> = read_frame(&mut peer, &budgets)
+            .await
+            .unwrap()
+            .decode()
+            .unwrap();
+        write_frame(
+            &mut peer,
+            &budgets,
+            &Envelope::new(
+                hello.host,
+                hello.operation,
+                Response::Capabilities {
+                    capabilities: Capabilities {
+                        explicit_end: true,
+                        ..Capabilities::default()
+                    },
+                },
+            ),
+        )
+        .await
+        .unwrap();
+        let end: Envelope<Request> = read_frame(&mut peer, &budgets)
+            .await
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert_eq!(end.operation, operation);
+        assert!(matches!(end.body, Request::ExplicitEnd { .. }));
+        write_frame(
+            &mut peer,
+            &budgets,
+            &Envelope::new(
+                end.host,
+                end.operation,
+                Response::Refused {
+                    reason: Refusal::OutcomeUncertain,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    });
+    let result = host_client::testing::end_from_stream(
+        stream,
+        ConnectionPermit::reserve(&Budgets::default()).unwrap(),
+        context.binding().clone(),
+        intent.clone(),
+        &CancellationToken::new(),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
+        ))
+    ));
+    server.await.unwrap();
+    assert!(intent.is_issued() && !intent.is_resolved());
+    intent
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn mobile_host_recovery_fence_foreign_account_batch_is_atomic() {
+    let (_root, mut app, account, store) = recovery_fixture();
+    let original = checkpoint_end(&app, store.clone(), account.clone()).await;
+    let mut foreign = account.clone();
+    foreign.login = "another-credential".into();
+    let foreign_original = checkpoint_end(&app, store.clone(), foreign).await;
+    let context = app.hosts.context().unwrap();
+    let (reopened, mut batch) = host_client::originals::testing::reopen(&store, &context).unwrap();
+    assert_eq!(batch.len(), 2);
+    batch.sort_by_key(|item| OriginalReview::decode(&item.review).unwrap().account != account);
+    app.hosts.launch = true;
+    let error = app
+        .hosts
+        .accept_recovered(reopened, batch, &account)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        "The original account credential differs; original retained, no replacement."
+    );
+    assert!(app.hosts.originals.is_empty() && app.hosts.ends.is_empty());
+    assert!(app.hosts.original_store.is_none() && app.hosts.launch);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    let (_, retained) = host_client::originals::testing::reopen(&store, &context).unwrap();
+    assert_eq!(retained.len(), 2);
+    assert!(retained.iter().all(|item| matches!(&item.intent, RecoveredIntent::End(end)
+        if end.operation() == original.operation() || end.operation() == foreign_original.operation())));
+    let (reopened, retained) = host_client::originals::testing::reopen(&store, &context).unwrap();
+    let valid: Vec<_> = retained
+        .into_iter()
+        .filter(|item| OriginalReview::decode(&item.review).unwrap().account == account)
+        .collect();
+    assert_eq!(valid.len(), 1);
+    app.hosts
+        .accept_recovered(reopened, valid, &account)
+        .unwrap();
+    assert_eq!(app.hosts.ends.len(), 1);
+    assert_eq!(app.hosts.ends[0].intent.operation(), original.operation());
+    assert!(app.hosts.original_store.is_some());
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn mobile_host_recovery_fence_late_result_after_account_or_context_switch_never_installs() {
+    for changed_account in [false, true] {
+        for empty in [false, true] {
+            let (_old_root, mut old_app, old_account, old_store) = recovery_fixture();
+            if !empty {
+                checkpoint_end(&old_app, old_store.clone(), old_account.clone()).await;
+            }
+            let old_context = old_app.hosts.context().unwrap();
+            let (valid_store, valid_batch) =
+                host_client::originals::testing::reopen(&old_store, &old_context).unwrap();
+            old_app
+                .hosts
+                .accept_recovered(valid_store, valid_batch, &old_account)
+                .unwrap();
+            assert!(old_app.hosts.original_store.is_some());
+            let (store, batch) =
+                host_client::originals::testing::reopen(&old_store, &old_context).unwrap();
+            assert_eq!(batch.is_empty(), empty);
+            let (_new_root, mut app, account, _) =
+                recovery_fixture_with_login(if changed_account {
+                    "new-mobile"
+                } else {
+                    "mobile"
+                });
+            let old_recipe = old_app.hosts.selected.clone();
+            if changed_account {
+                app.hosts.receipt = old_app.hosts.receipt.take();
+                app.hosts.resolved = old_app.hosts.resolved.take();
+                app.hosts.fingerprint = old_app.hosts.fingerprint.clone();
+                app.hosts.selected = old_recipe.clone();
+                assert_ne!(account, old_account);
+                assert_eq!(
+                    app.hosts.context().unwrap().binding(),
+                    old_context.binding()
+                );
+            } else {
+                app.profiles = old_app.profiles.take();
+                app.hosts.account = old_account.id.clone();
+                app.hosts.approval_account = Some(old_account.clone());
+                assert_eq!(app.host_account().as_ref(), Some(&old_account));
+                assert_ne!(
+                    app.hosts.context().unwrap().binding(),
+                    old_context.binding()
+                );
+            }
+            assert!(app.host_foreground() && app.host_recipe_current());
+            app.hosts.context().unwrap();
+            let token = app.sink.live.host.token(app.hosts.epoch);
+            let (ready, received) = std::sync::mpsc::channel();
+            app.hosts.pending = Some(Pending {
+                account: old_account,
+                recipe: old_recipe,
+                epoch: app.hosts.epoch,
+                token: token.clone(),
+                job: Job::spawn(&egui::Context::default(), move |_| {
+                    ready.send(()).unwrap();
+                    Ok(ResultEvent::Originals(store, batch))
+                }),
+            });
+            received.recv_timeout(Duration::from_secs(5)).unwrap();
+            app.poll_hosts(&egui::Context::default());
+            assert_eq!(
+                app.hosts.error.as_deref(),
+                Some("The original account credential changed; no result was installed.")
+            );
+            assert!(token.is_cancelled());
+            assert!(app.hosts.original_store.is_none());
+            assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+            assert!(app.hosts.originals.is_empty() && app.hosts.ends.is_empty());
+            assert!(!app.hosts.launch && app.hosts.end_review.is_none());
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn mobile_host_recovery_fence_create_and_end_before_explicit_reopen_issue_nothing() {
+    let (_root, mut app, account, store) = recovery_fixture();
+    let context = app.hosts.context().unwrap();
+    assert!(host_client::originals::testing::reopen(&store, &context)
+        .unwrap()
+        .1
+        .is_empty());
+    assert!(app.hosts.original_store.is_none());
+    app.hosts.launch = true;
+    let ctx = egui::Context::default();
+    assert_eq!(
+        app.host_action(&ctx, Action::Create).unwrap_err(),
+        "Explicitly reopen protected originals before any Create or End; no operation issued."
+    );
+    assert!(app.hosts.originals.is_empty());
+    let intent = Arc::new(EndIntent::new(
+        &context,
+        host_client::Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(9).unwrap(),
+        },
+    ));
+    let operation = intent.operation().clone();
+    app.review_end(account.clone(), intent.clone());
+    app.hosts.end_review.as_mut().unwrap().confirmed = true;
+    assert!(app
+        .hosts
+        .end_review
+        .as_ref()
+        .unwrap()
+        .authorize(&account, &context, app.hosts.epoch, app.hosts.generation)
+        .is_ok());
+    assert_eq!(
+        app.host_action(&ctx, Action::ConfirmEnd).unwrap_err(),
+        "Explicitly reopen protected originals before any Create or End; no operation issued."
+    );
+    assert_eq!(intent.operation(), &operation);
+    assert!(!intent.is_issued() && !intent.is_resolved());
+    assert!(app.hosts.originals.is_empty() && app.hosts.ends.is_empty());
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+    assert!(host_client::originals::testing::reopen(&store, &context)
+        .unwrap()
+        .1
+        .is_empty());
 }
 
 #[test]

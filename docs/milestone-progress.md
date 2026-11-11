@@ -1,5 +1,37 @@
 # Milestone Progress Narrative
 
+## Isolating mobile protected-recovery admission fences
+
+A normal child of qualified `3beeb2c2` adds exactly three HostUi regressions:
+foreign-account recovered batches reject atomically; late results after a full
+account or selected-host context change cannot install even an empty old-store
+batch; and otherwise valid, explicitly confirmed Create/End cannot issue an
+original or start a worker before protected reopen. Real memory-backed private
+owner receipts/checkpoints and framed OutcomeUncertain Ends provide retained
+originals on the existing Unix non-relay receipt implementation. These cases are
+Unix-gated rather than claiming Windows no-relay storage support. Positive
+acceptance under the captured scope and independently
+authorized End consent keep invalid recipe/context prerequisites from masking
+the fence under test.
+
+The only bridge addition is under its existing `testing` feature: composition
+of the same reviewed-owner, memory secret-store, receipt and checkpoint paths.
+It is not a raw authority constructor, native-store override or production
+storage API. App production policy and all existing production items are
+unchanged. No native, Android, offline suite or Simulator relink is needed for
+these test-only additions; all earlier receipts retain their original source
+attribution. Android reserved-reference Unsupported/permanent incomplete
+reservations and indefinitely unresolved sixteen-slot admission remain real
+limitations. An early strengthened test fixture incorrectly assumed separately
+seeded identical accounts had different credentials; that prerequisite assertion
+RED is retained, not relabeled a product fence failure or discarded.
+
+Actual final-source qualification: the focused selector runs all three named
+cases, and the HOST-mobile library selection passes 224 tests with four existing
+ignored. Affected mobile and testing-feature bridge strict profiles pass under
+both actual Rust1.98.0 and Rust1.99.1; formatting, trace and diff checks pass.
+Prior vendored/optional objcopy warnings remain visible, not globally waived.
+
 ## Reopening protected mobile originals without issuing a replacement
 
 The normal child of published `85b01679` closes one bounded client restart gap:

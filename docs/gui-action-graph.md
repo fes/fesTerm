@@ -1700,6 +1700,13 @@ allowlists. It does not
 implement service switching, rollback or migration; the legacy Linux script
 path is not promoted to authenticated setup.
 
+HOST-02/03 HostUi recovery fixtures isolate atomic foreign-account batch
+rejection, late account/selected-context results including empty old-store
+batches, and Create/End before explicit protected reopen. Valid memory-backed
+receipts, framed original Ends and positive scope/consent controls establish
+prerequisites; exact refusal and no worker/new issuance are the admission oracle.
+These are not native-vault, physical lifecycle or Android runtime evidence.
+
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after
 recovery adoption/writer activation; abandoned candidates are not Attached.

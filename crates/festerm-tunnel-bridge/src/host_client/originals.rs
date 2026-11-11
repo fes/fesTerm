@@ -464,3 +464,59 @@ impl ProtectedOriginalCheckpoint for OriginalHandle {
 #[cfg(all(test, unix))]
 #[path = "originals_tests.rs"]
 mod tests;
+
+#[cfg(all(feature = "testing", unix))]
+pub mod testing {
+    use super::*;
+
+    /// Composes existing receipt/checkpoint paths with a synthetic memory vault.
+    /// Never selects a native platform store or decodes caller-issued authority.
+    pub fn memory_fixture(
+        root: &Path,
+        mut context: ApprovedContext,
+    ) -> Result<
+        (
+            approvals::Receipt,
+            festerm_tunnel_client::service::ResolvedTunnel,
+            Arc<OriginalStore>,
+        ),
+        Failure,
+    > {
+        let vault = Arc::new(festerm_secret_store::MemorySecretStore::new());
+        let reviewed = approvals::ReviewedOwner::confirm(
+            &serde_json::to_string(&context.approved).map_err(|_| Failure::OriginalStorage)?,
+            &context.approved.host.host,
+            &context.approved.account,
+            &context.approved.host.host_key_fingerprint,
+        )
+        .map_err(failed)?;
+        let receipt = ReceiptIndex::in_app_sandbox(root)
+            .map_err(failed)?
+            .prepare_with(vault.as_ref(), reviewed)
+            .map_err(failed)?;
+        context.reference = receipt.reference();
+        let resolved = festerm_tunnel_client::service::ResolvedTunnel {
+            binding: festerm_tunnel_client::service::HostBinding {
+                tunnel_id: "fixture".into(),
+                cluster: "test".into(),
+                host_id: context.endpoint.host_id.clone(),
+                public_key: context.endpoint.host_public_keys[0].clone(),
+                port: context.port,
+            },
+            endpoint: context.endpoint.clone(),
+            connect_token: context.token.clone(),
+        };
+        let (store, originals) = OriginalStore::recover_with(root, &context, vault)?;
+        if !originals.is_empty() {
+            return Err(Failure::OriginalStorage);
+        }
+        Ok((receipt, resolved, store))
+    }
+
+    pub fn reopen(
+        store: &OriginalStore,
+        context: &ApprovedContext,
+    ) -> Result<(Arc<OriginalStore>, Vec<RecoveredOriginal>), Failure> {
+        OriginalStore::recover_with(&store.root, context, store.vault.clone())
+    }
+}

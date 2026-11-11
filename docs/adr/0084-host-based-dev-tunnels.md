@@ -594,6 +594,16 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ### Protected mobile original-action checkpoints
 
+The app admission validation additionally covers atomic foreign-account batch
+rejection, late account/selected-context results including an empty old-store
+batch, and exact Create/End refusal before explicit protected reopen.
+Unix feature-gated testing composition reuses the actual memory secret store, owner
+receipt/checkpoint paths and framed original Ends; it adds no production
+authority constructor or native-store selection override. Valid-scope and
+confirmed-End controls isolate the tested fences. Native acceptance remains
+separate; Android reserved-reference Unsupported/incomplete reservations and
+the sixteen-unresolved-action admission limit remain unchanged.
+
 Durable reconciliation is a current ADR0084 requirement, with a narrow
 client-bound checkpoint factory as its architectural enabler. A private,
 versioned owner receipt reserves an opaque native-vault payload reference before

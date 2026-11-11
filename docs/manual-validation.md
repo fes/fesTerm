@@ -119,6 +119,12 @@ missing/corrupt/scope-changed data, bounded unresolved originals and exact Ended
 settlement. This is not a native vault or physical process-lifecycle oracle.
 The seventeen-exact-Ended UI fixture also proves confirmed Ends cannot exhaust
 the sixteen-original lifetime cap after discarded UI completions.
+Three focused Unix HostUi cases additionally prove all-or-nothing rejection of a
+foreign-account recovered batch, stale account/selected-context result fencing
+including a valid empty old-store batch, and no Create/End issuance or worker
+before explicit protected reopen. They use actual memory-backed private receipts,
+framed uncertain original Ends and positive valid-scope/consent controls, not
+invalid metadata prerequisites. They do not qualify native vault or GUI behavior.
 
 Native acceptance must additionally kill/reopen the owned app before a send,
 after a lost reply and between private-marker/native-payload acknowledgements;
