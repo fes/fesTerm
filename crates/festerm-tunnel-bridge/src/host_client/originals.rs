@@ -3,7 +3,7 @@
 use super::*;
 use approvals::{Error as StorageError, ReceiptIndex};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
-use festerm_host_protocol::{IssuedOperation, Validate};
+use festerm_host_protocol::{AttachmentId, IssuedOperation, LogicalSessionId, Validate};
 use festerm_secret_store::{native_store, SecretBytes, SecretStore, MAX_SECRET_BYTES};
 use festerm_tunnel_client::host_control::{
     IssuedControlOperation, ProtectedOriginalCheckpoint, ProtectedOriginalReopener,
@@ -69,6 +69,138 @@ pub struct RecoveredOriginal {
     pub intent: RecoveredIntent,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OriginalId {
+    Creation(AttachmentId),
+    End(OperationId),
+}
+
+impl OriginalId {
+    fn key(&self) -> String {
+        match self {
+            Self::Creation(id) => id.to_string(),
+            Self::End(id) => id.to_string(),
+        }
+    }
+
+    fn matches_purpose(&self, body: &Body) -> bool {
+        matches!(
+            (self, body),
+            (Self::Creation(_), Body::Creation { .. }) | (Self::End(_), Body::End { .. })
+        )
+    }
+}
+
+pub struct ReviewedForget {
+    store: Arc<OriginalStore>,
+    id: OriginalId,
+    snapshot: Option<Stored>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ForgetOutcome {
+    Removed,
+    AlreadyMissing,
+}
+
+pub struct ForgottenOriginal {
+    store: Arc<OriginalStore>,
+    id: OriginalId,
+    outcome: ForgetOutcome,
+}
+
+impl ForgottenOriginal {
+    pub fn id(&self) -> &OriginalId {
+        &self.id
+    }
+
+    pub fn outcome(&self) -> ForgetOutcome {
+        self.outcome
+    }
+
+    pub fn matches_context(&self, context: &ApprovedContext) -> bool {
+        self.store
+            .matches(&context.approved, &context.reference, &context.binding)
+    }
+}
+
+impl ReviewedForget {
+    pub fn id(&self) -> &OriginalId {
+        &self.id
+    }
+
+    pub fn matches_context(&self, context: &ApprovedContext) -> bool {
+        self.store
+            .matches(&context.approved, &context.reference, &context.binding)
+    }
+
+    pub fn logical(&self) -> Option<&LogicalSessionId> {
+        self.snapshot.as_ref().map(|original| match &original.body {
+            Body::Creation { creation, .. } => &creation.logical,
+            Body::End { target, .. } => &target.logical,
+        })
+    }
+
+    pub fn target(&self) -> Option<&Target> {
+        self.snapshot
+            .as_ref()
+            .and_then(|original| match &original.body {
+                Body::Creation { confirmed, .. } => confirmed.as_ref(),
+                Body::End { target, .. } => Some(target),
+            })
+    }
+
+    pub fn forget(
+        self,
+        context: &ApprovedContext,
+        cancel: &CancellationToken,
+    ) -> Result<ForgottenOriginal, Failure> {
+        if !self.matches_context(context) {
+            return Err(Failure::BindingMismatch);
+        }
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
+        let outcome = self.store.access(false, |blob| {
+            if cancel.is_cancelled() {
+                return Ok((None, false));
+            }
+            let Some(index) = blob
+                .actions
+                .iter()
+                .position(|item| item.id == self.id.key())
+            else {
+                return Ok((Some(ForgetOutcome::AlreadyMissing), false));
+            };
+            let current = &blob.actions[index];
+            if !self.id.matches_purpose(&current.body) {
+                return Err(StorageError::BindingMismatch);
+            }
+            let Some(snapshot) = &self.snapshot else {
+                return Err(StorageError::BindingMismatch);
+            };
+            let current =
+                Zeroizing::new(serde_json::to_vec(current).map_err(|_| StorageError::Storage)?);
+            let snapshot =
+                Zeroizing::new(serde_json::to_vec(snapshot).map_err(|_| StorageError::Storage)?);
+            if *current != *snapshot {
+                return Err(StorageError::BindingMismatch);
+            }
+            blob.actions.remove(index);
+            Ok((Some(ForgetOutcome::Removed), true))
+        })?;
+        let outcome = outcome.ok_or_else(|| Failure::from(Error::Cancelled))?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
+        Ok(ForgottenOriginal {
+            store: self.store,
+            id: self.id,
+            outcome,
+        })
+    }
+}
+
 pub(super) struct OriginalHandle {
     store: Arc<OriginalStore>,
     id: String,
@@ -92,6 +224,35 @@ fn failed(error: StorageError) -> Failure {
 }
 
 impl OriginalStore {
+    pub fn review_forget(
+        self: &Arc<Self>,
+        context: &ApprovedContext,
+        id: OriginalId,
+        cancel: &CancellationToken,
+    ) -> Result<ReviewedForget, Failure> {
+        if !self.matches(&context.approved, &context.reference, &context.binding) {
+            return Err(Failure::BindingMismatch);
+        }
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
+        let snapshot = self.access(false, |blob| {
+            let original = blob.actions.iter().find(|item| item.id == id.key());
+            if original.is_some_and(|item| !id.matches_purpose(&item.body)) {
+                return Err(StorageError::BindingMismatch);
+            }
+            Ok((original.cloned(), false))
+        })?;
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
+        Ok(ReviewedForget {
+            store: self.clone(),
+            id,
+            snapshot,
+        })
+    }
+
     pub fn recover(
         root: &Path,
         context: &ApprovedContext,

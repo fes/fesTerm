@@ -1320,6 +1320,27 @@ These are source/mock and headless rendering results, not native-manager,
 signed-bundle, endpoint, GUI-usability or owner-removal acceptance. All three
 actual-platform CI gates and independent exact-source review remain required.
 
+## Abandoning one local retry history without pretending the remote action ended
+
+The bounded protected-original registry could become full when an original's
+exact generation could no longer produce an Ended receipt. The approved recovery
+is explicit local Forget, not automatic pruning or a larger registry. A separate
+default-No review binds one typed original and the current protected
+owner/account/privacy/request context. Native-vault work stays on the existing
+bounded job; confirmation compares the protected record again under its lease,
+removes only that record and reports a typed local result. UI history is removed
+only after a current correlated acknowledgment. A validated missing local record
+is distinguished from a missing/locked/corrupt/pending vault; neither is remote
+absence. Other originals and the sixteen-per-purpose/64KiB limits remain.
+Forget does not End/detach/revoke or authorize replacement/retry; other clients
+and already-running remote actions are unaffected. At `9f63a433`, the portable
+bridge suite passed 100/0/0 in 13.98s and mobile passed 229/0/4 in 59.68s,
+including eight new protected-store/typed-action regressions. Both selected
+all-target strict profiles exited zero. Existing dependency/build-script
+warnings, including the toolchain's unavailable debug-strip LLVM library, remain
+in raw logs; this is not warning-free toolchain or native binary qualification.
+Native-vault/device/usability and required platform checks remain separate.
+
 ## Keeping durable recovery tied to the account, not its local credential reference
 
 Protected mobile originals previously compared the entire persisted account

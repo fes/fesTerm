@@ -189,7 +189,18 @@ completion under the old full credential snapshot must still refuse. The
 deterministic memory-vault fixture is not native account/vault evidence.
 
 Creation and End each remain bounded to sixteen protected originals and 64KiB
-total; only exact terminal Ended retires originals, never native StopRequested.
+total; only exact terminal Ended automatically retires originals, never native StopRequested.
+The separate default-No local Forget review must name one exact original and
+the current host/account/privacy/request context. Confirm that cancel, lock,
+account/context/selection drift, concurrent work and failed/unconfirmed native
+updates retain UI history; only a correlated successful local completion drops
+the selected entry, preserving other operations/epochs/targets and bounds.
+For both purposes, fill sixteen slots, observe the seventeenth refusal, then
+explicitly Forget one and verify capacity returns without automatic execution.
+AlreadyMissing refers only to the selected record in a successfully validated
+native payload, not a missing vault or a remote absence. Keep the remote session
+running and verify no End/detach/retry/replacement or other-client revocation.
+Deterministic memory-vault/action tests do not qualify these native/device flows.
 Android's current `AndroidSecretStore` lacks `create_reserved`, so the trait's
 Unsupported remains an explicit native-vault prerequisite (also for owner-key
 preparation). The minimum adapter work is exact reserved-reference creation via
