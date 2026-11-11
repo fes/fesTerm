@@ -250,6 +250,14 @@ Early diagnostics should include:
 
 Raw protocol traces can expose passwords, tokens, commands, and private output. They must be explicit, redaction-aware, warned, and disabled by default.
 
+Controlled HOST assertion diagnostics should retain a fixed call-stage label
+and exact typed control-error category on failure, without formatting successful
+session, identity, inventory or recipe payloads. The renderer must be exhaustive
+over control errors and accept successful payloads without a `Debug` bound.
+Instrumentation preserves each original call, admission callback and exact
+predicate; it must not retry or reinterpret Busy/Unknown as denial or absence.
+A call-stage label does not claim an unobserved internal lock/admission phase.
+
 ## Current Priorities
 
 The terminal core, local-session boundary, renderer, multi-tab GUI vertical

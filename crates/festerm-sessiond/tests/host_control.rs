@@ -33,6 +33,60 @@ fn allow(_: &AdmissionState) -> Result<(), ControlError> {
     Ok(())
 }
 
+fn control_result_diagnostic<T>(result: &Result<T, ControlError>) -> &'static str {
+    match result {
+        Ok(_) => "Ok",
+        Err(ControlError::Denied) => "Err(Denied)",
+        Err(ControlError::Revoked) => "Err(Revoked)",
+        Err(ControlError::Unknown) => "Err(Unknown)",
+        Err(ControlError::Busy) => "Err(Busy)",
+        Err(ControlError::Stale) => "Err(Stale)",
+        Err(ControlError::RecipeConflict) => "Err(RecipeConflict)",
+        Err(ControlError::OperationConflict) => "Err(OperationConflict)",
+        Err(ControlError::AlreadyExists) => "Err(AlreadyExists)",
+        Err(ControlError::Ended) => "Err(Ended)",
+        Err(ControlError::Cancelled) => "Err(Cancelled)",
+        Err(ControlError::Invalid) => "Err(Invalid)",
+        Err(ControlError::Storage) => "Err(Storage)",
+        Err(ControlError::CommittedButNotPublished) => "Err(CommittedButNotPublished)",
+    }
+}
+
+#[test]
+fn host_control_result_diagnostics_are_content_free_and_variant_exact() {
+    struct Opaque;
+
+    for (error, expected) in [
+        (ControlError::Denied, "Err(Denied)"),
+        (ControlError::Revoked, "Err(Revoked)"),
+        (ControlError::Unknown, "Err(Unknown)"),
+        (ControlError::Busy, "Err(Busy)"),
+        (ControlError::Stale, "Err(Stale)"),
+        (ControlError::RecipeConflict, "Err(RecipeConflict)"),
+        (ControlError::OperationConflict, "Err(OperationConflict)"),
+        (ControlError::AlreadyExists, "Err(AlreadyExists)"),
+        (ControlError::Ended, "Err(Ended)"),
+        (ControlError::Cancelled, "Err(Cancelled)"),
+        (ControlError::Invalid, "Err(Invalid)"),
+        (ControlError::Storage, "Err(Storage)"),
+        (
+            ControlError::CommittedButNotPublished,
+            "Err(CommittedButNotPublished)",
+        ),
+    ] {
+        let result: Result<Opaque, ControlError> = Err(error);
+        assert_eq!(control_result_diagnostic(&result), expected);
+    }
+    assert_eq!(
+        control_result_diagnostic(&Ok::<_, ControlError>(Opaque)),
+        "Ok"
+    );
+    assert_eq!(
+        control_result_diagnostic(&Ok::<_, ControlError>("private-payload-sentinel")),
+        "Ok"
+    );
+}
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1192,17 +1246,19 @@ fn absence_denial_revocation_cancellation_and_generations_remain_distinct() {
             .unwrap(),
         Lookup::Absent
     );
-    assert!(matches!(
-        fixture.control().ensure(
-            &fixture.owner,
-            &fixture.issued(),
-            &creation,
-            false,
-            &AtomicBool::new(false),
-            |_| Err::<(), _>(ControlError::Denied)
-        ),
-        Err(ControlError::Denied)
-    ));
+    let denied = fixture.control().ensure(
+        &fixture.owner,
+        &fixture.issued(),
+        &creation,
+        false,
+        &AtomicBool::new(false),
+        |_| Err::<(), _>(ControlError::Denied),
+    );
+    assert!(
+        matches!(&denied, Err(ControlError::Denied)),
+        "HOST control stage=absence-denial/initial-ensure actual={}",
+        control_result_diagnostic(&denied),
+    );
     let cancelled = AtomicBool::new(true);
     let operation = fixture.issued();
     assert!(matches!(
@@ -1926,7 +1982,12 @@ fn current_absence_requires_fresh_create_permission_but_live_resume_does_not() {
             &AtomicBool::new(false),
             no_creation,
         )
-        .unwrap();
+        .unwrap_or_else(|error| {
+            panic!(
+                "HOST control stage=current-absence/live-resume actual={}",
+                control_result_diagnostic::<()>(&Err(error)),
+            )
+        });
     assert_eq!(resumed.identity, running.identity);
     fixture
         .control()
@@ -2070,7 +2131,15 @@ fn protected_inventory_filters_before_labels_without_frontend_admission() {
             allow,
         )
         .unwrap();
-    let inventory = fixture.control().inventory(&fixture.owner, allow).unwrap();
+    let inventory = fixture
+        .control()
+        .inventory(&fixture.owner, allow)
+        .unwrap_or_else(|error| {
+            panic!(
+                "HOST control stage=protected-inventory/initial-owner-inventory actual={}",
+                control_result_diagnostic::<()>(&Err(error)),
+            )
+        });
     assert!(inventory.unknown.is_empty());
     assert_eq!(inventory.sessions.len(), 1);
     assert_eq!(inventory.sessions[0].summary.name, "owned label");

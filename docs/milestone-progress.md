@@ -1,5 +1,53 @@
 # Milestone Progress Narrative
 
+## Executing d454 portable/cfg checks, then freezing the diagnostic joint source
+
+Exact `d454e7a722e3b36ada0766df66ea7a277e829cf1` is executed without a tracked
+source edit in a new private target. Secret-store passes **17/0/0, 0.02s**,
+portable bridge testing passes **101/0/0, 8.27s**, and mobile HOST clients pass
+**229/0/4, 15.54s**. All eight prior Forget cases and the new retained-index
+namespace/reopen/snapshot regression pass. The four existing ignores are
+explicit actual-widget/gallery screenshot captures requiring their own output
+directory and working headless GPU, not newly skipped failures.
+
+Three matching host all-target Clippy profiles pass with `-D warnings`.
+Actual Rust1.99.1 `aarch64-linux-android` checks and strict checks pass for the
+five production libraries, including live-SSH/HOST clients and the existing
+debug native-recording-validation factory hook. This is type/cfg qualification,
+not a linked APK, JNI invocation, Keystore/device or Android HOST workflow run.
+Fmt, actual-base `6614c990` trace311 and diff checks pass. All twelve command
+triples retain identical 2,063-source before/after maps and compiler/harness
+hashes; builds are offline/locked/jobs1/debug0/incremental0. Minimum sampled
+free memory is52%; all324 observed PIDs close and both owned target locks are
+independently available. All349 cross-lane,255 earlier lane and17 source-seal
+entries remain exact. Existing vendor and optional debug-stripping warnings
+are preserved, not repaired or suppressed.
+
+Two operational issues remain explicit in the private evidence: an initial
+rustup inventory query unexpectedly auto-installs a named1.99.1 toolchain,
+which is not used or removed; validation pins the pre-existing stable compiler
+and existing Android std/NDK by absolute path/hash. The first artifact collector
+attempts two different exclusive lock schemes simultaneously on one descriptor
+and fails; its original helper/result are preserved. Independent lock probes
+then pass, and the metadata-only collector is corrected. Neither issue changes
+production/test Rust or relabels a failed command as a passing suite.
+
+Only after sealing that exact-d454 phase and releasing its Cargo slot does the
+conditional normal source merge combine d454 with exact qualified
+`856702afb9ed002037eede004feb97a78a047f82`. Both parents/histories remain intact.
+Host_control test Rust is byte-identical to856; every production Rust file,
+manifest and lock, Android/Forget source and other test file remain d454.
+Design adds only the incoming content-free diagnostic contract; graph/manual/
+trace/story preserve both histories and each source-specific execution claim.
+No Cargo, formatter, trace checker, helper or native execution follows this
+joint source merge. Fresh joint source gates, HC28 including its new13-error
+unit, matching helper images and native19 or a bounded relevant selection are
+still prerequisites. The e6 required Mac/Windows results are green; Ubuntu's
+unprinted initial denied-ensure result and historical7ad End variant remain
+unknown, not a common-cause claim. No push, main merge, guest/SDK/ADB/vault/
+provider action, OS-setting change or product/native acceptance accompanies
+this joint source freeze; the earlier named-toolchain incident remains disclosed.
+
 ## Source-only Desktop and qualified Android composition
 
 A new short worktree normally combines exact published Desktop
@@ -15049,3 +15097,50 @@ case, not an explanation, fix, waiver or Ubuntu acceptance of the original
 7ad failure. That historical variant remains unknown until fresh diagnostic
 Ubuntu evidence. Publication/review remains behind the parent's fresh three
 source gates and proof check.
+
+## Retaining three distinct HOST control assertion outcomes
+
+The published exact `e6e4b8a2` diagnostic source has actual required macOS CI
+native19 **19/0/0, 175.03s**, including original exact End, revocation and both
+adoption cases. That positive belongs to e6 CI, not the prior local15e
+single-case1/0/0 in1.63s and not a future Android composition.
+
+Required Ubuntu run `42972036126`, job `130362499594`, stops earlier:
+host_control27 **26/1/0, 45.53s**. The first denied-ensure assertion in
+`absence_denial_revocation_cancellation_and_generations_remain_distinct`
+at `tests/host_control.rs:1195` expects exactly `Err(ControlError::Denied)`,
+but does not print the actual result. The owned failure journal is empty
+version2/issuance epoch1/generation0 with no sessions or operations. This is
+not the controlled diagnostic-panic fixtures that pass. Native19 was never
+reached, so historical7ad's unexpected first native End variant remains unknown.
+
+Source tracing finds creation validation and fallible private transaction
+preparation before fresh admission. The unchanged admission callback returns
+Denied whenever reached; an empty failure-time journal does not identify which
+earlier step/result occurred. No product correction is justified by guessing
+Busy, storage failure or a shared cause from the separate0bc/f507 evidence.
+The two requested0bc bodies actually printed Busy: macOS live-resume ensure at
+line1929 and Ubuntu initial owner inventory at line2073. Those are their own
+typed observations, not proof of e6's missing variant.
+
+A new short normal child of exact e6 changes only the integration test plus
+matching design/graph/manual/trace/story. Its renderer maps every ControlError
+exhaustively to a fixed tag and accepts arbitrary successful values without
+Debug or payload formatting. A co-located deterministic test names all13
+errors and opaque/no-Debug successes. Failure-only messages identify the
+initial denied ensure, live-resume ensure and initial owner inventory. The
+labels name completed calls, not an observed internal lock/admission stage.
+
+The three original calls, argument evaluation, fresh issued operations and
+admission callbacks remain unchanged and execute once. The initial assertion
+still requires exact Denied; both former unwrap sites still require success.
+All later cancellation, revocation, exact identity/generation, other-owner
+filtering and empty-inventory assertions remain unchanged. No retry, sleep,
+timeout, skip, broad match, fake absence or production permission change is added.
+
+This delivery is source-only: formatting, static source witnesses and
+traceability/diff checks are separate from compiled or native evidence.
+The new renderer test and the unchanged controlled cases await the parent's
+fresh combined-source validation and independent gates. Old e6/15e/7ad helpers,
+targets, receipts and first failures remain preserved; no Cargo/native build
+or execution, SDK/ADB/provider/VM/vault operation or publication is performed.

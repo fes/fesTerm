@@ -1928,6 +1928,17 @@ execution/source gates remain unrun at source freeze. Earlier API35 native
 campaigns and helper/PTY fixtures keep their original source attribution.
 Desktop explicit Forget is not full Android capacity/reopen/Forget acceptance.
 
+Subsequent **exact `d454e7a7` execution** passes secret-store 17/0/0, portable
+bridge 101/0/0 and mobile 229/0/4, including all eight prior Forget tests and the
+new namespace/reopen/snapshot case. Three affected host all-target strict
+profiles, Android production cfg/type and strict checks, fmt and actual-base
+`6614c990` trace311/diff pass. The four mobile ignores are unchanged screenshot
+captures, not waived failures. These results belong to d454, not the later
+normal exact-`856702af` source-only diagnostic merge. That joint source retains
+identical production Rust/manifests/locks and exact incoming host_control test
+bytes; fresh joint source gates, HC28 and matching-helper/native execution
+remain pending. No new native-vault/Android workflow acceptance follows.
+
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after
 recovery adoption/writer activation; abandoned candidates are not Attached.
@@ -1949,6 +1960,14 @@ exact native End case **1/0/0, 1.63s** on macOS. Initial OutcomeUncertain and
 later same-original exact Ended are assertion-verified. Affected bridge strict
 checks, direct rustfmt and traceability against actual PR base `6614c990` pass.
 This is neither Ubuntu cause/acceptance nor full 19-case native qualification.
+The later published `e6e4b8a2` required macOS job separately passes actual
+native19 **19/0/0, 175.03s**, including End, revocation and both adoption cases.
+Its Ubuntu job instead stops in host_control27 (**26/1/0, 45.53s**) at the
+initial denied-ensure assertion; its returned variant is unprinted and native19
+is not reached. A source-only followup retains fixed failure-stage/result tags
+at that exact call, the historically Busy live-resume ensure and the historically
+Busy initial owner inventory. It changes no call, admission callback or predicate,
+and does not turn the older Busy observations into this new failure's cause.
 The runtime/session union also passes the actual two-daemon signed-SSH
 input-isolation, independent attached inventory and persistent-detach route;
 additional actual signed-SSH cases pass for original-issued creation/end,
