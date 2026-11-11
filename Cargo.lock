@@ -2432,6 +2432,7 @@ dependencies = [
  "festerm-mobile",
  "festerm-recording",
  "festerm-recording-export",
+ "festerm-secret-store",
  "festerm-ui-egui",
  "jni 0.21.1",
  "winit",

@@ -204,6 +204,12 @@ the debug-only, no-argument scalar native-validation hook, which uses the real
 creation/reopen. Missing/refused hooks fail; symbols alone do not qualify. Record
 the fresh target36 APK, source maps and actual API35 invocation separately;
 physical devices, TEE and full HOST recovery remain unqualified.
+The focused commands are `build-android.py --recording-validation` followed by
+`smoke-android.py --serial <owned-emulator> --root-factory-validation`, with the
+same explicit private SDK/ADB environment. The existing POSIX optional runner
+selects this case instead of whole PlatformSmoke when
+`FESTERM_ANDROID_ROOT_FACTORY_VALIDATION=1` and the explicitly isolated emulator
+serial are supplied; global optional-validation consent is still required.
 
 The original publication case requires an owned
 emulator/device: validate native root owner/location, encrypted create/read/
