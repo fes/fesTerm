@@ -1392,6 +1392,34 @@ These are real isolated helper/PTY/SSH effects with in-memory authority,
 not actual native-vault, installed-service, cloud, physical-mobile or full
 native-matrix acceptance. Independent source gates and required CI remain
 separate prerequisites.
+## Measuring borrowed frame settings without a wall-clock queue assumption
+
+The required Ubuntu job at mobile head `b7c81932` stopped in
+`frame_keyboard_reads_do_not_snapshot_settings_for_one_or_six_sessions`:
+2032 passed, one failed and 18 ignored. Its failed assertion was terminal row
+text, not the settings-snapshot count. The raw failure remains retained under
+SHA256 `6a39a4bc592e598959a1366c93dee1d2f333423d1352e0fe35d800aa7deb6859`.
+
+That fixture synchronously queues output for every session and expects all
+twenty frames' rows and cursor replies after one pump. Production ingestion
+deliberately stops at its shared wall-clock deadline, so that one call does
+not promise all six queues were drained. The nearby deterministic budget test
+already proves deferred work and rotation between updates.
+
+The settings fixture now uses the existing injected clock with a frozen
+instant, as the neighboring controlled paste fixture does. The budget value,
+production clock and queues are unchanged. All exact row/reply/chip checks,
+twenty frames, one/six-session cases, native-menu build count and zero
+settings-snapshot oracle remain. It does not add sleeps, retries or a larger
+production budget, and it makes no latency or native acceptance claim.
+
+On macOS Rust1.99.1, the three frame-settings cases plus the existing global
+budget-rotation and deferred-paste cases pass: 5/0/0, 0.04s. Affected Desktop
+all-targets strict Clippy, formatting, traceability and diff checks pass.
+The first test command incorrectly selected `--lib` for this binary-only
+package and exited101 without running tests; that failure is retained, and
+the qualified command selects `--bin festerm`. Fresh required three-OS CI
+remains open; this deterministic fixture correction is not a native fix.
 
 ## Keeping native HOST fixture failures observable without exposing their inputs
 
