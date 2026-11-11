@@ -640,13 +640,21 @@ mod tests {
                     .path()
                     .join(format!("host-daemon-{}.json", target.generation.get()));
                 let before_lease = std::fs::read(&lease_path).ok();
+                assert_eq!(before_lease.is_some(), lease);
                 assert_eq!(
-                    control.end(&binding.principal, &target, |_| -> Result<(), ControlError> {
-                        panic!("an imported local shell cannot receive native End authority")
-                    }),
+                    control.end(
+                        &binding.principal,
+                        &target,
+                        |_| -> Result<(), ControlError> {
+                            panic!("an imported local shell cannot receive native End authority")
+                        }
+                    ),
                     Err(ControlError::Denied)
                 );
-                assert_eq!(std::fs::read(control.root.join(STATE_FILE)).unwrap(), journal);
+                assert_eq!(
+                    std::fs::read(control.root.join(STATE_FILE)).unwrap(),
+                    journal
+                );
                 assert_eq!(std::fs::read(&lease_path).ok(), before_lease);
             }
         }

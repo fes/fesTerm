@@ -2,6 +2,16 @@
 
 **Status:** Active registry
 
+The composed ADR 0084 Desktop source keeps two native lifetime domains
+separate: imported/ordinary-private Bind/Switch/Resume/Release/rollback never
+authorizes native End of the original local shell, including an already-Absent
+record. Only an exact host-created generation may receive the freshly
+authorized, lease-fenced Ended observation. During eventual installed/native
+acceptance, exercise both domains alongside protected original-operation
+reopen, correlated detach, replacement-generation refusal and occupied
+persistent-writer adoption. The source composition itself has no new native,
+actual-vault/provider/device or GUI acceptance evidence.
+
 ## Desktop pane qualification
 
 | ID | Scenario | Evidence / status |

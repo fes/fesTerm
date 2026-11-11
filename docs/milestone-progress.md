@@ -1,5 +1,40 @@
 # Milestone Progress Narrative
 
+## Composing the ADR 0084 Desktop vertical slice
+
+A new worktree based on published `dc43841f` normally merges the exact qualified
+foreground mobile/native-End `39218faf`, persistent adoption `18d218dc`,
+deterministic frame fixture `901bce36` and binary-generation fixture `278343ae`
+pins. Their individual evidence remains attributed to those sources, not to
+this composition. All existing stories and the Desktop Setup/acquisition/
+private-sharing/reviewed-versus-retained recovery contract are preserved.
+
+The behavior-bearing integration boundary is native End: imported/private
+bindings cannot acquire End authority through an already-Absent observation.
+They refuse before reconciliation or admission; the ephemeral observation is
+host-created only. A new deterministic negative fixture covers Running/Absent
+records with a present/missing lease, requires refusal before policy admission,
+and preserves exact journal and lease bytes. It creates no authority or native
+process. Imported watches retain original local/legacy admission and never use
+managed-writer disconnect bookkeeping. Managed persistent adoption retains
+fresh non-takeover Busy refusal, exact-writer disconnect/pending-takeover fences
+and uncertain unwind rather than guessing that a writer or process is absent.
+
+Source conflicts retain both sets of tests, explicit API feature dependencies
+and documentation invariants. The frame change uses the already-injected
+fixture clock without changing settings-read/terminal assertions or production
+budgets. The binary change only owns fixture roots and Windows file-handle
+ordering; it is not Windows runtime acceptance.
+
+At this source-composition checkpoint, host Cargo is explicitly held by the
+parent for other owned work. **No combined compile, Rust test, Clippy, native
+daemon, VM or GUI result has been produced here.** Source formatting,
+311-edge traceability and diff checks do not substitute for those gates. Earlier
+`76b9` native 6.00s, `39218faf` protected-original SSH/helper/PTY and `18d218dc`
+adoption evidence remain inherited, not new integrated executions. Required
+Windows CI, actual-vault/provider/device/installed-service/GUI acceptance and
+the parent's independent source gates remain separate. ADR 0084 is not done.
+
 ## Separating reviewed sharing recovery from retained status
 
 Independent reliability review of frozen `76b9b3af` found a real target/operation
