@@ -80,7 +80,7 @@ fn desktop_consent_requires_an_installed_monitor_and_is_revoked_on_loss() {
     let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
     let destination = tempfile::tempdir().unwrap();
     let (storage, _) = RecordingStorage::open_for_test(&root).unwrap();
-    let mut coordinator = DesktopRecording::new(false);
+    let mut coordinator = DesktopRecording::new(false, true);
     coordinator.storage = Some(storage);
     let settings = RecordingSettings {
         destination: Some(ExportDestination::DesktopPath(
@@ -128,7 +128,7 @@ fn recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss() 
     let parent = crate::recording_storage::test_private_parent();
     let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
     let (storage, _) = RecordingStorage::open_for_test(&root).unwrap();
-    let mut coordinator = DesktopRecording::new(false);
+    let mut coordinator = DesktopRecording::new(false, true);
     coordinator.storage = Some(storage);
     coordinator.request(
         &mut app,
@@ -145,6 +145,56 @@ fn recording_rejects_non_wayland_displays_and_revokes_monitor_on_backend_loss() 
     coordinator.set_wayland_backend(false);
     assert!(loss.load(Ordering::Acquire));
     assert!(coordinator.privacy.is_none());
+}
+
+#[test]
+fn desktop_recording_requires_opt_in_before_opening_consent() {
+    let (mut app, _, _, _, _) = two_windows();
+    let mut coordinator = DesktopRecording::new(false, false);
+
+    coordinator.request(
+        &mut app,
+        WindowId(0),
+        Request::Open,
+        &egui::Context::default(),
+    );
+
+    assert!(coordinator.dialog.is_none());
+    assert!(coordinator
+        .status
+        .as_deref()
+        .unwrap()
+        .contains("Enable session recording"));
+}
+
+#[test]
+fn desktop_disabling_session_recording_stops_capture_and_retains_the_source() {
+    let (mut app, first, _, _, _) = two_windows();
+    let parent = crate::recording_storage::test_private_parent();
+    let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
+    let (_storage, _) = RecordingStorage::open_for_test(&root).unwrap();
+    let terminal = &app.recording_session(first).unwrap().terminal;
+    let (recording, _) =
+        festerm_recording::SharedRecording::start(&root, &[terminal], || {}).unwrap();
+    let mut coordinator = DesktopRecording::new(false, true);
+    coordinator.recording = Some(recording.clone());
+
+    coordinator.request(
+        &mut app,
+        WindowId(0),
+        Request::SetAllowed {
+            enabled: false,
+            unsaved: false,
+        },
+        &egui::Context::default(),
+    );
+
+    assert!(!recording.is_recording().unwrap());
+    assert!(coordinator
+        .status
+        .as_deref()
+        .unwrap()
+        .contains("source remains in the recording library"));
 }
 
 #[test]
@@ -167,7 +217,7 @@ fn desktop_quit_waits_for_a_finalized_private_recording() {
     let terminal = &app.recording_session(first).unwrap().terminal;
     let (recording, _) = SharedRecording::start(&private_path, &[terminal], || {}).unwrap();
     let path = private_path.join(format!("recording-{}.fstrec", recording.id()));
-    let mut coordinator = DesktopRecording::new(false);
+    let mut coordinator = DesktopRecording::new(false, true);
     coordinator.recording = Some(recording.clone());
     let context = egui::Context::default();
     let mut output = context.run_ui(egui::RawInput::default(), |ui| {
@@ -383,7 +433,7 @@ fn desktop_stop_requires_a_current_duration_preview_and_export_confirmation() {
     let lease = Arc::new(RecordingLease::acquire(&root).unwrap());
     recording.stop(FinishReason::User).unwrap();
     let context = egui::Context::default();
-    let mut coordinator = DesktopRecording::new(false);
+    let mut coordinator = DesktopRecording::new(false, true);
     coordinator.storage = Some(storage);
     coordinator.recording = Some(recording);
     coordinator.manifest = Some(manifest);
@@ -438,7 +488,7 @@ fn recording_start_and_enrollment_refuse_scrolled_viewports() {
     session.terminal.ingest(b"hidden live secret");
     session.view.reveal_document_row(&session.terminal, 0);
 
-    let mut coordinator = DesktopRecording::new(false);
+    let mut coordinator = DesktopRecording::new(false, true);
     coordinator.begin(
         &app,
         vec![second],
@@ -526,6 +576,7 @@ fn synchronized_capture_spans_windows_and_excludes_local_input() {
     for (tab, stream) in [first, second].into_iter().zip(streams) {
         assert!(app.attach_recording(tab, stream));
     }
+
     let choices = app.recording_choices(Some(recording.id()), WindowId::PRIMARY);
     assert!(
         choices
@@ -590,4 +641,89 @@ fn synchronized_capture_spans_windows_and_excludes_local_input() {
             (second_stream, b"second output".to_vec())
         ]
     );
+}
+
+#[test]
+fn opting_out_stops_other_window_output_before_requests_are_settled() {
+    let (mut app, first, first_transport, second, second_transport) = two_windows();
+    let parent = crate::recording_storage::test_private_parent();
+    let root = crate::recording_storage::test_directory_path(parent.path()).join("private");
+    let (_storage, _) = RecordingStorage::open_for_test(&root).unwrap();
+    let terminals = [
+        &app.recording_session(first).unwrap().terminal,
+        &app.recording_session(second).unwrap().terminal,
+    ];
+    let (recording, streams) = SharedRecording::start(&root, &terminals, || {}).unwrap();
+    for (tab, stream) in [first, second].into_iter().zip(streams) {
+        assert!(app.attach_recording(tab, stream));
+    }
+    app.recording.recording = Some(recording.clone());
+    let context = egui::Context::default();
+    app.poll_recording(&context);
+
+    first_transport.push_event(SessionEvent::Output(b"before opt-out".to_vec()));
+    app.windows[0]
+        .app
+        .automation_session_mut(first)
+        .pump_session_events();
+    app.windows[0]
+        .app
+        .set_session_recording_allowed(false, &context);
+    assert!(!recording.is_recording().unwrap());
+    second_transport.push_event(SessionEvent::Output(b"after opt-out".to_vec()));
+    app.windows[1]
+        .app
+        .automation_session_mut(second)
+        .pump_session_events();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let path = loop {
+        match recording.poll_completion().unwrap() {
+            Some(Completion::Complete { path, .. }) => break path,
+            Some(other) => panic!("unexpected recording completion: {other:?}"),
+            None if std::time::Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            None => panic!("recording writer did not finish"),
+        }
+    };
+    let mut reader = ArtifactReader::new(File::open(path).unwrap()).unwrap();
+    let mut outputs = Vec::new();
+    while let Some(event) = reader.next_event().unwrap() {
+        if let ArtifactEvent::Output { bytes, .. } = event {
+            outputs.push(bytes);
+        }
+    }
+    assert_eq!(outputs, [b"before opt-out".to_vec()]);
+}
+
+#[test]
+fn unknown_recording_opt_in_save_stays_off_and_blocks_stale_saves() {
+    use crate::configuration_startup::{ConfigurationReloader, TestSaveFailure};
+    use festerm_config::Configuration;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("configuration.toml");
+    let original = Configuration::empty();
+    original.save_to_path(&path).unwrap();
+    let reloader = ConfigurationReloader::from_path_for_test(path.clone());
+    let mut window = FesTermApp::for_test_with_configuration(original.clone());
+    window.set_reloader_for_test(reloader.clone());
+    reloader.fail_next_save_for_test(TestSaveFailure::AfterWrite);
+
+    window.set_session_recording_allowed(true, &egui::Context::default());
+    assert!(!window.session_recording_allowed());
+    assert!(matches!(
+        window.take_recording_request(),
+        Some(Request::SetAllowed {
+            enabled: false,
+            unsaved: true
+        })
+    ));
+    assert!(Configuration::load_from_path(&path)
+        .unwrap()
+        .session_recording_enabled());
+    assert!(reloader.save_configuration(&original).is_err());
+    assert!(!reloader
+        .recording_configuration(&Configuration::load_from_path(&path).unwrap())
+        .unwrap()
+        .session_recording_enabled());
 }

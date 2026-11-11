@@ -27,6 +27,11 @@ smoke. The remaining native and usability scenarios are `TR-01`–`TR-03` in
   ownership.
 - Make the sensitive nature of recordings visible before, during and after
   capture.
+- Require a separate, persistent opt-in to enable recording; the default is
+  off, and disabling it stops active capture before saving without deleting
+  library sources or cancelling unrelated exports. If saving fails, the
+  application stays off for this run and warns that restart may restore the
+  prior preference.
 
 ### Non-goals
 
@@ -105,7 +110,10 @@ explicit recover/delete controls.
 subdirectory naming template, and an MP4 filename template, with a live preview
 of the resulting layout. It also holds the pacing defaults described under
 [Pacing settings](#pacing-settings) and the recording-wide appearance used by
-default at export. Desktop also offers a **Delete source
+default at export. A separate **Allow session recording** preference is off
+until explicitly enabled. Disabling it cancels preparation and stops active
+capture; retained sources remain available in the recording library. Desktop
+also offers a **Delete source
 recording after encoding** toggle that is on by default; mobile keeps sources
 until the user deletes them from the library. The folder is chosen with the
 platform's native directory picker. There is no implicit export destination

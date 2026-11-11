@@ -33,6 +33,7 @@ pub(crate) enum Request {
     Open,
     Settings,
     Library,
+    SetAllowed { enabled: bool, unsaved: bool },
     Stop,
     CancelExport,
     IncludeActive,
@@ -42,6 +43,7 @@ pub(crate) enum Request {
 #[derive(Clone, Default)]
 pub(crate) struct WindowView {
     pub active: Option<RecordingId>,
+    pub capture: Option<SharedRecording>,
     pub auto_include: Option<SharedRecording>,
     pub label: Option<String>,
     pub exporting: bool,
@@ -56,6 +58,7 @@ pub(super) struct DesktopRecording {
     open: Option<OpenTask>,
     storage: Option<RecordingStorage>,
     defaults: RecordingSettings,
+    allowed: bool,
     settings_saving: Option<bool>,
     library_task: Option<LibraryTask>,
     library: Option<LibrarySnapshot>,
@@ -155,7 +158,7 @@ impl SessionIdentity {
 
 impl Default for DesktopRecording {
     fn default() -> Self {
-        Self::new(false)
+        Self::new(false, false)
     }
 }
 
@@ -187,13 +190,14 @@ impl DesktopRecording {
         }
     }
 
-    pub(super) fn new(auto_open: bool) -> Self {
+    pub(super) fn new(auto_open: bool, allowed: bool) -> Self {
         Self {
             auto_open,
             attempted_open: false,
             open: None,
             storage: None,
             defaults: RecordingSettings::default(),
+            allowed,
             settings_saving: None,
             library_task: None,
             library: None,
@@ -443,6 +447,53 @@ impl DesktopRecording {
         context: &egui::Context,
     ) {
         match request {
+            Request::SetAllowed { enabled, unsaved } => {
+                self.allowed = enabled;
+                for window in &mut app.windows {
+                    window.app.set_recording_allowed_state(enabled, unsaved);
+                }
+                if !enabled {
+                    self.include_new = None;
+                    if let Some(task) = &self.prepare {
+                        task.cancel();
+                    }
+                    if let Some(task) = &self.privacy_task {
+                        task.cancel();
+                    }
+                    if let Some(start) = &mut self.starting {
+                        start.error = Some(
+                            "Recording preparation was cancelled because recording was disabled"
+                                .to_owned(),
+                        );
+                    }
+                    self.privacy = None;
+                    if let Some(recording) = &self.recording {
+                        match recording.stop(FinishReason::User) {
+                            Ok(_) => {
+                                self.status = Some(
+                                    "Recording stopped because session recording was disabled; the source remains in the recording library"
+                                        .to_owned(),
+                                );
+                            }
+                            Err(error) => {
+                                self.status = Some(format!(
+                                    "Recording disable could not stop capture cleanly: {error}"
+                                ));
+                            }
+                        }
+                    } else if self.starting.is_some()
+                        || matches!(self.dialog, Some(Dialog::Start { .. }))
+                    {
+                        self.status = Some(
+                            "Recording was cancelled because session recording was disabled"
+                                .to_owned(),
+                        );
+                    }
+                    if matches!(self.dialog, Some(Dialog::Start { .. })) {
+                        self.dialog = None;
+                    }
+                }
+            }
             Request::Stop => {
                 if let Some(recording) = &self.recording {
                     match recording.stop(FinishReason::User) {
@@ -479,6 +530,13 @@ impl DesktopRecording {
             }
             Request::Dismiss => self.status = None,
             Request::Open | Request::Settings | Request::Library => {
+                if matches!(request, Request::Open | Request::Settings) && !self.allowed {
+                    self.status = Some(
+                        "Enable session recording in Settings before recording terminal output"
+                            .to_owned(),
+                    );
+                    return;
+                }
                 if self.storage.is_none() {
                     self.pending_open = Some((owner, request));
                     self.status = Some("Opening private recording storage".to_owned());
@@ -571,6 +629,7 @@ impl DesktopRecording {
         };
         WindowView {
             active,
+            capture: self.recording.clone(),
             auto_include: self
                 .recording
                 .as_ref()
@@ -592,6 +651,10 @@ impl DesktopRecording {
         include_new: bool,
         context: &egui::Context,
     ) {
+        if !self.allowed {
+            self.status = Some("Enable session recording in Settings before starting".to_owned());
+            return;
+        }
         if self.busy() || self.library_task.is_some() {
             self.status =
                 Some("Wait for the current recording library operation to finish".to_owned());
@@ -672,6 +735,16 @@ impl DesktopRecording {
     }
 
     fn poll_start(&mut self, app: &mut FesTermApplication, context: &egui::Context) {
+        if !self.allowed {
+            if let Some(task) = &self.prepare {
+                task.cancel();
+            }
+            if let Some(start) = &mut self.starting {
+                start.error.get_or_insert_with(|| {
+                    "Recording preparation was cancelled because recording was disabled".to_owned()
+                });
+            }
+        }
         if let Some(result) = self.privacy_task.as_ref().and_then(PrivacyTask::poll) {
             self.privacy_task = None;
             match result {
@@ -761,6 +834,10 @@ impl DesktopRecording {
         prepared: PreparedCapture,
         context: &egui::Context,
     ) {
+        if !self.allowed {
+            self.status = Some("Recording was disabled before capture could start".to_owned());
+            return;
+        }
         let PreparedCapture {
             source,
             manifest,

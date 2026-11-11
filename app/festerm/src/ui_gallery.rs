@@ -1443,6 +1443,8 @@ fn synthetic_settings_view_model() -> SettingsViewModel {
         automation: Default::default(),
         default_sftp_local_directory: Some("/home/devuser/sftp/example-drop".to_owned()),
         sftp_pane_order: SftpPaneOrderPreference::LocalLeft,
+        session_recording_enabled: false,
+        recording_preference_unsaved: false,
     }
 }
 

@@ -86,6 +86,8 @@ impl KeyboardBridge {
 
     pub fn play_input_click(&self) {}
 
+    pub fn play_input_haptic(&self) {}
+
     pub fn set_field_document(&self, _document: Option<FieldDocument>) {}
 
     pub fn take_field_input(&self) -> Vec<FieldInput> {

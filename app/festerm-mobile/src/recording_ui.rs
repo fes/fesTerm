@@ -135,6 +135,14 @@ impl MobileApp {
                 }
             }
             Ok(None) => {
+                if !self.shell.session_recording_enabled {
+                    if ui.button("Enable session recording in Settings").clicked() {
+                        self.shell.tab = shell::Tab::Settings;
+                        self.leave_terminal();
+                        ui.close();
+                    }
+                    return;
+                }
                 let ready = self.recording_ui.preparing.is_none()
                     && self.recording_ui.pending_export.is_none()
                     && self.recording_ui.exporting.is_none()
@@ -155,6 +163,11 @@ impl MobileApp {
     }
 
     fn open_recording_sheet(&mut self) {
+        if !self.shell.session_recording_enabled {
+            self.recording_ui.status =
+                Some("Enable session recording in Settings before starting".to_owned());
+            return;
+        }
         if let Err(error) = self
             .recording_ui
             .draft
@@ -175,6 +188,36 @@ impl MobileApp {
         }
         self.recording_ui.status = None;
         self.recording_ui.open = true;
+    }
+
+    pub(super) fn cancel_recording_capture(&mut self) {
+        let was_open = self.recording_ui.open;
+        let was_preparing = self.recording_ui.preparing.is_some();
+        let active = match self.sink.live.current_recording() {
+            Ok(Some(recording)) => matches!(recording.is_recording(), Ok(true)),
+            Ok(None) => false,
+            Err(error) => {
+                self.recording_ui.status = Some(error);
+                false
+            }
+        };
+        if let Some(task) = &self.recording_ui.preparing {
+            task.cancel();
+        }
+        self.recording_ui.pending_consent = None;
+        self.recording_ui.pending_invalidation = Some(
+            "Recording preparation was cancelled because session recording was disabled".to_owned(),
+        );
+        self.recording_ui.open = false;
+        if active {
+            self.recording_ui.status = Some(
+                "Recording stopped because session recording was disabled; the source remains in the recording library"
+                    .to_owned(),
+            );
+        } else if was_preparing || was_open {
+            self.recording_ui.status =
+                Some("Recording was cancelled because session recording was disabled".to_owned());
+        }
     }
 
     pub(super) fn finish_capture_folder(

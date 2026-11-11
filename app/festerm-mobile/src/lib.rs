@@ -128,6 +128,12 @@ pub use profiles::Profiles;
 
 pub const SCROLLBACK_LIMIT: usize = 256 * 1024;
 
+fn play_haptic_if_enabled(enabled: bool, play: impl FnOnce()) {
+    if enabled {
+        play();
+    }
+}
+
 /// winit on iOS reports Return and Tab (software or hardware keyboard) as
 /// `Key::Character("\n" / "\t")`, which egui-winit drops as non-printable. The
 /// event loop queues them here and the app replays them as named keys.
@@ -250,8 +256,12 @@ const SUSPENDED: &str =
 #[cfg(feature = "live-ssh")]
 impl SuspensionHandle {
     fn stop_recording(&self) {
-        Self::stop_shared_recording(&self.recording);
+        self.stop_recording_capture();
         Self::cancel_shared_export(&self.export);
+    }
+
+    fn stop_recording_capture(&self) {
+        Self::stop_shared_recording(&self.recording);
     }
 
     fn stop_shared_recording(holder: &std::sync::Mutex<Option<RecordingOwner>>) {
@@ -270,7 +280,7 @@ impl SuspensionHandle {
         };
         if let Some(recording) = recording {
             if let Err(error) = recording.stop(festerm_recording::FinishReason::Lifecycle) {
-                eprintln!("fesTerm: recording could not be stopped on suspension: {error}");
+                eprintln!("fesTerm: recording could not be stopped: {error}");
             }
         }
     }
@@ -771,6 +781,8 @@ pub struct MobileApp {
     observed_memory_warnings: u64,
     observed_suspensions: u64,
     keyboard: Option<festerm_ios_window::KeyboardBridge>,
+    #[cfg(test)]
+    keyboard_haptic_count: Cell<usize>,
     keys: HardwareKeys,
     control: bool,
     alt: bool,
@@ -864,6 +876,8 @@ impl MobileApp {
             observed_memory_warnings: 0,
             observed_suspensions: 0,
             keyboard: None,
+            #[cfg(test)]
+            keyboard_haptic_count: Cell::new(0),
             keys: HardwareKeys::default(),
             control: false,
             alt: false,
@@ -950,6 +964,23 @@ impl MobileApp {
             Err(error) => self.notice = Some(error),
         }
         self.terminal_keyboard.split = profiles.split_keyboard();
+        self.shell.keyboard_haptics_enabled = match profiles.keyboard_haptics_enabled() {
+            Ok(enabled) => enabled,
+            Err(error) => {
+                self.notice.get_or_insert(error);
+                false
+            }
+        };
+        #[cfg(all(feature = "live-ssh", unix))]
+        {
+            self.shell.session_recording_enabled = match profiles.session_recording_enabled() {
+                Ok(enabled) => enabled,
+                Err(error) => {
+                    self.notice.get_or_insert(error);
+                    false
+                }
+            };
+        }
         self.profiles = Some(profiles);
         self.apply_text_size(text_size);
         self
@@ -1140,6 +1171,9 @@ impl MobileApp {
         selected: &[RecordingSessionSelection],
         context: &egui::Context,
     ) -> Result<(), String> {
+        if !self.shell.session_recording_enabled {
+            return Err("Enable session recording in Settings before starting".to_owned());
+        }
         let terminals = self.validate_recording_selection(selected)?;
         let context = context.clone();
         #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -1203,6 +1237,9 @@ impl MobileApp {
     /// Explicitly includes an additional live terminal in the shared timeline.
     #[cfg(feature = "live-ssh")]
     pub fn include_terminal_in_recording(&mut self, id: u64) -> Result<(), String> {
+        if !self.shell.session_recording_enabled {
+            return Err("Session recording is disabled in Settings".to_owned());
+        }
         let recording = self
             .sink
             .live
@@ -2004,6 +2041,35 @@ impl MobileApp {
                         });
                     }
                 }
+                ShellAction::SetKeyboardHaptics(enabled) => {
+                    match self
+                        .profiles
+                        .as_ref()
+                        .map(|profiles| profiles.save_keyboard_haptics_enabled(enabled))
+                    {
+                        Some(Ok(())) => self.shell.keyboard_haptics_enabled = enabled,
+                        Some(Err(error)) => self.notice = Some(error),
+                        None => {
+                            self.notice = Some(
+                                "Keyboard haptics changed for this run; saved settings are unavailable"
+                                    .to_owned(),
+                            );
+                            self.shell.keyboard_haptics_enabled = enabled;
+                        }
+                    }
+                }
+                #[cfg(all(feature = "live-ssh", unix))]
+                ShellAction::SetSessionRecordingEnabled(enabled) => {
+                    self.set_session_recording_enabled(enabled);
+                }
+                #[cfg(all(feature = "live-ssh", unix))]
+                ShellAction::OpenRecordingSettings => {
+                    self.shell.recording_settings_open = true;
+                }
+                #[cfg(all(feature = "live-ssh", unix))]
+                ShellAction::CloseRecordingSettings => {
+                    self.shell.recording_settings_open = false;
+                }
                 ShellAction::SetSplitKeyboard(mode) => {
                     self.terminal_keyboard.split = mode;
                     if let Some(Err(error)) =
@@ -2090,6 +2156,66 @@ impl MobileApp {
                 }
             }
         }
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    fn set_session_recording_enabled(&mut self, enabled: bool) {
+        self.set_session_recording_enabled_with(enabled, |profiles, enabled| {
+            profiles
+                .ok_or_else(|| "Session recording requires saved device settings".to_owned())?
+                .save_session_recording_enabled(enabled)
+        });
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    fn set_session_recording_enabled_with(
+        &mut self,
+        enabled: bool,
+        save: impl FnOnce(Option<&profiles::Profiles>, bool) -> Result<(), String>,
+    ) {
+        let stop_error = if !enabled {
+            self.shell.session_recording_enabled = false;
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            self.cancel_recording_capture();
+            let error = self.stop_terminal_recording().err();
+            self.sink.live.stop_recording_capture();
+            error
+        } else {
+            None
+        };
+        let mut notice = match save(self.profiles.as_ref(), enabled) {
+            Ok(()) => {
+                self.shell.session_recording_enabled = enabled;
+                self.shell.recording_preference_unsaved = false;
+                None
+            }
+            Err(error) if !enabled => {
+                self.shell.recording_preference_unsaved = true;
+                Some(format!(
+                    "{error}; recording is off for this run, but may be enabled after restart"
+                ))
+            }
+            Err(error) => Some(error),
+        };
+        if let Some(error) = stop_error {
+            let message = format!("Recording could not be stopped cleanly: {error}");
+            notice = Some(match notice {
+                Some(notice) => format!("{notice}; {message}"),
+                None => message,
+            });
+        }
+        self.notice = notice;
+    }
+
+    pub(crate) fn play_custom_keyboard_haptic(&self) {
+        play_haptic_if_enabled(self.shell.keyboard_haptics_enabled, || {
+            #[cfg(test)]
+            self.keyboard_haptic_count
+                .set(self.keyboard_haptic_count.get() + 1);
+            if let Some(keyboard) = &self.keyboard {
+                keyboard.play_input_haptic();
+            }
+        });
     }
 
     #[cfg(all(feature = "live-ssh", unix))]
@@ -3000,6 +3126,7 @@ impl MobileApp {
                 })
                 .inner;
             if let Some((key, modifiers)) = output.key {
+                self.play_custom_keyboard_haptic();
                 self.send_key_with(key, modifiers);
             }
             if output.close {
@@ -3035,6 +3162,9 @@ impl MobileApp {
                         } else {
                             terminal_chrome::key_row(ui, &state, &mut self.terminal_keyboard.keys)
                         };
+                        if output.click {
+                            self.play_custom_keyboard_haptic();
+                        }
                         if custom_visible && output.click {
                             if let Some(keyboard) = &self.keyboard {
                                 keyboard.play_input_click();
@@ -3323,6 +3453,15 @@ impl eframe::App for MobileApp {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn custom_keyboard_haptics_are_gated_by_the_preference() {
+        let feedback = std::cell::Cell::new(0);
+        play_haptic_if_enabled(false, || feedback.set(feedback.get() + 1));
+        assert_eq!(feedback.get(), 0);
+        play_haptic_if_enabled(true, || feedback.set(feedback.get() + 1));
+        assert_eq!(feedback.get(), 1);
+    }
+
+    #[test]
     fn return_and_tab_reported_as_characters_are_replayed_as_named_keys() {
         let keys = HardwareKeys::default();
         assert!(keys.push_text("\n"));
@@ -3503,6 +3642,7 @@ mod tests {
                         "{kind:?} {size:?}: {label} {rect:?}"
                     );
                 }
+
                 let space = harness.get_by_label("Space").rect();
                 assert!((space.center().x - toolbar.center().x).abs() < 1.0);
                 assert!(space.width() > (toolbar.width() - 14.0).min(720.0) * 0.47);
@@ -3532,6 +3672,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn terminal_keyboard_haptics_cover_variants_symbols_split_and_extended_keys() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        use terminal_keyboard::{KeyboardKind, SplitMode};
+
+        for kind in [KeyboardKind::HoldSymbols, KeyboardKind::ShellRow] {
+            for split in [SplitMode::Never, SplitMode::Always] {
+                let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+                    active: true,
+                    ..Default::default()
+                })));
+                app.select_keyboard(kind);
+                app.terminal_keyboard.split = split;
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(1194.0, 834.0))
+                    .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+                harness.run();
+                harness.get_by_label("q").click();
+                harness.run();
+                assert_eq!(harness.state().keyboard_haptic_count.get(), 0);
+
+                harness.state_mut().shell.keyboard_haptics_enabled = true;
+                for (index, label) in ["q", "#+=", "[", "Extended keys", "Home"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    harness.get_by_label(label).click();
+                    harness.run();
+                    assert_eq!(
+                        harness.state().keyboard_haptic_count.get(),
+                        index + 1,
+                        "{kind:?} {split:?} {label}"
+                    );
+                }
+                harness.get_by_label("F-keys").click();
+                harness.run();
+                harness.get_by_label("F1").click();
+                harness.run();
+                assert_eq!(harness.state().keyboard_haptic_count.get(), 6);
+                harness.get_by_label("Symbols").click();
+                harness.run();
+                harness.get_by_label("~").click();
+                harness.run();
+                assert_eq!(harness.state().keyboard_haptic_count.get(), 7);
+            }
+        }
+
+        let mut app = MobileApp::new_terminal(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })));
+        app.shell.keyboard_haptics_enabled = true;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(390.0, 844.0))
+            .build_ui_state(|ui, app: &mut MobileApp| app.show(ui), app);
+        harness.run();
+        harness.get_by_label("Tab").click();
+        harness.run();
+        assert_eq!(harness.state().keyboard_haptic_count.get(), 1);
     }
 
     #[test]
@@ -3602,6 +3803,184 @@ mod tests {
 
     #[cfg(all(feature = "live-ssh", unix))]
     #[test]
+    fn recording_is_opt_in_and_unlocks_settings_only_after_saving() {
+        use egui_kittest::{kittest::Queryable, Harness};
+        use festerm_recording::RecordingSettings;
+        use std::{cell::Cell, rc::Rc};
+
+        let profiles = profiles::testing::profiles();
+        let mut app =
+            MobileApp::new(Rc::new(Cell::new(Lifecycle::default()))).with_profiles(profiles);
+        app.shell.recording_settings = Some(RecordingSettings::default());
+        app.shell.recording_saved = Some(RecordingSettings::default());
+        app.shell.tab = shell::Tab::Settings;
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(850.0, 2400.0))
+            .build_ui_state(
+                |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                app,
+            );
+        harness.run();
+
+        assert!(!harness.state().shell.session_recording_enabled);
+        assert!(harness.query_by_label("Recording settings >").is_none());
+        let source = tempfile::tempdir().unwrap();
+        let error = harness
+            .state_mut()
+            .start_terminal_recording_from(
+                RecordingStart::Directory(source.path()),
+                &[],
+                &egui::Context::default(),
+            )
+            .unwrap_err();
+        assert!(error.contains("Enable session recording"));
+        assert_eq!(std::fs::read_dir(source.path()).unwrap().count(), 0);
+
+        harness.get_by_label("Allow session recording").click();
+        harness.run();
+        assert!(harness.state().shell.session_recording_enabled);
+        assert!(harness.query_by_label("Recording settings >").is_some());
+        harness.get_by_label("Recording settings >").click();
+        harness.run();
+        assert!(harness.state().shell.recording_settings_open);
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    #[test]
+    fn disabling_session_recording_stops_capture_and_retains_the_source() {
+        use festerm_recording::{Completion, FinishReason, SharedRecording};
+        use std::{cell::Cell, rc::Rc, sync::atomic::Ordering, thread, time::Instant};
+
+        let directory = tempfile::tempdir().unwrap();
+        festerm_unix_security::make_private_directory(
+            &std::fs::File::open(directory.path()).unwrap(),
+        )
+        .unwrap();
+        let suspension = SuspensionHandle::default();
+        let export = suspension.foreground_export_cancellation(|| Ok(1)).unwrap();
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle::default())))
+            .with_profiles(profiles::testing::profiles())
+            .with_suspension(suspension.clone());
+        app.shell.session_recording_enabled = true;
+        let (recording, _) =
+            SharedRecording::start(directory.path(), &[&app.terminal], || {}).unwrap();
+        app.sink.live.install_test_recording(recording.clone());
+
+        app.set_session_recording_enabled_with(false, |profiles, enabled| {
+            assert!(!recording.is_recording().unwrap());
+            assert!(!export.flag().load(Ordering::Acquire));
+            profiles.unwrap().save_session_recording_enabled(enabled)
+        });
+        assert!(!recording.is_recording().unwrap());
+        assert!(!export.flag().load(Ordering::Acquire));
+
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let completion = loop {
+            if let Some(completion) = app.poll_terminal_recording().unwrap() {
+                break completion;
+            }
+            assert!(Instant::now() < deadline, "recording did not finish");
+            thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let Completion::Complete { path, reason, .. } = completion else {
+            panic!("expected the disabled recording source to be retained");
+        };
+        assert_eq!(reason, FinishReason::User);
+        assert!(path.exists());
+        assert!(!app
+            .profiles
+            .as_ref()
+            .unwrap()
+            .session_recording_enabled()
+            .unwrap());
+        suspension.stop_recording();
+        assert!(export.flag().load(Ordering::Acquire));
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    #[test]
+    fn recording_opt_out_remains_available_when_settings_are_unavailable_or_busy() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        for (settings_available, busy) in [(false, false), (true, true)] {
+            let profiles = profiles::testing::profiles();
+            profiles.save_session_recording_enabled(true).unwrap();
+            let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+                active: true,
+                ..Default::default()
+            })))
+            .with_profiles(profiles);
+            app.shell.recording_settings =
+                settings_available.then(festerm_recording::RecordingSettings::default);
+            app.shell.recording_busy = busy;
+            app.shell.tab = shell::Tab::Settings;
+            let mut harness = Harness::builder()
+                .with_size(egui::vec2(850.0, 2400.0))
+                .build_ui_state(
+                    |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                    app,
+                );
+            harness.run();
+            harness.get_by_label("Allow session recording").click();
+            harness.run();
+            assert!(!harness.state().shell.session_recording_enabled);
+            assert!(!harness
+                .state()
+                .profiles
+                .as_ref()
+                .unwrap()
+                .session_recording_enabled()
+                .unwrap());
+        }
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    #[test]
+    fn failed_recording_opt_out_warns_and_can_be_retried() {
+        use egui_kittest::{kittest::Queryable, Harness};
+
+        let profiles = profiles::testing::profiles();
+        profiles.save_session_recording_enabled(true).unwrap();
+        let mut app = MobileApp::new(Rc::new(Cell::new(Lifecycle {
+            active: true,
+            ..Default::default()
+        })))
+        .with_profiles(profiles);
+        app.shell.tab = shell::Tab::Settings;
+        app.set_session_recording_enabled_with(false, |_, _| Err("Save failed".to_owned()));
+        assert!(!app.shell.session_recording_enabled);
+        assert!(app.shell.recording_preference_unsaved);
+        assert!(app.notice.as_deref().unwrap().contains("restart"));
+        assert!(app
+            .profiles
+            .as_ref()
+            .unwrap()
+            .session_recording_enabled()
+            .unwrap());
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(850.0, 2400.0))
+            .build_ui_state(
+                |ui, app: &mut MobileApp| app.show_with_occlusion(ui, 0.0),
+                app,
+            );
+        harness.run();
+        harness
+            .get_by_label("Retry saving recording opt-out")
+            .click();
+        harness.run();
+        assert!(!harness.state().shell.recording_preference_unsaved);
+        assert!(!harness
+            .state()
+            .profiles
+            .as_ref()
+            .unwrap()
+            .session_recording_enabled()
+            .unwrap());
+    }
+
+    #[cfg(all(feature = "live-ssh", unix))]
+    #[test]
     fn recording_settings_ui_saves_a_valid_device_local_draft() {
         use egui_kittest::{kittest::Queryable, Harness};
         use std::{fs::File, time::Duration};
@@ -3616,6 +3995,7 @@ mod tests {
         app.recording_storage = Some(storage);
         app.shell.recording_settings = Some(settings.clone());
         app.shell.recording_saved = Some(settings);
+        app.shell.recording_settings_open = true;
         app.shell.tab = shell::Tab::Settings;
         let mut harness = Harness::builder()
             .with_size(egui::vec2(850.0, 2400.0))

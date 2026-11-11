@@ -424,6 +424,7 @@ pub struct FesTermApp {
     last_session_pump: Option<TabId>,
     recording_view: crate::application::recording::WindowView,
     recording_request: Option<crate::application::recording::Request>,
+    recording_preference_unsaved: bool,
     pane_rects: Vec<(TabId, egui::Rect)>,
     pane_layout_menu: Option<TabId>,
     pane_controls: panes::PaneControls,
@@ -938,6 +939,7 @@ impl FesTermApp {
             last_session_pump: None,
             recording_view: Default::default(),
             recording_request: None,
+            recording_preference_unsaved: false,
             pane_rects: Vec::new(),
             pane_layout_menu: None,
             pane_controls: panes::PaneControls::default(),
@@ -1668,6 +1670,10 @@ impl FesTermApp {
         let Ok(configuration) = self
             .configuration_reloader
             .automation_configuration(&configuration)
+            .and_then(|configuration| {
+                self.configuration_reloader
+                    .recording_configuration(&configuration)
+            })
         else {
             self.queue_automation_command(crate::automation::NativeCommand::SafetyStop);
             return;
@@ -6832,6 +6838,53 @@ impl eframe::App for FesTermApp {
 }
 
 impl FesTermApp {
+    pub(crate) fn session_recording_allowed(&self) -> bool {
+        self.state.session_recording_allowed()
+    }
+
+    pub(crate) fn initialize_recording_preference(&self) {
+        self.configuration_reloader
+            .initialize_recording_preference(self.state.session_recording_allowed());
+    }
+
+    pub(crate) fn set_recording_allowed_state(&mut self, enabled: bool, unsaved: bool) {
+        self.state.set_session_recording_allowed(enabled);
+        self.recording_preference_unsaved = unsaved;
+    }
+
+    pub(crate) fn set_session_recording_allowed(&mut self, enabled: bool, context: &egui::Context) {
+        self.initialize_recording_preference();
+        if !enabled {
+            if let Some(recording) = &self.recording_view.capture {
+                if let Err(error) = recording.stop(festerm_recording::FinishReason::User) {
+                    tracing::error!("Could not stop recording after opt-out: {error}");
+                }
+            }
+            self.configuration_reloader.disable_recording_preference();
+        }
+        self.state
+            .dispatch(AppCommand::SetSessionRecordingAllowed(enabled), context);
+        let saved = self.apply_configuration_save(
+            self.state
+                .configuration()
+                .with_interface_settings(self.current_interface_settings()),
+            ConfigurationStartupStatus::InterfaceSettingsSaveFailure,
+            |reloader, configuration| reloader.save_recording_preference(configuration, enabled),
+        );
+        if !saved {
+            self.configuration_reloader.disable_recording_preference();
+            self.state.set_session_recording_allowed(false);
+            self.report_configuration_notice(
+                "Session recording is off for this run, but the saved preference is unconfirmed and may permit recording after restart.",
+            );
+        }
+        self.recording_preference_unsaved = !saved;
+        self.recording_request = Some(crate::application::recording::Request::SetAllowed {
+            enabled: enabled && saved,
+            unsaved: !saved,
+        });
+    }
+
     fn dispatch_recording_command(&mut self, command: AppCommand) {
         use crate::application::recording::Request;
         self.recording_request = Some(match command {
@@ -7458,6 +7511,8 @@ impl FesTermApp {
                                     .default_sftp_local_directory()
                                     .map(|path| path.to_string_lossy().into_owned()),
                                 sftp_pane_order: self.state.sftp_pane_order(),
+                                session_recording_enabled: self.state.session_recording_allowed(),
+                                recording_preference_unsaved: self.recording_preference_unsaved,
                             },
                         );
                     }
@@ -7796,6 +7851,9 @@ impl FesTermApp {
                 command @ (AppCommand::OpenRecording
                 | AppCommand::OpenRecordingSettings
                 | AppCommand::OpenRecordingLibrary) => self.dispatch_recording_command(command),
+                AppCommand::SetSessionRecordingAllowed(enabled) => {
+                    self.set_session_recording_allowed(enabled, ui.ctx());
+                }
                 #[cfg(feature = "experimental-dev-tunnels")]
                 AppCommand::ImportPublicDevTunnelProfile { import } => {
                     self.import_public_tunnel_profile(import);
@@ -8771,6 +8829,7 @@ impl FesTermApp {
             last_session_pump: None,
             recording_view: Default::default(),
             recording_request: None,
+            recording_preference_unsaved: false,
             pane_rects: Vec::new(),
             pane_layout_menu: None,
             pane_controls: panes::PaneControls::default(),
