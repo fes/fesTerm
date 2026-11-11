@@ -182,8 +182,10 @@ after a complete base is durable. Existing native AES-GCM/reference AAD is uncha
 
 **Host automated evidence:** the corrected host selection covers production
 namespace faults at marker/base creation, partial write, force, publication,
-marker removal and final sync, plus owner/scope and real concurrent processes.
-Its exact results are recorded at source freeze. Historical `e462c59b` had
+marker removal and final sync, plus owner/scope and real concurrent processes:
+five Python tests including 35 actual JVM cases pass at frozen `d89fc146`.
+Production Java and extended smoke compile against existing API35; inputs and
+full tracked-source maps stay identical during both commands. Historical `e462c59b` had
 23 host JVM passes but is reliability-blocked by the Android SELinux hard-link
 denial; those passes never establish Android compatibility. These tests are not
 Android `Os`, JNI, Keystore or device execution. Inherited frozen Rust qualification passes

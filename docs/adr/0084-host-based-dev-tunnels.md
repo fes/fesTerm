@@ -701,6 +701,14 @@ creators; retained backup/new/staging states; successful native put/reserved
 creation with no marker after acknowledgement and unchanged bytes on collision.
 The existing receipt location and native ciphertext/AAD are unchanged.
 
+The corrected `d89fc146` host selection passes five Python tests, including
+35 production-namespace/predicate JVM cases, and actual API35 compilation of all
+five production Java sources plus the extended native smoke. Compiler inputs
+and full tracked-source maps remain unchanged through both commands. This is
+not SELinux/JNI/Keystore/device execution; corrected source remains blocked from
+consumption pending fresh full-source security/reliability/scope gates and that
+actual native acceptance. No Rust/Cargo rerun is attributed to the Java-only fix.
+
 Validation impact remains `HOST-02`, `HOST-03`, ADR0084: deterministic current
 owner/foreign scope, create versus reopen, foreign-account refusal, base/backup/
 staging collisions, concurrent creation and failure/no-overwrite/no-implicit-

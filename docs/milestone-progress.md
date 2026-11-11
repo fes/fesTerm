@@ -23,6 +23,23 @@ cleanup, encryption/authority changes or new JNI/platform APIs. Deterministic
 host faults and existing-SDK compilation are necessary but actual Android
 SELinux/JNI/Keystore/device smoke remains a mandatory consumption blocker.
 
+Frozen corrected source `d89fc146` passes five Python tests, including 35 actual
+host JVM cases (empty/4096-byte partial/full bases, each publication boundary,
+guard/directory-sync/marker-delete failures and real independent processes).
+Production Java plus extended smoke compile against the existing API35 jar.
+Both commands retain identical full tracked-source maps before/after execution.
+Rust/manifests/lock remain identical to `e462c59b`; no Cargo rerun was performed.
+The early historical source-drifting Cargo-zero receipts stay unqualified,
+alongside the original nonzero failures; only the later frozen Rust evidence
+is inherited by canonical equality.
+
+Read-only inventory finds API35/build-tools35/NDK27, adb/emulator binaries and
+one AVD configuration; an existing adb process is not owned or modified.
+API36 jar/build-tools remain missing. No adb/emulator command, server query,
+device launch, install or SDK/OS/provider change was performed. Connected or
+bootable devices and actual SELinux/JNI/Keystore behavior remain unknown:
+fresh three-source gates and actual native smoke are required before consumption.
+
 ## Historical e462 boundary qualification: reliability blocked
 
 The owner explicitly approved implementing the opaque native application-root

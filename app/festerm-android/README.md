@@ -78,9 +78,11 @@ python3 -m unittest scripts.tests.test_android_native_secrets -v
 The earlier `e462c59b` publisher is reliability-blocked by Android SELinux's
 hard-link denial and must not be consumed. Corrected source requires actual
 Android SELinux/JNI/Keystore/device smoke before consumption; host tests and
-compilation do not clear that gate. Historical bounded qualification
-also checks Android Rust with the existing NDK 27 and compiles production Java
-plus smoke against existing API 35. Configured API 36 APK packaging and actual
+compilation do not clear that gate. Corrected `d89fc146` passes five Python tests including 35 JVM cases, and
+production Java plus smoke compile against existing API35 with frozen inputs.
+No actual native execution is implied. Earlier frozen Rust qualification checks
+Android Rust with existing NDK27; canonical unchanged inputs carry it without
+a Cargo rerun. Configured API 36 APK packaging and actual
 native smoke remain required: API 36 `android.jar`/`aapt2` are absent, and no SDK
 was installed. Incomplete receipt anchors and retained-original exhaustion are
 not repaired by this increment.
