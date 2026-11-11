@@ -56,7 +56,8 @@ hosting on Save (ADR 0072), with host-local consent, non-attaching one-shot
 launch, verified helper staging and shell-preserving revocation/cleanup.
 Signed native provisioning, servicing and physical-client acceptance remain
 open under DT-08; no file/observation grant is implied. This is separate from
-remote session inventory/create/terminate, which remain unavailable. Native GitHub device
+the experimental HOST client execution below; legacy hosting does not gain
+remote session creation/termination authority. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
 coverage, not live qualification: the project-owned public client is registered
 and included in default builds; actual service acceptance remains pending
@@ -106,6 +107,42 @@ fixtures are not old-release, installed Windows/macOS/Linux, vault/cloud or GUI
 migration acceptance. Older helpers without startup capability defer; no native
 permissions are repaired, frontend acquired or shell restarted. Remote enable
 remains separate from migration consent.
+Foreground clients and protected original operations remain separate from
+host-local Setup and ordinary-private sharing authority.
+Desktop Profiles includes experimental offline recipe metadata management,
+with deterministic interaction/transaction tests. The later selected-host client
+adds protected foreground review, authorized inventory, existing attachment and
+explicit host-authorized Create/Ensure through the same actual worker and HOST
+protocol. Owned signed-SSH/native-PTY frontend isolation and headless consent/
+original-request regressions are automated evidence, not stage-6 acceptance.
+The opt-in shared mobile `host-clients` route now implements account-scoped
+Find/refresh, protected foreground owner review, authorized inventory,
+Connect/Create/Ensure and actual installed-terminal snapshot adoption. Direct
+native-callback cancellation and process-local original-ticket retention have
+headless/framed evidence; the independent signed-SSH/native-PTY session-adapter
+fixture passes in combined `c5f2d024` qualification (all sixteen actual-helper
+routes pass individually once with fresh private1.98 helpers). The combined
+Simulator executable links; neither result is physical mobile acceptance.
+The prior a13a 2/14 native RED remains separately recorded.
+The lifecycle child adds exact mobile End review/original-operation retention
+and bounded correlated Close/Disconnect retirement. Focused framed and two
+actual SSH/native-PTY cases cover stale End/replacement immunity and persistent/
+owning-temporary detach; native StopRequested remains OutcomeUncertain. This
+is not physical mobile lifecycle/vault acceptance or a rerun of the sixteen cases.
+Offline/live-SSH defaults remain
+unchanged. Native mobile installation, actual local Settings/Remote Access qualification,
+desktop durable restart reconciliation and signed/native/vault/service/device
+qualification remain open; public recipes never confer authority.
+
+The mobile protected restart slice stores exact original mutations before wire
+effects in the native vault, anchored by the existing private owner receipt.
+Explicit current-context review reopens the original UUID/epoch/body (End has no
+creation epoch); there is no startup retry/sign-in/replay. Missing/corrupt,
+locked, pending or mismatched checkpoints fail closed. Only exact Ended prunes
+an End and its confirmed-created generation; unresolved originals retain the
+sixteen-per-purpose/64KiB bounds. Synthetic fresh-process and framed tests are
+not native-vault/physical cold-restart acceptance. Android reserved-reference
+creation is an explicit unsupported-adapter prerequisite, not a file fallback.
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 

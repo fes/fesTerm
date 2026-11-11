@@ -122,9 +122,10 @@ of that same handler. The coordinator refuses obsolete editors before any
 effect and reports the transactional result only to the submitting editor.
 Preview uses the shared portable parser; import confirmation only saves metadata.
 Export returns JSON to the view for explicit clipboard copy and never saves.
-Desktop selected-host review is described below; mobile connection installation
-and creation remain deferred under [#681](https://github.com/fes/fesTerm/issues/681),
-not delegated to legacy `SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
+Desktop selected-host review and explicit creation are described below.
+The opt-in shared mobile `host-clients` route uses `ShellAction::OpenHosts` and
+the mobile application's typed foreground HOST actions, not legacy
+`SaveAndConnectDevTunnel`. See the [configuration contract](configuration.md#public-host-recipes-adr-0084-foundation).
 
 The shared `festerm-tunnel-bridge::host_client` executor performs actual
 selected-host inventory and existing-generation attachment only after its
@@ -162,16 +163,103 @@ account is confirmed; expired credentials require foreground account sign-in,
 not implicit refresh. HOST-only resolution refuses legacy bridge ports. The
 bounded inventory chooser creates the privileged attachment command only for
 an allowed observed target: exact attach preserves logical/generation identity,
-resume only selects the recipe's logical session, and AlwaysCreate is refused
-until actual creation is wired. Busy/unknown/refused observations never become
+resume only selects the recipe's logical session, and AlwaysCreate never
+substitutes attachment to an existing shell. Busy/unknown/refused observations never become
 absence or permission to create. Receipt/vault actions have a 15-second visible
 deadline and resolution a 45-second bound; blocked native calls retain admission
 until actual completion and late results cannot replace the originating UI.
 
-No creation, implicit discovery, background sign-in or input replay is implemented
-by this executor. Shared framing, protected-file/memory-vault and headless GUI
-tests plus diagnostic desktop compilation are not native-vault, development-wrapper
-GUI or physical-mobile acceptance.
+The separate foreground `Action::Create` is coordinated by the same application
+owner after exact launch/lifetime confirmation. Cached inventory shows capability
+and creation/temporary permission, but the worker checks freshly authenticated
+capabilities again. ResumeOrCreate issues HOST `Ensure` for the saved logical ID;
+AlwaysCreate and explicit creation from ChooseSession freeze a fresh logical ID
+once. Neither a lookup nor an unknown/denied/offline/Busy reply chooses creation.
+`CreationIntent` binds the protected owner/reference, endpoint, launch, logical ID,
+reserved attachment and original sealed `IssuedControlOperation`. Explicit retry
+retains that whole action even when a fresh handshake advertises a newer epoch.
+Only one flight per action is admitted; no automatic retry/reconnect or input
+replay is added.
+
+The bounded application registry retains sixteen unresolved actions across review
+closure. Changed recipe/credential cannot replace one. A confirmed wire reply is
+not presentation: a cancelled/lost completion or failed terminal admission keeps
+the original action. After the application admits its authoritative target for
+presentation, a later fresh review may create a new action. Confirmed Created,
+Resumed and Recreated descriptions remain distinct; all use the existing
+`OpenApprovedHostFromProfiles` origin/account checks and installed-frontend
+snapshot/adoption path. This desktop registry remains process-local; the opt-in
+mobile protected checkpoint path below does not reconstruct older lost actions.
+
+The mobile composition root owns the same protected receipt/context, bounded
+worker, exact authorized session selection and original-action registry. Its
+native callback cancellation token is registered **before** worker/session
+creation, closing the lock/suspension admission race. Result installation checks
+the complete original account record, recipe, request and native lifetime epoch;
+account removal/credential replacement also cancels active and parked HOST
+transports. Imported metadata is never an owner binding or creation permission.
+The native app-owned storage root alone selects the private receipt index
+(canonicalized once for OS sandbox aliases); receipt traversal remains no-follow
+and signing material stays in the native vault.
+
+`LiveSsh::from_host` starts non-running, wraps the actual `HostSession`, and
+adopts its pending snapshot into the already installed mobile terminal. Only
+the subsequent correlated host activation admits input. Protected mobile
+created-generation records remain until an exact authoritative Ended settles
+them; starting a presentation worker alone never retires an original. Native lock
+and suspension cancel without a UI frame and never forge detach receipts or
+end the daemon-owned shell; no automatic reconnect or replay is added. Default
+offline and legacy live-SSH/bridge behavior remain separate. Physical/native
+mobile acceptance remains open under HOST-01–03/MOB-01–06.
+
+Mobile inventory and `EndHostSurface(tab)` converge on one application-owned,
+default-unconfirmed exact End review. Confirmation revalidates the full account,
+protected owner/reference/endpoint, native privacy epoch, request generation and,
+for an adopted tab, its original Session identity. `EndIntent` retains one
+operation and logical/native generation across explicit retries; it does not
+borrow creation permission or a creation issuance epoch (the existing End wire
+contract forbids that field). Fresh authenticated End capability and protected
+host admission remain mandatory. Native namespace/PID resolution stays in the
+host's exact-generation journal, not profile authority or an invented UI PID.
+Busy/unknown/denied/offline/Stale/cancellation/lost reply never mean absence.
+The current native backend returns OutcomeUncertain after durable stop intent;
+only an exactly correlated Ended reply is presented as confirmed End.
+
+Close-tab and `DisconnectSurface(tab)` retire the exact old HOST Session through
+the existing correlated `Session::shutdown` helper on a bounded background job,
+never a blocking UI call or ExplicitEnd. A late receipt only completes that old
+attachment; it cannot mutate the replacement frontend. Persistent daemons
+survive; an owning temporary lease follows the host's intentional-detach policy.
+Lock/suspension still directly cancel transport without a UI frame or a false
+detach; unexpected-loss heartbeat/grace remains host-owned. End originals and
+retirements are bounded to sixteen each. Exactly confirmed End originals retire
+even if their completed UI event was discarded; unresolved ones do not.
+
+Mobile Create/Ensure and End require explicit **Reopen protected originals**
+under the current independently approved owner, full account and app lifetime.
+This bounded native-vault job performs no network retry and grants no launch or
+End consent. Its private receipt reserves the native payload reference before
+initialization; a pending update nonce is published/synced before native writes.
+Only the matching native payload can settle an ambiguous update. Missing,
+corrupt, locked, mismatched or uncommitted pending data cannot become an empty
+registry or new operation. Neither profiles nor workspaces store its authority.
+
+An admitted mutation captures its exact original before effectful wire bytes;
+durability failure refuses that send. Explicit cold-start review restores the
+same creation UUID, old issuance epoch and whole body through the client-bound
+protected checkpoint factory after fresh authenticated capability checks, never
+`issue_operation` on restored work. End restores its distinct operation/target
+without a creation epoch. Fresh launch/destructive consent is still required.
+Multiple originals require exact selection; stale selection never mints another
+action. Each purpose remains bounded to sixteen (64KiB total). Only correlated
+Ended removes an End and its exact confirmed-created generation, not
+StopRequested/OutcomeUncertain or frontend closure. The unprotected desktop path,
+default offline fixture and opt-in legacy live-SSH path are unchanged.
+
+No implicit discovery, background sign-in or input replay is implemented by this
+executor. Shared framing, protected-file/memory-vault, headless application tests
+and owned native SSH/PTY fixtures are not native-vault, development-wrapper GUI
+or physical-mobile acceptance.
 
 Destructive confirmation remains composition-owned even when the final effect
 is an `AppCommand`. Every close invocation first passes through the same

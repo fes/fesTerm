@@ -80,6 +80,9 @@ mod grant_storage {
                 LogicalState::Unknown => State::Unknown,
                 LogicalState::Absent => State::Absent,
                 LogicalState::Running(generation) => State::Running(generation),
+                LogicalState::Ended(_) => {
+                    return Err(serde::ser::Error::custom("observed End cannot be stored"));
+                }
                 LogicalState::Revoked => State::Revoked,
             },
         }
@@ -126,6 +129,10 @@ impl DaemonLease {
             return Err(invalid());
         }
         if self.grant.remote_access == self.remote_revoked
+            || matches!(
+                self.grant.state,
+                festerm_host_protocol::LogicalState::Ended(_)
+            )
             || matches!(
                 self.grant.state,
                 festerm_host_protocol::LogicalState::Revoked
@@ -612,6 +619,25 @@ mod tests {
         let ticket = OperationId::new();
         assert!(!watch.allows_attachment(Some(&ticket), true));
         assert!(watch.commit_attachment(Some(&ticket), true).is_err());
+    }
+
+    #[test]
+    fn observed_end_grant_cannot_be_stored_or_reopened() {
+        let fixture = Fixture::new();
+        let generation = fixture.lease(1, now_ms() + 60_000);
+        let guard = LeaseGuard::acquire(&fixture.0, generation).unwrap();
+        let mut lease = guard.read().unwrap();
+        let mut forged = serde_json::to_value(&lease).unwrap();
+        forged["grant"]["state"] = serde_json::json!({ "Ended": generation });
+        assert!(serde_json::from_value::<DaemonLease>(forged).is_err());
+        lease.grant.state = festerm_host_protocol::LogicalState::Ended(generation);
+        assert!(lease.validate().is_err());
+        assert!(serde_json::to_vec(&lease).is_err());
+        assert!(guard.replace(&mut lease).is_err());
+        assert!(matches!(
+            guard.read().unwrap().grant.state,
+            festerm_host_protocol::LogicalState::Running(current) if current == generation
+        ));
     }
 
     #[test]

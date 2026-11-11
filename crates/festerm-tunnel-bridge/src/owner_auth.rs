@@ -517,6 +517,16 @@ impl VerifiedOwner {
             }
             _ => (None, None),
         };
+        if let Some(SessionGrant {
+            state: LogicalState::Ended(generation),
+            ..
+        }) = session_grant
+        {
+            if !matches!(&request.body, Request::ExplicitEnd { target } if target.generation == *generation)
+            {
+                return Err(ContractError::Stale);
+            }
+        }
         let (logical_state, logical_revision) = if let Some(logical) = &logical {
             let grant = session_grant.ok_or(ContractError::Denied)?;
             if grant.owner != self.challenge.principal
@@ -536,7 +546,10 @@ impl VerifiedOwner {
                 return Err(ContractError::Denied);
             }
             if let Some(target) = &target {
-                if grant.state != LogicalState::Running(target.generation) {
+                if grant.state != LogicalState::Running(target.generation)
+                    && !(matches!(request.body, Request::ExplicitEnd { .. })
+                        && grant.state == LogicalState::Ended(target.generation))
+                {
                     return Err(ContractError::Stale);
                 }
             }
@@ -1104,6 +1117,129 @@ mod tests {
         assert!(resume_owner
             .authorize(&resume_verifier, &create, epoch, Some(&grant))
             .is_err());
+    }
+
+    #[test]
+    fn host_owner_observed_end_only_authorizes_current_exact_end() {
+        let key = OwnerSigningKey::from_seed(&[7; 32]);
+        let mut allowed = policy();
+        allowed.capabilities = Capabilities {
+            issuance_epoch: Some(Epoch::new(1).unwrap()),
+            inventory: true,
+            attach: true,
+            detach: true,
+            explicit_end: true,
+            ensure: true,
+            create: true,
+            creation_allowed: true,
+            ..Capabilities::default()
+        };
+        let verifier = OwnerVerifier::new(allowed, &[key.public_key()]).unwrap();
+        let (pending, proof) = signed(&verifier, &key);
+        let (owner, _connection) = pending.verify(&proof, &verifier).unwrap();
+        let target = Target {
+            logical: id(2),
+            generation: GenerationId::new(42).unwrap(),
+        };
+        let grant = SessionGrant {
+            logical: target.logical.clone(),
+            owner: id(7),
+            remote_access: true,
+            state: LogicalState::Ended(target.generation),
+            revision: Epoch::new(1).unwrap(),
+        };
+        let epoch = Epoch::new(1).unwrap();
+        let end = request(Request::ExplicitEnd {
+            target: target.clone(),
+        });
+        let fence = owner
+            .authorize(&verifier, &end, epoch, Some(&grant))
+            .unwrap();
+        fence.revalidate(&fence).unwrap();
+        let mut invalid_fence = fence.clone();
+        invalid_fence.intent = (&Request::Lookup {
+            logical: target.logical.clone(),
+        })
+            .into();
+        assert_eq!(
+            invalid_fence.revalidate(&invalid_fence),
+            Err(ContractError::Malformed)
+        );
+        let creation = Creation {
+            logical: target.logical.clone(),
+            attachment: id(4),
+            name: None,
+            recipe: Recipe::default(),
+            lifetime: Lifetime::Persistent {},
+        };
+        for body in [
+            Request::Capabilities {},
+            Request::List { cursor: None },
+            Request::Lookup {
+                logical: target.logical.clone(),
+            },
+            Request::Ensure {
+                creation: creation.clone(),
+            },
+            Request::Create { creation },
+            Request::Attach {
+                target: target.clone(),
+                attachment: id(4),
+                takeover: false,
+            },
+            Request::Detach {
+                target: target.clone(),
+                attachment: id(4),
+                lease: None,
+                lease_epoch: None,
+                reason: festerm_host_protocol::DetachKind::Intentional,
+            },
+            Request::ExplicitEnd {
+                target: Target {
+                    generation: GenerationId::new(43).unwrap(),
+                    ..target.clone()
+                },
+            },
+        ] {
+            assert!(owner
+                .authorize(&verifier, &request(body), epoch, Some(&grant))
+                .is_err());
+        }
+        for state in [
+            LogicalState::Absent,
+            LogicalState::Unknown,
+            LogicalState::Revoked,
+            LogicalState::Ended(GenerationId::new(43).unwrap()),
+        ] {
+            let mut changed = grant.clone();
+            changed.state = state;
+            assert!(owner
+                .authorize(&verifier, &end, epoch, Some(&changed))
+                .is_err());
+        }
+        for field in 0..3 {
+            let mut changed = grant.clone();
+            match field {
+                0 => changed.owner = id(9),
+                1 => changed.logical = id(9),
+                _ => changed.remote_access = false,
+            }
+            assert!(owner
+                .authorize(&verifier, &end, epoch, Some(&changed))
+                .is_err());
+        }
+        let mut disabled = verifier.policy.clone();
+        disabled.capabilities.explicit_end = false;
+        let disabled = OwnerVerifier::new(disabled, &[key.public_key()]).unwrap();
+        assert!(owner
+            .authorize(&disabled, &end, epoch, Some(&grant))
+            .is_err());
+        let mut changed = grant.clone();
+        changed.revision = changed.revision.next().unwrap();
+        let replacement_fence = owner
+            .authorize(&verifier, &end, epoch, Some(&changed))
+            .unwrap();
+        assert!(fence.revalidate(&replacement_fence).is_err());
     }
 
     #[test]

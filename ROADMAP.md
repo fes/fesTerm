@@ -42,8 +42,12 @@ delivery, actual vault/cloud/manager readiness and usability remain gates; no
 new release pipeline exists.
 Configuration defaults disabled; no
 listener starts from compilation/import. Combined-source review, real release/
-cloud/vault/service/device qualification and foreground client trust/session
-chooser evidence remain open. This source is not a native Ready/acceptance claim.
+cloud/vault/service/device qualification and native foreground client trust/session
+chooser evidence remain open. Experimental desktop and opt-in shared mobile
+HOST clients execute inventory/attach/Create/Ensure with focused host fixtures,
+not native GUI/vault acceptance. This source is not a native Ready/acceptance claim.
+Mobile also captures/reopens protected original actions before wire effects;
+synthetic process/framed evidence is not native cold-start acceptance.
 Owned migration now has protected explicit inventory/preview, identity/claim
 reservation, authenticated current-daemon bind/switch, retained-root routing,
 resume/deferral and exact release/rollback. The

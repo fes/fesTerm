@@ -30,6 +30,8 @@ pub struct HostSession {
     scope: Scope,
     state: Mutex<State>,
     notifier: Arc<dyn SessionEventNotifier>,
+    creation_intent: Option<Arc<CreationIntent>>,
+    target: Option<Target>,
 }
 
 impl HostSession {
@@ -40,18 +42,61 @@ impl HostSession {
         budgets: &Budgets,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, Failure> {
-        let notify = notifier.clone();
-        let worker = Worker::start(
+        Self::start_operation(
             context,
             scope,
             Operation::Attach { target },
             budgets,
-            Arc::new(move || notify.notify()),
-        )?;
-        Ok(Self::from_worker(worker, notifier))
+            notifier,
+        )
     }
 
-    fn from_worker(worker: Worker, notifier: Arc<dyn SessionEventNotifier>) -> Self {
+    pub(super) fn start_operation(
+        context: ApprovedContext,
+        scope: Scope,
+        operation: Operation,
+        budgets: &Budgets,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, Failure> {
+        Self::start_operation_with_cancellation(
+            context,
+            scope,
+            operation,
+            budgets,
+            notifier,
+            CancellationToken::new(),
+        )
+    }
+
+    pub(super) fn start_operation_with_cancellation(
+        context: ApprovedContext,
+        scope: Scope,
+        operation: Operation,
+        budgets: &Budgets,
+        notifier: Arc<dyn SessionEventNotifier>,
+        cancel: CancellationToken,
+    ) -> Result<Self, Failure> {
+        let target = match &operation {
+            Operation::Attach { target } | Operation::AttachReserved { target, .. } => {
+                Some(target.clone())
+            }
+            _ => None,
+        };
+        let notify = notifier.clone();
+        let worker = Worker::start_with_cancellation(
+            context,
+            scope,
+            operation,
+            budgets,
+            Arc::new(move || notify.notify()),
+            cancel,
+        )?;
+        let mut session = Self::from_worker(worker, notifier);
+        session.target = target;
+        Ok(session)
+    }
+
+    pub(crate) fn from_worker(worker: Worker, notifier: Arc<dyn SessionEventNotifier>) -> Self {
         Self {
             id: SessionId::next(),
             scope: worker.scope().clone(),
@@ -68,7 +113,26 @@ impl HostSession {
                 },
             }),
             notifier,
+            creation_intent: None,
+            target: None,
         }
+    }
+
+    pub(crate) fn set_creation_intent(&mut self, intent: Option<Arc<CreationIntent>>) {
+        self.creation_intent = intent;
+    }
+
+    #[cfg(feature = "testing")]
+    pub(super) fn set_target(&mut self, target: Target) {
+        self.target = Some(target);
+    }
+
+    pub fn target(&self) -> Option<&Target> {
+        self.target.as_ref()
+    }
+
+    pub fn binding(&self) -> &Binding {
+        &self.scope.binding
     }
 
     pub fn has_pending_snapshot(&self) -> bool {
@@ -101,10 +165,8 @@ impl HostSession {
     /// App-lock/account invalidation abandons the transport, not intentional
     /// detach success. The daemon owns temporary-session loss grace.
     pub fn cancel(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            if state.worker.cancel.is_cancelled() {
-                return;
-            }
+        {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
             state.worker.cancel();
             state.adoption = None;
             state.terminal = None;
@@ -141,6 +203,9 @@ impl HostSession {
             Outcome::Attached(terminal) if state.lifecycle == SessionLifecycle::Starting => {
                 terminal.set_event_notifier(self.notifier.clone());
                 state.terminal = Some(terminal);
+                if let Some(intent) = &self.creation_intent {
+                    intent.mark_presented();
+                }
                 Self::transition(state, SessionLifecycle::Running);
             }
             Outcome::Failed(failure) => {

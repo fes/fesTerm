@@ -1172,6 +1172,983 @@ remain visible; no toolchain/SDK changes or lint allowances were introduced.
 These are source/mock and headless rendering results, not native-manager,
 signed-bundle, endpoint, GUI-usability or owner-removal acceptance. All three
 actual-platform CI gates and independent exact-source review remain required.
+## Executing protected originals through exact native End
+
+The normal composition of qualified mobile `8f0b7f06` and immutable native End
+`06cb94c0` adds one explicit ignored SSH/helper/PTY protected-original case.
+It uses the same synthetic memory vault for the private receipt, owner-key
+proof and checkpoint, with only a testing-feature memory-fixture composition
+extension. No production authority constructor, protocol, storage backend or
+private-core guard is changed. The executed oracle retains the original
+Create ID/epoch across explicit protected reopen and a fresh real handshake,
+then retains an uncertain original End, refuses a wrong generation as Stale and
+a missing owned lease as Unknown, and prunes only the exact settled creation/End pair.
+This tests bridge/runtime composition, not the mobile GUI or a live NativeVault.
+The host issuance epoch is not artificially rotated by this case; higher-epoch
+reopen remains the separately attributed framed checkpoint regression.
+
+The first actual execution is **0 pass/1 fail**, exit101 in1.03s, before any
+SSH stream or native Create: the shared runtime fixture uses
+`github:runtime-test`, but the protected receipt index accepts only numeric
+`github:<id>` names. Its exact binary, complete source diff,52 named source
+inputs, raw reply and freshly built helper hashes are preserved. The new
+fixture now uses a valid synthetic `github:7` account without changing the
+production name guard. The authorized corrected-source execution at immutable
+`c803e619` passes **1/0/0**, exit0 in3.47s: actual control-role signed SSH owner
+proof, HostRuntime/native adapter, owned helper and independent PTY creation/stop.
+An explicit protected-memory-store reopen and fresh authenticated handshake
+reconcile the original Create without a second PTY. The uncertain original End
+and wrong-generation End survive another protected reopen; authoritative
+absence alone does not settle them. A missing owned native lease returns
+Unknown without pruning; restoring the exact lease then lets the same End ID
+return exact Ended and durably prune only its matching creation/End pair.
+End has no creation-issuance-epoch field by contract; its original ID/target are
+retained, not a fabricated epoch. The wrong-generation original remains.
+
+The preceding19 raw records,90 historical records,57 named composed inputs,
+failed pre-wire executable, corrected executable and both helper hashes remain
+unchanged. Neither the independently qualified710 native positive nor old mobile
+proofs are relabeled as this new combined execution. No unchanged retry,
+timeout inflation or oracle weakening is introduced. This is not mobile GUI,
+terminal-role frontend adoption, live NativeVault, physical cold-start or
+Android runtime acceptance; the existing Android `create_reserved` prerequisite
+and unresolved-original limits remain unchanged.
+
+## Isolating mobile protected-recovery admission fences
+
+A normal child of qualified `3beeb2c2` adds exactly three HostUi regressions:
+foreign-account recovered batches reject atomically; late results after a full
+account or selected-host context change cannot install even an empty old-store
+batch; and otherwise valid, explicitly confirmed Create/End cannot issue an
+original or start a worker before protected reopen. Real memory-backed private
+owner receipts/checkpoints and framed OutcomeUncertain Ends provide retained
+originals on the existing Unix non-relay receipt implementation. These cases are
+Unix-gated rather than claiming Windows no-relay storage support. Positive
+acceptance under the captured scope and independently
+authorized End consent keep invalid recipe/context prerequisites from masking
+the fence under test.
+
+The only bridge addition is under its existing `testing` feature: composition
+of the same reviewed-owner, memory secret-store, receipt and checkpoint paths.
+It is not a raw authority constructor, native-store override or production
+storage API. App production policy and all existing production items are
+unchanged. No native, Android, offline suite or Simulator relink is needed for
+these test-only additions; all earlier receipts retain their original source
+attribution. Android reserved-reference Unsupported/permanent incomplete
+reservations and indefinitely unresolved sixteen-slot admission remain real
+limitations. An early strengthened test fixture incorrectly assumed separately
+seeded identical accounts had different credentials; that prerequisite assertion
+RED is retained, not relabeled a product fence failure or discarded.
+
+Actual final-source qualification: the focused selector runs all three named
+cases, and the HOST-mobile library selection passes 224 tests with four existing
+ignored. Affected mobile and testing-feature bridge strict profiles pass under
+both actual Rust1.98.0 and Rust1.99.1; formatting, trace and diff checks pass.
+Prior vendored/optional objcopy warnings remain visible, not globally waived.
+
+## Reopening protected mobile originals without issuing a replacement
+
+The normal child of published `85b01679` closes one bounded client restart gap:
+previously a lost process also lost the original creation issuance ticket or End
+operation. The opt-in mobile client now explicitly opens a protected original
+set under its independently approved native owner/account context. Its existing
+private receipt reserves an opaque native-vault payload before initialization.
+A durable pending nonce precedes native updates; only the matching scoped native
+payload can settle an ambiguous write. Missing, corrupt, locked, mismatched and
+uncommitted states refuse rather than becoming an empty set or a new operation.
+Nothing authoritative is serialized into ordinary profiles/workspaces.
+
+The Root-approved architectural enabler is a narrow client-bound checkpoint
+factory in the owning portable control module, not a public raw epoch
+constructor, new protocol/service or generic journal. The bridge's private
+adapter reopens the exact current native key/receipt before decoding domain,
+destination and full original body. Create/Ensure capture must durably succeed
+before effectful wire bytes. Explicit restart review keeps the same original
+UUID/old issuance epoch across a newer handshake; End keeps its separate exact
+operation/target with no creation epoch. Restoring is not sign-in, retry or
+consent. Full account, owner/reference, native/request epoch, capability and
+fresh launch/destructive confirmation still fence execution. Stale or ambiguous
+original selection refuses; there is no input replay or silent substitution.
+
+Confirmed-created generations survive presentation until authoritatively
+settled. Exactly correlated terminal Ended alone removes that generation and its
+End. The seventeen-exact-Ended UI regression first failed on the old sixteen-slot
+lifetime cap; confirmed retirement now releases those slots even when completed
+UI events were discarded. Sixteen unresolved actions still block a seventeenth:
+the bound was not raised and uncertain originals were not discarded.
+Native StopRequested remains OutcomeUncertain, a separate host completion gap.
+Replaced or reconfirmed-away generations without an exact terminal Ended receipt
+can therefore remain unresolved indefinitely and exhaust admission. Stale,
+generic absence or Unknown is not a pruning workaround.
+
+Focused protected-store/framed tests cover genuine fresh-process controller
+reopen using a test-only synthetic memory-vault snapshot over a private pipe,
+identical original wire bytes after a newer handshake, no duplicate send,
+before/after-write failure, lock/cancellation, missing/corrupt/scope-changed data,
+tampered checkpoint purpose/epoch and exact generation settlement. This is
+neither production key export/file fallback nor native-vault acceptance.
+The checkpoint factory preserves typed native/storage errors instead of
+mislabeling a locked vault or missing protected payload as host denial.
+The early compile failures, one misplaced test-module zero-selector result
+(not evidence), and both old-cap diagnostics remain retained. Runtime inputs,
+explicit Rust1.98/1.99 commands, numeric exits and raw hashes belong to the
+owned `target/restart-evidence` receipt, not an immutable executable seal.
+
+No host-runtime worker/adoption code or moving native/backend head was consumed,
+and no native seventeen-case rerun was performed. The parent's85 required-macOS
+worker Offline failure remains separately investigated, not fixed by these
+checkpoints. Physical native-vault/jetsam/cold-start, real app-lock/suspension,
+Android reserved-reference storage, GUI/usability and current required CI/source
+gates remain open. Old helper/Simulator/Android receipts keep their original
+source attribution. Pre-checkpoint-version lost actions cannot be reconstructed;
+desktop durable reconciliation and mobile sharing were not pulled into this slice.
+
+Bounded qualification on the final named runtime bytes uses the existing real
+private Rust1.98.0 and Rust1.99.1, jobs1/debug0/incremental0 and project-local
+scratch, without installs or manifest/MSRV changes. Rust1.98 runs 10 protected
+original cases (including an actual child-process exit0), 95 non-relay bridge
+tests, 35 portable-client tests, 221 mobile host-client tests with 4 existing
+ignored, and 134 default-offline tests with 1 existing ignored. Mobile, standalone
+client and client/host-routing/owner-auth bridge strict profiles pass on both
+toolchains; the relay-enabled bridge also checks without running native cases.
+The final app-only settlement refinement delegates protected owner/key/target
+matching to the shared helper rather than OAuth credential-handle equality;
+mobile tests/strict and fresh Simulator check/link were rerun afterwards.
+Fmt and traceability pass (311 edges, 0 broken references).
+The Simulator executable is linked only, not launched/signed/installed. Native
+helper/objcopy fallback warnings remain visible; strict success is not a
+globally warning-free tooling claim. Full commands, source/tool hashes, retained
+failures, zero-selector non-evidence and historical preservation live in the
+owned `target/restart-evidence` handoff, not in an aggregate/native acceptance seal.
+
+Publication preparation normally merges only immutable diagnostic
+`b7c81932b589aa09addc339b316c666861f8a9a4` into the qualified checkpoint
+`00eb26ee40f0a56974da5776bbcf75561f6ffe71`, preserving both histories and stories.
+The only Rust delta is the diagnostic test file below; checkpoint/mobile
+production bytes and the original test/Simulator attribution remain unchanged.
+No proposed parent End implementation or moving core is consumed.
+The combined source runs the one relay-gated static-label unit: 1 pass, 0 fail,
+0 ignored on actual Rust1.99.1, with affected client/host-routing strict profiles
+both without and with relay passing. An initial non-relay exact selector selected
+zero tests because this fixture module requires relay; that raw result remains
+non-evidence, not a second actual unit run. Formatting, traceability and diff
+checks pass. No mobile221/offline134, Simulator, Android or native suite is rerun
+for this test/story-only merge; the earlier57 raw records remain unchanged.
+
+The current Android secret-store adapter implements put/get/update/delete but
+does not implement
+`SecretStore::create_reserved(&SecretReference, &SecretBytes) -> Result<(), SecretStoreError>`.
+It inherits Unsupported. First protected-original initialization therefore
+fails at `OriginalStore::access` before any mutation can be sent; an incomplete
+anchored reservation remains a storage refusal, not an empty set. Mobile
+Create/Ensure and End require a successfully reopened protected set, so this is
+an actual Android feature limitation: the current backend has no supported
+initialization path for those checkpoint-gated actions, not merely missing
+Android test evidence. Inventory/existing-session attach do not acquire new
+authority from that refusal and retain their separate native/vault gates.
+The minimum prerequisite is an Android native-store implementation of that
+existing reserved-reference API under its exact-reference lease, honoring
+private protected storage, no replacement and typed failures. No JNI/backend
+framework, file fallback or bypass is added here. Historical Android library
+builds are not Android runtime completion.
+
+## Confirming an original End without inventing absence authority
+
+The native host could durably request a stop but could never confirm Ended:
+its exact-action admission required Running, while an absent generation had no
+generation-bearing authorization state. Mobile originals therefore remained
+unresolved even after a successful stop. The native backend now admits a
+temporary, exact-generation End observation only from a protected owned record
+with a retained native identity and authoritative absence, under fresh current
+End permission. It does not infer success from a generic error, Lookup absence,
+a lost record, a never-created reservation or a replacement.
+
+The observation never becomes stored state or a new wire command. Lease
+validation/serialization refuse it; owner authorization and publication fences
+permit it only for the exact End request. StopRequested remains uncertain.
+The observation proves that generation is gone, not what caused its exit.
+Removed, retired or replaced records remain refusal/uncertainty; no retention
+cap is raised and no unresolved original is discarded.
+
+Actual macOS Rust1.99.1 qualification has four deterministic sessiond and
+thirteen owner-authorization passes plus one new separately selected actual
+SSH/native-helper case, 1/0/0 in 2.71s. That case first retains an uncertain
+original End, observes absence, then resolves the same original operation.
+The observation also retains and rechecks the native lease while admitting
+the fresh policy; a deterministic witness verifies that lock is held. An
+earlier implementation of the same native case passed in 1.74s before this
+additional lease fence; both executions retain their distinct changed-source
+attribution and are not two distinct cases.
+The existing stale-replacement case is unchanged, not rerun or relabelled.
+An initial focused unit exposed the additional End-only publication-fence
+validation needed by this design; its failed result is retained. A protocol
+library selector ran zero tests and is not contract evidence.
+
+Thirteen protocol integration contracts and the affected strict default and
+client-safe profiles pass; actual Rust1.98 compatibility is checked separately.
+Existing optional rust-objcopy
+libLLVM stripping warnings remain visible, with no toolchain/OS repair.
+These are real isolated helper/PTY/SSH effects with in-memory authority,
+not actual native-vault, installed-service, cloud, physical-mobile or full
+native-matrix acceptance. Independent source gates and required CI remain
+separate prerequisites.
+
+## Keeping native HOST fixture failures observable without exposing their inputs
+
+The published mobile lifecycle head `85b01679` passes its required Ubuntu and
+Windows jobs, but macOS still fails the selected-creation worker's terminal
+event read with Offline: native aggregate16/1/0,177.13s. Both creation and
+frontend adoption had already passed. This is separate from the migration
+takeover failure; neither a lock-contention cause nor a flaky-test label is
+established.
+
+The test-only runtime fixture now reports only a fixed control/terminal role
+and a static failure classification when its server stream returns an error.
+It preserves the exact result, with no error Debug text, operation, endpoint,
+receipt, terminal data or credential. A deterministic unit checks the static
+classifications. Production policy, protocol, effects, assertions, timeouts
+and retry behavior are unchanged.
+
+Actual macOS Rust1.99.1 qualification at85 HEAD plus this final test file:
+classification unit1/0/0 and one controlled named native worker1/0/0,6.42s;
+affected strict Clippy, formatting and diff checks pass. Helpers and the bridge
+were freshly rebuilt in a private cloned cache; all eight recorded commands
+exit0. This single passing execution does not reproduce or fix the CI failure.
+Normal control-stream closure also reports Offline in that passing run, so
+that label alone is not causal evidence. Existing vendored warnings and an
+unsuccessful optional rust-objcopy debug-strip warning remain visible; no
+toolchain or OS repair was attempted. Fresh required CI and native product
+acceptance remain open.
+
+## Ending a mobile HOST generation without ending its replacement
+
+The shared mobile client could create/adopt an actual HOST terminal, but lacked
+explicit End UI and dropped closed attachments as transport loss. This normal
+child of published `19442f6c` completes one bounded lifecycle increment, not ADR
+0084 or mobile acceptance. Authorized inventory and the adopted-tab menu route
+through one application-owned exact, default-unconfirmed End review. Full
+account/protected owner/reference/endpoint, native privacy/request epochs and
+the originating Session identity fence confirmation. The existing protocol
+addresses logical/native generation; native namespace/PID resolution remains
+host-journal-owned rather than fabricated from a profile. No protocol, service,
+dependency, generic retirement or persistence framework is added.
+
+The shared worker freshly authenticates the existing ExplicitEnd command and
+retains its immutable original operation/target on Busy, unknown, denied,
+revoked, offline, cancellation, stale or lost reply. End does not borrow
+creation permission or attach a forbidden creation issuance epoch. The actual
+native backend deliberately returns **OutcomeUncertain** after StopRequested;
+only an exactly correlated Ended reply is displayed as confirmed End. An old
+original End cannot terminate a replacement generation.
+
+Close-tab and the common typed Disconnect command move the exact old HOST
+Session into a bounded background job using existing `Session::shutdown`.
+Correlated detach receipt completes only that old attachment, never a new
+foreground terminal. Persistent daemons survive/re-adopt; an owning temporary
+lease ends under host policy. Native lock/suspend still cancel directly without
+a UI frame, intentional detach or replay. Sixteen process-local End originals
+and sixteen retirement jobs are bounded and observable; cold-restart original
+action reconciliation remains the explicit next slice, not automatic retry.
+One shared application lookup also refuses to mint a replacement End operation
+for an already retained host/generation after account, protected principal,
+key reference or endpoint changes; fresh review is not permission to discard
+an uncertain original.
+The prior matching-only lookup counterexample fails **0 pass/1 fail** (exit101)
+on account change; the centralized host/generation lookup passes while retaining
+the exact original and refusing changed protected authority.
+
+Focused framed tests retain the original app-lock/no-replay oracle and add
+close/disconnect-versus-End, exact confirmation/account/epoch and late-frontend
+isolation. Four shared End cases cover negative typed replies, original retry,
+fresh capability without creation authority, wrong-generation receipt,
+single-flight and cancellation. The two selected actual SSH/native-PTY cases
+pass once each: End/authoritative absence/recreation plus original-End Stale
+without harming the replacement, and actual frontend-adopted persistent versus
+temporary correlated retirement/recovery. The older sixteen-route c5f proof,
+0747/42/194 receipts, helper copies, Simulator executables and original a13a RED
+remain separate; no aggregate requalification is claimed.
+
+Initial iteration receipts remain retained: malformed Cargo `-VV` diagnostic
+exit1, private-field and widget-context compile errors, a typed-command
+formatting scope diagnostic, and a meaningful 3-pass/1-fail End
+pre-admission test that caught a wrongly nested authority check before the
+synchronous fence was fixed. No assertion was weakened. Detailed final
+source/tool/count/hash attribution follows in this section's qualification
+receipt. Physical iOS/Android lifecycle/vault, GUI/accessibility, provider/
+service, signed release, mobile sharing and durable restart reconciliation
+remain open. Desktop local Settings/Remote Access stays with its separate owner.
+The parent's Android native-library-only proof belongs to exact42/194 inputs,
+not this changed lifecycle child; no APK/device/runtime claim is transferred.
+
+### Lifecycle qualification receipt
+
+Qualified lifecycle source is
+`fa1770b88779cb5bd08dc79ae7d02b6a0d0791e1`, a normal descendant of published
+`19442f6c`. Its final full mobile library is **218 pass/0 fail/4 ignored**,
+and its host-client all-target strict Clippy, arm64 iOS Simulator check and
+actual executable link each exit **0**. The preserved executable is Mach-O
+arm64, SHA-256
+`0d0bf5dafd440ba5b453adaebfdc4fae9c8236a339cb2cc3e7a2898c6cdba2cd`;
+it was not launched, bundled, installed or signed.
+
+The same lifecycle implementation's additional selected checks are:
+
+| Selection | Actual pass/fail/ignored | Exit |
+| --- | --- | --- |
+| Offline mobile library | 134/0/1 | 0 |
+| Default/host-routing bridge library | 150/0/17 | 0 |
+| Non-relay host-routing bridge library, including four portable receipt regressions | 84/0/0 | 0 |
+| Desktop experimental HOST compatibility selector | 52/0/0 | 0 |
+| Shared exact-End selector | 4/0/0 | 0 |
+| Actual native End/original-retry/replacement route, individually once | 1/0/0 | 0 |
+| Actual native persistent/temporary retirement/frontend route, individually once | 1/0/0 | 0 |
+
+Default bridge, `client,owner-auth` non-relay, offline mobile and legacy live-SSH
+all-target strict profiles also exit0; fmt and full-base#700 trace pass (311
+edges, zero broken references). These are not warning-free-toolchain claims:
+the existing rust-objcopy/libLLVM fallback and vendor diagnostics remain in raw
+logs. There is no workspace-wide or fresh seventeen-native-route aggregate.
+The final registry correction changes only two HOST-feature mobile Rust inputs
+after source12: final mobile218/strict/Simulator were rerun, while named native
+bridge/helper inputs and the offline/desktop implementation remain unchanged.
+
+All commands use absolute Cargo/rustc from private
+`/Users/fes/src/fesTerm-adr84-clients-nov10/target/adr84-rustup/toolchains/1.98.0-aarch64-apple-darwin/bin`,
+with that private `RUSTUP_HOME`, jobs1/debug0/incremental0 and project-local
+scratch/target. `rustc -vV` records1.98.0/`88d9e12ae178`, Cargo `-vV`
+records1.98.0/`797e8a9bca27`; no Homebrew plus-flag dispatch, global default,
+manifest/lock or MSRV change is involved. Both helpers were built first,
+copied into explicit private non-writable paths and measured before/after each
+native selection: sessiond
+`5817e2394c1aa3e23b3c3b2d1211d4d88688d7fe5d27fd41eff5741fba40882c`,
+PTY child
+`79012c917bb0d837d5dcbcfea7655b6e5db58719d8e1197785b001025dca9675`.
+Their27 named source/manifest inputs match the frozen c5f snapshot. These are
+measured named-input/path scopes, not immutable execution seals or complete
+dependency attestations.
+
+Raw command/environment/head/working-diff/exits are retained in the owned
+lifecycle tree's `target/lifecycle-evidence/qualification.jsonl` and named
+`.log` files; named input snapshots, helper before/after measurements,
+`frozen-preservation.json` and the final handoff/hash index accompany them.
+Both native runs compiled the working source subsequently committed as12c71;
+the final fa1770 correction leaves those named native inputs unchanged. All41
+earlier receipt/CI raw files, the six named old/current executable artifacts,
+the original source12 Simulator and all earlier RED/non-evidence receipts are
+preserved. Parent-reported actual194 Linux/macOS portable-receipt CI passes
+remain attributed to194. Its newly recovered Windows unused-worker and
+Rust1.99 mobile atomic deprecation failures require a separate dependent
+minimal compatibility repair before publication; they are not erased by this
+private1.98 lifecycle qualification.
+
+### Dependent required-CI compatibility repair
+
+A minimal normal child of lifecycle evidence head `2c5bb2c5` addresses the
+parent's two actual published194 CI failures, without another lifecycle feature.
+The affected function fragments were byte-identical from194 through lifecycle
+sourcefa; both original parent CI logs/hashes are retained in the handoff.
+All five direct native `Worker::spawn` consumers are Unix-guarded. Its
+test-plus-relay factory now follows that guard, while the existing explicit
+`testing` factory stays cross-platform. Production worker admission is unchanged.
+
+Mobile privacy invalidation uses the bridge's existing checked weak-CAS pattern
+instead of the atomic update deprecated in1.99. Acquire load/failure and AcqRel
+success ordering, no-wrap saturation, retry on contention/spurious failure and
+the subsequent cancellation drains are preserved. No new atomic API, lint
+waiver, dependency/toolchain/MSRV change or operation-ID replacement is added.
+The new eight-thread regression makes512 invalidations per scenario, verifies
+the exact ordinary count and near-maximum saturation, cancels the old token and
+refuses stale/exhausted admissions. Existing original-End/creation/cancellation
+and correlated-retirement cases remain in the same **15 pass/0 fail/0 ignored**
+focused mobile selector (208 filtered), exit0 on actual private1.98.
+
+Actual1.98 strict mobile HOST, default/host-routing bridge and non-default
+`client,testing` bridge all-target profiles each exit0. Actual existing1.99.1
+strict mobile HOST and default/host-routing bridge all-target profiles also each
+exit0, using absolute tools under
+`/Users/fes/.rustup/toolchains/stable-aarch64-apple-darwin/bin`
+(`rustc 58cf8f9c35b3`, Cargo `5f94df4789f0`), with separately owned cloned warm
+target, jobs1/debug0/incremental0 and no installation/default mutation. Selected
+strict success does not erase retained vendor or objcopy/libLLVM warnings.
+Fresh changed-source private1.98 arm64 Simulator check/link both exit0; its
+separately preserved executable SHA-256 is
+`d73e332040f321391d23c0aedf958ca8ff53c568787c2bae6ae66a63e53f533c`.
+The lifecycle sourcefa executable and all older artifacts remain untouched.
+
+The handoff's named production-diff check proves only the privacy increment and
+the test-only Unix guard changed after lifecycle sourcefa; native End/retirement
+and helper bodies are otherwise identical. The two actual native runs remain
+attributed to their lifecycle inputs, not rerun or relabeled as a new-head
+aggregate. Rust1.95 itself, actual Windows required CI, actual1.99 iOS-target CI,
+changed-source Android, physical lifecycle/native vault, GUI, sharing and durable
+cold-restart reconciliation remain separate gates.
+
+## Keeping the portable receipt crash regressions in mandatory CI
+
+The retained reliability review found that default bridge tests enable relay
+and therefore do not compile the four new portable receipt regressions.
+The existing mandatory quality matrix now separately runs
+`cargo test --locked -p festerm-tunnel-bridge --no-default-features --features
+host-routing --lib portable_receipt` on macOS and Ubuntu, with Windows skipped
+because these tests are cfgUnix. It has no optional/continue-on-error gate.
+A small existing-workflow contract test pins that exact non-relay selector,
+Unix matrix guard and the four actual regression names; native execution is
+proved separately by the selected Cargo invocation, not the static name check.
+
+This is a CI/test-policy-only normal child of `42f9ceeb`: all Rust,
+manifests/lock and mobile/Simulator inputs retain their qualified bytes.
+The source90 receipt/mobile213/offline134 and Simulator e6bba proof remain
+attributed to that source, not rerun or relabeled for this workflow change.
+All thirty prior evidence hashes, the extra owner-auth-only baseline RED and
+the initial zero-test selector non-evidence remain preserved. The fresh local
+private1.98 selection executes **4 pass/0 fail/0 ignored**, and its discovery
+list contains exactly those four names; the workflow contract, fmt and
+base#700 trace pass. GitHub matrix execution, Android and all native acceptance
+gates remain unrun here. No native16, simulator, lifecycle, provider, install,
+OS/device, signing/release or push operation is performed.
+
+## Publishing portable owner receipts atomically
+
+The retained #705 reliability gate found a real crash/ENOSPC defect in the
+non-relay Unix receipt backend: it exclusively created the **final** JSON name
+before writing/syncing. A partial write or jetsam could permanently poison
+Prepare/Load with Storage before any owner key existed. The separately
+implemented relay publisher already staged safely; its prior actual native
+qualification does not prove this mobile path.
+
+A minimal child of frozen `0747f13b` now applies the existing anchored Unix
+private-file and atomic `rename_noreplace` primitives locally: exclusively
+create a unique private `.stage-*` entry, write completely, sync the file,
+publish without overwriting and sync the directory. Write/rename failure
+removes only this call's staging entry and syncs that removal; cleanup errors
+are returned. A post-rename sync failure never deletes the complete final
+receipt. A crash-abandoned staging entry is not authority and is not adopted
+or indiscriminately deleted. A malformed final is still Storage, not Missing
+or a reason to regenerate a key. No relay/setup dependency, new filesystem
+framework, public API, fallback or live vault use is introduced.
+
+The private writer seam follows `setup_storage.rs`'s existing narrow fixture
+pattern. Keeping the original final-before-write algorithm, the exact
+partial-write regression produced **0 pass/1 fail**, exit101, exposing the
+three truncated final bytes. An earlier short-name `--exact` selector ran
+zero tests and is retained as **non-evidence**. After the atomic change the
+non-relay approval selection passes **12/0/0**. Its four new regressions cover
+write interruption plus cleanup/retry, an actual final-name race plus
+no-overwrite/cleanup, abandoned partial staging followed by exactly one
+reserved key across Prepare/Load/reopen, and malformed final refusal with zero
+key creation. These are deterministic file/memory-vault tests, not actual
+jetsam, ENOSPC hardware or native-vault acceptance.
+
+Work is isolated in `fesTerm-adr84-mobile-receipt-atomic-nov10`; the frozen
+mobile tree and all native artifacts remain untouched. Before cloning its
+released warm target into a distinct private target, the original Simulator
+executable was also preserved and measured as
+`bc93642364e6359081102108f806aa0230820d00c052aac08574c8ef93fcb133`.
+Original helpers remain the previously measured913f/7901 bytes. Their sixteen
+actual route passes belong only to source `c5f2d024`, not this receipt child;
+no native-route rerun is justified or claimed for this non-relay-only fix.
+Final fixed-source private1.98 test/lint/Simulator receipts follow separately.
+Source-level reviews and required three-OS CI, physical mobile/privacy/vault,
+GUI/cloud, sharing/end/restart and runtime-owned desktop Settings gates remain
+open. No package/tool install, OS/device/provider/release operation or push
+is involved.
+
+### Fixed-source receipt qualification
+
+Source `90d3354db94040b57003d88b4530a05137aee108` is the normal child of
+`0747f13b9c75b1c5be536e32df2a453b0b6088d9`. Fresh exact-source commands use
+the same absolute private Rust/Cargo1.98 binaries documented below, with the
+separate `target/receipt-rust198`, jobs1/debug0/incremental0 and
+`TMPDIR=$PWD/target/work`. No tool/package install or global override occurred.
+`target/receipt-evidence/toolchain.log` records full-vV, compiler/Cargo/Clippy
+paths and the explicitly unset-private-variables global stable/default list.
+
+The retained `target/receipt-qualify.sh` and individual raw logs show:
+
+- `cargo test --locked --offline -p festerm-tunnel-bridge
+  --no-default-features --features host-routing --lib host_client::approvals::
+  -- --test-threads=1`: **12 pass/0 fail/0 ignored**, exit0. This is the actual
+  non-relay mobile storage path, not relay feature unification.
+- Mobile `--features host-clients --lib`: **213 pass/4 existing ignores**,
+  exit0; default offline `--lib`: **134 pass/1 existing ignore**, exit0.
+- Bridge strict all-target profiles `host-routing`, `client`, and
+  `client,owner-auth`, each `--no-default-features`, plus mobile
+  `host-clients --all-targets`: **all exit0**. The client/owner-auth union is
+  also the existing primary CI portable-owner feature selection (tested here
+  with all targets rather than just CI's library).
+- Actual `aarch64-apple-ios-sim` library check and mobile executable link,
+  `--features host-clients`, **both exit0**, using existing SDK/std. The new
+  arm64 Mach-O executable is measured as
+  `e6bba8735daf6c011faab2f60e7eb0103a3ecb5c5822e435b993cac7c87ef21d`;
+  it was not launched/bundled/signed. This is new source proof, not reassignment
+  of the original bc936 binary.
+- fmt, diff and base#700 trace (**311 edges/0 broken**) **exit0**.
+
+An **additional, non-CI `owner-auth`-alone strict diagnostic remains RED**:
+exit101 for pre-existing unused `Capabilities::validate` and
+`Metadata::validate` in `observation_protocol.rs:242/269`. The exact same
+command also failed exit101 against read-only frozen0747, using only this
+child's private target. That profile excludes the changed receipt module.
+`owner-auth-strict.log` and `owner-auth-only-frozen-baseline.log` retain both
+outputs; the existing CI `client,owner-auth` profile passes. No warning waiver,
+unrelated source fix or aggregate-green claim hides this baseline limitation.
+
+The mobile feature-tree receipt contains bridge client/owner-auth/host-routing,
+**not relay**; no manifest/lock/dependency changes were made. Scoped hashes in
+`named-source-inputs.json` identify the two changed files and selected unchanged
+inputs, not an immutable executable seal or complete dependency attestation.
+`raw-hashes.sha256` records raw evidence bytes and `command-exits.json` records
+numeric command exits. Existing vendor and rust-objcopy/LLVM stripping warnings
+remain disclosed. Recorded qualification stages had43–52% free memory.
+The original Simulator and both original helper hashes still match; c5f's
+sixteen native passes, prior a13a RED, and all their raw logs are preserved
+without native reruns or reattribution. Source reviews/required CI and the
+manual gates above remain open.
+
+## Qualifying the combined executable mobile HOST client
+
+Qualified source is normal two-parent merge
+`c5f2d0245efb0b77cac0f886275d7eac7bc8472f`: mobile evidence
+`2c9555a213fc0ed18ede3fe834f94886f45da031` plus **only** parent-authorized
+immutable core `3d91702715945383866b9759a30084d8f43a56f7`. The sole conflict
+was additive milestone prose; both complete histories were retained. No moving
+backend, future FFI/binding, stopped update or desktop-local Settings source
+was consumed. Mobile/Android sources and Cargo.lock have **zero byte delta**
+from a13a. This following evidence-only documentation commit changes no Rust,
+manifest, lock or workflow input.
+
+The original a13a sixteen individual results remain intact in
+`target/mobile-native-evidence-a13a-red/`: **2 refusal passes / 14
+Unknown-or-Stale pre-adoption failures**. The direct socket diagnostic remains
+`target/mobile-native-socket-boundary.log` (111-byte old path rejected,
+103-byte short path binds). That established a specific prerequisite, not the
+sole cause of every original response. On the combined source, every selected
+route now reaches its original assertions and passes. No assertion weakening,
+fallback, retry-after-failure or repeat-to-green was used.
+
+Before native tests, actual private Rust/Cargo1.98 freshly built both helpers:
+
+```sh
+cargo build --locked --offline -p festerm-sessiond -p festerm-pty-test-child --bins
+```
+
+Both executables were copied into the new private, nonwritable
+`target/mobile-combined-native-tools/` directory. Every test explicitly sets
+`FESTERM_HOST_TEST_HELPER` to its absolute `festerm-sessiond` pathname; the
+fixture selects its sibling PTY child. Before/after **every** native command,
+and again after all qualification, those copied bytes match:
+
+- sessiond: `913f55f71f4bad8663566616d0e9962a9bbe70f4408127fb30a83fade8cccd9a`;
+- PTY child: `79012c917bb0d837d5dcbcfea7655b6e5db58719d8e1197785b001025dca9675`.
+
+The later selected Cargo tests did republish mutable
+`target/adr84-mobile-rust198/debug/festerm-sessiond` as
+`86c245b8585fb714fe501001ce3e828ffbce4a1de27f5c1254ab8691bb56f582`;
+that is **not the native runner's execution pathname** and did not change either
+private copy. These are explicit runner-path and byte-hash measurements, not
+a per-child exec trace. Build logs, helper-source file hashes and exact
+compiler paths/versions are in `target/mobile-combined-evidence/`.
+`final-provenance.log` distinguishes the private1.98 rustup list from the
+explicit unset-`RUSTUP_HOME`/`RUSTUP_TOOLCHAIN` global list, still only stable
+active/default. No global toolchain, override or manifest version was changed.
+
+`target/mobile-combined-native-once.py` selected each of the **sixteen native
+routes once in its own process: 16 pass / 0 fail / 0 ignored**, exit0.
+The sum of individual command durations is209.94s, **not an aggregate-run
+claim**. This includes original committed-operation Busy/replay and lost-reply
+issuance, the actual mobile HostSession adoption/activation route, desktop
+Create/Ensure frontend isolation, collector/snapshot-before-adopt, both
+two-daemon frontend oracles, temporary lifetime/heartbeat, takeover and
+revocation. The runner stops at the first failing typed response; it encountered
+none. Exact names, commands, exits, memory and per-case helper hashes are in
+`target/mobile-combined-evidence/native/{summary.json,*.log}`.
+
+Fresh **combined-source**, not inherited a13a, nonnative results:
+mobile **213 pass/4 existing ignores**, offline **134/1**, bridge **146/16
+explicit native ignores**, portable approvals **29/0**, client **35/0**,
+desktop selected **52/0**, private-storage **4/0**, retirement **4/0**.
+All have zero failures. Six-package all-target strict Clippy (mobile,
+bridge, client, desktop and both helpers), separate mobile/portable/legacy
+strict configurations, fmt, diff and base#700 trace (**311 edges/0 broken**)
+pass. `target/mobile-combined-checks.sh` retains exact commands; its selected
+command logs in `target/mobile-combined-evidence/` pin source/tool/command/exit.
+
+The real private1.98 Simulator library check **and arm64 executable link were
+rerun and pass** on combined inputs, using the existing SDK/std, not merely
+carried forward. The Mach-O executable SHA-256 is
+`bc93642364e6359081102108f806aa0230820d00c052aac08574c8ef93fcb133`.
+No simulator was launched and no device build/bundle/signing was performed.
+Existing debug-stripping/vendor tool warnings remain disclosed below.
+Qualification started with58% free memory; recorded cases/stages stayed at48–56%,
+jobs1/debug0/incremental0 throughout. The final scoped audit found **zero
+owned Cargo/rustc/sessiond/PTY processes and zero owned fixture roots**; the
+host Cargo slot is **released**.
+
+Remaining gates are unchanged: three-OS required CI and independent source
+reviews; physical iOS/Android and native-vault/privacy/suspend/60-second grace;
+real cloud, GUI/accessibility/usability and Android NDK/device compilation;
+mobile sharing/end/correlated-detach controls and durable restart reconciliation.
+Desktop Local Settings/Remote Access/local sharing remains runtime-owned.
+No provider/account/VM/OS permission/release operation or source push occurred.
+ADR0084 and milestone acceptance remain incomplete.
+
+## Executable shared mobile HOST client (retained a13a source history)
+
+The mobile lane is a new child of immutable creation evidence head
+`1f28db0a58c4c73fd44e92a7703eb896fd7f5e85` (#700), preserving its fixed #693/#695
+stack. It consumes no later moving core, native-update or desktop-local Settings
+source. `host-clients` is separately opt-in on the shared mobile app and forwarded
+by Android; neither the offline default nor legacy `live-ssh` changes.
+
+Profiles now routes a typed foreground HOST review. Find/refresh is explicit
+and scoped to the complete selected signed-in account; service metadata is not
+availability, trust or absence. The same application owner performs protected
+native owner preparation/reopening, separately confirmed host-local enrollment,
+authorized inventory, exact-generation attachment and confirmed Create/Ensure.
+Public imported/saved recipes never become owner bindings or protected creation
+permission. The protected receipt journal reuses its existing native-vault key
+logic with a small portable no-follow/private-file backend, not host lifecycle
+dependencies. Only the authoritative native app-storage root is canonicalized
+for sandbox aliases; receipt files/indexes still reject links and nonprivate
+metadata without permission repair or key replacement.
+
+The installed mobile tab wraps the real shared `HostSession`, adopts recovery
+into its own terminal, then waits for actual host activation before input.
+HOST tabs and reconnect chrome are explicitly distinct from offline fixtures
+and legacy SSH: resetting the demo cannot overwrite their frontends, and
+reconnection opens protected review rather than promising a fresh shell.
+Native lock/suspension owns weak cancellation registrations and cancels pending
+work and active/parked HOST transports without another UI frame. A cancellation
+token now enters the shared executor before thread/vault/connection admission,
+closing the registration race. Abandoning transport never forges detach or ends
+the independent daemon; generation/heartbeat-fenced grace remains server-owned.
+An actual RED regression also caught cancellation arriving through the shared
+token before its Session registration: cancellation must still publish the
+disconnected lifecycle rather than leave a permanently Starting frontend.
+Legacy retention and liveness probes are preserved.
+
+Mobile keeps sixteen original creation actions across review closure and
+cancellation, refusing changed recipe/account or overflow. This also exposed and
+corrected a shared presentation boundary: starting a presentation worker alone
+must not retire an action. Retirement now requires frontend snapshot adoption
+and the host's activation receipt. Busy, unknown, denied, offline, cancellation
+and lost replies do not create absence, replay input or replace the original
+sealed issuance. This registry remains process-local; restart is not an
+automatic retry/reconciliation journal.
+An explicit local review action reselects an unsaved retained original without
+issuing it; all protected trust, endpoint and launch consent must be reviewed again.
+
+The nine new mobile fixtures cover inert metadata, native callback cancellation,
+stale account/recipe completion, original-action bounds and the real framed
+frontend adopter. A separate explicitly ignored native-helper fixture exercises
+the same Session adapter over signed SSH, actual independent PTYs, positive
+foreign-output observation/exclusion and original-ticket retention until
+activation. Neither kind of host fixture is physical mobile/native-vault/GUI
+acceptance. Raw toolchain/qualification evidence is kept under `target/mobile-*`
+in this owned worktree; final fixed-source receipts follow below.
+
+**Remaining ADR 0084 capsule:** physical iOS/Android native-vault, app-lock,
+suspend/resume, live cloud and GUI/accessibility/usability gates remain open.
+Mobile sharing/end/correlated-detach controls and durable restart reconciliation
+are not silently claimed. Desktop local Settings/Remote Access, local private
+shell sharing/unsharing and its native approval/setup gates remain the separate
+runtime-owned HOST-03–05 slice. No installed app, device/VM, production account,
+native vault, OS service/settings or signing operation is exercised here.
+
+### Original mobile fixed-source qualification and retained native blocker (a13a)
+
+Compiled source is `a13a1bcaccec557a186db02ebd002ae85df460da`, a normal child
+of frozen #700 `1f28db0a58c4c73fd44e92a7703eb896fd7f5e85`. The following
+documentation-only receipt does not change those Rust/manifest bytes. No later
+core/native-update source has been merged. Existing mobile CI now also selects
+`host-clients` tests, strict lint and device-target check; CI itself is unrun.
+
+All commands below use the absolute Cargo/Rust compiler in
+`/Users/fes/src/fesTerm-adr84-clients-nov10/target/adr84-rustup/toolchains/1.98.0-aarch64-apple-darwin/bin`,
+with private `RUSTUP_HOME` ending `target/adr84-rustup`,
+`RUSTUP_TOOLCHAIN=1.98.0`, jobs1, dev/test debug0 and incremental0.
+`target/mobile-final-toolchain.log` records `rustc -vV`:
+`1.98.0`, commit `88d9e12ae178fab0fb5cc050a94da85685d449ea`, LLVM22.1.8;
+Cargo `1.98.0`, commit `797e8a9bca276c1c9f9f738d2a20f484fa4eea9d`.
+The global toolchain list remains only stable/default; no bare `+flag` proxy,
+manifest version change, MSRV bypass or dependency downgrade is used.
+The private target is `target/adr84-mobile-rust198`; scratch is `target/work`.
+
+The exact fixed-head runner and commands are retained in
+`target/mobile-fixed-qualify.sh`, with source/tool paths at the top of each
+`target/mobile-fixed-*.log`:
+
+| Actual command (`cargo`, always `--locked --offline`) | Result |
+| --- | --- |
+| `test -p festerm-mobile --features host-clients --lib` | **213 pass, 4 existing ignored**, including all nine new mobile tests |
+| `test -p festerm-mobile --lib` | **134 pass, 1 existing ignored**; offline default preserved |
+| `test -p festerm-tunnel-bridge --features host-routing --lib` | **146 pass, 16 explicitly ignored**; not actual-native acceptance |
+| `test -p festerm-tunnel-bridge --no-default-features --features host-routing --lib host_client::` | **29 pass, 0 ignored** |
+| `test -p festerm-tunnel-client --lib` | **35 pass, 0 ignored**, including original-issued retry and service selectors |
+| `test -p festerm --features experimental-dev-tunnels --bin festerm host_` | **52 pass, 0 ignored** |
+| Four-package `clippy --all-targets -- -D warnings`, mobile `host-clients` and legacy `live-ssh` separately, plus portable bridge strict lint | **All exit0**; exact feature selections in the runner/logs |
+| `build -p festerm-sessiond --bin festerm-sessiond` | **Pass**, same private1.98 native helper |
+| Mobile `check --lib` and `build --bin festerm-mobile`, `--features host-clients --target aarch64-apple-ios-sim` | **Pass**, actual linked arm64 Simulator executable; no launch/bundle/signing/device/vault claim |
+
+The Simulator commands use `SDKROOT` from `xcrun --sdk iphonesimulator
+--show-sdk-path` (Xcode iPhoneSimulator27.2) and
+`IPHONEOS_DEPLOYMENT_TARGET=15.0`. Initial checks precisely found an uncached
+locked `accesskit_consumer0.37.0` and then missing target `core`; only the
+locked missing packages and official private1.98 Simulator std were restored.
+The earlier `RecipeId` formatting compile RED was corrected before this fixed
+source. Existing vendor warnings and the private toolchain's `rust-objcopy`
+missing `@rpath/libLLVM.dylib` debug-stripping warning remain disclosed;
+successful strict commands are not a warning-free toolchain claim.
+
+**Actual-native qualification is BLOCKED, not green.** Every one of the
+sixteen ignored tests was selected exactly once in its own process with
+`cargo test --locked --offline -p festerm-tunnel-bridge --features host-routing
+--lib NAME -- --exact --ignored --test-threads=1 --nocapture`.
+`target/mobile-native-evidence/summary.json` records **2 pass / 14 fail**;
+the first RED was preserved, not automatically retried. The two passing cases
+are creation denial and inventory-only unsupported creation. The fourteen
+fail before PTY/adoption with `Refused(Unknown)` or `Refused(Stale)`, including
+the new mobile adapter, creation frontend, collector and two-daemon frontend
+oracles. No old assertion/body was removed or weakened. Consequently neither
+native mobile SSH/PTY success nor aggregate green is claimed on this head.
+
+An independent direct AF_UNIX diagnostic under this owned checkout proves the
+specific prerequisite: the existing `ft-<16hex>` fixture plus maximum
+PID/generation socket name is **111 bytes and rejected**; the exclusively
+created `ft-<8hex>` form is **103 bytes and binds**. Raw evidence is
+`target/mobile-native-socket-boundary.log`. The session owner independently
+confirmed that immutable correction
+`61f67fc558d381f7479356d9c2a642c93f2f89d1` in
+`3d91702715945383866b9759a30084d8f43a56f7` addresses this exact path boundary.
+That is not proof of every Unknown/Stale cause or of a successful combined
+client route. **Parent authorization of a normal exact fixed-head merge is
+still required**; no moving core or unapproved prerequisite was consumed.
+The next execution milestone is that merge followed by the same preserved
+sixteen actual-native routes and combined private1.98 mobile/shared/iOS checks.
+
+Source validation also passed fmt, base#700 trace (**311 edges, 0 broken**),
+packaging, font/emoji/icons, Python scripts (**392 run, 68 skipped**) and
+whitespace checks. Lock auditing proves all package versions/sources/checksums
+unchanged: only three mobile dependency edges were added. The original15s auth
+Busy and original-issued lost-reply production/oracle files are unchanged;
+all pre-existing actual-native fixture assertions are preserved. Earlier
+compiler/test/lint/trace REDs, the accidental relay-only75-test run and the
+wrong desktop `--lib` selector remain logs, not substituted positive evidence.
+Physical iOS/Android, native vault, lock/suspend hardware, cloud, native GUI,
+Android NDK, device-target build, three-OS CI/full-workspace validation and the
+sharing/end/restart capsule above remain open. No source was pushed.
+
+The final owned CWD/process audit found **zero Cargo/rustc/sessiond/PTY helper
+processes**. The private host Cargo slot is **released pending parent
+authorization/regrant**; the immutable compiled source and all RED evidence
+remain available in this worktree.
+
+## Explicit desktop Create and atomic resume-or-create
+
+The creation lane normally merges exact corrected #693
+`9b1d2a688e35cad8dead2afa4b228c152c2cadb9` with qualified #695 repair
+`602f19f83cd26748d6580f4e041781190b3150ba` and its #691 metadata ancestor.
+It adds actual typed Create/Ensure execution, not new profile authority or
+placeholder sessions. The fixed core includes the separately owned private-root,
+COM and cfg corrections documented below. No moving source, stopped-update c75,
+later CORE918 fan-in or active root native-route/Windows-fixture correction is
+consumed or duplicated here.
+
+The existing foreground recipe review now shows host capabilities and independent
+creation/temporary grants, exact shell/argv/cwd/lifetime and a separate launch
+confirmation. Create freezes a fresh logical ID and future attachment once;
+Ensure keeps the saved logical ID and delegates authorized absence/resume to the
+host. Resume-only Ensure remains usable without creation permission, while the
+host must refuse absence and explicit Create is unavailable. AttachOnly cannot
+create. Fresh authenticated capabilities are checked again by the worker.
+
+`CreationIntent` freezes the full approved owner/native reference, endpoint,
+launch/lifetime and original sealed `IssuedControlOperation`. Retries use that
+same operation/epoch even if the new handshake advertises a newer epoch.
+Busy, Unknown, Denied, Offline, revoked, uncertain, cancelled and incompatible
+replies never mean absence or replacement permission. The incompatible-result
+path was corrected not to claim that no shell was created. One mutation flight
+per action is allowed; no automatic reconnect, fallback or input replay is added.
+
+The application owns a bounded sixteen-entry registry across review closure.
+Changed recipe/credential and overflow cannot discard an unresolved original.
+A correlated wire success is deliberately separate from presentation admission:
+closing/cancelling review or failing terminal admission must not retire the
+action and silently allocate another shell on retry. Only admission of its
+authoritative target to a presentation session retires that entry; this is not
+terminal activation. Created/Resumed/Recreated plus exact logical/generation
+identity remain visible. Reserved attachment continuation uses the existing
+origin/account-fenced command, installed frontend, snapshot acknowledgment and
+host-confirmed activation path.
+
+Eight deterministic mutation tests cover exact typed refusals/lost reply,
+fresh-epoch original issuance, capability/permission/temporary and seven
+owner/reference/binding fences, cancellation, duplicate flight, unpresented
+success, resume-only Ensure and incompatible target correlation. Four additional
+headless application tests cover consent, launch/behavior and registry
+retention/rotation/overflow. The new native case uses the real bounded worker
+and production mutation/adoption functions on independently authenticated signed
+SSH streams: Create A and absent-to-created Ensure B produce independent native
+PTYs; retries preserve both original issuers/targets and create no extra daemon;
+fresh Ensure resumes A's exact generation. Each frontend adopts its stored
+snapshot before activation, ingests actual expected native-child output and
+excludes foreign text. Correlated exact-target detach leaves both persistent
+shells running. The fixture injects controlled authenticated streams rather than
+opening native vault/cloud credentials. Both earlier collector/frontend
+adoption/isolation oracles and production 15-second auth-Busy/original-issued
+lost-reply sources are unchanged.
+
+### Fixed 9b/602 creation source and fresh qualification
+
+The compiled, tracked-clean source is
+`ebb3038d1dbb67d5ff60b74ad9db1a74393191c6`: a normal two-parent merge of
+creation implementation `8e087c9462121a61ac9a915bde17067e2879df8a` and exact
+core `9b1d2a688e35cad8dead2afa4b228c152c2cadb9`. Immutable `602f19f8` is an
+ancestor, not rewritten. The two conflicts retained both milestone histories
+and combined the core's corrected feature comment with #695's client-safe
+base64/SHA fingerprint dependencies. No locked package version, source or
+checksum changed. `target/create-9b-union-audit-final.log` verifies every
+creation implementation file, #695's formatter/reexport/desktop feature
+boundary, the exact core production runtime/control sources and Busy-policy
+fixture correction, both qualified collector/frontend oracle bodies, and all
+automated trace references from both parents.
+
+Fresh commands below used the same explicit private Rust/Cargo **1.98.0**
+environment described in the following historical section, with the same
+jobs1/debug0/incremental0 target. `target/create-9b-toolchain.log` records
+the exact compiler/Cargo executables, full versions and compiled HEAD. The
+same-toolchain owned helper build passed. Bridge library: **142 passed,
+15 explicitly ignored** (including all eight mutation tests). The actual
+desktop binary's `host_` selector passed **52 tests**, zero ignored; separately
+filtered integration binaries ran zero tests and are not extra evidence.
+An earlier mistaken desktop `--lib` invocation failed because the package has
+no library target (`target/create-9b-desktop-tests.log`); it is not counted.
+
+All **15 actual native cases passed, zero ignored**, each selected exactly
+once in its own test process, with no retry and no assertion changes.
+`target/create-9b-native/summary.log` records the source SHA and every
+per-case log. This includes the new signed-SSH Create/Ensure worker,
+original-issued retries, independent native PTYs, adopted frontend bytes and
+foreign-output exclusion, plus both inherited collector/frontend oracles.
+This is deliberately not a claim that a fresh single-process aggregate
+passed: the three pre-9b aggregate REDs below remain visible, and active
+parent-owned native-route fixture corrections were not duplicated or consumed.
+The portable check, desktop check, strict all-target desktop and bridge/client
+Clippy, formatting and committed range-aware traceability also passed.
+
+```sh
+source target/creation-env.sh
+cargo build --locked -p festerm-sessiond -p festerm-pty-test-child
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib
+cargo test --locked -p festerm --features experimental-dev-tunnels host_
+cargo check --locked -p festerm --features experimental-dev-tunnels
+cargo clippy --locked -p festerm --features experimental-dev-tunnels --all-targets -- -D warnings
+cargo clippy --locked -p festerm-tunnel-bridge -p festerm-tunnel-client --features festerm-tunnel-bridge/host-routing --all-targets -- -D warnings
+cargo check --locked -p festerm-tunnel-bridge --no-default-features --features host-routing
+# Discover all fifteen native names, then select each once with --exact:
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib native_ -- --ignored --list
+cargo test --locked -p festerm-tunnel-bridge --features host-routing --lib EXACT_NAME -- --exact --ignored --test-threads=1
+cargo fmt --all -- --check
+python3 scripts/check_validation_traceability.py --base 602f19f83cd26748d6580f4e041781190b3150ba
+git diff --check
+```
+
+Raw helper/library/desktop/check/strict/portable receipts use
+`target/create-9b-{helper-build,bridge-lib,desktop-tests-final,desktop-check,desktop-clippy,client-clippy,portable}.log`.
+The private native matrix runner and discovery receipt are retained under
+`target/create-native-matrix.py` and `target/create-9b-native/list.log`.
+Later qualification-receipt edits are documentation-only, not another compiled
+source qualification. Full workspace/primary CI, GUI, native vault, platform
+services, cloud, release signing, VM and physical-device acceptance were not run
+or claimed. The final owned-worktree Cargo/rustc/Clippy/sessiond/PTY CWD process
+audit found **zero** matches (`target/create-9b-process-audit.log`); all owned
+commands completed and the private host Cargo slot is released. The concrete
+mobile/local Settings capsule below remains required.
+
+### Pre-9b creation qualification and retained diagnostics
+
+Qualification uses the existing official private Rust **1.98.0**, not a
+Homebrew binary receiving an ineffective `+1.98.0` argument. Source
+`target/creation-env.sh`: `RUSTUP_HOME` is
+`/Users/fes/src/fesTerm-adr84-clients-nov10/target/adr84-rustup`; `PATH`,
+`RUSTC`, `RUSTDOC` and `RUSTFMT` explicitly select its
+`toolchains/1.98.0-aarch64-apple-darwin/bin`. Rustc commit is
+`88d9e12ae178fab0fb5cc050a94da85685d449ea`; Cargo commit is
+`797e8a9bca276c1c9f9f738d2a20f484fa4eea9d`. Raw executable/version receipt:
+`target/create-toolchain.log`. Global defaults/overrides, manifests and locked
+package versions are unchanged. The separate target is
+`target/adr84-clients-create-rust198`, with jobs=1, dev/test debug=0 and
+incremental=0; fixture scratch stays under `target/work`.
+
+The same-toolchain owned sessiond/PTY-child build passed
+(`target/create-helper-build.log`). Eight mutation-boundary tests passed,
+the new actual native worker/PTY test passed, nineteen selected desktop tests
+passed, and the bridge library passed 141 tests with fifteen explicit native
+ignores. Raw receipts are `target/create-qualified-boundaries.log`,
+`target/create-qualified-native-worker.log`,
+`target/create-qualified-desktop-tests-final.log` and
+`target/create-qualified-bridge-lib.log`. Desktop check, strict all-target
+desktop Clippy, strict all-target bridge/client Clippy and the portable
+no-default bridge check passed; corresponding receipts are
+`target/create-qualified-{desktop-check,desktop-clippy,client-clippy,portable}.log`.
+Existing vendor warnings and private `rust-objcopy`'s missing-LLVM debug-strip
+fallback warning are retained, not suppressed or described as warning-free.
+
+Three complete native aggregates each passed fourteen cases and failed one
+**unchanged** inherited oracle. The first final persistent-session count could
+not acquire its 500 ms registry lock
+(`target/create-qualified-native-all.log`); its exact isolated rerun passed
+(`target/create-qualified-unmodified-oracle-rerun.log`). The second observed
+OutcomeUncertain instead of the required Busy on an already-owned attachment
+(`target/create-qualified-native-all-final.log`); its exact isolated rerun
+passed (`target/create-qualified-unmodified-takeover-rerun.log`). Neither error
+was converted to absence or accepted as the expected refusal. A third aggregate
+failed the other inherited two-terminal oracle's inventory observation with
+OutcomeUncertain (`target/create-qualified-native-all-confirmation.log`).
+The new creation case passed in all three aggregates; that is not a claim that
+any of those aggregates passed. No production
+backend or old assertion was changed, and these REDs remain evidence of
+intermittent native-fixture/observation behavior, not a flake-free claim.
+`target/create-source-oracle-audit-final.log` verifies the original native
+runtime functions, auth/Busy/control lost-reply sources and manifests/lock are
+byte-for-byte preserved. Formatting, range-aware traceability (311 edges,
+zero broken references), unique JSON keys and diff checks pass.
+
+### Remaining mobile and local Settings/Remote Access capsule
+
+This is one creation increment, not ADR acceptance. The in-memory original-action
+registry is **not** durable restart reconciliation; the UI says so and never
+automatically resumes/reissues it after restart. A later protected journal and
+reviewed original-issuance restoration/reconciliation boundary must preserve the
+same owner/key/endpoint/epoch and refuse ambiguous replacement, not serialize
+authority into profiles.
+
+Next mobile execution uses the same `ApprovedContext`/`CreationIntent`/
+`ApprovedAttachment`/`HostSession`, not a second protocol or profile approval
+flag. Integrate with the shared mobile session/presentation owner, install the
+actual frontend before acknowledging recovery, and retain foreground
+account/credential/request/generation fencing. Wire native lock/suspension
+cancellation directly to the live owner without requiring another UI frame;
+preserve healthy legacy retention/reconnect and never replay input. Add
+headless mobile lifecycle/late-result tests and separately qualify the actual
+iOS/Android feature builds, vault adapters and physical-device boundaries.
+Parent-qualified final CORE mobile/platform repairs must be consumed only at an
+authorized immutable head, not duplicated from moving worktrees.
+
+Local **Settings → Remote Access** and sharing remain required HOST-04/05
+frontdoors, not silently supplied by client key preparation. Use the existing
+shared controller for explicit identity → account sign-in → zero-shell
+provisioning → protected owner approval → exact native registration. Keep
+fresh origin/settings/account/epoch and cancellation fences, independent
+default-No remote-access/creation/temporary/end permissions and separate
+host/client fingerprint approvals. Sharing starts with an exact owned local
+generation/private default; setup/sharing consent cannot stop or restart a live
+legacy shell. That requires separate default-No exact-generation confirmation
+and manual deferral under ADR 0085. Test the real coordinator with typed owned
+adapters before any separately authorized native service/cloud/vault/GUI window.
+A future lifecycle feature must be justified by this actual local setup path,
+never reintroduced merely to format a client fingerprint. Account-wide explicit
+Find hosts and signed/native/device acceptance also remain separate.
 
 ## #695 client-safe fingerprint dependency repair
 
@@ -1525,6 +2502,10 @@ sharing or migration. Live host inventory, protected trust/Connect, mobile UI
 and native qualification remain open; ADR 0084 is still Proposed and stage 6
 is incomplete.
 ## Providing explicit, receipt-bound manual cloud cleanup remediation
+
+Related retained branch heading: **Bounding native fixture paths and replaying
+the original committed operation**. The cleanup policy below remains the
+separate explicit, receipt-bound owner-approved flow.
 
 The owner approved `allow_explicit_manual_fallback`: the pinned SDK does not
 document generation-atomic DELETE, and PUT's preconditions are not DELETE

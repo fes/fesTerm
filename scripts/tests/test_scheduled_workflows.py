@@ -138,6 +138,35 @@ class HeadlessVulkanWorkflowTests(unittest.TestCase):
                 )
 
 
+class PortableHostReceiptWorkflowTests(unittest.TestCase):
+    def test_quality_runs_all_four_portable_receipt_regressions_without_relay_on_unix(self):
+        root = WORKFLOWS.parents[1]
+        quality = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8").split(
+            "\n  quality:\n", 1
+        )[1]
+        command = (
+            "cargo test --locked -p festerm-tunnel-bridge "
+            "--no-default-features --features host-routing --lib portable_receipt"
+        )
+        steps = [step for step in re.split(r"(?m)^      - ", quality) if command in step]
+        self.assertEqual(len(steps), 1)
+        self.assertIn("if: matrix.os != 'windows-latest'\n", steps[0])
+        self.assertIn(f"run: {command}\n", steps[0])
+        self.assertNotIn("continue-on-error", steps[0])
+        names = set()
+        for name in ("approval_storage.rs", "approval_tests.rs"):
+            source = (root / "crates/festerm-tunnel-bridge/src/host_client" / name).read_text(
+                encoding="utf-8"
+            )
+            names.update(re.findall(r"(?m)^\s*fn (\w*portable_receipt\w*)\(", source))
+        self.assertEqual(names, {
+            "portable_receipt_interrupted_write_never_publishes_final",
+            "portable_receipt_racing_final_is_never_overwritten_and_staging_is_removed",
+            "selected_host_portable_receipt_abandoned_staging_recovers_exactly_one_key",
+            "selected_host_portable_receipt_malformed_final_remains_storage_without_key_creation",
+        })
+
+
 class ScheduledWorkflowTests(unittest.TestCase):
     def test_fuzz_explicitly_selects_nightly_over_the_repository_toolchain(self):
         workflow = (WORKFLOWS / "fuzz.yml").read_text(encoding="utf-8")

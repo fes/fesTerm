@@ -51,9 +51,17 @@ The shared Session adapter and typed desktop installation preserve frontend
 ownership, activation and account-credential fencing. Desktop foreground review
 can prepare/load an exact private native-key receipt, show its public key for
 separate host-local approval, explicitly resolve one HOST endpoint and choose an
-authorized existing session. It never silently enrolls a key, falls back to a
-legacy bridge or creates a shell. Mobile installation, account-wide Find hosts,
-creation and native acceptance remain open; this is not stage-6 completion.
+authorized existing session. A separate exact-launch confirmation enables
+advertised, host-authorized Create or atomic resume-or-create; uncertain results
+retain the original issued action for explicit in-process retry. It never
+silently enrolls a key, falls back to a legacy bridge or infers creation
+authority from inventory. Mobile installation, account-wide Find hosts, local
+Settings/Remote Access, desktop durable client-action reconciliation and native
+acceptance remain open; this is not stage-6 completion.
+The opt-in mobile client has a protected native-vault original-action checkpoint:
+explicit cold-start review keeps the same UUID/issuance/body, never auto-retries,
+and only exact Ended retires settled originals. Native-vault/device cold-start
+acceptance (including Android reserved-reference storage) remains open.
 The default headless build now has explicit authenticated
 setup/owner approval/run; no listener or permission is enabled merely by
 compilation/configuration. Independent combined review and native/cloud/vault/
@@ -181,8 +189,13 @@ private keys. Persistent host-key trust is explicit and non-secret.
 
 ADR 0084 now has a shared desktop/mobile [public host recipe metadata
 foundation](docs/configuration.md#public-host-recipes-adr-0084-foundation)
-under [#681](https://github.com/fes/fesTerm/issues/681). Live host UI/connection
-wiring and native acceptance remain deferred; legacy launch behavior is unchanged.
+under [#681](https://github.com/fes/fesTerm/issues/681). Experimental desktop and
+opt-in shared mobile `host-clients` now execute protected foreground inventory,
+attachment and explicit Create/Ensure; public recipes never grant trust or
+creation permission. Native GUI/vault/cloud/device acceptance remains open;
+offline defaults and legacy launch behavior are unchanged.
+Mobile also exposes separate exact End confirmation and correlated Close/
+Disconnect retirement; uncertain stop intent is not confirmed End or absence.
 
 Explicit [smart selection](docs/gui-design.md#smart-terminal-selection)
 highlights sentences, paragraphs or indented blocks from terminal cells before

@@ -147,6 +147,11 @@ fn probe_secret_store(
 }
 
 impl Profiles {
+    #[cfg(feature = "host-clients")]
+    pub(super) fn host_approval_directory(&self) -> PathBuf {
+        self.directory.clone()
+    }
+
     pub fn open(
         directory: &Path,
         secrets: Arc<dyn SecretStore>,

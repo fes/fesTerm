@@ -272,6 +272,7 @@ pub struct DetachmentReceipt {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EndOutcome {
     StopRequested,
+    ObservedEnded,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -489,6 +490,184 @@ impl Transaction {
 pub struct SessionControl {
     root: PathBuf,
     helper: PathBuf,
+}
+
+#[cfg(all(test, unix))]
+mod end_confirmation_tests {
+    use super::*;
+
+    fn observed_fixture() -> (
+        storage::PrivateTestDirectory,
+        SessionControl,
+        PrincipalId,
+        Target,
+    ) {
+        let directory = storage::private_test_directory();
+        storage::private_directory(directory.path(), false).unwrap();
+        let control = SessionControl {
+            root: directory.path().into(),
+            helper: directory.path().join("never-executed-helper"),
+        };
+        let owner = PrincipalId::new();
+        let target = Target {
+            logical: LogicalSessionId::new(),
+            generation: GenerationId::new(1).unwrap(),
+        };
+        let record = Record {
+            owner: owner.clone(),
+            logical: target.logical.clone(),
+            display_name: "controlled".into(),
+            recipe: Recipe::default(),
+            effective_recipe: Recipe::default(),
+            lifetime: Lifetime::Persistent {},
+            epoch: Epoch::new(1).unwrap(),
+            revoked: false,
+            name: native_slot(0),
+            launch: OperationId::new(),
+            generation: target.generation,
+            fingerprint: "0".repeat(64),
+            phase: Phase::Absent,
+            identity: Some(Identity {
+                pid: std::process::id(),
+                endpoint: "controlled".into(),
+            }),
+            artifacts_retired: false,
+            binding: None,
+        };
+        let lease = DaemonLease {
+            version: 1,
+            name: record.name.clone(),
+            generation: record.generation,
+            revision: 1,
+            lifetime: record.lifetime,
+            temporary: None,
+            deadline_ms: None,
+            connected: false,
+            stopped: true,
+            remote_revoked: false,
+            pending: None,
+            last_attachment: None,
+            grant: record.grant(),
+            writer_epoch: Epoch::new(1).unwrap(),
+            native_pid: Some(std::process::id()),
+        };
+        LeaseGuard::reserve(&control.root, target.generation)
+            .unwrap()
+            .create(&lease)
+            .unwrap();
+        let mut tx = control.transaction().unwrap();
+        tx.state.last_generation = target.generation.get();
+        tx.state.sessions.insert(target.logical.clone(), record);
+        tx.save().unwrap();
+        drop(tx);
+        (directory, control, owner, target)
+    }
+
+    #[test]
+    fn end_confirmation_requires_fresh_policy_without_storing_observation() {
+        let (_directory, control, owner, target) = observed_fixture();
+        for refusal in [
+            ControlError::Unknown,
+            ControlError::Busy,
+            ControlError::Denied,
+            ControlError::Revoked,
+            ControlError::Stale,
+        ] {
+            assert_eq!(
+                control.end(&owner, &target, |_| Err::<(), _>(refusal)),
+                Err(refusal)
+            );
+        }
+        assert_eq!(
+            control.end(&owner, &target, |state| {
+                assert_eq!(state.effect, Effect::End);
+                assert_eq!(
+                    state.grant.as_ref().unwrap().state,
+                    LogicalState::Ended(target.generation)
+                );
+                assert!(state.issuance_epoch.is_some());
+                let error = LeaseGuard::acquire(&control.root, target.generation)
+                    .err()
+                    .expect("End observation must retain the native lease fence");
+                assert!(crate::lock_is_contended(&error));
+                Ok(())
+            }),
+            Ok(EndOutcome::ObservedEnded)
+        );
+        assert_eq!(
+            control.transaction().unwrap().state.sessions[&target.logical].state(),
+            LogicalState::Absent
+        );
+        assert_eq!(
+            LeaseGuard::acquire(&control.root, target.generation)
+                .unwrap()
+                .read()
+                .unwrap()
+                .grant
+                .state,
+            LogicalState::Absent
+        );
+    }
+
+    #[test]
+    fn end_confirmation_refuses_foreign_revoked_replaced_unbound_retired_or_missing_records() {
+        for field in 0..6 {
+            let (_directory, control, mut owner, mut target) = observed_fixture();
+            let mut tx = control.transaction().unwrap();
+            let record = tx.state.sessions.get_mut(&target.logical).unwrap();
+            let expected = match field {
+                0 => {
+                    owner = PrincipalId::new();
+                    ControlError::Denied
+                }
+                1 => {
+                    record.revoked = true;
+                    ControlError::Revoked
+                }
+                2 => {
+                    target.generation = GenerationId::new(2).unwrap();
+                    ControlError::Stale
+                }
+                3 => {
+                    record.identity = None;
+                    ControlError::Unknown
+                }
+                4 => {
+                    record.artifacts_retired = true;
+                    ControlError::Unknown
+                }
+                _ => {
+                    tx.state.sessions.remove(&target.logical);
+                    ControlError::Denied
+                }
+            };
+            tx.save().unwrap();
+            drop(tx);
+            assert_eq!(
+                control.end(&owner, &target, |_| -> Result<(), ControlError> {
+                    panic!("an unproved generation must not reach End admission");
+                }),
+                Err(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn end_confirmation_refuses_contended_or_corrupt_native_lease() {
+        let (_directory, control, owner, target) = observed_fixture();
+        let guard = LeaseGuard::acquire(&control.root, target.generation).unwrap();
+        assert_eq!(
+            control.end(&owner, &target, |_| Ok(())),
+            Err(ControlError::Busy)
+        );
+        drop(guard);
+        let directory = storage::private_directory(&control.root, false).unwrap();
+        storage::replace_private(&directory, Path::new("host-daemon-1.json"), b"invalid").unwrap();
+        assert_eq!(
+            control.end(&owner, &target, |_| Ok(())),
+            Err(ControlError::Unknown)
+        );
+    }
 }
 
 impl SessionControl {
@@ -918,7 +1097,7 @@ impl SessionControl {
                 generation,
             }),
             Some(LogicalState::Revoked) => Lookup::Revoked,
-            Some(LogicalState::Unknown) => Lookup::Unknown,
+            Some(LogicalState::Unknown | LogicalState::Ended(_)) => Lookup::Unknown,
         };
         let summary = match record {
             Some(record) if matches!(record.phase, Phase::Running) => Some(self.summary(record)?),
@@ -1422,8 +1601,17 @@ impl SessionControl {
         if record.generation != target.generation {
             return Err(ControlError::Stale);
         }
+        if effect == Effect::End && record.binding.is_some() {
+            return Err(ControlError::Denied);
+        }
         self.reconcile(record)?;
-        if !matches!(record.phase, Phase::Running) {
+        let observed_end = effect == Effect::End
+            && record.binding.is_none()
+            && matches!(record.phase, Phase::Absent)
+            && record.identity.is_some()
+            && !record.revoked
+            && !record.artifacts_retired;
+        if !matches!(record.phase, Phase::Running) && !observed_end {
             return Err(ControlError::Unknown);
         }
         tx.save()?;
@@ -1432,7 +1620,34 @@ impl SessionControl {
             .sessions
             .get_mut(&target.logical)
             .ok_or(ControlError::Storage)?;
-        let guard = Self::admission(Some(record), owner, effect, admit)?;
+        let _observation_lease = if observed_end {
+            let guard =
+                LeaseGuard::acquire(&self.root, record.generation).map_err(storage_error)?;
+            let lease = guard.read().map_err(|_| ControlError::Unknown)?;
+            if lease.remote_revoked {
+                return Err(ControlError::Revoked);
+            }
+            if !record.lease_matches(&lease) || !same_grant(&lease.grant, &record.grant()) {
+                return Err(ControlError::Unknown);
+            }
+            Some(guard)
+        } else {
+            None
+        };
+        let guard = Self::admission(Some(record), owner, effect, &mut |state| {
+            if observed_end {
+                let mut grant = state.grant.clone().ok_or(ControlError::Unknown)?;
+                grant.state = LogicalState::Ended(target.generation);
+                admit(&AdmissionState {
+                    grant: Some(grant),
+                    grant_epoch: state.grant_epoch,
+                    effect: state.effect,
+                    issuance_epoch: state.issuance_epoch,
+                })
+            } else {
+                admit(state)
+            }
+        })?;
         Ok((record, guard))
     }
 
@@ -1862,8 +2077,8 @@ impl SessionControl {
         })
     }
 
-    /// Requests exact-generation termination in the daemon's own loop. Success
-    /// means durable stop intent, NOT observed process exit; Lookup reconciles it.
+    /// Requests exact-generation termination or freshly authorizes confirmation
+    /// that its previously bound native process is authoritatively gone.
     pub fn end<G>(
         &self,
         owner: &PrincipalId,
@@ -1875,6 +2090,9 @@ impl SessionControl {
         let (record, _admission) = self.exact(&mut tx, owner, target, Effect::End, &mut admit)?;
         if record.binding.is_some() {
             return Err(ControlError::Denied);
+        }
+        if matches!(record.phase, Phase::Absent) {
+            return Ok(EndOutcome::ObservedEnded);
         }
         let guard = LeaseGuard::acquire(record.root(&self.root), record.generation)
             .map_err(storage_error)?;

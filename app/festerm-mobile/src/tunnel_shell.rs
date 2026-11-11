@@ -46,6 +46,8 @@ impl MobileApp {
     }
 
     pub(super) fn sign_out_account(&mut self, id: &str) {
+        #[cfg(feature = "host-clients")]
+        self.sink.live.host.invalidate();
         if let Some(client) = self.tunnel_client() {
             if let Err(error) = client.sign_out(id) {
                 self.notice = Some(describe_error(&error));

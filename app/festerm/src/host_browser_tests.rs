@@ -184,3 +184,224 @@ fn selected_host_desktop_foreground_honors_saved_attach_generation_and_refuses_c
     assert!(!browser.allows_target(&target));
     assert_unallocated(&app);
 }
+
+#[test]
+fn selected_host_desktop_creation_requires_separate_consent_and_advertised_creation_permission() {
+    let (mut app, context) = fixture();
+    app.apply_host_review_action(Action::Create, &context);
+    assert_unallocated(&app);
+    assert!(app.state.host_creation_intents.is_empty());
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.inventory = Some(Inventory {
+        capabilities: Default::default(),
+        sessions: Vec::new(),
+        unknown: Vec::new(),
+    });
+    assert!(
+        browser.creation_request().is_none(),
+        "empty inventory is not creation authority"
+    );
+    let caps = &mut browser.inventory.as_mut().unwrap().capabilities;
+    caps.create = true;
+    caps.ensure = true;
+    caps.attach = true;
+    caps.creation_allowed = true;
+    browser.host_approved = true;
+    assert!(
+        browser.creation_request().is_none(),
+        "host trust is not shell-launch consent"
+    );
+    browser.creation_confirmed = true;
+    assert!(browser.creation_request().is_some());
+    browser
+        .inventory
+        .as_mut()
+        .unwrap()
+        .capabilities
+        .creation_allowed = false;
+    assert!(
+        browser.creation_request().is_some(),
+        "Ensure delegates authoritative resume-only policy to the host"
+    );
+    browser.recipe.behavior = ConnectionBehavior::AlwaysCreate;
+    assert!(browser.creation_request().is_none());
+    assert!(app.state.host_creation_intents.is_empty());
+}
+
+#[test]
+fn selected_host_desktop_creation_freezes_launch_and_distinguishes_new_logical_from_authoritative_ensure(
+) {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_mut().unwrap();
+    browser.host_approved = true;
+    browser.creation_confirmed = true;
+    browser.inventory = Some(Inventory {
+        capabilities: Default::default(),
+        sessions: Vec::new(),
+        unknown: Vec::new(),
+    });
+    let caps = &mut browser.inventory.as_mut().unwrap().capabilities;
+    caps.create = true;
+    caps.ensure = true;
+    caps.attach = true;
+    caps.creation_allowed = true;
+    browser.recipe.launch = Recipe {
+        shell: Some("/owned/test-shell".into()),
+        args: vec!["literal argv; not shell expansion".into()],
+        cwd: Some("/owned/test-directory".into()),
+    };
+    let (mode, ensured) = browser.creation_request().unwrap();
+    assert_eq!(mode, CreationMode::Ensure);
+    assert_eq!(ensured.logical, browser.recipe.logical_session);
+    assert_eq!(ensured.recipe, browser.recipe.launch);
+    assert_eq!(ensured.lifetime, browser.recipe.lifetime);
+    browser.recipe.behavior = ConnectionBehavior::AlwaysCreate;
+    let (mode, created) = browser.creation_request().unwrap();
+    assert_eq!(mode, CreationMode::Create);
+    assert_ne!(created.logical, browser.recipe.logical_session);
+    assert_eq!(created.recipe, ensured.recipe);
+    browser.recipe.lifetime = Lifetime::Temporary {
+        reconnect_grace_seconds: 60,
+    };
+    assert!(
+        browser.creation_request().is_none(),
+        "temporary permission is independent"
+    );
+    browser.inventory.as_mut().unwrap().capabilities.temporary = true;
+    assert!(browser.creation_request().is_some());
+    browser.recipe.behavior = ConnectionBehavior::AttachOnly {
+        generation: "7".to_owned().try_into().unwrap(),
+    };
+    assert!(browser.creation_request().is_none());
+    assert!(app.state.host_creation_intents.is_empty());
+}
+
+fn protected_creation_context(recipe: &PublicRecipe) -> ApprovedContext {
+    use festerm_tunnel_bridge::owner_auth::{OwnerBinding, PinnedHost};
+    use russh::keys::{Algorithm, HashAlg, PrivateKey};
+    let key = PrivateKey::random(&mut russh::keys::key::safe_rng(), Algorithm::Ed25519).unwrap();
+    let public = key.public_key().to_openssh().unwrap();
+    let AccountReference::Github { account_id } = recipe.host.account;
+    let owner = OwnerBinding {
+        installation: uuid::Uuid::new_v4().to_string(),
+        host: PinnedHost {
+            host: recipe.host.id.clone(),
+            host_key_fingerprint: key.public_key().fingerprint(HashAlg::Sha256).to_string(),
+        },
+        account: format!("github:{account_id}"),
+        principal: uuid::Uuid::new_v4().to_string().try_into().unwrap(),
+    };
+    let binding = Binding::new(
+        owner.host.host.clone(),
+        owner.account.clone(),
+        "owned-fixture".into(),
+    )
+    .unwrap();
+    ApprovedContext::from_protected_approval(
+        owner,
+        SecretReference::generate(),
+        serde_json::from_value(serde_json::json!({
+            "connectionMode": "TunnelRelay", "hostId": "owned-fixture",
+            "hostPublicKeys": [public.split_whitespace().nth(1).unwrap()],
+            "clientRelayUri": "wss://example.invalid/client"
+        }))
+        .unwrap(),
+        22,
+        zeroize::Zeroizing::new("not-a-service-token".into()),
+        binding,
+    )
+    .unwrap()
+}
+
+fn registry_creation(recipe: &PublicRecipe) -> Option<(CreationMode, host_client::Creation)> {
+    Some((
+        CreationMode::Ensure,
+        host_client::Creation {
+            logical: recipe.logical_session.clone(),
+            attachment: host_client::AttachmentId::new(),
+            name: Some(recipe.name.clone()),
+            recipe: recipe.launch.clone(),
+            lifetime: recipe.lifetime,
+        },
+    ))
+}
+
+#[test]
+fn selected_host_desktop_creation_registry_retains_action_across_close_and_refuses_changed_recipe_or_credential(
+) {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_ref().unwrap();
+    let recipe = browser.recipe.clone();
+    let reference = browser.account_reference.duplicate_for_transport();
+    let approved = protected_creation_context(&recipe);
+    let first = app
+        .state
+        .host_creation_intent(&recipe, &reference, &approved, || {
+            registry_creation(&recipe)
+        })
+        .unwrap();
+    app.host_browser = None;
+    let retry = app
+        .state
+        .host_creation_intent(&recipe, &reference, &approved, || {
+            panic!("retry cannot allocate another action")
+        })
+        .unwrap();
+    assert!(Arc::ptr_eq(&first, &retry));
+    let mut changed = recipe.clone();
+    changed.launch.args.push("changed launch".into());
+    assert!(app
+        .state
+        .host_creation_intent(&changed, &reference, &approved, || panic!(
+            "changed recipe cannot replace an unresolved action"
+        ))
+        .is_err());
+    assert!(app
+        .state
+        .host_creation_intent(&recipe, &SecretReference::generate(), &approved, || panic!(
+            "credential rotation cannot replace an unresolved action"
+        ))
+        .is_err());
+    assert_eq!(app.state.host_creation_intents.len(), 1);
+    assert!(!first.is_presented());
+    assert!(first.issued_operation().is_none());
+}
+
+#[test]
+fn selected_host_desktop_creation_registry_is_bounded_without_discarding_original_retry() {
+    let (mut app, _) = fixture();
+    let browser = app.host_browser.as_ref().unwrap();
+    let recipe = browser.recipe.clone();
+    let reference = browser.account_reference.duplicate_for_transport();
+    let approved = protected_creation_context(&recipe);
+    let mut first = None;
+    for _ in 0..16 {
+        let mut recipe = recipe.clone();
+        recipe.id = Default::default();
+        let intent = app
+            .state
+            .host_creation_intent(&recipe, &reference, &approved, || {
+                registry_creation(&recipe)
+            })
+            .unwrap();
+        if first.is_none() {
+            first = Some((recipe, intent));
+        }
+    }
+    assert_eq!(app.state.host_creation_intents.len(), 16);
+    assert!(app
+        .state
+        .host_creation_intent(&recipe, &reference, &approved, || panic!(
+            "full registry must refuse before allocating or contacting a host"
+        ))
+        .is_err());
+    let (recipe, original) = first.unwrap();
+    let retry = app
+        .state
+        .host_creation_intent(&recipe, &reference, &approved, || {
+            panic!("capacity cannot prevent retrying the original action")
+        })
+        .unwrap();
+    assert!(Arc::ptr_eq(&original, &retry));
+    assert_eq!(app.state.host_creation_intents.len(), 16);
+}

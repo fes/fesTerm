@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [features]
 default = ["live-ssh"]
 live-ssh = ["festerm-mobile/live-ssh"]
+host-clients = ["festerm-mobile/host-clients"]
 native-recording-validation = [
     "dep:festerm-core",
     "dep:festerm-recording",

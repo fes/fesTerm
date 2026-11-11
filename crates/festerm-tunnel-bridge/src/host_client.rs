@@ -10,8 +10,8 @@ use crate::{
 };
 use festerm_core::Terminal;
 use festerm_host_protocol::{
-    AttachmentId, Capabilities, ContractError, InventoryPage, OperationId, Request, Response,
-    SessionSummary, Validate, MAX_SESSIONS, PAGE_SIZE,
+    Capabilities, ContractError, InventoryPage, OperationId, Request, Response, SessionSummary,
+    Validate, MAX_SESSIONS, PAGE_SIZE,
 };
 use festerm_secret_store::SecretReference;
 use festerm_tunnel_client::host_control::{Binding, ConnectionPermit, ControlClient, Error};
@@ -21,11 +21,63 @@ use tokio_util::sync::CancellationToken;
 use tunnels::contracts::TunnelEndpoint;
 use zeroize::Zeroizing;
 
-#[cfg(feature = "relay")]
 pub mod approvals;
+mod creation;
+#[cfg(test)]
+mod creation_tests;
+mod ending;
+pub mod originals;
 mod session;
-pub use festerm_host_protocol::{Budgets, Target};
+pub(crate) use creation::create_authenticated;
+pub use creation::{Created, CreationIntent, CreationMode};
+pub(crate) use ending::end_authenticated;
+pub use ending::EndIntent;
+pub use festerm_host_protocol::{AttachmentId, Budgets, Creation, LogicalSessionId, Target};
 pub use session::HostSession;
+#[cfg(feature = "testing")]
+pub mod testing {
+    use super::*;
+
+    /// Explicit authenticated control-stream injection for headless tests.
+    pub async fn end_from_stream<S>(
+        stream: S,
+        permit: ConnectionPermit,
+        binding: Binding,
+        intent: Arc<EndIntent>,
+        cancel: &CancellationToken,
+    ) -> Result<Outcome, Failure>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
+        end_authenticated(&mut client, intent, cancel).await
+    }
+
+    /// Explicit stream injection for headless composition tests only.
+    pub fn session_from_stream<S>(
+        stream: S,
+        permit: ConnectionPermit,
+        scope: Scope,
+        target: Target,
+        notifier: Arc<dyn festerm_session::SessionEventNotifier>,
+    ) -> Result<Arc<HostSession>, Failure>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let notify = notifier.clone();
+        let selected = target.clone();
+        let worker = Worker::spawn(
+            scope,
+            Arc::new(move || notify.notify()),
+            move |scope, cancel, events, wake| async move {
+                attach_authenticated(stream, permit, &scope, target, &cancel, &events, &wake).await
+            },
+        )?;
+        let mut session = HostSession::from_worker(worker, notifier);
+        session.set_target(selected);
+        Ok(Arc::new(session))
+    }
+}
 
 pub const ENROLLMENT_PREREQUISITE: &str =
     "This host needs foreground host-key approval and an owner key explicitly enrolled on that host. Reopen its protected native-vault credential for this installation, account and principal; importing or saving a recipe cannot authorize a connection.";
@@ -37,6 +89,7 @@ pub enum Failure {
     OwnerKey(OwnerKeyError),
     Control(Error),
     WorkerUnavailable,
+    OriginalStorage,
 }
 
 impl From<Error> for Failure {
@@ -54,6 +107,7 @@ impl From<ContractError> for Failure {
 impl Failure {
     pub fn message(self) -> &'static str {
         match self {
+            Self::OriginalStorage => "The protected original-action checkpoint is missing, corrupt, incomplete, full or could not be durably updated. No replacement was issued. Explicitly reopen protected originals; storage uncertainty is not absence.",
             Self::MissingApproval => ENROLLMENT_PREREQUISITE,
             Self::BindingMismatch => "The approved host, key, account or endpoint changed. Review the selected host in the foreground; the saved recipe was not changed.",
             Self::OwnerKey(OwnerKeyError::Vault(festerm_secret_store::SecretStoreError::Missing)) =>
@@ -80,7 +134,7 @@ impl Failure {
             Self::Control(Error::Deadline) => "The host operation timed out. Its sessions are not known to be absent.",
             Self::Control(Error::Offline | Error::Closed) =>
                 "The host connection is unavailable. Its sessions are not known to be absent.",
-            Self::Control(_) => "The host refused the operation or returned an incompatible or stale result. No shell was created.",
+            Self::Control(_) => "The host refused the operation or returned an incompatible or stale result. Its outcome is not known; retain the original action rather than creating a replacement.",
             Self::WorkerUnavailable => "The bounded host worker could not start. Retry the explicit action.",
         }
     }
@@ -142,15 +196,22 @@ impl ApprovedContext {
         role: StreamRole,
         cancel: &CancellationToken,
     ) -> Result<(relay::ClientConnection, ConnectionPermit, Binding), Failure> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
         // The worker is already admitted. Vault access is blocking and never
         // runs in a GUI callback. It cannot generate a replacement on failure.
         let permit = Arc::new(permit);
         let charge = permit.clone();
         let approved = self.approved.clone();
         let reference = self.reference;
+        let key_cancel = cancel.clone();
         let key = tokio::task::spawn_blocking(move || {
             let _charge = charge;
-            ClientOwnerKey::open_native(reference, &approved)
+            if key_cancel.is_cancelled() {
+                return Err(Failure::Control(Error::Cancelled));
+            }
+            ClientOwnerKey::open_native(reference, &approved).map_err(Failure::OwnerKey)
         });
         let key = tokio::select! {
             biased;
@@ -158,7 +219,7 @@ impl ApprovedContext {
             value = tokio::time::timeout(Duration::from_secs(15), key) =>
                 value.map_err(|_| Failure::Control(Error::Deadline))?
                     .map_err(|_| Failure::WorkerUnavailable)?
-                    .map_err(Failure::OwnerKey)?,
+                    ?,
         };
         let permit = Arc::try_unwrap(permit).map_err(|_| Failure::WorkerUnavailable)?;
         let stream = tokio::select! {
@@ -194,7 +255,15 @@ pub struct Inventory {
 
 pub enum Operation {
     Inventory,
-    Attach { target: Target },
+    Attach {
+        target: Target,
+    },
+    Create(Arc<CreationIntent>),
+    End(Arc<EndIntent>),
+    AttachReserved {
+        target: Target,
+        attachment: AttachmentId,
+    },
 }
 
 /// An existing target selected after foreground approval. This command carries
@@ -203,6 +272,9 @@ pub struct ApprovedAttachment {
     context: ApprovedContext,
     scope: Scope,
     target: Target,
+    attachment: Option<AttachmentId>,
+    disposition: Option<festerm_host_protocol::EnsureDisposition>,
+    creation_intent: Option<Arc<CreationIntent>>,
 }
 
 impl std::fmt::Debug for ApprovedAttachment {
@@ -222,7 +294,50 @@ impl ApprovedAttachment {
             context,
             scope,
             target,
+            attachment: None,
+            disposition: None,
+            creation_intent: None,
         })
+    }
+
+    pub fn from_created(
+        context: ApprovedContext,
+        scope: Scope,
+        created: Created,
+    ) -> Result<Self, Failure> {
+        if !created.intent.matches(&context) || context.binding() != &scope.binding {
+            return Err(Failure::BindingMismatch);
+        }
+        let disposition = Some(created.disposition());
+        Ok(Self {
+            context,
+            scope,
+            target: created.session.target,
+            attachment: Some(created.attachment),
+            disposition,
+            creation_intent: Some(created.intent),
+        })
+    }
+
+    pub fn description(&self) -> String {
+        use festerm_host_protocol::EnsureDisposition;
+        let state = match self.disposition {
+            Some(EnsureDisposition::Created) => {
+                "Approved HOST · host confirmed creation; attaching generation"
+            }
+            Some(EnsureDisposition::Recreated) => {
+                "Approved HOST · host confirmed recreation; attaching generation"
+            }
+            Some(EnsureDisposition::Resumed) => {
+                "Approved HOST · host confirmed resume; attaching generation"
+            }
+            None => "Approved HOST · attaching selected existing generation",
+        };
+        format!(
+            "{state} · logical {} · generation {}",
+            self.target.logical,
+            self.target.generation.get()
+        )
     }
 
     pub fn scope(&self) -> &Scope {
@@ -238,12 +353,41 @@ impl ApprovedAttachment {
         budgets: &Budgets,
         notifier: Arc<dyn festerm_session::SessionEventNotifier>,
     ) -> Result<HostSession, Failure> {
-        HostSession::start(self.context, self.scope, self.target, budgets, notifier)
+        self.start_with_cancellation(budgets, notifier, CancellationToken::new())
+    }
+
+    pub fn start_with_cancellation(
+        self,
+        budgets: &Budgets,
+        notifier: Arc<dyn festerm_session::SessionEventNotifier>,
+        cancel: CancellationToken,
+    ) -> Result<HostSession, Failure> {
+        let operation = match self.attachment {
+            None => Operation::Attach {
+                target: self.target,
+            },
+            Some(attachment) => Operation::AttachReserved {
+                target: self.target,
+                attachment,
+            },
+        };
+        let mut session = HostSession::start_operation_with_cancellation(
+            self.context,
+            self.scope,
+            operation,
+            budgets,
+            notifier,
+            cancel,
+        )?;
+        session.set_creation_intent(self.creation_intent);
+        Ok(session)
     }
 }
 
 pub enum Outcome {
     Inventory(Inventory),
+    Created(Box<Created>),
+    Ended { target: Target },
     Snapshot(Box<Adoption>),
     Attached(TerminalHandle),
     Failed(Failure),
@@ -293,12 +437,92 @@ impl Worker {
         budgets: &Budgets,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<Self, Failure> {
+        Self::start_with_cancellation(
+            context,
+            scope,
+            operation,
+            budgets,
+            wake,
+            CancellationToken::new(),
+        )
+    }
+
+    pub fn start_with_cancellation(
+        context: ApprovedContext,
+        scope: Scope,
+        operation: Operation,
+        budgets: &Budgets,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cancel: CancellationToken,
+    ) -> Result<Self, Failure> {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
         if context.binding() != &scope.binding {
             return Err(Failure::BindingMismatch);
         }
+        if let Operation::Create(intent) = &operation {
+            if !intent.matches(&context) {
+                return Err(Failure::BindingMismatch);
+            }
+        }
+        if let Operation::End(intent) = &operation {
+            if !intent.matches_context(&context) {
+                return Err(Failure::BindingMismatch);
+            }
+        }
         // Admission precedes thread/runtime allocation, vault lookup and connect.
         let permit = ConnectionPermit::reserve(budgets)?;
-        let cancel = CancellationToken::new();
+        Self::spawn_with_cancellation(
+            scope,
+            wake,
+            cancel,
+            move |scope, cancel, events, wake| async move {
+                execute(context, permit, &scope, operation, &cancel, &events, &wake).await
+            },
+        )
+    }
+
+    #[cfg(any(all(test, feature = "relay", unix), feature = "testing"))]
+    pub(crate) fn spawn<F, Fut>(
+        scope: Scope,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        task: F,
+    ) -> Result<Self, Failure>
+    where
+        F: FnOnce(
+                Scope,
+                CancellationToken,
+                flume::Sender<Completion>,
+                Arc<dyn Fn() + Send + Sync>,
+            ) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = Result<Outcome, Failure>>,
+    {
+        Self::spawn_with_cancellation(scope, wake, CancellationToken::new(), task)
+    }
+
+    fn spawn_with_cancellation<F, Fut>(
+        scope: Scope,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        cancel: CancellationToken,
+        task: F,
+    ) -> Result<Self, Failure>
+    where
+        F: FnOnce(
+                Scope,
+                CancellationToken,
+                flume::Sender<Completion>,
+                Arc<dyn Fn() + Send + Sync>,
+            ) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = Result<Outcome, Failure>>,
+    {
+        if cancel.is_cancelled() {
+            return Err(Error::Cancelled.into());
+        }
         let (events, receiver) = flume::bounded(2);
         let worker_cancel = cancel.clone();
         let worker_scope = scope.clone();
@@ -321,14 +545,11 @@ impl Worker {
                     return;
                 };
                 runtime.block_on(async {
-                    let result = execute(
-                        context,
-                        permit,
-                        &worker_scope,
-                        operation,
-                        &worker_cancel,
-                        &events,
-                        &wake,
+                    let result = task(
+                        worker_scope.clone(),
+                        worker_cancel.clone(),
+                        events.clone(),
+                        wake.clone(),
                     )
                     .await;
                     let live = matches!(result, Ok(Outcome::Attached(_)));
@@ -392,8 +613,8 @@ async fn execute(
     wake: &Arc<dyn Fn() + Send + Sync>,
 ) -> Result<Outcome, Failure> {
     let role = match operation {
-        Operation::Inventory => StreamRole::Control,
-        Operation::Attach { .. } => StreamRole::Terminal,
+        Operation::Inventory | Operation::Create(_) | Operation::End(_) => StreamRole::Control,
+        Operation::Attach { .. } | Operation::AttachReserved { .. } => StreamRole::Terminal,
     };
     let (stream, permit, binding) = context.connect(permit, role, cancel).await?;
     match operation {
@@ -406,6 +627,26 @@ async fn execute(
         Operation::Attach { target } => {
             debug_assert_eq!(&binding, &scope.binding);
             attach_authenticated(stream, permit, scope, target, cancel, events, wake).await
+        }
+        Operation::Create(intent) => {
+            let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
+            create_authenticated(&mut client, intent, cancel).await
+        }
+        Operation::End(intent) => {
+            let mut client = ControlClient::on_authenticated_stream(stream, binding, permit);
+            end_authenticated(&mut client, intent, cancel).await
+        }
+        Operation::AttachReserved { target, attachment } => {
+            attach_reserved_authenticated(
+                stream,
+                permit,
+                scope,
+                (target, attachment),
+                cancel,
+                events,
+                wake,
+            )
+            .await
         }
     }
 }
@@ -422,13 +663,37 @@ pub(crate) async fn attach_authenticated<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    attach_reserved_authenticated(
+        stream,
+        permit,
+        scope,
+        (target, AttachmentId::new()),
+        cancel,
+        events,
+        wake,
+    )
+    .await
+}
+
+pub(crate) async fn attach_reserved_authenticated<S>(
+    stream: S,
+    permit: ConnectionPermit,
+    scope: &Scope,
+    selection: (Target, AttachmentId),
+    cancel: &CancellationToken,
+    events: &flume::Sender<Completion>,
+    wake: &Arc<dyn Fn() + Send + Sync>,
+) -> Result<Outcome, Failure>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let mut pending = host_terminal::establish(
         stream,
         permit,
         scope.binding.clone(),
         scope.request.clone(),
-        target,
-        AttachmentId::new(),
+        selection.0,
+        selection.1,
         false,
         cancel,
     )

@@ -751,6 +751,13 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ### Private-session current-host sharing caller
 
+The composed native-End boundary remains host-created only. An imported/private
+record is denied before reconciliation or End admission, including an already
+Absent record; sharing/migration consent never authorizes ending its original
+local shell. Ephemeral Ended observations require no imported binding, an exact
+previously bound native generation, the existing lease fence and fresh End
+permission. They never enter lease storage or non-End publication.
+
 The separate desktop child implements `HOST-03` Bind/Switch/status-Resume/exact
 Release/irreversible rollback against the agreed protected private-source core
 adapter, not legacy installation migration. The parent-qualified immutable
@@ -775,6 +782,131 @@ not rerun or promoted by this UI-only correction.
 The existing frontend/independent PTY, metadata-only profile boundary and separate
 ADR 0085 default-No legacy-stop consent are unchanged. The retained migration
 macOS 13/1 failure remains unresolved/unknown, not fixed by these caller paths.
+### Protected mobile original-action checkpoints
+
+The app admission validation additionally covers atomic foreign-account batch
+rejection, late account/selected-context results including an empty old-store
+batch, and exact Create/End refusal before explicit protected reopen.
+Unix feature-gated testing composition reuses the actual memory secret store, owner
+receipt/checkpoint paths and framed original Ends; it adds no production
+authority constructor or native-store selection override. Valid-scope and
+confirmed-End controls isolate the tested fences. Native acceptance remains
+separate; Android reserved-reference Unsupported/incomplete reservations and
+the sixteen-unresolved-action admission limit remain unchanged.
+
+Durable reconciliation is a current ADR0084 requirement, with a narrow
+client-bound checkpoint factory as its architectural enabler. A private,
+versioned owner receipt reserves an opaque native-vault payload reference before
+initialization; its initialized marker is durable before mutations are admitted.
+Version2 without its anchor, missing reserved payloads, malformed data, vault
+failure or staging uncertainty never mean an empty action set or replacement
+authority. The native payload binds its domain/reference, installation, pinned
+host, account, owner principal/key reference and endpoint. Individual records
+bind exact Create/Ensure body, lifetime/logical/attachment identity and original
+issued ID/epoch, or the distinct End purpose and exact native-generation target.
+The host journal continues to resolve native namespace/PID/lifetime for End;
+the client invents neither a PID nor a creation issuance epoch for that purpose.
+
+The portable control factory accepts only the protected-store composition hook
+after a fresh handshake and checks the full original destination/body/domain;
+it exposes no raw epoch constructor or serde authority. The owning bridge
+adapter reopens the exact native owner key and protected anchor before supplying
+the payload. Adapter errors retain their typed native/storage origin: a locked
+vault or missing checkpoint is not relabeled as host denial. Capture must durably succeed before an effectful frame can be sent;
+ambiguous writes retain the original and refuse the send. Reopening originals
+is explicit, network-free and not consent to execute. The mobile app separately
+revalidates current full account, protected context, privacy/request epoch,
+capability and fresh destructive/launch consent before original reconciliation.
+No automatic sign-in, retry, input replay, new wire protocol/service or general
+journaling framework is introduced. Ordinary profiles/workspaces contain no
+checkpoint, sealed ticket, secret or authoritative sentinel.
+
+The native set remains bounded to sixteen creation and sixteen End originals
+and 64KiB. Created-generation records survive frontend presentation. Only an
+exactly correlated terminal Ended receipt can retire its End and matching
+confirmed-created generation. StopRequested/OutcomeUncertain, stale, denied,
+unknown, cancellation and lost replies retain originals. Pre-checkpoint-version
+actions lost before capture cannot be reconstructed. Native-vault/physical
+cold-start acceptance and current platform CI remain independent gates.
+
+### Exact-generation native End confirmation
+
+The combined protected-client/runtime case is separately executed from the
+native-only positive below. Its first nonnumeric fixture failure is retained
+as pre-wire receipt-setup evidence, not native execution coverage. Correcting
+only that synthetic account permits the actual `c803e619` case to pass1/0/0:
+protected-memory-store reopen, fresh control-role authenticated SSH, unchanged
+original Create ticket/epoch and no duplicate native PTY; uncertain End retention;
+wrong-generation Stale and missing-lease Unknown retain originals; same original
+End ID/exact target returns Ended only after authoritative absence and exact
+native-lease restoration, pruning only its matching creation/End pair.
+No production authority/parser boundary changes. End carries no creation
+issuance epoch. This does not qualify a changed host issuance epoch, terminal
+frontend adoption, native vault, GUI, physical cold restart or Android runtime.
+
+The native adapter can now return the existing `Ended(target)` reply when the
+protected journal retains that exact owner's generation and native identity,
+has authoritatively reconciled it to Absent, and fresh current End permission
+admits the observation under the same transaction. A never-bound reservation,
+retired artifacts, replacement, revocation, contention or observation failure
+does not qualify. StopRequested still returns OutcomeUncertain. Logical Lookup
+absence and the generic Ended error are not converted into successful End.
+
+The temporary `LogicalState::Ended(generation)` is End-only authorization
+metadata, not a wire or stored-state change. Both owner authorization and the
+publication fence reject it for every other request or generation; lease
+validation and serialization reject it. It is never assigned to a journal
+record or daemon lease. Confirmation means the generation is gone, not that
+this particular End caused its exit.
+
+`HOST-03` adds deterministic current-permission, owner/generation, unbound,
+retired, missing/corrupt/contended lease, storage and purpose/fence regressions.
+One separately selected actual SSH/native-helper case confirms the original
+End operation after authoritative absence; the existing stale-replacement case
+is unchanged. These are isolated fixtures with in-memory protected authority,
+not native-vault, installed-service, physical-mobile or whole-ADR acceptance.
+Removed/reconfirmed-away or replaced originals may remain unresolved; this
+change neither discards them nor enlarges the client retention bound.
+
+### Explicit desktop Create/Ensure execution increment
+
+The client extends protected selected-host execution with actual HOST Create and
+Ensure, not metadata-only commands or simulated sessions. The foreground
+coordinator requires exact launch/lifetime confirmation and displays capabilities
+and independent creation/temporary permissions. The bounded worker checks fresh
+authenticated capabilities. Ensure may resume an authorized existing generation
+without creation permission; only the host can authorize absence-to-creation.
+Public recipes, empty inventory, Busy, Unknown, denial, offline, incompatible
+replies and cancellation never imply absence or replacement authority.
+
+An immutable action binds full approved owner/key reference and endpoint to
+logical ID, launch, future attachment and the original sealed issued operation.
+Explicit retries retain that operation even across a newer handshake epoch.
+Only one flight per action is admitted. A sixteen-entry app registry survives
+review closure and refuses changed recipe/credential or overflow without
+discarding unresolved actions. A confirmed wire reply is not frontend
+presentation; failed admission or dropped completion retains the original action.
+The host-confirmed target/disposition follows the existing typed command,
+installed frontend, snapshot acknowledgment and activation route. No automatic
+retry/reconnect or input replay is added.
+
+Deterministic tests cover exact typed refusals/lost reply, malformed correlation,
+fresh-epoch retry, resume-only Ensure, capability/grant/owner fences,
+cancellation, duplicate flight, failed frontend admission and app-registry
+retention/bounds. The additional opt-in native case drives the actual bounded
+worker and production mutation/adoption functions over signed SSH, creates two
+independent native PTYs, retries the original action, resumes the same generation,
+installs snapshots before activation, ingests actual expected frontend output,
+excludes foreign output and checks exact-target correlated persistent detach.
+Both earlier collector/frontend oracles remain unchanged. Exact commands/results
+are recorded in `milestone-progress.md`; this is not GUI/vault/cloud acceptance.
+
+The desktop action registry remains process-local; the opt-in mobile protected
+checkpoint path above does not reconstruct pre-checkpoint-version lost actions.
+Mobile execution installation/lock cancellation, account-wide explicit Find
+hosts, local Settings/Remote Access setup/sharing and native/device qualification
+remain required separate milestones. HOST statuses and ADR acceptance remain
+partial; existing legacy hosting and ADR 0085 boundaries are unchanged.
 
 ### Client-safe owner-key fingerprint boundary
 
@@ -1168,7 +1300,44 @@ blocked and a pending result is not successful uninstall. See the
   and explicit-browse state evidence for `HOST-01`/`HOST-02` under
   [#681](https://github.com/fes/fesTerm/issues/681). Experimental desktop Profiles
   now has the reachable foreground review and authorized existing-session
-  selection route described above. End-to-end native GUI/mobile acceptance
+  selection route described above. The opt-in shared mobile `host-clients`
+  application additionally executes explicit account-scoped HOST discovery,
+  protected owner review, inventory, Connect/Create/Ensure and actual
+  `HostSession` frontend adoption. Callback-owned cancellation precedes worker
+  admission and does not wait for a UI frame. Desktop original creation actions
+  remain process-local. Protected mobile originals survive restart/presentation
+  until an exact authoritative Ended settles them, never merely worker admission.
+  The non-relay Unix protected receipt publisher
+  now stages/syncs complete bytes before anchored atomic no-replace publication
+  and directory sync; interrupted writes and final-name races cannot poison or
+  overwrite the final receipt. Abandoned staging remains inert; malformed
+  finals remain Storage without key creation. Focused non-relay regressions
+  cover those boundaries; native vault/jetsam/device acceptance remains open.
+  The mobile lifecycle child adds application-owned exact End confirmation and
+  a protected `EndIntent` retaining the original operation/target across explicit
+  retries. Current account, native/request epoch and adopted Session identity
+  fence confirmation; fresh authenticated capability/admission fence execution.
+  End uses the existing non-creation wire contract, with native PID/namespace
+  resolved only by the host journal. StopRequested remains OutcomeUncertain,
+  never a fabricated Ended/absence. Close/Disconnect uses the existing correlated
+  Session shutdown off-UI in bounded old-attachment retirement; persistent
+  daemons survive and temporary intentional detach stays lease-owned. Framed
+  old/new-frontend, End refusal/cancellation/original-operation regressions and
+  two selected actual native SSH/PTY routes cover this increment, not physical
+  app suspension, native vault or the entire earlier sixteen-case matrix.
+  The dependent CI compatibility repair uses the existing checked weak-CAS
+  pattern, preserving privacy Acquire/AcqRel ordering, saturation and cancellation
+  without adopting a post-MSRV atomic API. Concurrent epoch/cancellation tests
+  supplement the existing original-action fences. Its test-only native worker
+  factory follows its Unix consumers while explicit `testing` stays portable;
+  actual Windows required CI remains a separate gate.
+  Combined fixed source `c5f2d024` passes all
+  sixteen separately selected actual-helper SSH/native-PTY routes, including
+  mobile adoption, original-operation replay and both collector/frontend
+  isolation oracles, with fresh private1.98 helper copies and per-command
+  before/after hashes. Its Simulator executable also links; neither is device
+  execution. The original a13a 2/14 RED remains recorded separately.
+  End-to-end native GUI/mobile acceptance
   remains deferred. `HOST-04`/`HOST-05` have partial shared boundary
   coverage. `HOST-06` has partial authenticity-foundation coverage only. Existing
   `TUNNEL-01`–`TUNNEL-16` and profile edges retain their implementation coverage

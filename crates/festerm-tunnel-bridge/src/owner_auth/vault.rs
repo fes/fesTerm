@@ -179,7 +179,7 @@ impl ClientOwnerKey {
         })
     }
 
-    #[cfg(all(feature = "host-routing", feature = "relay"))]
+    #[cfg(feature = "host-routing")]
     pub(crate) fn generate_reserved(
         vault: &dyn SecretStore,
         reference: SecretReference,

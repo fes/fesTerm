@@ -1600,8 +1600,24 @@ separate native-key preparation. Host-local owner approval is still a distinct
 action. Public-key fingerprint display uses the canonical client-safe
 `owner_auth` formatter; it does not enable host-local owner enrollment or
 lifecycle features. The compatibility reexport retains the host-local API
-without duplicating formatting. HOST-01/02 remain partial; creation and
-account-wide explicit discovery are not implemented by this executor.
+without duplicating formatting. The explicit Create/Ensure continuation checks
+fresh capabilities and protected permissions, retains the original issued action
+for in-process retry, and uses the same frontend snapshot/adoption path.
+HOST-01/02 remain partial. The subsequent opt-in shared mobile `host-clients`
+route adds explicit account-scoped discovery/refresh, protected owner review,
+inventory, Create/Ensure and installed-frontend adoption; it cancels HOST work
+from native callbacks without another frame. Non-relay receipt crash/race
+regressions cover staged atomic no-replace
+publication, inert abandoned staging and exactly-one-key recovery; malformed
+finals remain Storage rather than absence. These do not prove native vault or
+actual jetsam behavior. Framed mobile tests and the
+separate signed-SSH/native-PTY adapter fixture are automated evidence. Combined
+source `c5f2d024` passes all sixteen individual actual-helper routes once,
+with fresh private1.98 helper-copy hashes preserved before/after each command,
+and links the Simulator binary; the a13a 2/14 native RED is retained separately.
+These do not establish physical mobile/native-vault/GUI acceptance.
+Local Settings/Remote Access,
+sharing, durable client-action reconciliation and native acceptance remain open.
 The subsequent shared Session adapter consumes bounded frames with event-loop
 wakes, preserves recovery ordering and uses correlated detach. Typed desktop
 installation checks the originating editor and account credential before work;
@@ -1669,6 +1685,8 @@ inputs and an exact-one selection guard. Query errors are never negative
 evidence; source/portable checks and Linux compilation are not native execution.
 This read-only smoke leaves transport/manager/logout/daemon-survival gates open.
 
+**Historical per-slice overviews; use the composed detailed contract below.**
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state tests; UI/endpoint/H,N deferred |
@@ -1677,6 +1695,28 @@ This read-only smoke leaves transport/manager/logout/daemon-survival gates open.
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings Remote access typed review/confirm; signed helper/account and separate owner consent | Bounded app workers delegate shared controller/native factory; full-snapshot/settings/epoch CAS; native vault only; creation/startup default off; zero shells; Running/history not Ready | Cancel retains actual admission and original-issued-scope fence; exact disable/drain, explicit recovery and typed manual cleanup; unknown/foreign evidence has no removal instruction | P,H,N; reachable headless-render/command and real shared-controller/CLI-origin fixtures; actual signed native usability, endpoint readiness and binding remain open |
 | `HOST-05` | Headless package → configured service | Configure/status/authenticated staging; explicit setup/owner approval/run/uninstall and authenticated stopped update/update-status | Disabled defaults, zero shells/access until separate consent; signed origin-bound native runner; no pre-login; Running/history is not Ready | Revoke-first lease/epoch/receipt-fenced stop and cleanup; missing/foreign evidence refuses; authenticated exact cloud absence alone removes, otherwise typed manual review stays CleanupPending with no DELETE | P,H,N; shared controller/Services/CLI fixtures, not signed endpoint/native-manager or manual provider-removal acceptance; see detailed HOST-05 row below |
 | `HOST-06` | Existing installation → updated/migrated host | Authenticated stopped helper update or explicit protected migration reservation | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Same-operation resume and claim-only rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: authenticity/update/reservation foundation; H,N: genuine native switching/live binding/migration deferred |
+
+The older per-slice overview tables below are historical. The composed
+HOST-01–06 contract is the detailed table following the current Setup and
+private-sharing sections; Setup never implicitly enables sharing or End.
+
+HOST-03 also has isolated exact-generation native End confirmation: protected
+authoritative absence of a previously bound generation plus fresh End permission
+may produce the existing Ended reply. StopRequested remains uncertain. The
+ephemeral observation is rejected by non-End authorization/publication and by
+lease storage; missing, unbound, retired and replacement records do not qualify.
+One new real SSH/native-helper case resolves its original End; the existing
+replacement and retirement cases retain their separate source attribution.
+Native-vault, GUI/device and installed-service acceptance remain open.
+
+| Edge | Transition | Action | Invariants | Recovery | Coverage |
+| --- | --- | --- | --- | --- | --- |
+| `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; desktop plus opt-in shared mobile protected foreground worker, account/recipe/native-lifetime fences; live cloud/native GUI/device H,N deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Offline recipe management; separate foreground attach/Create/Ensure; explicit protected-original reopen/review | Metadata grants no authority; fresh protected context/capabilities/launch/lifetime consent; native checkpoint before effectful write; same original UUID/old epoch/body; snapshot before activation; no input replay | Busy/unknown/denied/offline/stale/pending/corrupt is never absence; sixteen originals per purpose/64KiB; stale or ambiguous original selection refuses; no startup retry/sign-in; created generations remain until exact Ended | P; typed protected-store/framed and synthetic-vault fresh-process reopen, existing actual worker→SSH→independent PTY frontend fixtures; native-vault/device cold-start/GUI/accessibility/usability H,N deferred |
+| `HOST-03` | Session → shared/detached/ended | Explicit share/unshare; exact End confirmation; correlated Close/Disconnect; explicit original-End reopen | Private default; exact protected account/owner/reference/target/native/request epochs; original End checkpoint precedes wire; no creation issuance epoch; independent daemon lifetime | Only correlated Ended prunes End/exact confirmed-created generation, including discarded UI completion; unresolved sixteen-entry bound never raised; StopRequested/Busy/unknown/denied/offline/Stale is not absence; stale detach cannot mutate replacement; temporary lease/grace stays host-owned | P; protected original/reopen/settlement and seventeen-Ended slot regression; retained two real SSH/native-PTY lifecycle and detach/revocation/heartbeat fixtures, not rerun here; sharing/authoritative native Ended/native-vault/physical lifecycle/H,N deferred |
+| `HOST-04` | Unconfigured/disabled → enabled host | Settings or sharing-triggered Enable and continue | Shared origin-scoped journal/epoch and exact approved-settings boundary; actual setup/Ready and desktop controls deferred; no default shell | Reconfirm changed settings; recover persisted ticket; preserve draft and exact late cleanup identity, never re-enable | P,H,N; partial boundary, native/UI deferred |
+| `HOST-05` | Headless package → configured service | Configure/status/pinned CLI and authenticated helper staging; setup/run/update/uninstall refuse | Shared disabled settings and exact-owned receipt policy; no shell/service changes; pre-login unavailable | Busy/corrupt/foreign state fails closed; retain cleanup and signed artifact evidence | P,H,N; partial boundary, endpoint/headless package/native deferred |
+| `HOST-06` | Existing installation → updated/migrated host | Verified helper switch or explicit legacy migration | Authenticated artifacts; protected/account state and old daemons preserved; no grant expansion; live legacy stop needs separate default-No exact-generation confirmation, never setup/sharing consent | Compatible rollback; manual deferral; no revoked-state resurrection or automatic legacy recreation | P: manifest/verifier foundation; H,N: switching/migration deferred |
 
 Primary `HOST-04` Setup explicitly acquires the exact trusted build/native-target
 official bundle on the bounded worker. Version/target and acquisition status are
@@ -1710,8 +1750,8 @@ Detailed contract and fixture coverage:
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; partial contracts/auth/privacy/browser state/framed dispatcher tests; UI/endpoint/H,N deferred |
-| `HOST-02` | Local recipe → resumed/new remote shell | Offline save/edit/duplicate/import/export/delete; separate future Connect with atomic resume-or-create or strict attach | Public metadata; stable host/account/logical IDs and fresh duplicates; future-only edits; deletion preserves shell; authoritative absence/current creation permission; exact generation; no input replay | Failed saves retain state; mobile skips/reports invalid entries without losing valid recipes; typed conflicts and export-specific outcomes; legacy remains exact-generation; reconcile uncertain live ensure; no duplicate spawn | P; partial metadata/command/recovery/codec/absence/admission and real-daemon ensure/crash/conflict/cancellation/issuance/retirement/Unknown inventory fixtures; live execution/H,N deferred |
-| `HOST-03` | Session → shared/detached/ended | Exact local persistent tab/profile/native generation review; explicit private Bind, separate Switch, original-operation Resume/Release/rollback | Private by default; connected-local provenance and authenticated current NativeVault Desktop authority, never metadata/PID authority or legacy receipt fabrication | Negative selection/command fences; interrupted Bind reuses original operation; exact reduction preserves frontend/PTY and independent lifetime; no implicit Switch, conversion, restart or share-all | P; command/lifetime/private-source/current-policy and controlled Local-native fixtures; installed endpoint/GUI/actual-native-vault H,N deferred |
+| `HOST-02` | Local recipe → resumed/new remote shell | Offline save/edit/duplicate/import/export/delete; separate foreground Connect/Create/Ensure and protected original reopen | Public metadata grants no authority; fresh protected context/capability/launch/lifetime consent; stable host/account/logical IDs and fresh duplicates; future-only edits; deletion preserves shell; authoritative absence/current creation permission; exact generation; original UUID/epoch/body before wire, snapshot before activation, no input replay | Failed saves retain state; mobile skips/reports invalid entries; typed conflicts/Unknown never create or replace originals; no startup retry/sign-in, ambiguous selection or duplicate spawn | P; metadata/command, protected-store/framed/reopen and per-source actual SSH/helper/PTY fixtures; integrated native-vault/device/GUI acceptance remains open |
+| `HOST-03` | Session → shared/detached/ended | Exact local persistent generation review; private Bind, separate Switch, original-operation Resume/Release/rollback; host-created exact End and original-End reopen; correlated Close/Disconnect | Private by default; protected connected-local provenance/current NativeVault authority, never metadata/PID authority; imported/private bindings cannot native-End even when Absent; End requires fresh exact protected host-created generation authority | Reviewed recovery uses reviewed target/typed original, status controls retain displayed target/original; no implicit Switch or replacement grant; exact reduction preserves frontend/PTY/lifetime; only correlated Ended settles exact originals, StopRequested stays uncertain, stale detach cannot affect replacement | P; current sharing/recovery/lease/refusal and per-source protected-original/SSH/helper/PTY evidence; integrated native-vault/device/installed endpoint/GUI acceptance remains open |
 | `HOST-04` | Unconfigured/disabled → enabled host | Settings Remote access typed review/confirm; signed helper/account and separate owner approval | Shared origin/account/OS-user authority; full-snapshot/settings/epoch CAS; bounded primary plus independent revoke worker; native vault only; creation and sign-in startup off by default; zero shells; native process/history never Ready | Reconfirm edited/stale consent; cancelled workers retain admission and original issued scope, late results cannot grant; explicit recovery, revoke/drain disable and typed manual cloud-cleanup guidance preserve drafts/daemons; no browser/DELETE or uncertain removal target | P,H,N; reachable Settings/headless-render/command and actual controller/Services/CLI-origin fixtures; matching signed bundles, real native/vault/cloud usability, readiness and exact existing-shell binding remain open |
 | `HOST-05` | Headless package → configured service | Configure/status/acquisition/staging/native qualification; explicit setup → public owner context → host-local approve-owner → run/run-status; service-status/disable/cleanup-local/uninstall/recover-cleanup; authenticated stopped update/update-status | Shared origin/account/exact-owned receipt policy; disabled configuration, zero-shell access-off setup; independent default-No creation/end/temporary, temporary never creates; exact signed bundle/helper and fresh vault policy; watchdog retries installation contention, never cached permission; update strictly newer current release + explicit signed from-version, existing identity/binding, stopped host/runtime, protected old/new native reservation; history/native Running/cloud presence is not Ready; Linux UserSignIn requires current-logon proof | Revoke before exact native stop/runtime-lease release; never-published absence requires full lease/phase/epoch/instance fences and no replacement history, including Committed/Aborted journals; status stays no-observation; corrupt/foreign/uncertain evidence is not absence; update Prepared/Applying retains unknown old/new state, same-intent retry only, no automatic enable/rollback/repair or daemon kill; partial-update cleanup reconciles both resources; unsuccessful cloud CleanupPending/deletion remains separate | P,H,N; core removal fixtures retain explicit fake cloud/account/native contexts, real Services/private lifecycle and a panic-on-manager runner; update cores use typed fake native/network/credentials and synthetic signatures; coupled daemon launches authenticated old cached entry in installation namespace, preserving PID/generation/endpoint, frontend/control and helper path/bytes with negative controls; current-source binary tagged old is not genuine older-release/publisher/native switching or Windows account acceptance; separate client trust/index/chooser, first bootstrap, platform and cloud-deletion gates remain |
 | `HOST-06` | Existing installation → updated/migrated host | Authenticated stopped update; owned inventory/preview/reservation; separate owner approval; current-daemon bind/switch/resume/defer/exact release/rollback | Exact signed old/new artifacts; protected source/account/key/claim/namespace/generation, owner/principal/issuer and preview/destination epoch; no grant expansion or frontend acquisition; live stop requires separate default-No exact-generation consent, never setup/sharing/migration consent | Same-operation immutable binding/activation/release intent; revoke before exact release/claims rollback; retain cleanup/revocation evidence and legacy use; old helpers defer without restart/create; manual provider review does not complete removal | P: stopped-update, authenticity/publication, receipt-bound guidance, reservation/authentication/recovery fixtures; controlled current-source live binding/frontend/PTY is separate from genuine cross-version/installed Windows/macOS/Linux switching, cloud/vault/GUI acceptance |
@@ -1767,6 +1807,22 @@ healthy authorized entries remain visible beside authorized Unknown target
 metadata, while record/global/publication authority refusals still fail closed.
 Private liveness is point-in-time, unlike legacy shared installer-lock exclusion.
 
+Foreground client execution additionally requires fresh protected context,
+capability and explicit launch/lifetime consent; original mutation checkpoints
+precede wire effects and retain the same UUID/old epoch/body. End has no creation
+issuance epoch. Snapshot adoption precedes activation; no input is replayed.
+Busy/unknown/denied/offline/stale/pending/corrupt never means absence. Originals
+retain sixteen entries per purpose/64KiB, with no startup sign-in/retry or
+ambiguous selection. Only a correlated Ended prunes an exact End/confirmed
+created generation, including a discarded UI completion; StopRequested remains
+uncertain. Close/Disconnect is correlated to the original native lifetime;
+stale detach cannot mutate its replacement, and temporary lease/grace remains
+host-owned. Protected reopen/settlement and seventeen-Ended slot regressions
+remain distinct from actual-vault/device cold-start/GUI/accessibility/usability.
+The host-created native End observation never applies to imported/private local
+bindings: those retain their original frontend, owner-controlled End and
+independent lifetime even when an imported record is Absent.
+
 HOST-06 currently has the independently testable
 [helper authenticity boundary](host-release-artifacts.md) and separate
 [private executable-publication component](native-host-services.md):
@@ -1804,6 +1860,23 @@ waiting remains outside it. Native Windows lock execution remains a gate.
 Controlled live fixtures are not service switching/rollback,
 installed/old-release or complete migration acceptance; the legacy Linux script
 path is not promoted to authenticated setup.
+
+HOST-02/03 HostUi recovery fixtures isolate atomic foreign-account batch
+rejection, late account/selected-context results including empty old-store
+batches, and Create/End before explicit protected reopen. Valid memory-backed
+receipts, framed original Ends and positive scope/consent controls establish
+prerequisites; exact refusal and no worker/new issuance are the admission oracle.
+These are not native-vault, physical lifecycle or Android runtime evidence.
+The separate protected-original/runtime native composition case passes1/0/0 at
+`c803e619`, after its retained nonnumeric-account pre-wire setup failure.
+Actual control-role SSH/helper/PTY execution preserves the original Create
+ticket/epoch through protected-memory-store reopen/fresh handshake without a
+duplicate PTY. Uncertain End, wrong-generation Stale and missing-lease Unknown
+retain originals; the same original End ID/exact target after authoritative
+absence and exact-lease restoration returns Ended and prunes only its matching
+creation/End pair. End has no issuance-epoch field. This adds bounded bridge/
+runtime evidence, not mobile GUI, terminal frontend adoption, live vault,
+higher-host-epoch native, physical cold-start or Android runtime acceptance.
 
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after

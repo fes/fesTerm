@@ -50,6 +50,124 @@ technology, visual judgment, reference-application screen semantics, or a real
 usability question. A reproducible failure should become the smallest suitable
 fixture, interaction test, snapshot, native smoke, or focused defect issue.
 
+## ADR 0084 mobile HOST execution
+
+The opt-in shared `host-clients` application now executes selected HOST inventory,
+exact attachment and explicitly confirmed Create/Ensure through the bounded
+shared worker and actual `HostSession` frontend adopter. Android forwards the
+same optional boundary; the offline fixture and legacy live-SSH defaults do not
+change. Host tests exercise inert save/import, stale account/recipe rejection,
+bounded original-action retention, direct native-callback cancellation and
+framed snapshot-before-activation/no-replay behavior. The separately selected
+native helper fixture exercises signed SSH, independent real PTYs, exact
+original issuance and actual stored/presented output. These are not device,
+native-vault or GUI acceptance. Fixed combined source `c5f2d024` passes all
+sixteen actual-helper routes, individually selected once with freshly built
+private helper copies measured before/after each command. The new mobile
+adoption route and both frontend/collector oracles pass; the original a13a
+2-pass/14-fail receipt remains retained. The combined Simulator executable
+links but was not launched. Exact source/tool/helper attribution and remaining
+gates are in [the qualification receipt](milestone-progress.md#qualifying-the-combined-executable-mobile-host-client).
+
+The lifecycle child adds explicit, separate End confirmation from authorized
+inventory or the adopted HOST tab menu. Exact protected owner/account/endpoint,
+logical/native generation, original operation and native/request epochs are
+revalidated; native PID/namespace stay private to the host journal. Closing or
+Disconnect routes the old attachment through bounded background correlated
+retirement, not End. Focused framed tests prove late detach cannot touch a new
+frontend and lock still emits no detach/replay. Two individually selected
+controlled native SSH/PTY cases prove original End cannot stop a replacement,
+persistent detach survives/re-adopts actual output, and only the owning temporary
+lease ends. Native End still returns **OutcomeUncertain** after StopRequested.
+A separate exact-generation observation can now return Ended only for a
+previously bound generation authoritatively reconciled absent under fresh End
+permission. One new isolated real SSH/native-helper case confirms the original
+End operation; ordinary Lookup absence, missing records, replaced generations
+and retired or never-bound records do not authorize that reply. The existing
+End/replacement case is unchanged. This does not requalify the older
+sixteen-case matrix or establish physical lifecycle/vault behavior.
+
+In an explicitly owned iOS/Android native window, still verify:
+
+- jetsam/disk-full receipt preparation: deterministic non-relay fixtures now
+  prove staged atomic no-replace publication, write/rename cleanup, inert
+  abandoned staging and exactly-one-key recovery, but actual native
+  filesystem/quota/jetsam and vault execution remain unrun; malformed final
+  metadata must remain Storage rather than being repaired or treated absent;
+- opening/importing/saving while offline performs no discovery, sign-in or
+  trust/enrollment; only explicit Find/refresh uses the chosen signed-in account;
+  service omissions are not session absence;
+- native sandbox receipt privacy/backup policy and native vault
+  locked/unavailable/missing behavior, exact independently confirmed fingerprint,
+  host-local owner approval and imported-recipe first-execution consent;
+- exact host/principal/logical/generation/launch/lifetime selection, visible
+  fresh capability and creation/temporary permission, and truthful Busy,
+  unknown, denied, revoked, offline and lost-reply states;
+- active and parked terminals under real app-lock, foreground loss, suspend,
+  account removal and credential rotation: immediate input gating, no replay,
+  no automatic reconnect, no false detach; independently observe the daemon's
+  60-second generation/heartbeat-fenced grace and stale replacement immunity;
+- actual mobile terminal snapshot/output isolation, phone/tablet scrolling,
+  software-keyboard/safe-area behavior, accessibility labels/focus and actionable
+  approval/uncertainty errors.
+- explicit End confirmation versus Close/Disconnect on persistent and temporary
+  sessions; cancel and stale account/tab/generation/lock confirmations; late
+  detach/End replies while another foreground tab is installed; independently
+  observe native process lifetime without mistaking StopRequested for Ended.
+
+The protected mobile restart slice captures original Create/Ensure/End before
+effectful writes and explicitly reopens the same native-vault set. Deterministic
+tests cover a fresh subprocess with an injected **synthetic memory-vault
+snapshot**, old UUID/epoch/body on a newer handshake, exactly one request,
+before-write failure, ambiguous after-write failure, cancellation, lock,
+missing/corrupt/scope-changed data, bounded unresolved originals and exact Ended
+settlement. This is not a native vault or physical process-lifecycle oracle.
+The seventeen-exact-Ended UI fixture also proves confirmed Ends cannot exhaust
+the sixteen-original lifetime cap after discarded UI completions.
+Three focused Unix HostUi cases additionally prove all-or-nothing rejection of a
+foreign-account recovered batch, stale account/selected-context result fencing
+including a valid empty old-store batch, and no Create/End issuance or worker
+before explicit protected reopen. They use actual memory-backed private receipts,
+framed uncertain original Ends and positive valid-scope/consent controls, not
+invalid metadata prerequisites. They do not qualify native vault or GUI behavior.
+The explicitly selected
+`native_protected_original_end_reopens_and_settles_exact_generation` composition
+case passes1/0/0 at immutable `c803e619` with its fixed owned helpers and
+`testing` feature. The first nonnumeric synthetic-account failure remains
+preserved separately: it reached only protected receipt setup, not SSH/Create.
+The corrected-source execution reaches real control-role SSH proof, runtime,
+native adapter, helper and independent PTY. A fresh protected-memory-store
+reopen/handshake retains the original Create ticket/epoch without a duplicate
+PTY. Another reopen retains the uncertain End ID/exact target; wrong-generation
+Stale and missing-lease Unknown retain originals. Only exact Ended after
+authoritative native absence and restored exact lease prunes its creation/End
+pair, leaving the wrong-generation original. End has no issuance-epoch field.
+This does not qualify terminal-role frontend adoption, mobile GUI/lifecycle,
+live NativeVault, changed host issuance epoch or physical-device behavior.
+
+Native acceptance must additionally kill/reopen the owned app before a send,
+after a lost reply and between private-marker/native-payload acknowledgements;
+explicitly reopen with fresh current account, protected key, native privacy
+epoch, capabilities and fresh launch/End consent. Observe the identical original
+on the host, no duplicate generation, no automatic network/sign-in/retry and no
+input replay. Exercise quota/jetsam, locked/revoked vault, missing pending payload,
+corrupt final/index, owner/account/endpoint change and stale selected original.
+An unmatched pending marker remains uncertainty, never empty state or a new ID.
+Check native backup/privacy policy: only opaque references/commit marker belong
+in the private index; no tickets/credentials belong in profiles/workspaces.
+Pre-checkpoint-version lost originals cannot be recovered retroactively.
+
+Creation and End each remain bounded to sixteen protected originals and 64KiB
+total; only exact terminal Ended retires originals, never native StopRequested.
+Android's current `AndroidSecretStore` lacks `create_reserved`, so the trait's
+Unsupported remains an explicit native-vault prerequisite (also for owner-key
+preparation). The minimum adapter work is exact reserved-reference creation via
+the existing non-overwriting native write under the existing receipt lease; no
+file fallback is permitted. Android native-library linkage is not that proof.
+Mobile sharing, physical restart/End/detach/lifecycle, live cloud/device/vault
+evidence and usability remain open. Desktop local Settings/Remote Access and local sharing are a
+separately owned HOST-03–05 slice, not implemented or claimed by this increment.
+
 ## ADR 0084 client-local recipe foundation (HOST-01/HOST-02)
 
 Issue [#681](https://github.com/fes/fesTerm/issues/681) has automated public
@@ -80,8 +198,9 @@ Signed Windows/macOS/Linux checks remain **manual/native and usability**:
 keyboard/focus traversal and screen-reader labels at narrow sizes, clipboard
 export, explicit error recovery and network/service/vault instrumentation while
 opening, editing, saving, copying, importing and deleting. Confirm legacy account
-selection, generation pins and manual-migration UI remain unchanged. The panel
-must not display an enabled Connect/Create/Review Trust action.
+selection, generation pins and manual-migration UI remain unchanged. Metadata editing/import must not itself enable execution or trust. The distinct
+protected foreground execution path is described in the current HOST procedure
+below; it does not change offline metadata-command behavior.
 
 Before future stage 6 execution is exposed, qualify explicit first-execution
 review/reconfirmation of imported shell/argv/cwd, lifetime and resume/create
@@ -3956,10 +4075,30 @@ development wrapper, not installed or production services:
    Busy and unknown targets must not become empty inventory or creation authority.
 5. Attach an allowed existing generation and verify the installed frontend receives
    recovery before activation/input. Respect exact-generation and logical resume
-   restrictions; AlwaysCreate remains unavailable. Exercise account credential
+   restrictions; it must not substitute existing attachment for AlwaysCreate.
+   Exercise account credential
    replacement, editor/recipe replacement, cancellation, 15-second vault and
    45-second resolver deadlines, and late completion while admission stays charged.
    Detach requires its correlated receipt; loss never replays input.
+6. Separately approve the exact displayed launch arguments, working directory
+   and lifetime. Verify visible create/ensure, creation and temporary permissions
+   against fresh host policy. Create freezes a fresh logical ID; Ensure preserves
+   the recipe logical ID and lets the host decide authorized resume/creation.
+   With no creation permission, Ensure may resume an authorized existing
+   generation but must refuse absence; explicit Create is unavailable.
+   Busy, Unknown, denied, offline, timeout, malformed correlation and revocation
+   must never be shown as absence or start a replacement action.
+7. Interrupt a Create/Ensure reply and explicitly retry. Compare the displayed
+   original logical ID, reserved attachment and issued operation/epoch; a fresh
+   handshake epoch must not replace the original. Close/reopen review and
+   verify the in-process registry retains the action. Changed recipe/credential,
+   duplicate flight and sixteen-entry overflow refuse replacement. A confirmed
+   reply that was cancelled or failed frontend admission remains retained.
+   Successful presentation identifies the host-confirmed logical/generation
+   and Created/Resumed/Recreated state. Verify real independent frontend output
+   and no foreign-session bytes, input before adoption or replay after detach.
+   Process restart is not durable reconciliation and must not be reported as
+   recovery of this in-memory action.
 
 These are pending native/manual checks, not results from the headless recipe
 button, memory-vault/protected-file or framed-session fixtures.
@@ -4002,6 +4141,17 @@ the actual owned-daemon case was separately selected and passed (0 ignored).
 Compatibility CLI10, strict affected all-target Clippy, standalone native-services
 check, Python59/7skipped, packaging/fmt/trace311/diff and optional POSIX syntax pass.
 The broad optional/GUI suite and PowerShell runner execution were not performed.
+
+The explicit-creation increment adds automated typed refusal/lost-reply/
+fresh-epoch, incompatible-result, resume-only Ensure, cancellation/duplicate-flight,
+failed frontend admission and app-registry/consent tests. Its opt-in owned native
+fixture uses the actual bounded worker and production control/adoption functions
+over signed SSH with two real PTYs, same-operation retry/same-generation resume,
+stored frontend snapshot/output ingestion, positive expected-text and negative
+foreign-text checks, and exact-target correlated persistent detach. Both earlier
+collector/frontend fixtures remain. Exact counts and source/compiler boundaries
+are recorded in `milestone-progress.md`; none performs the native-vault,
+development-wrapper GUI, cloud, mobile/device or installed-manager procedure.
 
 Migration must preserve protected state/account binding and permit manual
 deferral. Setup/sharing consent cannot stop or restart a live legacy session;

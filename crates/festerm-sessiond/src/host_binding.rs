@@ -621,6 +621,38 @@ mod tests {
     }
 
     #[test]
+    fn imported_binding_native_end_never_observes_absence_or_admits_policy() {
+        for absent in [false, true] {
+            for lease in [false, true] {
+                let directory = storage::private_test_directory();
+                let (control, binding) = release_fixture(directory.path(), true, lease);
+                let target = Target {
+                    logical: binding.logical.clone(),
+                    generation: GenerationId::new(binding.identity.created_at_unix_ms).unwrap(),
+                };
+                if absent {
+                    let mut tx = control.transaction().unwrap();
+                    tx.state.sessions.get_mut(&binding.logical).unwrap().phase = Phase::Absent;
+                    tx.save().unwrap();
+                }
+                let journal = std::fs::read(control.root.join(STATE_FILE)).unwrap();
+                let lease_path = directory
+                    .path()
+                    .join(format!("host-daemon-{}.json", target.generation.get()));
+                let before_lease = std::fs::read(&lease_path).ok();
+                assert_eq!(
+                    control.end(&binding.principal, &target, |_| -> Result<(), ControlError> {
+                        panic!("an imported local shell cannot receive native End authority")
+                    }),
+                    Err(ControlError::Denied)
+                );
+                assert_eq!(std::fs::read(control.root.join(STATE_FILE)).unwrap(), journal);
+                assert_eq!(std::fs::read(&lease_path).ok(), before_lease);
+            }
+        }
+    }
+
+    #[test]
     fn imported_binding_release_after_exact_absence_revokes_present_or_missing_lease_and_is_idempotent(
     ) {
         for active in [false, true] {
