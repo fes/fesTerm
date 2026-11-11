@@ -1,6 +1,6 @@
 # Milestone Progress Narrative
 
-## Android reserved originals: implementing the approved native boundary
+## Android reserved originals: secure boundary, runtime acceptance pending
 
 The owner explicitly approved implementing the opaque native application-root
 capability and serialized native reserved-write boundary described in ADR0084.
@@ -23,11 +23,24 @@ pass, including five adapter/root cases. The initial Rust formatter/test-module
 scoping failures are preserved, then corrected source is validated; the first
 successful Rust run also retains a missing-LLVM debug-strip tool warning.
 
-These are host contracts, not Android JNI/Keystore/device evidence. Companion
-bridge/mobile/strict results and actual target compilation are separately
-recorded at source freeze; the extended Android native smoke remains a runtime
-prerequisite. Permanent incomplete anchors and the 16-original cap remain honest
-blockers. All previous `39218faf`/`c803e619` proofs remain unchanged.
+Frozen host qualification passes mobile 224, secret-store 17 and portable bridge
+96 tests (337 total, four existing mobile ignores), plus four Python tests
+including the 23 JVM cases. Affected all-target strict checks pass on Rust
+1.98.0/1.99.1, with a separate default-relay bridge-library strict check.
+Actual Android Rust mobile checking passes with the existing NDK 27 compiler.
+Production Java and extended smoke compile against the existing API 35 jar.
+The first Java compile caught a nonpublic directory flag; descriptor type checks
+with public no-follow/nonblocking flags replace it. Native directory parents
+are also synced for existing children so an earlier unsynced creation cannot
+undermine a later protected checkpoint.
+
+All first failures remain preserved, including default compiler lookup before
+configuring the already-installed NDK. These are host contracts and target
+compilation, not Android JNI/Keystore/device execution. The configured API 36
+jar/build-tools are missing; APK packaging and the extended native runtime smoke
+remain prerequisites, without SDK installation or platform changes. Permanent
+incomplete anchors and the 16-original cap remain honest blockers. All previous
+`39218faf`/`c803e619` proofs remain unchanged.
 
 ### Historical contract investigation
 

@@ -72,9 +72,12 @@ Host-only namespace regressions need an existing JDK (no Android SDK):
 python3 -m unittest scripts.tests.test_android_native_secrets -v
 ```
 
-These regressions are not Keystore/JNI/device acceptance. The extended native
-smoke and target compilation are separately required; incomplete receipt anchors
-and retained-original exhaustion are not repaired by this increment.
+These regressions are not Keystore/JNI/device acceptance. Bounded qualification
+also checks Android Rust with the existing NDK 27 and compiles production Java
+plus smoke against existing API 35. Configured API 36 APK packaging and actual
+native smoke remain required: API 36 `android.jar`/`aapt2` are absent, and no SDK
+was installed. Incomplete receipt anchors and retained-original exhaustion are
+not repaired by this increment.
 
 ## Accessibility
 

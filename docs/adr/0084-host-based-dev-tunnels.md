@@ -682,10 +682,24 @@ owner/foreign scope, create versus reopen, foreign-account refusal, base/backup/
 staging collisions, concurrent creation and failure/no-overwrite/no-implicit-
 empty checks are required. Host fixtures are not Android JNI, target compilation
 or device evidence, which must be recorded separately. The accepted decision was
-persisted before coding; the implementation has one host wrapper/23 production
-namespace JVM cases and 17 secret-store host units, including five new adapter/
-pinned-root cases. Qualification records companion bridge/mobile and strict
-results separately. Android target/JNI/Keystore/device acceptance is not inferred.
+persisted before coding. Frozen host qualification passes 337 Rust tests
+(mobile 224, secret-store 17, portable bridge 96), with four existing mobile
+ignores; five secret-store cases cover the new adapter/pinned root. Four Python
+tests pass, including the 23 production namespace/predicate JVM cases.
+Affected all-target strict checks pass on Rust 1.98.0 and 1.99.1; the default-relay
+bridge library also passes strict checking on 1.99.1.
+
+Actual `aarch64-linux-android` Rust mobile/secret-store checking passes using the
+already installed NDK 27 compiler; this is compilation, not a linked APK or
+execution. Production Java and the extended native smoke compile against the
+already installed Android API 35 jar. The first Java compile exposed the
+nonpublic `OsConstants.O_DIRECTORY`; corrected code uses public no-follow/
+nonblocking flags and validates the descriptor's directory type before use.
+Initial formatter/test-module, trace-registration, default compiler-lookup and
+Java compile failures remain preserved alongside corrected-source results.
+The configured API 36 jar/build-tools are absent, so configured APK packaging,
+JNI execution, native Keystore, device and physical restart acceptance remain
+unrun. No SDK installation or platform-setting change was made.
 Incomplete-anchor recovery, retained-original bounds, account/epoch fences and
 explicit reopen are unchanged.
 

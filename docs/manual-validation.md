@@ -182,17 +182,22 @@ these states into missing. Existing native AES-GCM/reference AAD is unchanged.
 one wrapper/23 actual JVM cases covering the production namespace, real host
 file publication/concurrent processes, owner/application metadata predicates,
 scope substitution, collisions and injected write/sync ambiguity. This is not
-Android `Os`, JNI, Keystore or device execution. Rust adapter/root and affected
-protected-original/mobile validation are recorded separately at qualification.
+Android `Os`, JNI, Keystore or device execution. Frozen Rust qualification passes
+337 tests (mobile 224, secret-store 17, portable bridge 96), with four existing
+mobile ignores. Four Python tests include those 23 JVM cases; affected
+all-target strict checks pass on Rust 1.98.0/1.99.1.
 Existing protected-record tests retain foreign-account/key/installation/
 principal refusal; the generic store gains no account bypass.
 
 **Native prerequisite:** run the extended Android `PlatformSmoke` on an owned
 emulator/device: validate native root owner/location, encrypted create/read/
 update/no-replace/tamper/delete, and preserved backup/new/reserved collision
-artifacts with typed read refusal. Actual Android target compilation and this
-runtime evidence remain separately required; host tests alone cannot establish
-them. Locked native storage remains unavailable, never an empty store.
+artifacts with typed read refusal. Android Rust mobile checking passes with the
+existing NDK 27, and production Java plus smoke compile against existing API 35.
+Those are compilation only: configured API 36 APK/dex/linking and native runtime
+evidence remain required. API 36 `android.jar`/`aapt2` are absent in the qualified
+environment; none were installed. Locked native storage remains unavailable,
+never an empty store.
 No incomplete-anchor repair, retained-original cap change or automatic
 retirement is included: existing permanently incomplete anchors and the
 16-original bound still block the affected flow rather than lose originals.
