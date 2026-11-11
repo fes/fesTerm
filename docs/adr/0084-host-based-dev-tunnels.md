@@ -760,6 +760,19 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+### Composed Desktop lifetime qualification
+
+The normal Desktop/mobile/NativeEnd/adoption/frame/fixture composition retains
+both native lifetime domains and both takeover orderings. At `9bc9ef4c`, fresh
+owned sessiond/PTY-child images execute the original active-writer refusal
+before any pending ticket, the unchanged pending-ticket case, and authenticated
+original exact-generation End: **3/0/0, 8.11s**. Private/imported End denial is
+also exercised before admission for Running/Absent with present/missing lease,
+without manufacturing authority. The [milestone record](../milestone-progress.md#composing-the-adr-0084-desktop-vertical-slice)
+separates each actual harness/profile count and inherited proof. No Windows,
+native-vault/provider/device/installed-service or GUI acceptance follows from
+these controlled macOS executions; `76b9` ordinary-private 6.00s stays inherited.
+
 ### Private-session current-host sharing caller
 
 The composed native-End boundary remains host-created only. An imported/private
@@ -792,7 +805,9 @@ The 6.00-second native daemon execution remains attributed to `76b9b3af`,
 not rerun or promoted by this UI-only correction.
 The existing frontend/independent PTY, metadata-only profile boundary and separate
 ADR 0085 default-No legacy-stop consent are unchanged. The retained migration
-macOS 13/1 failure remains unresolved/unknown, not fixed by these caller paths.
+macOS 13/1 failure stays attributed to its older source, not fixed by these
+caller paths. The subsequent composed adoption slice executes both selected
+takeover orderings above; it does not rerun or replace that entire native suite.
 ### Protected mobile original-action checkpoints
 
 The app admission validation additionally covers atomic foreign-account batch

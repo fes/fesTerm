@@ -1877,6 +1877,12 @@ HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after
 recovery adoption/writer activation; abandoned candidates are not Attached.
 These remain local automated evidence, not endpoint or native-platform acceptance.
+The composed `9bc9ef4c` additionally executes distinct before-pending and
+after-pending non-takeover refusal orderings plus authenticated original End
+against fresh owned helper/PTY images: 3/0/0, 8.11s. Neither takeover oracle
+replaces the other; private/imported bindings still cannot acquire native End
+authority. Full [per-harness attribution](milestone-progress.md#composing-the-adr-0084-desktop-vertical-slice)
+does not promote inherited ordinary-private 6.00s or native-vault/GUI acceptance.
 The runtime/session union also passes the actual two-daemon signed-SSH
 input-isolation, independent attached inventory and persistent-detach route;
 additional actual signed-SSH cases pass for original-issued creation/end,

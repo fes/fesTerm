@@ -100,6 +100,10 @@ and persistent detach. The paired runtime supports protected Ensure/Create/end
 with the original backend-issued operation; standalone control stays inventory-only.
 Independent consumer/native qualification remains pending.
 Explicit headless run consumes this source; no native Ready/acceptance is claimed.
+The normally composed Desktop/mobile/adoption slice now compiles and passes
+focused host tests plus three controlled native takeover/End cases; see the
+[attributed results](docs/milestone-progress.md#composing-the-adr-0084-desktop-vertical-slice).
+This is not installed-host, actual-vault/provider/device or GUI acceptance.
 
 ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
 GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition

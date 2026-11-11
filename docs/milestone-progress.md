@@ -11,9 +11,9 @@ old-writer-before-adoption, takeover, no-input-replay and correlated detach
 oracles. Its second non-takeover request runs once, before any pending takeover;
 the lease must have no pending ticket and both lease/journal remain unchanged
 after Busy. Only then may takeover begin. The b7 case is unchanged. No retry,
-sleep or deadline is added, and neither case has been executed on this
-integrated child while parent Cargo allocation is held. The parent's separate
-`18d218dc` 14-case result is not integrated-source qualification.
+sleep or deadline is added. Both orderings subsequently execute successfully
+on the composed source, as recorded below. The parent's separate `18d218dc`
+14-case result remains attributed to that source, not this integration.
 
 A new worktree based on published `dc43841f` normally merges the exact qualified
 foreground mobile/native-End `39218faf`, persistent adoption `18d218dc`,
@@ -39,14 +39,62 @@ fixture clock without changing settings-read/terminal assertions or production
 budgets. The binary change only owns fixture roots and Windows file-handle
 ordering; it is not Windows runtime acceptance.
 
-At this source-composition checkpoint, host Cargo is explicitly held by the
-parent for other owned work. **No combined compile, Rust test, Clippy, native
-daemon, VM or GUI result has been produced here.** Source formatting,
-311-edge traceability and diff checks do not substitute for those gates. Earlier
-`76b9` native 6.00s, `39218faf` protected-original SSH/helper/PTY and `18d218dc`
-adoption evidence remain inherited, not new integrated executions. Required
-Windows CI, actual-vault/provider/device/installed-service/GUI acceptance and
-the parent's independent source gates remain separate. ADR 0084 is not done.
+The source-only `1e2e535e` checkpoint is preserved. After explicit host Cargo
+allocation, Rust 1.99.1 compiles the composition in a new private target with one
+job, no debug information/incremental compilation, and at least 25% free-memory
+admission before each command. Actual focused results at `a60f7257` are:
+
+| Executed harness/profile | Passed / failed / ignored | Selection |
+| --- | --- | --- |
+| Desktop with local-host-settings | 56 / 0 / 0 | Desktop recovery/Setup/private sharing 41, selected-host browser 10, frame 5; 2046 filtered |
+| Sessiond library lifetime/binding guards | 33 / 0 / 0 | Binding 20 (including the new private-End refusal), End confirmation 3, adoption 9, nonpersistable Ended 1; 109 filtered |
+| Mobile host-clients | 224 / 0 / 4 | Four existing ignored cases; none filtered |
+| Portable host-routing bridge | 96 / 0 / 0 | Protected-original 10 are a subset, not additional executions |
+| Tunnel client | 35 / 0 / 0 | Full library harness |
+| Native-feature bridge control/terminal/runtime selection | 26 / 0 / 20 | Ignored native registrations are not executions; 137 filtered |
+| Sessiond actual-daemon host-control integration | 27 / 0 / 0 | 135.70s, including revoked-live-generation exact local end/reconsent |
+
+The initial protocol `--lib` invocation selects zero tests and is retained as
+non-evidence. The corrected `--test contracts` selection actually passes 13/0/0
+at `9bc9ef4c`. That normal merge adds qualified `c41e3a6c` Windows-only creator
+handle ordering and preserves both complete stories. Main generation fixtures
+pass 3/0/0 at `a60f7257`, then 3/0/0 in 0.65s after that merge; neither is Windows
+execution.
+
+Fresh helper and PTY-child Cargo artifacts are copied into an owned execution
+directory before the bounded native selection. At `9bc9ef4c`, the distinct
+**before-pending-ticket** active-writer refusal, unchanged b7
+**after-pending-ticket** takeover case and authenticated original exact-generation
+End execute together: **3/0/0, 8.11s**, 179 filtered. Their current helper
+paths/digests, source heads, commands, raw logs, numeric exits and memory samples
+are retained in `.integration-evidence/`; no older helper image is consumed.
+No compiler/test failure or unchanged retry is needed for these selections.
+Optional `rust-objcopy` stripping reports its existing missing LLVM dylib warning;
+the build succeeds without toolchain or OS repair.
+
+Five affected strict Clippy invocations subsequently pass with `-D warnings`:
+the composed Desktop/sessiond/bridge/protocol/client all-target profile,
+client-safe experimental Desktop all targets, mobile host-clients all targets,
+portable host-routing bridge/client all targets, and client/owner-auth-only bridge
+library. Dependency/build-tool warnings are retained; this is not a globally
+warning-free toolchain claim. The wholly featureless Desktop baseline is not
+executed or newly qualified.
+
+The first final PR-base trace attempt fails on this lane's two nonexistent
+footer IDs (`HOST-07`, `HOST-15`), not on code or a test. Its raw exit 1 and
+`a19b9486`/`9bc9ef4c` history are preserved. A new candidate branch reconstructs
+the same normal `a60f7257` plus exact `c41e3a6c` merge as `5099bf04`, with a
+byte-identical tree and canonical HOST-03/HOST-06 footer. No frozen commit is
+amended, no source/oracle is changed and no checker is weakened. Final
+traceability uses the actual published Desktop PR base `6614c990`, not merely
+the source-composition starting head `dc43841f`.
+
+Earlier `76b9` ordinary-private native 6.00s is not rerun or promoted. The current
+macOS revoked-generation pass does not resolve the separately reported Ubuntu
+Busy failure. Windows deletion behavior and current required CI,
+actual-vault/provider/device/installed-service/GUI acceptance and the parent's
+fresh full-source gates remain separate. Source/fixture integration is not
+product acceptance; ADR 0084 is not done.
 
 ## Separating reviewed sharing recovery from retained status
 

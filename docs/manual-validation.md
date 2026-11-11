@@ -9,16 +9,22 @@ record. Only an exact host-created generation may receive the freshly
 authorized, lease-fenced Ended observation. During eventual installed/native
 acceptance, exercise both domains alongside protected original-operation
 reopen, correlated detach, replacement-generation refusal and occupied
-persistent-writer adoption. The source composition itself has no new native,
-actual-vault/provider/device or GUI acceptance evidence.
+persistent-writer adoption. The composition now has bounded controlled native
+evidence, not actual-vault/provider/device or GUI acceptance.
 
 Persistent takeover has two distinct controlled native oracles: an active
 writer must refuse a second non-takeover request before any pending takeover
 exists; an already-pending takeover must independently retain its ticket and
 old writer through a refused competing request. Both then require adoption
-before writer replacement and prohibit input replay. The integrated source
-has not executed these cases; a passing pending-ticket case alone does not
-qualify the original-order boundary.
+before writer replacement and prohibit input replay. Both execute on integrated
+`9bc9ef4c`, alongside authenticated original exact-generation End: **3/0/0,
+8.11s** with freshly built owned sessiond/PTY-child execution images. The first
+case explicitly proves the original ordering; the second retains b7 coverage
+and does not substitute for it. Current macOS host-control integration additionally
+passes **27/0/0, 135.70s**, including the revoked-generation case reported failing
+on Ubuntu; this is not Linux proof. Existing `76b9` ordinary-private native
+6.00s remains separately attributed. Windows current CI and installed/native
+platform acceptance remain required.
 
 ## Desktop pane qualification
 
