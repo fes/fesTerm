@@ -16568,8 +16568,13 @@ mod tests {
                         format!("\x1b[Hsession-{index}-{frame:02}\x1b[K\x1b[6n").into_bytes(),
                     ));
                 }
+                let frozen = Instant::now();
                 let mut output = context.run_ui(Default::default(), |ui| {
-                    app.pump_all_sessions(ui.ctx());
+                    app.pump_all_sessions_with_clock(
+                        ui.ctx(),
+                        crate::session_controller::GLOBAL_INGEST_TIME_BUDGET,
+                        || frozen,
+                    );
                     app.handle_shortcuts(ui.ctx());
                     app.update_native_menu();
                     let (chips, active_chip) = app.chip_view_models();
