@@ -7278,7 +7278,7 @@ mod tests {
         assert!(harness
             .query_by_label("development — Local · cargo")
             .is_some());
-        let launch_cards = 6 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
+        let launch_cards = 5 + usize::from(cfg!(feature = "experimental-dev-tunnels"));
         for _ in 0..launch_cards {
             harness.key_press(egui::Key::ArrowDown);
             harness.run();
