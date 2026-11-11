@@ -189,17 +189,39 @@ owner and duration were not captured: attachment authority/cleanup Busy logs
 are not identification of the `observe_local` producer, and no production
 lock leak is established.
 
-The source-only correction waits only for local observational Busy using the
+The initial source-only `da7f23c2` correction waits only for local observational Busy using the
 existing eight-second/10ms fixture prior art. It retains the exact target and
 observation fields, requires Running at this live-shell boundary, returns all
 other errors immediately and leaves exhaustion as Err(Busy). Three new
-paused-clock tests are **unrun**. Every original revoked/local-resume/no-input,
+paused-clock tests were **unrun at that source freeze**. Every original revoked/local-resume/no-input,
 generation, independent-process and cleanup oracle remains strict; no creation,
-admission or End retry is introduced. Qualification awaits source gates and a
+admission or End retry is introduced. Qualification initially awaited source gates and a
 fresh matching-helper execution grant. The owned failed-process SIGTERM after
 evidence copies is cleanup, not ExactEnd or authoritative absence. The fixture's
 MemorySecretStore/protected owner policy/private native journal do not qualify
 file-vault, native OS vault, provider, installed-service or GUI acceptance.
+
+**Subsequent exact-`da7f23c2` local macOS execution:** the three paused-clock
+`local_observation_wait_` tests pass **3/0/0, 0.01s**, including exact eight-second
+Busy exhaustion, unchanged successful fields and immediate refusal of every
+non-Busy error. The changed ignored live-policy case passes **1/0/0, 9.16s**,
+once with repository host-routing/relay features and intended serial selection;
+all key/host/session revocation, exact Running target, local adoption/no-input,
+independent-daemon and cleanup oracles execute. This is not a full19 rerun:
+the eighteen earlier passes and original Busy failure remain **2b-only**.
+
+Sessiond/PTY images are exclusive byte copies of the immutable **2b-compiled**
+pair (`bf05c05b`/`4994e4fc`), not rebuilt at da7. All production inputs,
+manifests/locks and compiler hashes are equivalent; the changed bridge test
+binary is compiled from da7. Matching host-routing/relay all-target strict,
+fmt, actual-full-base6614 trace311 and diff checks pass on pre-existing
+Rust1.99.1. Seven command triples retain identical2,063-source before/after maps
+and helper/tool hashes. The timeout is cooperative, not a hard interruption
+of blocking work. Sampled PID/listener closure and native fixture lifecycle
+checks are not an exhaustive trace of every short-lived process/port.
+Full required CI/workspace/release/1.98, Linux/Windows/cloud/mobile/GUI and
+native OS/file-vault acceptance remain open. The following docs-only child
+requires parent continuity gates/final proof before any promotion.
 
 In an explicitly owned iOS/Android native window, still verify:
 

@@ -15205,3 +15205,48 @@ gates and execution authorization. Parent proof preserves88 artifacts,
 locks; this change neither reexecutes nor edits those helpers/failed fixture.
 Canonical injected MemorySecretStore/protected owner policy/private journals
 are not a file-vault selector, native OS vault, installed/provider or GUI claim.
+
+## Executing the exact local-observation correction without rewriting failure history
+
+After the parent's three exact-source family gates, the owned integration
+worktree normally fast-forwards from `2b151c0c` through design `a7405a77` to
+`da7f23c2`. The executed2b branch, its88 sealed artifacts/helpers/failed fixture,
+the17/71/7 prior seals,46 source entries and all earlier hashes remain intact.
+No rebase, merge commit, production change or moving peer source is consumed.
+
+Exact da7 executes the three new `local_observation_wait_` contracts:
+**3/0/0, 0.01s**, including unchanged successful observation fields, all twelve
+non-Busy errors without retry and exact eight-second paused-clock exhaustion
+remaining Busy. The changed ignored live-policy native case executes once:
+**1/0/0, 9.16s**, covering every key/host/session branch and retained exact
+Running/revocation/local-adoption/no-input/independent-daemon/cleanup oracle.
+The bound is a cooperative Tokio timeout, not an interruption guarantee for
+synchronous blocking work.
+
+The selected sessiond/PTY pair remains **compiled at2b**, hashes
+`bf05c05b`/`4994e4fc`. Exclusive new byte copies have distinct inodes and
+single links;2,057 unchanged production/other compiler inputs and original
+pre-existing stable1.99.1 compiler hashes establish permitted reuse. Neither
+a new da7 helper build nor substitution from mutable target helpers is claimed.
+The bridge test image itself is compiled from da7; its older mutable output
+path cannot reattribute the recorded2b image hash or eighteen old passes.
+
+Matching host-routing/relay all-target Clippy strict, fmt, actual-full-base
+`6614c990` trace311 and diff pass. Seven raw/numeric-exit/receipt triples retain
+equal2,063-source before/after maps and tool/helper hashes. Minimum sampled
+free memory is54%;17 observed PIDs close and both independent target locks are
+free before the primary slot is released. Five-second sampling can miss
+short-lived native/PTY processes and SSH listeners; passing fixture lifecycle
+checks and closed recorded resources are not an exhaustive process/port trace.
+All716 prior unique physical artifact paths remain unchanged.
+
+This does **not** replace the original2b native19 **18/1/0, 203.44s**, its typed
+observe_local Busy or post-copy owned-process abort, nor reexecute HC28 or all
+nineteen cases at da7. No production leak/common-cause fix, workspace/release/
+required three-OS CI,1.98, native OS/file-vault/provider/GUI/mobile/TEE acceptance
+is claimed. Canonical fixture policy/MemorySecretStore/private journals remain
+the authority boundary. All old warnings and operational incidents are kept.
+Only after execution/resources close does a normal docs-only child record this
+qualified evidence; parent bounded continuity gates/final proof precede any
+promotion. No push, PR/main merge, bypass, installation, SDK/ADB/guest/vault/
+provider/VM/OS change accompanies this delivery.

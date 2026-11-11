@@ -2057,3 +2057,16 @@ eight-second persistent-Busy exhaustion. Their source is not executed evidence.
 The original live-policy native case retains every later revocation, local
 adoption/input, generation and cleanup assertion, with explicit exact-target
 Running checks added at the observation boundary.
+
+Subsequent controlled macOS execution at exact `da7f23c2` passes all three
+paused-clock contracts (**3/0/0, 0.01s**) and the changed live-policy native
+case once (**1/0/0, 9.16s**), including all key/host/session branches. The
+eight-second exhaustion assertion is executed; its timeout remains cooperative,
+not a hard interruption of a blocking observation. Host-routing/relay-enabled
+all-target strict, fmt, actual-full-base6614 trace311 and diff pass.
+Helpers are explicitly source2b-compiled immutable `bf05c05b`/`4994e4fc` images
+reused through exclusive byte copies with equivalent production inputs and
+compiler hashes, not freshly compiled at da7. The eighteen native passes and
+original Busy failure remain2b-only; no full19 or cross-platform/vault/GUI
+acceptance is inferred. Partial classification and required CI/parent
+docs-continuity gates remain unchanged.
