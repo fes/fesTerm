@@ -639,6 +639,25 @@ unknown, cancellation and lost replies retain originals. Pre-checkpoint-version
 actions lost before capture cannot be reconstructed. Native-vault/physical
 cold-start acceptance and current platform CI remain independent gates.
 
+### Android protected reservation prerequisite
+
+Android reserved-reference parity remains a current client-delivery blocker,
+not an implemented extension of this checkpoint boundary. The existing native
+facade supplies a canonical application path, but the portable receipt guard
+requires every ancestor to be root/current-UID-owned and not group/other
+writable; it has no native-created opaque application-root anchor for
+system-owned Android ancestors. Accepting a caller path, skipping the walk or
+globally trusting another UID is not authorized. The minimum decision is an
+owner/application-bound pinned `NativeAppPrivateRoot` through the existing
+secret-store facade and a narrow receipt-index entry point using that anchor,
+with no bridge-to-JNI dependency or public unchecked constructor.
+Additionally, native create-new must treat AtomicFile backup/staging remnants
+as existing/uncertain, not absence: current Java insert checks the base file
+only while read accepts `.bak`. No reservation override is added before these
+contracts and deterministic owner/scope/collision/failure tests exist.
+This does not change incomplete-anchor recovery, retained-original bounds,
+account fencing or the requirement for actual Android target/runtime evidence.
+
 ### Exact-generation native End confirmation
 
 The combined protected-client/runtime case is separately executed from the

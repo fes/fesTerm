@@ -1,5 +1,30 @@
 # Milestone Progress Narrative
 
+## Android reserved originals: identifying the exact missing native-root contract
+
+A clean normal child of qualified `39218faf` traces the Android reservation
+blocker without changing392/c803 sources or evidence. The missing
+`AndroidSecretStore::create_reserved` override is not safely repaired by simply
+delegating to Java insert: read recognizes an AtomicFile `.bak` while insert
+checks only the base name, so a backup-only collision can overwrite recoverable
+data. Separately, Android supplies `getFilesDir()/festerm` as a canonical string;
+receipt storage then validates every ancestor as root/current UID with no
+group/other writes. An Android system-owned ancestor cannot pass that policy,
+and no existing typed native application-root anchor bridges that contract.
+This is source evidence, not an observed device filesystem failure.
+
+The bounded result is a concrete contract decision, not an unsafe partial
+adapter: an opaque native-created owner/application-bound pinned private root
+through the existing secret-store facade, used by a narrow receipt-index
+entry point without a bridge/JNI dependency; plus exact create-new semantics
+that preserve any base/backup/uncertain staging state. Existing protected
+OwnerBinding equality continues to reject foreign host/account/installation/
+principal/fingerprint records. Root substitution, create-versus-reopen,
+foreign-account, collision and native-write-failure tests are required before
+qualifying parity. No parser, native owner guard, payload encryption, incomplete
+anchor or retention bound is changed. Host Cargo remains held: no target clone,
+Cargo, SDK, device, provider or OS-configuration operation was performed.
+
 ## Executing protected originals through exact native End
 
 The normal composition of qualified mobile `8f0b7f06` and immutable native End
