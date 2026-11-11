@@ -1,5 +1,13 @@
 # Milestone Progress Narrative
 
+## Repairing desktop profile-host request decoding
+
+Saving an exposed profile could start its detached session but stop before
+provisioning a tunnel: the tagged helper request could not decode the session
+generation. The request now preserves the existing numeric format and protected
+identity checks. Regression tests exercise the helper boundary and reject
+malformed generations; live-service qualification remains DT-08.
+
 ## Enabling desktop hosting without disturbing legacy sessions
 
 Older Windows installations could not enable profile hosting because shared

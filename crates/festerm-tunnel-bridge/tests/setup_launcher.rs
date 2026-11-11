@@ -3,7 +3,7 @@
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Output, Stdio},
     sync::Mutex,
     time::Duration,
@@ -131,6 +131,90 @@ async fn setup_help_distinguishes_managed_service_from_foreground_mode() {
         "MCP enrollment or JavaScript",
     ] {
         assert!(help.contains(contract), "missing help contract: {contract}");
+    }
+}
+
+#[tokio::test]
+async fn profile_host_request_decodes_generation_and_refuses_malformed_input() {
+    use festerm_tunnel_bridge::{
+        profile_hosting::{
+            BindExistingRequest, ManagementOperation, ManagementReply, ManagementRequest, Target,
+        },
+        setup_storage,
+    };
+
+    let root = std::env::current_dir()
+        .unwrap()
+        .join(format!(".profile-host-request-{}", uuid::Uuid::new_v4()));
+    setup_storage::private_directory(&root, true).unwrap();
+    let fixture = Fixture { root };
+    let namespace = fixture.root.join("profile-hosts");
+    setup_storage::private_directory(&namespace, true).unwrap();
+    let requests = namespace.join("requests");
+    let directory = setup_storage::private_directory(&requests, true).unwrap();
+    let path = requests.join("request.json");
+    let target = Target {
+        runtime_root: fixture.root.join("sessiond"),
+        name: "fixture".into(),
+        pid: 42,
+        generation: 1_700_000_000_000,
+        endpoint: "fixture-endpoint".into(),
+    };
+    let request = ManagementRequest {
+        version: 1,
+        operation: ManagementOperation::BindExisting(Box::new(BindExistingRequest {
+            installation: uuid::Uuid::new_v4().to_string(),
+            consent: uuid::Uuid::new_v4().to_string(),
+            cli: fixture.root.join("unused-devtunnel"),
+            target,
+            spawn_fingerprint: "v1:fixture".into(),
+            description: "Fixture profile".into(),
+            upgrade: false,
+        })),
+    };
+    let request = serde_json::to_value(request).unwrap();
+
+    for (generation, valid) in [
+        (serde_json::json!(1_700_000_000_000u64), true),
+        (serde_json::json!(-1), false),
+        (serde_json::json!(1.5), false),
+    ] {
+        let mut request = request.clone();
+        request["operation"]["target"]["generation"] = generation;
+        setup_storage::replace_private(
+            &directory,
+            Path::new("request.json"),
+            &serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+        let result = output(
+            Command::new(env!("CARGO_BIN_EXE_festerm-tunnel-setup"))
+                .arg("--profile-host")
+                .arg("--request-json")
+                .arg(&path)
+                .env(
+                    "FESTERM_SESSIOND_RUNTIME_ROOT",
+                    fixture.root.join("sessiond"),
+                )
+                .stdin(Stdio::null())
+                .kill_on_drop(true),
+        )
+        .await;
+        if valid {
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let reply: ManagementReply = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(reply.version, 1);
+            assert!(reply.hosts.is_empty());
+            assert!(reply.error.is_some());
+        } else {
+            assert!(!result.status.success());
+            assert!(String::from_utf8_lossy(&result.stderr).contains("profile_host.request_decode"));
+        }
+        assert!(!namespace.join("installations").exists());
     }
 }
 

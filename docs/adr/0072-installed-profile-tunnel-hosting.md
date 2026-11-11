@@ -145,6 +145,9 @@ client reconnection still require separate qualification.
   repairs only an already pin-verified handle. The detached native fixture
   selects a directory accepted by production private-storage policy rather
   than assuming Windows runner checkout ancestors are trusted.
+  `bind_existing_management_request_round_trips_generation` and
+  `profile_host_request_decodes_generation_and_refuses_malformed_input` cover
+  the tagged app-to-helper request and rejection of malformed generations.
 - **Native/manual evidence required:** DT-08 signed desktop lifecycle,
   GitHub browser sign-in, live helper updates and physical-client reconnect;
   deterministic tests do not promote acceptance.
