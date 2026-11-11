@@ -1315,7 +1315,6 @@ pub(crate) fn show_profiles(
                 ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::new_sftp()))
             }
             NewProfileKind::Serial => ProfilesScreenMode::EditSerial(SerialProfileDraft::default()),
-            NewProfileKind::PowerShell => ProfilesScreenMode::EditPowerShell(Box::default()),
             NewProfileKind::SshFromDraft(draft) => {
                 ProfilesScreenMode::EditSsh(Box::new(SshProfileDraft::from_seed(draft)))
             }
@@ -3969,62 +3968,54 @@ mod tests {
             tab_id: TabId,
             configuration: Configuration,
             edit: Option<String>,
-            create: Option<NewProfileKind>,
         }
 
-        for edit_existing in [false, true] {
-            let profile = Profile::powershell("saved", "win.example.test", 5986, "alice").unwrap();
-            let mut harness = Harness::builder()
-                .with_size(egui::vec2(560.0, 640.0))
-                .build_ui_state(
-                    |ui, state: &mut ReplacementState| {
-                        let _ = show_profiles(
-                            ui,
-                            state.tab_id,
-                            &state.configuration,
-                            state.edit.take(),
-                            state.create.take(),
-                            PersistenceProviderKind::FestermSessiond,
-                        );
-                    },
-                    ReplacementState {
-                        tab_id: AppState::for_test().active(),
-                        configuration: Configuration::new(vec![profile]).unwrap(),
-                        edit: None,
-                        create: Some(NewProfileKind::PowerShell),
-                    },
-                );
-            harness.run();
-            harness.get_by_label("Password to save").scroll_to_me();
-            harness.run();
-            harness.get_by_label("Password to save").focus();
-            harness.run();
-            harness
-                .get_by_label("Password to save")
-                .type_text("profile-sentinel");
-            harness.run();
-            let old_id = harness.ctx.memory(|memory| memory.focused()).unwrap();
-            assert!(egui::TextEdit::load_state(&harness.ctx, old_id).is_some());
+        let profile = Profile::powershell("saved", "win.example.test", 5986, "alice").unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(560.0, 640.0))
+            .build_ui_state(
+                |ui, state: &mut ReplacementState| {
+                    let _ = show_profiles(
+                        ui,
+                        state.tab_id,
+                        &state.configuration,
+                        state.edit.take(),
+                        None,
+                        PersistenceProviderKind::FestermSessiond,
+                    );
+                },
+                ReplacementState {
+                    tab_id: AppState::for_test().active(),
+                    configuration: Configuration::new(vec![profile]).unwrap(),
+                    edit: Some("saved".to_owned()),
+                },
+            );
+        harness.run();
+        harness.get_by_label("Password to save").scroll_to_me();
+        harness.run();
+        harness.get_by_label("Password to save").focus();
+        harness.run();
+        harness
+            .get_by_label("Password to save")
+            .type_text("profile-sentinel");
+        harness.run();
+        let old_id = harness.ctx.memory(|memory| memory.focused()).unwrap();
+        assert!(egui::TextEdit::load_state(&harness.ctx, old_id).is_some());
 
-            if edit_existing {
-                harness.state_mut().edit = Some("saved".to_owned());
-            } else {
-                harness.state_mut().create = Some(NewProfileKind::PowerShell);
-            }
-            harness.run();
-            assert!(egui::TextEdit::load_state(&harness.ctx, old_id).is_none());
-            let state = harness
-                .ctx
-                .data(|data| {
-                    data.get_temp::<ProfilesScreenState>(profiles_state_id(harness.state().tab_id))
-                })
-                .unwrap();
-            let ProfilesScreenMode::EditPowerShell(draft) = state.mode else {
-                panic!("PowerShell replacement editor should be open");
-            };
-            assert!(draft.password.is_empty());
-            assert_ne!(draft.password_widget_id, old_id);
-        }
+        harness.state_mut().edit = Some("saved".to_owned());
+        harness.run();
+        assert!(egui::TextEdit::load_state(&harness.ctx, old_id).is_none());
+        let state = harness
+            .ctx
+            .data(|data| {
+                data.get_temp::<ProfilesScreenState>(profiles_state_id(harness.state().tab_id))
+            })
+            .unwrap();
+        let ProfilesScreenMode::EditPowerShell(draft) = state.mode else {
+            panic!("PowerShell replacement editor should be open");
+        };
+        assert!(draft.password.is_empty());
+        assert_ne!(draft.password_widget_id, old_id);
     }
 
     #[test]

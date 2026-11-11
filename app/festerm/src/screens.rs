@@ -5415,7 +5415,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn unsupported_new_session_cards_are_hidden_at_narrow_and_wide_tab_sizes() {
         for size in [egui::vec2(360.0, 516.0), egui::vec2(752.0, 516.0)] {
             let mut harness = harness_with_configuration_size(Configuration::empty(), size);

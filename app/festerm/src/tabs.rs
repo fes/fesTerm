@@ -2486,7 +2486,6 @@ pub enum NewProfileKind {
     DevTunnel,
     /// The Dev Tunnel host-setup surface rather than a profile editor.
     HostSetup,
-    PowerShell,
     SshFromDraft(SshProfileDraftSeed),
 }
 
