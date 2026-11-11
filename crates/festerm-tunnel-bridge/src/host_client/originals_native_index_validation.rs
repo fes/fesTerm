@@ -99,7 +99,7 @@ pub(super) fn run_native() -> Result<(), Failure> {
 async fn capture_uncertain(
     store: &Arc<OriginalStore>,
     context: &ApprovedContext,
-    generation: u64,
+    generation: u128,
 ) -> Result<Arc<EndIntent>, Failure> {
     let target = Target {
         logical: LogicalSessionId::new(),
@@ -242,7 +242,11 @@ async fn exercise(
     drop(store);
     // Only the explicit review retains the OriginalStore at confirmation.
     let forgotten = current.forget(&context, &cancel)?;
-    require(forgotten.id() == &id && forgotten.outcome() == ForgetOutcome::Removed)?;
+    require(
+        forgotten.id() == &id
+            && forgotten.outcome() == ForgetOutcome::Removed
+            && forgotten.matches_context(&context),
+    )?;
     let (final_store, remaining) = reopen(&context)?;
     require(remaining.len() == 1)?;
     let RecoveredIntent::End(restored) = &remaining[0].intent else {

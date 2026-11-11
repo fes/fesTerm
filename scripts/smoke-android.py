@@ -16,7 +16,9 @@ spec.loader.exec_module(build)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--serial", required=True)
+    parser.add_argument("--serial")
+    parser.add_argument("--build-only", action="store_true",
+                        help="Compile/sign instrumentation without querying ADB or running any case")
     parser.add_argument("--sdk", default=os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk")))
     parser.add_argument("--recording-validation", action="store_true",
                         help="Exercise Rust-to-Java recording export in a validation APK")
@@ -27,11 +29,14 @@ def main():
     args = parser.parse_args()
     if sum((args.recording_validation, args.root_factory_validation, args.native_index_validation)) > 1:
         parser.error("Select one focused native validation case")
+    if not args.build_only and not args.serial:
+        parser.error("--serial is required unless --build-only is selected")
     sdk = Path(args.sdk)
     tools = sdk / "build-tools" / build.BUILD_TOOLS
     android_jar = sdk / "platforms" / f"android-{build.API}" / "android.jar"
     adb = ["adb", "-s", args.serial]
-    if build.run(*adb, "shell", "getprop", "ro.kernel.qemu", capture=True).strip() != "1":
+    if not args.build_only and build.run(
+            *adb, "shell", "getprop", "ro.kernel.qemu", capture=True).strip() != "1":
         parser.error("Native smoke mutates test app data; select an isolated emulator, not a personal device")
     output = build.ROOT / "target" / "android-smoke"
     output.mkdir(parents=True, exist_ok=True)
@@ -60,6 +65,9 @@ def main():
         build.run(tools / "apksigner", "sign", "--ks",
             build.ROOT / "target/android/development.keystore",
             "--ks-pass", "pass:android", "--out", apk, aligned)
+    if args.build_only:
+        print(apk)
+        return
     build.run(*adb, "install", "-r", apk)
     if args.recording_validation:
         build.run(*adb, "shell", "mkdir", "-p", "/sdcard/Documents/fes-recording-00dd")

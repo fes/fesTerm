@@ -71,6 +71,16 @@ class AndroidBuildTests(unittest.TestCase):
         symbols = "\n".join("0000 T " + name for name in android.NATIVE_VALIDATION_SYMBOLS)
         with patch.object(android, "run", return_value=symbols):
             android.check_native_validation_exports(Path("fixture.so"), {"ANDROID_NDK_HOME": "/owned/ndk"})
+        with patch.object(android, "target_environment") as target:
+            with self.assertRaisesRegex(ValueError, "release APKs"):
+                android.build(android.argparse.Namespace(recording_validation=True, release=True))
+            target.assert_not_called()
+
+    def test_native_instrumentation_build_only_never_queries_or_installs_adb(self):
+        source = (SCRIPT.parent / "smoke-android.py").read_text()
+        self.assertIn('if not args.build_only and build.run(', source)
+        self.assertIn('if args.build_only:\n        print(apk)\n        return\n'
+                      '    build.run(*adb, "install", "-r", apk)', source)
 
     def test_native_root_factory_hook_is_debug_only_and_scalar(self):
         root = SCRIPT.parents[1]

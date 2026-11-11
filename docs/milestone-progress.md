@@ -22,6 +22,14 @@ No native run, different-namespace proof, GUI consent, full HOST recovery,
 app-lock/cold-start, API36 runtime, physical-device or TEE claim is made here.
 All earlier factory/publication campaigns and their first failures remain
 closed and preserved; no namespace rotation or production repair is added.
+The first source qualification preserves a fixture-only `u64`/`u128` generation
+compile failure and an actual-parent trace failure: separately paragraphed
+Validation-Impact and Co-authored-by lines were not one Git trailer block.
+A normal child corrects the synthetic parameter to the protocol's `u128`,
+uses contiguous trailers, and adds a build-only instrumentation option so
+source qualification can produce both APKs without any ADB activity. No
+history or first outcome is rewritten; source gates/native execution remain
+pending.
 
 ## Executing d454 portable/cfg checks, then freezing the diagnostic joint source
 

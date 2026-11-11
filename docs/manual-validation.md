@@ -348,6 +348,8 @@ selects only the registered `NativeIndexForgetSmoke`, requiring a debug
 `build-android.py --offline --recording-validation` APK. The packager explicitly
 enables Rust debug assertions and verifies both root and index JNI exports;
 a debuggable APK alone is not evidence that Rust compiled the hooks.
+`smoke-android.py --build-only --sdk <existing-private-sdk>` compiles and signs
+the instrumentation APK without querying ADB, installing or running any case.
 After three source gates and separate coordinator guest GO, this fixed case
 must use real native receipt/key/payload storage, separate production root/index
 reopen with positively identified native same-namespace identity, an uncertain
