@@ -258,6 +258,15 @@ Instrumentation preserves each original call, admission callback and exact
 predicate; it must not retry or reinterpret Busy/Unknown as denial or absence.
 A call-stage label does not claim an unobserved internal lock/admission phase.
 
+Controlled exact-generation local observation must account for the backend's
+nonblocking journal/generation locks while an independent daemon polls or a
+runtime stream closes. An observation-only wait may repeat exactly Busy within
+the existing fixture's eight-second/10ms polling bound. It must return the
+unchanged authoritative observation, propagate every other error immediately,
+and leave exhausted Busy as an error, never absence or success. This is not
+permission to retry creation, admission or End, release production guards, or
+serialize the whole runtime test.
+
 ## Current Priorities
 
 The terminal core, local-session boundary, renderer, multi-tab GUI vertical

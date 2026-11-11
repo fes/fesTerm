@@ -2041,3 +2041,13 @@ the original deadline. Unexpected replies are printed, not accepted. Unix
 fixture roots also bind the maximum PID/HOST-generation socket pathname with
 exclusive private creation; this is not native Windows or installed-service
 acceptance. The distinct Linux `920715a5` CI reply remains unprinted/unknown.
+
+HOST-02/03 exact local observation remains nonblocking: global journal and
+generation-lease contention can return Busy while daemon polling or authenticated
+stream cleanup runs. Client stream closure does not join those actors. The
+bounded corrective fixture boundary waits only on observational Busy using the
+existing eight-second/10ms prior art; persistent Busy and every other error still
+fail. Only an authoritative exact-target Running observation can precede the
+unchanged revoked/local-resume/no-input and independent-daemon oracles. This
+source-only design does not infer the precise lock owner or production leak,
+and is not new native or vault acceptance.
