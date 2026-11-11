@@ -735,11 +735,55 @@ async fn checkpoint_end(
 
 #[tokio::test(flavor = "current_thread")]
 #[cfg(unix)]
+async fn mobile_host_recovery_preserves_original_after_same_account_metadata_changes() {
+    for changed in ["profile", "login", "credential", "all"] {
+        let (_root, mut app, account, store) = recovery_fixture();
+        let original = checkpoint_end(&app, store.clone(), account.clone()).await;
+        let mut current = account.clone();
+        if matches!(changed, "profile" | "all") {
+            current.id = "recreated-local-profile".into();
+        }
+        if matches!(changed, "login" | "all") {
+            current.login = "renamed-mobile".into();
+        }
+        if matches!(changed, "credential" | "all") {
+            current.credential = festerm_mobile_profiles::SecretRef::from_reference(
+                &festerm_secret_store::SecretReference::generate(),
+            );
+        }
+        assert_ne!(current, account);
+        let context = app.hosts.context().unwrap();
+        let (reopened, batch) = host_client::originals::testing::reopen(&store, &context).unwrap();
+        let protected_review = batch[0].review.clone();
+        app.hosts.launch = true;
+        app.hosts
+            .accept_recovered(reopened, batch, &current)
+            .unwrap();
+        assert_eq!(app.hosts.ends.len(), 1);
+        let restored = &app.hosts.ends[0];
+        assert_eq!(restored.account, current);
+        assert_eq!(restored.intent.operation(), original.operation());
+        assert_eq!(restored.intent.target(), original.target());
+        assert!(restored.intent.is_issued() && !restored.intent.is_resolved());
+        assert!(restored.intent.matches_context(&context));
+        assert!(app.hosts.original_store.is_some() && !app.hosts.launch);
+        assert!(app.hosts.originals.is_empty());
+        assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+        let (_, retained) = host_client::originals::testing::reopen(&store, &context).unwrap();
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].review, protected_review);
+        assert!(matches!(&retained[0].intent, RecoveredIntent::End(end)
+            if end.operation() == original.operation() && end.target() == original.target()));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
 async fn mobile_host_recovery_fence_foreign_account_batch_is_atomic() {
     let (_root, mut app, account, store) = recovery_fixture();
     let original = checkpoint_end(&app, store.clone(), account.clone()).await;
     let mut foreign = account.clone();
-    foreign.login = "another-credential".into();
+    foreign.account_id = 8;
     let foreign_original = checkpoint_end(&app, store.clone(), foreign).await;
     let context = app.hosts.context().unwrap();
     let (reopened, mut batch) = host_client::originals::testing::reopen(&store, &context).unwrap();
@@ -752,7 +796,7 @@ async fn mobile_host_recovery_fence_foreign_account_batch_is_atomic() {
         .unwrap_err();
     assert_eq!(
         error,
-        "The original account credential differs; original retained, no replacement."
+        "The original authenticated account differs; original retained, no replacement."
     );
     assert!(app.hosts.originals.is_empty() && app.hosts.ends.is_empty());
     assert!(app.hosts.original_store.is_none() && app.hosts.launch);

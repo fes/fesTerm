@@ -281,9 +281,11 @@ impl HostUi {
         let mut ends = Vec::new();
         for original in recovered {
             let review = OriginalReview::decode(&original.review)?;
-            if &review.account != account {
+            if review.account.provider != account.provider
+                || review.account.account_id != account.account_id
+            {
                 return Err(
-                    "The original account credential differs; original retained, no replacement."
+                    "The original authenticated account differs; original retained, no replacement."
                         .into(),
                 );
             }
