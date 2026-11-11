@@ -1,5 +1,32 @@
 # Milestone Progress Narrative
 
+## Composing protected originals with exact native End: execution still blocked
+
+The normal composition of qualified mobile `8f0b7f06` and immutable native End
+`06cb94c0` adds one explicit ignored SSH/helper/PTY protected-original case.
+It uses the same synthetic memory vault for the private receipt, owner-key
+proof and checkpoint, with only a testing-feature memory-fixture composition
+extension. No production authority constructor, protocol, storage backend or
+private-core guard is changed. The intended oracle retains the original
+Create ID/epoch across explicit protected reopen and a fresh real handshake,
+then retains an uncertain original End, refuses a wrong generation and missing
+owned lease as Unknown, and prunes only the exact settled creation/End pair.
+This tests bridge/runtime composition, not the mobile GUI or a live NativeVault.
+The host issuance epoch is not artificially rotated by this case; higher-epoch
+reopen remains the separately attributed framed checkpoint regression.
+
+The first actual execution is **0 pass/1 fail**, exit101 in1.03s, before any
+SSH stream or native Create: the shared runtime fixture uses
+`github:runtime-test`, but the protected receipt index accepts only numeric
+`github:<id>` names. Its exact binary, complete source diff,52 named source
+inputs, raw reply and freshly built helper hashes are preserved. The new
+fixture now uses a valid synthetic `github:7` account without changing the
+production name guard. The native case is not rerun: the corrected composition
+remains unqualified until an explicitly authorized new actual execution.
+Neither the independently qualified710 native positive nor the old mobile
+proofs are relabeled as this combined proof. No timeout/retry or oracle
+weakening is introduced.
+
 ## Isolating mobile protected-recovery admission fences
 
 A normal child of qualified `3beeb2c2` adds exactly three HostUi regressions:
@@ -137,6 +164,47 @@ existing reserved-reference API under its exact-reference lease, honoring
 private protected storage, no replacement and typed failures. No JNI/backend
 framework, file fallback or bypass is added here. Historical Android library
 builds are not Android runtime completion.
+
+## Confirming an original End without inventing absence authority
+
+The native host could durably request a stop but could never confirm Ended:
+its exact-action admission required Running, while an absent generation had no
+generation-bearing authorization state. Mobile originals therefore remained
+unresolved even after a successful stop. The native backend now admits a
+temporary, exact-generation End observation only from a protected owned record
+with a retained native identity and authoritative absence, under fresh current
+End permission. It does not infer success from a generic error, Lookup absence,
+a lost record, a never-created reservation or a replacement.
+
+The observation never becomes stored state or a new wire command. Lease
+validation/serialization refuse it; owner authorization and publication fences
+permit it only for the exact End request. StopRequested remains uncertain.
+The observation proves that generation is gone, not what caused its exit.
+Removed, retired or replaced records remain refusal/uncertainty; no retention
+cap is raised and no unresolved original is discarded.
+
+Actual macOS Rust1.99.1 qualification has four deterministic sessiond and
+thirteen owner-authorization passes plus one new separately selected actual
+SSH/native-helper case, 1/0/0 in 2.71s. That case first retains an uncertain
+original End, observes absence, then resolves the same original operation.
+The observation also retains and rechecks the native lease while admitting
+the fresh policy; a deterministic witness verifies that lock is held. An
+earlier implementation of the same native case passed in 1.74s before this
+additional lease fence; both executions retain their distinct changed-source
+attribution and are not two distinct cases.
+The existing stale-replacement case is unchanged, not rerun or relabelled.
+An initial focused unit exposed the additional End-only publication-fence
+validation needed by this design; its failed result is retained. A protocol
+library selector ran zero tests and is not contract evidence.
+
+Thirteen protocol integration contracts and the affected strict default and
+client-safe profiles pass; actual Rust1.98 compatibility is checked separately.
+Existing optional rust-objcopy
+libLLVM stripping warnings remain visible, with no toolchain/OS repair.
+These are real isolated helper/PTY/SSH effects with in-memory authority,
+not actual native-vault, installed-service, cloud, physical-mobile or full
+native-matrix acceptance. Independent source gates and required CI remain
+separate prerequisites.
 
 ## Keeping native HOST fixture failures observable without exposing their inputs
 

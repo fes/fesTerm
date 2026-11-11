@@ -1535,6 +1535,278 @@ async fn authenticated_runtime_terminal_role_uses_separate_bounded_framing() {
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_authenticated_runtime_end_confirms_original_exact_gone_generation() {
+    use festerm_host_protocol::Refusal;
+
+    let mut fixture = NativeRuntimeFixture::new();
+    let mut control = fixture.control().await;
+    let issued = control.issue_operation().unwrap();
+    let creation = fixture.native.creation();
+    let Response::Ensured { session, .. } =
+        issued_request(&mut control, &issued, Request::Create { creation }).await
+    else {
+        panic!("native creation must bind an exact generation");
+    };
+    let target = session.target;
+    let context = fixture.client_context();
+    let end = Arc::new(crate::host_client::EndIntent::new(&context, target.clone()));
+    let original = end.operation().clone();
+    assert!(matches!(
+        client_end_worker(&mut fixture, end.clone()).await,
+        crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
+        ))
+    ));
+    assert!(end.is_issued() && !end.is_resolved());
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let response = control
+                .request(
+                    OperationId::new(),
+                    Request::Lookup {
+                        logical: target.logical.clone(),
+                    },
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            if matches!(
+                response.body,
+                Response::Lookup {
+                    result: festerm_host_protocol::LookupResult::Absent { .. }
+                }
+            ) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        client_end_worker(&mut fixture, end.clone()).await,
+        crate::host_client::Outcome::Ended { target: ended } if ended == target
+    ));
+    assert_eq!(end.operation(), &original);
+    assert!(end.is_resolved());
+    assert!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .is_empty()
+    );
+    drop(control);
+    fixture.shutdown().await;
+}
+
+#[cfg(all(unix, feature = "testing"))]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_protected_original_end_reopens_and_settles_exact_generation() {
+    use crate::host_client::{
+        self,
+        originals::{testing, RecoveredIntent},
+        CreationIntent, CreationMode, EndIntent, Outcome,
+    };
+    use festerm_host_protocol::{GenerationId, LookupResult, Refusal, Target};
+
+    let mut fixture = NativeRuntimeFixture::new();
+    fixture.auth.approved.account = "github:7".into();
+    let (receipt, resolved, store) = testing::memory_fixture_with_store(
+        &fixture.auth.root,
+        fixture.client_context(),
+        fixture.auth.vault.clone(),
+    )
+    .unwrap();
+    fixture.auth.key = Arc::new(
+        ClientOwnerKey::open(
+            fixture.auth.vault.as_ref(),
+            receipt.reference(),
+            &fixture.auth.approved,
+        )
+        .unwrap(),
+    );
+    assert_eq!(fixture.auth.key.public_key(), receipt.public_key());
+    *fixture.auth.source.0.lock().await = OwnerVerifier::from_protected_permissions(
+        fixture.auth.policy.clone(),
+        &[fixture.auth.key.public_key()],
+    )
+    .unwrap();
+    let context = host_client::ApprovedContext::from_protected_approval(
+        fixture.auth.approved.clone(),
+        receipt.reference(),
+        resolved.endpoint,
+        resolved.binding.port,
+        resolved.connect_token,
+        fixture.binding(),
+    )
+    .unwrap();
+    let creation = Arc::new(
+        CreationIntent::new(&context, CreationMode::Create, fixture.native.creation()).unwrap(),
+    );
+    creation
+        .protect_original(store.clone(), "owned native creation review".into())
+        .unwrap();
+    let mut control = fixture.control().await;
+    let Outcome::Created(created) = host_client::create_authenticated(
+        &mut control,
+        creation.clone(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap() else {
+        panic!("one protected Create must return its actual helper generation")
+    };
+    let target = created.session().target.clone();
+    let issued = creation.issued_operation().unwrap();
+    assert_eq!(creation.confirmed_target().as_ref(), Some(&target));
+    drop(created);
+    drop(control);
+    drop(creation);
+    let (store, mut recovered) = testing::reopen(&store, &context).unwrap();
+    assert_eq!(recovered.len(), 1);
+    let RecoveredIntent::Creation(creation) = recovered.remove(0).intent else {
+        panic!("protected creation purpose must survive reopen")
+    };
+    assert_eq!(creation.issued_operation().as_ref(), Some(&issued));
+    let mut control = fixture.control().await;
+    let capabilities = control.handshake(&CancellationToken::new()).await.unwrap();
+    assert_eq!(capabilities.issuance_epoch, Some(issued.epoch));
+    let Outcome::Created(reconciled) = host_client::create_authenticated(
+        &mut control,
+        creation.clone(),
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap() else {
+        panic!("fresh authenticated reopener must reconcile only the original Create")
+    };
+    assert_eq!(reconciled.session().target, target);
+    assert_eq!(creation.issued_operation().as_ref(), Some(&issued));
+    assert_eq!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .len(),
+        1,
+        "original replay must not launch a duplicate PTY"
+    );
+    drop(reconciled);
+    let wrong = Arc::new(EndIntent::new(
+        &context,
+        Target {
+            logical: target.logical.clone(),
+            generation: GenerationId::new(target.generation.get() + 1).unwrap(),
+        },
+    ));
+    wrong
+        .protect_original(store.clone(), "owned wrong-generation End review".into())
+        .unwrap();
+    assert!(matches!(
+        client_end_worker(&mut fixture, wrong.clone()).await,
+        Outcome::Failed(host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::Stale)
+        ))
+    ));
+    let end = Arc::new(EndIntent::new(&context, target.clone()));
+    end.protect_original(store.clone(), "owned exact End review".into())
+        .unwrap();
+    let original_end = end.operation().clone();
+    assert!(matches!(
+        client_end_worker(&mut fixture, end.clone()).await,
+        Outcome::Failed(host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
+        ))
+    ));
+    assert!(end.is_issued() && !end.is_resolved());
+    drop(end);
+    let (store, recovered) = testing::reopen(&store, &context).unwrap();
+    assert_eq!(
+        recovered.len(),
+        3,
+        "uncertain stop must retain creation and both End originals"
+    );
+    let end = recovered
+        .into_iter()
+        .find_map(|original| match original.intent {
+            RecoveredIntent::End(end) if end.operation() == &original_end => Some(end),
+            _ => None,
+        })
+        .unwrap();
+    assert!(end.is_issued() && !end.is_resolved());
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let observed = control
+                .request(
+                    OperationId::new(),
+                    Request::Lookup {
+                        logical: target.logical.clone(),
+                    },
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            if matches!(
+                observed.body,
+                Response::Lookup {
+                    result: LookupResult::Absent { .. }
+                }
+            ) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let lease = fixture
+        .native
+        .root
+        .join(format!("host-daemon-{}.json", target.generation.get()));
+    let held = lease.with_extension("protected-original-held");
+    let lease_bytes = std::fs::read(&lease).unwrap();
+    std::fs::rename(&lease, &held).unwrap();
+    let unknown = client_end_worker(&mut fixture, end.clone()).await;
+    std::fs::rename(&held, &lease).unwrap();
+    assert_eq!(std::fs::read(&lease).unwrap(), lease_bytes);
+    assert!(matches!(
+        unknown,
+        Outcome::Failed(host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::Unknown)
+        ))
+    ));
+    assert_eq!(end.operation(), &original_end);
+    assert!(!end.is_resolved());
+    let (store, retained) = testing::reopen(&store, &context).unwrap();
+    assert_eq!(
+        retained.len(),
+        3,
+        "Unknown cannot prune either exact original"
+    );
+    drop(retained);
+    assert!(matches!(
+        client_end_worker(&mut fixture, end.clone()).await,
+        Outcome::Ended { target: ended } if ended == target
+    ));
+    assert_eq!(end.operation(), &original_end);
+    assert!(end.definitively_settles(&creation));
+    let (_, remaining) = testing::reopen(&store, &context).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert!(
+        matches!(&remaining[0].intent, RecoveredIntent::End(retained)
+        if retained.operation() == wrong.operation() && retained.target() == wrong.target()
+            && !retained.is_resolved())
+    );
+    assert!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .is_empty()
+    );
+    drop(control);
+    fixture.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority() {
     use festerm_host_protocol::{EnsureDisposition, Refusal};
 

@@ -639,6 +639,38 @@ unknown, cancellation and lost replies retain originals. Pre-checkpoint-version
 actions lost before capture cannot be reconstructed. Native-vault/physical
 cold-start acceptance and current platform CI remain independent gates.
 
+### Exact-generation native End confirmation
+
+The combined protected-client/runtime case is a separate acceptance gate from
+the native-only positive below. Its first actual execution fails before wire
+effects because the synthetic runtime account is not a numeric receipt account.
+The numeric fixture correction does not change the production guard and has
+not been rerun; no combined protected-original native acceptance is claimed.
+
+The native adapter can now return the existing `Ended(target)` reply when the
+protected journal retains that exact owner's generation and native identity,
+has authoritatively reconciled it to Absent, and fresh current End permission
+admits the observation under the same transaction. A never-bound reservation,
+retired artifacts, replacement, revocation, contention or observation failure
+does not qualify. StopRequested still returns OutcomeUncertain. Logical Lookup
+absence and the generic Ended error are not converted into successful End.
+
+The temporary `LogicalState::Ended(generation)` is End-only authorization
+metadata, not a wire or stored-state change. Both owner authorization and the
+publication fence reject it for every other request or generation; lease
+validation and serialization reject it. It is never assigned to a journal
+record or daemon lease. Confirmation means the generation is gone, not that
+this particular End caused its exit.
+
+`HOST-03` adds deterministic current-permission, owner/generation, unbound,
+retired, missing/corrupt/contended lease, storage and purpose/fence regressions.
+One separately selected actual SSH/native-helper case confirms the original
+End operation after authoritative absence; the existing stale-replacement case
+is unchanged. These are isolated fixtures with in-memory protected authority,
+not native-vault, installed-service, physical-mobile or whole-ADR acceptance.
+Removed/reconfirmed-away or replaced originals may remain unresolved; this
+change neither discards them nor enlarges the client retention bound.
+
 ### Explicit desktop Create/Ensure execution increment
 
 The client extends protected selected-host execution with actual HOST Create and

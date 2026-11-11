@@ -1673,6 +1673,15 @@ reconnects, refuse account/endpoint/host changes before writing, reject
 missing/forbidden or wrongly echoed scopes, and preserve privacy-filtered
 Unknown targets alongside healthy inventory. HOST-01–03 remain partial.
 
+HOST-03 also has isolated exact-generation native End confirmation: protected
+authoritative absence of a previously bound generation plus fresh End permission
+may produce the existing Ended reply. StopRequested remains uncertain. The
+ephemeral observation is rejected by non-End authorization/publication and by
+lease storage; missing, unbound, retired and replacement records do not qualify.
+One new real SSH/native-helper case resolves its original End; the existing
+replacement and retirement cases retain their separate source attribution.
+Native-vault, GUI/device and installed-service acceptance remain open.
+
 | Edge | Transition | Action | Invariants | Recovery | Coverage |
 | --- | --- | --- | --- | --- | --- |
 | `HOST-01` | Launcher → host → authorized inventory | Explicit Find hosts, select host, Refresh | Local-only opening/saving; no availability claim or fan-out; verified principal and host; private sessions hidden; bounded workers | Request identity/cancel/account change fence results | P; desktop plus opt-in shared mobile protected foreground worker, account/recipe/native-lifetime fences; live cloud/native GUI/device H,N deferred |
@@ -1706,6 +1715,10 @@ batches, and Create/End before explicit protected reopen. Valid memory-backed
 receipts, framed original Ends and positive scope/consent controls establish
 prerequisites; exact refusal and no worker/new issuance are the admission oracle.
 These are not native-vault, physical lifecycle or Android runtime evidence.
+The separate protected-original/runtime native composition case currently has
+one pre-wire prerequisite failure; its corrected numeric fixture remains
+unexecuted. It does not extend the earlier native-only End positive or mobile
+checkpoint proof until the actual combined oracle passes.
 
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after

@@ -78,9 +78,14 @@ retirement, not End. Focused framed tests prove late detach cannot touch a new
 frontend and lock still emits no detach/replay. Two individually selected
 controlled native SSH/PTY cases prove original End cannot stop a replacement,
 persistent detach survives/re-adopts actual output, and only the owning temporary
-lease ends. Current native End returns **OutcomeUncertain** after StopRequested,
-not an Ended receipt. This does not requalify the older sixteen-case matrix or
-establish physical lifecycle/vault behavior.
+lease ends. Native End still returns **OutcomeUncertain** after StopRequested.
+A separate exact-generation observation can now return Ended only for a
+previously bound generation authoritatively reconciled absent under fresh End
+permission. One new isolated real SSH/native-helper case confirms the original
+End operation; ordinary Lookup absence, missing records, replaced generations
+and retired or never-bound records do not authorize that reply. The existing
+End/replacement case is unchanged. This does not requalify the older
+sixteen-case matrix or establish physical lifecycle/vault behavior.
 
 In an explicitly owned iOS/Android native window, still verify:
 
@@ -125,6 +130,14 @@ including a valid empty old-store batch, and no Create/End issuance or worker
 before explicit protected reopen. They use actual memory-backed private receipts,
 framed uncertain original Ends and positive valid-scope/consent controls, not
 invalid metadata prerequisites. They do not qualify native vault or GUI behavior.
+The new explicitly selected
+`native_protected_original_end_reopens_and_settles_exact_generation` composition
+case is not yet a pass: its first actual execution failed at the synthetic
+non-numeric account's protected-receipt prerequisite before SSH/Create. The
+valid numeric fixture correction has not been rerun. Future execution must use
+the current fixed helpers and `testing` feature, retain the first failure, and
+prove exact original reconciliation/uncertain retention/authoritative Ended
+settlement without treating Lookup absence or Unknown as success.
 
 Native acceptance must additionally kill/reopen the owned app before a send,
 after a lost reply and between private-marker/native-payload acknowledgements;

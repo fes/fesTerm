@@ -11,7 +11,7 @@ use festerm_host_protocol::{
     UnknownInventoryEntry, CONTROL_DEADLINE_SECONDS,
 };
 use festerm_sessiond::host_control::{
-    AdmissionState, ControlError, Effect, Lookup, SessionControl,
+    AdmissionState, ControlError, Effect, EndOutcome, Lookup, SessionControl,
 };
 use std::{
     sync::Arc,
@@ -367,13 +367,18 @@ impl<A: ProtectedPolicySource> SessionBackend for NativeControl<A> {
                 })
             }
             Request::ExplicitEnd { target } => {
-                self.sessions
+                let outcome = self
+                    .sessions
                     .end(admission.principal(), target, |state| {
                         self.admit(admission, state, request)
                     })
                     .map_err(refusal)?;
-                // StopRequested is deliberately not an Ended success.
-                Err(Refusal::OutcomeUncertain)
+                match outcome {
+                    EndOutcome::StopRequested => Err(Refusal::OutcomeUncertain),
+                    EndOutcome::ObservedEnded => Ok(Response::Ended {
+                        target: target.clone(),
+                    }),
+                }
             }
             // A control connection never silently acquires a frontend lease.
             Request::Attach { .. } | Request::Detach { .. } => Err(Refusal::Unsupported),

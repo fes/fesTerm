@@ -473,7 +473,7 @@ pub mod testing {
     /// Never selects a native platform store or decodes caller-issued authority.
     pub fn memory_fixture(
         root: &Path,
-        mut context: ApprovedContext,
+        context: ApprovedContext,
     ) -> Result<
         (
             approvals::Receipt,
@@ -482,7 +482,25 @@ pub mod testing {
         ),
         Failure,
     > {
-        let vault = Arc::new(festerm_secret_store::MemorySecretStore::new());
+        memory_fixture_with_store(
+            root,
+            context,
+            Arc::new(festerm_secret_store::MemorySecretStore::new()),
+        )
+    }
+
+    pub fn memory_fixture_with_store(
+        root: &Path,
+        mut context: ApprovedContext,
+        vault: Arc<festerm_secret_store::MemorySecretStore>,
+    ) -> Result<
+        (
+            approvals::Receipt,
+            festerm_tunnel_client::service::ResolvedTunnel,
+            Arc<OriginalStore>,
+        ),
+        Failure,
+    > {
         let reviewed = approvals::ReviewedOwner::confirm(
             &serde_json::to_string(&context.approved).map_err(|_| Failure::OriginalStorage)?,
             &context.approved.host.host,
