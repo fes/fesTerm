@@ -32,13 +32,14 @@ function Invoke-VisualStudioCommand {
     $batchPath = Join-Path ([System.IO.Path]::GetTempPath()) (
         "festerm-validation-{0}.cmd" -f [System.Guid]::NewGuid().ToString('N')
     )
+    $ccName = if (Test-Path -LiteralPath (Join-Path $LlvmBinPath 'clang-cl.exe')) { 'clang-cl' } else { 'clang' }
     try {
         @(
             '@echo off'
             "call `"$VcVarsAllPath`" $Architecture >nul"
             'if errorlevel 1 exit /b %errorlevel%'
             "set `"PATH=$LlvmBinPath;%PATH%`""
-            'set "CC=clang"'
+            "set `"CC=$ccName`""
             $Command
         ) | Set-Content -LiteralPath $batchPath -Encoding Ascii
         Invoke-NativeCommand { & $batchPath }

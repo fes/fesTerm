@@ -71,6 +71,8 @@ New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
 
 $vcvarsallPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
 $llvmBinPath = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin'
+# cc-rs needs the MSVC-compatible driver on MSVC targets; fall back to clang when it is absent.
+$ccName = if (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang-cl.exe')) { 'clang-cl' } else { 'clang' }
 
 Push-Location $sourcePath
 try {
@@ -95,7 +97,7 @@ try {
                     'python scripts/check_windows_conpty_prompt.py --cycles 20'
                 }
             }
-            $evidenceCommand = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && $runnerCommand"
+            $evidenceCommand = "call `"$vcvarsallPath`" $architecture >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=$ccName && $runnerCommand"
             Invoke-NativeCommand { cmd.exe /d /c $evidenceCommand }
             if ($LASTEXITCODE -ne 0) {
                 Set-Content -LiteralPath $resultPath -Value 'status=fail'
@@ -109,7 +111,7 @@ try {
                 -not (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
                 throw 'Windows ARM64 Build Tools and Clang are required for evidence builds.'
             }
-            $buildCommand = "call `"$vcvarsallPath`" arm64 >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=clang && cargo build --workspace"
+            $buildCommand = "call `"$vcvarsallPath`" arm64 >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=$ccName && cargo build --workspace"
             Invoke-NativeCommand { cmd.exe /d /c $buildCommand }
             if ($LASTEXITCODE -ne 0) {
                 throw 'Workspace build failed.'
