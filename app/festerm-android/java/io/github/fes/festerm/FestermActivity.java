@@ -136,7 +136,7 @@ public final class FestermActivity extends NativeActivity {
     private ParcelFileDescriptor pinPrivateDirectory(String path) throws IOException {
         try {
             FileDescriptor descriptor = Os.open(path,
-                OsConstants.O_RDONLY | OsConstants.O_DIRECTORY | OsConstants.O_NOFOLLOW
+                OsConstants.O_RDONLY | OsConstants.O_NOFOLLOW | OsConstants.O_NONBLOCK
                     | OsConstants.O_CLOEXEC, 0);
             try {
                 checkPrivateDescriptor(descriptor, true);
@@ -173,12 +173,14 @@ public final class FestermActivity extends NativeActivity {
                 ParcelFileDescriptor parent = pinNativeStorageDirectory(application, nativeParent, nativeName)) {
             String path = "/proc/self/fd/" + parent.getFd() + "/" + child;
             try {
-                Os.mkdir(path, 0700);
+                try {
+                    Os.mkdir(path, 0700);
+                } catch (ErrnoException error) {
+                    if (error.errno != OsConstants.EEXIST) throw error;
+                }
                 Os.fsync(parent.getFileDescriptor());
             } catch (ErrnoException error) {
-                if (error.errno != OsConstants.EEXIST) {
-                    throw new IOException("Native private storage unavailable", error);
-                }
+                throw new IOException("Native private storage unavailable", error);
             }
             return pinPrivateDirectory(path);
         }
@@ -188,7 +190,7 @@ public final class FestermActivity extends NativeActivity {
             File nativeParent, String name) throws IOException {
         try {
             FileDescriptor descriptor = Os.open("/proc/self/fd/" + application.getFd() + "/" + name,
-                OsConstants.O_RDONLY | OsConstants.O_DIRECTORY | OsConstants.O_NOFOLLOW
+                OsConstants.O_RDONLY | OsConstants.O_NOFOLLOW | OsConstants.O_NONBLOCK
                     | OsConstants.O_CLOEXEC, 0);
             try {
                 StructStat metadata = Os.fstat(descriptor);
@@ -197,6 +199,7 @@ public final class FestermActivity extends NativeActivity {
                     metadata.st_gid, metadata.st_mode, metadata.st_nlink,
                     OsConstants.S_ISDIR(metadata.st_mode), metadata.st_dev, metadata.st_ino,
                     expected.st_dev, expected.st_ino);
+                Os.fsync(application.getFileDescriptor());
                 return duplicatePrivateDescriptor(descriptor);
             } finally {
                 Os.close(descriptor);

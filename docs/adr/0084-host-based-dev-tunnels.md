@@ -664,7 +664,12 @@ collision/failure cannot overwrite or silently clear retained material.
 The bounded implementation retains the native-context data-directory handle
 before accepting its exact files/no-backup child (including Android's native
 0771 child mode under the private application root). The final receipt/vault
-children must remain current-app private. Native vault operations share
+children must remain current-app private.
+Native directory descriptors use public no-follow/nonblocking flags and must
+pass descriptor-based directory/owner checks before becoming authority. Each
+native directory entry's parent is synced even when the child already exists;
+an earlier unsynced creation must not undermine a later original checkpoint.
+Native vault operations share
 same-process nonreentrant admission and a cross-process file lease: a second
 same-process attempt must not open/close the POSIX lock inode and inadvertently
 release the first process-owned lock. New encrypted data uses a private synced
