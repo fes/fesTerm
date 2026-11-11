@@ -64,15 +64,21 @@ separately in [manual validation](../../docs/manual-validation.md#android-shared
 
 Protected HOST originals use the native-current-app pinned receipt capability,
 not profile-path authority. Native reserved creation serializes the namespace
-and never replaces base/backup/staging material; interrupted material refuses
-reads and requires explicit reconciliation, not an empty-store reset.
+and never replaces base/backup/staging material. A durable reservation marker
+fences exclusive base creation until the full encrypted base and its directory
+are synced; marker removal/final sync precede acknowledgement. No hard link or
+replace-capable rename is used. Interrupted material refuses reads/updates/
+deletes and requires explicit reconciliation, not an empty-store reset.
 Host-only namespace regressions need an existing JDK (no Android SDK):
 
 ```sh
 python3 -m unittest scripts.tests.test_android_native_secrets -v
 ```
 
-These regressions are not Keystore/JNI/device acceptance. Bounded qualification
+The earlier `e462c59b` publisher is reliability-blocked by Android SELinux's
+hard-link denial and must not be consumed. Corrected source requires actual
+Android SELinux/JNI/Keystore/device smoke before consumption; host tests and
+compilation do not clear that gate. Historical bounded qualification
 also checks Android Rust with the existing NDK 27 and compiles production Java
 plus smoke against existing API 35. Configured API 36 APK packaging and actual
 native smoke remain required: API 36 `android.jar`/`aapt2` are absent, and no SDK

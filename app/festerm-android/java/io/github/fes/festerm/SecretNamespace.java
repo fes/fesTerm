@@ -121,25 +121,42 @@ final class SecretNamespace implements Closeable {
         Path stage = directory.resolve(reference + ".reserved");
         // This reference-specific stage is itself the durable reservation.
         // On any ambiguity it is deliberately retained; no reset/retry cleanup.
-        try (FileChannel output = FileChannel.open(stage,
+        try (FileChannel marker = FileChannel.open(stage,
                 new java.util.HashSet<>(java.util.Arrays.asList(
                     StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW, NOFOLLOW)),
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))) {
             guard.check(stage);
-            output.force(true);
+            step.reached("reservation-created");
+            marker.force(true);
             sync.run();
             step.reached("reserved");
+        }
+        // CREATE_NEW cannot replace a raced base. The durable marker makes
+        // every reader/updater/deleter refuse until the whole base is durable.
+        // Hard links are denied by Android app SELinux policy.
+        try (FileChannel output = FileChannel.open(path(reference),
+                new java.util.HashSet<>(java.util.Arrays.asList(
+                    StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW, NOFOLLOW)),
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))) {
+            guard.check(path(reference));
+            step.reached("base-created");
             ByteBuffer remaining = ByteBuffer.wrap(envelope);
-            while (remaining.hasRemaining()) output.write(remaining);
+            while (remaining.hasRemaining()) {
+                int limit = remaining.limit();
+                remaining.limit(remaining.position() + Math.min(4096, remaining.remaining()));
+                while (remaining.hasRemaining()) output.write(remaining);
+                remaining.limit(limit);
+                step.reached("writing");
+            }
+            step.reached("before-base-force");
             output.force(true);
             step.reached("written");
         }
-        // link is atomic create-new, unlike ATOMIC_MOVE which may replace an
-        // existing target even without REPLACE_EXISTING on some providers.
-        Files.createLink(path(reference), stage);
         sync.run();
         step.reached("published");
+        step.reached("before-marker-delete");
         Files.delete(stage);
+        step.reached("marker-deleted");
         sync.run();
         step.reached("committed");
         return true;

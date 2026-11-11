@@ -13,6 +13,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipUnless(os.name == "posix", "Unix native-vault filesystem predicates")
 class AndroidNativeSecrets(unittest.TestCase):
+    def test_namespace_avoids_selinux_denied_publication(self):
+        source = (ROOT / "app/festerm-android/java/io/github/fes/festerm/SecretNamespace.java").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotRegex(source, r"\bFiles\s*\.\s*(?:createLink|move)\s*\(")
+        self.assertNotIn("ATOMIC_MOVE", source)
+
     def test_owner_scope_and_reserved_namespace(self):
         java_home = os.environ.get("JAVA_HOME")
         java = Path(java_home) / "bin/java" if java_home else shutil.which("java")

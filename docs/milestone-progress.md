@@ -6,6 +6,13 @@ Independent full-source gates blocked `e462c59b`: its hard-link publication is
 denied to untrusted Android apps by AOSP SELinux policy. Host JVM passes, API35
 Java compilation and NDK Rust checks did not establish runtime compatibility.
 That frozen source and all evidence are retained, not consumed or relabelled.
+Every `secretWrite(..., false)` call, including ordinary put, shared the broken
+publisher and could leave a permanent reservation; this is a production
+regression, not merely a missing acceptance check.
+The authoritative [Android 16 app policy, line 115](https://android.googlesource.com/platform/system/sepolicy/+/refs/heads/android16-release/private/app_neverallows.te?format=TEXT)
+states `neverallow all_untrusted_apps file_type:file link;`. Parent separately
+retains the decoded policy with SHA256
+`f62dce15435b564c86f16ef6d54bbedcd4725752b45a1b487be3b4e592595486`.
 
 Before correction code, ADR0084 now requires an exclusive base creation under
 the existing namespace lease and durable `.reserved` marker. The complete base
@@ -16,7 +23,7 @@ cleanup, encryption/authority changes or new JNI/platform APIs. Deterministic
 host faults and existing-SDK compilation are necessary but actual Android
 SELinux/JNI/Keystore/device smoke remains a mandatory consumption blocker.
 
-## Android reserved originals: secure boundary, runtime acceptance pending
+## Historical e462 boundary qualification: reliability blocked
 
 The owner explicitly approved implementing the opaque native application-root
 capability and serialized native reserved-write boundary described in ADR0084.

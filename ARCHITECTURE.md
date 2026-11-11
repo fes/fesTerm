@@ -13,7 +13,10 @@ directory capability through `festerm-secret-store`, not caller-path authority.
 The bridge retains that capability/index and uses existing descriptor-relative
 private receipt operations; it never depends on JNI. Native reserved secret
 creation is serialized with read/update/delete and refuses backup/staging
-ambiguity without overwriting or resetting retained originals. Native crypto
+ambiguity without overwriting or resetting retained originals. Publication uses
+an exclusive no-follow base creation behind a durable reservation marker; the
+complete forced base and directory sync precede marker removal/final sync.
+It does not use SELinux-denied hard links or replace-capable renames. Native crypto
 and full protected owner/account binding remain unchanged; host contract tests
 are not Android Keystore/device acceptance.
 

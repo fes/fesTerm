@@ -172,19 +172,23 @@ bridge-to-JNI dependency or file-vault fallback.
 
 The native namespace uses bounded same-process admission plus a cross-process
 file lease for all reads/writes/deletes. Create-new refuses base, `.bak`, `.new`
-or `.reserved` collisions. An exclusive private `.reserved` stage is synced
-before publication, atomically linked without replacement, then unlinked and
-the directory synced before acknowledgement. Interrupted stages remain
-uncertain, including a published base with a retained stage; reads never turn
-these states into missing. Existing native AES-GCM/reference AAD is unchanged.
+or `.reserved` collisions. A private empty `.reserved` marker and directory are
+synced before exclusive `CREATE_NEW`/no-follow base creation. The complete base
+is forced and its directory synced before marker deletion and final directory
+sync/acknowledgement. No hard link or replace-capable rename is used. A retained
+marker refuses reads, updates and deletes even for an empty/partial/full base.
+Every failure remains explicit, including deletion/final-sync uncertainty
+after a complete base is durable. Existing native AES-GCM/reference AAD is unchanged.
 
-**Host automated evidence:** `scripts.tests.test_android_native_secrets` passes
-one wrapper/23 actual JVM cases covering the production namespace, real host
-file publication/concurrent processes, owner/application metadata predicates,
-scope substitution, collisions and injected write/sync ambiguity. This is not
-Android `Os`, JNI, Keystore or device execution. Frozen Rust qualification passes
+**Host automated evidence:** the corrected host selection covers production
+namespace faults at marker/base creation, partial write, force, publication,
+marker removal and final sync, plus owner/scope and real concurrent processes.
+Its exact results are recorded at source freeze. Historical `e462c59b` had
+23 host JVM passes but is reliability-blocked by the Android SELinux hard-link
+denial; those passes never establish Android compatibility. These tests are not
+Android `Os`, JNI, Keystore or device execution. Inherited frozen Rust qualification passes
 337 tests (mobile 224, secret-store 17, portable bridge 96), with four existing
-mobile ignores. Four Python tests include those 23 JVM cases; affected
+mobile ignores; Rust source equality, not a Cargo rerun, carries that evidence. Affected
 all-target strict checks pass on Rust 1.98.0/1.99.1.
 Existing protected-record tests retain foreign-account/key/installation/
 principal refusal; the generic store gains no account bypass.
@@ -192,7 +196,12 @@ principal refusal; the generic store gains no account bypass.
 **Native prerequisite:** run the extended Android `PlatformSmoke` on an owned
 emulator/device: validate native root owner/location, encrypted create/read/
 update/no-replace/tamper/delete, and preserved backup/new/reserved collision
-artifacts with typed read refusal. Android Rust mobile checking passes with the
+artifacts with typed read/update/delete refusal. Both ordinary put and the
+reserved-reference shared native path must acknowledge creation with no marker,
+reject a second create with different bytes, and preserve the original value.
+This actual Android SELinux/JNI/Keystore/device smoke is required **before
+consumption**, even after corrected host and compilation gates pass.
+Historical Android Rust mobile checking passes with the
 existing NDK 27, and production Java plus smoke compile against existing API 35.
 Those are compilation only: configured API 36 APK/dex/linking and native runtime
 evidence remain required. API 36 `android.jar`/`aapt2` are absent in the qualified

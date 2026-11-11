@@ -1586,6 +1586,15 @@ and now exposes a separate foreground review path described below. Existing TUNN
 retain their current coverage until explicit migration. The single
 `host-protocol-owner-contracts` trace group combines these evidence sets.
 
+For `HOST-02`/`HOST-03`, Android protected-original publication keeps a durable
+reservation marker while exclusively creating and syncing the complete native
+base. Marker-visible state refuses read/update/delete and cannot become absence;
+collision/failure never grants replacement or clears uncertain originals.
+The earlier hard-link publisher is blocked by Android SELinux, including ordinary
+put. No hard link/replace-capable rename or authority relaxation is permitted.
+Actual Android SELinux/JNI/Keystore/device smoke remains required before
+consumption, independently of host tests, compilation and fresh source gates.
+
 The portable selected-host `host_client` executor adds actual native-vault/
 relay/role-proof composition, bounded inventory and frontend-confirmed
 existing-generation adoption. Its executed `selected_host_*` tests are not

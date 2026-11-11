@@ -706,10 +706,12 @@ owner/foreign scope, create versus reopen, foreign-account refusal, base/backup/
 staging collisions, concurrent creation and failure/no-overwrite/no-implicit-
 empty checks are required. Host fixtures are not Android JNI, target compilation
 or device evidence, which must be recorded separately. The accepted decision was
-persisted before coding. Frozen host qualification passes 337 Rust tests
+persisted before coding. Historical frozen Rust qualification passes 337 tests
 (mobile 224, secret-store 17, portable bridge 96), with four existing mobile
-ignores; five secret-store cases cover the new adapter/pinned root. Four Python
-tests pass, including the 23 production namespace/predicate JVM cases.
+ignores; five secret-store cases cover the new adapter/pinned root. These
+unchanged Rust inputs do not require a Cargo rerun for the Java-only correction.
+The historical 23 host JVM passes did not detect the blocked Android hard-link
+primitive; corrected host/Java qualification is recorded separately.
 Affected all-target strict checks pass on Rust 1.98.0 and 1.99.1; the default-relay
 bridge library also passes strict checking on 1.99.1.
 

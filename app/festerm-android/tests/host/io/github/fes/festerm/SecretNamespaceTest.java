@@ -134,6 +134,8 @@ public final class SecretNamespaceTest {
                 try (SecretNamespace namespace = fixture.open()) {
                     require(!namespace.existing(REF));
                     require(namespace.create(REF, ENVELOPE));
+                    require(!Files.exists(fixture.directory.resolve(REF + ".reserved"), NOFOLLOW));
+                    require(((Number) Files.getAttribute(namespace.path(REF), "unix:nlink")).longValue() == 1);
                     require(!namespace.create(REF, new byte[]{9}));
                 }
                 try (SecretNamespace reopened = fixture.open()) {
@@ -156,22 +158,38 @@ public final class SecretNamespaceTest {
                 }
             });
         }
-        for (String point : new String[]{"reserved", "written", "published", "committed"}) {
+        for (String point : new String[]{"reservation-created", "reserved", "base-created",
+                "writing", "before-base-force", "written", "published", "before-marker-delete",
+                "marker-deleted", "committed"}) {
             run("retain-write-ambiguity-" + point, () -> {
                 try (Fixture fixture = new Fixture(parent); SecretNamespace namespace = fixture.open()) {
-                    refused(() -> namespace.create(REF, ENVELOPE, step -> {
+                    byte[] envelope = new byte[8193];
+                    Arrays.fill(envelope, (byte) 37);
+                    refused(() -> namespace.create(REF, envelope, step -> {
                         if (step.equals(point)) throw new IOException("injected write ambiguity");
                     }));
-                    if (point.equals("committed")) {
+                    if (point.equals("committed") || point.equals("marker-deleted")) {
                         require(namespace.existing(REF));
                         require(!namespace.create(REF, new byte[]{9}));
-                        require(Arrays.equals(Files.readAllBytes(namespace.path(REF)), ENVELOPE));
+                        require(Arrays.equals(Files.readAllBytes(namespace.path(REF)), envelope));
+                        require(!Files.exists(fixture.directory.resolve(REF + ".reserved"), NOFOLLOW));
                     } else {
                         Path retained = fixture.directory.resolve(REF + ".reserved");
                         byte[] before = Files.readAllBytes(retained);
+                        require(before.length == 0);
                         refused(() -> namespace.existing(REF));
                         refused(() -> namespace.create(REF, new byte[]{9}));
                         require(Arrays.equals(Files.readAllBytes(retained), before));
+                        if (point.equals("reservation-created") || point.equals("reserved")) {
+                            require(!Files.exists(namespace.path(REF), NOFOLLOW));
+                        } else {
+                            byte[] base = Files.readAllBytes(namespace.path(REF));
+                            if (point.equals("base-created")) require(base.length == 0);
+                            else if (point.equals("writing")) {
+                                require(base.length == 4096);
+                                require(Arrays.equals(base, Arrays.copyOf(envelope, 4096)));
+                            } else require(Arrays.equals(base, envelope));
+                        }
                     }
                 }
             });
@@ -179,25 +197,82 @@ public final class SecretNamespaceTest {
         run("publication-race-never-replaces", () -> {
             try (Fixture fixture = new Fixture(parent); SecretNamespace namespace = fixture.open()) {
                 refused(() -> namespace.create(REF, ENVELOPE, step -> {
-                    if (step.equals("written")) fixture.put("", new byte[]{42});
+                    if (step.equals("reserved")) fixture.put("", new byte[]{42});
                 }));
                 require(Arrays.equals(Files.readAllBytes(namespace.path(REF)), new byte[]{42}));
-                require(Arrays.equals(Files.readAllBytes(fixture.directory.resolve(REF + ".reserved")), ENVELOPE));
+                require(Files.size(fixture.directory.resolve(REF + ".reserved")) == 0);
                 refused(() -> namespace.existing(REF));
             }
         });
-        run("directory-sync-failure-retains-reservation", () -> {
-            try (Fixture fixture = new Fixture(parent)) {
-                AtomicInteger syncs = new AtomicInteger();
-                try (SecretNamespace namespace = SecretNamespace.acquire(fixture.directory, fixture::guard, () -> {
-                        if (syncs.incrementAndGet() == 2) throw new IOException("injected sync failure");
-                        fixture.sync();
-                    })) {
-                    refused(() -> namespace.create(REF, ENVELOPE));
-                    refused(() -> namespace.existing(REF));
+        for (int failingSync : new int[]{2, 3, 4}) {
+            run("directory-sync-failure-" + failingSync, () -> {
+                try (Fixture fixture = new Fixture(parent)) {
+                    AtomicInteger syncs = new AtomicInteger();
+                    try (SecretNamespace namespace = SecretNamespace.acquire(fixture.directory, fixture::guard, () -> {
+                            if (syncs.incrementAndGet() == failingSync) throw new IOException("injected sync failure");
+                            fixture.sync();
+                        })) {
+                        refused(() -> namespace.create(REF, ENVELOPE));
+                        if (failingSync == 4) {
+                            require(namespace.existing(REF));
+                            require(!namespace.create(REF, new byte[]{9}));
+                            require(Arrays.equals(Files.readAllBytes(namespace.path(REF)), ENVELOPE));
+                        } else {
+                            refused(() -> namespace.existing(REF));
+                            refused(() -> namespace.create(REF, ENVELOPE));
+                            require(Files.exists(fixture.directory.resolve(REF + ".reserved"), NOFOLLOW));
+                        }
+                        if (failingSync == 2) require(!Files.exists(namespace.path(REF), NOFOLLOW));
+                        else require(Arrays.equals(Files.readAllBytes(namespace.path(REF)), ENVELOPE));
+                    }
+                }
+            });
+        }
+        for (String guarded : new String[]{".reserved", ""}) {
+            run("publication-guard-failure-" + (guarded.isEmpty() ? "base" : "marker"), () -> {
+                try (Fixture fixture = new Fixture(parent);
+                        SecretNamespace namespace = SecretNamespace.acquire(fixture.directory, path -> {
+                            fixture.guard(path);
+                            if (path.getFileName().toString().equals(REF + guarded)) {
+                                throw new IOException("injected owner check failure");
+                            }
+                        }, fixture::sync)) {
                     refused(() -> namespace.create(REF, ENVELOPE));
                     require(Files.exists(fixture.directory.resolve(REF + ".reserved"), NOFOLLOW));
+                    refused(() -> namespace.existing(REF));
+                    if (guarded.isEmpty()) require(Files.size(namespace.path(REF)) == 0);
+                    else require(!Files.exists(namespace.path(REF), NOFOLLOW));
                 }
+            });
+        }
+        run("marker-delete-failure-keeps-base-uncertain", () -> {
+            try (Fixture fixture = new Fixture(parent); SecretNamespace namespace = fixture.open()) {
+                Path marker = fixture.directory.resolve(REF + ".reserved");
+                Path retained = fixture.directory.resolve("owned-marker");
+                refused(() -> namespace.create(REF, ENVELOPE, step -> {
+                    if (step.equals("before-marker-delete")) {
+                        Files.move(marker, retained);
+                        Files.createDirectory(marker);
+                        Files.createFile(marker.resolve("owned-blocker"));
+                    }
+                }));
+                require(Files.size(retained) == 0);
+                require(Arrays.equals(Files.readAllBytes(namespace.path(REF)), ENVELOPE));
+                refused(() -> namespace.existing(REF));
+                refused(() -> namespace.create(REF, new byte[]{9}));
+                require(Files.exists(marker.resolve("owned-blocker"), NOFOLLOW));
+            }
+        });
+        run("marker-delete-missing-is-explicit-failure-not-ack", () -> {
+            try (Fixture fixture = new Fixture(parent); SecretNamespace namespace = fixture.open()) {
+                refused(() -> namespace.create(REF, ENVELOPE, step -> {
+                    if (step.equals("before-marker-delete")) {
+                        Files.delete(fixture.directory.resolve(REF + ".reserved"));
+                    }
+                }));
+                require(namespace.existing(REF));
+                require(!namespace.create(REF, new byte[]{9}));
+                require(Arrays.equals(Files.readAllBytes(namespace.path(REF)), ENVELOPE));
             }
         });
         run("foreign-scope-symlink", () -> {
