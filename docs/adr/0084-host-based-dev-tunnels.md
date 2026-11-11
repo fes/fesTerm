@@ -893,6 +893,7 @@ not successful uninstall. See the [cloud adapter contract](../headless-host.md#i
   `temporary_takeover_fences_old_disconnect_and_persistent_shells_have_no_lease`,
   `daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor`,
   `current_absence_requires_fresh_create_permission_but_live_resume_does_not`,
+  `absent_generation_lease_contention_precedes_fresh_create_denial_without_effects`,
   `failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create`,
   `host_reservation_requires_its_exact_native_launch_journal`,
   `protected_publication_preserves_shared_no_replace_boundary`,

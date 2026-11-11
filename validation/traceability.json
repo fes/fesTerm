@@ -5595,6 +5595,7 @@
         "unticketed_local_attachment_requires_persistent_lifetime",
         "daemon_enforces_lost_create_reply_grace_without_bridge_or_supervisor",
         "current_absence_requires_fresh_create_permission_but_live_resume_does_not",
+        "absent_generation_lease_contention_precedes_fresh_create_denial_without_effects",
         "failed_real_helper_spawn_is_durable_unknown_not_a_fresh_create",
         "cancelled_or_revoked_pending_takeover_never_commits_or_stops_old_owner",
         "lease_supervisor_restart_and_busy_storage_cannot_restart_expired_grace",

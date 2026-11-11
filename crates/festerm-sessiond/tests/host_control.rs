@@ -1798,17 +1798,23 @@ fn current_absence_requires_fresh_create_permission_but_live_resume_does_not() {
         .end(&fixture.owner, &running.target, allow)
         .unwrap();
     fixture.wait_absent(&running.target);
-    assert!(matches!(
-        fixture.control().ensure(
-            &fixture.owner,
-            &fixture.issued(),
-            &creation,
-            false,
-            &AtomicBool::new(false),
-            no_creation
-        ),
-        Err(ControlError::Denied)
-    ));
+    let mut effects = Vec::new();
+    let outcome = fixture.control().ensure(
+        &fixture.owner,
+        &fixture.issued(),
+        &creation,
+        false,
+        &AtomicBool::new(false),
+        |state| {
+            effects.push(state.effect);
+            no_creation(state)
+        },
+    );
+    eprintln!(
+        "absence-admission outcome={:?} effects={effects:?}",
+        outcome.as_ref().map(|_| ()).map_err(|error| *error)
+    );
+    assert!(matches!(outcome, Err(ControlError::Denied)));
     assert!(list_running_sessions_in(&fixture.root).unwrap().is_empty());
 }
 

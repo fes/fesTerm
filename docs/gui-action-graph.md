@@ -1641,6 +1641,11 @@ HOST-01 additionally has a deterministic private-source uncertainty regression:
 healthy authorized entries remain visible beside authorized Unknown target
 metadata, while record/global/publication authority refusals still fail closed.
 Private liveness is point-in-time, unlike legacy shared installer-lock exclusion.
+HOST-02's fresh creation permission additionally has a deterministic already-Absent
+generation-lease contention guard: Busy before Create changes no journal or
+PID/generation/lease metadata; after exact lock release, Create is freshly Denied
+without another session. This does not identify the required Ubuntu native
+test's unreported failure variant or relax its strict Denied oracle.
 
 HOST-06 currently has the independently testable
 [helper authenticity boundary](host-release-artifacts.md) and separate

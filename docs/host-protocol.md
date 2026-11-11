@@ -280,6 +280,15 @@ Read-only native snapshots use complete private atomic checkpoints without
 holding the mutation lock across file/ACL I/O. Mutations retain the validated
 directory handle and serialize fresh CAS checks/publication; legacy nonprivate
 reads remain locked. Native admission still fences exact generation and writer.
+An observed Absent record is not a promise of uncontended admission: Ensure
+still reconciles its protected generation lease before reaching fresh Create
+permission. A held lease can return Busy before that permission callback; this
+is neither creation authorization nor another spawn. The deterministic
+`absent_generation_lease_contention_precedes_fresh_create_denial_without_effects`
+regression checks unchanged journal/PID/generation/lease metadata while held,
+then fresh Denied and no creation after release. The separate real-daemon
+current-absence test retains its strict Denied oracle; its content-free
+diagnostic reports only the result variant and reached admission Effects.
 HOST reserved launches retain ADR 0085's owned-journal policy: matching native
 metadata alone cannot adopt a generation whose exact launch journal is missing.
 The ordinary detached-launch compatibility path keeps its existing policy.

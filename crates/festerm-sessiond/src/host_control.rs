@@ -2261,3 +2261,133 @@ fn profile(recipe: &Recipe) -> Result<LocalProfile, ControlError> {
     }
     detached::normalize_spawn_profile(&profile).map_err(|_| ControlError::Invalid)
 }
+
+#[cfg(test)]
+mod absence_admission_tests {
+    use super::*;
+
+    #[test]
+    fn absent_generation_lease_contention_precedes_fresh_create_denial_without_effects() {
+        let root = storage::private_test_directory();
+        let directory = storage::private_directory(root.path(), false).unwrap();
+        storage::write_new_private(
+            &directory,
+            Path::new("must-not-execute"),
+            b"not an executable",
+        )
+        .unwrap();
+        let sessions =
+            SessionControl::with_helper(root.path(), &root.path().join("must-not-execute"))
+                .unwrap();
+        let owner = PrincipalId::new();
+        let creation = Creation {
+            logical: LogicalSessionId::new(),
+            attachment: AttachmentId::new(),
+            name: None,
+            recipe: Recipe {
+                shell: None,
+                cwd: None,
+                args: Vec::new(),
+            },
+            lifetime: Lifetime::Persistent {},
+        };
+        let issued = IssuedOperation::new(sessions.issuance_epoch(&owner, |_| Ok(())).unwrap());
+        // Structured already-Absent metadata, not proof of a running daemon.
+        let record = Record {
+            owner: owner.clone(),
+            logical: creation.logical.clone(),
+            display_name: "absent fixture".into(),
+            recipe: creation.recipe.clone(),
+            effective_recipe: creation.recipe.clone(),
+            lifetime: creation.lifetime,
+            epoch: Epoch::new(1).unwrap(),
+            revoked: false,
+            name: native_slot(0),
+            launch: OperationId::new(),
+            generation: GenerationId::new(123).unwrap(),
+            fingerprint: "fixture".into(),
+            phase: Phase::Absent,
+            identity: Some(Identity {
+                pid: std::process::id(),
+                endpoint: "unused absent endpoint".into(),
+            }),
+            artifacts_retired: false,
+            binding: None,
+        };
+        let guard = LeaseGuard::reserve(root.path(), record.generation).unwrap();
+        guard
+            .create(&DaemonLease {
+                version: 1,
+                name: record.name.clone(),
+                generation: record.generation,
+                revision: 1,
+                lifetime: record.lifetime,
+                temporary: None,
+                deadline_ms: None,
+                connected: false,
+                stopped: true,
+                remote_revoked: false,
+                pending: None,
+                last_attachment: None,
+                grant: record.grant(),
+                writer_epoch: Epoch::new(1).unwrap(),
+                native_pid: Some(std::process::id()),
+            })
+            .unwrap();
+        let lease = serde_json::to_vec(&guard.read().unwrap()).unwrap();
+        let mut tx = sessions.transaction().unwrap();
+        tx.state.last_generation = record.generation.get();
+        tx.state
+            .sessions
+            .insert(record.logical.clone(), record.clone());
+        tx.save().unwrap();
+        drop(tx);
+        let journal =
+            || storage::read_private(&directory, Path::new(STATE_FILE), STATE_LIMIT).unwrap();
+        let before = journal();
+        let effects = std::cell::RefCell::new(Vec::new());
+        let no_creation = |state: &AdmissionState| {
+            effects.borrow_mut().push(state.effect);
+            if state.effect == Effect::Create {
+                Err(ControlError::Denied)
+            } else {
+                Ok(())
+            }
+        };
+        let busy = sessions.ensure(
+            &owner,
+            &issued,
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            no_creation,
+        );
+        assert!(matches!(busy, Err(ControlError::Busy)));
+        assert_eq!(*effects.borrow(), [Effect::Resume]);
+        assert_eq!(journal(), before);
+        assert_eq!(serde_json::to_vec(&guard.read().unwrap()).unwrap(), lease);
+        drop(guard);
+        let denied = sessions.ensure(
+            &owner,
+            &issued,
+            &creation,
+            false,
+            &AtomicBool::new(false),
+            no_creation,
+        );
+        assert!(matches!(denied, Err(ControlError::Denied)));
+        assert_eq!(
+            *effects.borrow(),
+            [
+                Effect::Resume,
+                Effect::Resume,
+                Effect::Resume,
+                Effect::Create
+            ]
+        );
+        assert_eq!(journal(), before);
+        let guard = LeaseGuard::acquire(root.path(), record.generation).unwrap();
+        assert_eq!(serde_json::to_vec(&guard.read().unwrap()).unwrap(), lease);
+        assert!(!root.path().join("registry.json").exists());
+    }
+}

@@ -3752,6 +3752,23 @@ and endpoint visibility remain native/manual gates, not inferred from lookup or
 fixture success. Existing required macOS/Linux native contention failures remain
 unresolved; this case is not their fix.
 
+The separate current-absence creation-permission investigation retains Ubuntu
+job `130200686992` as **25 pass / 1 fail / 0 ignored**, 32.20 seconds; raw SHA-256
+`81d742e21ca72aa5775132cdf06469d3fee74a297fcec5c572590610ac671687`.
+That failure did not print its result variant. The newly instrumented
+`current_absence_requires_fresh_create_permission_but_live_resume_does_not`
+ran once on macOS: **1 pass / 0 fail / 0 ignored / 25 filtered**, 1.17 seconds,
+printing only `Err(Denied)` and `[Resume, Resume, Create]`. Owner-retained
+`adr84-absence-evidence/followup/current-absence-native.log` has SHA-256
+`b3d74e3910f7688e081f95a8f7bafe35bd1de4991cf2ecd6cb63086414f04783`.
+This is non-reproduction, not Ubuntu acceptance or a runtime fix. A separate
+structured already-Absent/held-generation-lock regression demonstrates
+pre-Create Busy without changed journal/PID/generation/lease metadata, followed
+by fresh Create denial after exact lock release. It does not establish that
+Busy or any particular lock holder caused the actual CI failure. The original
+Denied/no-new-session oracle and production behavior remain unchanged; a
+diagnostic Ubuntu outcome is still required.
+
 `HOSTMIG-01` additionally has an actual authenticated-binding Local frontend
 fixture, distinct from the Local reservation-only case. It retains original
 PID/generation, PTY and capability bytes through bind/switch/resume/revocation/

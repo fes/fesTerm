@@ -1,5 +1,26 @@
 # Milestone Progress Narrative
 
+## Separating absence observation from fresh creation admission
+
+The required Ubuntu current-absence permission test failed without printing its
+actual result. Read-only inspection found a pre-admission path: even an
+already-Absent record must reconcile its protected generation lease before
+reaching fresh Create permission. A deterministic held-lease regression now
+shows Busy after Resume admission, no Create admission, and unchanged journal,
+PID/generation metadata and lease. Releasing that exact lock reaches fresh
+Create denial without creating or changing those records. It uses structured
+already-Absent metadata, not a running daemon or new authority.
+
+The original real-daemon test retains its strict Denied/no-new-session oracle
+and now reports only the result variant and admission Effect names. Its single
+changed-source macOS execution passed (1/0/0, 25 filtered, 1.17 seconds), reaching
+Resume, Resume, Create and Denied. This is a local non-reproduction, not a fix or
+causal explanation of Ubuntu's failure. Production admission/order/locking,
+timeouts and retry behavior are unchanged. The actual Ubuntu variant/holder
+remains unknown; the next required run's bounded diagnostic is needed before
+choosing a runtime correction. No Windows fixture merge or native-suite replay
+is part of this checkpoint.
+
 ## Keeping healthy inventory visible beside an uncertain private source
 
 Review found a concrete coupled gap: protected inventory recorded a private
