@@ -1,5 +1,32 @@
 # Milestone Progress Narrative
 
+## Integrating the qualified serialized-pruner fixture continuation
+
+The integrated `3183039b` source and all of its receipts/helper execution copies
+remain frozen under a named ref. A normal descendant merges exact qualified
+`f5071b11` (`c41e3a6c` → metadata-only `f7abd4ac` → `f5071b11`) as `06eb9332`,
+retaining both complete narratives. The actual c41 Windows qualification is
+106/0 library and 67/1 main: its sole pruner AccessDenied(5) precedes the final
+creator close. That failure is retained, not an unchanged retry or Windows pass.
+
+The continuation changes only the serialized-pruner fixture: close its extra
+creator after the existing lifetime-release and real contention probes but
+before independent cleanup, asserting the key still exists immediately after
+the close. Production main's full 182425-byte prefix through the test-module
+boundary is identical to `3183039b`; every other Rust input, Cargo manifest and
+lockfile is unchanged. Current macOS generation-binding selection actually
+passes **3/0/0, 1.12s**, 71 filtered (74 registered), and affected sessiond
+all-target strict Clippy passes. The old optional stripping/dependency warnings
+remain recorded. New receipts use distinct `f507-*` names in the owned evidence
+directory; no prior receipt or immutable helper copy is replaced and no target
+is cloned.
+
+No daemon/helper execution or native3/full14 rerun occurs for this fixture-only
+merge. Both takeover orderings and original End remain attributed to the actual
+`9bc9ef4c` **3/0/0, 8.11s**, not this descendant. Actual Windows execution of
+`f5071b11`, composed required CI and native-vault/provider/device/installed/GUI
+acceptance remain separate gates. ADR 0084 remains incomplete.
+
 ## Composing the ADR 0084 Desktop vertical slice
 
 Source inspection against exact `18d218dc` also finds a semantic fixture merge
