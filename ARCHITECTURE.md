@@ -376,6 +376,25 @@ answers terminal queries exactly once for protocol-v2 sessions instead of
 dropping or replaying queued replies, clipboard actions, or stale user input
 across reattach.
 
+For a HOST-managed persistent generation, adoption records its connected
+ticket and writer epoch in the protected daemon lease. Fresh owner policy,
+record/grant revision and exact native identity checks precede a non-takeover
+Busy refusal for that connected writer; the refusal creates no pending ticket
+and performs no native connection. The daemon observes its exact current
+ticketed frontend retiring independently of bridge cleanup. Its existing
+bounded poll clears only that persistent connection bit under the same lease
+lock, preserving pending takeover, writer epoch and shell lifetime. A delayed
+old-writer notification cannot clear a newer committed writer. Imported binding
+watches, temporary deadlines and ordinary unticketed admission retain their
+separate existing policies. Native connection failures still require exact
+ticket unwind; contended or ambiguous unwind remains outcome-uncertain.
+
+The generation lease is distinct from the native global registry lock. Private
+registry mutation snapshots and applies its change under that lock, prepares
+the durable checkpoint outside it, then rechecks/rebases lineage before atomic
+publication. Directory synchronization occurs after releasing the registry
+lock; ordinary discovery releases its read lock before native connection.
+
 Platform-sensitive file authority remains isolated in the two ADR 0034
 security crates. `festerm-unix-security` owns no-follow opens, private staging,
 metadata snapshots and no-overwrite publication. `festerm-windows-security`

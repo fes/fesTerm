@@ -890,12 +890,62 @@ pub fn process_alive(pid: u32) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PersistentSessionError {
     message: String,
+    #[cfg(any(test, feature = "test-support"))]
+    native_failure: Option<NativeConnectionFailure>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeConnectionBoundary {
+    Registry,
+    Generation,
+    Protocol,
+    Connect,
+    #[cfg(unix)]
+    StreamOptions,
+    AdmissionWrite,
+    TicketWrite,
+    AdmissionRead,
+    AdmissionRefused,
+    StreamStart,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeConnectionFailure {
+    boundary: NativeConnectionBoundary,
+    io_kind: Option<io::ErrorKind>,
+    raw_os: Option<i32>,
 }
 
 impl PersistentSessionError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            #[cfg(any(test, feature = "test-support"))]
+            native_failure: None,
+        }
+    }
+
+    fn at_native_boundary(
+        self,
+        boundary: NativeConnectionBoundary,
+        error: Option<&io::Error>,
+    ) -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            Self {
+                native_failure: Some(NativeConnectionFailure {
+                    boundary,
+                    io_kind: error.map(io::Error::kind),
+                    raw_os: error.and_then(io::Error::raw_os_error),
+                }),
+                ..self
+            }
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            let _ = (boundary, error);
+            self
         }
     }
 }
@@ -1230,18 +1280,20 @@ impl PersistentSession {
         ticket: &festerm_host_protocol::OperationId,
         notifier: Arc<dyn SessionEventNotifier>,
     ) -> Result<Self, PersistentSessionError> {
-        let registry = load_registry_in(root)?;
-        let record = registry
-            .sessions
-            .get(&selected.name)
-            .ok_or_else(|| PersistentSessionError::new("host generation unavailable"))?;
+        let registry = load_registry_in(root)
+            .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::Registry, None))?;
+        let record = registry.sessions.get(&selected.name).ok_or_else(|| {
+            PersistentSessionError::new("host generation unavailable")
+                .at_native_boundary(NativeConnectionBoundary::Generation, None)
+        })?;
         if NativeSessionIdentity::from_record(record) != *selected
             || record.protocol_version != 3
             || !record.attach_kinds
         {
-            return Err(PersistentSessionError::new(
-                "host lease admission unavailable",
-            ));
+            return Err(
+                PersistentSessionError::new("host lease admission unavailable")
+                    .at_native_boundary(NativeConnectionBoundary::Generation, None),
+            );
         }
         let connection = connect_record_admitted_ticket(
             record,
@@ -1252,6 +1304,7 @@ impl PersistentSession {
             Some(ticket),
         )?;
         Self::from_stream_with_reconnector(connection, notifier, None)
+            .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::StreamStart, None))
     }
 
     pub fn start(
@@ -2981,7 +3034,8 @@ fn connect_record_admitted_ticket(
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
-    ensure_protocol_compatible(record)?;
+    ensure_protocol_compatible(record)
+        .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::Protocol, None))?;
     let _pid = record.pid;
     #[cfg(unix)]
     {
@@ -2995,13 +3049,20 @@ fn connect_record_admitted_ticket(
         };
         let mut stream = connect().map_err(|error| {
             PersistentSessionError::new(format!("could not connect to session daemon: {error}"))
+                .at_native_boundary(NativeConnectionBoundary::Connect, Some(&error))
         })?;
         stream
             .set_read_timeout(Some(POLL_INTERVAL))
-            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+            .map_err(|error| {
+                PersistentSessionError::new(error.to_string())
+                    .at_native_boundary(NativeConnectionBoundary::StreamOptions, Some(&error))
+            })?;
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT))
-            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+            .map_err(|error| {
+                PersistentSessionError::new(error.to_string())
+                    .at_native_boundary(NativeConnectionBoundary::StreamOptions, Some(&error))
+            })?;
         admit_record_ticket(
             &mut stream,
             record,
@@ -3028,6 +3089,7 @@ fn connect_record_admitted_ticket(
         )
         .map_err(|error| {
             PersistentSessionError::new(format!("could not connect to session daemon: {error}"))
+                .at_native_boundary(NativeConnectionBoundary::Connect, Some(&error))
         })?;
         stream.set_read_timeout(POLL_INTERVAL);
         stream.set_write_timeout(WRITE_TIMEOUT);
@@ -3123,13 +3185,17 @@ fn admit_record_ticket(
     if ticket.is_some() {
         request[3] = b'5';
     }
-    stream
-        .write_all(&request)
-        .map_err(|_| PersistentSessionError::new("daemon admission write failed"))?;
+    stream.write_all(&request).map_err(|error| {
+        PersistentSessionError::new("daemon admission write failed")
+            .at_native_boundary(NativeConnectionBoundary::AdmissionWrite, Some(&error))
+    })?;
     if let Some(ticket) = ticket {
         stream
             .write_all(ticket.as_str().as_bytes())
-            .map_err(|_| PersistentSessionError::new("host lease ticket write failed"))?;
+            .map_err(|error| {
+                PersistentSessionError::new("host lease ticket write failed")
+                    .at_native_boundary(NativeConnectionBoundary::TicketWrite, Some(&error))
+            })?;
     }
     let mut reply = [0];
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -3137,11 +3203,15 @@ fn admit_record_ticket(
         (Instant::now() >= deadline)
             .then(|| io::Error::new(io::ErrorKind::TimedOut, "admission timed out"))
     })
-    .map_err(|_| PersistentSessionError::new("daemon admission unavailable"))?;
+    .map_err(|error| {
+        PersistentSessionError::new("daemon admission unavailable")
+            .at_native_boundary(NativeConnectionBoundary::AdmissionRead, Some(&error))
+    })?;
     if reply != [1] {
-        return Err(PersistentSessionError::new(
-            "daemon refused occupied or changed generation",
-        ));
+        return Err(
+            PersistentSessionError::new("daemon refused occupied or changed generation")
+                .at_native_boundary(NativeConnectionBoundary::AdmissionRefused, None),
+        );
     }
     Ok(())
 }

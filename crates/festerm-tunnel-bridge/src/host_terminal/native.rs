@@ -337,13 +337,21 @@ impl<A: ProtectedPolicySource> Worker<A> {
             .sessions
             .cancel_attachment(&self.pending.authority, |state| {
                 self.admit(state, None, true)
+            })
+            .inspect_err(|error| {
+                eprintln!("host terminal cleanup boundary=cancel-attachment control={error:?}");
             })?;
         if matches!(committed, AttachmentCancellation::Committed(_)) {
-            self.backend.sessions.maintain_lease(
-                &self.pending.authority,
-                Some(DetachKind::TransportLost),
-                |state| self.admit(state, None, true),
-            )?;
+            self.backend
+                .sessions
+                .maintain_lease(
+                    &self.pending.authority,
+                    Some(DetachKind::TransportLost),
+                    |state| self.admit(state, None, true),
+                )
+                .inspect_err(|error| {
+                    eprintln!("host terminal cleanup boundary=transport-lost control={error:?}");
+                })?;
         }
         Ok(())
     }

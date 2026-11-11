@@ -10526,3 +10526,60 @@ checkout remains a lab prerequisite, not runtime acceptance. No GUI, production
 cloud, native-vault, installed service, signed bundle, guest/device or mobile
 acceptance was performed. Parent owns Draft publication; this is not Ready or
 ADR completion.
+
+## ADR 0084: refuse an already connected persistent writer before native admission
+
+The required macOS acquisition/private-source jobs each retained 13 passes and
+one failure in the original takeover fixture. Its line633 failure was actually
+the second non-takeover attachment, before takeover began. The private-source
+log proves generation-lease unwind contention (WouldBlock35), not registry-lock
+contention; the preceding native connection error was discarded. The acquisition
+log does not identify that inner boundary. B7's 17-case positive baseline instead
+tests Busy after publishing pending takeover, so it cannot validate this path.
+The later binding `2f8624e1` macOS repeat retained 13/1 in 162.90s at the same
+assertion, also with unwind WouldBlock35, but cleanup Stale rather than Storage.
+It does not identify the discarded primary error or actual lock holder either.
+
+The existing connected bit was only maintained for temporary leases. The narrow
+correction records a HOST-managed persistent connection at the same daemon commit
+as its ticket/writer epoch, then refuses a freshly authorized matching connected
+writer before reserving another ticket or opening native IPC. Native errors are
+not parsed as Busy. Exact native identity, current owner/policy/account and grant
+revision still precede refusal; takeover still commits only after adoption.
+Imported binding watches and ordinary unticketed admission retain their existing
+boundaries.
+
+The daemon, not bridge uptime, owns persistent disconnect bookkeeping. Exact
+current-client retirement captures the committed ticket/epoch, and its existing
+poll clears connected state under the generation lock. Contention keeps that
+single receipt pending without waiting behind a bridge. A delayed old receipt
+cannot clear a newer writer, pending takeover, lease authority or shell lifetime.
+Bridge cleanup also clears its own persistent connected state under its existing
+authority. Temporary deadlines and grace are unchanged.
+
+Content-free primary native-connect phase/I/O-kind and cleanup stage diagnostics
+preserve missing evidence without logging error strings, paths, tickets or input.
+The failed-connect unwind code is factored privately without changing its
+uncertainty behavior. Deterministic fixtures hold the real generation lock,
+preserve original committed-writer/lease/pending bytes, verify exact-ticket unwind
+after release, and refuse unwind after commit. Additional native-watch fixtures
+cover independent disconnect, delayed old cleanup, pending takeover, ordinary
+unticketed adoption, unchanged temporary grace and unchanged imported watches.
+The entire original native test/fixture files, test deadlines, legacy 14-case
+boundary, manifests/defaults, storage policy and CI remain unchanged.
+
+Focused validation and the one exact original native case are recorded with
+Rust/Cargo 1.99, a private APFS-cloned warm target, jobs1/debug0/incremental0 and
+the 25%-free memory guard. A first strict attempt exposed an unused new-test
+guard; the correction reads and asserts its exact committed ticket/epoch rather
+than suppressing the warning. Final deterministic selection passed **9/0/0**
+(1.63s), both affected all-target strict profiles passed, and the **one unchanged
+original native case passed 1/0/0** (11.15s). Its 40 connected-persistent Busy
+diagnostics demonstrate the pre-reservation path; no native-connect/unwind
+diagnostic occurs on that occupied path. The captured cleanup refusal is Stale
+at cancellation, not Storage. Neither this run nor source inference identifies
+the discarded primary error or actual lock holder in the historical CI jobs.
+Original CI logs and that first strict failure remain
+retained. The Windows 2f fixture correction and all its old source/proofs/targets
+are separate and unchanged. Required full-platform CI, combined source gates and
+installed/service/vault/device acceptance remain open.
