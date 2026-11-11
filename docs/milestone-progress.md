@@ -1,5 +1,32 @@
 # Milestone Progress Narrative
 
+## Executing local Forget in the normally composed host slice
+
+The frozen `0bc6cc11` and all prior helpers/receipts remain preserved. A normal
+descendant merges exact qualified `af9093d9` as `dcaa11f1`. The four changed Rust
+blobs match the approved pin exactly; other Rust, manifests and lockfile are
+unchanged. Narrative conflicts retain both complete stories. The GUI graph keeps
+the current consolidated HOST table and private/setup/lifetime invariants,
+adding local Forget rather than resurrecting the incoming older duplicate tables.
+
+Fresh integrated execution passes portable bridge **100/0/0, 14.12s** and mobile
+**229/0/4, 63.25s** (233 registered, no filters, four existing ignored). These
+are new executions, not the parent's 13.98s/59.68s runs. All eight added Forget
+tests execute: exact selected history/other-record preservation, scope/change/
+cancellation/vault failures and bounded capacity in the bridge; default-No
+confirmation/current acknowledgment, local capacity, stale/busy/lock/selection
+and failed/stale acknowledgment in mobile. Both matching all-target strict
+profiles pass. Existing optional debug-strip/dependency warnings remain retained.
+Seven distinct `forgetaf9-*` raw/exit/receipt triples cover the suites, strict
+profiles and final formatting/actual-PR-base trace/diff checks.
+
+No Android source or working rf11/fg content is consumed; Android publication
+remains separately blocked pending its own corrected qualification. Native3 and
+full14 are not rerun and no helper build is requested. The native **3/0/0,
+8.11s** remains only `9bc9ef4c` evidence, with immutable execution copies retained.
+Actual native-vault/device local Forget, GUI usability, required platform CI
+and installed/provider acceptance remain unproved. ADR 0084 is not done.
+
 ## Executing stable-account recovery in the composed host slice
 
 The frozen `d4b2a29a` and its proofs remain named and unchanged. A new descendant

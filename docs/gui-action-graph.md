@@ -1826,7 +1826,6 @@ changed records, busy/stale contexts and failed or cancelled completions do not
 discard memory history. The 16+16/64KiB bounds and automatic Ended-only retirement
 remain; native-vault/device/usability acceptance is still required.
 
-
 HOST-06 currently has the independently testable
 [helper authenticity boundary](host-release-artifacts.md) and separate
 [private executable-publication component](native-host-services.md):
