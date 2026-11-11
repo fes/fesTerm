@@ -1,16 +1,16 @@
 # Milestone Progress Narrative
 
-## Composing protected originals with exact native End: execution still blocked
+## Executing protected originals through exact native End
 
 The normal composition of qualified mobile `8f0b7f06` and immutable native End
 `06cb94c0` adds one explicit ignored SSH/helper/PTY protected-original case.
 It uses the same synthetic memory vault for the private receipt, owner-key
 proof and checkpoint, with only a testing-feature memory-fixture composition
 extension. No production authority constructor, protocol, storage backend or
-private-core guard is changed. The intended oracle retains the original
+private-core guard is changed. The executed oracle retains the original
 Create ID/epoch across explicit protected reopen and a fresh real handshake,
-then retains an uncertain original End, refuses a wrong generation and missing
-owned lease as Unknown, and prunes only the exact settled creation/End pair.
+then retains an uncertain original End, refuses a wrong generation as Stale and
+a missing owned lease as Unknown, and prunes only the exact settled creation/End pair.
 This tests bridge/runtime composition, not the mobile GUI or a live NativeVault.
 The host issuance epoch is not artificially rotated by this case; higher-epoch
 reopen remains the separately attributed framed checkpoint regression.
@@ -21,11 +21,26 @@ SSH stream or native Create: the shared runtime fixture uses
 `github:<id>` names. Its exact binary, complete source diff,52 named source
 inputs, raw reply and freshly built helper hashes are preserved. The new
 fixture now uses a valid synthetic `github:7` account without changing the
-production name guard. The native case is not rerun: the corrected composition
-remains unqualified until an explicitly authorized new actual execution.
-Neither the independently qualified710 native positive nor the old mobile
-proofs are relabeled as this combined proof. No timeout/retry or oracle
-weakening is introduced.
+production name guard. The authorized corrected-source execution at immutable
+`c803e619` passes **1/0/0**, exit0 in3.47s: actual control-role signed SSH owner
+proof, HostRuntime/native adapter, owned helper and independent PTY creation/stop.
+An explicit protected-memory-store reopen and fresh authenticated handshake
+reconcile the original Create without a second PTY. The uncertain original End
+and wrong-generation End survive another protected reopen; authoritative
+absence alone does not settle them. A missing owned native lease returns
+Unknown without pruning; restoring the exact lease then lets the same End ID
+return exact Ended and durably prune only its matching creation/End pair.
+End has no creation-issuance-epoch field by contract; its original ID/target are
+retained, not a fabricated epoch. The wrong-generation original remains.
+
+The preceding19 raw records,90 historical records,57 named composed inputs,
+failed pre-wire executable, corrected executable and both helper hashes remain
+unchanged. Neither the independently qualified710 native positive nor old mobile
+proofs are relabeled as this new combined execution. No unchanged retry,
+timeout inflation or oracle weakening is introduced. This is not mobile GUI,
+terminal-role frontend adoption, live NativeVault, physical cold-start or
+Android runtime acceptance; the existing Android `create_reserved` prerequisite
+and unresolved-original limits remain unchanged.
 
 ## Isolating mobile protected-recovery admission fences
 

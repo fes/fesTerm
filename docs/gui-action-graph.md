@@ -1715,10 +1715,16 @@ batches, and Create/End before explicit protected reopen. Valid memory-backed
 receipts, framed original Ends and positive scope/consent controls establish
 prerequisites; exact refusal and no worker/new issuance are the admission oracle.
 These are not native-vault, physical lifecycle or Android runtime evidence.
-The separate protected-original/runtime native composition case currently has
-one pre-wire prerequisite failure; its corrected numeric fixture remains
-unexecuted. It does not extend the earlier native-only End positive or mobile
-checkpoint proof until the actual combined oracle passes.
+The separate protected-original/runtime native composition case passes1/0/0 at
+`c803e619`, after its retained nonnumeric-account pre-wire setup failure.
+Actual control-role SSH/helper/PTY execution preserves the original Create
+ticket/epoch through protected-memory-store reopen/fresh handshake without a
+duplicate PTY. Uncertain End, wrong-generation Stale and missing-lease Unknown
+retain originals; the same original End ID/exact target after authoritative
+absence and exact-lease restoration returns Ended and prunes only its matching
+creation/End pair. End has no issuance-epoch field. This adds bounded bridge/
+runtime evidence, not mobile GUI, terminal frontend adoption, live vault,
+higher-host-epoch native, physical cold-start or Android runtime acceptance.
 
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after

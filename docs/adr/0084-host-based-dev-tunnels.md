@@ -641,11 +641,18 @@ cold-start acceptance and current platform CI remain independent gates.
 
 ### Exact-generation native End confirmation
 
-The combined protected-client/runtime case is a separate acceptance gate from
-the native-only positive below. Its first actual execution fails before wire
-effects because the synthetic runtime account is not a numeric receipt account.
-The numeric fixture correction does not change the production guard and has
-not been rerun; no combined protected-original native acceptance is claimed.
+The combined protected-client/runtime case is separately executed from the
+native-only positive below. Its first nonnumeric fixture failure is retained
+as pre-wire receipt-setup evidence, not native execution coverage. Correcting
+only that synthetic account permits the actual `c803e619` case to pass1/0/0:
+protected-memory-store reopen, fresh control-role authenticated SSH, unchanged
+original Create ticket/epoch and no duplicate native PTY; uncertain End retention;
+wrong-generation Stale and missing-lease Unknown retain originals; same original
+End ID/exact target returns Ended only after authoritative absence and exact
+native-lease restoration, pruning only its matching creation/End pair.
+No production authority/parser boundary changes. End carries no creation
+issuance epoch. This does not qualify a changed host issuance epoch, terminal
+frontend adoption, native vault, GUI, physical cold restart or Android runtime.
 
 The native adapter can now return the existing `Ended(target)` reply when the
 protected journal retains that exact owner's generation and native identity,

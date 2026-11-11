@@ -130,14 +130,20 @@ including a valid empty old-store batch, and no Create/End issuance or worker
 before explicit protected reopen. They use actual memory-backed private receipts,
 framed uncertain original Ends and positive valid-scope/consent controls, not
 invalid metadata prerequisites. They do not qualify native vault or GUI behavior.
-The new explicitly selected
+The explicitly selected
 `native_protected_original_end_reopens_and_settles_exact_generation` composition
-case is not yet a pass: its first actual execution failed at the synthetic
-non-numeric account's protected-receipt prerequisite before SSH/Create. The
-valid numeric fixture correction has not been rerun. Future execution must use
-the current fixed helpers and `testing` feature, retain the first failure, and
-prove exact original reconciliation/uncertain retention/authoritative Ended
-settlement without treating Lookup absence or Unknown as success.
+case passes1/0/0 at immutable `c803e619` with its fixed owned helpers and
+`testing` feature. The first nonnumeric synthetic-account failure remains
+preserved separately: it reached only protected receipt setup, not SSH/Create.
+The corrected-source execution reaches real control-role SSH proof, runtime,
+native adapter, helper and independent PTY. A fresh protected-memory-store
+reopen/handshake retains the original Create ticket/epoch without a duplicate
+PTY. Another reopen retains the uncertain End ID/exact target; wrong-generation
+Stale and missing-lease Unknown retain originals. Only exact Ended after
+authoritative native absence and restored exact lease prunes its creation/End
+pair, leaving the wrong-generation original. End has no issuance-epoch field.
+This does not qualify terminal-role frontend adoption, mobile GUI/lifecycle,
+live NativeVault, changed host issuance epoch or physical-device behavior.
 
 Native acceptance must additionally kill/reopen the owned app before a send,
 after a lost reply and between private-marker/native-payload acknowledgements;
