@@ -12,6 +12,14 @@ reopen, correlated detach, replacement-generation refusal and occupied
 persistent-writer adoption. The source composition itself has no new native,
 actual-vault/provider/device or GUI acceptance evidence.
 
+Persistent takeover has two distinct controlled native oracles: an active
+writer must refuse a second non-takeover request before any pending takeover
+exists; an already-pending takeover must independently retain its ticket and
+old writer through a refused competing request. Both then require adoption
+before writer replacement and prohibit input replay. The integrated source
+has not executed these cases; a passing pending-ticket case alone does not
+qualify the original-order boundary.
+
 ## Desktop pane qualification
 
 | ID | Scenario | Evidence / status |

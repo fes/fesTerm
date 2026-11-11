@@ -731,6 +731,91 @@ mod native_routes {
 
     #[tokio::test]
     #[ignore = "requires explicitly built owned native helper and fixture child"]
+    async fn native_active_writer_refuses_non_takeover_before_pending_takeover_and_retains_adoption_fences(
+    ) {
+        let mut fixture = NativeFixture::new(true);
+        fixture.policy.capabilities.detach = true;
+        let (backend, source) = fixture.backend();
+        let budgets = Budgets::default();
+        let scheduler = OutputScheduler::default();
+        let (mut control, control_server) =
+            fixture.connect(backend, source.clone(), &budgets).await;
+        let mut creation = fixture.creation();
+        creation.recipe.args = vec![
+            "emit:ready".into(),
+            "read-line".into(),
+            "echo:before".into(),
+            "read-line".into(),
+            "echo:after".into(),
+            "spin".into(),
+        ];
+        let target = create(&fixture, &mut control, creation).await;
+        let mut stale = target.clone();
+        stale.generation = GenerationId::new(target.generation.get() + 1).unwrap();
+        let (refused, refused_server) =
+            pending(&fixture, source.clone(), stale, false, &budgets, &scheduler).await;
+        assert!(matches!(refused, Err(Error::Refused(Refusal::Stale))));
+        assert!(refused_server.await.unwrap().is_err());
+        let (mut old, old_server, _) = live(
+            &fixture,
+            source.clone(),
+            target.clone(),
+            false,
+            &budgets,
+            &scheduler,
+        )
+        .await;
+        let lease_name = format!("host-daemon-{}.json", target.generation.get());
+        let before_lease = fixture.checkpoint(&lease_name, 4096);
+        assert!(before_lease["pending"].is_null());
+        let before_record = fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024);
+        let request = Envelope::new(
+            fixture.policy.host.host.clone(),
+            OperationId::new(),
+            Request::Attach {
+                target: target.clone(),
+                attachment: AttachmentId::new(),
+                takeover: false,
+            },
+        );
+        let (refused, refused_server) =
+            pending_once(&fixture, source.clone(), &request, &budgets, &scheduler).await;
+        assert!(
+            matches!(refused, Err(Error::Refused(Refusal::Busy))),
+            "refusal: {:?}",
+            refused.as_ref().err()
+        );
+        assert!(refused_server.await.unwrap().is_err());
+        assert_eq!(fixture.checkpoint(&lease_name, 4096), before_lease);
+        assert_eq!(
+            fixture.checkpoint("host-sessions.json", 4 * 1024 * 1024),
+            before_record
+        );
+        let (new, new_server) = pending(&fixture, source, target, true, &budgets, &scheduler).await;
+        let mut new = new.unwrap();
+        new.take_snapshot().unwrap();
+        old.input(b"old-before\n").unwrap();
+        until(&mut old, b"before:old-before").await;
+        let mut new = new
+            .adopt(&CancellationToken::new())
+            .await
+            .unwrap()
+            .spawn()
+            .unwrap();
+        let _ = old.input(b"must-not-replay");
+        new.input(b"new-after\n").unwrap();
+        let output = until(&mut new, b"after:new-after").await;
+        assert!(!output.windows(15).any(|bytes| bytes == b"must-not-replay"));
+        detached(&mut new).await;
+        assert!(new_server.await.unwrap().is_ok());
+        drop(old);
+        let _ = old_server.await.unwrap();
+        drop(control);
+        assert!(control_server.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicitly built owned native helper and fixture child"]
     async fn native_temporary_detach_and_pending_cancellation_keep_lease_meanings_distinct() {
         let mut fixture = NativeFixture::new(true);
         fixture.policy.capabilities.temporary = true;

@@ -2,6 +2,19 @@
 
 ## Composing the ADR 0084 Desktop vertical slice
 
+Source inspection against exact `18d218dc` also finds a semantic fixture merge
+gap: the retained b7 terminal takeover case asserts non-takeover Busy only
+after a pending takeover exists. It preserves that pending-ticket invariant,
+but cannot prove the original active-writer-only boundary. A distinct ignored
+native regression retains the legacy recipe, stale-generation refusal,
+old-writer-before-adoption, takeover, no-input-replay and correlated detach
+oracles. Its second non-takeover request runs once, before any pending takeover;
+the lease must have no pending ticket and both lease/journal remain unchanged
+after Busy. Only then may takeover begin. The b7 case is unchanged. No retry,
+sleep or deadline is added, and neither case has been executed on this
+integrated child while parent Cargo allocation is held. The parent's separate
+`18d218dc` 14-case result is not integrated-source qualification.
+
 A new worktree based on published `dc43841f` normally merges the exact qualified
 foreground mobile/native-End `39218faf`, persistent adoption `18d218dc`,
 deterministic frame fixture `901bce36` and binary-generation fixture `278343ae`

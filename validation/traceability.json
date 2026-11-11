@@ -5788,6 +5788,7 @@
         "native_temporary_detach_and_pending_cancellation_keep_lease_meanings_distinct",
         "native_revocation_tears_down_slow_output_without_stopping_persistent_shell",
         "native_takeover_waits_for_adoption_and_stale_generation_cannot_attach",
+        "native_active_writer_refuses_non_takeover_before_pending_takeover_and_retains_adoption_fences",
         "native_attachment_failure_diagnostics_are_redacted_and_boundary_exact",
         "failed_native_attach_unwind_contention_preserves_committed_writer_and_exact_pending_ticket",
         "persistent_disconnect_contention_preserves_new_writer_pending_ticket_and_shell",
