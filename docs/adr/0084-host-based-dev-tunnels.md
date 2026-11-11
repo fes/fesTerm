@@ -709,6 +709,27 @@ not SELinux/JNI/Keystore/device execution; corrected source remains blocked from
 consumption pending fresh full-source security/reliability/scope gates and that
 actual native acceptance. No Rust/Cargo rerun is attributed to the Java-only fix.
 
+**Missing native-factory qualification, designed before coding:** the first
+`e135da90` disposable API35/enforcing/untrusted-app campaign passed the production
+Java/native descriptor, secret publication, Keyguard and privacy cases. It did
+not invoke Rust's `NativeAppPrivateRoot::current()`; linked symbols are not
+invocation evidence. Reuse the existing Android-only, debug-assertions-only
+`native-recording-validation` JNI hook and opt-in packager, not a production
+authority API. Add one no-argument scalar hook that invokes the real current-app
+factory twice, requires validated identical roots, and creates/reopens only the
+existing fixed receipt child with exact descriptor identity. Any factory refusal,
+ownership validation failure or panic must fail the case. No caller path, UID,
+descriptor, key, account or serialized capability enters or leaves the hook.
+The existing release-packaging refusal remains mandatory.
+
+Validation impact remains `HOST-02`, `HOST-03`, ADR0084: a focused opt-in native
+instrumentation case must actually call that hook on a fresh isolated guest.
+Preserve the first campaign; do not rerun its entire PlatformSmoke merely to
+obtain green output. New APK/source/compiler maps, actual invocation and
+untrusted-app/enforcing attribution, affected strict/fmt/trace checks and fresh
+source gates are required. API35 runtime with target36 is not API36 runtime,
+TEE, full app-lock authentication or protected-original HOST workflow acceptance.
+
 Validation impact remains `HOST-02`, `HOST-03`, ADR0084: deterministic current
 owner/foreign scope, create versus reopen, foreign-account refusal, base/backup/
 staging collisions, concurrent creation and failure/no-overwrite/no-implicit-

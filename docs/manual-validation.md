@@ -196,6 +196,16 @@ Existing protected-record tests retain foreign-account/key/installation/
 principal refusal; the generic store gains no account bypass.
 
 **Native prerequisite:** run the extended Android `PlatformSmoke` on an owned
+emulator/device. The first frozen `e135da90` campaign now supplies API35 enforcing
+untrusted-app Java/native publication, descriptor, Keyguard and privacy evidence,
+but **not Rust-factory invocation**. A separate opt-in root-factory case must call
+the debug-only, no-argument scalar native-validation hook, which uses the real
+`NativeAppPrivateRoot::current()` and validates identical roots and fixed-child
+creation/reopen. Missing/refused hooks fail; symbols alone do not qualify. Record
+the fresh target36 APK, source maps and actual API35 invocation separately;
+physical devices, TEE and full HOST recovery remain unqualified.
+
+The original publication case requires an owned
 emulator/device: validate native root owner/location, encrypted create/read/
 update/no-replace/tamper/delete, and preserved backup/new/reserved collision
 artifacts with typed read/update/delete refusal. Both ordinary put and the

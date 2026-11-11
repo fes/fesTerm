@@ -1746,6 +1746,13 @@ Keystore. Extended native smoke remains unrun and Android target compilation
 is a separate qualification. Permanent incomplete anchors and the 16-original
 cap remain honest blockers; neither recovery nor retention is redesigned.
 
+HOST-02/03 Android native qualification additionally requires actual invocation
+of Rust's current-app root factory, not just linked symbols or direct Java calls.
+The focused debug-only existing JNI-validation pattern accepts no path/UID/FD,
+requires two validated current roots and exact fixed-child creation/reopen, and
+returns only scalar success/failure. First-campaign API35 publication/Keyguard
+proof is preserved; new invocation evidence and source gates remain required.
+
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after
 recovery adoption/writer activation; abandoned candidates are not Attached.

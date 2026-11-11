@@ -1,5 +1,20 @@
 # Milestone Progress Narrative
 
+## Closing the Android Rust-factory invocation gap
+
+The first frozen `e135da90` disposable campaign built target36 and passed actual
+API35/enforcing/untrusted-app Java/native publication, Keyguard and privacy
+checks. All 77 raw records, 24 successful native subcommands and 2,036 canonical
+source inputs remain frozen. That evidence deliberately did not claim invocation
+of Rust's current-app root factory.
+
+Before code, ADR0084 specifies a no-argument scalar addition to the existing
+debug-only native-validation hook. It must call the real Rust factory twice and
+validate fixed-child creation/reopen without path/UID/FD inputs or outputs.
+A focused new native case, not an unchanged whole-smoke retry, will supply the
+missing invocation evidence. No product authority or portable dependency boundary
+changes; fresh source gates and Parent proof remain required before consumption.
+
 ## Android reservation correction: remove the SELinux-denied publisher
 
 Independent full-source gates blocked `e462c59b`: its hard-link publication is
