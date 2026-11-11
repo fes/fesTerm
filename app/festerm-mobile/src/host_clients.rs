@@ -659,7 +659,7 @@ impl HostUi {
                 CreationMode::Create
             }
             ConnectionBehavior::AttachOnly { .. } => {
-                return Err("Attach-only cannot create.".into())
+                return Err("Attach-only cannot create.".into());
             }
         };
         self.originals.retain(|original| {
@@ -1084,7 +1084,8 @@ impl MobileApp {
                     self.hosts.inventory = None;
                     self.hosts.error = Some(format!(
                         "Host confirmed End for logical {} generation {}. No replacement was touched.",
-                        target.logical, target.generation.get()
+                        target.logical,
+                        target.generation.get()
                     ));
                 }
                 _ => {
@@ -1509,6 +1510,7 @@ impl MobileApp {
         let token = self.sink.live.host.token(epoch);
         let cancel = token.clone();
         let selected = self.hosts.selected.clone();
+        #[cfg(not(target_os = "android"))]
         let root = profiles.host_approval_directory();
         let recovery_context = if matches!(action, Action::RecoverOriginals)
             || forget_id.is_some()
@@ -1562,8 +1564,20 @@ impl MobileApp {
             if cancel.is_cancelled() || legacy_cancel.is_cancelled() {
                 return Err("HOST action cancelled.".into());
             }
-            let index =
-                || ReceiptIndex::in_app_sandbox(&root).map_err(|error| error.message().to_owned());
+            let index = || {
+                #[cfg(target_os = "android")]
+                {
+                    festerm_secret_store::NativeAppPrivateRoot::current()
+                        .map(|root| ReceiptIndex::in_native_app_sandbox(Arc::new(root)))
+                        .map_err(|_| {
+                            "Native application storage unavailable; no path fallback.".to_owned()
+                        })
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    ReceiptIndex::in_app_sandbox(&root).map_err(|error| error.message().to_owned())
+                }
+            };
             let result = match action {
                 Action::ReviewForgetCreation(_) | Action::ReviewForgetEnd(_) => original_store
                     .ok_or("Protected original store no longer current.")?
@@ -1584,14 +1598,26 @@ impl MobileApp {
                     )
                     .map(|forgotten| ResultEvent::Forgotten(forgotten, generation))
                     .map_err(|error| error.message().to_owned()),
-                Action::RecoverOriginals => OriginalStore::recover(
-                    &root,
-                    recovery_context
+                Action::RecoverOriginals => {
+                    let context = recovery_context
                         .as_ref()
-                        .expect("explicit protected recovery"),
-                )
-                .map(|(store, originals)| ResultEvent::Originals(store, originals))
-                .map_err(|error| error.message().to_owned()),
+                        .expect("explicit protected recovery");
+                    #[cfg(target_os = "android")]
+                    let result = {
+                        let root = festerm_secret_store::NativeAppPrivateRoot::current().map_err(
+                            |_| {
+                                "Native application storage unavailable; no path fallback."
+                                    .to_owned()
+                            },
+                        )?;
+                        OriginalStore::recover_in_native_app_sandbox(Arc::new(root), context)
+                    };
+                    #[cfg(not(target_os = "android"))]
+                    let result = OriginalStore::recover(&root, context);
+                    result
+                        .map(|(store, originals)| ResultEvent::Originals(store, originals))
+                        .map_err(|error| error.message().to_owned())
+                }
                 Action::Prepare => index()?
                     .prepare(reviewed.expect("reviewed"))
                     .map(|receipt| ResultEvent::Receipt(Box::new(receipt)))

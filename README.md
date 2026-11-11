@@ -65,6 +65,14 @@ and only exact Ended automatically retires settled originals. Separate default-N
 local Forget abandons only the selected retry history, never ends a session or
 infers absence/replacement consent. Native-vault/device cold-start
 acceptance (including Android reserved-reference storage) remains open.
+Isolated API35/enforcing/untrusted-app smoke now covers native publication,
+Keyguard and the actual Rust→JNI current-app root factory through a debug-only
+validation hook. Target36 packaging is not API36 runtime, TEE or full HOST
+recovery; fresh source reviews and evidence approval remain required.
+The normal Desktop `e6e4b8a2` + Android `b05bc1c0` source composition retains
+typed local Forget reviews and the native pinned receipt index together.
+Composed-head tests, strict checks and Android target checks are still unrun;
+the earlier isolated native campaigns are not execution evidence for this merge.
 The default headless build now has explicit authenticated
 setup/owner approval/run; no listener or permission is enabled merely by
 compilation/configuration. Independent combined review and native/cloud/vault/

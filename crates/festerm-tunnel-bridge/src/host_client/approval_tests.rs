@@ -35,6 +35,8 @@ fn fixture() -> (
     let root = storage::private_test_directory_in(&parent);
     let index = ReceiptIndex {
         root: root.path().join("client-receipts"),
+        #[cfg(unix)]
+        native_root: None,
     };
     (root, index, MemorySecretStore::new())
 }

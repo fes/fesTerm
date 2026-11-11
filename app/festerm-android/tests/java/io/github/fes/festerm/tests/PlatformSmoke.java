@@ -420,8 +420,25 @@ public final class PlatformSmoke extends Instrumentation {
             String reference = UUID.randomUUID().toString();
             byte[] fixture = "native-store-fixture".getBytes(StandardCharsets.UTF_8);
             require(activity.secretWrite(reference, fixture.clone(), false), "secret insert");
+            require(!new File(activity.getNoBackupFilesDir(), "secrets/" + reference + ".reserved").exists(),
+                "ordinary put acknowledgement leaves no reservation");
             require(Arrays.equals(activity.secretRead(reference), fixture), "secret round trip");
-            require(!activity.secretWrite(reference, fixture.clone(), false), "insert must not replace");
+            require(!activity.secretWrite(reference, new byte[]{9}, false), "insert must not replace");
+            require(Arrays.equals(activity.secretRead(reference), fixture), "insert collision preserves original bytes");
+            // Both Rust put and create_reserved use this existing JNI entry
+            // with replace=false; no new native test authority/API is added.
+            String reservedReference = UUID.randomUUID().toString();
+            byte[] reservedFixture = new byte[8193];
+            Arrays.fill(reservedFixture, (byte) 37);
+            require(activity.secretWrite(reservedReference, reservedFixture.clone(), false),
+                "reserved reference shared native creation");
+            require(!new File(activity.getNoBackupFilesDir(), "secrets/" + reservedReference + ".reserved").exists(),
+                "reserved creation acknowledgement leaves no reservation");
+            require(!activity.secretWrite(reservedReference, new byte[]{8}, false),
+                "reserved reference cannot be replaced");
+            require(Arrays.equals(activity.secretRead(reservedReference), reservedFixture),
+                "reserved creation and collision preserve complete bytes");
+            require(activity.secretDelete(reservedReference), "remove only owned reserved fixture");
             require(activity.secretWrite(reference, new byte[]{1, 2, 3}, true), "secret update");
             require(Arrays.equals(activity.secretRead(reference), new byte[]{1, 2, 3}), "updated value");
             File envelope = new File(activity.getNoBackupFilesDir(), "secrets/" + reference);
@@ -440,6 +457,54 @@ public final class PlatformSmoke extends Instrumentation {
             require(activity.secretDelete(reference), "secret delete");
             require(activity.secretRead(reference) == null, "deleted reference missing");
             require(!activity.secretDelete(reference), "idempotent deletion");
+
+            try (ParcelFileDescriptor root = ParcelFileDescriptor.adoptFd(activity.privateDirectoryDescriptor())) {
+                android.system.StructStat pinned = Os.fstat(root.getFileDescriptor());
+                android.system.StructStat expected = Os.stat(new File(activity.getFilesDir(), "festerm").getPath());
+                require(pinned.st_uid == android.os.Process.myUid() && (pinned.st_mode & 0777) == 0700,
+                    "native application root owner");
+                require(pinned.st_dev == expected.st_dev && pinned.st_ino == expected.st_ino,
+                    "native root keeps existing receipt location");
+            }
+            for (String suffix : new String[]{".bak", ".new", ".reserved"}) {
+                String interruptedReference = UUID.randomUUID().toString();
+                File interrupted = new File(activity.getNoBackupFilesDir(),
+                    "secrets/" + interruptedReference + suffix);
+                byte[] retained = new byte[]{8, 3, 5};
+                java.nio.file.Files.createFile(interrupted.toPath(),
+                    java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+                try (FileOutputStream output = new FileOutputStream(interrupted)) {
+                    output.write(retained);
+                    output.getFD().sync();
+                }
+                android.system.StructStat owned = Os.lstat(interrupted.getPath());
+                require(owned.st_uid == android.os.Process.myUid() && (owned.st_mode & 0777) == 0600,
+                    "valid private interrupted fixture");
+                boolean createRefused;
+                try {
+                    createRefused = !activity.secretWrite(interruptedReference, fixture.clone(), false);
+                } catch (IOException expected) {
+                    createRefused = true;
+                }
+                require(createRefused, "native create refuses interrupted material");
+                boolean readRefused = false;
+                try { activity.secretRead(interruptedReference); } catch (IOException expected) { readRefused = true; }
+                require(readRefused, "interrupted native secret is not absence");
+                boolean updateRefused = false;
+                try { activity.secretWrite(interruptedReference, fixture.clone(), true); }
+                catch (IOException expected) { updateRefused = true; }
+                require(updateRefused, "interrupted native secret refuses update");
+                boolean deleteRefused = false;
+                try { activity.secretDelete(interruptedReference); }
+                catch (IOException expected) { deleteRefused = true; }
+                require(deleteRefused, "interrupted native secret refuses deletion");
+                require(Arrays.equals(java.nio.file.Files.readAllBytes(interrupted.toPath()), retained),
+                    "interrupted material preserved");
+                require(!new File(activity.getNoBackupFilesDir(), "secrets/" + interruptedReference).exists(),
+                    "no base created from interrupted state");
+                require(interrupted.delete(), "remove only owned smoke fixture");
+            }
 
             activity.copyText("native clipboard fixture");
             require("native clipboard fixture".equals(activity.clipboardText()), "clipboard round trip");

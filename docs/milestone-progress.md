@@ -1,5 +1,48 @@
 # Milestone Progress Narrative
 
+## Source-only Desktop and qualified Android composition
+
+A new short worktree normally combines exact published Desktop
+`e6e4b8a2b03cf17c7b9dc9cb28b991956f45a162` and exact qualified Android
+`b05bc1c0065ce069572a9d3df3aaffd9b96fea8e`; the frozen `7ad13c6d`
+worktree, peer worktrees and all prior helpers/receipts are preserved.
+The mobile dispatch conflict retains every typed Forget branch and current
+account/privacy/request/selection fence, while Android prepare/load/recovery
+uses only the current native application capability. `OriginalStore` retains
+its `ReceiptIndex` across access/reopen and compares validated namespace
+identity. Review and confirmation keep their original store and snapshot.
+Profiles' ordinary root accessor remains non-Android-only; lockfile additions
+from both normal histories remain present. Documentation histories are combined,
+not replaced by one side.
+
+The only new regression is
+`protected_original_forget_retains_namespace_and_snapshot_across_index_reopen`:
+portable cloned-index reopen, namespace comparison, stale-snapshot refusal,
+retained-review confirmation and unrelated-record preservation. No forging
+constructor or production authority API is added. All eight existing Forget
+tests and native pre-/post-pending takeover oracles remain unchanged.
+
+This is a **source-only freeze**, not a validation handoff or acceptance.
+No composed build, test, strict/cfg/fmt/trace command or native rerun has executed.
+Three fresh composed source gates and the affected suites/checks follow in a
+separately authorized phase. Android production Rust→JNI execution is retained
+only at `495f700f`, API35/enforcing/untrusted-app with target36 packaging; the
+focused optional runner is not whole PlatformSmoke qualification.
+The native three-case `9bc9ef4c` and diagnostic End `15e768ad` executions keep
+their exact original attribution. Changed bridge storage/secret-store inputs
+prevent full compiled-input equivalence claims. No SDK/OS/vault/provider/VM
+operation or publication accompanies this merge. Full Android HOST, NativeVault,
+app-lock, API36 runtime, physical-device and TEE acceptance remain open.
+
+Parent's latest exact-`e6e4b8a2` required CI attribution is Mac success, Ubuntu
+host_control 26 passed/1 failed in 45.53s at line 1195 of
+`absence_denial_revocation_cancellation_and_generations_remain_distinct`.
+The Denied assertion's actual returned variant was not printed; an empty journal
+does not identify the cause. Windows remains pending. Ubuntu native19 was not
+reached, so the historical `7ad13c6d` End variant remains unknown. Parent owns a
+separate exact-e6 source-only diagnostic child; this composition neither imports
+that moving work nor adds a speculative host-control fix or common-cause claim.
+
 ## Executing local Forget in the normally composed host slice
 
 The frozen `0bc6cc11` and all prior helpers/receipts remain preserved. A normal
@@ -1381,6 +1424,149 @@ retain their full credential/account snapshot checks; no old worker is
 re-authorized. Deterministic fixtures cover each metadata change and their
 combination. Native-vault/account cold-start acceptance remains separate.
 
+## Closing the Android Rust-factory invocation gap
+
+The first frozen `e135da90` disposable campaign built target36 and passed actual
+API35/enforcing/untrusted-app Java/native publication, Keyguard and privacy
+checks. All 77 raw records, 24 successful native subcommands and 2,036 canonical
+source inputs remain frozen. That evidence deliberately did not claim invocation
+of Rust's current-app root factory.
+
+Before code, ADR0084 specifies a no-argument scalar addition to the existing
+debug-only native-validation hook. It must call the real Rust factory twice and
+validate fixed-child creation/reopen without path/UID/FD inputs or outputs.
+A focused new native case, not an unchanged whole-smoke retry, will supply the
+missing invocation evidence. No product authority or portable dependency boundary
+changes; fresh source gates and Parent proof remain required before consumption.
+
+The implementation freeze `495f700f` now passes that actual missing case once
+on a fresh disposable API35 guest, targeting API36, with enforcing SELinux and the
+real untrusted application UID. The scalar JNI hook calls the production Rust
+factory twice, validates equal pinned roots and exact fixed-child creation/reopen;
+no path, UID or descriptor is supplied by the test. The actual APK, immutable
+native library and compiler/source maps are retained. The package build, affected
+Android-target Rust 1.99.1 strict, five focused host tests, fmt and trace311 pass
+with all 2,037 source inputs unchanged during each command. Existing vendored
+dependency warnings are retained in logs, not repaired or concealed.
+
+This continuation does not rerun whole PlatformSmoke or the first Keyguard case;
+all 89 first-campaign inventory entries remain unchanged. The earlier compiled
+library is separately preserved before authorized warm-target reuse. The new
+guest/privateADB are stopped, every owned PID/loopback listener is closed, both
+target locks are available, and original SDK/license/AVD configuration hashes
+and global ADB17898 identity match. Guest credentials are destroyed; anonymous
+registry cache alone is retained. Android-target Rust 1.98 strict is unrun because that
+existing toolchain lacks Android std; no toolchain install was attempted.
+Actual API35 runtime is not API36 runtime, TEE or a full protected-original HOST
+workflow. Fresh full-source gates and evidence approval remain mandatory.
+
+## Android reservation correction: remove the SELinux-denied publisher
+
+Independent full-source gates blocked `e462c59b`: its hard-link publication is
+denied to untrusted Android apps by AOSP SELinux policy. Host JVM passes, API35
+Java compilation and NDK Rust checks did not establish runtime compatibility.
+That frozen source and all evidence are retained, not consumed or relabelled.
+Every `secretWrite(..., false)` call, including ordinary put, shared the broken
+publisher and could leave a permanent reservation; this is a production
+regression, not merely a missing acceptance check.
+The authoritative [Android 16 app policy, line 115](https://android.googlesource.com/platform/system/sepolicy/+/refs/heads/android16-release/private/app_neverallows.te?format=TEXT)
+states `neverallow all_untrusted_apps file_type:file link;`. Parent separately
+retains the decoded policy with SHA256
+`f62dce15435b564c86f16ef6d54bbedcd4725752b45a1b487be3b4e592595486`.
+
+Before correction code, ADR0084 now requires an exclusive base creation under
+the existing namespace lease and durable `.reserved` marker. The complete base
+must be forced and its directory synced before marker removal; removal and a
+final directory sync precede acknowledgement. Marker-visible partial data is
+never accepted. Collisions and failures retain uncertainty without replacement,
+cleanup, encryption/authority changes or new JNI/platform APIs. Deterministic
+host faults and existing-SDK compilation are necessary but actual Android
+SELinux/JNI/Keystore/device smoke remains a mandatory consumption blocker.
+
+Frozen corrected source `d89fc146` passes five Python tests, including 35 actual
+host JVM cases (empty/4096-byte partial/full bases, each publication boundary,
+guard/directory-sync/marker-delete failures and real independent processes).
+Production Java plus extended smoke compile against the existing API35 jar.
+Both commands retain identical full tracked-source maps before/after execution.
+Rust/manifests/lock remain identical to `e462c59b`; no Cargo rerun was performed.
+The early historical source-drifting Cargo-zero receipts stay unqualified,
+alongside the original nonzero failures; only the later frozen Rust evidence
+is inherited by canonical equality.
+
+Read-only inventory finds API35/build-tools35/NDK27, adb/emulator binaries and
+one AVD configuration; an existing adb process is not owned or modified.
+API36 jar/build-tools remain missing. No adb/emulator command, server query,
+device launch, install or SDK/OS/provider change was performed. Connected or
+bootable devices and actual SELinux/JNI/Keystore behavior remain unknown:
+fresh three-source gates and actual native smoke are required before consumption.
+
+## Historical e462 boundary qualification: reliability blocked
+
+The owner explicitly approved implementing the opaque native application-root
+capability and serialized native reserved-write boundary described in ADR0084.
+The design-only `81dfe5a5` checkpoint preceded production edits. It preserves the existing
+receipt location and all protected-original/account/epoch fences, rejects
+backup/staging ambiguity without reset, and leaves incomplete-anchor/retention
+work out of scope. The narrow implementation obtains a nonserializable pinned
+current-app directory through the secret-store facade and threads it through
+the actual Android foreground receipt/reopen worker. `OriginalStore` keeps that
+index rather than reconstructing native authority from a profile path.
+
+The native vault now implements reserved creation under same-process admission
+and a cross-process namespace lease shared with read/update/delete. Synced
+reference-specific stages publish by non-replacing hard link; backup/new/staged
+or ambiguous material is retained and refuses reads rather than becoming
+absence. The native key/envelope/reference AAD is unchanged. One JDK host wrapper
+executes 23 cases against the production namespace/predicates (including
+independent processes and injected failures), and 17 Rust secret-store units
+pass, including five adapter/root cases. The initial Rust formatter/test-module
+scoping failures are preserved, then corrected source is validated; the first
+successful Rust run also retains a missing-LLVM debug-strip tool warning.
+
+Frozen host qualification passes mobile 224, secret-store 17 and portable bridge
+96 tests (337 total, four existing mobile ignores), plus four Python tests
+including the 23 JVM cases. Affected all-target strict checks pass on Rust
+1.98.0/1.99.1, with a separate default-relay bridge-library strict check.
+Actual Android Rust mobile checking passes with the existing NDK 27 compiler.
+Production Java and extended smoke compile against the existing API 35 jar.
+The first Java compile caught a nonpublic directory flag; descriptor type checks
+with public no-follow/nonblocking flags replace it. Native directory parents
+are also synced for existing children so an earlier unsynced creation cannot
+undermine a later protected checkpoint.
+
+All first failures remain preserved, including default compiler lookup before
+configuring the already-installed NDK. These are host contracts and target
+compilation, not Android JNI/Keystore/device execution. The configured API 36
+jar/build-tools are missing; APK packaging and the extended native runtime smoke
+remain prerequisites, without SDK installation or platform changes. Permanent
+incomplete anchors and the 16-original cap remain honest blockers. All previous
+`39218faf`/`c803e619` proofs remain unchanged.
+
+### Historical contract investigation
+
+A clean normal child of qualified `39218faf` traces the Android reservation
+blocker without changing392/c803 sources or evidence. The missing
+`AndroidSecretStore::create_reserved` override is not safely repaired by simply
+delegating to Java insert: read recognizes an AtomicFile `.bak` while insert
+checks only the base name, so a backup-only collision can overwrite recoverable
+data. Separately, Android supplies `getFilesDir()/festerm` as a canonical string;
+receipt storage then validates every ancestor as root/current UID with no
+group/other writes. An Android system-owned ancestor cannot pass that policy,
+and no existing typed native application-root anchor bridges that contract.
+This is source evidence, not an observed device filesystem failure.
+
+The bounded result is a concrete contract decision, not an unsafe partial
+adapter: an opaque native-created owner/application-bound pinned private root
+through the existing secret-store facade, used by a narrow receipt-index
+entry point without a bridge/JNI dependency; plus exact create-new semantics
+that preserve any base/backup/uncertain staging state. Existing protected
+OwnerBinding equality continues to reject foreign host/account/installation/
+principal/fingerprint records. Root substitution, create-versus-reopen,
+foreign-account, collision and native-write-failure tests are required before
+qualifying parity. No parser, native owner guard, payload encryption, incomplete
+anchor or retention bound is changed. Host Cargo remains held: no target clone,
+Cargo, SDK, device, provider or OS-configuration operation was performed.
+
 ## Executing protected originals through exact native End
 
 The normal composition of qualified mobile `8f0b7f06` and immutable native End
@@ -1443,7 +1629,7 @@ It is not a raw authority constructor, native-store override or production
 storage API. App production policy and all existing production items are
 unchanged. No native, Android, offline suite or Simulator relink is needed for
 these test-only additions; all earlier receipts retain their original source
-attribution. Android reserved-reference Unsupported/permanent incomplete
+attribution. At that frozen pin, Android reserved-reference Unsupported/permanent incomplete
 reservations and indefinitely unresolved sixteen-slot admission remain real
 limitations. An early strengthened test fixture incorrectly assumed separately
 seeded identical accounts had different credentials; that prerequisite assertion

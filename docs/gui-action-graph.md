@@ -1586,6 +1586,15 @@ and now exposes a separate foreground review path described below. Existing TUNN
 retain their current coverage until explicit migration. The single
 `host-protocol-owner-contracts` trace group combines these evidence sets.
 
+For `HOST-02`/`HOST-03`, Android protected-original publication keeps a durable
+reservation marker while exclusively creating and syncing the complete native
+base. Marker-visible state refuses read/update/delete and cannot become absence;
+collision/failure never grants replacement or clears uncertain originals.
+The earlier hard-link publisher is blocked by Android SELinux, including ordinary
+put. No hard link/replace-capable rename or authority relaxation is permitted.
+Actual Android SELinux/JNI/Keystore/device smoke remains required before
+consumption, independently of host tests, compilation and fresh source gates.
+
 The portable selected-host `host_client` executor adds actual native-vault/
 relay/role-proof composition, bounded inventory and frontend-confirmed
 existing-generation adoption. Its executed `selected_host_*` tests are not
@@ -1885,6 +1894,39 @@ absence and exact-lease restoration returns Ended and prunes only its matching
 creation/End pair. End has no issuance-epoch field. This adds bounded bridge/
 runtime evidence, not mobile GUI, terminal frontend adoption, live vault,
 higher-host-epoch native, physical cold-start or Android runtime acceptance.
+
+Android HOST-02/03 has a bounded reserved-create implementation, not runtime
+acceptance. Its foreground worker receives the opaque native-current-app root
+through the secret-store facade; portable ancestry checks remain unchanged.
+Native namespace admission/lease covers reads, create, update and delete.
+Base/backup/new/reserved material cannot become absence or be overwritten by
+create-new; uncertain stages remain retained. One host wrapper/23 JVM cases
+exercise the actual namespace and metadata predicates, not Android JNI/
+Keystore. Extended native smoke remains unrun and Android target compilation
+is a separate qualification. Permanent incomplete anchors and the 16-original
+cap remain honest blockers; neither recovery nor retention is redesigned.
+
+HOST-02/03 Android native qualification additionally requires actual invocation
+of Rust's current-app root factory, not just linked symbols or direct Java calls.
+The focused debug-only existing JNI-validation pattern accepts no path/UID/FD,
+requires two validated current roots and exact fixed-child creation/reopen, and
+returns only scalar success/failure. First-campaign API35 publication/Keyguard
+proof is preserved. The focused case passes at `495f700f` on fresh
+API35/enforcing/untrusted-app runtime with target36 packaging: both real Rust
+factory calls and exact fixed-child create/reopen execute before scalar success.
+Fresh full-source gates and evidence approval remain required; no physical
+device, TEE, API36 runtime or complete protected-original HOST claim follows.
+
+The normal `e6e4b8a2` + `b05bc1c0` composition preserves both typed local Forget
+and native pinned-index recovery. Review/confirmation retain the same store;
+no raw path, newly acquired root or pending-reservation repair substitutes for
+its namespace or checkpoint snapshot. The new portable
+`protected_original_forget_retains_namespace_and_snapshot_across_index_reopen`
+case checks shared-index reopen, distinct-namespace refusal, changed-snapshot
+refusal and preservation of unrelated history. It and all composed-head
+execution/source gates remain unrun at source freeze. Earlier API35 native
+campaigns and helper/PTY fixtures keep their original source attribution.
+Desktop explicit Forget is not full Android capacity/reopen/Forget acceptance.
 
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after

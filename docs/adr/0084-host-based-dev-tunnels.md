@@ -817,8 +817,9 @@ Unix feature-gated testing composition reuses the actual memory secret store, ow
 receipt/checkpoint paths and framed original Ends; it adds no production
 authority constructor or native-store selection override. Valid-scope and
 confirmed-End controls isolate the tested fences. Native acceptance remains
-separate; Android reserved-reference Unsupported/incomplete reservations and
-the sixteen-unresolved-action admission limit remain unchanged.
+separate; the Android reservation boundary below removes the source-level
+Unsupported prerequisite but does not repair incomplete reservations or the
+sixteen-unresolved-action admission limit.
 
 Durable reconciliation is a current ADR0084 requirement, with a narrow
 client-bound checkpoint factory as its architectural enabler. A private,
@@ -887,6 +888,163 @@ Forget does not mint an operation, contact the host, settle an End, stop a
 session, change owner authority or launch a replacement. Saving, importing,
 opening, sign-out, suspension and stale/unknown remote replies cannot grant
 Forget consent.
+
+### Android protected reservation prerequisite
+
+**Normal source composition:** exact Desktop `e6e4b8a2` and qualified Android
+`b05bc1c0` are combined without squashing either history. Foreground Android
+prepare/load and explicit recovery use only the native-created root capability;
+non-Android callers retain the existing application sandbox path entry point.
+Local Forget review and confirmation use their retained `OriginalStore`, whose
+index, typed original and serialized snapshot remain unchanged by dispatch.
+Original handles compare validated storage identity, not placeholder paths.
+No native constructor, permission relaxation, vault fallback, implicit pending
+repair or automatic retry is introduced.
+
+Validation impact remains `HOST-02`, `HOST-03`, ADR0084. The new portable
+`protected_original_forget_retains_namespace_and_snapshot_across_index_reopen`
+regression covers cloned-index reopen, same/different namespace comparison,
+stale review refusal after another opener changes the checkpoint, retained-store
+confirmation and preservation of the unrelated original. It is **unrun at the
+composition source freeze**. All eight existing Forget regressions are retained.
+Fresh composed secret-store/portable-bridge/mobile suites, affected all-target
+strict and Android cfg checks, fmt and actual-base `6614c990` trace/diff are
+pending, as are three fresh composed source gates. The isolated API35 factory
+case remains attributed only to `495f700f`; prior native takeover/End evidence
+is not reattributed to this merge. Explicit local Forget mitigates Desktop
+capacity only after consent; full Android HOST recovery/Forget and NativeVault,
+app-lock, API36 runtime, physical-device and TEE acceptance remain open.
+The following implementation checkpoints retain their own historical limits;
+Parent qualified exact `b05bc1c0` source/evidence before authorizing composition.
+
+**Accepted current-requirement enabler, before implementation:** the owner chose
+the secure Android boundary. An opaque, nonserializable `NativeAppPrivateRoot`
+is obtained only from the current Android application through the existing
+secret-store facade. Native code pins and checks the application-owned private
+directory; the bridge opens only its fixed receipt child relative to that
+anchor. Neither a caller path nor imported metadata can construct the capability.
+The existing receipt location is retained, including interrupted material.
+Portable ancestry validation is unchanged; there is no blanket UID allowance,
+bridge-to-JNI dependency, raw-root constructor or file-vault fallback.
+The portable path constructor explicitly refuses Android; only the native
+capability entry point can select its receipt namespace.
+
+Reserved native creation must serialize the existing native namespace and
+atomically exclude the base, `.bak`, `.new` and reserved-write staging states.
+An interrupted or ambiguous write remains existing/uncertain, never a new empty
+reference. Existing envelopes remain native-key encrypted and reference-bound.
+Readers, replacement and deletion participate in the same namespace ownership;
+collision/failure cannot overwrite or silently clear retained material.
+
+The bounded implementation retains the native-context data-directory handle
+before accepting its exact files/no-backup child (including Android's native
+0771 child mode under the private application root). The final receipt/vault
+children must remain current-app private.
+Native directory descriptors use public no-follow/nonblocking flags and must
+pass descriptor-based directory/owner checks before becoming authority. Each
+native directory entry's parent is synced even when the child already exists;
+an earlier unsynced creation must not undermine a later original checkpoint.
+Native vault operations share
+same-process nonreentrant admission and a cross-process file lease: a second
+same-process attempt must not open/close the POSIX lock inode and inadvertently
+release the first process-owned lock.
+
+**Normative mechanism correction, documented before coding:** the `e462c59b`
+hard-link publisher is blocked, not consumable. AOSP SELinux app policy denies
+untrusted apps `file_type:file link`; host filesystem tests and Java/Rust target
+compilation cannot qualify that operation. No hard link or replace-capable
+rename may publish native secrets.
+
+Under the existing namespace lease, create and sync a private reference-specific
+`.reserved` marker and its directory. Exclusively open the base with
+`CREATE_NEW`, `WRITE`, `NOFOLLOW_LINKS` and mode 0600; write the complete encrypted
+envelope, force the base, and sync its directory. Only then delete the marker
+and sync the directory before acknowledgement. While the marker exists,
+`existing()` refuses reads, replacement and deletion, including an empty or
+partial base. Never clean up uncertain material automatically. A collision
+must preserve both the pre-existing base and the reservation. Any write, force,
+directory-sync or marker-deletion failure returns an explicit failure, even
+when the final result may already be committed. Failure after marker deletion
+may leave a complete readable base, but must not acknowledge creation or permit
+replacement. Native SELinux/JNI/Keystore/device smoke is required before
+consumption; host/JVM/API35 evidence remains insufficient.
+
+Validation impact remains the existing `HOST-02`, `HOST-03`, ADR0084 IDs:
+deterministic faults at reservation, base creation/partial write/force,
+publication sync, marker deletion and final sync; non-overwrite and concurrent
+creators; retained backup/new/staging states; successful native put/reserved
+creation with no marker after acknowledgement and unchanged bytes on collision.
+The existing receipt location and native ciphertext/AAD are unchanged.
+
+The corrected `d89fc146` host selection passes five Python tests, including
+35 production-namespace/predicate JVM cases, and actual API35 compilation of all
+five production Java sources plus the extended native smoke. Compiler inputs
+and full tracked-source maps remain unchanged through both commands. This is
+not SELinux/JNI/Keystore/device execution; corrected source remains blocked from
+consumption pending fresh full-source security/reliability/scope gates and that
+actual native acceptance. No Rust/Cargo rerun is attributed to the Java-only fix.
+
+**Missing native-factory qualification, designed before coding:** the first
+`e135da90` disposable API35/enforcing/untrusted-app campaign passed the production
+Java/native descriptor, secret publication, Keyguard and privacy cases. It did
+not invoke Rust's `NativeAppPrivateRoot::current()`; linked symbols are not
+invocation evidence. Reuse the existing Android-only, debug-assertions-only
+`native-recording-validation` JNI hook and opt-in packager, not a production
+authority API. Add one no-argument scalar hook that invokes the real current-app
+factory twice, requires validated identical roots, and creates/reopens only the
+existing fixed receipt child with exact descriptor identity. Any factory refusal,
+ownership validation failure or panic must fail the case. No caller path, UID,
+descriptor, key, account or serialized capability enters or leaves the hook.
+The existing release-packaging refusal remains mandatory.
+
+Validation impact remains `HOST-02`, `HOST-03`, ADR0084: a focused opt-in native
+instrumentation case must actually call that hook on a fresh isolated guest.
+Preserve the first campaign; do not rerun its entire PlatformSmoke merely to
+obtain green output. New APK/source/compiler maps, actual invocation and
+untrusted-app/enforcing attribution, affected strict/fmt/trace checks and fresh
+source gates are required. API35 runtime with target36 is not API36 runtime,
+TEE, full app-lock authentication or protected-original HOST workflow acceptance.
+
+The implementation freeze `495f700f` executes this focused JNI case successfully
+on fresh API35/enforcing/untrusted-app runtime, with target36 packaging. Both
+real factory calls and validated fixed-child create/reopen precede scalar success;
+the hook cannot accept a caller path/UID/FD or substitute an unvalidated root.
+The package, Android-target Rust 1.99.1 strict and five focused host tests pass
+with identical 2,037-input source maps; all 89 first-campaign inventory entries remain
+unchanged. This is actual invocation, not merely symbol qualification. The new
+source still requires independent full-source gates and evidence approval;
+physical devices, TEE, API36 runtime and full protected-original recovery remain
+separate. No unchanged native smoke or new SDK install was used in this continuation.
+
+Validation impact remains `HOST-02`, `HOST-03`, ADR0084: deterministic current
+owner/foreign scope, create versus reopen, foreign-account refusal, base/backup/
+staging collisions, concurrent creation and failure/no-overwrite/no-implicit-
+empty checks are required. Host fixtures are not Android JNI, target compilation
+or device evidence, which must be recorded separately. The accepted decision was
+persisted before coding. Historical frozen Rust qualification passes 337 tests
+(mobile 224, secret-store 17, portable bridge 96), with four existing mobile
+ignores; five secret-store cases cover the new adapter/pinned root. These
+unchanged Rust inputs do not require a Cargo rerun for the Java-only correction.
+The historical 23 host JVM passes did not detect the blocked Android hard-link
+primitive; corrected host/Java qualification is recorded separately.
+Affected all-target strict checks pass on Rust 1.98.0 and 1.99.1; the default-relay
+bridge library also passes strict checking on 1.99.1.
+
+Actual `aarch64-linux-android` Rust mobile/secret-store checking passes using the
+already installed NDK 27 compiler; this is compilation, not a linked APK or
+execution. Production Java and the extended native smoke compile against the
+already installed Android API 35 jar. The first Java compile exposed the
+nonpublic `OsConstants.O_DIRECTORY`; corrected code uses public no-follow/
+nonblocking flags and validates the descriptor's directory type before use.
+Initial formatter/test-module, trace-registration, default compiler-lookup and
+Java compile failures remain preserved alongside corrected-source results.
+At that original compile-only checkpoint the configured API 36 jar/build-tools
+were absent, so APK packaging, JNI and native Keystore execution were unrun.
+The later isolated campaigns above separately qualify their recorded subset,
+not full HOST or physical restart acceptance. No SDK installation or
+platform-setting change is part of this source composition.
+Incomplete-anchor recovery, retained-original bounds, account/epoch fences and
+explicit reopen are unchanged.
 
 ### Exact-generation native End confirmation
 

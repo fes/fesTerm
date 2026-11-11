@@ -2432,6 +2432,7 @@ dependencies = [
  "festerm-mobile",
  "festerm-recording",
  "festerm-recording-export",
+ "festerm-secret-store",
  "festerm-ui-egui",
  "jni 0.21.1",
  "winit",
@@ -2905,6 +2906,7 @@ version = "0.16.0"
 dependencies = [
  "apple-native-keyring-store",
  "festerm-android-platform",
+ "festerm-unix-security",
  "keyring-core",
  "security-framework",
  "serde",

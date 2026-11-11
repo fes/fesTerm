@@ -531,6 +531,69 @@ async fn protected_original_forget_preserves_other_records_and_never_settles_end
 }
 
 #[tokio::test]
+async fn protected_original_forget_retains_namespace_and_snapshot_across_index_reopen() {
+    let fixture = Fixture::new();
+    let first = fixture.intent();
+    let second = fixture.intent();
+    lost_creation(&fixture, first.clone()).await;
+    lost_creation(&fixture, second.clone()).await;
+    let saved = serde_json::to_vec(&fixture.blob().actions[1]).unwrap();
+    let (reopened, originals) = OriginalStore::recover_index(
+        fixture.store.index.clone(),
+        &fixture.context,
+        fixture.vault.clone(),
+    )
+    .unwrap();
+    assert_eq!(originals.len(), 2);
+    assert!(fixture.store.index.same_storage(&reopened.index));
+    let handle = fixture.store.handle(
+        first.creation().attachment.to_string(),
+        "fixture review".into(),
+    );
+    assert!(handle.agrees(&reopened, "fixture review"));
+    let other = Fixture::new();
+    assert!(!fixture.store.index.same_storage(&other.store.index));
+    assert!(!handle.agrees(&other.store, "fixture review"));
+    let cancel = CancellationToken::new();
+    let id = OriginalId::Creation(first.creation().attachment.clone());
+    let stale = fixture
+        .store
+        .review_forget(&fixture.context, id.clone(), &cancel)
+        .unwrap();
+    reopened
+        .access(false, |blob| {
+            blob.actions[0].review.push_str(" changed after reopen");
+            Ok(((), true))
+        })
+        .unwrap();
+    assert!(matches!(
+        stale.forget(&fixture.context, &cancel),
+        Err(Failure::BindingMismatch)
+    ));
+    assert_eq!(fixture.reopen().unwrap().1.len(), 2);
+    let current = reopened
+        .review_forget(&fixture.context, id, &cancel)
+        .unwrap();
+    drop(originals);
+    drop(reopened);
+    assert_eq!(
+        current.forget(&fixture.context, &cancel).unwrap().outcome(),
+        ForgetOutcome::Removed
+    );
+    let (_, mut remaining) = fixture.reopen().unwrap();
+    assert_eq!(remaining.len(), 1);
+    let RecoveredIntent::Creation(restored) = remaining.remove(0).intent else {
+        panic!("creation")
+    };
+    assert_eq!(restored.issued_operation(), second.issued_operation());
+    assert_eq!(
+        serde_json::to_vec(&fixture.blob().actions[0]).unwrap(),
+        saved
+    );
+    assert!(!first.is_resolved() && !second.is_resolved());
+}
+
+#[tokio::test]
 async fn protected_original_forget_refuses_changed_scope_record_and_cancelled_consent() {
     let fixture = Fixture::new();
     let intent = fixture.intent();

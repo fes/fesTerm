@@ -20,7 +20,11 @@ def main():
     parser.add_argument("--sdk", default=os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk")))
     parser.add_argument("--recording-validation", action="store_true",
                         help="Exercise Rust-to-Java recording export in a validation APK")
+    parser.add_argument("--root-factory-validation", action="store_true",
+                        help="Only invoke the debug-validation Rust current-app root factory")
     args = parser.parse_args()
+    if args.recording_validation and args.root_factory_validation:
+        parser.error("Select one focused native validation case")
     sdk = Path(args.sdk)
     tools = sdk / "build-tools" / build.BUILD_TOOLS
     android_jar = sdk / "platforms" / f"android-{build.API}" / "android.jar"
@@ -61,12 +65,15 @@ def main():
     try:
         result = build.run(*adb, "shell", "am", "instrument", "-w",
             *(["-e", "recording-validation", "true"] if args.recording_validation else []),
-            "io.github.fes.festerm.tests/.PlatformSmoke", capture=True, timeout=90)
+            "io.github.fes.festerm.tests/."
+            + ("RootFactorySmoke" if args.root_factory_validation else "PlatformSmoke"),
+            capture=True, timeout=90)
     except subprocess.TimeoutExpired:
         result = "FAIL: Android native instrumentation exceeded 90 seconds\n"
     finally:
         build.run(*adb, "shell", "am", "force-stop", "io.github.fes.festerm", timeout=15)
-    (output / "native-results.txt").write_text(result)
+    result_name = "native-root-results.txt" if args.root_factory_validation else "native-results.txt"
+    (output / result_name).write_text(result)
     print(result)
     if "PASS:" not in result or "FAIL:" in result:
         raise SystemExit("Android native integration checks failed")

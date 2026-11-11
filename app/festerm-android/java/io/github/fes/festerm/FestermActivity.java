@@ -119,6 +119,121 @@ public final class FestermActivity extends NativeActivity {
         return directory.getCanonicalPath();
     }
 
+    public int privateDirectoryDescriptor() throws IOException {
+        try (ParcelFileDescriptor directory = privateChild(getFilesDir(), "festerm")) {
+            return directory.detachFd();
+        }
+    }
+
+    private void checkPrivateDescriptor(FileDescriptor descriptor, boolean directory)
+            throws ErrnoException, IOException {
+        StructStat metadata = Os.fstat(descriptor);
+        boolean type = directory ? OsConstants.S_ISDIR(metadata.st_mode) : OsConstants.S_ISREG(metadata.st_mode);
+        NativeStorageChecks.privateEntry(android.os.Process.myUid(), getApplicationInfo().uid,
+            metadata.st_uid, metadata.st_mode, metadata.st_nlink, type, directory);
+    }
+
+    private ParcelFileDescriptor pinPrivateDirectory(String path) throws IOException {
+        try {
+            FileDescriptor descriptor = Os.open(path,
+                OsConstants.O_RDONLY | OsConstants.O_NOFOLLOW | OsConstants.O_NONBLOCK
+                    | OsConstants.O_CLOEXEC, 0);
+            try {
+                checkPrivateDescriptor(descriptor, true);
+                return duplicatePrivateDescriptor(descriptor);
+            } finally {
+                Os.close(descriptor);
+            }
+        } catch (ErrnoException error) {
+            throw new IOException("Native private storage unavailable", error);
+        }
+    }
+
+    private ParcelFileDescriptor duplicatePrivateDescriptor(FileDescriptor descriptor)
+            throws ErrnoException, IOException {
+        ParcelFileDescriptor owned = ParcelFileDescriptor.dup(descriptor);
+        try {
+            Os.fcntlInt(owned.getFileDescriptor(), OsConstants.F_SETFD, OsConstants.FD_CLOEXEC);
+            return owned;
+        } catch (ErrnoException error) {
+            owned.close();
+            throw error;
+        }
+    }
+
+    private ParcelFileDescriptor privateChild(File nativeParent, String child) throws IOException {
+        if (nativeParent == null) throw new IOException("Native private storage unavailable");
+        // Android may make files/no_backup 0771. They are not portable private
+        // roots: pin the current Context's private data directory first, then
+        // validate that exact native child beneath it, never a caller path.
+        String nativeName = nativeParent.equals(getFilesDir()) ? "files"
+            : nativeParent.equals(getNoBackupFilesDir()) ? "no_backup" : null;
+        if (nativeName == null) throw new IOException("Native storage scope unavailable");
+        try (ParcelFileDescriptor application = pinPrivateDirectory(getDataDir().getPath());
+                ParcelFileDescriptor parent = pinNativeStorageDirectory(application, nativeParent, nativeName)) {
+            String path = "/proc/self/fd/" + parent.getFd() + "/" + child;
+            try {
+                try {
+                    Os.mkdir(path, 0700);
+                } catch (ErrnoException error) {
+                    if (error.errno != OsConstants.EEXIST) throw error;
+                }
+                Os.fsync(parent.getFileDescriptor());
+            } catch (ErrnoException error) {
+                throw new IOException("Native private storage unavailable", error);
+            }
+            return pinPrivateDirectory(path);
+        }
+    }
+
+    private ParcelFileDescriptor pinNativeStorageDirectory(ParcelFileDescriptor application,
+            File nativeParent, String name) throws IOException {
+        try {
+            FileDescriptor descriptor = Os.open("/proc/self/fd/" + application.getFd() + "/" + name,
+                OsConstants.O_RDONLY | OsConstants.O_NOFOLLOW | OsConstants.O_NONBLOCK
+                    | OsConstants.O_CLOEXEC, 0);
+            try {
+                StructStat metadata = Os.fstat(descriptor);
+                StructStat expected = Os.stat(nativeParent.getPath());
+                NativeStorageChecks.nativeChild(android.os.Process.myUid(), metadata.st_uid,
+                    metadata.st_gid, metadata.st_mode, metadata.st_nlink,
+                    OsConstants.S_ISDIR(metadata.st_mode), metadata.st_dev, metadata.st_ino,
+                    expected.st_dev, expected.st_ino);
+                Os.fsync(application.getFileDescriptor());
+                return duplicatePrivateDescriptor(descriptor);
+            } finally {
+                Os.close(descriptor);
+            }
+        } catch (ErrnoException error) {
+            throw new IOException("Native storage scope unavailable", error);
+        }
+    }
+
+    private SecretNamespace secretNamespace(ParcelFileDescriptor directory) throws IOException {
+        Path root = Paths.get("/proc/self/fd/" + directory.getFd());
+        return SecretNamespace.acquire(root, path -> {
+            try {
+                FileDescriptor file = Os.open(path.toString(),
+                    OsConstants.O_RDONLY | OsConstants.O_NOFOLLOW | OsConstants.O_CLOEXEC
+                        | OsConstants.O_NONBLOCK, 0);
+                try {
+                    checkPrivateDescriptor(file, false);
+                } finally {
+                    Os.close(file);
+                }
+            } catch (ErrnoException error) {
+                throw new IOException("Native secret ownership unavailable", error);
+            }
+        }, () -> {
+            try {
+                checkPrivateDescriptor(directory.getFileDescriptor(), true);
+                Os.fsync(directory.getFileDescriptor());
+            } catch (ErrnoException error) {
+                throw new IOException("Native secret publication unavailable", error);
+            }
+        });
+    }
+
     public RecordingEncoder newRecordingEncoder(String path, int width, int height) throws IOException {
         return new RecordingEncoder(path, width, height);
     }
@@ -633,12 +748,15 @@ public final class FestermActivity extends NativeActivity {
         }
     }
 
-    private synchronized SecretKey secretKey() throws GeneralSecurityException, IOException {
+    private synchronized SecretKey secretKey(SecretNamespace namespace) throws GeneralSecurityException, IOException {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore");
         store.load(null);
         if (store.containsAlias(KEY_ALIAS)) return (SecretKey) store.getKey(KEY_ALIAS, null);
-        File[] entries = secretDirectory().listFiles();
-        if (entries == null || entries.length != 0) throw new KeyStoreException("Secret key unavailable");
+        File[] entries = namespace.directory.toFile().listFiles();
+        if (entries == null) throw new KeyStoreException("Secret key unavailable");
+        for (File entry : entries) {
+            if (!entry.getName().equals(SecretNamespace.LOCK)) throw new KeyStoreException("Secret key unavailable");
+        }
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
         generator.init(new KeyGenParameterSpec.Builder(KEY_ALIAS,
                 KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
@@ -649,64 +767,72 @@ public final class FestermActivity extends NativeActivity {
         return generator.generateKey();
     }
 
-    private File secretDirectory() throws IOException {
-        File directory = new File(getNoBackupFilesDir(), "secrets");
-        if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Secret storage unavailable");
-        return directory;
-    }
-
-    private File secretFile(String reference) throws IOException {
-        if (!reference.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")) {
-            throw new IllegalArgumentException("Invalid secret reference");
-        }
-        return new File(secretDirectory(), reference);
-    }
-
     public synchronized byte[] secretRead(String reference) throws GeneralSecurityException, IOException {
-        File file = secretFile(reference);
-        AtomicFile atomic = new AtomicFile(file);
-        if (!file.exists() && !new File(file + ".bak").exists()) return null;
-        byte[] envelope;
-        try (InputStream source = atomic.openRead()) {
-            ByteArrayOutputStream bounded = new ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
-            int count;
-            while ((count = source.read(buffer, 0, Math.min(buffer.length, MAX_SECRET + 30 - bounded.size()))) > 0) {
-                bounded.write(buffer, 0, count);
+        try (ParcelFileDescriptor directory = privateChild(getNoBackupFilesDir(), "secrets");
+                SecretNamespace namespace = secretNamespace(directory)) {
+            if (!namespace.existing(reference)) return null;
+            byte[] envelope;
+            try (InputStream source = Files.newInputStream(namespace.path(reference), LinkOption.NOFOLLOW_LINKS)) {
+                ByteArrayOutputStream bounded = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = source.read(buffer, 0, Math.min(buffer.length, MAX_SECRET + 30 - bounded.size()))) > 0) {
+                    bounded.write(buffer, 0, count);
+                }
+                envelope = bounded.toByteArray();
+                if (source.read() != -1 || envelope.length < 29 || envelope[0] != 1) {
+                    throw new IOException("Invalid secret envelope");
+                }
             }
-            envelope = bounded.toByteArray();
-            if (source.read() != -1 || envelope.length < 29 || envelope[0] != 1) {
-                throw new IOException("Invalid secret envelope");
+            try {
+                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                cipher.init(Cipher.DECRYPT_MODE, secretKey(namespace), new GCMParameterSpec(128, envelope, 1, 12));
+                cipher.updateAAD((KEY_ALIAS + "/" + reference).getBytes(StandardCharsets.US_ASCII));
+                return cipher.doFinal(envelope, 13, envelope.length - 13);
+            } finally {
+                Arrays.fill(envelope, (byte) 0);
             }
-        }
-        try {
-            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, secretKey(), new GCMParameterSpec(128, envelope, 1, 12));
-            cipher.updateAAD((KEY_ALIAS + "/" + reference).getBytes(StandardCharsets.US_ASCII));
-            return cipher.doFinal(envelope, 13, envelope.length - 13);
-        } finally {
-            Arrays.fill(envelope, (byte) 0);
         }
     }
 
     public synchronized boolean secretWrite(String reference, byte[] bytes, boolean replace)
             throws GeneralSecurityException, IOException {
-        try {
+        try (ParcelFileDescriptor directory = privateChild(getNoBackupFilesDir(), "secrets");
+                SecretNamespace namespace = secretNamespace(directory)) {
             if (bytes.length > MAX_SECRET) throw new IllegalArgumentException("Secret limit exceeded");
-            File file = secretFile(reference);
-            if (file.exists() != replace) return false;
+            File file = namespace.path(reference).toFile();
+            if (namespace.existing(reference) != replace) return false;
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey());
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey(namespace));
             cipher.updateAAD((KEY_ALIAS + "/" + reference).getBytes(StandardCharsets.US_ASCII));
             byte[] encrypted = cipher.doFinal(bytes);
             AtomicFile atomic = new AtomicFile(file);
             FileOutputStream output = null;
             try {
+                if (!replace) {
+                    byte[] envelope = new byte[13 + encrypted.length];
+                    try {
+                        envelope[0] = 1;
+                        System.arraycopy(cipher.getIV(), 0, envelope, 1, 12);
+                        System.arraycopy(encrypted, 0, envelope, 13, encrypted.length);
+                        return namespace.create(reference, envelope);
+                    } finally {
+                        Arrays.fill(envelope, (byte) 0);
+                    }
+                }
                 output = atomic.startWrite();
                 output.write(1);
                 output.write(cipher.getIV());
                 output.write(encrypted);
                 atomic.finishWrite(output);
+                // Replacement remains under the same cross-instance lease;
+                // acknowledge only after native private-file and directory checks.
+                if (!namespace.existing(reference)) throw new IOException("Native secret replacement unavailable");
+                try {
+                    Os.fsync(directory.getFileDescriptor());
+                } catch (ErrnoException error) {
+                    throw new IOException("Native secret publication unavailable", error);
+                }
                 return true;
             } catch (IOException error) {
                 if (output != null) atomic.failWrite(output);
@@ -720,11 +846,19 @@ public final class FestermActivity extends NativeActivity {
     }
 
     public synchronized boolean secretDelete(String reference) throws IOException {
-        File file = secretFile(reference);
-        boolean present = file.exists() || new File(file + ".bak").exists();
-        new AtomicFile(file).delete();
-        if (file.exists() || new File(file + ".bak").exists()) throw new IOException("Secret deletion failed");
-        return present;
+        try (ParcelFileDescriptor directory = privateChild(getNoBackupFilesDir(), "secrets");
+                SecretNamespace namespace = secretNamespace(directory)) {
+            boolean present = namespace.existing(reference);
+            if (present) {
+                Files.delete(namespace.path(reference));
+                try {
+                    Os.fsync(directory.getFileDescriptor());
+                } catch (ErrnoException error) {
+                    throw new IOException("Native secret deletion unavailable", error);
+                }
+            }
+            return present;
+        }
     }
 
     public void speechCommand(long generation, int command) {

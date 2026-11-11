@@ -232,11 +232,106 @@ AlreadyMissing refers only to the selected record in a successfully validated
 native payload, not a missing vault or a remote absence. Keep the remote session
 running and verify no End/detach/retry/replacement or other-client revocation.
 Deterministic memory-vault/action tests do not qualify these native/device flows.
-Android's current `AndroidSecretStore` lacks `create_reserved`, so the trait's
-Unsupported remains an explicit native-vault prerequisite (also for owner-key
-preparation). The minimum adapter work is exact reserved-reference creation via
-the existing non-overwriting native write under the existing receipt lease; no
-file fallback is permitted. Android native-library linkage is not that proof.
+
+Android reserved creation now has a source implementation, not runtime
+acceptance. The owner-approved boundary was documented before coding:
+`NativeAppPrivateRoot::current` obtains an opaque, pinned current-application
+root through the secret-store facade. Java anchors the current Context's
+private data directory before validating its exact native storage child; the
+fixed receipt directory retains its existing `getFilesDir()/festerm` location.
+The portable ancestor policy is unchanged. Android foreground receipt/reopen
+workers use the capability; `OriginalStore` retains that index rather than
+reconstructing path authority. There is no public raw-root constructor,
+bridge-to-JNI dependency or file-vault fallback.
+
+**Composed source freeze (`e6e4b8a2` + `b05bc1c0`):** the native pinned index and
+typed local Forget reviews coexist without reconstructing path authority.
+The new portable cloned-index/Forget regression and all composed-head tests,
+strict/cfg/fmt/trace checks are unrun; three fresh composed source gates are
+also pending. The minimum execution is secret-store library, portable bridge
+`--no-default-features --features testing --lib`, and mobile
+`--features host-clients --lib`, plus matching all-target strict and Android
+target checks. Record actual selected counts and per-command source maps,
+logs and exits before claiming qualification. Existing eight Forget bodies and
+both native takeover orderings must remain intact.
+On Android, separately exercise native cold-start recovery followed by review,
+cancel, snapshot/context drift, lock and exact local Forget confirmation in the
+same pinned namespace. Preserve unrelated originals and interrupted markers.
+Explicit Desktop Forget is a capacity mitigation, not Android full-workflow
+acceptance or permission to repair pending native material. Historical factory
+and publication campaigns below do not qualify this composed source.
+
+The native namespace uses bounded same-process admission plus a cross-process
+file lease for all reads/writes/deletes. Create-new refuses base, `.bak`, `.new`
+or `.reserved` collisions. A private empty `.reserved` marker and directory are
+synced before exclusive `CREATE_NEW`/no-follow base creation. The complete base
+is forced and its directory synced before marker deletion and final directory
+sync/acknowledgement. No hard link or replace-capable rename is used. A retained
+marker refuses reads, updates and deletes even for an empty/partial/full base.
+Every failure remains explicit, including deletion/final-sync uncertainty
+after a complete base is durable. Existing native AES-GCM/reference AAD is unchanged.
+
+**Host automated evidence:** the corrected host selection covers production
+namespace faults at marker/base creation, partial write, force, publication,
+marker removal and final sync, plus owner/scope and real concurrent processes:
+five Python tests including 35 actual JVM cases pass at frozen `d89fc146`.
+Production Java and extended smoke compile against existing API35; inputs and
+full tracked-source maps stay identical during both commands. Historical `e462c59b` had
+23 host JVM passes but is reliability-blocked by the Android SELinux hard-link
+denial; those passes never establish Android compatibility. These tests are not
+Android `Os`, JNI, Keystore or device execution. Inherited frozen Rust qualification passes
+337 tests (mobile 224, secret-store 17, portable bridge 96), with four existing
+mobile ignores; Rust source equality, not a Cargo rerun, carries that evidence. Affected
+all-target strict checks pass on Rust 1.98.0/1.99.1.
+Existing protected-record tests retain foreign-account/key/installation/
+principal refusal; the generic store gains no account bypass.
+
+**Native prerequisite:** run the extended Android `PlatformSmoke` on an owned
+emulator/device. The first frozen `e135da90` campaign now supplies API35 enforcing
+untrusted-app Java/native publication, descriptor, Keyguard and privacy evidence,
+but **not Rust-factory invocation**. A separate opt-in root-factory case must call
+the debug-only, no-argument scalar native-validation hook, which uses the real
+`NativeAppPrivateRoot::current()` and validates identical roots and fixed-child
+creation/reopen. Missing/refused hooks fail; symbols alone do not qualify. Record
+the fresh target36 APK, source maps and actual API35 invocation separately;
+physical devices, TEE and full HOST recovery remain unqualified.
+The focused case now passes once at implementation freeze `495f700f` on a fresh
+API35/enforcing/untrusted-app guest. Its no-argument debug JNI entry calls the
+actual Rust factory twice and requires validated root/fixed-child identity;
+missing/refused hooks cannot report success. The target36 APK, immutable library,
+scalar native result, process-domain attribution and identical 2,037-source maps
+are retained separately from the unchanged first campaign. Package, affected
+Android Rust 1.99.1 strict, five focused host tests, fmt and trace311 pass. The
+existing Rust 1.98 toolchain lacks Android std, so no Rust 1.98 Android strict is claimed.
+Fresh source gates and evidence approval remain pending; this is not full
+native-vault/protected-original HOST or physical-device acceptance.
+The focused commands are `build-android.py --recording-validation` followed by
+`smoke-android.py --serial <owned-emulator> --root-factory-validation`, with the
+same explicit private SDK/ADB environment. The existing POSIX optional runner
+selects this case instead of whole PlatformSmoke when
+`FESTERM_ANDROID_ROOT_FACTORY_VALIDATION=1` and the explicitly isolated emulator
+serial are supplied; global optional-validation consent is still required.
+
+The original publication case requires an owned
+emulator/device: validate native root owner/location, encrypted create/read/
+update/no-replace/tamper/delete, and preserved backup/new/reserved collision
+artifacts with typed read/update/delete refusal. Both ordinary put and the
+reserved-reference shared native path must acknowledge creation with no marker,
+reject a second create with different bytes, and preserve the original value.
+This actual Android SELinux/JNI/Keystore/device smoke is required **before
+consumption**, even after corrected host and compilation gates pass.
+Historical Android Rust mobile checking passes with the
+existing NDK 27, and production Java plus smoke compile against existing API 35.
+That historical checkpoint was compilation only and lacked API36 tools.
+Separate disposable-emulator authorization installed only the missing API36
+platform/build-tools in a session-local SDK for the first campaign; the global
+SDK remains unchanged. The new focused continuation reuses that existing private
+SDK and records actual target36 APK/dex/linking with API35 runtime, not API36
+runtime. Locked native storage remains unavailable,
+never an empty store.
+No incomplete-anchor repair, retained-original cap change or automatic
+retirement is included: existing permanently incomplete anchors and the
+16-original bound still block the affected flow rather than lose originals.
 Mobile sharing, physical restart/End/detach/lifecycle, live cloud/device/vault
 evidence and usability remain open. Desktop local Settings/Remote Access and local sharing are a
 separately owned HOST-03–05 slice, not implemented or claimed by this increment.
