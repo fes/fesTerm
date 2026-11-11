@@ -6,7 +6,8 @@ Saving an exposed profile could start its detached session but stop before
 provisioning a tunnel: the tagged helper request could not decode the session
 generation. The request now preserves the existing numeric format and protected
 identity checks. Regression tests exercise the helper boundary and reject
-malformed generations; live-service qualification remains DT-08.
+malformed generations. Existing installations require the updated helper for
+the fix; live-service qualification remains DT-08.
 
 ## Enabling desktop hosting without disturbing legacy sessions
 

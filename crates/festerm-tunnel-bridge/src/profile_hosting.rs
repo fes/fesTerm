@@ -1065,14 +1065,16 @@ mod tests {
 
     #[test]
     fn bind_existing_management_request_round_trips_generation() {
-        let mut target = target();
-        target.generation = 1_700_000_000_000;
-        let request = bind_request(target.clone());
-        let bytes = serde_json::to_vec(&request).unwrap();
-        let decoded: ManagementRequest = serde_json::from_slice(&bytes).unwrap();
-        match decoded.operation {
-            ManagementOperation::BindExisting(decoded) => assert_eq!(decoded.target, target),
-            _ => panic!("operation kind changed"),
+        for generation in [1_700_000_000_000, u128::from(u64::MAX)] {
+            let mut target = target();
+            target.generation = generation;
+            let request = bind_request(target.clone());
+            let bytes = serde_json::to_vec(&request).unwrap();
+            let decoded: ManagementRequest = serde_json::from_slice(&bytes).unwrap();
+            match decoded.operation {
+                ManagementOperation::BindExisting(decoded) => assert_eq!(decoded.target, target),
+                _ => panic!("operation kind changed"),
+            }
         }
     }
 
@@ -1092,6 +1094,11 @@ mod tests {
         let mut unknown = request;
         unknown["operation"]["target"]["unexpected"] = serde_json::json!(true);
         assert!(serde_json::from_value::<ManagementRequest>(unknown).is_err());
+
+        let mut oversized = target();
+        oversized.generation = u128::from(u64::MAX) + 1;
+        let bytes = serde_json::to_vec(&bind_request(oversized)).unwrap();
+        assert!(serde_json::from_slice::<ManagementRequest>(&bytes).is_err());
     }
 
     #[test]

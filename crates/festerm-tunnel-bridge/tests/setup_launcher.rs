@@ -163,7 +163,7 @@ async fn profile_host_request_decodes_generation_and_refuses_malformed_input() {
     let request = ManagementRequest {
         version: 1,
         operation: ManagementOperation::BindExisting(Box::new(BindExistingRequest {
-            installation: uuid::Uuid::new_v4().to_string(),
+            installation: "not-an-installation-id".into(),
             consent: uuid::Uuid::new_v4().to_string(),
             cli: fixture.root.join("unused-devtunnel"),
             target,
@@ -209,7 +209,10 @@ async fn profile_host_request_decodes_generation_and_refuses_malformed_input() {
             let reply: ManagementReply = serde_json::from_slice(&result.stdout).unwrap();
             assert_eq!(reply.version, 1);
             assert!(reply.hosts.is_empty());
-            assert!(reply.error.is_some());
+            assert_eq!(
+                reply.error.as_deref(),
+                Some("profile_host.consent_identity")
+            );
         } else {
             assert!(!result.status.success());
             assert!(String::from_utf8_lossy(&result.stderr).contains("profile_host.request_decode"));
