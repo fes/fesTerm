@@ -7653,11 +7653,16 @@ mod tests {
         // The real caller acquires once, then passes the already-held typed
         // guard to capability cleanup. Windows locks are not recursive.
         cleanup_dead_generation(&fixture.0, &record, true).unwrap();
+        // Windows completes the independent cleanup's pending deletion only
+        // after the fixture's extra creator handle closes.
+        #[cfg(windows)]
+        drop(owner);
         fixture.assert_removed(&record);
         assert!(!fixture
             .0
             .join(format!("native-binding-{}-123.key", record.pid))
             .exists());
+        #[cfg(not(windows))]
         owner.cleanup().unwrap();
     }
 
@@ -7775,10 +7780,13 @@ mod tests {
                 registry.foreign["unrelated"],
                 serde_json::json!({"future": 1})
             );
+            #[cfg(windows)]
+            drop(owner.take().unwrap());
             fixture.assert_removed(&record);
             assert!(!root
                 .join(format!("native-binding-{}-123.key", record.pid))
                 .exists());
+            #[cfg(not(windows))]
             owner.take().unwrap().cleanup().unwrap();
         });
     }
