@@ -891,6 +891,44 @@ Forget consent.
 
 ### Android protected reservation prerequisite
 
+#### Bounded native-index/Forget validation design (before implementation)
+
+This current-requirement acceptance increment is a fixed, no-argument runner
+behind the existing Android/debug native-recording-validation JNI seam and the
+bridge's explicit testing feature. It obtains only production current-app root
+capabilities, prepares synthetic locally reviewed receipts in the real native
+secret store, and captures two synthetic End originals through the existing
+test-only injected control stream. Its uncertain peer is bounded in-memory
+composition, not HOST/SSH/provider authentication or a remote End.
+
+Separate production root/index reopen must positively identify the native
+backend and validated same-root identity. Review alone must not change either
+record. A production protected update changing the selected record must make
+the old review refuse with BindingMismatch without deleting anything. Fresh,
+explicit fixture-only Forget must retain its OriginalStore after external
+handles drop, remove exactly the selected retry history, and preserve the
+unrelated original byte-for-byte. The runner must never substitute a memory or
+path backend, arbitrary root/context inputs, raw authority constructors,
+automatic consent/repair, or a different namespace. Host tests may exercise the
+same oracles with explicitly identified memory fixtures but are not native
+acceptance. Different-native-namespace refusal is deliberately unproved.
+
+The APK packager must explicitly enable Rust debug assertions for validation,
+verify the expected linked JNI exports, and continue rejecting release plus
+validation before building. Android-only optional bridge testing dependencies
+disable default features and remain subject to the existing desktop-dependency
+guard. Production mobile default-No, foreground, pending/context/account and
+epoch fences remain unchanged.
+
+Validation impact: `HOST-02`, `HOST-03`, ADR0084. Packaging/static and bounded
+Android-target build/strict evidence precede a frozen source review pin. Actual
+native-index instrumentation requires three fresh source gates and separate
+coordinator guest GO despite the recorded disposable-emulator authorization.
+No guest/ADB/native-vault execution is permitted during this source phase.
+Full HOST recovery, GUI confirmation, cold-start/app-lock composition, physical
+devices, API36 runtime and TEE guarantees remain independent gates. Earlier
+closed publication/factory evidence is preserved, not reattributed to this case.
+
 **Normal source composition:** exact Desktop `e6e4b8a2` and qualified Android
 `b05bc1c0` are combined without squashing either history. Foreground Android
 prepare/load and explicit recovery use only the native-created root capability;
