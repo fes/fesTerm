@@ -1535,6 +1535,72 @@ async fn authenticated_runtime_terminal_role_uses_separate_bounded_framing() {
 #[cfg(unix)]
 #[tokio::test]
 #[ignore = "requires explicitly built owned native helper and fixture child"]
+async fn native_authenticated_runtime_end_confirms_original_exact_gone_generation() {
+    use festerm_host_protocol::Refusal;
+
+    let mut fixture = NativeRuntimeFixture::new();
+    let mut control = fixture.control().await;
+    let issued = control.issue_operation().unwrap();
+    let creation = fixture.native.creation();
+    let Response::Ensured { session, .. } =
+        issued_request(&mut control, &issued, Request::Create { creation }).await
+    else {
+        panic!("native creation must bind an exact generation");
+    };
+    let target = session.target;
+    let context = fixture.client_context();
+    let end = Arc::new(crate::host_client::EndIntent::new(&context, target.clone()));
+    let original = end.operation().clone();
+    assert!(matches!(
+        client_end_worker(&mut fixture, end.clone()).await,
+        crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
+            festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
+        ))
+    ));
+    assert!(end.is_issued() && !end.is_resolved());
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let response = control
+                .request(
+                    OperationId::new(),
+                    Request::Lookup {
+                        logical: target.logical.clone(),
+                    },
+                    &CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            if matches!(
+                response.body,
+                Response::Lookup {
+                    result: festerm_host_protocol::LookupResult::Absent { .. }
+                }
+            ) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        client_end_worker(&mut fixture, end.clone()).await,
+        crate::host_client::Outcome::Ended { target: ended } if ended == target
+    ));
+    assert_eq!(end.operation(), &original);
+    assert!(end.is_resolved());
+    assert!(
+        festerm_sessiond::list_running_sessions_in(&fixture.native.root)
+            .unwrap()
+            .is_empty()
+    );
+    drop(control);
+    fixture.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority() {
     use festerm_host_protocol::{EnsureDisposition, Refusal};
 

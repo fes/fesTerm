@@ -1,5 +1,46 @@
 # Milestone Progress Narrative
 
+## Confirming an original End without inventing absence authority
+
+The native host could durably request a stop but could never confirm Ended:
+its exact-action admission required Running, while an absent generation had no
+generation-bearing authorization state. Mobile originals therefore remained
+unresolved even after a successful stop. The native backend now admits a
+temporary, exact-generation End observation only from a protected owned record
+with a retained native identity and authoritative absence, under fresh current
+End permission. It does not infer success from a generic error, Lookup absence,
+a lost record, a never-created reservation or a replacement.
+
+The observation never becomes stored state or a new wire command. Lease
+validation/serialization refuse it; owner authorization and publication fences
+permit it only for the exact End request. StopRequested remains uncertain.
+The observation proves that generation is gone, not what caused its exit.
+Removed, retired or replaced records remain refusal/uncertainty; no retention
+cap is raised and no unresolved original is discarded.
+
+Actual macOS Rust1.99.1 qualification has four deterministic sessiond and
+thirteen owner-authorization passes plus one new separately selected actual
+SSH/native-helper case, 1/0/0 in 2.71s. That case first retains an uncertain
+original End, observes absence, then resolves the same original operation.
+The observation also retains and rechecks the native lease while admitting
+the fresh policy; a deterministic witness verifies that lock is held. An
+earlier implementation of the same native case passed in 1.74s before this
+additional lease fence; both executions retain their distinct changed-source
+attribution and are not two distinct cases.
+The existing stale-replacement case is unchanged, not rerun or relabelled.
+An initial focused unit exposed the additional End-only publication-fence
+validation needed by this design; its failed result is retained. A protocol
+library selector ran zero tests and is not contract evidence.
+
+Thirteen protocol integration contracts and the affected strict default and
+client-safe profiles pass; actual Rust1.98 compatibility is checked separately.
+Existing optional rust-objcopy
+libLLVM stripping warnings remain visible, with no toolchain/OS repair.
+These are real isolated helper/PTY/SSH effects with in-memory authority,
+not actual native-vault, installed-service, cloud, physical-mobile or full
+native-matrix acceptance. Independent source gates and required CI remain
+separate prerequisites.
+
 ## Keeping native HOST fixture failures observable without exposing their inputs
 
 The published mobile lifecycle head `85b01679` passes its required Ubuntu and

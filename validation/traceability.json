@@ -5759,6 +5759,12 @@
         "authenticated_runtime_policy_busy_cancellation_drains_charged_work",
         "native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input",
         "native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority",
+        "native_authenticated_runtime_end_confirms_original_exact_gone_generation",
+        "host_owner_observed_end_only_authorizes_current_exact_end",
+        "observed_end_grant_cannot_be_stored_or_reopened",
+        "end_confirmation_requires_fresh_policy_without_storing_observation",
+        "end_confirmation_refuses_foreign_revoked_replaced_unbound_retired_or_missing_records",
+        "end_confirmation_refuses_contended_or_corrupt_native_lease",
         "native_authenticated_runtime_live_policy_fences_actions_without_stopping_shells",
         "native_authenticated_runtime_takeover_waits_for_adoption_and_fences_old_generation",
         "native_authenticated_runtime_temporary_heartbeat_and_transport_loss_are_daemon_owned"

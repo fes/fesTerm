@@ -69,6 +69,8 @@ pub struct ClientBytesPermit {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LogicalState {
     Running(GenerationId),
+    /// Ephemeral exact-generation End admission; never a stored lease grant.
+    Ended(GenerationId),
     Absent,
     Unknown,
     Revoked,
@@ -202,18 +204,25 @@ impl AdmissionFence {
         if self != current {
             return Err(ContractError::Stale);
         }
+        let observed_end = matches!(
+            (&self.logical_state, &self.intent.0, &self.target),
+            (Some(LogicalState::Ended(generation)), Request::ExplicitEnd { target: requested }, Some(target))
+                if requested == target && *generation == target.generation
+        );
         if self.logical.is_some() != self.logical_state.is_some()
             || self.logical.is_some() != self.logical_revision.is_some()
             || matches!(
                 self.logical_state,
                 Some(LogicalState::Unknown | LogicalState::Revoked)
             )
+            || matches!(self.logical_state, Some(LogicalState::Ended(_))) && !observed_end
         {
             return Err(ContractError::Malformed);
         }
         if self.target.as_ref().is_some_and(|target| {
             self.logical.as_ref() != Some(&target.logical)
                 || self.logical_state != Some(LogicalState::Running(target.generation))
+                    && !observed_end
         }) {
             return Err(ContractError::Malformed);
         }
