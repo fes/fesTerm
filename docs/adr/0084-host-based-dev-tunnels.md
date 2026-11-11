@@ -764,6 +764,14 @@ error privacy. None constructs a native capability or substitutes mock phases
 for protected native authority. The native daemon proof uses the shared
 adapter's existing explicit NativeVault fixture, not an actual credential vault
 or GUI/native endpoint acceptance.
+The narrow recovery-target correction distinguishes reviewed recovery
+(current reviewed target plus explicitly typed original operation) from
+retained-status actions (displayed target plus retained original operation).
+Headless control/model regressions cover all three nongrant steps with prior
+Released/Uncertain status, different and same-session operations, unknown IDs
+and stale/malformed refusal; no recovery path binds or implicitly switches.
+The 6.00-second native daemon execution remains attributed to `76b9b3af`,
+not rerun or promoted by this UI-only correction.
 The existing frontend/independent PTY, metadata-only profile boundary and separate
 ADR 0085 default-No legacy-stop consent are unchanged. The retained migration
 macOS 13/1 failure remains unresolved/unknown, not fixed by these caller paths.

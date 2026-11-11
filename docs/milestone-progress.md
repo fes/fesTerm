@@ -1,5 +1,41 @@
 # Milestone Progress Narrative
 
+## Separating reviewed sharing recovery from retained status
+
+Independent reliability review of frozen `76b9b3af` found a real target/operation
+precedence bug despite its earlier security/scope passes and 50 configured
+passes. With retained status A, reviewing B and typing original operation X,
+the reviewed Resume control silently selected A and its retained operation.
+Those source-specific proofs remain frozen, not rewritten as coverage of this
+missing case.
+
+A new normal child preserves that head and uses a separate copy-on-write target.
+The actual headless button counterexample fails **0/1/0**, showing A/original-A
+instead of B/X before the production correction. The fix separates typed
+reviewed recovery from retained-status actions and passes target and original
+operation explicitly to the common worker admission. All three reviewed
+nongrant steps use the current reviewed target and typed original operation;
+missing/stale review or missing operation refuses. Canonical malformed-operation
+refusal stays in the unchanged native caller, before opening native authority.
+Status-group actions retain their displayed target/original operation even
+when another session and operation are reviewed. Recovery cannot Bind, Enable
+or implicitly Switch, and unknown operations remain uncertain.
+
+Four new regressions exercise actual headless recovery/status buttons across
+Released/Uncertain prior status, different/same-session typed operations, all
+three nongrant steps, missing/stale selection, grant-intent refusal and the real
+native malformed-operation refusal. No native capability or receipt is
+fabricated. Existing account/cancellation/privacy/provenance oracles remain.
+Before fixture composition, the actual focused desktop selection passes
+**41/0/0**, 2057 filtered, **7.38s**; full Settings and client-safe experimental
+desktop all-target strict Clippy both pass on Rust 1.99.1. The counterexample
+and corrected source/log/exit fingerprints are retained separately.
+The earlier native daemon case remains **one execution, 6.00s at `76b9b3af`**;
+this UI-only correction does not rerun or claim it as new-head native evidence.
+Actual-vault/GUI/native endpoint acceptance, prior migration macOS 13/1 and
+separate Windows fixture qualification remain open. No unqualified fixture pin,
+provider/OS/vault mutation, push or main merge is included.
+
 ## Composing desktop private sharing with the qualified current-host adapter
 
 The application-only `eb76b0b2` checkpoint was deliberately compile-pending;

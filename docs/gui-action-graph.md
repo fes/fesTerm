@@ -1697,7 +1697,11 @@ adapter at immutable `defece877`; no widget, profile metadata or PID authorizes 
 and live-target fences cancel stale review, while independent exact-operation
 reduction covers queued/late results without touching the original frontend or
 PTY. Refresh/owner review cannot retarget prior sharing consent. Older/unknown
-sources still refuse. Model/render and real caller refusal oracles are distinct
+sources still refuse. Reviewed recovery explicitly selects the reviewed session
+and typed original operation; status-group actions retain their displayed
+target/operation independently. Missing/malformed/stale reviewed recovery
+refuses, and unknown IDs never fall back to Bind or Switch.
+Model/render and real caller refusal oracles are distinct
 from the shared adapter's controlled NativeVault-fixture/native-daemon proof;
 neither qualifies actual native-vault, installed endpoint, GUI or usability.
 

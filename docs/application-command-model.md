@@ -55,6 +55,14 @@ retrying Bind retains that same operation. Release and irreversible rollback
 reopen the exact protected receipt, including after the original tab closes.
 Neither action stops or acquires its frontend/PTY.
 
+Reviewed recovery and retained-status controls are distinct typed intents.
+Reviewed Resume/Release/Rollback use that exact current review and the explicitly
+typed original operation, refusing missing, malformed or stale selections.
+They never silently reuse another status target/operation or recover by Bind.
+Status-group Resume/Release/Rollback instead retain the displayed target and
+its original operation, even when another session and operation are reviewed.
+An unknown operation remains uncertain; it never creates or switches a binding.
+
 The connected-local provenance accessor is distinct from display identity and
 default runtime discovery. The application never constructs its capability,
 legacy receipts or a policy verifier. A window-local central-command epoch

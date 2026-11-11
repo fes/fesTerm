@@ -243,6 +243,232 @@ fn private_share_target() -> ShareTarget {
     }
 }
 
+fn sharing_button(view: &View, label: &str) -> Action {
+    use egui_kittest::{kittest::Queryable, Harness};
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1400.0, 2000.0))
+        .build_ui_state(
+            |ui, state: &mut (View, Option<Action>)| {
+                if let Some(action) = show(ui, &state.0, &[]) {
+                    state.1 = Some(action);
+                }
+            },
+            (view.clone(), None),
+        );
+    harness.run();
+    harness.get_by_label(label).click();
+    harness.run();
+    harness.state().1.clone().expect("explicit sharing button")
+}
+
+#[test]
+fn desktop_remote_access_sharing_reviewed_recovery_uses_selected_target_and_typed_original() {
+    for phase in [SharePhase::Released, SharePhase::Uncertain] {
+        for same_target in [false, true] {
+            for (step, label) in [
+                (
+                    ShareStep::Resume,
+                    "Resume original protected status · no switch",
+                ),
+                (
+                    ShareStep::Release,
+                    "Release reviewed original operation · keep shell",
+                ),
+                (
+                    ShareStep::Rollback,
+                    "Rollback reviewed original operation · irreversible unshare",
+                ),
+            ] {
+                let calls = Arc::new(Mutex::new(Vec::new()));
+                let recorded = calls.clone();
+                let mut controller = fixture(Arc::new(Fake(
+                    move |request: Request, _: &CancellationToken| {
+                        let task = request.sharing.unwrap();
+                        recorded.lock().unwrap().push((
+                            request.operation,
+                            task.target,
+                            task.operation,
+                        ));
+                        Err(Failure::Reconciliation)
+                    },
+                )));
+                let context = egui::Context::default();
+                let previous = private_share_target();
+                let reviewed = if same_target {
+                    previous.clone()
+                } else {
+                    let mut other = private_share_target();
+                    other.identity.name = "other-private-session".into();
+                    other.identity.created_at_unix_ms += 1;
+                    other.lifecycle_generation += 1;
+                    other
+                };
+                let original = uuid::Uuid::new_v4().to_string();
+                controller.view.sharing = Some(ShareStatus {
+                    target: previous.clone(),
+                    operation: uuid::Uuid::new_v4().to_string(),
+                    phase,
+                });
+                controller.observe_share_epoch(Arc::new(AtomicU64::new(0)));
+                controller.observe_share_targets(vec![reviewed.clone()]);
+                controller.action(Action::ReviewShare(reviewed.clone()), &context);
+                controller.action(Action::RecoverShare(original.clone()), &context);
+                let action = sharing_button(&controller.view, label);
+                controller.action(action, &context);
+                drain(&mut controller, &context);
+                assert_eq!(
+                    *calls.lock().unwrap(),
+                    [(Operation::Share(step), reviewed.clone(), original.clone())]
+                );
+                assert_eq!(controller.view.failure, Some(Failure::Reconciliation));
+                assert_eq!(
+                    controller.view.sharing,
+                    Some(ShareStatus {
+                        target: reviewed,
+                        operation: original,
+                        phase: SharePhase::Uncertain,
+                    })
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn desktop_remote_access_sharing_status_controls_keep_displayed_target_and_original() {
+    for phase in [SharePhase::Released, SharePhase::Uncertain] {
+        for (step, label) in [
+            (ShareStep::Resume, "Resume original status · no switch"),
+            (ShareStep::Release, "Confirm Release · keep shell/frontend"),
+            (
+                ShareStep::Rollback,
+                "Confirm Rollback · irreversible unshare only",
+            ),
+        ] {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let recorded = calls.clone();
+            let mut controller = fixture(Arc::new(Fake(
+                move |request: Request, _: &CancellationToken| {
+                    let task = request.sharing.unwrap();
+                    recorded
+                        .lock()
+                        .unwrap()
+                        .push((request.operation, task.target, task.operation));
+                    Err(Failure::Reconciliation)
+                },
+            )));
+            let retained = ShareStatus {
+                target: private_share_target(),
+                operation: uuid::Uuid::new_v4().to_string(),
+                phase,
+            };
+            let reviewed = private_share_target();
+            let context = egui::Context::default();
+            controller.view.sharing = Some(retained.clone());
+            controller.observe_share_epoch(Arc::new(AtomicU64::new(0)));
+            controller.observe_share_targets(vec![reviewed.clone()]);
+            controller.action(Action::ReviewShare(reviewed), &context);
+            controller.action(
+                Action::RecoverShare(uuid::Uuid::new_v4().to_string()),
+                &context,
+            );
+            let action = sharing_button(&controller.view, label);
+            controller.action(action, &context);
+            drain(&mut controller, &context);
+            assert_eq!(
+                *calls.lock().unwrap(),
+                [(Operation::Share(step), retained.target, retained.operation)]
+            );
+        }
+    }
+}
+
+#[test]
+fn desktop_remote_access_sharing_reviewed_recovery_refuses_missing_stale_or_grant_intent() {
+    for step in [ShareStep::Resume, ShareStep::Release, ShareStep::Rollback] {
+        for refusal in 0..4 {
+            let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+                panic!("invalid reviewed recovery must not reach a backend")
+            })));
+            let target = private_share_target();
+            let epoch = Arc::new(AtomicU64::new(0));
+            let context = egui::Context::default();
+            controller.view.sharing = Some(ShareStatus {
+                target: private_share_target(),
+                operation: uuid::Uuid::new_v4().to_string(),
+                phase: SharePhase::Uncertain,
+            });
+            controller.observe_share_epoch(epoch.clone());
+            controller.observe_share_targets(vec![target.clone()]);
+            controller.action(Action::ReviewShare(target), &context);
+            controller.action(
+                Action::RecoverShare(uuid::Uuid::new_v4().to_string()),
+                &context,
+            );
+            let expected = match refusal {
+                0 => {
+                    controller.action(Action::RecoverShare(String::new()), &context);
+                    Failure::Reconciliation
+                }
+                1 => {
+                    epoch.fetch_add(1, Ordering::AcqRel);
+                    Failure::SessionChanged
+                }
+                2 => {
+                    controller.observe_share_targets(Vec::new());
+                    Failure::SessionChanged
+                }
+                _ => {
+                    controller.view.share_review = None;
+                    Failure::SessionChanged
+                }
+            };
+            controller.action(Action::RecoverReviewedShare(step), &context);
+            assert_eq!(controller.view.failure, Some(expected));
+            assert!(!controller.view.busy);
+        }
+    }
+    let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {
+        panic!("recovery cannot bind or switch")
+    })));
+    let context = egui::Context::default();
+    for step in [ShareStep::Bind, ShareStep::Switch] {
+        controller.action(Action::RecoverReviewedShare(step), &context);
+        assert_eq!(controller.view.failure, Some(Failure::InvalidDraft));
+        assert!(!controller.view.busy);
+    }
+}
+
+#[test]
+fn desktop_remote_access_sharing_reviewed_malformed_original_reaches_only_native_parse_refusal() {
+    for step in [ShareStep::Resume, ShareStep::Release, ShareStep::Rollback] {
+        let mut controller = fixture(Arc::new(native::Native));
+        let target = private_share_target();
+        let context = egui::Context::default();
+        controller.view.sharing = Some(ShareStatus {
+            target: private_share_target(),
+            operation: uuid::Uuid::new_v4().to_string(),
+            phase: SharePhase::Released,
+        });
+        controller.observe_share_epoch(Arc::new(AtomicU64::new(0)));
+        controller.observe_share_targets(vec![target.clone()]);
+        controller.action(Action::ReviewShare(target.clone()), &context);
+        controller.action(Action::RecoverShare("malformed-original".into()), &context);
+        controller.action(Action::RecoverReviewedShare(step), &context);
+        drain(&mut controller, &context);
+        assert_eq!(controller.view.failure, Some(Failure::InvalidDraft));
+        assert_eq!(
+            controller.view.sharing,
+            Some(ShareStatus {
+                target,
+                operation: "malformed-original".into(),
+                phase: SharePhase::Uncertain,
+            })
+        );
+    }
+}
+
 #[test]
 fn desktop_remote_access_sharing_review_edit_and_missing_provenance_never_dispatch() {
     let mut controller = fixture(Arc::new(Fake(|_: Request, _: &CancellationToken| {

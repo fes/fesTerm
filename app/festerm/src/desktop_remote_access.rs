@@ -179,6 +179,7 @@ pub enum Action {
     ReleaseShare,
     RollbackShare,
     RecoverShare(String),
+    RecoverReviewedShare(ShareStep),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -521,12 +522,13 @@ impl Controller {
                     .as_ref()
                     .map(|epoch| epoch.load(Ordering::Acquire));
             }
-            Action::Share(target) => self.start_share(ShareStep::Bind, Some(target), context),
-            Action::Unshare(target) => self.start_share(ShareStep::Release, Some(target), context),
-            Action::SwitchShare => self.start_share(ShareStep::Switch, None, context),
-            Action::ResumeShare => self.start_share(ShareStep::Resume, None, context),
-            Action::ReleaseShare => self.start_share(ShareStep::Release, None, context),
-            Action::RollbackShare => self.start_share(ShareStep::Rollback, None, context),
+            Action::Share(target) => self.start_share(ShareStep::Bind, target, None, context),
+            Action::Unshare(target) => self.start_share(ShareStep::Release, target, None, context),
+            Action::SwitchShare => self.start_retained_share(ShareStep::Switch, context),
+            Action::ResumeShare => self.start_retained_share(ShareStep::Resume, context),
+            Action::ReleaseShare => self.start_retained_share(ShareStep::Release, context),
+            Action::RollbackShare => self.start_retained_share(ShareStep::Rollback, context),
+            Action::RecoverReviewedShare(step) => self.recover_reviewed_share(step, context),
             Action::RecoverShare(operation) => {
                 if operation.len() > 128 || operation.chars().any(char::is_control) {
                     self.view.failure = Some(Failure::InvalidDraft);
@@ -538,27 +540,51 @@ impl Controller {
         }
     }
 
+    fn start_retained_share(&mut self, step: ShareStep, context: &egui::Context) {
+        let Some(sharing) = self.view.sharing.clone() else {
+            self.view.failure = Some(Failure::SessionChanged);
+            return;
+        };
+        self.start_share(step, sharing.target, Some(sharing.operation), context);
+    }
+
+    fn recover_reviewed_share(&mut self, step: ShareStep, context: &egui::Context) {
+        if step.grants() {
+            self.view.failure = Some(Failure::InvalidDraft);
+            return;
+        }
+        let Some(target) = self.view.share_review.clone() else {
+            self.view.failure = Some(Failure::SessionChanged);
+            return;
+        };
+        if self
+            .share_epoch
+            .as_ref()
+            .is_none_or(|epoch| self.share_review_epoch != Some(epoch.load(Ordering::Acquire)))
+            || !self
+                .share_targets
+                .lock()
+                .expect("healthy sharing selection")
+                .contains(&target)
+        {
+            self.view.failure = Some(Failure::SessionChanged);
+            return;
+        }
+        let original = self.view.share_operation_input.clone();
+        if original.is_empty() {
+            self.view.failure = Some(Failure::Reconciliation);
+            return;
+        }
+        self.start_share(step, target, Some(original), context);
+    }
+
     fn start_share(
         &mut self,
         step: ShareStep,
-        selected: Option<ShareTarget>,
+        target: ShareTarget,
+        original: Option<String>,
         context: &egui::Context,
     ) {
-        let target = match selected
-            .or_else(|| {
-                self.view
-                    .sharing
-                    .as_ref()
-                    .map(|sharing| sharing.target.clone())
-            })
-            .or_else(|| self.view.share_review.clone())
-        {
-            Some(target) => target,
-            None => {
-                self.view.failure = Some(Failure::SessionChanged);
-                return;
-            }
-        };
         if step.grants() {
             if target.source.is_none() {
                 self.view.failure = Some(Failure::ShareCapability);
@@ -587,7 +613,9 @@ impl Controller {
             sharing.target == target
                 && (step != ShareStep::Bind || sharing.phase != SharePhase::Released)
         });
-        let operation = if let Some(sharing) = retained {
+        let operation = if let Some(original) = original {
+            original
+        } else if let Some(sharing) = retained {
             sharing.operation.clone()
         } else if step == ShareStep::Bind && self.view.share_operation_input.is_empty() {
             if self

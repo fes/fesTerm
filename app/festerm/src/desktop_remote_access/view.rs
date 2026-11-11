@@ -177,12 +177,20 @@ pub(crate) fn show(
                 if original != view.share_operation_input {
                     action = Some(Action::RecoverShare(original));
                 }
-                if !view.share_operation_input.is_empty()
-                    && ui.button("Resume original protected status · no switch").clicked()
-                {
-                    action = Some(Action::ResumeShare);
+                if !view.share_operation_input.is_empty() {
+                    ui.small("These recovery controls use this reviewed session and the typed ORIGINAL operation, not the status group below.");
+                    for (step, label) in [
+                        (ShareStep::Resume, "Resume original protected status · no switch"),
+                        (ShareStep::Release, "Release reviewed original operation · keep shell"),
+                        (ShareStep::Rollback, "Rollback reviewed original operation · irreversible unshare"),
+                    ] {
+                        if ui.button(label).clicked() {
+                            action = Some(Action::RecoverReviewedShare(step));
+                        }
+                    }
                 }
-                if view.sharing.as_ref().is_some_and(|sharing| &sharing.target == target)
+                if view.share_operation_input.is_empty()
+                    && view.sharing.as_ref().is_some_and(|sharing| &sharing.target == target)
                     && ui.button("Release this reviewed generation · keep shell").clicked()
                 {
                     action = Some(Action::Unshare(target.clone()));

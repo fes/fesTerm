@@ -4211,6 +4211,14 @@ queued/late cancellation, same-operation uncertain recovery, account/revision/
 epoch change, native-vault lock/refusal and unsupported old helpers. These
 actual-vault/GUI/usability gates remain unrun; the earlier migration macOS 13/1 failure is
 still unresolved/unknown. Do not substitute legacy receipts or a fresh host.
+The controlled headless recovery regression separately retains status A
+(Released or Uncertain), reviews B and types original operation X: each reviewed
+Resume/Release/Rollback must address B/X, never A's retained operation.
+Status-group actions must still address A/original-A. Repeat with the same
+session but a different typed operation, unknown IDs, missing/invalid input and
+stale review; refuse or retain uncertainty without Bind, Enable or implicit
+Switch. Actual native GUI confirmation remains separate from those headless
+and model oracles.
 
 **HOSTSETUP-01 explicit manual cleanup fallback (owner-approved):** Automated
 generation-atomic DELETE remains unavailable, not a prerequisite to choosing
