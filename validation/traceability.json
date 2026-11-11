@@ -5543,6 +5543,7 @@
         "protected_original_fresh_context_cannot_change_account_key_installation_or_principal",
         "mobile_host_original_review_is_strict_typed_and_missing_or_ambiguous_selection_never_mints",
         "mobile_host_recovery_fence_foreign_account_batch_is_atomic",
+        "mobile_host_recovery_preserves_original_after_same_account_metadata_changes",
         "native_protected_original_end_reopens_and_settles_exact_generation",
         "mobile_host_recovery_fence_late_result_after_account_or_context_switch_never_installs",
         "mobile_host_recovery_fence_create_and_end_before_explicit_reopen_issue_nothing",

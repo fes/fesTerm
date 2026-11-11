@@ -1714,6 +1714,11 @@ rejection, late account/selected-context results including empty old-store
 batches, and Create/End before explicit protected reopen. Valid memory-backed
 receipts, framed original Ends and positive scope/consent controls establish
 prerequisites; exact refusal and no worker/new issuance are the admission oracle.
+Persisted review matching uses provider and numeric account ID within the
+already protected context. Same-account profile recreation, login rename and
+credential-reference rotation retain the original operation/target; mixed
+account batches remain atomic refusals. Live completions still require the
+exact full account snapshot.
 These are not native-vault, physical lifecycle or Android runtime evidence.
 The separate protected-original/runtime native composition case passes1/0/0 at
 `c803e619`, after its retained nonnumeric-account pre-wire setup failure.

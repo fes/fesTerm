@@ -627,6 +627,12 @@ ambiguous writes retain the original and refuse the send. Reopening originals
 is explicit, network-free and not consent to execute. The mobile app separately
 revalidates current full account, protected context, privacy/request epoch,
 capability and fresh destructive/launch consent before original reconciliation.
+The persisted review identifies the authenticated account by provider and
+numeric account ID, not its local profile ID, login spelling or credential
+reference. Explicit cold-start recovery under the same protected owner context
+may therefore use a rotated credential without rewriting the original review,
+operation or target. Live jobs and their completions still require the exact
+current full account snapshot; this is not permission to accept a stale job.
 No automatic sign-in, retry, input replay, new wire protocol/service or general
 journaling framework is introduced. Ordinary profiles/workspaces contain no
 checkpoint, sealed ticket, secret or authoritative sentinel.

@@ -157,6 +157,13 @@ Check native backup/privacy policy: only opaque references/commit marker belong
 in the private index; no tickets/credentials belong in profiles/workspaces.
 Pre-checkpoint-version lost originals cannot be recovered retroactively.
 
+Native cold-start qualification must also cover the same authenticated
+provider/account after credential rotation, login rename and local account
+profile recreation: reopen the original operation/target without rewriting its
+protected review or sending automatically. A changed account and a late
+completion under the old full credential snapshot must still refuse. The
+deterministic memory-vault fixture is not native account/vault evidence.
+
 Creation and End each remain bounded to sixteen protected originals and 64KiB
 total; only exact terminal Ended retires originals, never native StopRequested.
 Android's current `AndroidSecretStore` lacks `create_reserved`, so the trait's

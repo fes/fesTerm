@@ -1,5 +1,18 @@
 # Milestone Progress Narrative
 
+## Keeping durable recovery tied to the account, not its local credential reference
+
+Protected mobile originals previously compared the entire persisted account
+snapshot during cold-start recovery. Re-signing in, renaming a GitHub login or
+recreating its local profile could therefore block recovery of an otherwise
+unchanged authorized account. Recovery now compares provider and numeric
+account ID inside the existing protected owner context, materializes the
+current account and preserves the original review, operation and exact target.
+Foreign-account batches still refuse atomically. Live jobs and completions
+retain their full credential/account snapshot checks; no old worker is
+re-authorized. Deterministic fixtures cover each metadata change and their
+combination. Native-vault/account cold-start acceptance remains separate.
+
 ## Executing protected originals through exact native End
 
 The normal composition of qualified mobile `8f0b7f06` and immutable native End
