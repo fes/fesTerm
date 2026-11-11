@@ -16,6 +16,11 @@ use keyring_core::{CredentialStore, Entry};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
+#[cfg(unix)]
+mod native_root;
+#[cfg(unix)]
+pub use native_root::NativeAppPrivateRoot;
+
 /// The fixed native-service namespace used by all fesTerm secrets.
 pub const SERVICE_NAMESPACE: &str = "io.github.fes.festerm";
 
@@ -515,6 +520,10 @@ mod native {
 #[cfg(target_os = "android")]
 #[path = "android.rs"]
 mod native;
+
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "android.rs"]
+mod android_adapter_tests;
 
 #[cfg(all(
     unix,

@@ -261,6 +261,19 @@ pub fn storage_directory() -> Result<PathBuf, &'static str> {
     })
 }
 
+/// Owned handle from the current Activity's private application directory.
+pub fn application_private_directory() -> Result<File, &'static str> {
+    let descriptor = bridge()?.call(|env, activity| {
+        env.call_method(activity, "privateDirectoryDescriptor", "()I", &[])?
+            .i()
+    })?;
+    if descriptor < 0 {
+        return Err("native private storage unavailable");
+    }
+    // SAFETY: Java detaches this owned descriptor and transfers it exactly once.
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
 /// App-private recording storage excluded from Android Auto Backup.
 pub fn recording_directory() -> Result<PathBuf, &'static str> {
     bridge()?.call(|env, activity| {

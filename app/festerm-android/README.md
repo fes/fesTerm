@@ -62,6 +62,20 @@ universal local speech availability. System keyboard and biometric UI naturally
 follow Android rather than copying Apple controls. Qualification is tracked
 separately in [manual validation](../../docs/manual-validation.md#android-shared-mobile-port-adr-0073).
 
+Protected HOST originals use the native-current-app pinned receipt capability,
+not profile-path authority. Native reserved creation serializes the namespace
+and never replaces base/backup/staging material; interrupted material refuses
+reads and requires explicit reconciliation, not an empty-store reset.
+Host-only namespace regressions need an existing JDK (no Android SDK):
+
+```sh
+python3 -m unittest scripts.tests.test_android_native_secrets -v
+```
+
+These regressions are not Keystore/JNI/device acceptance. The extended native
+smoke and target compilation are separately required; incomplete receipt anchors
+and retained-original exhaustion are not repaired by this increment.
+
 ## Accessibility
 
 TalkBack and UI automation see the shared egui tree through

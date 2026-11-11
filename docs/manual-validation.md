@@ -159,44 +159,43 @@ Pre-checkpoint-version lost originals cannot be recovered retroactively.
 
 Creation and End each remain bounded to sixteen protected originals and 64KiB
 total; only exact terminal Ended retires originals, never native StopRequested.
-Android's current `AndroidSecretStore` lacks `create_reserved`, so the trait's
-Unsupported remains an explicit native-vault prerequisite (also for owner-key
-preparation). Source inspection identifies two prerequisites before implementing
-that override safely:
+Android reserved creation now has a source implementation, not runtime
+acceptance. The owner-approved boundary was documented before coding:
+`NativeAppPrivateRoot::current` obtains an opaque, pinned current-application
+root through the secret-store facade. Java anchors the current Context's
+private data directory before validating its exact native storage child; the
+fixed receipt directory retains its existing `getFilesDir()/festerm` location.
+The portable ancestor policy is unchanged. Android foreground receipt/reopen
+workers use the capability; `OriginalStore` retains that index rather than
+reconstructing path authority. There is no public raw-root constructor,
+bridge-to-JNI dependency or file-vault fallback.
 
-- The Android composition receives only a canonical path from
-  `FestermActivity.privateDirectory` (`getFilesDir()/festerm`), passed through
-  `storage_directory`, `Profiles::host_approval_directory` and
-  `ReceiptIndex::in_app_sandbox`. The latter walks every ancestor with
-  `trusted_private_storage_ancestor`, accepting only root/current-UID ownership
-  without group/other writes. A non-root Android system-owned ancestor is
-  rejected; no opaque, native-owner-bound application-root authority exists to
-  anchor validation below it. No device filesystem layout is inferred from this
-  source finding. Do not waive ancestor checks, trust a caller path or whitelist
-  Android system UIDs globally.
-- `FestermActivity.secretWrite(..., false)` checks only the base file's
-  existence, whereas `secretRead` recognizes a `.bak` recovery artifact.
-  Delegating a reserved create directly can therefore overwrite recoverable
-  data when only the backup survives. Create-new must refuse existing base,
-  backup or uncertain staging artifacts without deleting/reinitializing them;
-  reopen must retain the existing authenticated reference and owner scope.
+The native namespace uses bounded same-process admission plus a cross-process
+file lease for all reads/writes/deletes. Create-new refuses base, `.bak`, `.new`
+or `.reserved` collisions. An exclusive private `.reserved` stage is synced
+before publication, atomically linked without replacement, then unlinked and
+the directory synced before acknowledgement. Interrupted stages remain
+uncertain, including a published base with a retained stage; reads never turn
+these states into missing. Existing native AES-GCM/reference AAD is unchanged.
 
-The required contract decision is a native-created, nonserializable
-`NativeAppPrivateRoot` anchor (owner/current application identity plus pinned
-directory, not a raw path), exposed through the existing secret-store facade
-to a narrow `ReceiptIndex::in_native_app_sandbox` composition. JNI remains in
-`festerm-android-platform`; no bridge-to-platform dependency is introduced.
-The exact native-create contract must also reject AtomicFile recovery/staging
-collisions under the existing durable exact-reference lease. These signatures
-are requirements, not implemented or approved authority constructors.
-Account/host/installation/principal/fingerprint checks remain in the existing
-protected `OwnerBinding` record; the generic secret store does not acquire an
-account bypass. After that decision, deterministic native-boundary tests must
-cover owner/root substitution, same-reference create versus reopen, foreign
-account, collision, locked/unavailable and ambiguous write failures. Actual
-Android target compilation/execution remains separate and unrun; native-library
-linkage alone is not reservation/runtime proof. No fallback, incomplete-anchor
-recovery or retention change is part of this blocker.
+**Host automated evidence:** `scripts.tests.test_android_native_secrets` passes
+one wrapper/23 actual JVM cases covering the production namespace, real host
+file publication/concurrent processes, owner/application metadata predicates,
+scope substitution, collisions and injected write/sync ambiguity. This is not
+Android `Os`, JNI, Keystore or device execution. Rust adapter/root and affected
+protected-original/mobile validation are recorded separately at qualification.
+Existing protected-record tests retain foreign-account/key/installation/
+principal refusal; the generic store gains no account bypass.
+
+**Native prerequisite:** run the extended Android `PlatformSmoke` on an owned
+emulator/device: validate native root owner/location, encrypted create/read/
+update/no-replace/tamper/delete, and preserved backup/new/reserved collision
+artifacts with typed read refusal. Actual Android target compilation and this
+runtime evidence remain separately required; host tests alone cannot establish
+them. Locked native storage remains unavailable, never an empty store.
+No incomplete-anchor repair, retained-original cap change or automatic
+retirement is included: existing permanently incomplete anchors and the
+16-original bound still block the affected flow rather than lose originals.
 Mobile sharing, physical restart/End/detach/lifecycle, live cloud/device/vault
 evidence and usability remain open. Desktop local Settings/Remote Access and local sharing are a
 separately owned HOST-03–05 slice, not implemented or claimed by this increment.

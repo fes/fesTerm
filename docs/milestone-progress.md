@@ -1,14 +1,33 @@
 # Milestone Progress Narrative
 
-## Android reserved originals: accepted secure boundary before implementation
+## Android reserved originals: implementing the approved native boundary
 
 The owner explicitly approved implementing the opaque native application-root
 capability and serialized native reserved-write boundary described in ADR0084.
-This design-first checkpoint precedes production edits. It preserves the existing
+The design-only `81dfe5a5` checkpoint preceded production edits. It preserves the existing
 receipt location and all protected-original/account/epoch fences, rejects
 backup/staging ambiguity without reset, and leaves incomplete-anchor/retention
-work out of scope. Implementation, deterministic coverage and actual Android
-target/runtime evidence are still pending; the prior blocker proof is retained.
+work out of scope. The narrow implementation obtains a nonserializable pinned
+current-app directory through the secret-store facade and threads it through
+the actual Android foreground receipt/reopen worker. `OriginalStore` keeps that
+index rather than reconstructing native authority from a profile path.
+
+The native vault now implements reserved creation under same-process admission
+and a cross-process namespace lease shared with read/update/delete. Synced
+reference-specific stages publish by non-replacing hard link; backup/new/staged
+or ambiguous material is retained and refuses reads rather than becoming
+absence. The native key/envelope/reference AAD is unchanged. One JDK host wrapper
+executes 23 cases against the production namespace/predicates (including
+independent processes and injected failures), and 17 Rust secret-store units
+pass, including five adapter/root cases. The initial Rust formatter/test-module
+scoping failures are preserved, then corrected source is validated; the first
+successful Rust run also retains a missing-LLVM debug-strip tool warning.
+
+These are host contracts, not Android JNI/Keystore/device evidence. Companion
+bridge/mobile/strict results and actual target compilation are separately
+recorded at source freeze; the extended Android native smoke remains a runtime
+prerequisite. Permanent incomplete anchors and the 16-original cap remain honest
+blockers. All previous `39218faf`/`c803e619` proofs remain unchanged.
 
 ### Historical contract investigation
 
@@ -97,7 +116,7 @@ It is not a raw authority constructor, native-store override or production
 storage API. App production policy and all existing production items are
 unchanged. No native, Android, offline suite or Simulator relink is needed for
 these test-only additions; all earlier receipts retain their original source
-attribution. Android reserved-reference Unsupported/permanent incomplete
+attribution. At that frozen pin, Android reserved-reference Unsupported/permanent incomplete
 reservations and indefinitely unresolved sixteen-slot admission remain real
 limitations. An early strengthened test fixture incorrectly assumed separately
 seeded identical accounts had different credentials; that prerequisite assertion

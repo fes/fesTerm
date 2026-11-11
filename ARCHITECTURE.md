@@ -8,6 +8,15 @@ existing window, lock and secret-store facades, selected only on Android.
 boundary, GLES/IME ownership and the explicit private-document-import policy.
 No platform FFI enters the terminal core or renderer.
 
+For ADR0084 protected HOST receipts, Android supplies a pinned current-app
+directory capability through `festerm-secret-store`, not caller-path authority.
+The bridge retains that capability/index and uses existing descriptor-relative
+private receipt operations; it never depends on JNI. Native reserved secret
+creation is serialized with read/update/delete and refuses backup/staging
+ambiguity without overwriting or resetting retained originals. Native crypto
+and full protected owner/account binding remain unchanged; host contract tests
+are not Android Keystore/device acceptance.
+
 The additive experimental iOS composition root in `app/festerm-mobile` reuses
 `festerm-core` and `festerm-ui-egui` through eframe/winit, without depending on
 the desktop application. [ADR 0042](docs/adr/0042-ios-rendering-spike-host.md)

@@ -601,8 +601,9 @@ Unix feature-gated testing composition reuses the actual memory secret store, ow
 receipt/checkpoint paths and framed original Ends; it adds no production
 authority constructor or native-store selection override. Valid-scope and
 confirmed-End controls isolate the tested fences. Native acceptance remains
-separate; Android reserved-reference Unsupported/incomplete reservations and
-the sixteen-unresolved-action admission limit remain unchanged.
+separate; the Android reservation boundary below removes the source-level
+Unsupported prerequisite but does not repair incomplete reservations or the
+sixteen-unresolved-action admission limit.
 
 Durable reconciliation is a current ADR0084 requirement, with a narrow
 client-bound checkpoint factory as its architectural enabler. A private,
@@ -650,6 +651,8 @@ anchor. Neither a caller path nor imported metadata can construct the capability
 The existing receipt location is retained, including interrupted material.
 Portable ancestry validation is unchanged; there is no blanket UID allowance,
 bridge-to-JNI dependency, raw-root constructor or file-vault fallback.
+The portable path constructor explicitly refuses Android; only the native
+capability entry point can select its receipt namespace.
 
 Reserved native creation must serialize the existing native namespace and
 atomically exclude the base, `.bak`, `.new` and reserved-write staging states.
@@ -658,13 +661,28 @@ reference. Existing envelopes remain native-key encrypted and reference-bound.
 Readers, replacement and deletion participate in the same namespace ownership;
 collision/failure cannot overwrite or silently clear retained material.
 
+The bounded implementation retains the native-context data-directory handle
+before accepting its exact files/no-backup child (including Android's native
+0771 child mode under the private application root). The final receipt/vault
+children must remain current-app private. Native vault operations share
+same-process nonreentrant admission and a cross-process file lease: a second
+same-process attempt must not open/close the POSIX lock inode and inadvertently
+release the first process-owned lock. New encrypted data uses a private synced
+reference-specific `.reserved` stage and atomic non-replacing hard-link
+publication; crash/write ambiguity retains staging and never becomes absence.
+The existing receipt location and native ciphertext/AAD are unchanged.
+
 Validation impact remains `HOST-02`, `HOST-03`, ADR0084: deterministic current
 owner/foreign scope, create versus reopen, foreign-account refusal, base/backup/
 staging collisions, concurrent creation and failure/no-overwrite/no-implicit-
 empty checks are required. Host fixtures are not Android JNI, target compilation
-or device evidence, which must be recorded separately. Implementation and these
-gates remain pending at this design-first checkpoint. Incomplete-anchor recovery,
-retained-original bounds, account/epoch fences and explicit reopen are unchanged.
+or device evidence, which must be recorded separately. The accepted decision was
+persisted before coding; the implementation has one host wrapper/23 production
+namespace JVM cases and 17 secret-store host units, including five new adapter/
+pinned-root cases. Qualification records companion bridge/mobile and strict
+results separately. Android target/JNI/Keystore/device acceptance is not inferred.
+Incomplete-anchor recovery, retained-original bounds, account/epoch fences and
+explicit reopen are unchanged.
 
 ### Exact-generation native End confirmation
 

@@ -441,6 +441,46 @@ public final class PlatformSmoke extends Instrumentation {
             require(activity.secretRead(reference) == null, "deleted reference missing");
             require(!activity.secretDelete(reference), "idempotent deletion");
 
+            try (ParcelFileDescriptor root = ParcelFileDescriptor.adoptFd(activity.privateDirectoryDescriptor())) {
+                android.system.StructStat pinned = Os.fstat(root.getFileDescriptor());
+                android.system.StructStat expected = Os.stat(new File(activity.getFilesDir(), "festerm").getPath());
+                require(pinned.st_uid == android.os.Process.myUid() && (pinned.st_mode & 0777) == 0700,
+                    "native application root owner");
+                require(pinned.st_dev == expected.st_dev && pinned.st_ino == expected.st_ino,
+                    "native root keeps existing receipt location");
+            }
+            for (String suffix : new String[]{".bak", ".new", ".reserved"}) {
+                String interruptedReference = UUID.randomUUID().toString();
+                File interrupted = new File(activity.getNoBackupFilesDir(),
+                    "secrets/" + interruptedReference + suffix);
+                byte[] retained = new byte[]{8, 3, 5};
+                java.nio.file.Files.createFile(interrupted.toPath(),
+                    java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+                try (FileOutputStream output = new FileOutputStream(interrupted)) {
+                    output.write(retained);
+                    output.getFD().sync();
+                }
+                android.system.StructStat owned = Os.lstat(interrupted.getPath());
+                require(owned.st_uid == android.os.Process.myUid() && (owned.st_mode & 0777) == 0600,
+                    "valid private interrupted fixture");
+                boolean createRefused;
+                try {
+                    createRefused = !activity.secretWrite(interruptedReference, fixture.clone(), false);
+                } catch (IOException expected) {
+                    createRefused = true;
+                }
+                require(createRefused, "native create refuses interrupted material");
+                boolean readRefused = false;
+                try { activity.secretRead(interruptedReference); } catch (IOException expected) { readRefused = true; }
+                require(readRefused, "interrupted native secret is not absence");
+                require(Arrays.equals(java.nio.file.Files.readAllBytes(interrupted.toPath()), retained),
+                    "interrupted material preserved");
+                require(!new File(activity.getNoBackupFilesDir(), "secrets/" + interruptedReference).exists(),
+                    "no base created from interrupted state");
+                require(interrupted.delete(), "remove only owned smoke fixture");
+            }
+
             activity.copyText("native clipboard fixture");
             require("native clipboard fixture".equals(activity.clipboardText()), "clipboard round trip");
             activity.copyText("");

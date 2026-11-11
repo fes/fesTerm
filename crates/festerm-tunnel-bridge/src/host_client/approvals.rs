@@ -36,6 +36,8 @@ mod storage {
 }
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::sync::Arc;
 use std::{
     fs::File,
     io,
@@ -167,8 +169,11 @@ impl Receipt {
 
 /// The root must be selected by the application, never by imported recipes,
 /// remote data, or a credential reference supplied by a user.
+#[derive(Clone)]
 pub struct ReceiptIndex {
     root: PathBuf,
+    #[cfg(unix)]
+    native_root: Option<Arc<festerm_secret_store::NativeAppPrivateRoot>>,
 }
 
 struct Lease(File);
@@ -234,6 +239,9 @@ impl ReceiptIndex {
 
     /// App-selected private sandbox, never a path from imported metadata.
     pub fn in_app_sandbox(root: &Path) -> Result<Self, Error> {
+        if cfg!(target_os = "android") {
+            return Err(Error::Storage);
+        }
         // The native composition root, never imported metadata, supplies this
         // existing application directory. Normalize OS aliases such as iOS /var
         // once; all receipt traversal beneath it remains no-follow.
@@ -241,7 +249,28 @@ impl ReceiptIndex {
         storage::trusted_directory(&root, false).map_err(storage_error)?;
         Ok(Self {
             root: root.join("host-client-approvals"),
+            #[cfg(unix)]
+            native_root: None,
         })
+    }
+
+    /// Native-created current-application capability, never a caller path.
+    #[cfg(unix)]
+    pub fn in_native_app_sandbox(root: Arc<festerm_secret_store::NativeAppPrivateRoot>) -> Self {
+        Self {
+            root: PathBuf::new(),
+            native_root: Some(root),
+        }
+    }
+
+    pub(super) fn same_storage(&self, other: &Self) -> bool {
+        #[cfg(unix)]
+        match (&self.native_root, &other.native_root) {
+            (Some(left), Some(right)) => return left.same_root(right),
+            (None, None) => {}
+            _ => return false,
+        }
+        self.root == other.root
     }
 
     #[cfg(feature = "relay")]
@@ -251,7 +280,11 @@ impl ReceiptIndex {
             .parent()
             .ok_or(Error::Storage)?
             .join("host-client-approvals");
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            #[cfg(unix)]
+            native_root: None,
+        })
     }
 
     /// This action may create native signing material, but never contacts or
@@ -269,6 +302,12 @@ impl ReceiptIndex {
     }
 
     fn directory(&self, create: bool) -> Result<File, Error> {
+        #[cfg(unix)]
+        if let Some(root) = &self.native_root {
+            return root
+                .open_host_approval_directory(create)
+                .map_err(storage_error);
+        }
         if create {
             ensure_parent(self.root.parent().ok_or(Error::Storage)?, 32).map_err(storage_error)?;
         }

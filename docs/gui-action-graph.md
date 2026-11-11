@@ -1726,17 +1726,16 @@ creation/End pair. End has no issuance-epoch field. This adds bounded bridge/
 runtime evidence, not mobile GUI, terminal frontend adoption, live vault,
 higher-host-epoch native, physical cold-start or Android runtime acceptance.
 
-Android HOST-02/03 checkpoint-gated execution still refuses Unsupported.
-Reservation parity requires a native-created owner-bound private-root anchor:
-the current facade supplies only a canonical path, while receipt ancestry
-requires root/current UID and no group/other writes. Do not accept system-UID
-ancestors by weakening that portable guard or treating profile paths as
-authority. Native create-new must also refuse backup/staging collisions;
-current Java insert checks only the base file while read recognizes `.bak`.
-The narrow root/facade contract decision and deterministic native-boundary
-owner/scope/create-versus-reopen/collision/failure tests precede implementation;
-Android target/runtime evidence is unrun. No incomplete-anchor or retention
-work is included.
+Android HOST-02/03 has a bounded reserved-create implementation, not runtime
+acceptance. Its foreground worker receives the opaque native-current-app root
+through the secret-store facade; portable ancestry checks remain unchanged.
+Native namespace admission/lease covers reads, create, update and delete.
+Base/backup/new/reserved material cannot become absence or be overwritten by
+create-new; uncertain stages remain retained. One host wrapper/23 JVM cases
+exercise the actual namespace and metadata predicates, not Android JNI/
+Keystore. Extended native smoke remains unrun and Android target compilation
+is a separate qualification. Permanent incomplete anchors and the 16-original
+cap remain honest blockers; neither recovery nor retention is redesigned.
 
 HOST-02/03 integrated session regressions additionally require the exact native
 launch journal, not matching metadata alone, and observe attachment only after

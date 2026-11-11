@@ -9,7 +9,7 @@ use festerm_tunnel_client::host_control::{
     IssuedControlOperation, ProtectedOriginalCheckpoint, ProtectedOriginalReopener,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const DOMAIN: &str = "fesTerm protected HOST client originals v1";
 
@@ -52,7 +52,7 @@ enum Body {
 /// Selected only by the application sandbox and fresh protected context.
 /// Native calls belong on its existing bounded foreground/background worker.
 pub struct OriginalStore {
-    root: PathBuf,
+    index: ReceiptIndex,
     owner: OwnerBinding,
     key: SecretReference,
     endpoint: String,
@@ -105,8 +105,35 @@ impl OriginalStore {
         context: &ApprovedContext,
         vault: Arc<dyn SecretStore>,
     ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
+        Self::recover_index(
+            ReceiptIndex::in_app_sandbox(root).map_err(failed)?,
+            context,
+            vault,
+        )
+    }
+
+    /// Explicit foreground recovery using the native-created application
+    /// capability; subsequent accesses retain that same pinned namespace.
+    #[cfg(unix)]
+    pub fn recover_in_native_app_sandbox(
+        root: Arc<festerm_secret_store::NativeAppPrivateRoot>,
+        context: &ApprovedContext,
+    ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
+        let vault = native_store().map_err(|error| Failure::OwnerKey(error.into()))?;
+        Self::recover_index(
+            ReceiptIndex::in_native_app_sandbox(root),
+            context,
+            Arc::from(vault),
+        )
+    }
+
+    fn recover_index(
+        index: ReceiptIndex,
+        context: &ApprovedContext,
+        vault: Arc<dyn SecretStore>,
+    ) -> Result<(Arc<Self>, Vec<RecoveredOriginal>), Failure> {
         let store = Arc::new(Self {
-            root: root.canonicalize().map_err(|_| Failure::OriginalStorage)?,
+            index,
             owner: context.approved.clone(),
             key: context.reference.duplicate_for_transport(),
             endpoint: context.binding.endpoint().into(),
@@ -173,8 +200,7 @@ impl OriginalStore {
         initialize: bool,
         action: impl FnOnce(&mut Blob) -> Result<(T, bool), StorageError>,
     ) -> Result<T, Failure> {
-        let index = ReceiptIndex::in_app_sandbox(&self.root).map_err(failed)?;
-        index
+        self.index
             .with_originals(
                 self.vault.as_ref(),
                 &self.owner,
@@ -289,7 +315,7 @@ impl OriginalStore {
 
 impl OriginalHandle {
     pub(super) fn agrees(&self, store: &OriginalStore, review: &str) -> bool {
-        self.store.root == store.root
+        self.store.index.same_storage(&store.index)
             && self.review == review
             && self.store.owner == store.owner
             && self.store.key == store.key
@@ -535,6 +561,6 @@ pub mod testing {
         store: &OriginalStore,
         context: &ApprovedContext,
     ) -> Result<(Arc<OriginalStore>, Vec<RecoveredOriginal>), Failure> {
-        OriginalStore::recover_with(&store.root, context, store.vault.clone())
+        OriginalStore::recover_index(store.index.clone(), context, store.vault.clone())
     }
 }
