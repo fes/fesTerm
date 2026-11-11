@@ -73,7 +73,6 @@ enum LauncherItemKind<'a> {
     NewSsh,
     NewSftp,
     NewSerial,
-    NewPowerShell,
     /// Opens a Markdown workspace: the file picker, then a viewer tab.
     NewMarkdown,
     LocalProfile(&'a str),
@@ -251,7 +250,6 @@ impl LauncherItem<'_> {
             | LauncherItemKind::NewSsh
             | LauncherItemKind::NewSftp
             | LauncherItemKind::NewSerial
-            | LauncherItemKind::NewPowerShell
             | LauncherItemKind::NewMarkdown
             | LauncherItemKind::RunningTunnel(_)
             | LauncherItemKind::ResumeSession(_)
@@ -289,9 +287,7 @@ impl LauncherItem<'_> {
             LauncherItemKind::NewSerial | LauncherItemKind::SerialProfile(_) => {
                 (Icon::Serial, theme::ICON_SESSION_SERIAL)
             }
-            LauncherItemKind::NewPowerShell | LauncherItemKind::PowerShellProfile(_) => {
-                (Icon::SshRemote, theme::ICON_SESSION_REMOTE)
-            }
+            LauncherItemKind::PowerShellProfile(_) => (Icon::SshRemote, theme::ICON_SESSION_REMOTE),
             LauncherItemKind::NewMarkdown => (Icon::MarkdownDocument, theme::ICON_SESSION_MARKDOWN),
         }
     }
@@ -323,9 +319,6 @@ impl LauncherItem<'_> {
                     "the New Serial Connection item opens the serial form, not an AppCommand"
                 )
             }
-            LauncherItemKind::NewPowerShell => AppCommand::CreateProfile {
-                kind: NewProfileKind::PowerShell,
-            },
             LauncherItemKind::NewMarkdown => AppCommand::OpenMarkdownWorkspace,
             LauncherItemKind::LocalProfile(profile_id) => AppCommand::StartConfiguredLocalProfile {
                 profile_id: profile_id.to_owned(),
@@ -3784,11 +3777,6 @@ pub fn show_launcher(
             "Open a Markdown workspace".to_owned(),
             LauncherItemKind::NewMarkdown,
         ),
-        LauncherItem::untabulated(
-            "PowerShell".to_owned(),
-            "Experimental structured HTTPS/NTLM or SSH PSRP".to_owned(),
-            LauncherItemKind::NewPowerShell,
-        ),
     ];
     if cfg!(feature = "experimental-dev-tunnels") {
         // Dev Tunnel is a remote-terminal peer of SSH, so it sits directly
@@ -4527,7 +4515,6 @@ fn show_launch_card_row(
                         LauncherItemKind::NewDevTunnel => {
                             state.pending_form = Some(LauncherForm::DevTunnel);
                         }
-                        LauncherItemKind::NewPowerShell => *command = Some(item.command()),
                         _ => *command = Some(item.command()),
                     }
                 }
@@ -5428,47 +5415,18 @@ mod tests {
     }
 
     #[test]
-    fn powershell_new_profile_card_dispatches_at_narrow_and_wide_tab_sizes() {
-        for size in [egui::vec2(360.0, 516.0), egui::vec2(752.0, 516.0)] {
-            let mut harness = harness_with_configuration_size(Configuration::empty(), size);
-            harness.run_ok();
-
-            harness
-                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP")
-                .scroll_to_me();
-            harness.run_ok();
-            harness
-                .get_by_label("PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP")
-                .click();
-            harness.run_ok();
-
-            assert!(
-                matches!(
-                    harness.state().command,
-                    Some(AppCommand::CreateProfile {
-                        kind: NewProfileKind::PowerShell
-                    })
-                ),
-                "PowerShell card should dispatch CreateProfile at {size:?}, got {:?}",
-                harness.state().command
-            );
-        }
-    }
-
     #[test]
-    fn unreleased_discovery_cards_are_hidden_at_narrow_and_wide_tab_sizes() {
+    fn unsupported_new_session_cards_are_hidden_at_narrow_and_wide_tab_sizes() {
         for size in [egui::vec2(360.0, 516.0), egui::vec2(752.0, 516.0)] {
             let mut harness = harness_with_configuration_size(Configuration::empty(), size);
             harness.run_ok();
             for label in [
                 "Remote Sessions — Discover and resume an existing sessiond shell over SSH",
                 "Enterprise — Experimental Entra sign-in and Dev Box discovery",
+                "PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP",
             ] {
                 assert!(harness.query_by_label(label).is_none());
             }
-            assert!(harness
-                .query_by_label("PowerShell — Experimental structured HTTPS/NTLM or SSH PSRP")
-                .is_some());
             assert!(harness.state().command.is_none());
         }
     }
