@@ -672,9 +672,33 @@ an earlier unsynced creation must not undermine a later original checkpoint.
 Native vault operations share
 same-process nonreentrant admission and a cross-process file lease: a second
 same-process attempt must not open/close the POSIX lock inode and inadvertently
-release the first process-owned lock. New encrypted data uses a private synced
-reference-specific `.reserved` stage and atomic non-replacing hard-link
-publication; crash/write ambiguity retains staging and never becomes absence.
+release the first process-owned lock.
+
+**Normative mechanism correction, documented before coding:** the `e462c59b`
+hard-link publisher is blocked, not consumable. AOSP SELinux app policy denies
+untrusted apps `file_type:file link`; host filesystem tests and Java/Rust target
+compilation cannot qualify that operation. No hard link or replace-capable
+rename may publish native secrets.
+
+Under the existing namespace lease, create and sync a private reference-specific
+`.reserved` marker and its directory. Exclusively open the base with
+`CREATE_NEW`, `WRITE`, `NOFOLLOW_LINKS` and mode 0600; write the complete encrypted
+envelope, force the base, and sync its directory. Only then delete the marker
+and sync the directory before acknowledgement. While the marker exists,
+`existing()` refuses reads, replacement and deletion, including an empty or
+partial base. Never clean up uncertain material automatically. A collision
+must preserve both the pre-existing base and the reservation. Any write, force,
+directory-sync or marker-deletion failure returns an explicit failure, even
+when the final result may already be committed. Failure after marker deletion
+may leave a complete readable base, but must not acknowledge creation or permit
+replacement. Native SELinux/JNI/Keystore/device smoke is required before
+consumption; host/JVM/API35 evidence remains insufficient.
+
+Validation impact remains the existing `HOST-02`, `HOST-03`, ADR0084 IDs:
+deterministic faults at reservation, base creation/partial write/force,
+publication sync, marker deletion and final sync; non-overwrite and concurrent
+creators; retained backup/new/staging states; successful native put/reserved
+creation with no marker after acknowledgement and unchanged bytes on collision.
 The existing receipt location and native ciphertext/AAD are unchanged.
 
 Validation impact remains `HOST-02`, `HOST-03`, ADR0084: deterministic current

@@ -1,5 +1,21 @@
 # Milestone Progress Narrative
 
+## Android reservation correction: remove the SELinux-denied publisher
+
+Independent full-source gates blocked `e462c59b`: its hard-link publication is
+denied to untrusted Android apps by AOSP SELinux policy. Host JVM passes, API35
+Java compilation and NDK Rust checks did not establish runtime compatibility.
+That frozen source and all evidence are retained, not consumed or relabelled.
+
+Before correction code, ADR0084 now requires an exclusive base creation under
+the existing namespace lease and durable `.reserved` marker. The complete base
+must be forced and its directory synced before marker removal; removal and a
+final directory sync precede acknowledgement. Marker-visible partial data is
+never accepted. Collisions and failures retain uncertainty without replacement,
+cleanup, encryption/authority changes or new JNI/platform APIs. Deterministic
+host faults and existing-SDK compilation are necessary but actual Android
+SELinux/JNI/Keystore/device smoke remains a mandatory consumption blocker.
+
 ## Android reserved originals: secure boundary, runtime acceptance pending
 
 The owner explicitly approved implementing the opaque native application-root
