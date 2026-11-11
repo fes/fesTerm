@@ -118,10 +118,29 @@ in 174.15 seconds. The failure was the first OutcomeUncertain assertion in
 its actual worker outcome was not printed. The raw SHA-256 is
 `5c8a711c4117b77134114f211092067250a551dcf9a1942921bb56aef12f11eb`.
 The minimal followup adds only content-free test outcome/stage diagnostics and
-a deterministic label fixture; it is not a proven runtime correction or fresh
-native acceptance. The initial OutcomeUncertain, later exact Ended, unresolved/
+a deterministic label fixture; it is not a proven runtime correction or Ubuntu
+acceptance. The initial OutcomeUncertain, later exact Ended, unresolved/
 resolved state and original-operation assertions remain strict and unchanged.
 The separate `0bc` host-control failures do not establish this failure's cause.
+
+After explicit secondary-slot activation, exact diagnostic child
+`15e768ada48cbe4563490f476cee6669e12881eb` passes its new diagnostic unit
+**1/0/0, 0.01s**, and one execution of
+`native_authenticated_runtime_end_confirms_original_exact_gone_generation`
+**1/0/0, 1.63s** on macOS. Its original assertions verify initial
+`Failed(Control(Refused(OutcomeUncertain)))`, unresolved issued state, subsequent
+authoritative absence and exact-original Ended without changing the operation.
+The single new-source Mac case does not explain the retained Ubuntu failure,
+replace its missing actual outcome or qualify the complete 19-case selection.
+Affected bridge `--features host-routing --lib --tests` strict Clippy, direct
+edition-2021 rustfmt, traceability against actual PR base `6614c990` (311 edges)
+and diff checks all exit zero. The empty private target was built offline with
+jobs1/debug0/incremental0; both helpers were newly built and byte-copied into
+owned `target/ne`, with identical pre/post source, executable and compiler maps.
+The immediate free-memory probe was 46%; live guarded samples stayed at least
+49%, without a pause. The target lock was free and owned processes absent at
+closure. First nonfatal toolchain `rust-objcopy`/missing-LLVM stripping warnings
+are retained in raw logs; no SDK, installation or OS repair was attempted.
 
 In an explicitly owned iOS/Android native window, still verify:
 

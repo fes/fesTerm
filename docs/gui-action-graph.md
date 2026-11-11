@@ -1901,6 +1901,12 @@ original-End OutcomeUncertain assertion without printing its actual outcome.
 Test-only diagnostics distinguish typed failure from exact/other-target Ended
 at that initial completion, without logging target IDs or changing the oracle.
 The unprinted result remains unknown; source analysis is not native execution.
+At exact diagnostic child `15e768ad`, a new private offline jobs1 target and
+fresh byte-copied helper pair pass the diagnostic unit **1/0/0** and the one
+exact native End case **1/0/0, 1.63s** on macOS. Initial OutcomeUncertain and
+later same-original exact Ended are assertion-verified. Affected bridge strict
+checks, direct rustfmt and traceability against actual PR base `6614c990` pass.
+This is neither Ubuntu cause/acceptance nor full 19-case native qualification.
 The runtime/session union also passes the actual two-daemon signed-SSH
 input-isolation, independent attached inventory and persistent-detach route;
 additional actual signed-SSH cases pass for original-issued creation/end,

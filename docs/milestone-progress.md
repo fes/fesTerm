@@ -14818,3 +14818,48 @@ checks and a bounded exact-case qualification require the separately granted
 private jobs1 slot and matching helper/child attribution. Older native helper
 executions and macOS results cannot qualify this changed child or the Ubuntu
 failure.
+
+### Frozen diagnostic qualification, not an Ubuntu root-cause claim
+
+The explicit secondary slot qualifies exact source
+`15e768ada48cbe4563490f476cee6669e12881eb`, a normal child of frozen `7ad13c6d`.
+The initial source-only commit `190ffb90` had been amended before activation
+solely to make its trailers contiguous: both objects have the identical tree
+and parent. The first object is preserved under
+`refs/validation/adr0084-native-end/initial-190ffb90` and in the original
+metadata artifact. No further amend/rebase/rewrite was used.
+
+The immediate own memory probe was 46% free. A newly empty
+`target/native-end-cargo` compiles offline with jobs1/debug0/incremental0 using
+resolved rustc/cargo 1.99.1; no target clone, shared artifacts or old helper
+execution was used. Full before/after maps of all 2,057 tracked files and the
+compiler/tool executables are identical. The matching helper build exits zero;
+new exclusive byte copies under owned `target/ne` have distinct source inodes,
+single links and mode 0500, with unchanged hashes/inodes/sizes before and after
+the native case. A byte-identical deterministic PTY-child hash is not reuse of
+the old helper: the empty-target build and new copy provenance are retained.
+
+The actual new diagnostic unit passes **1/0/0, 0.01s**. Matching affected bridge
+`--features host-routing --lib --tests` strict Clippy, direct edition-2021
+rustfmt, traceability against actual PR base
+`6614c99086cc71e1a4097ed738f2435539e41c69` (**311 edges**) and diff checks exit
+zero. The original exact native End case executes **once: 1/0/0, 1.63s**.
+Its unchanged assertions establish initial OutcomeUncertain, issued/unresolved
+state, authoritative absence and later exact same-original Ended; the original
+operation and empty native inventory checks also pass. No whole 19/14-case
+campaign or unchanged retry was run.
+
+All nine guarded commands have numeric exit zero. Nonfatal compiler stripping
+warnings retain `rust-objcopy`'s missing `libLLVM.dylib` diagnostics in their
+first raw output; strict Clippy still exits zero, and no toolchain/SDK/OS
+intervention was made. An initial read-only `6614` lookup was ambiguous with a
+tree object and exited 128; the actual commit was resolved explicitly before
+qualification. Neither is silently relabeled as a product/native failure.
+Live memory samples never fell below 49%, no pause was needed, owned process
+markers are absent and the private target lock is available at closure.
+
+The secondary slot is released. This positive is only this changed-source Mac
+case, not an explanation, fix, waiver or Ubuntu acceptance of the original
+7ad failure. That historical variant remains unknown until fresh diagnostic
+Ubuntu evidence. Publication/review remains behind the parent's fresh three
+source gates and proof check.
