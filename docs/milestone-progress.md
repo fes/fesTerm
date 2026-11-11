@@ -1,6 +1,16 @@
 # Milestone Progress Narrative
 
-## Android reserved originals: identifying the exact missing native-root contract
+## Android reserved originals: accepted secure boundary before implementation
+
+The owner explicitly approved implementing the opaque native application-root
+capability and serialized native reserved-write boundary described in ADR0084.
+This design-first checkpoint precedes production edits. It preserves the existing
+receipt location and all protected-original/account/epoch fences, rejects
+backup/staging ambiguity without reset, and leaves incomplete-anchor/retention
+work out of scope. Implementation, deterministic coverage and actual Android
+target/runtime evidence are still pending; the prior blocker proof is retained.
+
+### Historical contract investigation
 
 A clean normal child of qualified `39218faf` traces the Android reservation
 blocker without changing392/c803 sources or evidence. The missing

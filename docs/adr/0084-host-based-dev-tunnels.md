@@ -641,22 +641,30 @@ cold-start acceptance and current platform CI remain independent gates.
 
 ### Android protected reservation prerequisite
 
-Android reserved-reference parity remains a current client-delivery blocker,
-not an implemented extension of this checkpoint boundary. The existing native
-facade supplies a canonical application path, but the portable receipt guard
-requires every ancestor to be root/current-UID-owned and not group/other
-writable; it has no native-created opaque application-root anchor for
-system-owned Android ancestors. Accepting a caller path, skipping the walk or
-globally trusting another UID is not authorized. The minimum decision is an
-owner/application-bound pinned `NativeAppPrivateRoot` through the existing
-secret-store facade and a narrow receipt-index entry point using that anchor,
-with no bridge-to-JNI dependency or public unchecked constructor.
-Additionally, native create-new must treat AtomicFile backup/staging remnants
-as existing/uncertain, not absence: current Java insert checks the base file
-only while read accepts `.bak`. No reservation override is added before these
-contracts and deterministic owner/scope/collision/failure tests exist.
-This does not change incomplete-anchor recovery, retained-original bounds,
-account fencing or the requirement for actual Android target/runtime evidence.
+**Accepted current-requirement enabler, before implementation:** the owner chose
+the secure Android boundary. An opaque, nonserializable `NativeAppPrivateRoot`
+is obtained only from the current Android application through the existing
+secret-store facade. Native code pins and checks the application-owned private
+directory; the bridge opens only its fixed receipt child relative to that
+anchor. Neither a caller path nor imported metadata can construct the capability.
+The existing receipt location is retained, including interrupted material.
+Portable ancestry validation is unchanged; there is no blanket UID allowance,
+bridge-to-JNI dependency, raw-root constructor or file-vault fallback.
+
+Reserved native creation must serialize the existing native namespace and
+atomically exclude the base, `.bak`, `.new` and reserved-write staging states.
+An interrupted or ambiguous write remains existing/uncertain, never a new empty
+reference. Existing envelopes remain native-key encrypted and reference-bound.
+Readers, replacement and deletion participate in the same namespace ownership;
+collision/failure cannot overwrite or silently clear retained material.
+
+Validation impact remains `HOST-02`, `HOST-03`, ADR0084: deterministic current
+owner/foreign scope, create versus reopen, foreign-account refusal, base/backup/
+staging collisions, concurrent creation and failure/no-overwrite/no-implicit-
+empty checks are required. Host fixtures are not Android JNI, target compilation
+or device evidence, which must be recorded separately. Implementation and these
+gates remain pending at this design-first checkpoint. Incomplete-anchor recovery,
+retained-original bounds, account/epoch fences and explicit reopen are unchanged.
 
 ### Exact-generation native End confirmation
 
