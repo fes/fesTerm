@@ -28,7 +28,10 @@ use festerm_tunnel_client::{
     identity::{self, Identity},
     service::{self, ResolvedTunnel, TunnelSummary},
 };
-use host_client::originals::{OriginalStore, RecoveredIntent, RecoveredOriginal};
+use host_client::originals::{
+    ForgetOutcome, ForgottenOriginal, OriginalId, OriginalStore, RecoveredIntent,
+    RecoveredOriginal, ReviewedForget,
+};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex, Weak,
@@ -139,6 +142,8 @@ enum ResultEvent {
     Receipt(Box<Receipt>),
     Resolved(Box<ResolvedTunnel>),
     Originals(Arc<OriginalStore>, Vec<RecoveredOriginal>),
+    ForgetReview(Box<ReviewedForget>, u64),
+    Forgotten(ForgottenOriginal, u64),
 }
 
 struct OriginalReview {
@@ -233,6 +238,36 @@ struct Retirement {
     job: Job<Result<ShutdownResult, ShutdownError>>,
 }
 
+struct ForgetReview {
+    record: ReviewedForget,
+    account: TunnelAccount,
+    epoch: u64,
+    generation: u64,
+    confirmed: bool,
+}
+
+impl ForgetReview {
+    fn authorize(
+        &self,
+        account: &TunnelAccount,
+        context: &ApprovedContext,
+        epoch: u64,
+        generation: u64,
+    ) -> Result<(), String> {
+        if !self.confirmed
+            || &self.account != account
+            || self.epoch != epoch
+            || self.generation != generation
+            || !self.record.matches_context(context)
+        {
+            return Err(
+                "Local Forget confirmation expired or is incomplete; no deletion confirmed.".into(),
+            );
+        }
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 pub(super) struct HostUi {
     pub(super) open: bool,
@@ -261,6 +296,7 @@ pub(super) struct HostUi {
     selected_original: Option<String>,
     ends: Vec<OriginalEnd>,
     end_review: Option<EndReview>,
+    forget_review: Option<ForgetReview>,
     retirements: Vec<Retirement>,
     budgets: Budgets,
     epoch: u64,
@@ -269,6 +305,91 @@ pub(super) struct HostUi {
 }
 
 impl HostUi {
+    fn has_forget_selection(
+        &self,
+        id: &OriginalId,
+        account: &TunnelAccount,
+        context: &ApprovedContext,
+    ) -> bool {
+        let same_account = |original: &TunnelAccount| {
+            original.provider == account.provider && original.account_id == account.account_id
+        };
+        match id {
+            OriginalId::Creation(id) => self.originals.iter().any(|original| {
+                &original.intent.creation().attachment == id
+                    && same_account(&original.account)
+                    && original.intent.matches_context(context)
+            }),
+            OriginalId::End(id) => self.ends.iter().any(|original| {
+                original.intent.operation() == id
+                    && same_account(&original.account)
+                    && original.intent.matches_context(context)
+            }),
+        }
+    }
+
+    fn accept_forget_review(
+        &mut self,
+        record: ReviewedForget,
+        account: &TunnelAccount,
+        generation: u64,
+    ) -> Result<(), String> {
+        let context = self.context()?;
+        if self.pending.is_some()
+            || self.worker.is_some()
+            || generation != self.generation
+            || !record.matches_context(&context)
+            || !self.has_forget_selection(record.id(), account, &context)
+        {
+            return Err("Local Forget review is no longer current; no deletion confirmed.".into());
+        }
+        self.launch = false;
+        self.end_review = None;
+        self.forget_review = Some(ForgetReview {
+            record,
+            account: account.clone(),
+            epoch: self.epoch,
+            generation,
+            confirmed: false,
+        });
+        Ok(())
+    }
+
+    fn accept_forgotten(
+        &mut self,
+        forgotten: ForgottenOriginal,
+        account: &TunnelAccount,
+        generation: u64,
+    ) -> Result<(), String> {
+        let context = self.context()?;
+        if generation != self.generation
+            || !forgotten.matches_context(&context)
+            || !self.has_forget_selection(forgotten.id(), account, &context)
+        {
+            return Err("Local Forget completion is no longer current; no remote absence inferred. Explicitly reopen protected history.".into());
+        }
+        match forgotten.id() {
+            OriginalId::Creation(id) => {
+                self.originals
+                    .retain(|original| &original.intent.creation().attachment != id);
+                if self.selected_original.as_ref() == Some(&id.to_string()) {
+                    self.selected_original = None;
+                }
+            }
+            OriginalId::End(id) => self
+                .ends
+                .retain(|original| original.intent.operation() != id),
+        }
+        self.launch = false;
+        self.end_review = None;
+        self.forget_review = None;
+        self.error = Some(match forgotten.outcome() {
+            ForgetOutcome::Removed => "Selected local retry checkpoint forgotten. Remote session/action unchanged; no End, absence, replacement or retry.".into(),
+            ForgetOutcome::AlreadyMissing => "Selected local retry history abandoned; no native checkpoint remained in the validated payload. This says nothing about the remote action.".into(),
+        });
+        Ok(())
+    }
+
     fn accept_recovered(
         &mut self,
         store: Arc<OriginalStore>,
@@ -458,6 +579,7 @@ impl HostUi {
     }
 
     fn cancel(&mut self) {
+        self.forget_review = None;
         if let Some(pending) = self.pending.take() {
             pending.token.cancel();
         }
@@ -615,6 +737,10 @@ enum Action {
     ReviewOriginalEnd(usize),
     ConfirmEnd,
     CancelEnd,
+    ReviewForgetCreation(usize),
+    ReviewForgetEnd(usize),
+    ConfirmForget,
+    CancelForget,
     Save,
     Import,
     Close,
@@ -906,6 +1032,29 @@ impl MobileApp {
                     }
                     None => self.hosts.error = Some("Original account no longer current.".into()),
                 },
+                Ok(ResultEvent::ForgetReview(record, generation)) => {
+                    let result = account
+                        .as_ref()
+                        .ok_or("Original account no longer current.".into())
+                        .and_then(|account| {
+                            self.hosts
+                                .accept_forget_review(*record, account, generation)
+                        });
+                    if let Err(error) = result {
+                        self.hosts.error = Some(error);
+                    }
+                }
+                Ok(ResultEvent::Forgotten(forgotten, generation)) => {
+                    let result = account
+                        .as_ref()
+                        .ok_or("Original account no longer current.".into())
+                        .and_then(|account| {
+                            self.hosts.accept_forgotten(forgotten, account, generation)
+                        });
+                    if let Err(error) = result {
+                        self.hosts.error = Some(error);
+                    }
+                }
                 Err(error) => self.hosts.error = Some(error),
             }
         }
@@ -1057,6 +1206,10 @@ impl MobileApp {
     }
 
     fn host_action(&mut self, ctx: &egui::Context, action: Action) -> Result<(), String> {
+        if matches!(action, Action::CancelForget) {
+            self.hosts.forget_review = None;
+            return Ok(());
+        }
         if matches!(action, Action::CancelEnd) {
             self.hosts.end_review = None;
             return Ok(());
@@ -1153,6 +1306,64 @@ impl MobileApp {
         }) {
             return Err("This recipe belongs to another account. No operation was issued.".into());
         }
+        let forget_id = match action {
+            Action::ReviewForgetCreation(index) => Some(OriginalId::Creation(
+                self.hosts
+                    .originals
+                    .get(index)
+                    .ok_or("Original selection expired.")?
+                    .intent
+                    .creation()
+                    .attachment
+                    .clone(),
+            )),
+            Action::ReviewForgetEnd(index) => Some(OriginalId::End(
+                self.hosts
+                    .ends
+                    .get(index)
+                    .ok_or("Original End selection expired.")?
+                    .intent
+                    .operation()
+                    .clone(),
+            )),
+            _ => None,
+        };
+        if let Some(id) = &forget_id {
+            if !self
+                .hosts
+                .has_forget_selection(id, &account, &self.hosts.context()?)
+            {
+                return Err("Review the original protected host and authenticated account before local Forget.".into());
+            }
+            if self.hosts.original_store.is_none() {
+                return Err("Explicitly reopen protected originals before local Forget.".into());
+            }
+            self.hosts.forget_review = None;
+        }
+        let forget_commit = if matches!(action, Action::ConfirmForget) {
+            let review = self
+                .hosts
+                .forget_review
+                .as_ref()
+                .ok_or("Review local Forget first.")?;
+            let context = self.hosts.context()?;
+            review.authorize(&account, &context, self.hosts.epoch, self.hosts.generation)?;
+            if !self
+                .hosts
+                .has_forget_selection(review.record.id(), &account, &context)
+            {
+                return Err("The selected original changed; local Forget was not started.".into());
+            }
+            Some(
+                self.hosts
+                    .forget_review
+                    .take()
+                    .expect("authorized review")
+                    .record,
+            )
+        } else {
+            None
+        };
         match action {
             Action::ReviewEnd(index) => {
                 let inventory = self
@@ -1299,8 +1510,13 @@ impl MobileApp {
         let cancel = token.clone();
         let selected = self.hosts.selected.clone();
         let root = profiles.host_approval_directory();
-        let recovery_context = if matches!(action, Action::RecoverOriginals) {
-            self.hosts.original_store = None;
+        let recovery_context = if matches!(action, Action::RecoverOriginals)
+            || forget_id.is_some()
+            || forget_commit.is_some()
+        {
+            if matches!(action, Action::RecoverOriginals) {
+                self.hosts.original_store = None;
+            }
             Some(self.hosts.context()?)
         } else {
             None
@@ -1339,6 +1555,8 @@ impl MobileApp {
         }
         let snapshot = account.clone();
         let snapshot_recipe = selected.clone();
+        let original_store = self.hosts.original_store.clone();
+        let generation = self.hosts.generation;
         let job = Job::spawn(ctx, move |legacy_cancel| {
             let _permit = permit;
             if cancel.is_cancelled() || legacy_cancel.is_cancelled() {
@@ -1347,6 +1565,25 @@ impl MobileApp {
             let index =
                 || ReceiptIndex::in_app_sandbox(&root).map_err(|error| error.message().to_owned());
             let result = match action {
+                Action::ReviewForgetCreation(_) | Action::ReviewForgetEnd(_) => original_store
+                    .ok_or("Protected original store no longer current.")?
+                    .review_forget(
+                        recovery_context.as_ref().expect("explicit local review"),
+                        forget_id.expect("selected local original"),
+                        &cancel,
+                    )
+                    .map(|record| ResultEvent::ForgetReview(Box::new(record), generation))
+                    .map_err(|error| error.message().to_owned()),
+                Action::ConfirmForget => forget_commit
+                    .expect("confirmed local review")
+                    .forget(
+                        recovery_context
+                            .as_ref()
+                            .expect("explicit local confirmation"),
+                        &cancel,
+                    )
+                    .map(|forgotten| ResultEvent::Forgotten(forgotten, generation))
+                    .map_err(|error| error.message().to_owned()),
                 Action::RecoverOriginals => OriginalStore::recover(
                     &root,
                     recovery_context
@@ -1532,12 +1769,27 @@ impl MobileApp {
             for (index, original) in self.hosts.originals.iter().enumerate() {
                 ui.label(format!("Retained original {} · logical {} · issued {:?}; explicit original-action review only", original.recipe.name, original.intent.creation().logical, original.intent.issued_operation()));
                 if ui.button(format!("Review retained original: {}", original.recipe.name)).clicked() { action = Some(Action::ReviewOriginal(index)); }
+                if ui.add_enabled(self.hosts.original_store.is_some() && self.hosts.pending.is_none() && self.hosts.worker.is_none(), egui::Button::new("Forget this local Create retry history...")).clicked() { action = Some(Action::ReviewForgetCreation(index)); }
             }
             for (index, original) in self.hosts.ends.iter().enumerate() {
                 ui.label(format!("Original End {} · generation {} · operation {} · issued={} confirmed-ended={}; protected capture required before sending",
                     original.intent.target().logical, original.intent.target().generation.get(),
                     original.intent.operation(), original.intent.is_issued(), original.intent.is_resolved()));
                 if ui.add_enabled(!original.intent.is_resolved(), egui::Button::new("Review original End / retry")).clicked() { action = Some(Action::ReviewOriginalEnd(index)); }
+                if ui.add_enabled(self.hosts.original_store.is_some() && self.hosts.pending.is_none() && self.hosts.worker.is_none(), egui::Button::new("Forget this local End retry history...")).clicked() { action = Some(Action::ReviewForgetEnd(index)); }
+            }
+            if let Some(review) = &mut self.hosts.forget_review {
+                ui.separator();
+                ui.heading("Forget local retry history - NOT End session");
+                ui.label(format!("Account github:{} · original {:?}", review.account.account_id, review.record.id()));
+                if let Some(logical) = review.record.logical() { ui.label(format!("Logical session {logical}")); }
+                if let Some(target) = review.record.target() { ui.label(format!("Captured native generation {}", target.generation.get())); }
+                ui.label(format!("Privacy epoch {} · request generation {}", review.epoch, review.generation));
+                ui.label("The protected host/installation/principal above are fixed. Only this local checkpoint is selected. Other originals are preserved.");
+                ui.label("The remote session may still be running and its action may still complete. Forget does NOT End, detach, revoke, prove absence, retry or authorize a replacement. Other clients are not revoked.");
+                ui.checkbox(&mut review.confirmed, "I explicitly abandon only this original's local retry history");
+                if ui.add_enabled(review.confirmed, egui::Button::new("Confirm local Forget once")).clicked() { action = Some(Action::ConfirmForget); }
+                if ui.button("Cancel local Forget (keep history)").clicked() { action = Some(Action::CancelForget); }
             }
             if let Some(review) = &mut self.hosts.end_review {
                 ui.separator();

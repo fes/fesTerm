@@ -477,6 +477,277 @@ async fn protected_original_sixteen_uncertain_actions_cannot_be_pruned_or_replac
 }
 
 #[tokio::test]
+async fn protected_original_forget_preserves_other_records_and_never_settles_end() {
+    let fixture = Fixture::new();
+    let first = fixture.intent();
+    let second = fixture.intent();
+    lost_creation(&fixture, first.clone()).await;
+    lost_creation(&fixture, second.clone()).await;
+    let operation = OperationId::new();
+    let target = Target {
+        logical: first.creation().logical.clone(),
+        generation: GenerationId::new(8).unwrap(),
+    };
+    fixture
+        .store
+        .handle(operation.to_string(), "End".into())
+        .capture_end(&operation, &target)
+        .unwrap();
+    let saved = serde_json::to_vec(&fixture.blob().actions[1]).unwrap();
+    let cancel = CancellationToken::new();
+    let review = fixture
+        .store
+        .review_forget(
+            &fixture.context,
+            OriginalId::End(operation.clone()),
+            &cancel,
+        )
+        .unwrap();
+    assert_eq!(review.target(), Some(&target));
+    assert_eq!(fixture.reopen().unwrap().1.len(), 3);
+    let receipt = review.forget(&fixture.context, &cancel).unwrap();
+    assert_eq!(receipt.outcome(), ForgetOutcome::Removed);
+    assert!(receipt.matches_context(&fixture.context));
+    assert_eq!(fixture.reopen().unwrap().1.len(), 2);
+    assert!(!first.is_resolved() && !first.is_presented());
+    let review = fixture
+        .store
+        .review_forget(
+            &fixture.context,
+            OriginalId::Creation(first.creation().attachment.clone()),
+            &cancel,
+        )
+        .unwrap();
+    assert_eq!(review.logical(), Some(&first.creation().logical));
+    review.forget(&fixture.context, &cancel).unwrap();
+    let remaining = fixture.blob().actions;
+    assert_eq!(remaining.len(), 1);
+    assert!(serde_json::to_vec(&remaining[0]).unwrap() == saved);
+    let (_, mut reopened) = fixture.reopen().unwrap();
+    let RecoveredIntent::Creation(restored) = reopened.remove(0).intent else {
+        panic!("creation")
+    };
+    assert_eq!(restored.issued_operation(), second.issued_operation());
+}
+
+#[tokio::test]
+async fn protected_original_forget_refuses_changed_scope_record_and_cancelled_consent() {
+    let fixture = Fixture::new();
+    let intent = fixture.intent();
+    lost_creation(&fixture, intent.clone()).await;
+    let id = OriginalId::Creation(intent.creation().attachment.clone());
+    let cancel = CancellationToken::new();
+    for changed in 0..4 {
+        let mut wrong = context();
+        wrong.approved = fixture.context.approved.clone();
+        wrong.reference = fixture.context.reference.duplicate_for_transport();
+        wrong.binding = fixture.context.binding.clone();
+        match changed {
+            0 => wrong.approved.principal = festerm_host_protocol::PrincipalId::new(),
+            1 => wrong.approved.account = "github:8".into(),
+            2 => wrong.reference = SecretReference::generate(),
+            _ => {
+                wrong.binding = Binding::new(
+                    wrong.binding.host().clone(),
+                    wrong.binding.account().into(),
+                    "other.endpoint".into(),
+                )
+                .unwrap()
+            }
+        }
+        assert!(matches!(
+            fixture.store.review_forget(&wrong, id.clone(), &cancel),
+            Err(Failure::BindingMismatch)
+        ));
+        let review = fixture
+            .store
+            .review_forget(&fixture.context, id.clone(), &cancel)
+            .unwrap();
+        assert!(matches!(
+            review.forget(&wrong, &cancel),
+            Err(Failure::BindingMismatch)
+        ));
+    }
+    let review = fixture
+        .store
+        .review_forget(&fixture.context, id.clone(), &cancel)
+        .unwrap();
+    cancel.cancel();
+    assert!(review.forget(&fixture.context, &cancel).is_err());
+    assert_eq!(fixture.reopen().unwrap().1.len(), 1);
+    let cancel = CancellationToken::new();
+    let review = fixture
+        .store
+        .review_forget(&fixture.context, id, &cancel)
+        .unwrap();
+    fixture.corrupt(|blob| blob.actions[0].review.push_str(" changed"));
+    assert!(matches!(
+        review.forget(&fixture.context, &cancel),
+        Err(Failure::BindingMismatch)
+    ));
+    assert_eq!(fixture.reopen().unwrap().1.len(), 1);
+}
+
+#[tokio::test]
+async fn protected_original_forget_missing_is_local_only_and_vault_failures_never_succeed() {
+    for fault in 0..6 {
+        let fixture = Fixture::new();
+        let intent = fixture.intent();
+        lost_creation(&fixture, intent.clone()).await;
+        let id = OriginalId::Creation(intent.creation().attachment.clone());
+        let cancel = CancellationToken::new();
+        let review = fixture
+            .store
+            .review_forget(&fixture.context, id.clone(), &cancel)
+            .unwrap();
+        match fault {
+            0 => {
+                drop(review);
+                assert_eq!(fixture.reopen().unwrap().1.len(), 1);
+                fixture
+                    .store
+                    .review_forget(&fixture.context, id.clone(), &cancel)
+                    .unwrap()
+                    .forget(&fixture.context, &cancel)
+                    .unwrap();
+                let receipt = fixture
+                    .store
+                    .review_forget(&fixture.context, id, &cancel)
+                    .unwrap()
+                    .forget(&fixture.context, &cancel)
+                    .unwrap();
+                assert_eq!(receipt.outcome(), ForgetOutcome::AlreadyMissing);
+                assert!(!intent.is_resolved());
+            }
+            1 | 2 => {
+                fixture.vault.fault.store(fault, Ordering::SeqCst);
+                assert!(review.forget(&fixture.context, &cancel).is_err());
+                assert_eq!(fixture.blob().actions.len(), usize::from(fault == 1));
+                if fault == 1 {
+                    assert!(fixture
+                        .store
+                        .review_forget(&fixture.context, id, &cancel)
+                        .is_err());
+                } else {
+                    let receipt = fixture
+                        .store
+                        .review_forget(&fixture.context, id, &cancel)
+                        .unwrap()
+                        .forget(&fixture.context, &cancel)
+                        .unwrap();
+                    assert_eq!(receipt.outcome(), ForgetOutcome::AlreadyMissing);
+                }
+            }
+            3 => {
+                fixture.vault.fault.store(3, Ordering::SeqCst);
+                assert!(review.forget(&fixture.context, &cancel).is_err());
+                assert!(fixture
+                    .store
+                    .review_forget(&fixture.context, id, &cancel)
+                    .is_err());
+            }
+            4 => {
+                fixture.vault.inner.delete(&fixture.reference()).unwrap();
+                assert!(review.forget(&fixture.context, &cancel).is_err());
+                assert!(fixture
+                    .store
+                    .review_forget(&fixture.context, id, &cancel)
+                    .is_err());
+            }
+            _ => {
+                fixture.corrupt(|blob| blob.domain.push_str(" invalid"));
+                assert!(review.forget(&fixture.context, &cancel).is_err());
+                assert!(fixture
+                    .store
+                    .review_forget(&fixture.context, id, &cancel)
+                    .is_err());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn protected_original_forget_frees_only_explicitly_selected_capacity() {
+    let fixture = Fixture::new();
+    for _ in 0..16 {
+        lost_creation(&fixture, fixture.intent()).await;
+    }
+    let target = Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(9).unwrap(),
+    };
+    let mut ends = Vec::new();
+    for _ in 0..16 {
+        let operation = OperationId::new();
+        fixture
+            .store
+            .handle(operation.to_string(), "End".into())
+            .capture_end(&operation, &target)
+            .unwrap();
+        ends.push(operation);
+    }
+    let extra_end = OperationId::new();
+    assert!(matches!(
+        fixture
+            .store
+            .handle(extra_end.to_string(), "End".into())
+            .capture_end(&extra_end, &target),
+        Err(Failure::OriginalStorage)
+    ));
+    let before = fixture.blob().actions;
+    let (_, originals) = fixture.reopen().unwrap();
+    let RecoveredIntent::Creation(selected) = &originals[0].intent else {
+        panic!("creation")
+    };
+    let (stream, mut peer) = tokio::io::duplex(8192);
+    let server = tokio::spawn(async move {
+        handshake(&mut peer, caps()).await;
+        let mut effectful = Vec::new();
+        peer.read_to_end(&mut effectful).await.unwrap();
+        assert!(effectful.is_empty());
+    });
+    assert!(matches!(
+        create_authenticated(
+            &mut client(stream, &fixture.context),
+            fixture.intent(),
+            &CancellationToken::new()
+        )
+        .await,
+        Err(Failure::OriginalStorage)
+    ));
+    server.await.unwrap();
+    let cancel = CancellationToken::new();
+    fixture
+        .store
+        .review_forget(
+            &fixture.context,
+            OriginalId::Creation(selected.creation().attachment.clone()),
+            &cancel,
+        )
+        .unwrap()
+        .forget(&fixture.context, &cancel)
+        .unwrap();
+    assert!(
+        serde_json::to_vec(&fixture.blob().actions).unwrap()
+            == serde_json::to_vec(&before[1..]).unwrap()
+    );
+    lost_creation(&fixture, fixture.intent()).await;
+    assert_eq!(fixture.reopen().unwrap().1.len(), 32);
+    fixture
+        .store
+        .review_forget(&fixture.context, OriginalId::End(ends[0].clone()), &cancel)
+        .unwrap()
+        .forget(&fixture.context, &cancel)
+        .unwrap();
+    fixture
+        .store
+        .handle(extra_end.to_string(), "End".into())
+        .capture_end(&extra_end, &target)
+        .unwrap();
+    assert_eq!(fixture.reopen().unwrap().1.len(), 32);
+}
+
+#[tokio::test]
 async fn protected_original_created_generation_survives_presentation_until_exact_authoritative_end()
 {
     let fixture = Fixture::new();

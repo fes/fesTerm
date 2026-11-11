@@ -1,5 +1,22 @@
 # Milestone Progress Narrative
 
+## Abandoning one local retry history without pretending the remote action ended
+
+The bounded protected-original registry could become full when an original's
+exact generation could no longer produce an Ended receipt. The approved recovery
+is explicit local Forget, not automatic pruning or a larger registry. A separate
+default-No review binds one typed original and the current protected
+owner/account/privacy/request context. Native-vault work stays on the existing
+bounded job; confirmation compares the protected record again under its lease,
+removes only that record and reports a typed local result. UI history is removed
+only after a current correlated acknowledgment. A validated missing local record
+is distinguished from a missing/locked/corrupt/pending vault; neither is remote
+absence. Other originals and the sixteen-per-purpose/64KiB limits remain.
+Forget does not End/detach/revoke or authorize replacement/retry; other clients
+and already-running remote actions are unaffected. Synthetic-vault and typed
+action regression coverage is being validated; native-vault/device/usability
+and required platform checks remain separate.
+
 ## Keeping durable recovery tied to the account, not its local credential reference
 
 Protected mobile originals previously compared the entire persisted account

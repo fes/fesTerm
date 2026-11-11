@@ -639,11 +639,38 @@ checkpoint, sealed ticket, secret or authoritative sentinel.
 
 The native set remains bounded to sixteen creation and sixteen End originals
 and 64KiB. Created-generation records survive frontend presentation. Only an
-exactly correlated terminal Ended receipt can retire its End and matching
-confirmed-created generation. StopRequested/OutcomeUncertain, stale, denied,
+exactly correlated terminal Ended receipt can automatically retire its End and
+matching confirmed-created generation. StopRequested/OutcomeUncertain, stale, denied,
 unknown, cancellation and lost replies retain originals. Pre-checkpoint-version
 actions lost before capture cannot be reconstructed. Native-vault/physical
 cold-start acceptance and current platform CI remain independent gates.
+
+#### Explicit local Forget
+
+A separate foreground, default-No confirmation may abandon one selected
+Create/Ensure or End original's local retry history. It is not End, detach,
+revocation, a statement of remote absence or consent to replacement, execution
+or retry. The remote action may already have completed or may still complete.
+No automatic pruning is added; the sixteen-per-purpose and 64KiB bounds remain.
+
+Review and confirmation bind the exact selected original, current protected
+owner/account/key/endpoint context and privacy/request epoch. Both refuse live
+pending control or vault work. Native-vault review and mutation use the existing
+bounded background job and protected-store lease, never UI-thread vault calls.
+Confirmation rejects a changed original or stale context; it removes only the
+selected checkpoint and preserves every other record. A checkpoint already
+missing inside a successfully validated protected payload is an explicit local
+no-op outcome, never remote absence or a missing-vault fallback.
+Historical account metadata may differ only within the same authenticated
+provider/numeric-ID scope; the live review and completion still require the
+exact current full account snapshot. Other live control guards are unchanged.
+
+Cancellation and storage failure never report confirmed deletion. In-memory
+history is discarded only after a correlated successful local completion.
+Forget does not mint an operation, contact the host, settle an End, stop a
+session, change owner authority or launch a replacement. Saving, importing,
+opening, sign-out, suspension and stale/unknown remote replies cannot grant
+Forget consent.
 
 ### Exact-generation native End confirmation
 

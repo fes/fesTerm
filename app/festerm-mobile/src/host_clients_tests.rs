@@ -733,6 +733,242 @@ async fn checkpoint_end(
     intent
 }
 
+#[cfg(unix)]
+async fn finish_local_host_job(app: &mut MobileApp, context: &egui::Context) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while app.hosts.pending.is_some() {
+            app.poll_hosts(context);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(app.hosts.worker.is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn mobile_host_forget_is_default_no_and_only_ack_discards_selected_history() {
+    let (_root, mut app, account, store) = recovery_fixture();
+    let first = checkpoint_end(&app, store.clone(), account.clone()).await;
+    let second = checkpoint_end(&app, store.clone(), account.clone()).await;
+    let context = app.hosts.context().unwrap();
+    app.hosts
+        .retain_end(&context, account.clone(), first.clone())
+        .unwrap();
+    app.hosts
+        .retain_end(&context, account, second.clone())
+        .unwrap();
+    app.hosts.original_store = Some(store.clone());
+    let ui = egui::Context::default();
+    app.host_action(&ui, Action::ReviewForgetEnd(0)).unwrap();
+    finish_local_host_job(&mut app, &ui).await;
+    assert!(!app.hosts.forget_review.as_ref().unwrap().confirmed);
+    assert!(app.host_action(&ui, Action::ConfirmForget).is_err());
+    assert!(app.hosts.pending.is_none());
+    app.host_action(&ui, Action::CancelForget).unwrap();
+    assert!(app.hosts.forget_review.is_none());
+    assert_eq!(
+        host_client::originals::testing::reopen(&store, &context)
+            .unwrap()
+            .1
+            .len(),
+        2
+    );
+    app.host_action(&ui, Action::ReviewForgetEnd(0)).unwrap();
+    finish_local_host_job(&mut app, &ui).await;
+    app.hosts.forget_review.as_mut().unwrap().confirmed = true;
+    app.host_action(&ui, Action::ConfirmForget).unwrap();
+    assert_eq!(app.hosts.ends.len(), 2);
+    assert!(app.hosts.pending.is_some() && app.hosts.worker.is_none());
+    finish_local_host_job(&mut app, &ui).await;
+    assert_eq!(app.hosts.ends.len(), 1);
+    assert_eq!(app.hosts.ends[0].intent.operation(), second.operation());
+    assert!(!first.is_resolved() && !second.is_resolved());
+    assert!(!app.hosts.launch && app.hosts.end_review.is_none());
+    assert_eq!(
+        host_client::originals::testing::reopen(&store, &context)
+            .unwrap()
+            .1
+            .len(),
+        1
+    );
+    assert!(app
+        .hosts
+        .error
+        .as_ref()
+        .unwrap()
+        .contains("Remote session/action unchanged"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn mobile_host_forget_releases_only_confirmed_local_capacity_without_creation() {
+    let (_root, mut app, account, store) = recovery_fixture();
+    let context = app.hosts.context().unwrap();
+    let recipe = || {
+        PublicRecipe::persistent(
+            "Retained",
+            HostReference {
+                id: context.binding().host().clone(),
+                account: AccountReference::Github { account_id: 7 },
+            },
+            Recipe::default(),
+        )
+        .unwrap()
+    };
+    for _ in 0..16 {
+        app.hosts
+            .creation_intent(&context, recipe(), account.clone())
+            .unwrap();
+    }
+    assert!(app
+        .hosts
+        .creation_intent(&context, recipe(), account.clone())
+        .is_err());
+    let surviving = app.hosts.originals[1].intent.creation().attachment.clone();
+    app.hosts.original_store = Some(store.clone());
+    let ui = egui::Context::default();
+    app.host_action(&ui, Action::ReviewForgetCreation(0))
+        .unwrap();
+    finish_local_host_job(&mut app, &ui).await;
+    assert_eq!(app.hosts.originals.len(), 16);
+    app.hosts.forget_review.as_mut().unwrap().confirmed = true;
+    app.host_action(&ui, Action::ConfirmForget).unwrap();
+    assert_eq!(app.hosts.originals.len(), 16);
+    finish_local_host_job(&mut app, &ui).await;
+    assert_eq!(app.hosts.originals.len(), 15);
+    assert_eq!(
+        app.hosts.originals[0].intent.creation().attachment,
+        surviving
+    );
+    assert!(app
+        .hosts
+        .error
+        .as_ref()
+        .unwrap()
+        .contains("no native checkpoint remained"));
+    assert!(!app.hosts.launch && app.hosts.worker.is_none());
+    assert!(host_client::originals::testing::reopen(&store, &context)
+        .unwrap()
+        .1
+        .is_empty());
+    app.hosts
+        .creation_intent(&context, recipe(), account)
+        .unwrap();
+    assert_eq!(app.hosts.originals.len(), 16);
+    assert!(app.hosts.pending.is_none() && app.hosts.worker.is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn mobile_host_forget_rejects_stale_confirmation_selection_lock_and_busy_work() {
+    for changed in 0..9 {
+        let (_root, mut app, account, store) = recovery_fixture();
+        let intent = checkpoint_end(&app, store.clone(), account.clone()).await;
+        let context = app.hosts.context().unwrap();
+        app.hosts
+            .retain_end(&context, account.clone(), intent.clone())
+            .unwrap();
+        app.hosts.original_store = Some(store.clone());
+        let ui = egui::Context::default();
+        let record = store
+            .review_forget(
+                &context,
+                OriginalId::End(intent.operation().clone()),
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        app.hosts
+            .accept_forget_review(record, &account, app.hosts.generation)
+            .unwrap();
+        app.hosts.forget_review.as_mut().unwrap().confirmed = true;
+        match changed {
+            0 => app.hosts.forget_review.as_mut().unwrap().confirmed = false,
+            1 => app
+                .hosts
+                .forget_review
+                .as_mut()
+                .unwrap()
+                .account
+                .login
+                .push_str("-changed"),
+            2 => app.hosts.forget_review.as_mut().unwrap().epoch += 1,
+            3 => app.hosts.generation += 1,
+            4 => app.hosts.ends.clear(),
+            5 => app.hosts.receipt = None,
+            6 => {
+                app.hosts.pending = Some(Pending {
+                    account: account.clone(),
+                    recipe: app.hosts.selected.clone(),
+                    epoch: app.hosts.epoch,
+                    token: app.sink.live.host.token(app.hosts.epoch),
+                    job: Job::spawn(&ui, |_| Err("held local work".into())),
+                });
+                assert!(app.host_action(&ui, Action::ReviewForgetEnd(0)).is_err());
+            }
+            7 => app.sink.live.content_lock_callback()(),
+            _ => app.host_action(&ui, Action::CancelForget).unwrap(),
+        }
+        assert!(app.host_action(&ui, Action::ConfirmForget).is_err());
+        assert!(app.hosts.worker.is_none());
+        assert!(!intent.is_resolved());
+        assert_eq!(
+            host_client::originals::testing::reopen(&store, &context)
+                .unwrap()
+                .1
+                .len(),
+            1
+        );
+        app.hosts.cancel();
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn mobile_host_forget_stale_ack_or_failure_preserves_memory_without_remote_inference() {
+    let (_root, mut app, account, store) = recovery_fixture();
+    let intent = checkpoint_end(&app, store.clone(), account.clone()).await;
+    let context = app.hosts.context().unwrap();
+    app.hosts
+        .retain_end(&context, account.clone(), intent.clone())
+        .unwrap();
+    app.hosts.original_store = Some(store.clone());
+    let generation = app.hosts.generation;
+    let cancel = CancellationToken::new();
+    let forgotten = store
+        .review_forget(
+            &context,
+            OriginalId::End(intent.operation().clone()),
+            &cancel,
+        )
+        .unwrap()
+        .forget(&context, &cancel)
+        .unwrap();
+    app.hosts.generation += 1;
+    assert!(app
+        .hosts
+        .accept_forgotten(forgotten, &account, generation)
+        .is_err());
+    assert_eq!(app.hosts.ends.len(), 1);
+    assert!(!intent.is_resolved());
+    let ui = egui::Context::default();
+    app.hosts.pending = Some(Pending {
+        account,
+        recipe: app.hosts.selected.clone(),
+        epoch: app.hosts.epoch,
+        token: app.sink.live.host.token(app.hosts.epoch),
+        job: Job::spawn(&ui, |_| Err("local storage completion unconfirmed".into())),
+    });
+    finish_local_host_job(&mut app, &ui).await;
+    assert_eq!(app.hosts.ends.len(), 1);
+    assert_eq!(
+        app.hosts.error.as_deref(),
+        Some("local storage completion unconfirmed")
+    );
+    assert!(app.hosts.worker.is_none() && !app.hosts.launch);
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[cfg(unix)]
 async fn mobile_host_recovery_preserves_original_after_same_account_metadata_changes() {
