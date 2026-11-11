@@ -15144,3 +15144,64 @@ The new renderer test and the unchanged controlled cases await the parent's
 fresh combined-source validation and independent gates. Old e6/15e/7ad helpers,
 targets, receipts and first failures remain preserved; no Cargo/native build
 or execution, SDK/ADB/provider/VM/vault operation or publication is performed.
+
+## Respecting nonblocking exact local observation during live revocation
+
+The normal `d454+856` composition at exact `2b151c0c` executes fresh matching
+helper/PTY copies. Host_control28 passes **28/0/0, 69.66s**, including the
+exhaustive control-result renderer. Controlled native19 retains **18/1/0,
+203.44s**: the live-policy key/host/session test fails at
+`host_runtime/tests.rs:2322`, immediate `observe_local(...).unwrap()`, with
+typed Busy. Exact End, both takeover/adoption and isolation cases pass.
+This is not the older0bc Busy pair, e6's unprinted Denied mismatch, or7ad's
+unprinted End outcome; no common cause or unchanged rerun is inferred.
+
+The preserved before-abort journal has a Running, revoked exact generation and
+identity. Its lease has connected=false, pending=None, stopped=false and
+persistent lifetime. Local resumption had not been reached. Later owned-daemon
+SIGTERM occurs only after both evidence copies and is not End or an absence
+receipt. No field in the copied state identifies the instantaneous lock owner,
+and separate attachment authority/cleanup Busy/WouldBlock diagnostics do not
+identify this call's producer.
+
+Canonical source establishes the observation contract. The journal transaction
+uses a nonblocking exclusive lock; exact grant synchronization acquires the
+same generation lease that the independent daemon polls and uses for deferred
+exact-ticket/writer-epoch disconnect bookkeeping. Contended private-storage
+acquisition/publication maps to Busy. On the captured Running, identified,
+unbound-native record, failed native liveness observation instead returns
+Unknown, not Busy; pending-launch/import/retirement paths are not its captured
+state. The terminal client marks its stream closed without joining server
+workers; authenticated cancellation/transport-lost cleanup and daemon polling
+can therefore remain concurrent. Guards stay scoped to synchronous production
+operations; no production lifetime/permission defect is established from the
+single contended observation.
+
+The defect is the fixture's immediate-success assumption at a documented
+nonblocking observational boundary. A normal design commit precedes code.
+The minimal test-only correction holds one path-only SessionControl handle,
+then waits only for repeated exact local observation Busy using existing
+eight-second/10ms fixture prior art. It cannot be reused for ensure, creation,
+admission or End by type or call site. Every other error returns immediately;
+persistent Busy remains an error at the deadline. Successful observations are
+returned unchanged, and the live case explicitly requires its exact target
+and Running state before the original revoked/local-resume checks. No
+production guard is released or held across the test yield.
+
+Three paused-clock regressions are declared: Busy/Busy/exact-observation with
+unchanged target, revision, revoked and state; every twelve non-Busy errors
+without retry, directly and after Busy; and eight-second exhaustion remaining
+Err(Busy), never absence. All original no-output/no-input, local approval/
+adoption, exact generation, independent daemon, revocation and cleanup body
+assertions stay byte-identical outside this observation block. No whole-test
+serialization, broader retry, timeout change to existing actions, ignored test
+or weak success/absence predicate is introduced.
+
+This delivery stops source-only. Direct existing rustfmt, static source
+witnesses, canonical maps, traceability and full-base diff checks are not
+compiled or native qualification. New tests remain unrun until fresh source
+gates and execution authorization. Parent proof preserves88 artifacts,
+9 receipt/raw/exit triples (native101, eight zeros),130 closed PIDs and both
+locks; this change neither reexecutes nor edits those helpers/failed fixture.
+Canonical injected MemorySecretStore/protected owner policy/private journals
+are not a file-vault selector, native OS vault, installed/provider or GUI claim.

@@ -1240,6 +1240,121 @@ impl NativeRuntimeFixture {
 }
 
 #[cfg(unix)]
+async fn wait_for_local_observation(
+    mut observe: impl FnMut() -> Result<
+        festerm_sessiond::host_control::LocalObservation,
+        festerm_sessiond::host_control::ControlError,
+    >,
+) -> Result<
+    festerm_sessiond::host_control::LocalObservation,
+    festerm_sessiond::host_control::ControlError,
+> {
+    use festerm_sessiond::host_control::ControlError;
+
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match observe() {
+                Err(ControlError::Busy) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                result => return result,
+            }
+        }
+    })
+    .await
+    .unwrap_or(Err(ControlError::Busy))
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn local_observation_wait_retries_only_busy_and_preserves_exact_result() {
+    use festerm_host_protocol::{Epoch, GenerationId, LogicalSessionId, Target};
+    use festerm_sessiond::host_control::{ControlError, LocalObservation, Lookup};
+
+    let target = Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(41).unwrap(),
+    };
+    let revision = Epoch::new(7).unwrap();
+    let mut results = std::collections::VecDeque::from([
+        Err(ControlError::Busy),
+        Err(ControlError::Busy),
+        Ok(LocalObservation {
+            target: target.clone(),
+            revision,
+            revoked: true,
+            state: Lookup::Running(target.clone()),
+        }),
+    ]);
+    let mut calls = 0;
+    let observed = wait_for_local_observation(|| {
+        calls += 1;
+        results.pop_front().expect("unexpected observation retry")
+    })
+    .await
+    .unwrap();
+    assert_eq!(calls, 3);
+    assert!(results.is_empty());
+    assert_eq!(observed.target, target);
+    assert_eq!(observed.revision, revision);
+    assert!(observed.revoked);
+    assert_eq!(observed.state, Lookup::Running(target));
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn local_observation_wait_refuses_every_non_busy_error_without_retry() {
+    use festerm_sessiond::host_control::ControlError;
+
+    for error in [
+        ControlError::Denied,
+        ControlError::Revoked,
+        ControlError::Unknown,
+        ControlError::Stale,
+        ControlError::RecipeConflict,
+        ControlError::OperationConflict,
+        ControlError::AlreadyExists,
+        ControlError::Ended,
+        ControlError::Cancelled,
+        ControlError::Invalid,
+        ControlError::Storage,
+        ControlError::CommittedButNotPublished,
+    ] {
+        for initial_busy in [false, true] {
+            let mut calls = 0;
+            let observed = wait_for_local_observation(|| {
+                calls += 1;
+                if initial_busy && calls == 1 {
+                    Err(ControlError::Busy)
+                } else {
+                    Err(error)
+                }
+            })
+            .await;
+            assert!(matches!(observed, Err(actual) if actual == error));
+            assert_eq!(calls, if initial_busy { 2 } else { 1 });
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(start_paused = true)]
+async fn local_observation_wait_exhaustion_remains_busy_not_absence() {
+    use festerm_sessiond::host_control::ControlError;
+
+    let start = tokio::time::Instant::now();
+    let mut calls = 0;
+    let observed = wait_for_local_observation(|| {
+        calls += 1;
+        Err(ControlError::Busy)
+    })
+    .await;
+    assert!(matches!(observed, Err(ControlError::Busy)));
+    assert!(calls > 1);
+    assert_eq!(start.elapsed(), Duration::from_secs(8));
+}
+
+#[cfg(unix)]
 async fn issued_request(
     control: &mut ControlClient<ClientConnection>,
     issued: &festerm_tunnel_client::host_control::IssuedControlOperation,
@@ -2315,11 +2430,17 @@ async fn native_authenticated_runtime_live_policy_fences_actions_without_stoppin
             1,
             "{revocation} must not stop a persistent daemon"
         );
-        let observed = fixture
-            .native
-            .control()
-            .observe_local(&fixture.auth.policy.principal, &target)
-            .unwrap();
+        let local_control = fixture.native.control();
+        let observed = wait_for_local_observation(|| {
+            local_control.observe_local(&fixture.auth.policy.principal, &target)
+        })
+        .await
+        .unwrap();
+        assert_eq!(observed.target, target);
+        assert_eq!(
+            observed.state,
+            festerm_sessiond::host_control::Lookup::Running(target.clone())
+        );
         assert_eq!(observed.revoked, revocation == "session");
         // Persistent local unticketed attachment remains permitted. It is not
         // remote admission and cannot grant a new proof or temporary lease.

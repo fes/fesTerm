@@ -2049,5 +2049,11 @@ bounded corrective fixture boundary waits only on observational Busy using the
 existing eight-second/10ms prior art; persistent Busy and every other error still
 fail. Only an authoritative exact-target Running observation can precede the
 unchanged revoked/local-resume/no-input and independent-daemon oracles. This
-source-only design does not infer the precise lock owner or production leak,
+source-only correction does not infer the precise lock owner or production leak,
 and is not new native or vault acceptance.
+The paused-clock fixtures cover Busy-to-exact-result preservation, immediate
+failure for all twelve non-Busy errors both directly and after Busy, and
+eight-second persistent-Busy exhaustion. Their source is not executed evidence.
+The original live-policy native case retains every later revocation, local
+adoption/input, generation and cleanup assertion, with explicit exact-target
+Running checks added at the observation boundary.

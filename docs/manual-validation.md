@@ -170,6 +170,37 @@ all later authority/generation assertions are unchanged. No production fix,
 common cause, fresh native acceptance or retry is claimed. Cargo/native checks
 remain pending the parent's combined-source qualification and source gates.
 
+At exact normal `2b151c0ce143181687bfa37d73c1548791de5e43`, the fresh
+matching-helper execution separately passes host_control28 **28/0/0, 69.66s**
+but fails controlled native19 **18/1/0, 203.44s**. The failure is
+`native_authenticated_runtime_live_policy_fences_actions_without_stopping_shells`,
+`host_runtime/tests.rs:2322`: immediate exact `observe_local(...).unwrap()`
+returns typed Busy. Raw SHA-256:
+`58faa106a73fac858fcbecb07d7340a98fe4338a17a0295d98331d6b95b4f53d`.
+Exact End, both adoption/takeover and isolation cases pass at that source;
+neither the native selection nor the failed case was retried.
+
+The sealed before-abort snapshot retains an exact Running record with identity,
+revoked grant, connected=false, pending=None, stopped=false and persistent
+lifetime. Journal and generation try-locks are intentionally nonblocking;
+generation polling/disconnect bookkeeping continues in the independent daemon,
+and client EOF does not join authenticated server cleanup. The exact contending
+owner and duration were not captured: attachment authority/cleanup Busy logs
+are not identification of the `observe_local` producer, and no production
+lock leak is established.
+
+The source-only correction waits only for local observational Busy using the
+existing eight-second/10ms fixture prior art. It retains the exact target and
+observation fields, requires Running at this live-shell boundary, returns all
+other errors immediately and leaves exhaustion as Err(Busy). Three new
+paused-clock tests are **unrun**. Every original revoked/local-resume/no-input,
+generation, independent-process and cleanup oracle remains strict; no creation,
+admission or End retry is introduced. Qualification awaits source gates and a
+fresh matching-helper execution grant. The owned failed-process SIGTERM after
+evidence copies is cleanup, not ExactEnd or authoritative absence. The fixture's
+MemorySecretStore/protected owner policy/private native journal do not qualify
+file-vault, native OS vault, provider, installed-service or GUI acceptance.
+
 In an explicitly owned iOS/Android native window, still verify:
 
 - jetsam/disk-full receipt preparation: deterministic non-relay fixtures now
