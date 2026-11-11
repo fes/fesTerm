@@ -130,7 +130,13 @@ try {
             if ($job.mode -eq 'keyboard-routing-native') {
                 $env:FESTERM_NATIVE_KEYBOARD_ROUTING_SMOKE = '1'
             }
-            Invoke-NativeCommand { & (Join-Path $sourcePath 'scripts\run-windows-os-input-smoke.ps1') $resultPath }
+            if (-not (Test-Path -LiteralPath $vcvarsallPath) -or
+                -not (Test-Path -LiteralPath (Join-Path $llvmBinPath 'clang.exe'))) {
+                throw 'Windows ARM64 Build Tools and Clang are required for evidence builds.'
+            }
+            $runnerScript = Join-Path $sourcePath 'scripts\run-windows-os-input-smoke.ps1'
+            $osInputCommand = "call `"$vcvarsallPath`" arm64 >nul && set `"PATH=$llvmBinPath;%PATH%`" && set CC=$ccName && powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" `"$resultPath`""
+            Invoke-NativeCommand { cmd.exe /d /c $osInputCommand }
             if ($LASTEXITCODE -ne 0) {
                 throw 'OS-input validation failed.'
             }
