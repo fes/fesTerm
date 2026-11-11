@@ -3686,6 +3686,23 @@ hashes in [manual validation](manual-validation.md).
 Its NativeVault is in-memory: actual vault, installed platforms, GUI/endpoint and
 provider acceptance remain separate. Existing required native CI contention
 failures remain unresolved and are not attributed to or fixed by this adapter.
+## Closing fixture-only creators after independent generation cleanup
+
+The actual required Windows run at `278343ae` advances from 65/3 to 66/2.
+Private-root admission and the intentional foreign/replacement case now pass.
+The two remaining failures are later file-absence assertions, not permission
+refusals: the fixtures retain an extra capability creator after independent
+dead-generation or serialized exit cleanup has succeeded.
+
+The Windows deletion helper uses handle-based `FileDispositionInfo`, whose
+pending deletion completes when the final file handle closes. These two
+fixtures now close their extra creator only after independent cleanup (and
+the concurrent pruner, where applicable) has completed, before asserting file
+absence. They do not invoke owner-driven deletion to make that assertion pass.
+Lease, registry, foreign-record, lifetime-release and serialization assertions
+are unchanged; the Unix cleanup path and production deletion policy are
+unchanged. Actual Windows execution of this follow-up remains required.
+
 ## Reaching the remaining Windows generation-cleanup fixtures
 
 Required CI at binding head `2f8624e1` clears the original seven sessiond
