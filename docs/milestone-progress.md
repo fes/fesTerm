@@ -3638,6 +3638,30 @@ hashes in [manual validation](manual-validation.md).
 Its NativeVault is in-memory: actual vault, installed platforms, GUI/endpoint and
 provider acceptance remain separate. Existing required native CI contention
 failures remain unresolved and are not attributed to or fixed by this adapter.
+## Reaching the remaining Windows generation-cleanup fixtures
+
+Required CI at binding head `2f8624e1` clears the original seven sessiond
+library failures: 106 passed, none failed. It then reaches three binary
+generation-binding tests and fails 65/3/0 at protected-root admission.
+The Windows `GenerationFixture` used a normal temporary directory followed
+by the Unix-mode compatibility helper, which does not establish a private
+Windows DACL. The native capability constructor correctly refuses it.
+
+The fixture now creates its own new directory with the existing protected
+private-directory helper, without repairing permissions on an existing path.
+For intentional replacement cases it also follows the library fixture's
+Windows pattern: move the exact original capability aside without overwrite
+before publishing a different entry under its old name. The retained creator
+still identifies the original object, so foreign replacement and generation
+retry-handle checks remain meaningful. No production storage, ACL, sharing
+mode, ownership, lease, cleanup ordering or assertion changes are made.
+
+The three unchanged generation-binding tests pass on macOS (3/0/0, 0.97s),
+alongside affected sessiond all-targets strict Clippy, workspace formatting,
+validation traceability and whitespace checks. The command receipts record
+the actual compiler and named source inputs. Actual Windows execution of this
+child remains required: its replacement branch is Windows-only. These are
+fixture corrections, not native service or whole-platform acceptance.
 
 ## Completing the Windows binding fixture handle lifetimes
 

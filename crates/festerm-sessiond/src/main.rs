@@ -7596,8 +7596,7 @@ mod tests {
                     now_ms(),
                     NEXT.fetch_add(1, Ordering::Relaxed)
                 ));
-                fs::create_dir(&path).unwrap();
-                set_dir_mode(&path, 0o700).unwrap();
+                festerm_sessiond::private_storage::private_directory(&path, true).unwrap();
                 Self(path)
             }
         }
@@ -7820,6 +7819,21 @@ mod tests {
                     record.spawn_fingerprint.clone().unwrap(),
                 )?;
                 if matches!(outcome, "replacement" | "foreign-record") {
+                    #[cfg(windows)]
+                    {
+                        let directory = festerm_sessiond::private_storage::private_directory(
+                            &fixture.0, false,
+                        )?;
+                        let original = festerm_windows_security::open_file_no_reparse_for_move(
+                            &directory,
+                            Path::new(&key),
+                        )?;
+                        festerm_windows_security::rename_file_noreplace(
+                            &original,
+                            &directory,
+                            Path::new("retired-capability.key"),
+                        )?;
+                    }
                     festerm_sessiond::private_storage::replace_private(
                         &festerm_sessiond::private_storage::private_directory(&fixture.0, false)?,
                         Path::new(&key),
