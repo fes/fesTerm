@@ -7690,7 +7690,7 @@ mod tests {
         record.spawn_fingerprint = Some(format!("v1:{}", "a".repeat(64)));
         thread::scope(|scope| {
             let mut pruner = None;
-            let mut owner = None;
+            let owner = std::cell::RefCell::new(None);
             let mut registry_was_locked = false;
             let mut lifetime_was_released = false;
             let result = with_daemon_generation_before_cleanup(
@@ -7708,7 +7708,7 @@ mod tests {
                             },
                             record.spawn_fingerprint.clone().unwrap(),
                         )?;
-                    owner = Some(created);
+                    *owner.borrow_mut() = Some(created);
                     #[cfg(unix)]
                     {
                         drop(UnixListener::bind(&record.socket)?);
@@ -7774,6 +7774,15 @@ mod tests {
                         ready.recv_timeout(Duration::from_secs(2)).unwrap(),
                         "concurrent pruner did not observe the exit transaction's registry lock"
                     );
+                    #[cfg(windows)]
+                    {
+                        drop(owner.borrow_mut().take().unwrap());
+                        assert!(
+                            root.join(format!("native-binding-{}-123.key", record.pid))
+                                .exists(),
+                            "closing the fixture creator must not delete the capability"
+                        );
+                    }
                 },
             );
             result.unwrap();
@@ -7796,14 +7805,12 @@ mod tests {
                 registry.foreign["unrelated"],
                 serde_json::json!({"future": 1})
             );
-            #[cfg(windows)]
-            drop(owner.take().unwrap());
             fixture.assert_removed(&record);
             assert!(!root
                 .join(format!("native-binding-{}-123.key", record.pid))
                 .exists());
             #[cfg(not(windows))]
-            owner.take().unwrap().cleanup().unwrap();
+            owner.borrow_mut().take().unwrap().cleanup().unwrap();
         });
     }
 
