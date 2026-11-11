@@ -14863,3 +14863,50 @@ case, not an explanation, fix, waiver or Ubuntu acceptance of the original
 7ad failure. That historical variant remains unknown until fresh diagnostic
 Ubuntu evidence. Publication/review remains behind the parent's fresh three
 source gates and proof check.
+
+## Retaining three distinct HOST control assertion outcomes
+
+The published exact `e6e4b8a2` diagnostic source has actual required macOS CI
+native19 **19/0/0, 175.03s**, including original exact End, revocation and both
+adoption cases. That positive belongs to e6 CI, not the prior local15e
+single-case1/0/0 in1.63s and not a future Android composition.
+
+Required Ubuntu run `42972036126`, job `130362499594`, stops earlier:
+host_control27 **26/1/0, 45.53s**. The first denied-ensure assertion in
+`absence_denial_revocation_cancellation_and_generations_remain_distinct`
+at `tests/host_control.rs:1195` expects exactly `Err(ControlError::Denied)`,
+but does not print the actual result. The owned failure journal is empty
+version2/issuance epoch1/generation0 with no sessions or operations. This is
+not the controlled diagnostic-panic fixtures that pass. Native19 was never
+reached, so historical7ad's unexpected first native End variant remains unknown.
+
+Source tracing finds creation validation and fallible private transaction
+preparation before fresh admission. The unchanged admission callback returns
+Denied whenever reached; an empty failure-time journal does not identify which
+earlier step/result occurred. No product correction is justified by guessing
+Busy, storage failure or a shared cause from the separate0bc/f507 evidence.
+The two requested0bc bodies actually printed Busy: macOS live-resume ensure at
+line1929 and Ubuntu initial owner inventory at line2073. Those are their own
+typed observations, not proof of e6's missing variant.
+
+A new short normal child of exact e6 changes only the integration test plus
+matching design/graph/manual/trace/story. Its renderer maps every ControlError
+exhaustively to a fixed tag and accepts arbitrary successful values without
+Debug or payload formatting. A co-located deterministic test names all13
+errors and opaque/no-Debug successes. Failure-only messages identify the
+initial denied ensure, live-resume ensure and initial owner inventory. The
+labels name completed calls, not an observed internal lock/admission stage.
+
+The three original calls, argument evaluation, fresh issued operations and
+admission callbacks remain unchanged and execute once. The initial assertion
+still requires exact Denied; both former unwrap sites still require success.
+All later cancellation, revocation, exact identity/generation, other-owner
+filtering and empty-inventory assertions remain unchanged. No retry, sleep,
+timeout, skip, broad match, fake absence or production permission change is added.
+
+This delivery is source-only: formatting, static source witnesses and
+traceability/diff checks are separate from compiled or native evidence.
+The new renderer test and the unchanged controlled cases await the parent's
+fresh combined-source validation and independent gates. Old e6/15e/7ad helpers,
+targets, receipts and first failures remain preserved; no Cargo/native build
+or execution, SDK/ADB/provider/VM/vault operation or publication is performed.

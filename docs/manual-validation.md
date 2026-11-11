@@ -142,6 +142,34 @@ The immediate free-memory probe was 46%; live guarded samples stayed at least
 closure. First nonfatal toolchain `rust-objcopy`/missing-LLVM stripping warnings
 are retained in raw logs; no SDK, installation or OS repair was attempted.
 
+Published exact `e6e4b8a2b03cf17c7b9dc9cb28b991956f45a162` has a distinct
+required macOS CI native19 result: **19/0/0, 175.03s**, including exact End,
+revocation and both adoption oracles. Its raw SHA-256 is
+`9048b9e2a41312ced042bf16cce897dc14ccf30a7f474947b670473876dceb06`.
+This is neither the local15e single-case result above nor qualification of a
+future Android-composed source.
+
+The same e6 required Ubuntu run `42972036126`, job `130362499594`, instead
+fails host_control27 **26/1/0, 45.53s** at
+`absence_denial_revocation_cancellation_and_generations_remain_distinct`,
+`tests/host_control.rs:1195`: the initial ensure must return exactly Denied,
+but the actual result is not printed. The retained journal is empty version2,
+issuance epoch1, generation0, with no sessions or operations. Raw SHA-256:
+`e3d47ed2c7553ac709f88a77ac63b57a48af71caf94ec470a989b5450358893c`.
+Ubuntu native19 is **not reached**, so the historical7ad End result is still
+unknown. Controlled diagnostic panic fixtures that pass are not this failure.
+
+The bounded source-only followup instruments that exact failed assertion plus
+the two distinct historical0bc sites: live-resume ensure (macOS, typed Busy at
+line1929) and initial owner inventory (Ubuntu, typed Busy at line2073).
+It emits only a fixed call-stage and exhaustive control-error tag on failure;
+successful payloads are opaque. The co-located deterministic renderer test
+covers all13 errors plus opaque/no-Debug success, but has not been executed.
+Original callbacks, issued operations, success/denial predicates, deadlines and
+all later authority/generation assertions are unchanged. No production fix,
+common cause, fresh native acceptance or retry is claimed. Cargo/native checks
+remain pending the parent's combined-source qualification and source gates.
+
 In an explicitly owned iOS/Android native window, still verify:
 
 - jetsam/disk-full receipt preparation: deterministic non-relay fixtures now

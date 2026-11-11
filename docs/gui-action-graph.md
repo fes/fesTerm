@@ -1907,6 +1907,14 @@ exact native End case **1/0/0, 1.63s** on macOS. Initial OutcomeUncertain and
 later same-original exact Ended are assertion-verified. Affected bridge strict
 checks, direct rustfmt and traceability against actual PR base `6614c990` pass.
 This is neither Ubuntu cause/acceptance nor full 19-case native qualification.
+The later published `e6e4b8a2` required macOS job separately passes actual
+native19 **19/0/0, 175.03s**, including End, revocation and both adoption cases.
+Its Ubuntu job instead stops in host_control27 (**26/1/0, 45.53s**) at the
+initial denied-ensure assertion; its returned variant is unprinted and native19
+is not reached. A source-only followup retains fixed failure-stage/result tags
+at that exact call, the historically Busy live-resume ensure and the historically
+Busy initial owner inventory. It changes no call, admission callback or predicate,
+and does not turn the older Busy observations into this new failure's cause.
 The runtime/session union also passes the actual two-daemon signed-SSH
 input-isolation, independent attached inventory and persistent-detach route;
 additional actual signed-SSH cases pass for original-issued creation/end,
