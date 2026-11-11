@@ -1,5 +1,29 @@
 # Milestone Progress Narrative
 
+## Executing stable-account recovery in the composed host slice
+
+The frozen `d4b2a29a` and its proofs remain named and unchanged. A new descendant
+normally merges exact qualified `98f2c000`, based on `39218faf`, as `94259548`.
+Only the two expected mobile Rust inputs change, byte-identical to that committed
+pin; other Rust, manifests and lockfile are unchanged. Both End/takeover oracles
+and private-binding fences are preserved. No Android or pending Forget worktree
+content is consumed.
+
+Fresh integrated mobile host-clients execution passes **225/0/4, 54.69s**
+(229 registered, zero filtered; four existing ignored), not a restatement of
+the parent's earlier 225. The new four-variant same-account recovery case and
+existing foreign-batch, late-context/account completion, and pre-reopen
+Create/End refusal cases all execute successfully. Current host-clients
+all-target strict Clippy also passes; existing optional stripping/dependency
+warnings remain. Distinct `recovery98f-*` raw/exit/receipt files retain exact
+source and command attribution in the owned evidence directory.
+
+The native **3/0/0, 8.11s** remains attributed only to `9bc9ef4c`; no native3,
+full14 or helper rebuild/execution is requested or performed for this merge.
+Actual native-vault/live credential recovery, platform/provider/device/installed
+and GUI acceptance remain open. Mutable old compiled-output paths are not
+rehashed or promoted to this source. ADR 0084 remains incomplete.
+
 ## Integrating the qualified serialized-pruner fixture continuation
 
 The integrated `3183039b` source and all of its receipts/helper execution copies
