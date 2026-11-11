@@ -1163,6 +1163,11 @@ pub(crate) mod tests {
     #[test]
     fn authenticated_binding_receipt_publication_resumes_exact_commit_and_never_rewrites_released_or_missing_state(
     ) {
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
         let root = std::env::current_dir()
             .unwrap()
             .join(format!("target/binding-receipt-{}", uuid::Uuid::new_v4()));
@@ -1216,6 +1221,11 @@ pub(crate) mod tests {
     {
         use crate::host_lease::{DaemonLease, LeaseGuard};
         use festerm_host_protocol::{GenerationId, Lifetime, LogicalState, SessionGrant};
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
         let root = std::env::current_dir()
             .unwrap()
             .join(format!("target/binding-managed-{}", uuid::Uuid::new_v4()));
@@ -1374,6 +1384,13 @@ pub(crate) mod tests {
             file: storage::open_private_file(&directory, &name, true).unwrap(),
             name: name.clone(),
         };
+        #[cfg(windows)]
+        festerm_windows_security::rename_file_noreplace(
+            &owner.file,
+            &directory,
+            Path::new("retired.key"),
+        )
+        .unwrap();
         let error = owner
             .publish(|_| {
                 storage::replace_private(&directory, &name, b"foreign")?;
@@ -1413,6 +1430,15 @@ pub(crate) mod tests {
             )
             .unwrap();
             let bytes = storage::read_private(&daemon.directory, &name, 4096).unwrap();
+            #[cfg(windows)]
+            if matches!(replacement, "same-bytes" | "foreign" | "corrupt") {
+                festerm_windows_security::rename_file_noreplace(
+                    &owner.file,
+                    &daemon.directory,
+                    Path::new("retired.key"),
+                )
+                .unwrap();
+            }
             match replacement {
                 "same-bytes" => storage::replace_private(&daemon.directory, &name, &bytes).unwrap(),
                 "foreign" => {
@@ -1509,6 +1535,33 @@ pub(crate) mod tests {
         )
         .is_err());
         assert!(root.path().join(&name).exists());
+        #[cfg(windows)]
+        {
+            // Retire the creator handle while preserving its missing-name cleanup oracle.
+            let retired_name = Path::new("retired.key");
+            let retired =
+                festerm_windows_security::open_file_no_reparse_for_move(&daemon.directory, &name)
+                    .unwrap();
+            assert!(festerm_windows_security::same_file_identity(&owner.file, &retired).unwrap());
+            festerm_windows_security::rename_file_noreplace(
+                &retired,
+                &daemon.directory,
+                retired_name,
+            )
+            .unwrap();
+            assert_eq!(
+                storage::open_private_file(&daemon.directory, &name, false)
+                    .unwrap_err()
+                    .kind(),
+                io::ErrorKind::NotFound
+            );
+            owner.cleanup().unwrap();
+            assert!(root.path().join(retired_name).exists());
+            festerm_windows_security::rename_file_noreplace(&retired, &daemon.directory, &name)
+                .unwrap();
+            drop(retired);
+            assert!(root.path().join(&name).exists());
+        }
         cleanup_dead_capability(
             &daemon.directory,
             &binding.identity,
@@ -1525,6 +1578,7 @@ pub(crate) mod tests {
             Some(&observer),
         )
         .unwrap();
+        #[cfg(unix)]
         owner.cleanup().unwrap();
         other_owner.cleanup().unwrap();
     }

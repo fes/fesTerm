@@ -833,6 +833,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn root() -> PathBuf {
         std::env::current_dir()
             .unwrap()
@@ -1035,6 +1036,11 @@ mod tests {
 
     #[test]
     fn imported_binding_namespace_is_stable_and_lost_state_never_reinitializes() {
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
         let root = root();
         let sessions = SessionControl::existing_only(&root).unwrap();
         assert!(!sessions.has_binding_records().unwrap());
@@ -1049,6 +1055,11 @@ mod tests {
 
     #[test]
     fn imported_binding_namespace_refuses_foreign_and_corrupt_anchor() {
+        #[cfg(windows)]
+        let private_root = storage::private_test_directory();
+        #[cfg(windows)]
+        let root = private_root.path().to_owned();
+        #[cfg(unix)]
         let root = root();
         let sessions = SessionControl::existing_only(&root).unwrap();
         sessions.binding_namespace().unwrap();

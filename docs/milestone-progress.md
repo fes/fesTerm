@@ -30,6 +30,28 @@ Before fixture composition, the actual focused desktop selection passes
 **41/0/0**, 2057 filtered, **7.38s**; full Settings and client-safe experimental
 desktop all-target strict Clippy both pass on Rust 1.99.1. The counterexample
 and corrected source/log/exit fingerprints are retained separately.
+For the known composed Windows CI fixture blockers, the parent separately
+authorized normal integration of exact qualified `2f8624e1`, preserving its
+`d258` → `c563` → `2f` ancestry and both full story histories. Complete sessiond
+binding production prefixes remain byte-identical to `76b9`; only the qualified
+Windows fixture source changes. The first local binding invocation used a wrong
+host-module selector and selected only native11 (**9/2/0**). Its two failures are
+ENOENT preparing fixture roots: the separate `.ci-target` does not implicitly
+create the repository's `target/` parent. Creating only that owned build-fixture
+parent and selecting `host_control::binding::tests::` corrects the harness;
+neither source nor an assertion changes for that correction. Both invocations'
+raw selections/exits are retained. The composed desktop selection passes
+**41/0/0**, 2057 filtered, **7.27s**. Corrected binding modules pass **19/0/0**,
+115 filtered, **14.47s**, including the qualified 17 and two existing
+private-source guards. Together these are **60 distinct configured passes**,
+not the earlier 50/41/17 counts added again. macOS fixture execution
+does not prove Windows behavior or establish that all seven runtime failures
+are fixed. Required Windows CI and fresh final combined source gates remain.
+Composed all-target strict Clippy passes sessiond, full Settings and client-safe
+experimental app profiles; fmt, 311-edge traceability and diff checks pass.
+Raw first failures, actual module names, all source/tool hashes and the
+unchanged production-prefix proof are retained privately. The installed
+rust-objcopy LLVM-dylib warning remains; no toolchain repair is performed.
 The earlier native daemon case remains **one execution, 6.00s at `76b9b3af`**;
 this UI-only correction does not rerun or claim it as new-head native evidence.
 Actual-vault/GUI/native endpoint acceptance, prior migration macOS 13/1 and
@@ -2607,6 +2629,102 @@ hashes in [manual validation](manual-validation.md).
 Its NativeVault is in-memory: actual vault, installed platforms, GUI/endpoint and
 provider acceptance remain separate. Existing required native CI contention
 failures remain unresolved and are not attributed to or fixed by this adapter.
+
+## Completing the Windows binding fixture handle lifetimes
+
+This normal child of `c5635c479a79fb5d320bcbdda7148846e5f989cb` continues
+the same seven-failure required-Windows correction, rather than stopping at
+four root fixtures. The original d258 raw failures and c563's 17-pass proof
+remain unchanged. Only the remaining three unit fixtures' Windows setup/cleanup
+ordering changes; production and the four inherited root corrections do not.
+
+The two replacement fixtures must keep the original creation handle alive to
+test exact-file ownership refusal. They now move that exact owned file to a
+fresh private sentinel name without replacement, retaining its owner handle,
+before the original publication/replacement operation. Its destination no longer
+has an open target handle, satisfying the existing Windows helper contract.
+The original same-bytes/foreign/corrupt identity-refusal cases, intentional
+publication error, cleanup-failure diagnostic and foreign-file preservation
+assertions all remain. No creator, lease or security guard is dropped before
+those negative boundaries; no share-delete or ACL policy is changed.
+
+The dead-generation fixture still proves live-lease refusal, missing-lease
+refusal and wrong-fingerprint refusal. Its exclusive dead-generation lease and
+unrelated generation's owner stay live throughout. On Windows, an exact-identity
+move handle temporarily retains the original file under a private sentinel;
+the original name must report **NotFound**, and the original owner's existing
+cleanup assertion runs against that genuine missing name. The sentinel must
+survive. The same retained file is then restored without replacement, and the
+temporary move handle closes. Thus the original creator handle has genuinely
+retired before dead-generation cleanup, without pre-deleting its test target:
+the restored key must exist immediately before the original positive cleanup.
+Exact identity/fingerprint/lease cleanup, immediate absence, other-generation
+preservation and repeated idempotent cleanup remain required. Unix retains its
+original ordering, including the original final owner-cleanup assertion.
+No assertion is removed or changed to accept an error, and no new fixture
+framework or fake authority is introduced.
+
+Actual macOS Rust/Cargo1.99.1 qualification again passes **17 binding module unit
+tests / zero failed / zero ignored**, 114 filtered, 7.60s: all seven original
+Windows-failure counterparts and ten direct guards. Affected all-target strict
+Clippy, fmt, traceability and diff checks pass. Jobs1/debug0/incremental0 uses a
+new APFS-cloned private target with a 25%-free-memory pause guard; c563's target,
+17-pass test binary, raw logs and prior helper/provenance evidence are preserved.
+No real daemon/helper/native14/full suite, SDK/VM/OS/provider/account/permission
+operation or moving privateCore source is consumed. All seven failures now have
+bounded fixture-source corrections, not Windows execution proof. Fresh exact-head
+source gates and required Windows CI remain necessary; no ADR/graph/manual
+classification or platform/native acceptance changes.
+
+## Separating Windows binding root failures from file-lifetime fixture blockers
+
+Required Windows run `42916663709` / job `130180758230` at exact
+`d25844f12f7e36d10bc3ad39f89505c142f9e6e0` reports sessiond library
+**99 passed / seven failed / zero ignored**, 2.99s. Its 934788-byte raw log
+is retained with SHA-256
+`97e9648306de76445713246a5023c24674ec143671ed61b54d58362c20702bb0`.
+All seven original failures remain recorded, not reclassified as cache noise.
+
+Four fixtures construct roots under checkout `target`: both imported namespace
+tests fail `existing_only` with opaque `Storage`, while receipt publication and
+already-managed-daemon refusal fail directory preparation with explicit private
+ancestor-policy refusal. Only their Windows root selection changes to the
+existing policy-validated `private_test_directory` factory, retaining its owner
+until the fixture finishes. Unix root paths, every original test body/oracle,
+explicit cleanup, publication/admission and namespace-loss checks remain exact.
+The checkout-path helper remains Unix-only to match its remaining consumers.
+No production, storage/ACL/account policy, feature, dependency or CI changes.
+The specific refused ancestor/principal and the inner cause of opaque `Storage`
+remain unrecorded.
+
+**Three failures remain blockers, unchanged by this root-only correction.**
+They already use private roots. Failed publication reaches its second error
+assertion at original line1103: its earlier partial-write failure and cleanup
+assertions succeeded, but the second closure replaces a still-open target before
+injecting the intended error. The replaced-key case fails that replacement at
+original line1136 with OS5. Both conflict with the Windows replacement helper's
+documented requirement to release existing target handles. The dead-generation
+case expects immediate absence at original line1238 while retaining its original
+owner handle; the Windows deletion helper documents deletion after the last
+handle closes. These are source-contract conflicts, not independently traced
+inner Windows syscall or delete-pending diagnoses. Their assertions and cleanup
+are not weakened, keys are not pre-deleted, and no production filesystem policy
+is rewritten. A truthful file-lifetime fixture correction is separate from root
+parity; this child does not claim to fix all seven Windows failures.
+
+Actual macOS Rust/Cargo1.99.1 qualification passes both complete in-process
+binding unit modules: **17 passed / zero failed / zero ignored**, 114 filtered,
+7.99s, including every seven-failure Mac counterpart and ten direct module guards.
+Affected all-target strict Clippy, fmt, traceability and diff checks pass.
+The first selector command exited1 before compilation because Cargo accepts
+only one filter before `--`; its raw/receipt are preserved, and both module
+filters now go after `--` to libtest. Jobs1/debug0/incremental0 uses a distinct
+APFS-cloned target, never writing the released original, with a 25%-free-memory
+pause guard. No real native daemon/helper, native14/full suite, SDK/VM/provider,
+account or permission repair ran. PrivateCore/709 moving source was not consumed.
+This current-milestone test-fixture correction changes no ADR/graph/manual
+classification or acceptance; fresh Windows CI and the three remaining
+file-lifetime fixture blockers are still required.
 
 ## Repairing the Windows binding-lane fixture boundaries
 

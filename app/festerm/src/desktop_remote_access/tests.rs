@@ -363,7 +363,10 @@ fn desktop_remote_access_sharing_status_controls_keep_displayed_target_and_origi
                 operation: uuid::Uuid::new_v4().to_string(),
                 phase,
             };
-            let reviewed = private_share_target();
+            let mut reviewed = private_share_target();
+            reviewed.identity.name = "other-reviewed-session".into();
+            reviewed.identity.created_at_unix_ms += 1;
+            reviewed.lifecycle_generation += 1;
             let context = egui::Context::default();
             controller.view.sharing = Some(retained.clone());
             controller.observe_share_epoch(Arc::new(AtomicU64::new(0)));
