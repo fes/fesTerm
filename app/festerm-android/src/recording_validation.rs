@@ -57,6 +57,20 @@ extern "system" fn Java_io_github_fes_festerm_RecordingNativeTest_applicationPri
 }
 
 #[unsafe(no_mangle)]
+extern "system" fn Java_io_github_fes_festerm_RecordingNativeTest_nativeIndexForget(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jint {
+    match std::panic::catch_unwind(
+        festerm_tunnel_bridge::host_client::originals::testing::native_index_forget,
+    ) {
+        Ok(Ok(())) => 0,
+        Ok(Err(_)) => 1,
+        Err(_) => 2,
+    }
+}
+
+#[unsafe(no_mangle)]
 extern "system" fn Java_io_github_fes_festerm_RecordingNativeTest_encode(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,

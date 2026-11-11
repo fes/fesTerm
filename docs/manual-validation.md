@@ -342,6 +342,26 @@ Explicit Desktop Forget is a capacity mitigation, not Android full-workflow
 acceptance or permission to repair pending native material. Historical factory
 and publication campaigns below do not qualify this composed source.
 
+**Next bounded native-index increment (source first, runtime pending):**
+`smoke-android.py --native-index-validation --serial <new-owned-emulator>`
+selects only the registered `NativeIndexForgetSmoke`, requiring a debug
+`build-android.py --offline --recording-validation` APK. The packager explicitly
+enables Rust debug assertions and verifies both root and index JNI exports;
+a debuggable APK alone is not evidence that Rust compiled the hooks.
+After three source gates and separate coordinator guest GO, this fixed case
+must use real native receipt/key/payload storage, separate production root/index
+reopen with positively identified native same-namespace identity, an uncertain
+in-memory injected peer, review-only no-op, changed-record BindingMismatch
+without deletion, retained-store fixture-only confirmation and byte-exact
+preservation of the unrelated End original. Only scalar success/failure may
+cross JNI or enter test output. No path/FD/context input, memory fallback,
+namespace rotation, remote authentication or production consent is permitted.
+`FESTERM_ANDROID_NATIVE_INDEX_VALIDATION=1` selects it in the optional runner
+only with an explicitly selected emulator. Host memory-oracle tests and Android
+compilation do not execute this case. Different-native-namespace refusal,
+full HOST recovery, GUI/default-No confirmation, app-lock/cold-start composition,
+API36 runtime, physical devices and TEE remain unproved by this increment.
+
 **Subsequent portable qualification at exact `d454e7a7`:** secret-store
 17/0/0 (0.02s), portable bridge 101/0/0 (8.27s), mobile 229/0/4 (15.54s).
 All eight existing Forget cases and the new cloned-index namespace/snapshot

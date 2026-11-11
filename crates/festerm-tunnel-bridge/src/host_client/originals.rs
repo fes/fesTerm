@@ -652,9 +652,23 @@ impl ProtectedOriginalCheckpoint for OriginalHandle {
 #[path = "originals_tests.rs"]
 mod tests;
 
+#[cfg(all(
+    feature = "testing",
+    unix,
+    any(test, all(target_os = "android", debug_assertions))
+))]
+#[path = "originals_native_index_validation.rs"]
+mod native_index_validation;
+
 #[cfg(all(feature = "testing", unix))]
 pub mod testing {
     use super::*;
+
+    /// Fixed synthetic native-storage validation, never host/provider enrollment.
+    #[cfg(all(target_os = "android", debug_assertions))]
+    pub fn native_index_forget() -> Result<(), Failure> {
+        native_index_validation::run_native()
+    }
 
     /// Composes existing receipt/checkpoint paths with a synthetic memory vault.
     /// Never selects a native platform store or decodes caller-issued authority.

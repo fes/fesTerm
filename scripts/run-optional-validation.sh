@@ -51,6 +51,17 @@ printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-requ
 printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-tunnel-task-xml status=skipped reason=windows-required\n' >>"$result_path"
 if [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ] &&
+    [ "${FESTERM_ANDROID_NATIVE_INDEX_VALIDATION:-}" = "1" ]; then
+    if python3 scripts/build-android.py --offline --recording-validation --install \
+        --serial "$FESTERM_ANDROID_EMULATOR_SERIAL" &&
+        python3 scripts/smoke-android.py --native-index-validation \
+            --serial "$FESTERM_ANDROID_EMULATOR_SERIAL"; then
+        printf 'suite=android-native-index status=pass\n' >>"$result_path"
+    else
+        printf 'suite=android-native-index status=fail\n' >>"$result_path"
+        status=fail
+    fi
+elif [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ] &&
     [ "${FESTERM_ANDROID_ROOT_FACTORY_VALIDATION:-}" = "1" ]; then
     if python3 scripts/build-android.py --recording-validation --install \
         --serial "$FESTERM_ANDROID_EMULATOR_SERIAL" &&

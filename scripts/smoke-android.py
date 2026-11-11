@@ -22,8 +22,10 @@ def main():
                         help="Exercise Rust-to-Java recording export in a validation APK")
     parser.add_argument("--root-factory-validation", action="store_true",
                         help="Only invoke the debug-validation Rust current-app root factory")
+    parser.add_argument("--native-index-validation", action="store_true",
+                        help="Only run synthetic native-index reopen and explicit fixture-only Forget")
     args = parser.parse_args()
-    if args.recording_validation and args.root_factory_validation:
+    if sum((args.recording_validation, args.root_factory_validation, args.native_index_validation)) > 1:
         parser.error("Select one focused native validation case")
     sdk = Path(args.sdk)
     tools = sdk / "build-tools" / build.BUILD_TOOLS
@@ -66,13 +68,16 @@ def main():
         result = build.run(*adb, "shell", "am", "instrument", "-w",
             *(["-e", "recording-validation", "true"] if args.recording_validation else []),
             "io.github.fes.festerm.tests/."
-            + ("RootFactorySmoke" if args.root_factory_validation else "PlatformSmoke"),
+            + ("NativeIndexForgetSmoke" if args.native_index_validation
+               else "RootFactorySmoke" if args.root_factory_validation else "PlatformSmoke"),
             capture=True, timeout=90)
     except subprocess.TimeoutExpired:
         result = "FAIL: Android native instrumentation exceeded 90 seconds\n"
     finally:
         build.run(*adb, "shell", "am", "force-stop", "io.github.fes.festerm", timeout=15)
-    result_name = "native-root-results.txt" if args.root_factory_validation else "native-results.txt"
+    result_name = ("native-index-results.txt" if args.native_index_validation
+                   else "native-root-results.txt" if args.root_factory_validation
+                   else "native-results.txt")
     (output / result_name).write_text(result)
     print(result)
     if "PASS:" not in result or "FAIL:" in result:

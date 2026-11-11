@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -15,6 +16,62 @@ SPEC.loader.exec_module(android)
 
 
 class AndroidBuildTests(unittest.TestCase):
+    def test_native_index_hook_selects_only_native_production_storage(self):
+        root = SCRIPT.parents[1]
+        source = (root / "crates/festerm-tunnel-bridge/src/host_client/"
+                  "originals_native_index_validation.rs").read_text()
+        native = source.split("fn run_native()", 1)[1].split("async fn capture_uncertain", 1)[0]
+        self.assertIn("NativeAppPrivateRoot::current()", native)
+        self.assertIn("ReceiptIndex::in_native_app_sandbox", native)
+        self.assertIn("index.prepare(reviewed)", native)
+        self.assertEqual(native.count("OriginalStore::recover_in_native_app_sandbox"), 2)
+        self.assertIn("validation_has_native_root()", native)
+        self.assertIn("root.same_root(&fresh)", native)
+        for forbidden in ("MemorySecretStore", "in_app_sandbox(", "recover_with", "connect("):
+            self.assertNotIn(forbidden, native)
+        entry = (root / "crates/festerm-tunnel-bridge/src/host_client/originals.rs").read_text()
+        self.assertIn('#[cfg(all(target_os = "android", debug_assertions))]\n'
+                      '    pub fn native_index_forget()', entry)
+
+    def test_native_index_case_requires_actual_scalar_hook_success(self):
+        root = SCRIPT.parents[1]
+        source = (root / "app/festerm-android/tests/java/io/github/fes/festerm/tests/"
+                  "NativeIndexForgetSmoke.java").read_text()
+        self.assertIn('hook.getMethod("nativeIndexForget").invoke(null)', source)
+        self.assertIn("if (!Integer.valueOf(0).equals(status)) throw new AssertionError();", source)
+        self.assertIn('domain.startsWith("u:r:untrusted_app:', source)
+        self.assertIn("FAIL: actual native index reopen and fixture-only Forget", source)
+        self.assertIn('android:name=".NativeIndexForgetSmoke"',
+                      (root / "app/festerm-android/tests/AndroidManifest.xml").read_text())
+        manifest = (root / "app/festerm-android/Cargo.toml").read_text()
+        dependency = next(line for line in manifest.splitlines()
+                          if line.startswith("festerm-tunnel-bridge ="))
+        self.assertIn('optional = true, default-features = false, features = ["testing"]', dependency)
+
+    def test_validation_packaging_overrides_disabled_rust_debug_assertions(self):
+        with patch.object(Path, "is_file", return_value=True), \
+                patch.object(android.shutil, "which", return_value="existing-tool"), \
+                patch.object(android, "run",
+                             return_value="festerm-mobile v1\nfesterm-core v1\nfesterm-ui-egui v1\n"), \
+                patch.dict(os.environ, {"CARGO_PROFILE_DEV_DEBUG_ASSERTIONS": "false",
+                                        "RUSTFLAGS": "-C debug-assertions=no"}):
+            *_, env, features = android.target_environment(
+                "/synthetic-existing-sdk", "arm64-v8a", offline=True, recording_validation=True)
+        self.assertEqual(env["CARGO_PROFILE_DEV_DEBUG_ASSERTIONS"], "true")
+        self.assertTrue(env["RUSTFLAGS"].endswith("-C debug-assertions=yes"))
+        self.assertIn("native-recording-validation", features)
+
+    def test_validation_packaging_refuses_missing_linked_hooks_and_release(self):
+        with patch.object(android, "run", return_value="") as run:
+            with self.assertRaisesRegex(ValueError, "Missing linked"):
+                android.check_native_validation_exports(Path("fixture.so"), {"ANDROID_NDK_HOME": "/owned/ndk"})
+            with self.assertRaisesRegex(ValueError, "release APKs"):
+                android.build_library("aarch64-linux-android", {}, [], True, True)
+            self.assertEqual(run.call_count, 1)
+        symbols = "\n".join("0000 T " + name for name in android.NATIVE_VALIDATION_SYMBOLS)
+        with patch.object(android, "run", return_value=symbols):
+            android.check_native_validation_exports(Path("fixture.so"), {"ANDROID_NDK_HOME": "/owned/ndk"})
+
     def test_native_root_factory_hook_is_debug_only_and_scalar(self):
         root = SCRIPT.parents[1]
         entry = (root / "app/festerm-android/src/lib.rs").read_text()

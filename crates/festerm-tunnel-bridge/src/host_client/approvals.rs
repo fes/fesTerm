@@ -273,6 +273,13 @@ impl ReceiptIndex {
         self.root == other.root
     }
 
+    #[cfg(all(target_os = "android", feature = "testing", debug_assertions))]
+    pub(super) fn validation_has_native_root(&self) -> bool {
+        self.native_root
+            .as_ref()
+            .is_some_and(|root| root.same_root(root))
+    }
+
     #[cfg(feature = "relay")]
     pub fn native() -> Result<Self, Error> {
         let runtime = festerm_sessiond::runtime_root().map_err(|_| Error::Storage)?;

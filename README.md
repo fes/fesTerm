@@ -69,6 +69,10 @@ Isolated API35/enforcing/untrusted-app smoke now covers native publication,
 Keyguard and the actual Rust→JNI current-app root factory through a debug-only
 validation hook. Target36 packaging is not API36 runtime, TEE or full HOST
 recovery; fresh source reviews and evidence approval remain required.
+The next fixed debug-validation case exercises the real Android receipt index,
+same-namespace reopen and retained-store local Forget with synthetic uncertain
+End originals. It is not executed native acceptance, different-namespace proof,
+provider enrollment or production GUI consent.
 The normal Desktop `e6e4b8a2` + Android `b05bc1c0` source composition retains
 typed local Forget reviews and the native pinned receipt index together.
 Composed-head tests, strict checks and Android target checks are still unrun;

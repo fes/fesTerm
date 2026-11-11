@@ -1,5 +1,28 @@
 # Milestone Progress Narrative
 
+## Designing the smallest real Android native-index/Forget increment
+
+The portable retained-index regression did not execute its Native branch, and
+the qualified Android factory case only created/reopened the fixed directory.
+The next normal child of `406ca499` therefore reuses the existing debug-only
+scalar JNI seam for a fixed synthetic native-index case, after committing its
+ADR design before code. Real native owner receipts and encrypted originals use
+production storage/reopen, while a bounded injected peer captures two uncertain
+End originals without HOST/provider authentication. The same fixture oracles
+check review-only no-op, changed-record refusal, retained-store confirmation
+and byte-exact unrelated-original preservation. Host tests explicitly use
+memory storage and cannot confer Android acceptance.
+
+Validation packaging now forces Rust debug assertions and verifies the linked
+JNI exports rather than assuming that a debuggable APK contains Rust debug
+hooks. The new bridge testing dependency is Android-only, optional and disables
+defaults; the existing desktop-dependency guard still applies. Source/build
+qualification precedes three fresh reviews and separate coordinator guest GO.
+No native run, different-namespace proof, GUI consent, full HOST recovery,
+app-lock/cold-start, API36 runtime, physical-device or TEE claim is made here.
+All earlier factory/publication campaigns and their first failures remain
+closed and preserved; no namespace rotation or production repair is added.
+
 ## Executing d454 portable/cfg checks, then freezing the diagnostic joint source
 
 Exact `d454e7a722e3b36ada0766df66ea7a277e829cf1` is executed without a tracked

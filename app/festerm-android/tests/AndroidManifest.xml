@@ -7,4 +7,6 @@
         android:targetPackage="io.github.fes.festerm" />
     <instrumentation android:name=".RootFactorySmoke"
         android:targetPackage="io.github.fes.festerm" />
+    <instrumentation android:name=".NativeIndexForgetSmoke"
+        android:targetPackage="io.github.fes.festerm" />
 </manifest>

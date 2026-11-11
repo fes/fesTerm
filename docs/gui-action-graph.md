@@ -1595,6 +1595,16 @@ put. No hard link/replace-capable rename or authority relaxation is permitted.
 Actual Android SELinux/JNI/Keystore/device smoke remains required before
 consumption, independently of host tests, compilation and fresh source gates.
 
+The separate fixed debug-only `NativeIndexForgetSmoke` is the next bounded
+`HOST-02`/`HOST-03` native acceptance case, not a new product action. It requires
+actual native receipt/payload storage and same-namespace production reopen,
+retained-store Forget review, stale-record refusal and unrelated-original
+preservation. Its synthetic uncertain peer is only in-memory test composition;
+fixture-only confirmation does not exercise GUI/default-No consent or its
+account/privacy/pending fences. Native execution remains pending three source
+gates and separate guest GO. Namespace rotation and different-native-namespace
+claims are explicitly excluded; the completed root-factory case is unchanged.
+
 The portable selected-host `host_client` executor adds actual native-vault/
 relay/role-proof composition, bounded inventory and frontend-confirmed
 existing-generation adoption. Its executed `selected_host_*` tests are not

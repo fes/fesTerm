@@ -2433,6 +2433,7 @@ dependencies = [
  "festerm-recording",
  "festerm-recording-export",
  "festerm-secret-store",
+ "festerm-tunnel-bridge",
  "festerm-ui-egui",
  "jni 0.21.1",
  "winit",

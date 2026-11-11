@@ -5540,6 +5540,7 @@
         "protected_original_sixteen_uncertain_actions_cannot_be_pruned_or_replaced",
         "protected_original_forget_preserves_other_records_and_never_settles_end",
         "protected_original_forget_retains_namespace_and_snapshot_across_index_reopen",
+        "protected_original_forget_native_index_oracles_with_explicit_memory_storage",
         "protected_original_forget_refuses_changed_scope_record_and_cancelled_consent",
         "protected_original_forget_missing_is_local_only_and_vault_failures_never_succeed",
         "protected_original_forget_frees_only_explicitly_selected_capacity",
