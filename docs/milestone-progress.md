@@ -1,5 +1,24 @@
 # Milestone Progress Narrative
 
+## Keeping the serialized pruner clear of fixture-only pending deletion
+
+The actual required Windows run at `c41e3a6c` advances to 67/1, with all
+106 sessiond library tests passing. The dead-generation absence check now
+passes. The remaining concurrent-pruner case reaches an earlier error:
+its real registry pruner encounters the capability's pending deletion while
+the fixture still holds an extra creator handle.
+
+The Windows fixture now closes that extra handle inside the existing
+before-cleanup callback, after the pruner has observed registry contention
+and after the lifetime-release probe. It asserts the capability still exists
+immediately after the close, before independent cleanup. Closing the creator
+therefore cannot substitute for deletion. Independent cleanup and the real
+pruner remain serialized by the unchanged registry lock; their successful
+results, foreign-record preservation and final key/lease absence remain
+required. No production hook, deletion policy, retry, delay or weaker oracle
+is added. Unix retains its final owner-cleanup assertion. Actual Windows
+execution of this continuation remains required.
+
 ## Recording fixture validation impact as a Git trailer
 
 Required CI at `c41e3a6c` exposes a commit-metadata error: a blank line
