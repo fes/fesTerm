@@ -1,5 +1,15 @@
 # Milestone Progress Narrative
 
+## Recording fixture validation impact as a Git trailer
+
+Required CI at `c41e3a6c` exposes a commit-metadata error: a blank line
+separates `Validation-Impact` from the final `Co-authored-by` trailer block
+in both fixture commits. Git therefore does not recognize their validation
+trailers. The no-base traceability check passes, but the actual PR-base
+check correctly fails. This normal documentation child records the
+fixture-only impact in one contiguous trailer block, without rewriting
+history, weakening the checker or changing Rust sources and test assertions.
+
 ## Closing fixture-only creators after independent generation cleanup
 
 The actual required Windows run at `278343ae` advances from 65/3 to 66/2.
