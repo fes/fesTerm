@@ -14781,3 +14781,40 @@ Original CI logs and that first strict failure remain
 retained. The Windows 2f fixture correction and all its old source/proofs/targets
 are separate and unchanged. Required full-platform CI, combined source gates and
 installed/service/vault/device acceptance remain open.
+
+## Retaining the unknown initial native End outcome
+
+The normally composed `7ad13c6d` source passed required macOS and Windows CI,
+but required Ubuntu run `42957155359`, job `130314852211`, retained 18 passes
+and one failure in its 19-case controlled native selection (174.15 seconds).
+The failing assertion was the first End worker completion at
+`host_runtime/tests.rs:1554`, before the subsequent authoritative-absence and
+same-original exact Ended checks. It expected OutcomeUncertain but did not
+print the actual variant. All other 18 native cases passed. The independent
+`0bc` control failures are distinct evidence, not a common-cause diagnosis.
+
+Source tracing proves that StopRequested maps to OutcomeUncertain, while
+transaction/reconciliation/native-lease refusal, protected admission and
+client transport can fail before that result. It does not prove which path
+the retained Ubuntu run took. No production policy or runtime correction is
+justified from the missing variant.
+
+The bounded normal child therefore captures that same completion once and
+adds only a test assertion diagnostic: initial-worker-completion stage, exact typed
+failure or outcome category, issued/resolved flags and unchanged-operation
+comparison. Exact versus other-target Ended is reported without target IDs;
+terminal, snapshot, created-session and inventory contents are never formatted.
+The completion label does not claim an internal handshake, admission or commit
+stage that the retained failure did not expose.
+A co-located deterministic test distinguishes the refusal/transport labels
+and exact-target classification. The initial OutcomeUncertain predicate,
+later exact Ended, retained original, no-duplicate-generation checks, deadlines,
+helpers and production source remain unchanged.
+
+This is a current validation blocker diagnostic, not native End acceptance or
+a fix claim. Cargo is initially held for the separately owned Android runtime;
+source/static checks are attributed separately. Fresh deterministic/strict
+checks and a bounded exact-case qualification require the separately granted
+private jobs1 slot and matching helper/child attribution. Older native helper
+executions and macOS results cannot qualify this changed child or the Ubuntu
+failure.

@@ -1896,6 +1896,11 @@ against fresh owned helper/PTY images: 3/0/0, 8.11s. Neither takeover oracle
 replaces the other; private/imported bindings still cannot acquire native End
 authority. Full [per-harness attribution](milestone-progress.md#composing-the-adr-0084-desktop-vertical-slice)
 does not promote inherited ordinary-private 6.00s or native-vault/GUI acceptance.
+The later `7ad13c6d` required Ubuntu selection retained 18/1 at the first
+original-End OutcomeUncertain assertion without printing its actual outcome.
+Test-only diagnostics distinguish typed failure from exact/other-target Ended
+at that initial completion, without logging target IDs or changing the oracle.
+The unprinted result remains unknown; source analysis is not native execution.
 The runtime/session union also passes the actual two-daemon signed-SSH
 input-isolation, independent attached inventory and persistent-detach route;
 additional actual signed-SSH cases pass for original-issued creation/end,

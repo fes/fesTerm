@@ -111,6 +111,18 @@ and retired or never-bound records do not authorize that reply. The existing
 End/replacement case is unchanged. This does not requalify the older
 sixteen-case matrix or establish physical lifecycle/vault behavior.
 
+At exact integrated `7ad13c6d91a6fa517adaa5acb203ef698b256a1f`, required Ubuntu
+run `42957155359`, job `130314852211`, retained **18 passed/1 failed/0 ignored**
+in 174.15 seconds. The failure was the first OutcomeUncertain assertion in
+`native_authenticated_runtime_end_confirms_original_exact_gone_generation`;
+its actual worker outcome was not printed. The raw SHA-256 is
+`5c8a711c4117b77134114f211092067250a551dcf9a1942921bb56aef12f11eb`.
+The minimal followup adds only content-free test outcome/stage diagnostics and
+a deterministic label fixture; it is not a proven runtime correction or fresh
+native acceptance. The initial OutcomeUncertain, later exact Ended, unresolved/
+resolved state and original-operation assertions remain strict and unchanged.
+The separate `0bc` host-control failures do not establish this failure's cause.
+
 In an explicitly owned iOS/Android native window, still verify:
 
 - jetsam/disk-full receipt preparation: deterministic non-relay fixtures now

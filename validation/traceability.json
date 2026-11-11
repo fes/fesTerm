@@ -5813,6 +5813,7 @@
         "native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input",
         "native_authenticated_runtime_creation_retains_issuer_and_exact_end_authority",
         "native_authenticated_runtime_end_confirms_original_exact_gone_generation",
+        "native_runtime_end_outcome_diagnostics_are_content_free_and_variant_exact",
         "host_owner_observed_end_only_authorizes_current_exact_end",
         "observed_end_grant_cannot_be_stored_or_reopened",
         "imported_binding_native_end_never_observes_absence_or_admits_policy",

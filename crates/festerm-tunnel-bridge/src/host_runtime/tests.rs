@@ -435,6 +435,106 @@ fn native_runtime_stream_failure_labels_are_content_free() {
 }
 
 #[cfg(unix)]
+fn native_end_outcome_diagnostic(
+    outcome: &crate::host_client::Outcome,
+    expected: &festerm_host_protocol::Target,
+) -> String {
+    use crate::host_client::Outcome;
+
+    // Failure is content-free; the other outcome payloads can contain session data.
+    match outcome {
+        Outcome::Failed(failure) => format!("failed({failure:?})"),
+        Outcome::Ended { target } if target == expected => "ended-exact".into(),
+        Outcome::Ended { .. } => "ended-other-target".into(),
+        Outcome::Inventory(_) => "inventory".into(),
+        Outcome::Created(_) => "created".into(),
+        Outcome::Snapshot(_) => "snapshot".into(),
+        Outcome::Attached(_) => "attached".into(),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_runtime_end_outcome_diagnostics_are_content_free_and_variant_exact() {
+    use crate::host_client::{Failure, Outcome};
+    use festerm_host_protocol::{GenerationId, LogicalSessionId, Refusal, Target};
+
+    let target = Target {
+        logical: LogicalSessionId::new(),
+        generation: GenerationId::new(1).unwrap(),
+    };
+    for (error, expected) in [
+        (
+            Error::Refused(Refusal::OutcomeUncertain),
+            "failed(Control(Refused(OutcomeUncertain)))",
+        ),
+        (
+            Error::Refused(Refusal::Busy),
+            "failed(Control(Refused(Busy)))",
+        ),
+        (
+            Error::Refused(Refusal::Unknown),
+            "failed(Control(Refused(Unknown)))",
+        ),
+        (Error::Closed, "failed(Control(Closed))"),
+        (Error::Deadline, "failed(Control(Deadline))"),
+        (Error::Cancelled, "failed(Control(Cancelled))"),
+        (Error::Offline, "failed(Control(Offline))"),
+    ] {
+        assert_eq!(
+            native_end_outcome_diagnostic(&Outcome::Failed(Failure::Control(error)), &target),
+            expected
+        );
+    }
+    assert_eq!(
+        native_end_outcome_diagnostic(&Outcome::Failed(Failure::OriginalStorage), &target),
+        "failed(OriginalStorage)"
+    );
+    assert_eq!(
+        native_end_outcome_diagnostic(
+            &Outcome::Failed(Failure::OwnerKey(crate::owner_auth::OwnerKeyError::Vault(
+                festerm_secret_store::SecretStoreError::Missing,
+            ))),
+            &target,
+        ),
+        "failed(OwnerKey(Vault(Missing)))"
+    );
+    assert_eq!(
+        native_end_outcome_diagnostic(
+            &Outcome::Ended {
+                target: target.clone(),
+            },
+            &target,
+        ),
+        "ended-exact"
+    );
+    assert_eq!(
+        native_end_outcome_diagnostic(
+            &Outcome::Ended {
+                target: Target {
+                    logical: target.logical.clone(),
+                    generation: GenerationId::new(2).unwrap(),
+                },
+            },
+            &target,
+        ),
+        "ended-other-target"
+    );
+    assert_eq!(
+        native_end_outcome_diagnostic(
+            &Outcome::Ended {
+                target: Target {
+                    logical: LogicalSessionId::new(),
+                    generation: target.generation,
+                },
+            },
+            &target,
+        ),
+        "ended-other-target"
+    );
+}
+
+#[cfg(unix)]
 impl NativeRuntimeFixture {
     fn client_context(&self) -> crate::host_client::ApprovedContext {
         let public = self.auth.ssh_key.public_key().to_openssh().unwrap();
@@ -1551,12 +1651,20 @@ async fn native_authenticated_runtime_end_confirms_original_exact_gone_generatio
     let context = fixture.client_context();
     let end = Arc::new(crate::host_client::EndIntent::new(&context, target.clone()));
     let original = end.operation().clone();
-    assert!(matches!(
-        client_end_worker(&mut fixture, end.clone()).await,
-        crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
-            festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
-        ))
-    ));
+    let first_end = client_end_worker(&mut fixture, end.clone()).await;
+    assert!(
+        matches!(
+            &first_end,
+            crate::host_client::Outcome::Failed(crate::host_client::Failure::Control(
+                festerm_tunnel_client::host_control::Error::Refused(Refusal::OutcomeUncertain)
+            ))
+        ),
+        "native End stage=initial-worker-completion actual={} issued={} resolved={} operation_unchanged={}",
+        native_end_outcome_diagnostic(&first_end, &target),
+        end.is_issued(),
+        end.is_resolved(),
+        end.operation() == &original,
+    );
     assert!(end.is_issued() && !end.is_resolved());
     tokio::time::timeout(Duration::from_secs(8), async {
         loop {
