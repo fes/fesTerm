@@ -260,6 +260,20 @@ fn host_process_recovery_stopped_replacement_preserves_old_and_new_policy_genera
         assert_eq!(new.definition.contains("Restart=on-failure"), recovery);
         assert_eq!(fixture.store.snapshot().unwrap(), stopped);
         assert_eq!(fixture.preserved(), preserved);
+        let ticket = fixture.store.request_enable(&stopped.settings).unwrap();
+        fixture
+            .store
+            .record_provisioned(&ticket, new.binding.clone())
+            .unwrap();
+        definitions::remove_file(&services.context, &new).unwrap();
+        services
+            .install_with_recovery(&fixture.next, fixture.store.snapshot().unwrap().epoch)
+            .unwrap();
+        assert_eq!(services.registration().unwrap().1.unwrap(), new);
+        assert_eq!(
+            std::fs::read(definitions::definition_path(&services.context, &new)).unwrap(),
+            new.definition.as_bytes()
+        );
     }
 }
 

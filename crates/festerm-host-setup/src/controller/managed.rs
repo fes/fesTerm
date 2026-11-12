@@ -1,5 +1,5 @@
 //! Native exit translation follows durable error history, never product success.
-use super::{last_run, RunFailure, Services, Store};
+use super::{RunFailure, RunRecord, Services, Store};
 use crate::{
     lifecycle::{Origin, Phase},
     run_exit,
@@ -62,33 +62,47 @@ pub fn last_report(store: &Store) -> io::Result<Option<Report>> {
 
 pub async fn run(store: Arc<Store>, state: &Path, cancel: CancellationToken) -> io::Result<()> {
     Services::current_user(&store, state)?.require_recovery_registration()?;
-    let snapshot = store.snapshot()?;
-    let previous = last_run(&store)?.map(|record| record.run_id);
-    let result = super::run(store.clone(), state, cancel).await;
-    finish(&store, &snapshot, previous.as_deref(), result)
+    run_registered(store, state, cancel).await
+}
+
+async fn run_registered(
+    store: Arc<Store>,
+    state: &Path,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    let (_run_lease, snapshot, mut record) = match super::reserve(&store) {
+        Ok(reserved) => reserved,
+        Err(error) => return finish(&store, &store.snapshot()?, None, Err(error)),
+    };
+    let result =
+        super::run_to_completion(store.clone(), state, &snapshot, &mut record, cancel).await;
+    // Keep the original run lease through recording, never adopt another attempt's history.
+    finish(&store, &snapshot, Some(&record), result)
 }
 
 fn finish(
     store: &Store,
     initial: &crate::lifecycle::Snapshot,
-    previous: Option<&str>,
+    record: Option<&RunRecord>,
     result: io::Result<()>,
 ) -> io::Result<()> {
     let current = store.snapshot()?;
-    let record = last_run(store)?
-        .filter(|record| record.epoch == initial.epoch && Some(record.run_id.as_str()) != previous);
     let login = result.as_ref().is_err_and(|error| {
         run_exit::error_exit_code(error) == run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
     });
     let failure = if result.is_ok() {
         None
     } else {
-        Some(
-            record
+        Some(record.and_then(|record| record.failure).unwrap_or_else(|| {
+            if result
                 .as_ref()
-                .and_then(|record| record.failure)
-                .unwrap_or(RunFailure::RuntimeFailed),
-        )
+                .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock)
+            {
+                RunFailure::InstallationBusy
+            } else {
+                RunFailure::RuntimeFailed
+            }
+        }))
     };
     let disposition = if result.is_ok() {
         Disposition::Stopped
@@ -113,7 +127,7 @@ fn finish(
         installation: initial.installation.clone(),
         origin: initial.origin,
         epoch: initial.epoch,
-        run_id: record.map(|record| record.run_id),
+        run_id: record.map(|record| record.run_id.clone()),
         disposition,
         failure,
         product_success: result.is_ok(),
@@ -138,6 +152,7 @@ fn finish(
 
 #[cfg(test)]
 mod tests {
+    use super::super::last_run;
     use super::*;
     use crate::lifecycle::{Settings, Startup};
 
@@ -181,9 +196,9 @@ mod tests {
         let state = root.path().join("state");
         let mut previous = None;
         for _ in 0..2 {
-            let result = super::super::run(store.clone(), &state, CancellationToken::new()).await;
-            assert!(result.is_err());
-            let error = finish(&store, &initial, previous.as_deref(), result).unwrap_err();
+            let error = run_registered(store.clone(), &state, CancellationToken::new())
+                .await
+                .unwrap_err();
             assert!(run_exit::is_recorded_managed_stop(&error));
             let record = last_run(&store).unwrap().unwrap();
             assert_ne!(previous.as_deref(), Some(record.run_id.as_str()));
@@ -201,15 +216,43 @@ mod tests {
         }
         store.revoke().unwrap();
         let revoked = store.snapshot().unwrap();
-        let result = super::super::run(store.clone(), &state, CancellationToken::new()).await;
-        assert!(result.is_err());
-        finish(&store, &revoked, previous.as_deref(), result).unwrap_err();
+        run_registered(store.clone(), &state, CancellationToken::new())
+            .await
+            .unwrap_err();
         assert_eq!(
             last_report(&store).unwrap().unwrap().disposition,
             Disposition::Refused
         );
         assert_eq!(last_run(&store).unwrap().unwrap().run_id, previous.unwrap());
         assert_eq!(store.snapshot().unwrap(), revoked);
+    }
+
+    #[test]
+    fn host_process_recovery_busy_attempt_never_adopts_another_runs_record_or_lease() {
+        let root = storage::private_test_directory();
+        let store = Arc::new(store(root.path()));
+        provision(&store);
+        let (lease, snapshot, active) = super::super::reserve(&store).unwrap();
+        super::super::persist(&store, &active).unwrap();
+        let result = finish(
+            &store,
+            &snapshot,
+            None,
+            Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "host.installation_busy",
+            )),
+        );
+        assert!(run_exit::is_recorded_managed_stop(&result.unwrap_err()));
+        let report = last_report(&store).unwrap().unwrap();
+        assert_eq!(report.run_id, None);
+        assert_eq!(report.failure, Some(RunFailure::InstallationBusy));
+        assert!(!report.product_success);
+        assert_eq!(last_run(&store).unwrap().unwrap(), active);
+        assert!(super::super::reserve(&store).is_err());
+        drop(lease);
+        let (_lease, _, next) = super::super::reserve(&store).unwrap();
+        assert_ne!(next.run_id, active.run_id);
     }
 
     #[test]
