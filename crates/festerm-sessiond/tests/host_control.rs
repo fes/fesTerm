@@ -2308,10 +2308,10 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
     let control = fixture.control();
     let pending = fixture.attach(&running.target, &creation.attachment, false);
     let authority = pending.authority.clone();
-    assert!(matches!(
-        control.with_attachment_authorized(&authority, allow, || Ok(())),
+    assert_eq!(
+        retry_busy(|| control.with_attachment_authorized(&authority, allow, || Ok(()))),
         Err(ControlError::Stale)
-    ));
+    );
     struct Guard(Arc<AtomicBool>);
     impl Drop for Guard {
         fn drop(&mut self) {
@@ -2319,8 +2319,8 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
         }
     }
     let held = Arc::new(AtomicBool::new(false));
-    control
-        .with_pending_attachment_authorized(
+    retry_busy(|| {
+        control.with_pending_attachment_authorized(
             &authority,
             |_| {
                 held.store(true, Ordering::Release);
@@ -2337,29 +2337,53 @@ fn guarded_relay_actions_distinguish_pending_from_committed_and_fence_revocation
                 Ok(())
             },
         )
-        .unwrap();
+    })
+    .unwrap();
     assert!(!held.load(Ordering::Acquire));
     let (active, _) = fixture.adopt(&running.target, pending);
-    control
-        .with_attachment_authorized(&authority, allow, || Ok(()))
-        .unwrap();
-    assert!(matches!(
-        control.with_attachment_authorized(
-            &authority,
-            |_| Err::<(), _>(ControlError::Denied),
-            || -> Result<(), ControlError> { panic!("denied action ran") }
-        ),
+    retry_busy(|| control.with_attachment_authorized(&authority, allow, || Ok(()))).unwrap();
+    assert_eq!(
+        retry_busy(|| {
+            control.with_attachment_authorized(
+                &authority,
+                |_| Err::<(), _>(ControlError::Denied),
+                || -> Result<(), ControlError> { panic!("denied action ran") },
+            )
+        }),
         Err(ControlError::Denied)
-    ));
-    control
-        .revoke_local(&fixture.owner, &creation.logical)
-        .unwrap();
-    assert!(matches!(
+    );
+    retry_busy(|| control.revoke_local(&fixture.owner, &creation.logical)).unwrap();
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let lease_lock = storage::open_private_file(
+        &directory,
+        Path::new(&format!(
+            "host-daemon-{}.lock",
+            running.target.generation.get()
+        )),
+        false,
+    )
+    .unwrap();
+    retry_busy(|| match fs2::FileExt::try_lock_exclusive(&lease_lock) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(ControlError::Busy),
+        Err(error) => panic!("owned authority lease lock failed: {error}"),
+    })
+    .unwrap();
+    assert_eq!(
         control.with_attachment_authorized(&authority, allow, || -> Result<(), ControlError> {
-            panic!("revoked action ran")
+            panic!("contended revoked action ran")
+        }),
+        Err(ControlError::Busy)
+    );
+    drop(lease_lock);
+    assert_eq!(
+        retry_busy(|| {
+            control.with_attachment_authorized(&authority, allow, || -> Result<(), ControlError> {
+                panic!("revoked action ran")
+            })
         }),
         Err(ControlError::Revoked)
-    ));
+    );
     drop(active);
 }
 
