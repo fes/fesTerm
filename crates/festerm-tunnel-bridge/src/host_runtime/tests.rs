@@ -1226,19 +1226,39 @@ impl NativeRuntimeFixture {
         attachment: festerm_host_protocol::AttachmentId,
         takeover: bool,
     ) -> crate::host_terminal::PendingTerminal<ClientConnection> {
-        let (client, permit) = self.stream(StreamRole::Terminal).await;
-        crate::host_terminal::establish(
-            client,
-            permit,
-            self.binding(),
-            OperationId::new(),
-            target,
-            attachment,
-            takeover,
-            &CancellationToken::new(),
-        )
+        let operation = OperationId::new();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                let (client, permit) = self.stream(StreamRole::Terminal).await;
+                match crate::host_terminal::establish(
+                    client,
+                    permit,
+                    self.binding(),
+                    operation.clone(),
+                    target.clone(),
+                    attachment.clone(),
+                    takeover,
+                    &CancellationToken::new(),
+                )
+                .await
+                {
+                    Ok(pending) => return pending,
+                    Err(Error::Refused(festerm_host_protocol::Refusal::Busy)) => {
+                        assert!(matches!(
+                            self.servers.pop().unwrap().await.unwrap(),
+                            Err(Error::Refused(festerm_host_protocol::Refusal::Busy))
+                        ));
+                        let ssh = self.connections.pop().unwrap();
+                        ssh.abort();
+                        let _ = ssh.await;
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    Err(error) => panic!("native pending terminal admission failed: {error:?}"),
+                }
+            }
+        })
         .await
-        .unwrap()
+        .expect("same-target pending terminal admission remained busy")
     }
 
     fn lease(&self, target: &festerm_host_protocol::Target) -> serde_json::Value {
@@ -1531,9 +1551,51 @@ async fn authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_session_input() {
     use crate::host_control::tests::native_routes::NativeFixture;
-    use festerm_host_protocol::IssuedOperation;
-    use festerm_sessiond::host_control::ControlError;
+    use festerm_host_protocol::{AttachmentId, IssuedOperation, Refusal, Target};
+    use festerm_sessiond::{host_control::ControlError, private_storage as storage};
+    use std::path::Path;
     use std::sync::atomic::AtomicBool;
+
+    async fn complete_inventory(
+        control: &mut ControlClient<ClientConnection>,
+        targets: &[Target],
+        cancel: &CancellationToken,
+    ) -> festerm_host_protocol::InventoryPage {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                match control
+                    .request(OperationId::new(), Request::List { cursor: None }, cancel)
+                    .await
+                    .expect("independent inventory stream failed")
+                    .body
+                {
+                    Response::Inventory { page } => {
+                        assert_eq!(
+                            page.sessions.len() + page.unknown.len(),
+                            targets.len(),
+                            "native terminal inventory lost or duplicated a target"
+                        );
+                        assert!(targets.iter().all(|target| {
+                            page.sessions
+                                .iter()
+                                .any(|session| &session.target == target)
+                                || page.unknown.contains(target)
+                        }));
+                        if page.unknown.is_empty() {
+                            return page;
+                        }
+                    }
+                    Response::Refused {
+                        reason: Refusal::Busy,
+                    } => {}
+                    response => panic!("independent inventory failed: {response:?}"),
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("exact native inventory targets remained uncertain")
+    }
 
     let fixture = Fixture::new();
     let mut native = NativeFixture::new(true);
@@ -1586,10 +1648,7 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
     let mut control = ControlClient::on_authenticated_stream(client, binding.clone(), permit);
     let cancel = CancellationToken::new();
     assert!(control.handshake(&cancel).await.unwrap().inventory);
-    let page =
-        crate::host_client::inventory_authenticated(&mut control, OperationId::new(), &cancel)
-            .await
-            .unwrap();
+    let page = complete_inventory(&mut control, &targets, &cancel).await;
     assert_eq!(page.sessions.len(), 2);
     assert!(page.sessions.iter().all(|session| !session.attached));
 
@@ -1597,45 +1656,110 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
     let mut frontends = Vec::new();
     let mut servers = Vec::new();
     let mut connections = Vec::new();
-    for target in targets {
-        let (client, stream, ssh) = fixture.pair().await;
-        connections.push(ssh);
-        let worker = runtime.clone();
-        servers.push(tokio::spawn(async move {
-            worker.serve_stream(stream, CancellationToken::new()).await
-        }));
-        let (client, permit) = fixture.authenticate(client, StreamRole::Terminal).await;
+    for target in &targets {
         let scope = crate::host_client::Scope {
             binding: binding.clone(),
             request: OperationId::new(),
             generation: 1,
         };
-        let (events, receiver) = flume::bounded(2);
-        let worker_scope = scope.clone();
-        let worker_cancel = cancel.clone();
-        let worker = tokio::spawn(async move {
-            crate::host_client::attach_authenticated(
-                client,
-                permit,
-                &worker_scope,
-                target,
-                &worker_cancel,
-                &events,
-                &(Arc::new(|| {}) as Arc<dyn Fn() + Send + Sync>),
-            )
-            .await
-        });
-        let completion = receiver.recv_async().await.unwrap();
-        assert_eq!(completion.scope, scope);
-        let crate::host_client::Outcome::Snapshot(adoption) = completion.outcome else {
-            panic!("frontend snapshot must precede Attached")
-        };
-        let mut presented =
-            festerm_core::Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap()).unwrap();
-        adoption.adopt_into(&scope, &mut presented).unwrap();
-        let crate::host_client::Outcome::Attached(handle) = worker.await.unwrap().unwrap() else {
-            panic!("actual host activation must confirm attachment")
-        };
+        let attachment = AttachmentId::new();
+        let directory = storage::private_directory(&native.root, false).unwrap();
+        let lease_lock = storage::open_private_file(
+            &directory,
+            Path::new(&format!("host-daemon-{}.lock", target.generation.get())),
+            false,
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                match fs2::FileExt::try_lock_exclusive(&lease_lock) {
+                    Ok(()) => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    Err(error) => panic!("owned terminal lease lock failed: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("owned terminal lease lock did not become available");
+        let mut contention = Some(lease_lock);
+        let (presented, handle) = tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                let (client, stream, ssh) = fixture.pair().await;
+                let runtime = runtime.clone();
+                let server = tokio::spawn(async move {
+                    let result = runtime.serve_stream(stream, CancellationToken::new()).await;
+                    if let Err(error) = result {
+                        eprintln!(
+                            "native terminal stream failure={}",
+                            native_stream_failure_code(error)
+                        );
+                    }
+                    result
+                });
+                let (client, permit) = fixture.authenticate(client, StreamRole::Terminal).await;
+                let (events, receiver) = flume::bounded(2);
+                let worker_scope = scope.clone();
+                let worker_cancel = cancel.clone();
+                let selection = (target.clone(), attachment.clone());
+                let worker = tokio::spawn(async move {
+                    crate::host_client::attach_reserved_authenticated(
+                        client,
+                        permit,
+                        &worker_scope,
+                        selection,
+                        &worker_cancel,
+                        &events,
+                        &(Arc::new(|| {}) as Arc<dyn Fn() + Send + Sync>),
+                    )
+                    .await
+                });
+                let completion = match receiver.recv_async().await {
+                    Ok(completion) => completion,
+                    Err(_) => match worker.await.expect("native terminal worker panicked") {
+                        Err(crate::host_client::Failure::Control(Error::Refused(
+                            Refusal::Busy,
+                        ))) => {
+                            assert!(matches!(
+                                server.await.unwrap(),
+                                Err(Error::Refused(Refusal::Busy))
+                            ));
+                            ssh.abort();
+                            let _ = ssh.await;
+                            drop(contention.take());
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                            continue;
+                        }
+                        Err(error) => {
+                            panic!("native terminal stage=before-snapshot failure={error:?}")
+                        }
+                        Ok(_) => panic!("native terminal worker completed without a snapshot"),
+                    },
+                };
+                assert!(
+                    contention.is_none(),
+                    "contended admission published a snapshot"
+                );
+                assert_eq!(completion.scope, scope);
+                let crate::host_client::Outcome::Snapshot(adoption) = completion.outcome else {
+                    panic!("frontend snapshot must precede Attached")
+                };
+                let mut presented =
+                    festerm_core::Terminal::new(festerm_core::Dimensions::new(80, 24).unwrap())
+                        .unwrap();
+                adoption.adopt_into(&scope, &mut presented).unwrap();
+                let crate::host_client::Outcome::Attached(handle) = worker.await.unwrap().unwrap()
+                else {
+                    panic!("actual host activation must confirm attachment")
+                };
+                servers.push(server);
+                connections.push(ssh);
+                break (presented, handle);
+            }
+        })
+        .await
+        .expect("same-target native terminal admission remained busy");
         frontends.push(presented);
         live.push(handle);
     }
@@ -1671,33 +1795,9 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
         assert!(text.text().contains(std::str::from_utf8(expected).unwrap()));
         assert!(!text.text().contains(std::str::from_utf8(foreign).unwrap()));
     }
-    let inventory_operation = OperationId::new();
-    tokio::time::timeout(Duration::from_secs(8), async {
-        loop {
-            match control
-                .request(
-                    inventory_operation.clone(),
-                    Request::List { cursor: None },
-                    &cancel,
-                )
-                .await
-                .unwrap()
-                .body
-            {
-                Response::Inventory { page } => {
-                    assert_eq!(page.sessions.len(), 2);
-                    assert!(page.sessions.iter().all(|session| session.attached));
-                    break;
-                }
-                Response::Refused {
-                    reason: festerm_host_protocol::Refusal::Busy,
-                } => tokio::time::sleep(Duration::from_millis(10)).await,
-                response => panic!("independent inventory failed: {response:?}"),
-            }
-        }
-    })
-    .await
-    .unwrap();
+    let page = complete_inventory(&mut control, &targets, &cancel).await;
+    assert_eq!(page.sessions.len(), 2);
+    assert!(page.sessions.iter().all(|session| session.attached));
     for terminal in &mut live {
         let operation = terminal.request_detach().unwrap();
         tokio::time::timeout(Duration::from_secs(8), async {
