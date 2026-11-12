@@ -1,12 +1,12 @@
 //! Host side of the Dev Tunnels relay handshake (desktop/remote host only).
 use std::{io, sync::Arc, time::Duration};
 
-use russh::{Channel, ChannelId, ChannelStream, client, server};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use russh::{client, server, Channel, ChannelId, ChannelStream};
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tunnels::{
     contracts::{TunnelConnectionMode, TunnelEndpoint},
-    management::{Authorization, TunnelLocator, TunnelRequestOptions, new_tunnel_management},
+    management::{new_tunnel_management, Authorization, TunnelLocator, TunnelRequestOptions},
 };
 
 use crate::{
@@ -178,13 +178,11 @@ pub async fn host_with_identity(
         id: Some(format!("{host_id}-relay")),
         host_id,
         connection_mode: TunnelConnectionMode::TunnelRelay,
-        host_public_keys: vec![
-            public
-                .split_whitespace()
-                .nth(1)
-                .ok_or_else(|| stage_error("host.key_encoding"))?
-                .to_owned(),
-        ],
+        host_public_keys: vec![public
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| stage_error("host.key_encoding"))?
+            .to_owned()],
         port_uri_format: None,
         tunnel_uri: None,
         port_ssh_command_format: None,
@@ -635,11 +633,9 @@ pub(crate) mod tests {
         {
             let closing = listener.close();
             tokio::pin!(closing);
-            assert!(
-                tokio::time::timeout(Duration::from_secs(3), &mut closing)
-                    .await
-                    .is_err()
-            );
+            assert!(tokio::time::timeout(Duration::from_secs(3), &mut closing)
+                .await
+                .is_err());
         }
         assert!(listener.cancel.is_cancelled());
         assert!(!listener.service.as_ref().unwrap().is_finished());
@@ -712,11 +708,9 @@ pub(crate) mod tests {
             for index in 0..10 {
                 let value = take_string(&mut names);
                 if index == 4 || index == 5 {
-                    assert!(
-                        value
-                            .split(|byte| *byte == b',')
-                            .any(|name| name == b"none")
-                    );
+                    assert!(value
+                        .split(|byte| *byte == b',')
+                        .any(|name| name == b"none"));
                 }
             }
             let mut kex = vec![20];
@@ -984,12 +978,10 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert!(client.authenticate_none("tunnel").await.unwrap().success());
-        assert!(
-            client
-                .channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 0)
-                .await
-                .is_err()
-        );
+        assert!(client
+            .channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 0)
+            .await
+            .is_err());
         let mut channel = client
             .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
             .await
@@ -1063,11 +1055,9 @@ pub(crate) mod tests {
                         .unwrap();
                     assert!(sibling.verify_owner(pending, &proof, &verifier).is_err());
                     let pending = sibling.challenge_owner(&verifier).unwrap();
-                    assert!(
-                        connection
-                            .prove_owner_fixture(&vault, &key, &approved, pending.challenge())
-                            .is_err()
-                    );
+                    assert!(connection
+                        .prove_owner_fixture(&vault, &key, &approved, pending.challenge())
+                        .is_err());
                 }
             }
             stream.write_all(b"o").await.unwrap();
@@ -1089,11 +1079,9 @@ pub(crate) mod tests {
         }
         drop(extra);
         connection.close().await.unwrap();
-        assert!(
-            tokio::time::timeout(Duration::from_secs(3), server)
-                .await
-                .is_ok()
-        );
+        assert!(tokio::time::timeout(Duration::from_secs(3), server)
+            .await
+            .is_ok());
         assert_eq!(clients.available_permits(), 0);
         drop(accepted);
         assert_eq!(clients.available_permits(), 1);
@@ -1132,15 +1120,13 @@ pub(crate) mod tests {
             )
             .await;
         });
-        assert!(
-            client::connect_stream(
-                Arc::new(client_config()),
-                client_io,
-                VerifiedHost(pin(&key()))
-            )
-            .await
-            .is_err()
-        );
+        assert!(client::connect_stream(
+            Arc::new(client_config()),
+            client_io,
+            VerifiedHost(pin(&key()))
+        )
+        .await
+        .is_err());
         server.abort();
     }
 
@@ -1351,11 +1337,9 @@ pub(crate) mod tests {
         };
         let pending = accepted.challenge_owner(&verifier).unwrap();
         let proof = proof_for(&pending);
-        assert!(
-            other
-                .prove_owner_fixture(&vault, &owner_key, &approved, pending.challenge())
-                .is_err()
-        );
+        assert!(other
+            .prove_owner_fixture(&vault, &owner_key, &approved, pending.challenge())
+            .is_err());
         assert!(other_host.verify_owner(pending, &proof, &verifier).is_err());
         let pending = accepted.challenge_owner(&verifier).unwrap();
         assert!(accepted.verify_owner(pending, &proof, &verifier).is_err());
@@ -1374,11 +1358,9 @@ pub(crate) mod tests {
                 3 => foreign.host.host_key_fingerprint = format!("SHA256:{}", "a".repeat(43)),
                 _ => foreign.principal = Default::default(),
             }
-            assert!(
-                client
-                    .prove_owner_fixture(&vault, &owner_key, &foreign, pending.challenge())
-                    .is_err()
-            );
+            assert!(client
+                .prove_owner_fixture(&vault, &owner_key, &foreign, pending.challenge())
+                .is_err());
         }
         let foreign_key = fixture_key(&vault, &approved);
         let pending = accepted.challenge_owner(&verifier).unwrap();

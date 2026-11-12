@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     host_control::tests::Policy,
-    owner_auth::{OwnerPolicy, OwnerVerifier, PinnedHost, fixture_key},
+    owner_auth::{fixture_key, OwnerPolicy, OwnerVerifier, PinnedHost},
     relay_host::tests::owner_network_pair,
 };
 use festerm_host_protocol::{
@@ -969,11 +969,9 @@ async fn native_selected_host_creation_worker_adopts_isolated_frontends_and_orig
                     frontends[index].ingest(frame.payload());
                     observed.extend_from_slice(frame.payload());
                     assert!(observed.len() < 64 * 1024);
-                    assert!(
-                        !observed
-                            .windows(foreign.len())
-                            .any(|bytes| bytes == foreign.as_bytes())
-                    );
+                    assert!(!observed
+                        .windows(foreign.len())
+                        .any(|bytes| bytes == foreign.as_bytes()));
                     if observed
                         .windows(expected.len())
                         .any(|bytes| bytes == expected.as_bytes())
@@ -1072,18 +1070,14 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
     foreign.input(b"independent\n").unwrap();
     let foreign_output = terminal_output_until(&mut foreign, b"FOREIGN-MOBILE:independent").await;
     foreign_frontend.ingest(&foreign_output);
-    assert!(
-        foreign_frontend
-            .text_snapshot()
-            .text()
-            .contains("FOREIGN-MOBILE:independent")
-    );
-    assert!(
-        !foreign_frontend
-            .text_snapshot()
-            .text()
-            .contains("OWNED-MOBILE")
-    );
+    assert!(foreign_frontend
+        .text_snapshot()
+        .text()
+        .contains("FOREIGN-MOBILE:independent"));
+    assert!(!foreign_frontend
+        .text_snapshot()
+        .text()
+        .contains("OWNED-MOBILE"));
     let (stream, permit) = fixture.stream(StreamRole::Terminal).await;
     let scope = Scope {
         request: OperationId::new(),
@@ -1167,11 +1161,10 @@ async fn native_mobile_host_session_adopts_actual_pty_and_retains_original_until
                 } => tokio::time::sleep(Duration::from_millis(25)).await,
                 Response::Inventory { page } => {
                     assert!(page.sessions.iter().any(|session| session.target == target));
-                    assert!(
-                        page.sessions
-                            .iter()
-                            .any(|session| session.target == foreign_target)
-                    );
+                    assert!(page
+                        .sessions
+                        .iter()
+                        .any(|session| session.target == foreign_target));
                     break;
                 }
                 other => panic!("cancel is not detach, end, or absence: {other:?}"),
@@ -1523,12 +1516,10 @@ async fn authenticated_runtime_routes_actual_ssh_control_and_rechecks_revocation
     revoked.host_epoch = Epoch::new(2).unwrap();
     *fixture.source.0.lock().await =
         OwnerVerifier::from_protected_permissions(revoked, &[fixture.key.public_key()]).unwrap();
-    assert!(
-        client
-            .request(OperationId::new(), Request::List { cursor: None }, &cancel)
-            .await
-            .is_err()
-    );
+    assert!(client
+        .request(OperationId::new(), Request::List { cursor: None }, &cancel)
+        .await
+        .is_err());
     assert!(server.await.unwrap().is_err());
     drop(client);
     ssh.abort();
@@ -1673,11 +1664,9 @@ async fn native_authenticated_runtime_routes_two_ssh_terminals_without_cross_ses
         })
         .await
         .unwrap();
-        assert!(
-            !observed
-                .windows(foreign.len())
-                .any(|bytes| bytes == foreign)
-        );
+        assert!(!observed
+            .windows(foreign.len())
+            .any(|bytes| bytes == foreign));
         let text = frontends[index].text_snapshot();
         assert!(text.text().contains(std::str::from_utf8(expected).unwrap()));
         assert!(!text.text().contains(std::str::from_utf8(foreign).unwrap()));
@@ -1866,8 +1855,9 @@ async fn native_authenticated_runtime_end_confirms_original_exact_gone_generatio
 #[ignore = "requires explicitly built owned native helper and fixture child"]
 async fn native_protected_original_end_reopens_and_settles_exact_generation() {
     use crate::host_client::{
-        self, CreationIntent, CreationMode, EndIntent, Outcome,
-        originals::{RecoveredIntent, testing},
+        self,
+        originals::{testing, RecoveredIntent},
+        CreationIntent, CreationMode, EndIntent, Outcome,
     };
     use festerm_host_protocol::{GenerationId, LookupResult, Refusal, Target};
 
@@ -2076,18 +2066,16 @@ async fn native_authenticated_runtime_creation_retains_issuer_and_exact_end_auth
     let mut control = fixture.control().await;
     let creation = fixture.native.creation();
     let issued = control.issue_operation().unwrap();
-    assert!(
-        control
-            .request(
-                OperationId::new(),
-                Request::Create {
-                    creation: creation.clone(),
-                },
-                &CancellationToken::new(),
-            )
-            .await
-            .is_err()
-    );
+    assert!(control
+        .request(
+            OperationId::new(),
+            Request::Create {
+                creation: creation.clone(),
+            },
+            &CancellationToken::new(),
+        )
+        .await
+        .is_err());
     assert!(
         festerm_sessiond::list_running_sessions_in(&fixture.native.root)
             .unwrap()
@@ -2330,11 +2318,9 @@ async fn native_authenticated_runtime_takeover_waits_for_adoption_and_fences_old
     assert!(old.input(b"must-not-replay\n").is_err());
     current.input(b"after-adoption\n").unwrap();
     let output = terminal_output_until(&mut current, b"new-writer:after-adoption").await;
-    assert!(
-        !output
-            .windows(b"must-not-replay".len())
-            .any(|bytes| bytes == b"must-not-replay")
-    );
+    assert!(!output
+        .windows(b"must-not-replay".len())
+        .any(|bytes| bytes == b"must-not-replay"));
     drop((old, current, control));
     fixture.shutdown().await;
 }

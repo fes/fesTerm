@@ -3,10 +3,10 @@
 mod linux_login;
 
 use crate::{
-    cloud::{Cleanup, CloudHostAdapter, Foreground, HOST_IDENTITY_FILE, Health},
+    cloud::{Cleanup, CloudHostAdapter, Foreground, Health, HOST_IDENTITY_FILE},
     enrollment::{
-        CurrentOwnerPolicySource, EnrollmentSnapshot, OwnerEnrollment, OwnerStorage,
-        owner_key_fingerprint,
+        owner_key_fingerprint, CurrentOwnerPolicySource, EnrollmentSnapshot, OwnerEnrollment,
+        OwnerStorage,
     },
     lifecycle::{Phase, Snapshot, Startup, Store},
     protected_state::Lease,
@@ -1240,11 +1240,9 @@ mod tests {
                         recovering,
                     );
                     tokio::pin!(watched);
-                    assert!(
-                        tokio::time::timeout(Duration::from_secs(3), &mut watched)
-                            .await
-                            .is_err()
-                    );
+                    assert!(tokio::time::timeout(Duration::from_secs(3), &mut watched)
+                        .await
+                        .is_err());
                     assert_eq!(calls.get(), 1);
                     if revoke {
                         store.revoke().unwrap();
@@ -1465,11 +1463,9 @@ mod tests {
         tokio::pin!(watched);
         store.revoke().unwrap();
         let current = store.snapshot().unwrap();
-        assert!(
-            tokio::time::timeout(Duration::from_secs(2), &mut watched)
-                .await
-                .is_err()
-        );
+        assert!(tokio::time::timeout(Duration::from_secs(2), &mut watched)
+            .await
+            .is_err());
         assert!(shutdown.is_cancelled());
         assert!(!revoked_runtime_released(&store, &current).unwrap());
         finish.send(()).unwrap();
@@ -1501,16 +1497,14 @@ mod tests {
         drop(policy_lease);
         let current = current.await.unwrap();
         assert_eq!(current, expected);
-        assert!(
-            authorize_run(
-                &store,
-                &root.path().join("host"),
-                &expected,
-                &mut record,
-                &current
-            )
-            .is_err()
-        );
+        assert!(authorize_run(
+            &store,
+            &root.path().join("host"),
+            &expected,
+            &mut record,
+            &current
+        )
+        .is_err());
         assert_eq!(
             record.failure,
             Some(RunFailure::AuthenticatedBundleRequired)
@@ -1628,11 +1622,9 @@ mod tests {
         );
         let watched = linux_login::guard(&Eligible, cancel, hosting_cancel, hosted);
         tokio::pin!(watched);
-        assert!(
-            tokio::time::timeout(Duration::from_secs(4), &mut watched)
-                .await
-                .is_err()
-        );
+        assert!(tokio::time::timeout(Duration::from_secs(4), &mut watched)
+            .await
+            .is_err());
         assert!(!shutdown.is_cancelled());
         drop(policy_lease);
         assert_eq!(
@@ -1754,14 +1746,12 @@ mod tests {
     fn host_runtime_disable_does_not_confirm_foreign_stop_or_cloud_uncertainty() {
         let (_root, store) = fixture();
         provision(&store);
-        assert!(
-            disable_with(&store, Duration::ZERO, |epoch| {
-                let mut observed = observed_stop(&store, epoch);
-                observed.installation = uuid::Uuid::new_v4().to_string();
-                Ok(observed)
-            })
-            .is_err()
-        );
+        assert!(disable_with(&store, Duration::ZERO, |epoch| {
+            let mut observed = observed_stop(&store, epoch);
+            observed.installation = uuid::Uuid::new_v4().to_string();
+            Ok(observed)
+        })
+        .is_err());
         assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
         assert!(store.request_cleanup().is_err());
 
@@ -1824,11 +1814,9 @@ mod tests {
         let before = store.snapshot().unwrap();
         let cancel = CancellationToken::new();
         cancel.cancel();
-        assert!(
-            uninstall(&store, &root.path().join("host"), &cancel)
-                .await
-                .is_err()
-        );
+        assert!(uninstall(&store, &root.path().join("host"), &cancel)
+            .await
+            .is_err());
         assert_eq!(store.snapshot().unwrap(), before);
         fixture_disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
@@ -1842,13 +1830,11 @@ mod tests {
                 .unwrap(),
             UninstallResult::AlreadyRemovedNotReobserved,
         );
-        assert!(
-            !root
-                .path()
-                .join("host")
-                .join("native-service.json")
-                .exists()
-        );
+        assert!(!root
+            .path()
+            .join("host")
+            .join("native-service.json")
+            .exists());
         assert!(!root.path().join("host").join("host-cloud.json").exists());
     }
 
@@ -1889,13 +1875,11 @@ mod tests {
         );
         assert!(!root.path().join("host").join("daemon").exists());
         assert!(!root.path().join("host").join("host-cloud.json").exists());
-        assert!(
-            !root
-                .path()
-                .join("host")
-                .join("owner-enrollment.json")
-                .exists()
-        );
+        assert!(!root
+            .path()
+            .join("host")
+            .join("owner-enrollment.json")
+            .exists());
         assert_eq!(store.snapshot().unwrap().phase, Phase::Provisioned);
     }
 

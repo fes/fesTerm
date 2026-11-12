@@ -5,16 +5,16 @@
 //! listeners, port-management API, or unbounded forwarding queues.
 use std::{io, sync::Arc, time::Duration};
 
-use russh::{Channel, ChannelStream, client};
+use russh::{client, Channel, ChannelStream};
 use serde::{Deserialize, Serialize};
 use tunnels::{
     connections::{
-        AsyncRWWebSocket, AsyncRWWebSocketOptions, build_websocket_request, connect_directly,
+        build_websocket_request, connect_directly, AsyncRWWebSocket, AsyncRWWebSocketOptions,
     },
     contracts::TunnelEndpoint,
 };
 
-use crate::protocol::{Target, invalid};
+use crate::protocol::{invalid, Target};
 
 // Neither relay role grants shell, agent, filesystem, or arbitrary forwarding
 // channels. Dropping each admission handle rejects it before registration.

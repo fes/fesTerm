@@ -10,12 +10,12 @@ use festerm_secret_store::{SecretBytes, SecretReference, SecretStore};
 use festerm_sessiond::private_storage as storage;
 use festerm_tunnel_bridge::host_identity::HostIdentity;
 use festerm_tunnel_client::{
-    Error as AccountError, Https,
     host::{
-        CreateError, HOST_LABEL, HOST_PORT, Management, Observation, PreparedCreate, Receipt,
-        Resource,
+        CreateError, Management, Observation, PreparedCreate, Receipt, Resource, HOST_LABEL,
+        HOST_PORT,
     },
     identity::{self, DevicePrompt, Identity},
+    Error as AccountError, Https,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs::File, io, path::Path};
@@ -1814,8 +1814,8 @@ mod tests {
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
-    async fn host_controller_setup_orders_real_identity_account_policy_and_registration_without_shells()
-     {
+    async fn host_controller_setup_orders_real_identity_account_policy_and_registration_without_shells(
+    ) {
         let (root, store, secrets) = fixture();
         let boundary = controller_boundary(&store, secrets);
         let stage = crate::services::fixture_stage(&root.path().join("stage"));
@@ -2022,51 +2022,7 @@ mod tests {
                 boundary.network.state.borrow_mut().revoke_create = true;
             }
             let stage = crate::services::fixture_stage(&root.path().join("stage"));
-            assert!(
-                crate::controller::setup_with(
-                    crate::controller::SetupRequest {
-                        store: &store,
-                        state: &root.path().join("host"),
-                        stage: &stage,
-                        account: 42,
-                        cancel: &CancellationToken::new()
-                    },
-                    |_| {},
-                    &boundary,
-                )
-                .await
-                .is_err()
-            );
-            assert!(!boundary.events.borrow().contains(&"owners"));
-            assert!(!boundary.events.borrow().contains(&"install"));
-            assert!(!root.path().join("host/owner-enrollment.json").exists());
-            assert!(!root.path().join("host/daemon").exists());
-            if after == "provision" {
-                assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
-                assert!(
-                    CloudHostAdapter::fixture(&store)
-                        .load()
-                        .unwrap()
-                        .receipt
-                        .is_some()
-                );
-            } else {
-                assert_eq!(store.snapshot().unwrap().phase, Phase::Reconciling);
-                assert_eq!(boundary.network.state.borrow().creates, 0);
-            }
-        }
-    }
-
-    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
-    #[tokio::test(start_paused = true)]
-    async fn host_controller_setup_retries_failed_install_without_duplicate_cloud_or_owner_identity()
-     {
-        let (root, store, secrets) = fixture();
-        let boundary = controller_boundary(&store, secrets);
-        boundary.fail_install.set(true);
-        let stage = crate::services::fixture_stage(&root.path().join("stage"));
-        assert!(
-            crate::controller::setup_with(
+            assert!(crate::controller::setup_with(
                 crate::controller::SetupRequest {
                     store: &store,
                     state: &root.path().join("host"),
@@ -2078,8 +2034,46 @@ mod tests {
                 &boundary,
             )
             .await
-            .is_err()
-        );
+            .is_err());
+            assert!(!boundary.events.borrow().contains(&"owners"));
+            assert!(!boundary.events.borrow().contains(&"install"));
+            assert!(!root.path().join("host/owner-enrollment.json").exists());
+            assert!(!root.path().join("host/daemon").exists());
+            if after == "provision" {
+                assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
+                assert!(CloudHostAdapter::fixture(&store)
+                    .load()
+                    .unwrap()
+                    .receipt
+                    .is_some());
+            } else {
+                assert_eq!(store.snapshot().unwrap().phase, Phase::Reconciling);
+                assert_eq!(boundary.network.state.borrow().creates, 0);
+            }
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[tokio::test(start_paused = true)]
+    async fn host_controller_setup_retries_failed_install_without_duplicate_cloud_or_owner_identity(
+    ) {
+        let (root, store, secrets) = fixture();
+        let boundary = controller_boundary(&store, secrets);
+        boundary.fail_install.set(true);
+        let stage = crate::services::fixture_stage(&root.path().join("stage"));
+        assert!(crate::controller::setup_with(
+            crate::controller::SetupRequest {
+                store: &store,
+                state: &root.path().join("host"),
+                stage: &stage,
+                account: 42,
+                cancel: &CancellationToken::new()
+            },
+            |_| {},
+            &boundary,
+        )
+        .await
+        .is_err());
         let owners = store
             .owner_enrollment_with_storage(crate::enrollment::OwnerStorage::HeadlessProtectedFile)
             .unwrap();
@@ -2152,8 +2146,8 @@ mod tests {
 
     #[cfg(all(feature = "host-runtime", feature = "native-services"))]
     #[tokio::test(start_paused = true)]
-    async fn host_controller_cancelled_or_missing_account_consent_has_no_identity_or_account_effect()
-     {
+    async fn host_controller_cancelled_or_missing_account_consent_has_no_identity_or_account_effect(
+    ) {
         let (root, store, secrets) = fixture();
         let boundary = controller_boundary(&store, secrets);
         let stage = crate::services::fixture_stage(&root.path().join("stage"));
@@ -2162,21 +2156,19 @@ mod tests {
             if account == 42 {
                 cancel.cancel();
             }
-            assert!(
-                crate::controller::setup_with(
-                    crate::controller::SetupRequest {
-                        store: &store,
-                        state: &root.path().join("host"),
-                        stage: &stage,
-                        account,
-                        cancel: &cancel
-                    },
-                    |_| panic!("no prompt without consent"),
-                    &boundary,
-                )
-                .await
-                .is_err()
-            );
+            assert!(crate::controller::setup_with(
+                crate::controller::SetupRequest {
+                    store: &store,
+                    state: &root.path().join("host"),
+                    stage: &stage,
+                    account,
+                    cancel: &cancel
+                },
+                |_| panic!("no prompt without consent"),
+                &boundary,
+            )
+            .await
+            .is_err());
             assert!(boundary.events.borrow().is_empty());
             assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
             assert!(store.snapshot().unwrap().pending_ticket().is_none());
@@ -2221,12 +2213,10 @@ mod tests {
         assert_eq!(HostIdentity::load(&path).unwrap().host_id(), host_id);
 
         std::fs::remove_file(&path).unwrap();
-        assert!(
-            adapter
-                .relay_authorization_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .relay_authorization_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert!(adapter.foreground(&approved.record.ticket, 42).is_err());
         assert!(!path.exists());
         assert_eq!(network.state.borrow().creates, 1);
@@ -2444,12 +2434,10 @@ mod tests {
             .await
             .unwrap();
         network.state.borrow_mut().lose_reply = true;
-        assert!(
-            adapter
-                .provision_with(&initial, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&initial, &cancel, &network, &secrets)
+            .await
+            .is_err());
         store.revoke().unwrap();
         let recovery = adapter
             .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
@@ -2584,24 +2572,20 @@ mod tests {
             state.lose_reply = true;
             state.create_without_resource = true;
         }
-        assert!(
-            adapter
-                .provision_with(&initial, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&initial, &cancel, &network, &secrets)
+            .await
+            .is_err());
         store.revoke().unwrap();
         let recovery = adapter
             .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
             .unwrap();
         adapter.acknowledge_uncertain_submission(&recovery).unwrap();
         let original = adapter.load().unwrap();
-        assert!(
-            adapter
-                .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert!(adapter.load().unwrap() == original);
         assert_eq!(store.snapshot().unwrap().phase, Phase::Disabled);
         {
@@ -2612,12 +2596,10 @@ mod tests {
             });
             state.revoke_observe = true;
         }
-        assert!(
-            adapter
-                .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert!(adapter.load().unwrap().receipt.is_some());
         assert!(store.snapshot().unwrap().binding.is_none());
         let pinned = adapter.load().unwrap();
@@ -2626,12 +2608,10 @@ mod tests {
             state.revoke_observe = false;
             state.created.as_mut().unwrap().created = "foreign-incarnation".into();
         }
-        assert!(
-            adapter
-                .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert!(adapter.load().unwrap() == pinned);
         network.state.borrow_mut().created = pinned.receipt.clone();
         assert_eq!(
@@ -2658,12 +2638,10 @@ mod tests {
                 .await
                 .unwrap();
             network.state.borrow_mut().lose_reply = true;
-            assert!(
-                adapter
-                    .provision_with(&initial, &cancel, &network, &secrets)
-                    .await
-                    .is_err()
-            );
+            assert!(adapter
+                .provision_with(&initial, &cancel, &network, &secrets)
+                .await
+                .is_err());
             store.revoke().unwrap();
             let recovery = adapter
                 .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
@@ -2691,12 +2669,10 @@ mod tests {
                 }
                 _ => unreachable!(),
             }
-            assert!(
-                adapter
-                    .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
-                    .await
-                    .is_err()
-            );
+            assert!(adapter
+                .adopt_uncertain_for_cleanup_with(&cancel, &network, &secrets)
+                .await
+                .is_err());
             assert!(adapter.load().unwrap() == before);
             let snapshot = store.snapshot().unwrap();
             assert_eq!(snapshot.phase, Phase::Disabled);
@@ -2717,39 +2693,33 @@ mod tests {
         let cancelled = CancellationToken::new();
         cancelled.cancel();
         network.state.borrow_mut().revoke_sign_in = true;
-        assert!(
-            adapter
-                .sign_in_with(
-                    &foreground,
-                    &CancellationToken::new(),
-                    |prompt| {
-                        assert_eq!(prompt.user_code, "ABCD-1234");
-                    },
-                    &network,
-                    &secrets
-                )
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .sign_in_with(
+                &foreground,
+                &CancellationToken::new(),
+                |prompt| {
+                    assert_eq!(prompt.user_code, "ABCD-1234");
+                },
+                &network,
+                &secrets
+            )
+            .await
+            .is_err());
         assert_eq!(network.state.borrow().sign_ins, 1);
-        assert!(
-            adapter
-                .sign_in_with(&foreground, &cancelled, |_| panic!(), &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .sign_in_with(&foreground, &cancelled, |_| panic!(), &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(network.state.borrow().sign_ins, 1);
         assert!(matches!(
             secrets.get(&reference(&foreground.record).unwrap()),
             Err(SecretStoreError::Missing)
         ));
         assert!(!adapter.load().unwrap().authenticated);
-        assert!(
-            adapter
-                .provision_with(&foreground, &CancellationToken::new(), &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&foreground, &CancellationToken::new(), &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(network.state.borrow().creates, 0);
         assert_eq!(store.snapshot().unwrap().phase, Phase::Reconciling);
         assert!(!store.snapshot().unwrap().settings.allow_creation);
@@ -2778,12 +2748,10 @@ mod tests {
             .await
             .unwrap();
         network.state.borrow_mut().lose_reply = true;
-        assert!(
-            adapter
-                .provision_with(&foreground, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
         let record = adapter.load().unwrap();
         assert!(record.submitted && record.receipt.is_none());
         store.revoke().unwrap();
@@ -2847,22 +2815,18 @@ mod tests {
             AccountError::RateLimited,
         ] {
             network.state.borrow_mut().observe_error = Some(error);
-            assert!(
-                adapter
-                    .health_with(&cancel, &network, &secrets)
-                    .await
-                    .is_err()
-            );
+            assert!(adapter
+                .health_with(&cancel, &network, &secrets)
+                .await
+                .is_err());
         }
 
         network.state.borrow_mut().observe_error = None;
         network.state.borrow_mut().confirm_error = Some(AccountError::AccountChanged);
-        assert!(
-            adapter
-                .health_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .health_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         network.state.borrow_mut().confirm_error = None;
         crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
@@ -2880,26 +2844,20 @@ mod tests {
         assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
         network.state.borrow_mut().created.as_mut().unwrap().created =
             "2026-11-10T00:00:00Z".into();
-        assert!(
-            adapter
-                .cleanup_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
-        assert!(
-            adapter
-                .health_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
+        assert!(adapter
+            .health_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         network.state.borrow_mut().created = None;
         network.state.borrow_mut().observe_error = Some(AccountError::Denied);
-        assert!(
-            adapter
-                .cleanup_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(store.snapshot().unwrap().phase, Phase::CleanupPending);
         network.state.borrow_mut().observe_error = None;
         assert_eq!(
@@ -2928,11 +2886,9 @@ mod tests {
             .provision_with(&approval, &cancel, &network, &secrets)
             .await
             .unwrap();
-        assert!(
-            adapter
-                .pending_cleanup_context(&store.snapshot().unwrap())
-                .is_err()
-        );
+        assert!(adapter
+            .pending_cleanup_context(&store.snapshot().unwrap())
+            .is_err());
         crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
         let before = store.snapshot().unwrap();
@@ -2943,11 +2899,9 @@ mod tests {
             fixture_user: Some("fixture:another-account"),
         };
         assert!(foreign.pending_cleanup_context(&before).is_err());
-        assert!(
-            CloudHostAdapter::new(&store)
-                .pending_cleanup_context(&before)
-                .is_err()
-        );
+        assert!(CloudHostAdapter::new(&store)
+            .pending_cleanup_context(&before)
+            .is_err());
         assert_eq!(store.snapshot().unwrap(), before);
         assert!(adapter.load().unwrap() == original);
         let exact = original.receipt.as_ref().unwrap();
@@ -2983,12 +2937,10 @@ mod tests {
         }
         secrets.delete(&reference(&original).unwrap()).unwrap();
         assert_eq!(adapter.pending_cleanup_context(&before).unwrap(), context);
-        assert!(
-            adapter
-                .cleanup_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .cleanup_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(network.state.borrow().sign_ins, 1);
         assert_eq!(network.state.borrow().creates, 1);
         store.revoke().unwrap();
@@ -3170,12 +3122,10 @@ mod tests {
                 .unwrap();
             network.state.borrow_mut().cancel_create = true;
             network.state.borrow_mut().lose_reply = lose_reply;
-            assert!(
-                adapter
-                    .provision_with(&foreground, &cancel, &network, &secrets)
-                    .await
-                    .is_err()
-            );
+            assert!(adapter
+                .provision_with(&foreground, &cancel, &network, &secrets)
+                .await
+                .is_err());
             let record = adapter.load().unwrap();
             assert!(record.submitted);
             assert_eq!(record.receipt.is_some(), !lose_reply);
@@ -3240,12 +3190,10 @@ mod tests {
         secrets
             .update(&credential_ref, &SecretBytes::copy_from_slice(&expired))
             .unwrap();
-        assert!(
-            adapter
-                .provision_with(&foreground, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(network.state.borrow().creates, 0);
         adapter
             .sign_in_with(&foreground, &cancel, |_| {}, &network, &secrets)
@@ -3259,12 +3207,10 @@ mod tests {
         let original = store.snapshot().unwrap().binding.unwrap();
         crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         let next = super::tests::foreground(&adapter);
-        assert!(
-            adapter
-                .sign_in_with(&foreground, &cancel, |_| panic!(), &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .sign_in_with(&foreground, &cancel, |_| panic!(), &network, &secrets)
+            .await
+            .is_err());
         adapter
             .sign_in_with(&next, &cancel, |_| panic!(), &network, &secrets)
             .await
@@ -3282,12 +3228,10 @@ mod tests {
         // Missing/expired vault credentials never become an empty cloud result.
         let record = adapter.load().unwrap();
         secrets.delete(&reference(&record).unwrap()).unwrap();
-        assert!(
-            adapter
-                .health_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .health_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
     }
 
     #[tokio::test(start_paused = true)]
@@ -3310,12 +3254,10 @@ mod tests {
                     _ => state.create_error = Some(CreateError::Rejected(AccountError::Response)),
                 }
             }
-            assert!(
-                adapter
-                    .provision_with(&foreground, &cancel, &network, &secrets)
-                    .await
-                    .is_err()
-            );
+            assert!(adapter
+                .provision_with(&foreground, &cancel, &network, &secrets)
+                .await
+                .is_err());
             let reserved = adapter.load().unwrap();
             assert!(!reserved.submitted);
             assert!(network.state.borrow().created.is_none());
@@ -3338,12 +3280,10 @@ mod tests {
                 state.cancel_before_send = false;
                 state.create_error = None;
             }
-            assert!(
-                adapter
-                    .provision_with(&foreground, &CancellationToken::new(), &network, &secrets)
-                    .await
-                    .is_err()
-            );
+            assert!(adapter
+                .provision_with(&foreground, &CancellationToken::new(), &network, &secrets)
+                .await
+                .is_err());
             assert_eq!(
                 adapter
                     .provision_with(&next, &CancellationToken::new(), &network, &secrets)
@@ -3370,12 +3310,10 @@ mod tests {
             .await
             .unwrap();
         network.state.borrow_mut().lose_reply = true;
-        assert!(
-            adapter
-                .provision_with(&foreground, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
         let original = adapter.load().unwrap();
         {
             let mut state = network.state.borrow_mut();
@@ -3383,49 +3321,39 @@ mod tests {
             state.lose_reply = false;
             state.observe_error = Some(AccountError::Denied);
         }
-        assert!(
-            adapter
-                .provision_with(&foreground, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
         network.state.borrow_mut().observe_error = None;
         network.state.borrow_mut().confirm_error = Some(AccountError::AccountChanged);
-        assert!(
-            adapter
-                .provision_with(&foreground, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(network.state.borrow().creates, 1);
         network.state.borrow_mut().confirm_error = None;
         // A non-foreground reconcile cannot submit, even after an exact 404.
-        assert!(
-            adapter
-                .reconcile_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .reconcile_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(network.state.borrow().creates, 1);
         let mut legacy = original.clone();
         legacy.creation_name = None;
         adapter.save(&legacy).unwrap();
-        assert!(
-            adapter
-                .provision_with(&foreground, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(network.state.borrow().creates, 1);
         adapter.save(&original).unwrap();
         network.state.borrow_mut().create_error =
             Some(CreateError::Rejected(AccountError::Response));
-        assert!(
-            adapter
-                .provision_with(&foreground, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&foreground, &cancel, &network, &secrets)
+            .await
+            .is_err());
         assert!(adapter.load().unwrap().submitted);
         assert_eq!(network.state.borrow().creates, 2);
         network.state.borrow_mut().create_error = None;
@@ -3528,8 +3456,8 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource()
-     {
+    async fn host_cloud_offline_cancel_acknowledgement_retains_uncertainty_and_observes_late_resource(
+    ) {
         let (_root, store, secrets) = fixture();
         let adapter = CloudHostAdapter::fixture(&store);
         let initial = foreground(&adapter);
@@ -3544,25 +3472,19 @@ mod tests {
             state.create_error = Some(CreateError::Uncertain(AccountError::Network));
             state.create_without_resource = true;
         }
-        assert!(
-            adapter
-                .provision_with(&initial, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&initial, &cancel, &network, &secrets)
+            .await
+            .is_err());
         store.revoke().unwrap();
         let original = adapter.load().unwrap();
         let epoch = store.snapshot().unwrap().epoch;
-        assert!(
-            adapter
-                .foreground_recovery(&initial.record.ticket, epoch, 99)
-                .is_err()
-        );
-        assert!(
-            adapter
-                .foreground_recovery(&initial.record.ticket, epoch - 1, 42)
-                .is_err()
-        );
+        assert!(adapter
+            .foreground_recovery(&initial.record.ticket, epoch, 99)
+            .is_err());
+        assert!(adapter
+            .foreground_recovery(&initial.record.ticket, epoch - 1, 42)
+            .is_err());
         let stale = adapter
             .foreground_recovery(&initial.record.ticket, epoch, 42)
             .unwrap();
@@ -3575,30 +3497,22 @@ mod tests {
         let (_other_root, other_store, _) = fixture();
         let other_adapter = CloudHostAdapter::fixture(&other_store);
         let other_foreground = foreground(&other_adapter);
-        assert!(
-            adapter
-                .foreground_recovery(&other_foreground.record.ticket, epoch, 42)
-                .is_err()
-        );
-        assert!(
-            other_adapter
-                .acknowledge_uncertain_submission(&recovery)
-                .is_err()
-        );
-        assert!(
-            adapter
-                .reconcile_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .foreground_recovery(&other_foreground.record.ticket, epoch, 42)
+            .is_err());
+        assert!(other_adapter
+            .acknowledge_uncertain_submission(&recovery)
+            .is_err());
+        assert!(adapter
+            .reconcile_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(store.snapshot().unwrap().phase, Phase::Reconciling);
         network.state.borrow_mut().observe_error = Some(AccountError::Network);
-        assert!(
-            adapter
-                .reconcile_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .reconcile_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(store.snapshot().unwrap().phase, Phase::Reconciling);
         assert_eq!(
             adapter.acknowledge_uncertain_submission(&recovery).unwrap(),
@@ -3616,12 +3530,10 @@ mod tests {
             Phase::Disabled
         );
         assert_eq!(network.state.borrow().observes, observes);
-        assert!(
-            adapter
-                .health_with(&cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .health_with(&cancel, &network, &secrets)
+            .await
+            .is_err());
         assert!(store.request_cleanup().is_err());
         assert!(adapter.acknowledge_uncertain_submission(&recovery).is_err());
         {
@@ -3641,12 +3553,10 @@ mod tests {
             Phase::Disabled
         );
         let next = foreground(&adapter);
-        assert!(
-            adapter
-                .provision_with(&initial, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&initial, &cancel, &network, &secrets)
+            .await
+            .is_err());
         assert_eq!(
             adapter
                 .provision_with(&next, &cancel, &network, &secrets)
@@ -3675,12 +3585,10 @@ mod tests {
             .await
             .unwrap();
         network.state.borrow_mut().lose_reply = true;
-        assert!(
-            adapter
-                .provision_with(&initial, &cancel, &network, &secrets)
-                .await
-                .is_err()
-        );
+        assert!(adapter
+            .provision_with(&initial, &cancel, &network, &secrets)
+            .await
+            .is_err());
         store.revoke().unwrap();
         let recovery = adapter
             .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
@@ -3690,11 +3598,9 @@ mod tests {
         record.receipt = network.state.borrow().created.clone();
         adapter.save(&record).unwrap();
         assert!(adapter.acknowledge_uncertain_submission(&recovery).is_err());
-        assert!(
-            adapter
-                .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
-                .is_err()
-        );
+        assert!(adapter
+            .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
+            .is_err());
         assert_eq!(
             adapter
                 .reconcile_with(&cancel, &network, &secrets)
@@ -3703,11 +3609,9 @@ mod tests {
             Phase::StopRequested
         );
         assert!(adapter.acknowledge_uncertain_submission(&recovery).is_err());
-        assert!(
-            adapter
-                .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
-                .is_err()
-        );
+        assert!(adapter
+            .foreground_recovery(&initial.record.ticket, store.snapshot().unwrap().epoch, 42)
+            .is_err());
         assert!(store.request_cleanup().is_err());
         crate::controller::fixture_disable(&store, &root.path().join("host")).unwrap();
         assert!(adapter.acknowledge_uncertain_submission(&recovery).is_err());
