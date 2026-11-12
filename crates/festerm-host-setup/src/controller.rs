@@ -53,6 +53,8 @@ pub(crate) fn revoked_runtime_released(store: &Store, expected: &Snapshot) -> io
     })
 }
 
+pub mod managed;
+
 /// Separate host-local approval after the client reviewed its exact binding.
 pub struct OwnerConsent {
     pub owner_public_key: [u8; 32],
@@ -150,7 +152,7 @@ impl SetupBoundary for NativeBoundary {
         stage: &TrustedStage,
         epoch: u64,
     ) -> io::Result<Observation> {
-        Services::current_user(store, state)?.install(stage, epoch)
+        Services::current_user(store, state)?.install_with_recovery(stage, epoch)
     }
 }
 
@@ -795,8 +797,18 @@ fn reserve(store: &Store) -> io::Result<(Lease, Snapshot, RunRecord)> {
 /// The independent persistent daemon is never stopped by host cancellation.
 pub async fn run(store: Arc<Store>, state: &Path, cancel: CancellationToken) -> io::Result<()> {
     let (_run_lease, snapshot, mut record) = reserve(&store)?;
-    persist(&store, &record)?;
-    let result = run_reserved(store.clone(), state, &snapshot, &mut record, cancel.clone()).await;
+    run_to_completion(store, state, &snapshot, &mut record, cancel).await
+}
+
+async fn run_to_completion(
+    store: Arc<Store>,
+    state: &Path,
+    snapshot: &Snapshot,
+    record: &mut RunRecord,
+    cancel: CancellationToken,
+) -> io::Result<()> {
+    persist(&store, record)?;
+    let result = run_reserved(store.clone(), state, snapshot, record, cancel.clone()).await;
     let result = if cancel.is_cancelled() && result.as_ref().is_err_and(crate::cloud::is_cancelled)
     {
         Ok(())
@@ -820,7 +832,7 @@ pub async fn run(store: Arc<Store>, state: &Path, cancel: CancellationToken) -> 
             });
         }
     }
-    persist(&store, &record)?;
+    persist(&store, record)?;
     result
 }
 

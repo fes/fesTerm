@@ -37,7 +37,11 @@ approve-owner --state-dir PATH --public-key HEX --fingerprint FINGERPRINT --cons
 run --state-dir PATH
     Explicit authenticated host listener; existing native credentials and owner approval required.
 run-status --state-dir PATH
-    Durable last-run history, not a liveness or endpoint-ready claim.
+    Durable last-run/managed-disposition history, not a liveness or endpoint-ready claim.
+run-desktop-status --state-dir PATH
+    The same history for a desktop-origin installation; never adopts headless state.
+run-managed | run-desktop-managed --state-dir PATH
+    Native-manager entry only, requiring a recovery-policy registration. Recorded refusal remains product failure, even when native restart is suppressed.
 uninstall --state-dir PATH --consent remove
     Revoke and remove exact stopped native registration; verified present cloud resources show explicit manual provider review, remain CleanupPending and exit unsuccessfully. Retry verifies absence only; never deletes.
 update --state-dir PATH --from-version VERSION --manifest PATH --signature PATH --archive PATH --cache-root PATH --consent replace
@@ -69,7 +73,7 @@ migration-switch --state-dir PATH --owner-storage native-vault|headless-protecte
 migration-binding-status --state-dir PATH
     Protected per-generation binding/switch/release history, not endpoint readiness.
 
-Manual startup requires an explicit run. Sign-in is user sign-in, NOT pre-login.
+Manual startup requires an explicit start/run. Sign-in is user sign-in, NOT pre-login.
 No native startup registration is performed by configure. Paths must be absolute,
 private, symlink-free and belong to the configured non-system OS user.
 ";
@@ -177,7 +181,12 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
             "--temporary",
         ],
         #[cfg(feature = "owner-routing")]
-        "run" | "run-desktop" | "run-status" => &["--state-dir"],
+        "run"
+        | "run-desktop"
+        | "run-managed"
+        | "run-desktop-managed"
+        | "run-status"
+        | "run-desktop-status" => &["--state-dir"],
         #[cfg(feature = "owner-routing")]
         "uninstall" => &["--state-dir", "--consent"],
         #[cfg(feature = "owner-routing")]
@@ -193,7 +202,15 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
         #[cfg(feature = "owner-routing")]
         "update-status" => &["--state-dir"],
         #[cfg(not(feature = "owner-routing"))]
-        "setup" | "run" | "run-desktop" | "uninstall" | "update" | "update-status" => {
+        "setup"
+        | "run"
+        | "run-desktop"
+        | "run-managed"
+        | "run-desktop-managed"
+        | "run-desktop-status"
+        | "uninstall"
+        | "update"
+        | "update-status" => {
             return Err(unavailable());
         }
         _ => return Err(invalid()),
@@ -510,9 +527,9 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 .map_err(|_| io::Error::other("host.status_serialization"))
         }
         #[cfg(feature = "owner-routing")]
-        "run" | "run-desktop" => {
+        "run" | "run-desktop" | "run-managed" | "run-desktop-managed" => {
             let state = path("--state-dir")?;
-            let origin = if command == "run-desktop" {
+            let origin = if command.starts_with("run-desktop") {
                 Origin::Desktop
             } else {
                 Origin::Headless
@@ -522,17 +539,30 @@ fn execute(args: impl IntoIterator<Item = OsString>) -> io::Result<String> {
                 .enable_all()
                 .build()?;
             let cancel = tokio_util::sync::CancellationToken::new();
-            runtime.block_on(with_shutdown(
-                festerm_host_setup::controller::run(store, &state, cancel.clone()),
-                cancel,
-            ))?;
+            if command.ends_with("-managed") {
+                runtime.block_on(with_shutdown(
+                    festerm_host_setup::controller::managed::run(store, &state, cancel.clone()),
+                    cancel,
+                ))?;
+            } else {
+                runtime.block_on(with_shutdown(
+                    festerm_host_setup::controller::run(store, &state, cancel.clone()),
+                    cancel,
+                ))?;
+            }
             Ok("Host listener stopped. Persistent sessions were not terminated.\n".into())
         }
         #[cfg(feature = "owner-routing")]
-        "run-status" => {
-            let store = Store::open(&path("--state-dir")?, Origin::Headless)?;
+        "run-status" | "run-desktop-status" => {
+            let origin = if command == "run-desktop-status" {
+                Origin::Desktop
+            } else {
+                Origin::Headless
+            };
+            let store = Store::open(&path("--state-dir")?, origin)?;
             serde_json::to_string_pretty(&serde_json::json!({
                 "last_run": festerm_host_setup::controller::last_run(&store)?,
+                "managed_result": festerm_host_setup::controller::managed::last_report(&store)?,
                 "current_lifecycle": store.snapshot()?,
                 "meaning": "history-only-not-liveness-or-ready",
             }))
@@ -788,6 +818,9 @@ fn add_cleanup_status(
 }
 
 fn render_diagnostic(error: &io::Error) -> String {
+    if festerm_host_setup::run_exit::is_recorded_managed_stop(error) {
+        return "host.managed_run_failed_restart_suppressed; HOST operation FAILED, not Ready or product success. Its protected typed result is retained; inspect run-status (headless) or run-desktop-status. Native stop status only suppresses automatic retries.".into();
+    }
     #[cfg(feature = "owner-routing")]
     if let Some(pending) = error
         .get_ref()

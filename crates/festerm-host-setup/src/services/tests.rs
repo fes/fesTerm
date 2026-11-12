@@ -122,6 +122,7 @@ fn native_service_live_exact_owned_lifecycle_preserves_independent_child() {
 
 struct FakeRunner {
     definition: PathBuf,
+    receipt: PathBuf,
     state: RefCell<FakeState>,
 }
 
@@ -248,20 +249,12 @@ impl CommandRunner for FakeRunner {
                         output.success = false;
                         output.code = 113;
                     } else {
-                        let record_path = self
-                            .definition
-                            .parent()
-                            .unwrap()
-                            .parent()
-                            .unwrap()
-                            .join("state")
-                            .join(RECORD);
                         let record: Registration =
-                            serde_json::from_slice(&std::fs::read(record_path).unwrap()).unwrap();
+                            serde_json::from_slice(&std::fs::read(&self.receipt).unwrap()).unwrap();
                         output.stdout = format!(
                             "path = {}\nprogram = {}\narguments = {{\n{}\n{}\n--state-dir\n{}\n}}\nstate = {}\n{}",
                             self.definition.display(), record.executable.display(), record.executable.display(),
-                            definitions::runner_verb(record.origin),
+                            definitions::record_runner_verb(&record),
                             record.state.display(), if state.running { "running" } else { "waiting" },
                             if state.running { "pid = 123\n" } else { "" }).into_bytes();
                     }
@@ -369,6 +362,7 @@ fn services<'a>(root: &Path, store: &'a Store, platform: Platform) -> Services<'
         context,
         runner: FakeRunner {
             definition,
+            receipt: root.join("state").join(RECORD),
             state: RefCell::new(FakeState::default()),
         },
     }
@@ -394,6 +388,191 @@ fn provision(store: &Store) -> Snapshot {
         .unwrap();
     store.record_provisioned(&ticket, binding()).unwrap();
     store.snapshot().unwrap()
+}
+
+#[test]
+fn host_process_recovery_native_policy_is_bounded_and_origin_exact() {
+    for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {
+        #[cfg(windows)]
+        if platform != Platform::Windows {
+            continue;
+        }
+        if platform == Platform::Windows && !cfg!(all(feature = "cloud", feature = "host-runtime"))
+        {
+            continue;
+        }
+        for startup in [Startup::Manual, Startup::UserSignIn] {
+            for origin in [Origin::Headless, Origin::Desktop] {
+                let root = storage::private_test_directory();
+                let mut options = settings();
+                options.startup = startup;
+                let store = Store::create(&root.path().join("state"), origin, options).unwrap();
+                let snapshot = provision(&store);
+                let mut manager = services(root.path(), &store, platform);
+                if platform == Platform::Macos && startup == Startup::Manual {
+                    manager.runner.definition = root
+                        .path()
+                        .join("state/native-manual-services")
+                        .join(manager.runner.definition.file_name().unwrap());
+                }
+                let stage = trusted::fixture(root.path());
+                manager
+                    .install_with_recovery(&stage, snapshot.epoch)
+                    .unwrap();
+                manager.require_recovery_registration().unwrap();
+                let record = manager.registration().unwrap().1.unwrap();
+                assert_eq!(record.version, 4);
+                assert_eq!(
+                    definitions::record_runner_verb(&record),
+                    if origin == Origin::Desktop {
+                        "run-desktop-managed"
+                    } else {
+                        "run-managed"
+                    }
+                );
+                match platform {
+                    Platform::Linux => {
+                        assert!(record
+                            .definition
+                            .contains("Restart=on-failure\nRestartSec=60s"));
+                        assert!(record.definition.contains("KillMode=process\n"));
+                        assert!(record.definition.contains("SendSIGKILL=no\n"));
+                        if startup == Startup::Manual {
+                            assert!(record.definition.contains("StartLimitBurst=3\n"));
+                            assert!(!record.definition.contains("RestartForceExitStatus="));
+                        } else {
+                            assert!(record.definition.contains("StartLimitIntervalSec=0\n"));
+                            assert!(record.definition.contains("RestartForceExitStatus=75\n"));
+                        }
+                    }
+                    Platform::Macos => {
+                        assert!(record
+                            .definition
+                            .contains("<key>SuccessfulExit</key><false/>"));
+                        assert!(record
+                            .definition
+                            .contains("<key>ThrottleInterval</key><integer>60</integer>"));
+                        if startup == Startup::Manual {
+                            assert!(manager
+                                .runner
+                                .definition
+                                .starts_with(root.path().join("state")));
+                            assert!(!manager.context.registration.exists());
+                        } else {
+                            assert!(manager
+                                .runner
+                                .definition
+                                .starts_with(&manager.context.registration));
+                        }
+                    }
+                    Platform::Windows => {
+                        assert!(record.definition.contains("<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>"));
+                        assert!(record
+                            .definition
+                            .contains("<LogonType>InteractiveToken</LogonType>"));
+                        assert!(record
+                            .definition
+                            .contains("<RunLevel>LeastPrivilege</RunLevel>"));
+                        assert_eq!(
+                            record.definition.contains("<LogonTrigger>"),
+                            startup == Startup::UserSignIn
+                        );
+                    }
+                }
+                assert_eq!(store.snapshot().unwrap(), snapshot);
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn host_process_recovery_manual_macos_bootstraps_only_explicitly_and_boots_out_on_stop() {
+    let root = storage::private_test_directory();
+    let state = root.path().join("state");
+    let store = Store::create(&state, Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let mut manager = services(root.path(), &store, Platform::Macos);
+    manager.runner.definition = state
+        .join("native-manual-services")
+        .join(manager.runner.definition.file_name().unwrap());
+    let stage = trusted::fixture(root.path());
+    manager
+        .install_with_recovery(&stage, snapshot.epoch)
+        .unwrap();
+    assert!(!manager.runner.state.borrow().registered);
+    assert!(!manager.runner.state.borrow().running);
+    manager
+        .start_with(&stage, snapshot.epoch, || Ok(()))
+        .unwrap();
+    assert!(manager.runner.state.borrow().running);
+    store.revoke().unwrap();
+    let stopped = store.snapshot().unwrap();
+    manager.stop(stopped.epoch).unwrap();
+    assert!(!manager.runner.state.borrow().registered);
+    assert!(!manager.runner.state.borrow().running);
+    store
+        .confirm_stopped(stopped.epoch, stopped.binding.as_ref().unwrap())
+        .unwrap();
+    store.request_cleanup().unwrap();
+    manager.cleanup(store.snapshot().unwrap().epoch).unwrap();
+    assert!(!manager.runner.definition.exists());
+    assert!(!manager.context.registration.exists());
+}
+
+#[test]
+fn host_process_recovery_existing_receipts_and_missing_legacy_files_keep_exact_policy() {
+    for platform in [Platform::Linux, Platform::Macos, Platform::Windows] {
+        #[cfg(windows)]
+        if platform != Platform::Windows {
+            continue;
+        }
+        if platform == Platform::Windows && !cfg!(all(feature = "cloud", feature = "host-runtime"))
+        {
+            continue;
+        }
+        let root = storage::private_test_directory();
+        let store =
+            Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+        let snapshot = provision(&store);
+        let manager = services(root.path(), &store, platform);
+        let stage = trusted::fixture(root.path());
+        manager.install(&stage, snapshot.epoch).unwrap();
+        let original = manager.registration().unwrap().1.unwrap();
+        manager
+            .install_with_recovery(&stage, snapshot.epoch)
+            .unwrap();
+        assert_eq!(manager.registration().unwrap().1.unwrap(), original);
+        assert!(manager.require_recovery_registration().is_err());
+        assert_eq!(original.version, 2);
+        assert!(!original.definition.contains("run-managed"));
+        assert!(!original.definition.contains("RestartOnFailure"));
+        assert!(!original.definition.contains("SuccessfulExit"));
+        if platform != Platform::Windows {
+            std::fs::remove_file(&manager.runner.definition).unwrap();
+            manager
+                .install_with_recovery(&stage, snapshot.epoch)
+                .unwrap();
+            assert_eq!(
+                std::fs::read(&manager.runner.definition).unwrap(),
+                original.definition.as_bytes()
+            );
+            assert_eq!(manager.registration().unwrap().1.unwrap(), original);
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn host_process_recovery_older_bundle_cannot_create_new_restart_authority() {
+    let root = storage::private_test_directory();
+    let store = Store::create(&root.path().join("state"), Origin::Headless, settings()).unwrap();
+    let snapshot = provision(&store);
+    let manager = services(root.path(), &store, Platform::Linux);
+    let old = trusted::version_fixture(root.path(), "0.15.0");
+    assert!(manager.install_with_recovery(&old, snapshot.epoch).is_err());
+    assert!(manager.registration().unwrap().1.is_none());
+    assert!(manager.runner.state.borrow().calls.is_empty());
 }
 
 #[test]

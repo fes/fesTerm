@@ -106,8 +106,10 @@ evidence. Never change an owned VM's configuration or acceptance scope silently.
    rejected unmerged, not unreachable or fully replaced. Its Windows respawn
    loop and new macOS restart/migration policy conflict with ADR0053.
    Separately deliver the newly approved HOST-scoped process-crash recovery
-   under [#730](https://github.com/fes/fesTerm/issues/730); this evidence PR does
-   not implement or qualify it. The #729 rejection does not replace that work.
+   under [#730](https://github.com/fes/fesTerm/issues/730); the #692 evidence
+   candidate `114015f9` alone does not implement or qualify it. Its composition
+   with separately reviewed #730 source does not establish native qualification.
+   The #729 rejection does not replace that work.
    In-process relay retry and independent daemon survival do not implement it.
    Do not restore rejected legacy policy merely to preserve its mechanism. Existing
    native manager/older-helper and sign-in/status/recovery/uninstall,

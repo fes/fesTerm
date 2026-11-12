@@ -15,8 +15,35 @@ impl fmt::Display for LoginProofUnavailable {
 
 impl std::error::Error for LoginProofUnavailable {}
 
+#[derive(Debug)]
+pub(crate) struct RecordedManagedStop {
+    pub(crate) source: io::Error,
+}
+
+impl fmt::Display for RecordedManagedStop {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("host.managed_run_failed_restart_suppressed")
+    }
+}
+
+impl std::error::Error for RecordedManagedStop {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Native-managed protocol only: an error remains an error to product callers.
+/// Its protected disposition must have been recorded before constructing it.
+pub fn is_recorded_managed_stop(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<RecordedManagedStop>())
+}
+
 pub fn error_exit_code(error: &io::Error) -> u8 {
-    if error
+    if is_recorded_managed_stop(error) {
+        0
+    } else if error
         .get_ref()
         .is_some_and(|inner| inner.is::<LoginProofUnavailable>())
     {

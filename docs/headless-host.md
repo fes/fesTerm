@@ -183,6 +183,15 @@ Stopped or Failed with bounded typed failure), **not liveness or Ready**.
 An interrupted Listening record remains history, never automatic startup
 authority. Concurrent runs refuse under a separate exact-installation lease.
 
+New native recovery-policy registrations use the managed-only `run-managed`
+or origin-exact `run-desktop-managed`, not a per-profile launcher. A durably
+recorded managed refusal/failure remains product failure even when OS exit0
+suppresses native retries; foreground `run` failure semantics are unchanged.
+`run-status` adds that protected managed history; `run-desktop-status` reports
+the corresponding Desktop history. Neither reports Ready or grants restart
+authority. Existing native policy2/3 is not silently upgraded. See
+[the #730 policy and qualification limits](native-host-services.md#native-host-process-recovery).
+
 `disable` revokes before native stop and requires the exact foreground-runtime
 lease to be released before confirming Disabled. Its bounded wait holds no
 installation lease; timeout/foreign stop evidence cannot become absence.

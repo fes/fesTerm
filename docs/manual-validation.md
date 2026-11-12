@@ -11,11 +11,14 @@ unrelated live clients or new admission; once retiring, its earlier drain
 uncertainty must still refuse replacement and a repeated close. Revoke/disable,
 changed epoch, locked vault,
 denial and unknown failure must stop without sign-in/provisioning or daemon
-control. Existing manager definitions/receipt bytes stay unchanged. Legacy
-#729 is rejected unmerged, not as fully replaced. New HOST-scoped process-crash
+control. That in-process slice kept manager definitions/receipt bytes unchanged;
+the separate #730 source slice below adds new-registration crash policy.
+Legacy #729 is rejected unmerged, not as fully replaced. New HOST-scoped process-crash
 recovery is separately approved and tracked under
 [#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
-by this evidence PR. Existing native gates remain under
+by the #692 evidence candidate `114015f9` alone. This composition retains the
+separately reviewed #730 implementation and all unrun native qualifiers below.
+Existing native gates remain under
 [#681](https://github.com/fes/fesTerm/issues/681): native manager
 and older-helper compatibility, sign-in/status/recovery/uninstall and actual
 vault/cloud/service/DT-05 session/lease/daemon-survival evidence remain open. See
@@ -33,6 +36,61 @@ new protocol capability is added. The platform/provider/vault/service
 scenarios above remain open. The
 [progress record](milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery)
 separates source-specific execution from acceptance.
+
+## Native HOST-process recovery (#730)
+
+Separate the new native-process policy from the in-process relay evidence
+above. Source tests cover versioned policy, exact retained 2/3 definitions,
+missing-file restoration, 4→5 replacement, private Manual launchd paths,
+typed durable refusal/failure, lease ownership and fail-closed CLI entries.
+They do **not** qualify native restart or independent shell survival.
+
+On each separately authorized ordinary-user platform with genuine current
+signed helpers, test Manual and UserSignIn, Desktop and Headless:
+
+1. A fresh registration uses version 4 / managed argv; retained versions 2/3
+   and their missing definitions do not silently acquire restart authority.
+   An older helper must reject the new policy, not reinterpret it.
+2. Observe one HOST and a separately owned persistent sessiond/shell. Induce
+   failure of **only that HOST**, then observe native recovery bounds and
+   fresh bundle/native-owner/account/receipt/scoped-token admission, unchanged
+   host identity and daemon PID/generation, and no frontend/input replay.
+3. Stop/Disable/revoke while running and during pending recovery. No new
+   hosting may outlive revocation. Returned permanent refusal and operational
+   uncertainty must remain `Refused`/`Failed`, `product_success=false`, visible
+   in origin-correct history even when native exit0 suppresses retries.
+   Report-write failure must not translate to a successful managed stop.
+4. Prove Manual macOS installation is outside LaunchAgents discovery, inert
+   across login until explicit Start, and booted out by Stop. KeepAlive's
+   implied RunAtLoad must not become an automatic-login loophole.
+5. Prove Linux eligible-login loss/return and native restart limits, including
+   explicit Starts counting against Manual's 3-start/300-second limit and a
+   potentially delayed subsequent Start. Linux sign-in and macOS's 60-second
+   launch throttle are not finite attempt limits. For Windows, retain exact
+   task XML/ACL and separately exercise:
+   - unmet start conditions/action-launch failure;
+   - genuine crash and unexpected nonzero termination **after proving the
+     actual HOST process has started and entered its running phase**, not
+     merely an action-launch failure or managed refusal/native0;
+   - explicit native task Stop as a negative crash control, never the product's
+     graceful-stop implementation.
+   Observe each case under a declared bounded deadline, recording actual
+   replacement launches, intervals, configured one-minute/three-retry
+   exhaustion, product Stop/Disable suppression and whether any replacement
+   follows explicit Scheduler Stop. That Stop must not simulate or be classified
+   as a crash. Microsoft describes different failure
+   boundaries in the [Win32 schema](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-restartonfailure-settingstype-element)
+   and [MS-TSCH §2.5.4.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/2ff4aa5a-7bc4-449f-bbb1-27475645867f);
+   post-start crash/nonzero applicability is natively **UNQUALIFIED**, not
+   declared unsupported; no Windows crash-recovery claim precedes that native case.
+   Only a process-terminating panic exercises native crash behavior; a spawned
+   task panic can instead become managed Failed/native0. Restart exhaustion
+   and native running state are not Ready or product success.
+
+These scenarios are **UNRUN** for #730. Current signed/native release
+prerequisites block positive execution qualification, not source implementation.
+No native manager, provider, vault, device or VM acceptance is inferred from
+portable tests; see `native-host-services.md#native-host-process-recovery`.
 
 **Status:** Active registry
 

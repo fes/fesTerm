@@ -47,7 +47,8 @@ passes did not cover this product availability bug. See
 the [source-specific progress record](milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery).
 This is not native/provider qualification.
 
-Keep native registration versions and rendered bytes/restart flags unchanged.
+That in-process slice kept native registration versions and rendered
+bytes/restart flags unchanged.
 RunRecord v1 uses existing `Starting` during retry; no new persisted enum value
 or cached permission is introduced. Older receipt-only registrations remain
 removable, not executable authority. The November 11 relevance decision rejects
@@ -56,8 +57,9 @@ or fully replaced. Its Windows respawn loop and new macOS restart/migration
 policy conflict with [ADR0053](adr/0053-separate-dev-tunnels-session-bridge.md).
 New HOST-scoped process-crash recovery is separately approved and tracked under
 [#730](https://github.com/fes/fesTerm/issues/730), not implemented or qualified
-by this evidence PR. The current HOST supplies in-process relay retry only;
-existing native acceptance gates remain under
+by the #692 evidence candidate `114015f9` alone. Main `261c1f25` supplies
+in-process relay retry; this composition additionally retains the separately
+reviewed #730 implementation below, not native acceptance. Existing native gates remain under
 [#681](https://github.com/fes/fesTerm/issues/681).
 
 For the **legacy ADR0053/0072 profile workers**, Linux's unit restarts failures
@@ -66,14 +68,89 @@ not external crash respawn; macOS without daemon-recovery opt-in stays offline
 until operator restart. Opted-in legacy daemon recovery retries transient
 failures after 15 seconds on all OSes.
 
-The **current HOST** has in-process relay recovery on all OSes; its manager
-restart flags remain unchanged pending the separately approved #730 work.
-Neither this evidence slice nor the legacy policy list implements #730 or
-changes service definitions. This is not a blanket claim that native control
-is unimplemented. Native manager,
+The **main `261c1f25` HOST** has in-process relay recovery on all OSes; #692's
+evidence candidate alone does not change its manager restart flags. The
+separate #730 source composed here configures new policy4/5 as documented below,
+preserving existing2/3 and all native qualification limits. Neither the #692
+evidence slice nor the legacy policy list implements that feature or changes
+service definitions. This is not a blanket claim that native control is
+unimplemented. Native manager,
 sign-in/status/recovery/uninstall, older-helper compatibility and actual
 Windows/macOS/Linux, vault/cloud and DT-05 session/lease/daemon-survival
 acceptance remain open.
+
+## Native HOST-process recovery
+
+The separately approved [#730](https://github.com/fes/fesTerm/issues/730)
+targets recovery of the **single HOST**, not a per-profile worker. Shared setup uses
+`Services::install_with_recovery`: only a fresh registration with current
+authenticated helpers receives policy version 4. Stopped replacement preserves
+that policy as version 5. Existing versions 2/3 retain their exact policy,
+including on ordinary reinstall, missing-file restoration and helper update;
+there is no automatic migration or grant of restart authority. Older helpers
+reject versions 4/5 and unknown managed entrypoints rather than interpreting
+them as ordinary foreground runs.
+
+The new native policies are:
+
+| Manager / startup | Unexpected process failure | Explicit startup / stop |
+| --- | --- | --- |
+| systemd Manual | `Restart=on-failure`, 60-second delay; 3-start/300-second limit counts explicit Starts too | Not enabled at login; subsequent Start can be rate-limited for up to 300 seconds |
+| systemd UserSignIn | 60-second restart delay; no attempt-count limit, retaining typed exit75's eventual fresh current-login proof | Existing eligible-login fence and revoke-before-stop; no linger or login-policy changes |
+| launchd Manual | `SuccessfulExit=false`, 60-second launch throttle; rate-bound, not finite attempts | Protected `STATE/native-manual-services/*.plist`, outside login discovery; only explicit Start bootstraps, Stop boots out |
+| launchd UserSignIn | Same launch throttle and unsuccessful-exit policy | User LaunchAgents discovery; never pre-login |
+| Task Scheduler Manual / UserSignIn | Configured `RestartOnFailure`: 1-minute interval, 3 retries; post-start crash/nonzero applicability natively **UNQUALIFIED** | Manual has no trigger; sign-in retains exact SID logon trigger, InteractiveToken and LeastPrivilege; explicit task Stop is not a crash |
+
+Microsoft's documentation is ambiguous about the Windows failure boundary:
+the [Win32 RestartOnFailure schema](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-restartonfailure-settingstype-element)
+says the task “fails for any reason,” whereas
+[MS-TSCH §2.5.4.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/2ff4aa5a-7bc4-449f-bbb1-27475645867f)
+describes unmet start conditions or failure to start an action. Neither this
+source configuration nor those differing descriptions proves recovery of an
+already-running HOST after crash/nonzero termination. That required behavior
+remains **natively unqualified, not declared unsupported or waived**, pending a genuine
+process-crash test distinguishing launch failure, running-process failure and
+explicit task Stop, with bounded restart/exhaustion observation and protected
+Stop/Disable suppression. No Windows crash-recovery claim is made before
+that actual native case.
+
+Any launchd KeepAlive implies RunAtLoad. The Manual policy therefore relies on
+**not being registered in a login-discovery directory**, not on a false
+RunAtLoad override. Exact path/argv/receipt verification and cleanup use that
+protected location. Linux still kills only the HOST process, never its process
+group; Windows does not gain a launcher loop, Scheduler Stop or TaskKill.
+
+`run-managed` / `run-desktop-managed` require a recovery registration and enter
+the ordinary fresh runtime admission path. Each attempt reopens signed bytes,
+current native owner authority, original account/resource and scoped token,
+and the same host identity. Stop, revocation, permanent refusal or returned
+operational/cleanup uncertainty do **not** authorize a new hosting attempt.
+They retain an explicit typed protected `host-managed-result.json` before any
+native stop-status translation, under the exact run lease when one was acquired.
+The operation still returns `Err`, records `Refused` or `Failed` with
+`product_success=false`, and emits a failure diagnostic; only this recorded
+managed-stop error maps to OS exit0 to suppress an unsafe native retry.
+Task Scheduler/launchd success status is therefore **not product success**.
+Ordinary foreground `run` errors retain their failure exit codes.
+
+`run-status` (headless) and `run-desktop-status` expose managed history beside
+unchanged RunRecord v1, explicitly not liveness, Ready or retry authority.
+Typed Linux login unavailability remains exit75 / `WaitingForLogin`; failure
+to durably record history remains an ordinary operational error/nonzero.
+Only a process-terminating panic or other unexpected process termination
+bypasses managed-stop translation; actual Windows restart remains natively unqualified.
+A spawned-task panic may instead become a returned runtime error, recorded
+`Failed` with native exit0; handled shutdown signals may complete normally.
+macOS and Linux sign-in throttles are not finite attempt-count limits.
+Restart never signs in,
+provisions, creates identity, acquires a frontend, kills sessiond/shells or
+replays input. Stale history cannot restore revoked authority.
+
+Deterministic policy, protected-history, actual admission-refusal and controlled
+CLI tests are not positive signed-release/native-manager acceptance. Genuine
+current bundle availability, native launch/crash/stop/login behavior and
+persistent sessiond/shell survival remain separately unqualified under #730.
+See [manual scenarios](manual-validation.md#native-host-process-recovery-730).
 
 ## Headless management and recovery
 

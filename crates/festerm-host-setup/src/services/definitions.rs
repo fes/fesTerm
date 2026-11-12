@@ -91,16 +91,41 @@ pub(super) fn runner_verb(origin: Origin) -> &'static str {
     }
 }
 
+pub(super) fn record_runner_verb(record: &Registration) -> &'static str {
+    if matches!(record.version, 4 | 5) {
+        match record.origin {
+            Origin::Desktop => "run-desktop-managed",
+            Origin::Headless => "run-managed",
+        }
+    } else {
+        runner_verb(record.origin)
+    }
+}
+
 pub(super) fn render(record: &Registration) -> io::Result<String> {
     if record.settings.startup == Startup::BeforeLogin {
         return Err(refused("host.startup_before_login_unqualified"));
     }
     let executable = path_text(&record.executable)?;
     let state = path_text(&record.state)?;
-    let verb = runner_verb(record.origin);
+    let verb = record_runner_verb(record);
+    let recovery = matches!(record.version, 4 | 5);
     match record.platform {
         Platform::Linux => {
-            let (limits, restart) = if record.settings.startup == Startup::UserSignIn {
+            let (limits, restart) = if recovery {
+                let login = if record.settings.startup == Startup::UserSignIn {
+                    format!("\nRestartForceExitStatus={}", crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE)
+                } else {
+                    String::new()
+                };
+                (if record.settings.startup == Startup::UserSignIn {
+                    "StartLimitIntervalSec=0\n"
+                } else {
+                    "StartLimitIntervalSec=300\nStartLimitBurst=3\n"
+                }, format!(
+                    "Restart=on-failure\nRestartSec=60s{login}"
+                ))
+            } else if record.settings.startup == Startup::UserSignIn {
                 ("StartLimitIntervalSec=0\n", format!(
                     "Restart=no\nRestartForceExitStatus={}\nRestartSec=2s",
                     crate::run_exit::LOGIN_PROOF_UNAVAILABLE_EXIT_CODE
@@ -116,11 +141,16 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\
              <key>Label</key><string>{}</string><key>ProgramArguments</key><array>\
              <string>{}</string><string>{}</string><string>--state-dir</string><string>{}</string></array>\
-             <key>RunAtLoad</key><{}/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><true/>\
+             <key>RunAtLoad</key><{}/>{}<key>AbandonProcessGroup</key><true/>\
              <key>ExitTimeOut</key><integer>10</integer>\
              <key>StandardOutPath</key><string>/dev/null</string><key>StandardErrorPath</key><string>/dev/null</string>\
              </dict></plist>\n", xml(&record.resource), xml(executable), verb, xml(state),
-            if record.settings.startup == Startup::UserSignIn { "true" } else { "false" })),
+            if record.settings.startup == Startup::UserSignIn { "true" } else { "false" },
+            if recovery {
+                "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>ThrottleInterval</key><integer>60</integer>"
+            } else {
+                "<key>KeepAlive</key><false/>"
+            })),
         Platform::Windows => {
             if !record.user.starts_with("S-1-") || !record.user.bytes().all(|c| c.is_ascii_digit() || c == b'-' || c == b'S')
                 || executable.contains(['"', '%']) || state.contains(['"', '%'])
@@ -140,15 +170,27 @@ pub(super) fn render(record: &Registration) -> io::Result<String> {
                  <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\
                  <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>false</AllowHardTerminate>\
                  <StartWhenAvailable>false</StartWhenAvailable><Enabled>true</Enabled>\
-                 <ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings>\
+                 <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>{}</Settings>\
                  <Actions Context=\"User\"><Exec><Command>{}</Command><Arguments>{}</Arguments></Exec></Actions></Task>",
-                xml(&record.resource), xml(&record.reservation), trigger, xml(&record.user), xml(executable), xml(&arguments)))
+                xml(&record.resource), xml(&record.reservation), trigger, xml(&record.user),
+                if recovery {
+                    "<RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>"
+                } else { "" },
+                xml(executable), xml(&arguments)))
         }
     }
 }
 
 pub(super) fn definition_path(context: &Context, record: &Registration) -> PathBuf {
-    context.registration.join(format!(
+    let directory = if record.platform == Platform::Macos
+        && matches!(record.version, 4 | 5)
+        && record.settings.startup == Startup::Manual
+    {
+        record.state.join("native-manual-services")
+    } else {
+        context.registration.clone()
+    };
+    directory.join(format!(
         "{}.{}",
         record.resource,
         if context.platform == Platform::Macos {
@@ -194,7 +236,7 @@ pub(super) fn check_file(
     #[cfg(unix)]
     {
         let path = definition_path(context, record);
-        let directory = match directory(&context.registration, false) {
+        let directory = match directory(path.parent().unwrap(), false) {
             Ok(directory) => directory,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
@@ -229,10 +271,10 @@ pub(super) fn publish_file(context: &Context, record: &Registration) -> io::Resu
     }
     #[cfg(unix)]
     {
-        let directory = directory(&context.registration, true)?;
+        let path = definition_path(context, record);
+        let directory = directory(path.parent().unwrap(), true)?;
         let staging = PathBuf::from(format!(".host-service-{}", uuid::Uuid::new_v4()));
         let mut file = festerm_unix_security::open_private_file(&directory, &staging, true)?;
-        let path = definition_path(context, record);
         let name = Path::new(path.file_name().unwrap());
         let result = (|| {
             file.write_all(record.definition.as_bytes())?;
@@ -255,8 +297,8 @@ pub(super) fn remove_file(context: &Context, record: &Registration) -> io::Resul
     }
     #[cfg(unix)]
     {
-        let directory = directory(&context.registration, false)?;
         let path = definition_path(context, record);
+        let directory = directory(path.parent().unwrap(), false)?;
         festerm_unix_security::remove_private_staging_file(
             &directory,
             Path::new(path.file_name().unwrap()),
@@ -346,7 +388,7 @@ pub(super) fn mac_state(
     let unique = |value: &str| lines.iter().filter(|line| **line == value).count() == 1;
     let argv = [
         path_text(&record.executable)?,
-        runner_verb(record.origin),
+        record_runner_verb(record),
         "--state-dir",
         path_text(&record.state)?,
     ];

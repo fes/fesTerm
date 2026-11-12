@@ -1,5 +1,67 @@
 # Milestone Progress Narrative
 
+## Composing reviewed recovery with candidate evidence delivery
+
+The initial normal merge `2c00fbc6` composes reviewed #730 `6605011e` with exact #692 evidence
+candidate `114015f9`, preserving feature source and evidence scripts unchanged.
+At composition, main remains `261c1f25` and #692's required CI is still running:
+the evidence candidate is not treated as merged or CI-green. Both source-specific
+histories and unrun native qualifications below remain distinct.
+
+The subsequent normal merge takes exact evidence successor `ffcc5a7d` while
+its fresh required CI is pending, still not merged main. Its cfg-test-only
+Lookup correction preserves both protected checkpoints under exact-generation
+contention, then uses the original operation and exact Running target with
+bounded Busy-only retry. The `114015f9` Ubuntu 18/1 response remains unprinted/
+unknown; the intervening `61551336` local Malformed failure remains historical, not
+erased or retrospectively explained by this regression. Exact `ffcc5a7d`'s
+separately executed native1/0/0 and strict/static results are retained as
+source-specific evidence, not fresh execution of this composition. #730 policy
+and Windows post-start UNQUALIFIED gates remain unchanged.
+
+## Adding native single-HOST process recovery under #730
+
+The user separately approved native recovery of the single HOST after
+unexpected failure. This does not revive rejected legacy #729 or its per-profile
+launcher loop. Fresh registrations use policy4, retained recovery replacements5;
+old2/3, older helpers and missing legacy definitions retain exact policy.
+Configured systemd/launchd/Scheduler bounds and an explicit protected managed-stop
+protocol avoid retrying permanent refusal without hiding product failure.
+Manual macOS definitions live outside login discovery; every recovered process
+reenters existing fresh authorization with the same identity and independent
+sessiond/shells. RunRecord/session authority and ordinary foreground errors
+are unchanged.
+
+Focused compilation preceded acceptance review. Initial `c9ead21d` selected
+10 policy/history tests, one actual CLI refusal test and 12 compatibility/
+admission tests, all passing. The owned-lease correction at `f7809612` selected
+11/1/12 passes; first strict exit101 was solely Clippy's equivalent
+`2 | 3 | 4 | 5` range spelling. At `c5f30bfd`, the same accepted set written
+`2..=5` passes all11 policy/history tests, affected setup/CLI all-target strict
+and app fmt. The unchanged CLI and compatibility evidence stays source-specific
+to `f7809612`, not relabelled as fresh execution. No warnings were suppressed,
+dependencies changed or prior evidence erased.
+
+Borrowed #729's refusal-versus-crash distinction and exact older-helper/missing-
+definition preservation patterns, not its silent refusal-as-success mapping,
+automatic legacy migration, Windows GUI respawn loop or blind Manual KeepAlive.
+The new durable typed error/status makes native exit translation explicit.
+Source/model tests and controlled refusal are not positive native recovery.
+Genuine current release/publisher admission, native crash/startup/stop/login,
+provider/vault and persistent daemon survival remain open under #730; no native,
+helper-rebuild, VM or provider campaign ran for this feature.
+
+The documentation-only successor to reviewed `fd5ab66a` qualifies Windows
+post-start crash/nonzero applicability as natively **UNQUALIFIED**: Microsoft's Win32 schema
+says “fails for any reason,” while MS-TSCH §2.5.4.2 describes start-condition/
+action-start failure (both authoritative URLs are in the native policy).
+Neither supported nor unsupported is established without genuine bounded
+launch/crash/explicit-task-Stop/exhaustion observations. Linux Manual's limit
+also counts explicit Starts; sign-in/macOS throttles are not finite attempt
+limits. Only process-terminating panic bypasses managed error translation;
+spawned panic may become Failed/native0. Source and executed evidence are
+unchanged; no Cargo or native campaign is implied.
+
 ## Retaining useful evidence delivery without carrying a closed campaign
 
 The single #712 merge at `261c1f25` included all eight foundation slices.
@@ -7,7 +69,9 @@ The remaining evidence pair is #692/#719, not eight pending foundation merges.
 Legacy #729 is rejected unmerged under the November 11 relevance decision.
 The later explicit approval tracks new HOST-scoped process-crash recovery
 separately under [#730](https://github.com/fes/fesTerm/issues/730), not implemented
-or qualified by this evidence PR. Existing native gates remain under #681.
+or qualified by that #692 evidence candidate alone. This composition additionally
+retains the separately reviewed #730 source above, not native acceptance.
+Existing native gates remain under #681.
 The rebased evidence pair
 consolidates #719's useful MSVC-driver selection, scoped Cargo stderr handling,
 OS-input Build Tools environment and private Running Sessions runtime into
@@ -107,7 +171,7 @@ execution. Affected delta review and native qualification remain required.
 Native restart flags/receipt versions and run-history schema are unchanged;
 legacy #729 is rejected unmerged, not as fully replaced. New HOST-scoped
 process-crash recovery is separately approved under #730, not implemented
-or qualified by this evidence PR.
+or qualified by the #692 evidence candidate alone.
 Native manager/older-helper compatibility and native/cloud/vault/DT-05
 session/lease/daemon-survival qualification remain explicit gaps.
 
