@@ -256,7 +256,7 @@ mod attach_diagnostic_tests {
         let temporary = matches!(lifetime, Lifetime::Temporary { .. }).then(|| TemporaryLease {
             lease: LeaseId::new(),
             epoch: Epoch::new(4).unwrap(),
-            attachment: replacement_attachment.clone(),
+            attachment: AttachmentId::new(),
         });
         let mut lease = DaemonLease {
             version: 1,
@@ -273,7 +273,7 @@ mod attach_diagnostic_tests {
                 ticket: ticket.clone(),
                 writer_epoch: Epoch::new(2).unwrap(),
                 previous: temporary.clone(),
-                attachment: AttachmentId::new(),
+                attachment: replacement_attachment.clone(),
                 deadline_ms: now_ms() + 15_000,
             }),
             last_attachment: Some(old_ticket.clone()),
@@ -321,6 +321,13 @@ mod attach_diagnostic_tests {
         let held = guard.read().unwrap();
         assert_eq!(held.pending.as_ref().unwrap().ticket, ticket);
         assert_eq!(held.pending.as_ref().unwrap().previous, lease.temporary);
+        assert_eq!(
+            held.pending.as_ref().unwrap().attachment,
+            replacement_attachment
+        );
+        if let Some(binding) = held.temporary.as_ref() {
+            assert_ne!(binding.attachment, replacement_attachment);
+        }
         assert_eq!(held.temporary, lease.temporary);
         assert_eq!(held.deadline_ms, lease.deadline_ms);
         assert_eq!(held.connected, lease.connected);
