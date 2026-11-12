@@ -153,12 +153,12 @@ if (-not $SkipBuild) {
     # terminating errors while $ErrorActionPreference is 'Stop'.
     $previousErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $LASTEXITCODE = $null
+    $global:LASTEXITCODE = $null
     try { cargo @buildArguments } finally { $ErrorActionPreference = $previousErrorAction }
-    if ($null -eq $LASTEXITCODE) {
+    if ($null -eq $global:LASTEXITCODE) {
         throw 'Cargo did not start; refusing a stale OS-input executable.'
     }
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($global:LASTEXITCODE -ne 0) { exit $global:LASTEXITCODE }
     $builtSource = & git -C $repositoryRoot rev-parse HEAD
     if ($LASTEXITCODE -ne 0 -or $builtSource -ne $runnerSource) {
         throw 'OS-input source changed during build.'

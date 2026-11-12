@@ -45,22 +45,24 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
         self.assertIn(
             "$previousErrorAction = $ErrorActionPreference\n"
             "    $ErrorActionPreference = 'Continue'\n"
-            "    $LASTEXITCODE = $null\n"
+            "    $global:LASTEXITCODE = $null\n"
             "    try { cargo @buildArguments } finally { $ErrorActionPreference = $previousErrorAction }\n"
-            "    if ($null -eq $LASTEXITCODE) {\n"
+            "    if ($null -eq $global:LASTEXITCODE) {\n"
             "        throw 'Cargo did not start; refusing a stale OS-input executable.'\n"
             "    }\n"
-            "    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", source)
+            "    if ($global:LASTEXITCODE -ne 0) { exit $global:LASTEXITCODE }", source)
         self.assertIn("'build','--locked','--workspace'", source)
         self.assertIn("OS-input source changed during build.", source)
         self.assertIn("OS-input checkout changed during build.", source)
 
     def test_missing_cargo_cannot_reuse_git_success_or_reach_stale_executable(self):
         source = (ROOT / "scripts/run-windows-os-input-smoke.ps1").read_text()
-        build = source.index("$LASTEXITCODE = $null")
+        self.assertNotRegex(source, r"(?m)^\s*\$LASTEXITCODE\s*=")
+        build = source.index("$global:LASTEXITCODE = $null")
         call = source.index("try { cargo @buildArguments }", build)
-        missing = source.index("if ($null -eq $LASTEXITCODE)", call)
-        nonzero = source.index("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }", missing)
+        missing = source.index("if ($null -eq $global:LASTEXITCODE)", call)
+        nonzero = source.index(
+            "if ($global:LASTEXITCODE -ne 0) { exit $global:LASTEXITCODE }", missing)
         identity = source.index("$builtSource = & git", nonzero)
         executable = source.index("$executableHash = (Get-FileHash", identity)
         self.assertLess(build, call)
@@ -95,7 +97,7 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
                     script = fixture / (name + ".ps1")
                     quoted_application = str(application).replace("'", "''")
                     script.write_text(
-                        "$ErrorActionPreference = 'Stop'\n$LASTEXITCODE = 0\n"
+                        "$ErrorActionPreference = 'Stop'\n$global:LASTEXITCODE = 0\n"
                         f"Set-Alias -Name cargo -Value '{quoted_application}'\n"
                         "$buildArguments = @()\ntry {\n" + scope +
                         "\nexit 0\n} catch {\n"
