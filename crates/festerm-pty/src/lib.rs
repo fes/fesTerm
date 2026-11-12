@@ -1604,10 +1604,69 @@ fn expand_home_directory_with(path: PathBuf, home: Option<&Path>) -> PathBuf {
     }
 }
 
+#[cfg(windows)]
+fn shell_working_directory(path: &Path) -> &Path {
+    // Use the first-dot DOS stem; dunce 1.0.5 misses multi-extension aliases,
+    // console aliases and superscript DOS device digits.
+    for component in path.components() {
+        let std::path::Component::Normal(name) = component else {
+            continue;
+        };
+        let Some(name) = name.to_str() else {
+            return path;
+        };
+        let stem = name
+            .split_once('.')
+            .map_or(name, |(stem, _)| stem)
+            .trim_end_matches(' ');
+        if [
+            "AUX",
+            "NUL",
+            "PRN",
+            "CON",
+            "CONIN$",
+            "CONOUT$",
+            "COM1",
+            "COM2",
+            "COM3",
+            "COM4",
+            "COM5",
+            "COM6",
+            "COM7",
+            "COM8",
+            "COM9",
+            "LPT1",
+            "LPT2",
+            "LPT3",
+            "LPT4",
+            "LPT5",
+            "LPT6",
+            "LPT7",
+            "LPT8",
+            "LPT9",
+            "COM\u{b9}",
+            "COM\u{b2}",
+            "COM\u{b3}",
+            "LPT\u{b9}",
+            "LPT\u{b2}",
+            "LPT\u{b3}",
+        ]
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+        {
+            return path;
+        }
+    }
+    dunce::simplified(path)
+}
+
 fn command_builder(profile: &LocalProfile) -> CommandBuilder {
     let mut command = CommandBuilder::new(&profile.executable);
     command.args(profile.arguments.iter());
     if let Some(working_directory) = &profile.working_directory {
+        // Keep canonical evidence in the profile, not in the shell's ordinary cwd.
+        #[cfg(windows)]
+        let working_directory = shell_working_directory(working_directory);
         command.cwd(working_directory);
     }
     match &profile.environment {
@@ -2149,6 +2208,69 @@ mod tests {
             profile.validate(),
             Err(LocalProfileError::InvalidWorkingDirectory(_))
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shell_cwd_simplifies_drive_paths_without_mutating_profile() {
+        for (original, expected) in [
+            (r"\\?\Q:\src", r"Q:\src"),
+            (r"\\?\q:\src", r"q:\src"),
+            (r"\\?\C:\work with spaces\src", r"C:\work with spaces\src"),
+            ("\\\\?\\C:\\work\\caf\u{e9}", "C:\\work\\caf\u{e9}"),
+            (r"\\?\Q:\COM10.txt", r"Q:\COM10.txt"),
+            (r"\\?\Q:\not.CON", r"Q:\not.CON"),
+            (r"Q:\src", r"Q:\src"),
+        ] {
+            let profile = LocalProfile::new("shell").with_working_directory(original);
+            let command = command_builder(&profile);
+            assert_eq!(command.get_cwd().map(Path::new), Some(Path::new(expected)));
+            assert_eq!(profile.working_directory(), Some(Path::new(original)));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shell_cwd_preserves_paths_requiring_verbatim_semantics() {
+        for original in [
+            r"\\?\Q:\NUL",
+            r"\\?\Q:\COM1.txt",
+            r"\\?\Q:\NUL.one.two",
+            r"\\?\Q:\con .one.two",
+            r"\\?\Q:\LPT9.one.two",
+            r"\\?\Q:\src.",
+            r"\\?\Q:\src ",
+            r"\\?\Q:\src\..\other",
+            r"\\?\UNC\server\share\src",
+            r"\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\src",
+            r"\\.\Q:\src",
+            r"\\?\Q:\CONIN$",
+            r"\\?\Q:\conout$.txt",
+            "\\\\?\\Q:\\COM\u{b9}",
+            "\\\\?\\Q:\\com\u{b2}.txt",
+            "\\\\?\\Q:\\LPT\u{b3}",
+        ] {
+            let profile = LocalProfile::new("shell").with_working_directory(original);
+            assert_eq!(
+                command_builder(&profile).get_cwd().map(Path::new),
+                Some(Path::new(original))
+            );
+        }
+        let long = format!(r"\\?\Q:\{}\src", "segment\\".repeat(40));
+        let profile = LocalProfile::new("shell").with_working_directory(&long);
+        assert_eq!(
+            command_builder(&profile).get_cwd().map(Path::new),
+            Some(Path::new(&long))
+        );
+
+        use std::os::windows::ffi::OsStringExt;
+        let mut non_unicode = PathBuf::from(r"\\?\Q:\src");
+        non_unicode.push(OsString::from_wide(&[0xd800]));
+        let profile = LocalProfile::new("shell").with_working_directory(&non_unicode);
+        assert_eq!(
+            command_builder(&profile).get_cwd().map(Path::new),
+            Some(non_unicode.as_path())
+        );
     }
 
     #[test]
@@ -3619,6 +3741,42 @@ mod tests {
             !process_is_running(child),
             "descendant process {child} remained after session shutdown"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn controlled_conpty_child_observes_plain_cwd_from_canonical_profile() {
+        let directory = std::env::temp_dir().join(format!(
+            "festerm-conpty-cwd-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let canonical = std::fs::canonicalize(&directory).unwrap();
+        let expected = canonical.to_str().unwrap().strip_prefix(r"\\?\").unwrap();
+        assert_eq!(expected.as_bytes()[1], b':');
+        let marker = format!("CWD:{expected}:END");
+        let profile = LocalProfile::new(test_child_path())
+            .with_arguments(["report-cwd", "read-line", "exit:0"])
+            .with_working_directory(&canonical);
+        let session = LocalPtySession::start(profile, TerminalSize::new(512, 24).unwrap()).unwrap();
+        let mut output = Vec::new();
+        wait_for_windows(&session, Duration::from_secs(5), &mut output, |_, bytes| {
+            bytes
+                .windows(marker.len())
+                .any(|window| window == marker.as_bytes())
+        });
+        session.try_send_input(b"finish\r\n").unwrap();
+        wait_for_windows_exit(&session, Duration::from_secs(3));
+        assert!(matches!(
+            session.shutdown(Duration::from_secs(2)),
+            Ok(ShutdownResult::AlreadyStopped | ShutdownResult::Stopped)
+        ));
+        drop(session);
+        std::fs::remove_dir(&directory).unwrap();
     }
 
     #[cfg(windows)]

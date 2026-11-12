@@ -41,6 +41,11 @@ remain readable for existing attach behavior but cannot authorize unverified
 hosting. Uncertain launch or a subsequently dead generation requires separately
 confirmed fresh-shell consent; ordinary Retry never creates a replacement.
 
+Canonical spawn evidence does not require verbatim spelling in the shell.
+On Windows, the PTY handoff uses ordinary drive paths when their meaning is
+unchanged; canonical profiles and fingerprints stay intact. Verbatim-only
+names, long paths, UNC/device namespaces and unpaired UTF-16 remain unchanged.
+
 The host helper has a separate bind-existing entry point that revalidates the
 exact native identity and spawn evidence. It never creates a shell. Transport,
 takeover and terminal ownership remain with the existing bridge/daemon
@@ -148,7 +153,10 @@ client reconnection still require separate qualification.
   repairs only an already pin-verified handle. The detached native fixture
   selects a directory accepted by production private-storage policy rather
   than assuming Windows runner checkout ancestors are trusted.
+  Windows PTY cwd tests cover plain drive handoff, unchanged canonical
+  profiles, reserved/verbatim-only paths and actual ConPTY child cwd reporting.
 - **Native/manual evidence required:** DT-08 signed desktop lifecycle,
   GitHub browser sign-in, live helper updates and physical-client reconnect;
-  deterministic tests do not promote acceptance.
+  deterministic tests do not promote acceptance. Actual mapped-drive shell
+  performance remains separate from the controlled cwd-shape regression (#733).
 - **Coverage superseded:** None.

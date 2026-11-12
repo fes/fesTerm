@@ -19,6 +19,7 @@ nix = { version = "0.31", default-features = false, features = ["process", "sign
 nix = { version = "0.31", default-features = false, features = ["resource"] }
 
 [target.'cfg(windows)'.dependencies]
+dunce = "1.0.5"
 festerm-windows-job = { path = "../festerm-windows-job" }
 festerm-windows-runtime = { path = "../festerm-windows-runtime" }
 

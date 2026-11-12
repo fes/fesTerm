@@ -1624,10 +1624,12 @@ fn generation_churn_reuses_fixed_native_slot_and_reclaims_only_proven_dead_artif
     let mut running = fixture.ensure(&creation);
     let name = running.identity.name.clone();
     for _ in 0..6 {
-        fixture
-            .control()
-            .end(&fixture.owner, &running.target, allow)
-            .unwrap();
+        retry_busy(|| {
+            fixture
+                .control()
+                .end(&fixture.owner, &running.target, allow)
+        })
+        .unwrap();
         fixture.wait_absent(&running.target);
         let previous = running.target.generation;
         running = fixture.ensure(&creation);
