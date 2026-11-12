@@ -5,7 +5,7 @@
 **Temporary-cancellation diagnostic slice:** exact `4898f407` macOS native19
 fails18/1 in174.87s: final takeover establish returns OutcomeUncertain before
 SNAPSHOT (`host_terminal_tests.rs:467`). Five cleanup Busy lines do not identify
-its producer; post-panic NotFound is not an established cause. Planned test-only
+its producer; post-panic NotFound is not an established cause. Test-only
 boundary labels and protected-file unwind regressions do not fix production or
 prove that200ms sleeps caused it. Sleeps, deadlines and all ownership/lease
 oracles remain unchanged. New native execution is **UNRUN**, separately gated;

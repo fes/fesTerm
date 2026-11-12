@@ -82,6 +82,15 @@ enum AttachFailureDiagnostic<'a> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+fn attach_failure_diagnostics_enabled(
+    temporary: bool,
+    takeover: bool,
+    previously_attached: bool,
+) -> bool {
+    temporary || (!takeover && previously_attached)
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl AttachFailureDiagnostic<'_> {
     fn message(self, enabled: bool) -> Option<String> {
         if !enabled {
@@ -129,6 +138,28 @@ impl AttachFailureDiagnostic<'_> {
 #[cfg(test)]
 mod attach_diagnostic_tests {
     use super::*;
+
+    #[test]
+    fn native_attachment_failure_diagnostics_include_temporary_takeover() {
+        for temporary in [false, true] {
+            for takeover in [false, true] {
+                for previously_attached in [false, true] {
+                    let enabled = attach_failure_diagnostics_enabled(
+                        temporary,
+                        takeover,
+                        previously_attached,
+                    );
+                    assert_eq!(enabled, temporary || (!takeover && previously_attached));
+                    assert_eq!(
+                        AttachFailureDiagnostic::UnwindCommitted
+                            .message(enabled)
+                            .is_some(),
+                        enabled
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn native_attachment_failure_diagnostics_are_redacted_and_boundary_exact() {
@@ -204,27 +235,44 @@ mod attach_diagnostic_tests {
     #[test]
     fn failed_native_attach_unwind_contention_preserves_committed_writer_and_exact_pending_ticket()
     {
+        assert_failed_native_attach_unwind(Lifetime::Persistent {});
+    }
+
+    #[test]
+    fn failed_native_attach_unwind_preserves_temporary_ownership_and_exact_pending_ticket() {
+        assert_failed_native_attach_unwind(Lifetime::Temporary {
+            reconnect_grace_seconds: 60,
+        });
+    }
+
+    fn assert_failed_native_attach_unwind(lifetime: Lifetime) {
         let directory = storage::private_test_directory();
         let root = directory.path();
         let storage_directory = storage::private_directory(root, false).unwrap();
         let generation = GenerationId::new(1).unwrap();
         let old_ticket = OperationId::new();
         let ticket = OperationId::new();
+        let replacement_attachment = AttachmentId::new();
+        let temporary = matches!(lifetime, Lifetime::Temporary { .. }).then(|| TemporaryLease {
+            lease: LeaseId::new(),
+            epoch: Epoch::new(4).unwrap(),
+            attachment: replacement_attachment.clone(),
+        });
         let mut lease = DaemonLease {
             version: 1,
             name: "fixture".into(),
             generation,
             revision: 1,
-            lifetime: Lifetime::Persistent {},
-            temporary: None,
-            deadline_ms: None,
-            connected: false,
+            lifetime,
+            temporary: temporary.clone(),
+            deadline_ms: temporary.as_ref().map(|_| now_ms() + 60_000),
+            connected: temporary.is_some(),
             stopped: false,
             remote_revoked: false,
             pending: Some(PendingLeaseAttachment {
                 ticket: ticket.clone(),
                 writer_epoch: Epoch::new(2).unwrap(),
-                previous: None,
+                previous: temporary.clone(),
                 attachment: AttachmentId::new(),
                 deadline_ms: now_ms() + 15_000,
             }),
@@ -256,7 +304,7 @@ mod attach_diagnostic_tests {
             grant: lease.grant.clone(),
             writer_epoch: lease.writer_epoch,
             ticket: old_ticket,
-            expected: None,
+            expected: temporary,
         };
         let guard = LeaseGuard::reserve(root, generation).unwrap();
         guard.create(&lease).unwrap();
@@ -272,6 +320,10 @@ mod attach_diagnostic_tests {
         );
         let held = guard.read().unwrap();
         assert_eq!(held.pending.as_ref().unwrap().ticket, ticket);
+        assert_eq!(held.pending.as_ref().unwrap().previous, lease.temporary);
+        assert_eq!(held.temporary, lease.temporary);
+        assert_eq!(held.deadline_ms, lease.deadline_ms);
+        assert_eq!(held.connected, lease.connected);
         assert!(same_grant(&held.grant, &lease.grant));
         assert_eq!(held.writer_epoch, old.writer_epoch);
         SessionControl::committed(&old, &held).unwrap();
@@ -287,6 +339,13 @@ mod attach_diagnostic_tests {
         let guard = LeaseGuard::acquire(root, generation).unwrap();
         let cleared = guard.read().unwrap();
         assert!(cleared.pending.is_none());
+        let mut expected = lease.clone();
+        expected.pending = None;
+        expected.revision += 1;
+        assert_eq!(
+            serde_json::to_value(&cleared).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
         assert_eq!(cleared.writer_epoch, lease.writer_epoch);
         assert_eq!(cleared.last_attachment, lease.last_attachment);
         assert_eq!(cleared.temporary, lease.temporary);
@@ -297,6 +356,10 @@ mod attach_diagnostic_tests {
         lease = cleared;
         lease.last_attachment = Some(ticket.clone());
         lease.writer_epoch = lease.writer_epoch.next().unwrap();
+        if let Some(binding) = lease.temporary.as_mut() {
+            binding.epoch = binding.epoch.next().unwrap();
+            binding.attachment = replacement_attachment;
+        }
         guard.replace(&mut lease).unwrap();
         let committed = storage::read_private(&storage_directory, name, 4096).unwrap();
         drop(guard);
@@ -1982,7 +2045,11 @@ impl SessionControl {
         }
 
         #[cfg(any(test, feature = "test-support"))]
-        let diagnose = !takeover && lease.last_attachment.is_some();
+        let diagnose = attach_failure_diagnostics_enabled(
+            lease.temporary.is_some(),
+            takeover,
+            lease.last_attachment.is_some(),
+        );
         if !record.lease_matches(&lease) || !same_grant(&lease.grant, &record.grant()) {
             return Err(ControlError::Unknown);
         }
