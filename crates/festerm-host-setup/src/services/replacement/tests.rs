@@ -286,7 +286,22 @@ fn host_update_rejects_live_phase_runtime_lease_downgrade_and_changed_helper_bef
         io::ErrorKind::WouldBlock
     );
     drop(held);
-    for from in ["0.16.0", "9.0.0", "01.0.0", "0.15.0-beta", "0.14.0"] {
+    for from in [crate::VERSION, "9.0.0"] {
+        let error = services
+            .replace_stopped_with(
+                &fixture.next,
+                from,
+                stopped.epoch,
+                TrustedStage::authenticate_fixture_registered,
+            )
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "host.update_strictly_newer_current_release_required"
+        );
+    }
+    for from in ["01.0.0", "0.15.0-beta", "0.14.0"] {
         assert!(services
             .replace_stopped_with(
                 &fixture.next,
