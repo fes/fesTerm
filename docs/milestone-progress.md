@@ -1,5 +1,24 @@
 # Milestone Progress Narrative
 
+## Retaining useful evidence delivery without carrying a closed campaign
+
+After #712 merged the eight foundation slices, the remaining queue is #692,
+#719 and #729, not eight pending foundation merges. The rebased evidence pair
+consolidates #719's useful MSVC-driver selection, scoped Cargo stderr handling,
+OS-input Build Tools environment and private Running Sessions runtime into
+#692. The runtime rejects symlinks, foreign ownership and shared-writable
+ancestors without repairing existing permissions; its tests use owned fixtures.
+Windows source contracts are not Windows-native execution.
+
+The old #692 operators only admit frozen source hashes, fixed identities and
+private November campaign inputs. Carrying these and duplicate embedded
+Python/vendor copies into today's adapter would add no current native
+qualification. Their original source and immutable first failures remain
+historical, while the [manual evidence record](manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope)
+retains the narrow actual Linux positives and their limits. No native service,
+vault, provider or full ADR 0084 acceptance advances, and #729's relevance is a
+separate decision.
+
 ## Keeping framed creation replays exact across native contention
 
 The consolidated `fef6eb09` macOS job observed a correlated `Busy`, not a

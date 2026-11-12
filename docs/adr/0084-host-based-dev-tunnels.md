@@ -778,6 +778,15 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+Historical selected Linux Logind and acquisition/replay observations are
+recorded with exact source and immutable archive digests in the
+[manual evidence record](../manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope).
+Their first failures, partial negative coverage and reviewed cleanup limits
+remain explicit. The rebased evidence delivery removes closed-campaign
+operators rather than extending their frozen source allowlists. It retains
+portable runner/build-environment fixes only, with no new GUI edge or change
+to HOST-01–HOST-06 classifications, native-service requirements or ADR status.
+
 The bounded new-HOST in-process recovery contract is in
 [native services](../native-host-services.md#in-process-host-relay-recovery).
 HOST-02/03 require typed positive transient classification, the same exclusive

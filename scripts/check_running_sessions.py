@@ -8,6 +8,7 @@ from pathlib import Path
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -50,10 +51,41 @@ def owned_targets(tool, output):
     return targets
 
 
+def trusted_runtime_directory(path, *, private=False):
+    if not path.is_absolute() or ".." in path.parts:
+        return False
+    try:
+        for directory in (path, *path.parents):
+            info = directory.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid())
+                    or info.st_mode & 0o022):
+                return False
+        info = path.lstat()
+        return not private or (
+            info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o700)
+    except OSError:
+        return False
+
+
 def create_runtime_root():
     # macOS TMPDIR and checkout paths can exceed sockaddr_un.sun_path before
-    # the daemon's generation suffix is added. mkdtemp owns a private 0700 leaf.
-    return Path(tempfile.mkdtemp(prefix="fs-mux-", dir="/tmp" if os.name != "nt" else None))
+    # the daemon's generation suffix is added, so the root must stay short.
+    # The daemon rejects shared-writable ancestors such as /tmp, so prefer the
+    # owner-only XDG runtime directory and otherwise an owned home leaf.
+    # Never repair existing permissions or follow a runtime-parent symlink.
+    if os.name == "nt":
+        return Path(tempfile.mkdtemp(prefix="fs-mux-"))
+    value = os.environ.get("XDG_RUNTIME_DIR")
+    base = Path(value) if value else None
+    if base is None or not trusted_runtime_directory(base, private=True):
+        home = Path.home()
+        if not trusted_runtime_directory(home):
+            raise PermissionError("Running Sessions requires a trusted home or XDG runtime directory")
+        base = home / ".fsm"
+        base.mkdir(mode=0o700, exist_ok=True)
+        if not trusted_runtime_directory(base, private=True):
+            raise PermissionError("Existing Running Sessions runtime parent is not owner-private")
+    return Path(tempfile.mkdtemp(prefix="fs-mux-", dir=str(base)))
 
 
 def main():
