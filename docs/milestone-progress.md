@@ -15470,3 +15470,16 @@ Historical169b raw logs/handoff remain untouched, not reused as child
 qualification. This introduces no signing policy, native Windows/guest claim
 or executable action. No unchanged native campaign or new publisher trust
 seam was added.
+
+## Correcting ADR 0084 delivery overhead
+
+The strategy review found that repeated source-only review rounds before
+compilation, per-correction worktrees, and expanding evidence narratives were
+slowing delivery without proportional benefit. The
+[agent delivery process guide](agent-delivery-process.md), linked from
+`AGENTS.md`, now records a compile/test-first iteration loop, independent
+reviews at logical feature boundaries, reusable working lanes, and bounded
+evidence. The revised ADR 0084 plan prioritizes qualifying and publishing
+existing HOST recovery before further framework work. It does not call
+network recovery equivalent to process-crash restart, lower lab resource
+limits, waive native/release gates, or change the project's acceptance status.

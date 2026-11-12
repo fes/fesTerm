@@ -10,6 +10,7 @@ Read `README.md`, then use the document that matches the task:
 | Dependency and ownership boundaries | `ARCHITECTURE.md` |
 | Application command semantics and UI action routing | `docs/application-command-model.md` |
 | Scope control and architecture-stability policy | `docs/development-governance.md` |
+| Agent delivery planning, review cadence, and session recovery | `docs/agent-delivery-process.md` |
 | Required behavior | `REQUIREMENTS.md`, `COMPATIBILITY.md` |
 | Standards and security decisions | `docs/standards-and-implementation-notes.md`, `docs/adr/` |
 | Golden fixtures | `tests/fixtures/README.md` |
