@@ -789,30 +789,24 @@ tests must preserve unrelated live clients after failed per-client cleanup,
 while retaining sticky retirement refusal after reaping and repeated close;
 the actual typed WebSocket wrapper must sanitize transient and refused errors.
 
-The encrypted shared-path fixture requires the peer to acknowledge the host's
-existing `tcpip-forward` notification. The pinned client's narrow typed
-`Handler::server_tcpip_forward(address, port) -> Result<Option<u32>, Error>`
-async callback defaults to refusal; **all existing production handlers keep
-that default for well-formed requests**. Only the test peer opts into the exact
-`127.0.0.1:47461` notification, retaining the existing host-key verifier and
-channel refusals.
-No listener is opened and host registration refusal remains fatal to that
-client. This is not a general global-request hook or new forwarding authority.
+The host's existing server `tcpip-forward` notification is optional for an
+authenticated client. The unmodified production `VerifiedHost` refuses it.
+Log an unacknowledged notification without disconnecting that client; the SDK
+also conflates refusal and peer closure into a unit error, so keep awaiting the
+owned `RunningSession` to establish genuine completion. Retain the client task
+and its permit until completion or bounded cancellation/drain. Do not detach
+the service task, opt production clients into forwarding, or create a listener.
+Host-key verification, channel admission and owner authority remain unchanged.
 
-Dispatch checks a UTF-8 address of at most 255 bytes before allocation, a full
-u32 port and complete payload before invoking the callback. Malformed server
-`tcpip-forward` payloads now terminate the SSH session before any Handler
-callback or reply. This session-termination difference applies to all workspace
-clients using the patched `russh`, including `festerm-ssh`; it is not limited
-to the test peer. Well-formed default-deny behavior and reply bytes remain
-unchanged. Out-of-range ports refuse without callback.
-Unknown requests retain existing default rejection. Nonzero `want-reply`
-requests get success/failure; zero never gets a reply. Accepted fixed ports
-must match the requested nonzero TCP port and return no port payload. Port 0
-requires `want-reply` and a returned port in 1..=65535, included in success;
-port 0 without reply is refused without callback. Invalid returned ports
-refuse. Deterministic dispatch/default-deny/exact-peer and original encrypted
-live-isolation/retirement regressions are required. Focused execution and its
+The encrypted shared-path isolation and liveness tests must use the real,
+unmodified production `VerifiedHost`. Require bidirectional direct-TCP bytes
+beyond the two-second disconnect budget and a session-held permit after channel
+closure, as well as healthy traffic/new admission, failed-client cleanup,
+sticky retirement/second-close refusal and full permit return. The unnecessary
+vendored notification callback/dispatcher and accepting test peer are removed;
+the affected vendor files match the published base, including its existing
+request parsing/replies. Earlier accepting-peer passes did not prove production
+client availability. Focused execution and its
 source-specific limits are recorded in the
 [progress narrative](../milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery);
 unit coverage does not establish native/provider acceptance or waive review.

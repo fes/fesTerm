@@ -7,10 +7,13 @@ before replacement and recheck signed bundle/current native owner/account/
 receipt with a fresh scoped token. Unknown or refused authority never retries;
 failed per-client cleanup stays isolated while serving, but its sticky drain
 uncertainty refuses listener replacement, including after repeated close.
-The encrypted test peer's exact-port typed notification opt-in retains pinned
-key verification; production defaults still deny. Its corrected isolation
-and dispatch/peer have focused unit coverage, not new HOST authority or native
-acceptance; logical feature reviews remain required.
+Refusal of the optional server port notification must not disconnect an
+authenticated production client: log it and keep awaiting the owned session
+with its permit. Actual encrypted isolation and beyond-budget bidirectional
+liveness regressions use unmodified production `VerifiedHost`; the accepting
+peer/vendor extension is removed. Earlier accepting-peer passes did not cover
+production-client availability. No new HOST authority or native acceptance is
+implied; affected source still requires delta review.
 No terminal input replay or daemon operation is introduced. See
 `native-host-services.md#in-process-host-relay-recovery`. Manager crash policy
 and native/cloud/vault acceptance remain open.

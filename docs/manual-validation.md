@@ -15,12 +15,16 @@ crash restart, manager migration/older-helper compatibility and actual
 vault/cloud/service/daemon-survival evidence remain open. See
 `native-host-services.md#in-process-host-relay-recovery`.
 
-The encrypted shared-path fixture's typed notification callback is test-only
-opt-in, exact `127.0.0.1:47461` with the unchanged host-key verifier. Require
-default/unknown/malformed/wrong-port refusal and strict reply/port-zero tests
-before accepting its live isolation/retirement proof. No listener or production
-handler opt-in is added. These deterministic checks have focused unit coverage;
-the platform/provider/vault/service scenarios above remain open. The
+The real shared serving path must retain an authenticated production
+`VerifiedHost` despite its refusal of the optional server port notification:
+log the disposition, retain the owned session/permit and prove bidirectional
+direct-TCP bytes beyond the two-second disconnect budget. Keep all existing
+live isolation/new-admission/sticky-retirement/second-close/permit oracles using
+that same unmodified peer. Earlier accepting-peer unit passes did not cover
+production-client availability; the peer/vendor extension is removed rather
+than enabling production forwarding. No listener, authentication relaxation or
+new protocol capability is added. The platform/provider/vault/service
+scenarios above remain open. The
 [progress record](milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery)
 separates source-specific execution from acceptance.
 

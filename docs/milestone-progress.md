@@ -40,21 +40,34 @@ network/unknown/refused authority stops. Focused deterministic coverage is now
 executed; independent feature reviews and native qualification remain separate.
 The source correction isolates failed per-client cleanup while serving and
 retains sticky retirement refusal. Exact da9967 passed setup8/0/0 and bridge5/1;
-the first healthy-channel fixture failed before fault injection because its
-peer cannot acknowledge the host's port notification. The corrected test peer
-uses only an exact-port typed callback with unchanged pin verification and
-default production refusal. At exact `e4273190`, setup selects **8/0/0, 3.67s**,
+the first healthy-channel failure exposed a real production compatibility bug,
+not merely fixture incompatibility. At exact `e4273190`, setup selects **8/0/0, 3.67s**,
 bridge selects **7/0/0, 0.15s**, and the excluded vendor manifest explicitly
-selects **3/0/0, 0.00s**. The unchanged real shared service regression now passes
-healthy traffic/new admission, stalled unadopted-client cleanup, sticky
-retirement/second-close refusal and full permit return. Affected bridge/setup/
+selects **3/0/0, 0.00s**, but those 18 passes did **not** cover real production
+peer availability: the accepting test peer hid its disconnection. Affected bridge/setup/
 CLI all-target strict, app fmt, vendor formatting delta preserving prior drift,
 actual-main trace and diff all exit0. The first offline vendor-cache miss was
 preserved; restoring existing locked dependencies changed no manifests or
 versions. A harness module-prefix mismatch was corrected against existing
 passing output without rerunning tests. No new native/helper campaign or
 reattribution of the separate 422 native evidence is implied. This is a tested
-candidate for security/reliability/scope review, not ADR acceptance.
+candidate's evidence, not ADR acceptance or a production-liveness proof.
+
+Reliability review found that the published path dropped `RunningSession` on
+notification refusal, detaching its still-live authenticated service. Awaitable
+recovery instead explicitly disconnected it, breaking every ordinary
+`VerifiedHost` client because that peer refuses the optional server notification.
+The correction logs an unacknowledged notification and keeps awaiting the
+owned session with its permit; actual completion or bounded cancellation/drain
+still ends ownership. It does not relax authentication or enable forwarding.
+The unnecessary accepting peer and vendor callback/dispatch/tests are removed,
+restoring only their own vendor hunks to the published base. The isolation
+regression again uses unmodified production `VerifiedHost`, retaining all its
+original oracles. A separate direct-TCP byte/permit liveness regression fails
+red at `9c3f6374` (**0/1/0, 0.10s**, OS101, `SendError`) before the compatibility
+fix. Changed-source bridge/strict/static qualification and affected delta review
+remain separate from the unchanged, source-specific setup evidence and all
+native/provider acceptance.
 Native restart flags/receipt versions and run-history schema are unchanged;
 #729 crash recovery, older-helper manager migration and native/cloud/vault/
 daemon-survival qualification remain explicit gaps.

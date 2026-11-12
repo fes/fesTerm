@@ -328,9 +328,12 @@ where
                         result = adopted => { if result.is_err() { return; } }
                     }
                     if running.handle().forward_tcpip("127.0.0.1".into(), port as u32).await.is_err() {
-                        return;
+                        // This notification is optional; its unit error also conflates peer closure.
+                        eprintln!("host.optional_forward_notification_unacknowledged");
                     }
-                    let _ = (&mut running).await;
+                    if (&mut running).await.is_err() {
+                        eprintln!("host.client_session_closed_with_error");
+                    }
                     finished = true;
                 } => {}
             }
