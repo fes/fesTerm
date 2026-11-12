@@ -1,4 +1,4 @@
-<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "ccf342fb9dd822823790a4c16d1ee5baa58f889a2465664e4e40865d99d89df7"} -->
+<!-- agent-navigation: {"domain": "app-commands", "generator": "2", "model": "mai-code-1.1-flash", "sources": "fc60f3dcb4cd6206fc9c4efe32a9180c9eaa205235c572873f007fdf6dd5cd2c"} -->
 # Application commands, tabs, and input routing
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
@@ -19,7 +19,7 @@ Use for: Need to trace a user action from UI surface to final tab or session eff
 
 Evidence:
 - [`docs/application-command-model.md`](../../docs/application-command-model.md) — defines the one-semantic-command contract and ownership boundaries
-- [`AppCommand`](../../app/festerm/src/tabs.rs) — enum comments specify launcher, profile, and session semantics
+- [`docs/keyboard-shortcuts.md`](../../docs/keyboard-shortcuts.md) — describes routing order, scope, and no-terminal-bytes policy
 
 Caveats:
 - Widgets may translate input to commands, but they do not own session or workspace policy.
@@ -55,7 +55,7 @@ Use for: Need to reason about active tab choice, pane groups, and session lifecy
 
 Evidence:
 - [`docs/application-command-model.md`](../../docs/application-command-model.md) — tab switching and close are application commands, not widget policy
-- [`activate`](../../app/festerm/src/tabs.rs) — sets active tab, marks workspace dirty, and records the departing tab
+- [`set_active`](../../app/festerm/src/tabs.rs) — records the departing tab and clears new-output flags when focus changes
 
 Caveats:
 - Activation history is window-local and intentionally not persisted.

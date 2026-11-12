@@ -4,6 +4,16 @@
   "page_budget_bytes": 6000,
   "index_budget_bytes": 3500,
   "glossary_budget_bytes": 12000,
+  "state_models": [
+    {
+      "id": "session-lifecycle",
+      "title": "Session lifecycle",
+      "domain": "sessions",
+      "path": "crates/festerm-session/src/lib.rs",
+      "enum": "SessionLifecycle",
+      "docs": ["docs/adr/0018-ssh-liveness-reconnect-and-persistent-session-recovery.md"]
+    }
+  ],
   "coverage_roots": ["app/", "crates/"],
   "domains": [
     {
@@ -131,6 +141,9 @@
       "paths": [
         "crates/festerm-tunnel-*/**",
         "crates/festerm-host-setup/**",
+        "crates/festerm-host-protocol/**",
+        "crates/festerm-client-recipes/**",
+        "app/festerm-host/**",
         "crates/festerm-enterprise/**",
         "crates/festerm-powershell/**",
         "app/festerm/src/tunnel_*.rs",
@@ -142,8 +155,8 @@
         "app/festerm/src/remote_sessions.rs",
         "app/festerm/src/discovery.rs"
       ],
-      "docs": ["docs/dev-tunnels-experiment.md", "docs/dev-tunnel-files-protocol.md", "docs/remote-observation-protocol.md", "docs/powershell-enterprise.md", "docs/host-release-artifacts.md"],
-      "focus": "Tunnel discovery and HostBinding; rooted FileService and Filesystem; distinct trust and consent boundaries; helper artifact Manifest verification; gated qualification."
+      "docs": ["docs/dev-tunnels-experiment.md", "docs/dev-tunnel-files-protocol.md", "docs/remote-observation-protocol.md", "docs/powershell-enterprise.md", "docs/host-release-artifacts.md", "docs/adr/0084-host-based-dev-tunnels.md"],
+      "focus": "HOST protocol, identity, inventory, and client recipes; tunnel discovery and HostBinding; rooted FileService and Filesystem; distinct trust and consent boundaries; helper artifact Manifest verification; gated qualification."
     },
     {
       "id": "desktop-platform",

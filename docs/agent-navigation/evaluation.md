@@ -44,9 +44,26 @@ fesTerm's token use or improves its answers.
   page's source hash then mismatches and the next run regenerates it.
 - Generated text is untrusted. It is reviewed in the PR diff like code, and
   the generator drops text that addresses agents.
-- The glossary page is generated separately and refreshed when its cited source
-  files or the manifest settings change; if it is stale, the same freshness
-  check fails until the page is regenerated.
+- The map holds three kinds of generated page: one routing page per domain,
+  a glossary of project terms, and state models (`state-*.md`, declared under
+  `state_models` in [domains.json](domains.json)).
+- The glossary is refreshed when its cited source files or the manifest
+  settings change. A state model's states and terminal set are parsed from the
+  enum and its `is_terminal`; the model proposes transitions, and a transition
+  is kept only if its cited function is declared in a production file that
+  names the target state. Graph property checks (reachability, no exits from
+  terminal states, no dead ends, a path to a terminal state) are computed by
+  the script, not the model. A FAIL is a lead for review, not proof of a bug,
+  and no state model is checked against runtime traces. A state page is stale
+  when the enum, its cited files, or any production line naming a variant
+  changes.
+- Glossary and state pages hash only what they cite, so vocabulary or emitters
+  added elsewhere do not trigger regeneration. A monthly scheduled run (or a
+  dispatch with `refresh_coverage`) regenerates them with
+  `regenerate --refresh-coverage` and opens a PR from an
+  `agent-navigation/refresh-*` branch. This requires the repository setting
+  that allows GitHub Actions to create pull requests. Close the PR if it only
+  rewords entries.
 
 ## Opt-in comparison
 

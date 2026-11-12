@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -178,6 +178,36 @@ class Domain:
         }
 
 
+@dataclass(frozen=True)
+class StateModel:
+    """A lifecycle enum whose transitions are mapped from source (see state_* functions)."""
+
+    id: str
+    title: str
+    domain: str
+    path: str
+    enum: str
+    docs: tuple[str, ...]
+
+    @property
+    def key(self) -> str:
+        return f"state-{self.id}"
+
+    @property
+    def page(self) -> Path:
+        return MAP_DIR / f"{self.key}.md"
+
+    def manifest_entry(self) -> dict:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "domain": self.domain,
+            "path": self.path,
+            "enum": self.enum,
+            "docs": list(self.docs),
+        }
+
+
 @dataclass
 class Manifest:
     model: str
@@ -186,6 +216,7 @@ class Manifest:
     coverage_roots: tuple[str, ...]
     domains: list[Domain]
     glossary_budget: int = 9000
+    state_models: list[StateModel] = field(default_factory=list)
 
 
 def load_manifest(root: Path = ROOT) -> Manifest:
@@ -207,6 +238,17 @@ def load_manifest(root: Path = ROOT) -> Manifest:
         glossary_budget=int(data.get("glossary_budget_bytes", 9000)),
         coverage_roots=tuple(data["coverage_roots"]),
         domains=domains,
+        state_models=[
+            StateModel(
+                id=item["id"],
+                title=item["title"],
+                domain=item["domain"],
+                path=item["path"],
+                enum=item["enum"],
+                docs=tuple(item.get("docs", ())),
+            )
+            for item in data.get("state_models", [])
+        ],
     )
 
 
@@ -648,6 +690,247 @@ def fit_glossary_budget(
         dropped += 1
 
 
+STATE_VERSION = "1"
+STATE_PROMPT = """\
+You are mapping the runtime transitions of the Rust enum {enum} in fesTerm for
+an AI retrieval map. Use only view, grep, and glob. Read the emitting files;
+do not guess. Return JSON only:
+{{"transitions":[{{"from":"State","to":"State","trigger":"what causes it","evidence":[{{"path":"repo/relative.rs","symbol":"function_name"}}]}}]}}
+
+States, parsed from {path} (first is initial): {states}
+Terminal states, parsed from is_terminal: {terminal}
+Production files that name {enum} variants:
+{emitters}
+Related docs: {docs}
+
+Rules:
+- Include a transition only when code moves a session from one state to the
+  other, such as by assigning, sending, or returning the new state after the
+  old one. Include recovery, reconnect, and failure paths you can confirm.
+- Evidence path must be one of the files listed above; symbol must be the Rust
+  fn in that file that performs or emits the transition. Give 1-2 evidence items.
+- trigger: max 120 chars, describes the event or guard, no instructions.
+- Do not invent transitions to make the model look complete; omit unconfirmed ones.
+- At most 30 transitions; from and to must be listed states and must differ.
+"""
+STATE_TEST_PATH_RE = re.compile(r"(?:^|/)(?:tests|benches|examples|fuzz)/|_tests?\.rs$|(?:^|/)tests?\.rs$")
+STATE_MIN_TRANSITIONS = 3
+
+
+def enum_variants(source: str, name: str) -> list[str]:
+    """Parses top-level variant names of `enum name { ... }` without a Rust parser."""
+    match = re.search(rf"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?enum\s+{re.escape(name)}\b[^{{;]*\{{", source)
+    if not match:
+        return []
+    depth, end = 1, match.end()
+    while end < len(source) and depth:
+        depth += {"{": 1, "}": -1}.get(source[end], 0)
+        end += 1
+    body = re.sub(r"//[^\n]*", "", source[match.end() : end - 1])
+    body = re.sub(r"#\[[^\]]*\]", "", body)
+    while True:
+        reduced = re.sub(r"\([^()]*\)|\{[^{}]*\}", "", body)
+        if reduced == body:
+            break
+        body = reduced
+    return [m.group(1) for chunk in body.split(",") if (m := re.match(r"\s*([A-Z][A-Za-z0-9_]*)", chunk))]
+
+
+def terminal_variants(source: str, name: str) -> list[str]:
+    impl = re.search(rf"impl\s+{re.escape(name)}\s*\{{", source)
+    if not impl:
+        return []
+    fn = re.search(r"fn\s+is_terminal\b[^{]*\{(.*?)\n\s*\}", source[impl.end() :], re.S)
+    return sorted(set(re.findall(rf"(?:Self|{re.escape(name)})::([A-Z][A-Za-z0-9_]*)", fn.group(1)))) if fn else []
+
+
+def state_emitters(root: Path, model: StateModel, files: list[str]) -> list[str]:
+    marker = f"{model.enum}::"
+    found = []
+    for path in files:
+        if not path.endswith(".rs") or STATE_TEST_PATH_RE.search(path):
+            continue
+        text = (root / path).read_text(encoding="utf-8", errors="replace")
+        if marker in text or (path == model.path and "Self::" in text):
+            found.append(path)
+    return found
+
+
+def state_source_hash(root: Path, model: StateModel, files: list[str], cited: list[str]) -> str:
+    """Covers the contract, the enum's file, every cited file, and every
+    production line that names a variant, so a new emission site anywhere
+    marks the page stale even when its file is not cited."""
+    digest = hashlib.sha256()
+    digest.update(f"state={STATE_VERSION}\n".encode())
+    digest.update(hashlib.sha256(STATE_PROMPT.encode()).digest())
+    digest.update(json.dumps(model.manifest_entry(), sort_keys=True).encode())
+    marker = f"{model.enum}::"
+    for path in sorted({model.path, *cited, *model.docs}):
+        source = root / path
+        content = source.read_bytes().replace(b"\r\n", b"\n") if source.is_file() else b""
+        digest.update(path.encode() + b"\0" + hashlib.sha256(content).digest())
+    for path in state_emitters(root, model, files):
+        lines = [
+            line.strip()
+            for line in (root / path).read_text(encoding="utf-8", errors="replace").splitlines()
+            if marker in line
+        ]
+        digest.update(path.encode() + b"\0" + "\n".join(lines).encode() + b"\0")
+    return digest.hexdigest()
+
+
+def validate_state_output(
+    root: Path, raw: dict, model: StateModel, states: list[str], emitters: list[str],
+) -> tuple[list[dict], list[str]]:
+    if not isinstance(raw, dict):
+        raise GenerationError("state model output must be a JSON object")
+    if SECRET_RE.search(json.dumps(raw)):
+        raise GenerationError("state model output appears to contain a secret")
+    warnings: list[str] = []
+    allowed = set(emitters)
+    sources: dict[str, str] = {}
+    merged: dict[tuple[str, str], dict] = {}
+    for item in (raw.get("transitions") or [])[:30] if isinstance(raw.get("transitions"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        source_state, target = str(item.get("from", "")).strip(), str(item.get("to", "")).strip()
+        if source_state not in states or target not in states or source_state == target:
+            warnings.append(f"dropped transition with unknown states: {source_state!r} -> {target!r}")
+            continue
+        trigger = clean_text(item.get("trigger"), 120)
+        if not trigger or DIRECTIVE_RE.search(trigger):
+            warnings.append(f"dropped transition with empty or agent-directed trigger: {source_state} -> {target}")
+            continue
+        evidence = []
+        for ref in (item.get("evidence") or [])[:2] if isinstance(item.get("evidence"), list) else []:
+            if not isinstance(ref, dict):
+                continue
+            path = str(ref.get("path", "")).strip()
+            while path.startswith("./"):
+                path = path[2:]
+            symbol = str(ref.get("symbol") or "").split("::")[-1].strip()
+            if path not in allowed or not IDENT_RE.fullmatch(symbol):
+                warnings.append(f"dropped evidence outside emitting files: {path!r}")
+                continue
+            if path not in sources:
+                sources[path] = (root / path).read_text(encoding="utf-8", errors="replace")
+            emits = f"{model.enum}::{target}" in sources[path] or (path == model.path and f"Self::{target}" in sources[path])
+            if not has_rust_declaration(sources[path], symbol) or not emits:
+                warnings.append(f"dropped ungrounded evidence {path}::{symbol} for -> {target}")
+                continue
+            evidence.append({"path": path, "symbol": symbol})
+        if not evidence:
+            warnings.append(f"dropped transition without grounded evidence: {source_state} -> {target}")
+            continue
+        key = (source_state, target)
+        if key in merged:
+            known = {(e["path"], e["symbol"]) for e in merged[key]["evidence"]}
+            merged[key]["evidence"] += [e for e in evidence if (e["path"], e["symbol"]) not in known][: 2 - len(merged[key]["evidence"])]
+            continue
+        merged[key] = {"from": source_state, "to": target, "trigger": trigger, "evidence": evidence}
+    order = {state: i for i, state in enumerate(states)}
+    transitions = sorted(merged.values(), key=lambda t: (order[t["from"]], order[t["to"]]))
+    if len(transitions) < STATE_MIN_TRANSITIONS:
+        raise GenerationError(f"state model has {len(transitions)} grounded transitions; require {STATE_MIN_TRANSITIONS}")
+    return transitions, warnings
+
+
+def state_properties(states: list[str], terminal: list[str], transitions: list[dict]) -> list[tuple[str, bool, str]]:
+    """Graph checks over the extracted model. They test the model, not runtime
+    behavior: a failure means the model or the code needs a closer look."""
+    edges: dict[str, set[str]] = {state: set() for state in states}
+    for t in transitions:
+        edges[t["from"]].add(t["to"])
+
+    def reach(start: str) -> set[str]:
+        seen, todo = {start}, [start]
+        while todo:
+            for nxt in edges[todo.pop()]:
+                if nxt not in seen:
+                    seen.add(nxt)
+                    todo.append(nxt)
+        return seen
+
+    initial = states[0]
+    reachable = reach(initial)
+    unreachable = [s for s in states if s not in reachable]
+    exits = [f"{t['from']}→{t['to']}" for t in transitions if t["from"] in terminal]
+    dead = [s for s in states if s not in terminal and not edges[s]]
+    stuck = [s for s in states if s in reachable and s not in terminal and not (reach(s) & set(terminal))]
+    return [
+        (f"every state is reachable from {initial}", not unreachable, ", ".join(unreachable) or "all reachable"),
+        ("terminal states have no outgoing transitions", not exits, ", ".join(exits) or "none"),
+        ("every non-terminal state has an exit", not dead, ", ".join(dead) or "none"),
+        ("every reachable state can reach a terminal state", not stuck, ", ".join(stuck) or "all can"),
+    ]
+
+
+def render_state_page(
+    model: StateModel, states: list[str], terminal: list[str], transitions: list[dict],
+    emitters: list[str], source_hash: str, model_name: str, manifest: Manifest, max_evidence: int = 2,
+) -> str:
+    cited = sorted({e["path"] for t in transitions for e in t["evidence"][:max_evidence]})
+    meta = json.dumps(
+        {"domain": model.key, "sources": source_hash, "generator": GENERATOR_VERSION, "model": model_name,
+         "cited": cited, "state_version": STATE_VERSION},
+        sort_keys=True,
+    )
+    domain_titles = {d.id: d.title for d in manifest.domains}
+    labels = [s + (" (initial)" if i == 0 else "") + (" (terminal)" if s in terminal else "") for i, s in enumerate(states)]
+    lines = [
+        f"<!-- agent-navigation: {meta} -->",
+        f"# State model: {model.title}",
+        "",
+        f"> Generated candidate model of `{model.path}::{model.enum}`. States and the",
+        "> terminal set are parsed from source; transitions are model-proposed and kept",
+        "> only if the cited function's file names the target state. Not checked",
+        "> against runtime traces; verify in source.",
+        "",
+        f"Domain: [{domain_titles.get(model.domain, model.domain)}]({model.domain}.md). States: {', '.join(labels)}.",
+        "",
+        "| From | To | Trigger | Evidence |",
+        "| --- | --- | --- | --- |",
+    ]
+    for t in transitions:
+        refs = "<br>".join(f"`{e['path']}::{e['symbol']}`" for e in t["evidence"][:max_evidence])
+        lines.append(f"| {t['from']} | {t['to']} | {t['trigger']} | {refs} |")
+    lines += ["", "## Property checks", ""]
+    for name, ok, detail in state_properties(states, terminal, transitions):
+        lines.append(f"- {'PASS' if ok else 'FAIL'}: {name} ({detail}).")
+    uncited = [p for p in emitters if p not in cited]
+    lines += [
+        "",
+        "## Coverage",
+        "",
+        f"Transitions cite {len(cited)} of {len(emitters)} production files that name a variant. A FAIL",
+        "or an uncited file means the model may be incomplete, not that the code is wrong.",
+    ]
+    if uncited:
+        lines.append("Uncited: " + ", ".join(f"`{p}`" for p in uncited[:12]) + (f", +{len(uncited) - 12} more." if len(uncited) > 12 else "."))
+    return "\n".join(lines) + "\n"
+
+
+def fit_state_page(
+    root: Path, model: StateModel, states: list[str], terminal: list[str], transitions: list[dict],
+    emitters: list[str], files: list[str], model_name: str, manifest: Manifest,
+) -> str:
+    for max_evidence in (2, 1):
+        cited = sorted({e["path"] for t in transitions for e in t["evidence"][:max_evidence]})
+        source_hash = state_source_hash(root, model, files, cited)
+        text = render_state_page(model, states, terminal, transitions, emitters, source_hash, model_name, manifest, max_evidence)
+        if len(text.encode()) <= manifest.page_budget:
+            return text
+    raise GenerationError(f"{model.key}: cannot fit {len(transitions)} transitions in {manifest.page_budget} bytes")
+
+
+def state_inputs(root: Path, model: StateModel, files: list[str]) -> tuple[list[str], list[str], list[str]]:
+    source = (root / model.path).read_text(encoding="utf-8")
+    states = enum_variants(source, model.enum)
+    if len(states) < 2:
+        raise GenerationError(f"{model.key}: enum {model.enum} not found in {model.path}")
+    return states, terminal_variants(source, model.enum), state_emitters(root, model, files)
+
+
 def render_index(root: Path, manifest: Manifest) -> str:
     rows = []
     for domain in manifest.domains:
@@ -656,6 +939,8 @@ def render_index(root: Path, manifest: Manifest) -> str:
         rows.append(f"| [{domain.title}]({domain.id}.md) | {summary} |")
     glossary_link = "| [Glossary](glossary.md) | Terms, aliases, and their defining source; open when task wording is unfamiliar. |"
     rows.append(glossary_link)
+    for model in manifest.state_models:
+        rows.append(f"| [State: {model.title}]({model.key}.md) | Checked transition map with evidence; open for lifecycle questions. |")
     return "\n".join(
         [
             "<!-- agent-navigation: index; generated by scripts/agent_navigation.py -->",
@@ -668,7 +953,7 @@ def render_index(root: Path, manifest: Manifest) -> str:
             "| --- | --- |",
             *rows,
             "",
-            "Pages regenerate per PR when their sources change",
+            "Pages regenerate per PR when their sources change, and monthly for coverage",
             "([workflow](../../.github/workflows/agent-navigation.yml),",
             "[domains](domains.json), [evaluation](evaluation.md)).",
             "",
@@ -746,6 +1031,13 @@ def stale_domains(root: Path, manifest: Manifest, files: list[str]) -> dict[str,
             stale["glossary"] = current
     else:
         stale["glossary"] = glossary_source_hash(root, [], manifest.glossary_budget, manifest)
+    for model in manifest.state_models:
+        page = root / model.page
+        text = page.read_text(encoding="utf-8") if page.exists() else ""
+        meta = page_metadata(text) if text else None
+        current = state_source_hash(root, model, files, meta.get("cited", []) if meta else [])
+        if not meta or meta.get("sources") != current or navigation_errors(root, page, text):
+            stale[model.key] = current
     return stale
 
 
@@ -755,7 +1047,7 @@ def check(root: Path = ROOT, freshness: bool = True) -> list[str]:
     errors = coverage_errors(manifest, files)
     if freshness:
         errors += [
-            f"{MAP_DIR / (d + '.md')}: stale; run scripts/agent_navigation.py regenerate"
+            f"{MAP_DIR / (d + '.md')}: stale; run scripts/agent_navigation.py regenerate {d}"
             for d in stale_domains(root, manifest, files)
         ]
     for domain in manifest.domains:
@@ -774,6 +1066,15 @@ def check(root: Path = ROOT, freshness: bool = True) -> list[str]:
         errors += navigation_errors(root, glossary_page, text)
     else:
         errors.append(f"{GLOSSARY_PAGE}: missing; run scripts/agent_navigation.py regenerate glossary")
+    for model in manifest.state_models:
+        page = root / model.page
+        if not page.exists():
+            errors.append(f"{model.page}: missing; run scripts/agent_navigation.py regenerate {model.key}")
+            continue
+        text = page.read_text(encoding="utf-8")
+        if len(text.encode()) > manifest.page_budget:
+            errors.append(f"{model.page}: exceeds {manifest.page_budget} bytes")
+        errors += navigation_errors(root, page, text)
     index = root / INDEX
     expected = render_index(root, manifest)
     if not index.exists() or index.read_text(encoding="utf-8") != expected:
@@ -983,6 +1284,46 @@ def generate_glossary(
     raise DomainFailure(f"glossary: {last_error}", usages)
 
 
+def generate_state_model(
+    root: Path, manifest: Manifest, model: StateModel, files: list[str], model_name: str, usage_dir: Path, deadline: float,
+) -> tuple[str, list[str], list[dict]]:
+    usages: list[dict] = []
+    last_error = None
+    states, terminal, emitters = state_inputs(root, model, files)
+    prompt = STATE_PROMPT.format(
+        enum=model.enum, path=model.path, states=", ".join(states), terminal=", ".join(terminal) or "none",
+        emitters="\n".join(f"- {p}" for p in emitters), docs=", ".join(model.docs) or "none",
+    )
+    for attempt in range(2):
+        remaining = deadline - time.monotonic()
+        if remaining < 60:
+            last_error = last_error or "time budget exhausted before generation"
+            break
+        if last_error:
+            prompt += f"\n\nYour previous answer was rejected: {last_error}. Return valid JSON only."
+        usage_file = usage_dir / f"{model.key}-{attempt}.json"
+        try:
+            output = run_copilot(root, prompt, model_name, usage_file, min(COPILOT_TIMEOUT, remaining))
+        except (GenerationError, subprocess.TimeoutExpired, OSError) as error:
+            last_error = str(error)
+            continue
+        finally:
+            try:
+                usages.append(json.loads(usage_file.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                pass
+        try:
+            transitions, warnings = validate_state_output(root, extract_json(output), model, states, emitters)
+            text = fit_state_page(root, model, states, terminal, transitions, emitters, files, model_name, manifest)
+            reject_rendered_secrets(text)
+        except Exception as error:  # noqa: BLE001 - malformed model output must not abort the run
+            last_error = f"{type(error).__name__}: {error}"
+            continue
+        write_text(root / model.page, text)
+        return model.key, warnings, usages
+    raise DomainFailure(f"{model.key}: {last_error}", usages)
+
+
 def usage_summary(usages: list[dict]) -> str:
     totals = {"input": 0, "output": 0, "cache_read": 0, "premium": 0.0}
     for usage in usages:
@@ -999,7 +1340,7 @@ def usage_summary(usages: list[dict]) -> str:
 
 def regenerate(
     root: Path, selected: list[str], force: bool, base: str | None, jobs: int, model: str | None,
-    time_budget: float = 2400,
+    time_budget: float = 2400, refresh_coverage: bool = False,
 ) -> int:
     deadline = time.monotonic() + time_budget
     manifest = load_manifest(root)
@@ -1007,33 +1348,39 @@ def regenerate(
     assigned = assign_files(manifest, files)
     hashes = {d.id: domain_hash(root, d, assigned[d.id]) for d in manifest.domains}
     hashes["glossary"] = "glossary"
+    states = {m.key: m for m in manifest.state_models}
+    hashes.update({key: key for key in states})
     targets = selected or list(hashes if force else stale_domains(root, manifest, files))
+    if refresh_coverage:
+        # Glossary and state pages hash only what they cite, so new vocabulary
+        # or emitters elsewhere need a periodic full refresh.
+        targets = list(dict.fromkeys([*targets, "glossary", *states]))
     unknown = set(targets) - set(hashes)
     if unknown:
         print(f"unknown domains: {sorted(unknown)}", file=sys.stderr)
         return 2
     domains = [d for d in manifest.domains if d.id in targets]
-    glossary_requested = "glossary" in targets
-    if not domains and not glossary_requested:
+    if not targets:
         print("agent navigation: all pages are fresh")
     failures, usages = [], []
+    name = model or manifest.model
     with tempfile.TemporaryDirectory() as tmp, ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        futures = []
-        for d in domains:
-            futures.append(
-                pool.submit(
-                    generate_domain, root, manifest, d, assigned[d.id], hashes[d.id],
-                    set(files), base, model or manifest.model, Path(tmp), deadline,
-                )
-            )
-        if glossary_requested:
-            futures.append(
-                pool.submit(
-                    generate_glossary, root, manifest, set(files), base, model or manifest.model, Path(tmp), deadline,
-                )
-            )
-        for item in zip(domains + ([None] if glossary_requested else []), futures):
-            domain, future = item
+        jobs_by_id = [
+            (d.id, pool.submit(
+                generate_domain, root, manifest, d, assigned[d.id], hashes[d.id],
+                set(files), base, name, Path(tmp), deadline,
+            ))
+            for d in domains
+        ]
+        if "glossary" in targets:
+            jobs_by_id.append(("glossary", pool.submit(
+                generate_glossary, root, manifest, set(files), base, name, Path(tmp), deadline,
+            )))
+        for key in (k for k in states if k in targets):
+            jobs_by_id.append((key, pool.submit(
+                generate_state_model, root, manifest, states[key], files, name, Path(tmp), deadline,
+            )))
+        for job_id, future in jobs_by_id:
             try:
                 domain_id, warnings, used = future.result()
                 usages += used
@@ -1044,10 +1391,9 @@ def regenerate(
                 usages += error.usages
                 failures.append(str(error))
             except Exception as error:  # noqa: BLE001 - keep the other domains' pages
-                domain_id = domain.id if domain else "glossary"
-                failures.append(f"{domain_id}: {type(error).__name__}: {error}")
+                failures.append(f"{job_id}: {type(error).__name__}: {error}")
     write_text(root / INDEX, render_index(root, manifest))
-    generated_total = len(domains) + (1 if glossary_requested else 0)
+    generated_total = len(jobs_by_id)
     if generated_total:
         line = f"agent navigation: {generated_total - len(failures)}/{generated_total} pages; {usage_summary(usages)}"
         print(line)
@@ -1070,6 +1416,10 @@ def main(argv: list[str] | None = None) -> int:
     regen = sub.add_parser("regenerate", help="regenerate stale (or selected) pages with Copilot CLI")
     regen.add_argument("domains", nargs="*")
     regen.add_argument("--all", action="store_true", help="regenerate every page")
+    regen.add_argument(
+        "--refresh-coverage", action="store_true",
+        help="also regenerate the glossary and state models, which only track the files they cite",
+    )
     regen.add_argument("--base", help="PR base commit, used to tell the model what changed")
     regen.add_argument("--jobs", type=int, default=3)
     regen.add_argument("--model", help="override the manifest model")
@@ -1093,7 +1443,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "index":
         write_text(ROOT / INDEX, render_index(ROOT, load_manifest()))
         return 0
-    return regenerate(ROOT, args.domains, args.all, args.base, args.jobs, args.model, args.time_budget)
+    return regenerate(
+        ROOT, args.domains, args.all, args.base, args.jobs, args.model, args.time_budget, args.refresh_coverage,
+    )
 
 
 if __name__ == "__main__":

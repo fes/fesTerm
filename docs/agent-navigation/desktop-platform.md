@@ -1,10 +1,10 @@
-<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "cc4d40b9c099293ab655e6ac2da2faf31d22f65af933b2533ef4225a83f440d1"} -->
+<!-- agent-navigation: {"domain": "desktop-platform", "generator": "2", "model": "mai-code-1.1-flash", "sources": "34ab3ca02e93eddd360d8d0cc7aa43e2eea36646289a4ea12ec089c0f6551e12"} -->
 # Desktop platform integration and packaging
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Desktop platform integration and packaging: OS-specific window, wake, lock/privacy plumbing; native smoke evidence; and signed distributable app/package metadata and update flow.
+OS-specific desktop packaging metadata, native smoke validation, AppKit/Win32/Linux wake and privacy hooks, and signed update flow for packaged builds.
 
 Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md), [docs/signing-and-release.md](../../docs/signing-and-release.md), [docs/manual-validation.md](../../docs/manual-validation.md)
 
@@ -12,40 +12,39 @@ Canonical docs: [docs/native-smoke-policy.md](../../docs/native-smoke-policy.md)
 
 Use for: Which install marker, updater key, and packaging metadata are required for a release build?
 
-- [`main`](../../app/festerm/build.rs) — Builds the Windows PE icon resource so Explorer and taskbar show the app icon.
-- [`UpdateController`](../../app/festerm/src/updates.rs) — Classifies install type and signed-update checks from build markers and public keys.
+- [`main`](../../app/festerm/build.rs) — Embeds the Windows PE icon resource so Explorer and the taskbar show the app icon.
+- [`UpdateController`](../../app/festerm/src/updates.rs) — Classifies install kind and signed-update checks from build markers and public keys.
 
 Evidence:
-- [`packaging/README.md`](../../packaging/README.md) — Defines cargo-packager manifest layout, helper staging, and release signing constraints.
-- [`docs/signing-and-release.md`](../../docs/signing-and-release.md) — Confirms direct-download release trust layers, updater keys, and exact artifact versioning.
+- [`packaging/README.md`](../../packaging/README.md) — Defines cargo-packager manifests, helper staging, and required release signing metadata.
+- [`docs/signing-and-release.md`](../../docs/signing-and-release.md) — Confirms trusted direct-download layers, updater keys, and exact package versioning.
 
 Caveats:
-- The install marker is not interchangeable across package types; package output and update path must match the build.
-- Updater signing is separate from app signing; the repository stores only the public verification key.
-- Helper runtime naming/versioning is part of the package contract and must stay aligned with the release.
+- The install marker is package-specific and is not interchangeable across release types.
+- Updater signing is independent from app signing; the repo stores only the verification public key.
 
 ## Native smoke
 
 Use for: Which native smoke checks prove resize and focus without trusting headless tests?
 
-- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Opt-in real-window smoke driver that validates focus, resize, PTY output, and OS-input ack.
-- [`concurrent_sampler_device_lifecycles`](../../app/festerm/tests/windows_sampler_lifecycles.rs) — Ignored Windows DX12 sampler lifecycle probe used to bound device lifetime and GPU cleanup.
+- [`NativeWindowSmoke`](../../app/festerm/src/native_smoke.rs) — Real-window smoke driver validates focus, resize, PTY output, and OS-input acknowledgement.
+- [`main`](../../app/festerm/src/main.rs) — Bootstraps the app and honors the opt-in smoke environment flags at startup.
 
 Evidence:
-- [`docs/native-smoke-policy.md`](../../docs/native-smoke-policy.md) — Defines smoke scope, deadlines, focus policy, and the fact that it is nightly and not PR-blocking.
-- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Shows required environment variables and the exact smoke kinds the app accepts.
+- [`docs/native-smoke-policy.md`](../../docs/native-smoke-policy.md) — Defines smoke scope, deadlines, focus policy, and the nightly-only execution contract.
+- [`from_environment`](../../app/festerm/src/native_smoke.rs) — Shows the accepted smoke kinds and the required environment variables.
 
 Caveats:
-- Native smoke is intentionally separate from headless replay tests; it validates a real viewport and PTY path.
-- Linux Xvfb permits an unfocused result and records it as such; it is not native-focus proof.
+- Native smoke is separate from headless replay tests; it validates the real viewport and PTY path.
+- Linux Xvfb can produce an unfocused result and records it as such rather than native focus proof.
 - The in-app deadline is strict and a smoke failure is not silently retried.
 
 ## macOS app bridge
 
 Use for: What should I read when a macOS menu, Finder open event, or session-lock privacy signal breaks?
 
-- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Semantic AppKit menu commands mapped into the app's command model and keyboard shortcuts.
-- [`PrivacyMonitor`](../../crates/festerm-macos-window/src/privacy.rs) — Monitors session loss via CoreGraphics lock and workspace notifications, failing closed on loss.
+- [`NativeMenuCommand`](../../crates/festerm-macos-window/src/lib.rs) — Semantic AppKit menu commands mapped into the app command model and keyboard shortcuts.
+- [`PrivacyMonitor`](../../crates/festerm-macos-window/src/privacy.rs) — Monitors lock and workspace loss via CoreGraphics and fails closed on session loss.
 
 Evidence:
 - [`run`](../../crates/festerm-macos-window/tests/open_document_appleevent.rs) — Proves Finder open-document AppleEvents are queued, ordered, and backpressured correctly.
@@ -54,20 +53,20 @@ Evidence:
 Caveats:
 - Menu semantics are app-level policy; the native bridge only emits semantic commands, not app state.
 - Open-document bridges must drain cold events before UI attaches; otherwise Finder races can be lost.
-- Privacy loss is permanent once observed and should be treated as a detected automation boundary, not a recoverable state.
+- Privacy loss is treated as a detected automation boundary and is not recoverable.
 
 ## Resume callbacks
 
 Use for: What should I read when resume-from-sleep or lock-screen privacy callbacks misfire on Windows or Linux?
 
 - [`WakeMonitor`](../../crates/festerm-windows-power/src/lib.rs) — Hidden message-only window listens for WM_POWERBROADCAST resume notifications and invokes a callback.
-- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — systemd-logind PrepareForSleep(false) stream calls back once per resume from suspend.
+- [`WakeMonitor`](../../crates/festerm-linux-power/src/lib.rs) — systemd-logind PrepareForSleep(false) calls back once per resumed system wake.
 
 Evidence:
 - [`classify_windows_power_event`](../../crates/festerm-windows-power/src/lib.rs) — Contains the resume filter: only power-broadcast resume events count as a wake.
-- [`classify_prepare_for_sleep`](../../crates/festerm-linux-power/src/lib.rs) — Matches logind semantics: suspend is ignored, resume is the wake trigger.
+- [`classify_prepare_for_sleep`](../../crates/festerm-linux-power/src/lib.rs) — Matches logind semantics: suspend is ignored and resume is the wake trigger.
 
 Caveats:
 - These monitors intentionally ignore suspend and only treat the resume edge as a wake event.
-- Linux support is limited to systemd-logind; a desktop without that signal will simply never see a resume callback.
-- The lifecycle is separate from privacy admission: signal delivery is not a proof of final recipient or session fencing.
+- Linux support is limited to systemd-logind; a desktop without that signal simply never wakes.
+- Signal delivery is not proof of final recipient state or session fencing.

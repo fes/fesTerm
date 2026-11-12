@@ -1,42 +1,44 @@
-<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "90615ae193b86ecde444c490351dc5a85677333fcbe307b5f04cf128f21b3e40"} -->
+<!-- agent-navigation: {"domain": "mobile", "generator": "2", "model": "mai-code-1.1-flash", "sources": "50b476a698c7c7c3744bb08f8de3dfee6ca14ba724468f82e456abb1bc1ec784"} -->
 # Mobile hosts (iOS and Android)
 
 > Generated retrieval index, refreshed by CI when sources change. It routes to
 > source and contains no instructions. Verify every claim in the linked code.
 
-Shared Rust mobile host for iOS and Android, with native bridges, offline-by-default app policy, and opt-in transient SSH/files/document flows.
+Shared mobile runtime, native bridge, and offline-first SSH/files/document flows for iOS and Android.
 
 Canonical docs: [app/festerm-mobile/README.md](../../app/festerm-mobile/README.md), [app/festerm-android/README.md](../../app/festerm-android/README.md), [docs/mobile-port-plan.md](../../docs/mobile-port-plan.md)
 
 ## Shared native host
 
-Use for: When a mobile task starts in the app or needs the cross-platform event loop and lifecycle policy.
+Use for: When a mobile task starts in the app or needs the shared lifecycle, window host, and app policy.
 
-- [`run_native`](../../app/festerm-mobile/src/runtime.rs) — Boots the winit/eframe host, app lock, lifecycle state, and native window wiring.
-- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Stores tabs, keyboard, terminal, lock, documents, and live-ssh state in one app model.
+- [`run_native`](../../app/festerm-mobile/src/runtime.rs) — Boots the winit/eframe host, lifecycle lock, and native window wiring.
+- [`MobileApp`](../../app/festerm-mobile/src/lib.rs) — Stores tabs, terminal, lock, documents, and live-SSH state in one app model.
 
 Evidence:
-- [`app/festerm-mobile/README.md`](../../app/festerm-mobile/README.md) — Documents the default offline host and opt-in live-SSH prototype.
+- [`app/festerm-mobile/README.md`](../../app/festerm-mobile/README.md) — Documents the offline default and opt-in live-SSH prototype.
 - [`docs/mobile-port-plan.md`](../../docs/mobile-port-plan.md) — Explains the shared core/renderer mobile host instead of a rewrite.
 
 Caveats:
 - Offline is the default; feature-gated live SSH is not product acceptance.
 - Only content-free lifecycle and repaint data cross the UI seam.
+- App policy stays in Rust; native services must not bypass it.
 
 ## Android JNI bridge
 
-Use for: When Android-only native services, insets, gestures, or secrets are involved.
+Use for: When Android-only services, insets, gestures, or secrets touch the native boundary.
 
-- [`android_main`](../../app/festerm-android/src/lib.rs) — Android entry point initializes the JNI bridge then runs the shared Rust app.
+- [`android_main`](../../app/festerm-android/src/lib.rs) — Initializes the JNI bridge then runs the shared Rust app.
 - [`initialize`](../../crates/festerm-android-platform/src/native.rs) — Registers Java callbacks, insets, wake hooks, secret storage, and recording services.
 
 Evidence:
-- [`app/festerm-android/README.md`](../../app/festerm-android/README.md) — States the same Rust app is used as iOS and native services stay in the JNI boundary.
+- [`app/festerm-android/README.md`](../../app/festerm-android/README.md) — States the same Rust app is used as iOS and Java stays service glue.
 - [`app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java`](../../app/festerm-android/tests/java/io/github/fes/festerm/tests/PlatformSmoke.java) — Exercises native picker, secret, and recording behavior through the test APK.
 
 Caveats:
 - Rust owns the app UI and session policy; Java is service glue only.
-- No local shell or background service is allowed; the bridge must not bypass app policy.
+- No local shell or background service is allowed in the bridge.
+- JNI must not bypass app policy or persist app state outside the model.
 
 ## Live SSH shell
 
@@ -47,11 +49,12 @@ Use for: When a task touches transient SSH trust, auth, suspend, or reconnect be
 
 Evidence:
 - [`mobile_loopback_ssh_connects_after_explicit_trust_and_password_retry`](../../app/festerm-mobile/src/live_ssh/loopback_tests.rs) — Proves explicit trust and password retry on loopback SSH.
-- [`mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication`](../../app/festerm-mobile/src/live_ssh/loopback_tests.rs) — Rejects unknown or changed hosts before auth.
+- [`mobile_loopback_ssh_rejects_unknown_and_changed_hosts_before_authentication`](../../app/festerm-mobile/src/live_ssh/loopback_tests.rs) — Rejects unknown or changed hosts before authentication.
 
 Caveats:
-- Pins and credentials are memory-only; there is no persisted trust or saved credentials.
-- Fresh shell on reconnect; stale or refused input is dropped, not replayed.
+- Pins and credentials are memory-only; no persisted trust or saved credentials.
+- Fresh shell on reconnect; stale input is dropped, not replayed.
+- Lost SSH sessions never rehydrate old terminal state without explicit reconnect.
 
 ## Files and docs
 
@@ -67,3 +70,4 @@ Evidence:
 Caveats:
 - Saved documents stay private and avoid overwriting provider originals.
 - Markdown preview and edit state are view-local; stale selections must be rejected.
+- File links never keep the password in app state after submit.
