@@ -2087,3 +2087,11 @@ compiler hashes, not freshly compiled at da7. The eighteen native passes and
 original Busy failure remain2b-only; no full19 or cross-platform/vault/GUI
 acceptance is inferred. Partial classification and required CI/parent
 docs-continuity gates remain unchanged.
+
+HOST-02/03 temporary-cancellation diagnosis preserves the exact final takeover
+success oracle and original request. Test-only fixed boundary/error labels must
+cover this formerly silent takeover path. Protected-file unwind tests retain
+the old temporary owner/epoch/deadline and foreign/committed ticket fences;
+Busy/Unknown/OutcomeUncertain never establish absence. The `4898f407` macOS
+native18/1 producer is unknown; no retry/sleep/policy change or new native
+acceptance is implied.

@@ -2,6 +2,15 @@
 
 **Status:** Active registry
 
+**Temporary-cancellation diagnostic slice:** exact `4898f407` macOS native19
+fails18/1 in174.87s: final takeover establish returns OutcomeUncertain before
+SNAPSHOT (`host_terminal_tests.rs:467`). Five cleanup Busy lines do not identify
+its producer; post-panic NotFound is not an established cause. Planned test-only
+boundary labels and protected-file unwind regressions do not fix production or
+prove that200ms sleeps caused it. Sleeps, deadlines and all ownership/lease
+oracles remain unchanged. New native execution is **UNRUN**, separately gated;
+original raw failure and earlier source-specific results remain preserved.
+
 The composed ADR 0084 Desktop source keeps two native lifetime domains
 separate: imported/ordinary-private Bind/Switch/Resume/Release/rollback never
 authorizes native End of the original local shell, including an already-Absent
