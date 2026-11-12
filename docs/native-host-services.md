@@ -360,7 +360,9 @@ Draining preserves non-login hosting errors; only an exact typed cloud
 cancellation induced by the login watcher is normalized within its owned run.
 This includes cancellation after final cloud account confirmation but before
 the locked relay-identity read; a changed snapshot remains a non-cancellation
-failure with the same diagnostic. No provisioning or cloud operation is retried.
+failure with the same diagnostic. This login-manager mechanism retries no
+provisioning or cloud operation; in-process relay recovery is separately bounded
+by the contract above.
 No listener is admitted without current proof and owner consent.
 This is automatic current-logon activation,
 not Manual startup or pre-login exposure. Manual retains `Restart=no` and no

@@ -5,16 +5,16 @@
 //! listeners, port-management API, or unbounded forwarding queues.
 use std::{io, sync::Arc, time::Duration};
 
-use russh::{client, Channel, ChannelStream};
+use russh::{Channel, ChannelStream, client};
 use serde::{Deserialize, Serialize};
 use tunnels::{
     connections::{
-        build_websocket_request, connect_directly, AsyncRWWebSocket, AsyncRWWebSocketOptions,
+        AsyncRWWebSocket, AsyncRWWebSocketOptions, build_websocket_request, connect_directly,
     },
     contracts::TunnelEndpoint,
 };
 
-use crate::protocol::{invalid, Target};
+use crate::protocol::{Target, invalid};
 
 // Neither relay role grants shell, agent, filesystem, or arbitrary forwarding
 // channels. Dropping each admission handle rejects it before registration.
@@ -131,9 +131,17 @@ pub(crate) async fn websocket(
     if let Some(header) = request.headers_mut().get_mut("Authorization") {
         header.set_sensitive(true);
     }
-    let websocket = connect_directly(request)
-        .await
-        .map_err(|_| stage_error("relay.websocket_upgrade"))?;
+    let websocket = connect_directly(request).await.map_err(|error| {
+        use std::error::Error;
+        let transient = match &error {
+            tunnels::connections::TunnelError::WebSocketError(error) => error
+                .source()
+                .and_then(|source| source.downcast_ref::<io::Error>())
+                .is_some_and(transient_io),
+            _ => false,
+        };
+        relay_stage_error("relay.websocket_upgrade".into(), transient)
+    })?;
     Ok(AsyncRWWebSocket::new(AsyncRWWebSocketOptions {
         websocket,
         ping_interval: Duration::from_secs(30),
@@ -145,16 +153,62 @@ pub(crate) fn stage_error(stage: &'static str) -> io::Error {
     io::Error::other(stage)
 }
 
+#[derive(Debug)]
+struct TransientRelayFailure(String);
+
+impl std::fmt::Display for TransientRelayFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TransientRelayFailure {}
+
+/// Only a typed positive transport classification grants recovery, never text.
+pub fn is_transient_failure(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<TransientRelayFailure>())
+}
+
+pub(crate) fn transient_io(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::HostUnreachable
+    )
+}
+
+pub(crate) fn relay_stage_error(stage: String, transient: bool) -> io::Error {
+    if transient {
+        io::Error::other(TransientRelayFailure(stage))
+    } else {
+        io::Error::other(stage)
+    }
+}
+
 #[cfg(feature = "relay")]
 pub(crate) fn management_error(error: tunnels::management::HttpError) -> io::Error {
     use tunnels::management::HttpError;
     match error {
-        HttpError::ResponseError(response) => io::Error::other(format!(
-            "host.endpoint_update.http_{}",
-            response.status_code.as_u16()
-        )),
+        HttpError::ResponseError(response) => relay_stage_error(
+            format!(
+                "host.endpoint_update.http_{}",
+                response.status_code.as_u16()
+            ),
+            matches!(
+                response.status_code.as_u16(),
+                408 | 429 | 500 | 502 | 503 | 504
+            ),
+        ),
         HttpError::ConnectionError(error) if error.is_timeout() => {
-            stage_error("host.endpoint_update.timeout")
+            relay_stage_error("host.endpoint_update.timeout".into(), true)
         }
         HttpError::ConnectionError(error) if error.is_decode() => {
             stage_error("host.endpoint_update.decode")

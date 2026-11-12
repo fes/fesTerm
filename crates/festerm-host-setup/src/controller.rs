@@ -3,10 +3,10 @@
 mod linux_login;
 
 use crate::{
-    cloud::{Cleanup, CloudHostAdapter, Foreground, Health, HOST_IDENTITY_FILE},
+    cloud::{Cleanup, CloudHostAdapter, Foreground, HOST_IDENTITY_FILE, Health},
     enrollment::{
-        owner_key_fingerprint, CurrentOwnerPolicySource, EnrollmentSnapshot, OwnerEnrollment,
-        OwnerStorage,
+        CurrentOwnerPolicySource, EnrollmentSnapshot, OwnerEnrollment, OwnerStorage,
+        owner_key_fingerprint,
     },
     lifecycle::{Phase, Snapshot, Startup, Store},
     protected_state::Lease,
@@ -26,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 const LOCK: &str = "host-runtime.lock";
 const RECORD: &str = "host-runtime.json";
+const RELAY_RETRY_DELAY: Duration = Duration::from_secs(15);
 
 /// Protected revocation is the stop request; runtime-lease release and exact
 /// native task quiescence together are completion, never a PID/name or history.
@@ -765,7 +766,7 @@ fn reserve(store: &Store) -> io::Result<(Lease, Snapshot, RunRecord)> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 match storage::open_private_file(directory, Path::new(RECORD), false) {
                     Ok(_) => {
-                        return Err(refused("host.runtime_lock_missing_reconciliation_required"))
+                        return Err(refused("host.runtime_lock_missing_reconciliation_required"));
                     }
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error),
@@ -966,28 +967,115 @@ async fn run_admitted(
     record.failure = Some(RunFailure::DaemonBoundaryUnavailable);
     let sessions = SessionControl::with_helper(&state.join("daemon"), helper)
         .map_err(|_| refused("host.runtime_daemon_boundary_unavailable"))?;
-    let runtime = Arc::new(HostRuntime::new(sessions, policy));
-    record.failure = Some(RunFailure::RelayUnavailable);
-    let mut relay = CloudHostAdapter::new(&store).open_relay(&cancel).await?;
-    startup_admission(expected.settings.startup, &cancel).await?;
-    stage.sessiond_path()?;
-    if store.snapshot()? != *expected {
-        return Err(refused("host.runtime_consent_changed"));
-    }
-    record.state = RunState::Listening;
-    record.failure = None;
-    persist(&store, record)?;
-    let shutdown = CancellationToken::new();
-    let served = runtime.serve(&mut relay, shutdown.clone());
-    supervise(&store, expected, cancel, shutdown, served).await
+    let host = RunningHost {
+        store: &store,
+        state,
+        expected,
+        stage,
+        runtime: Arc::new(HostRuntime::new(sessions, policy)),
+    };
+    let shutdown = cancel.child_token();
+    let recovering = recover_relay(&store, expected, record, &shutdown, async |record| {
+        host.attempt(record, &shutdown).await
+    });
+    supervise(&store, expected, cancel, shutdown.clone(), recovering).await
 }
 
-async fn supervise<T>(
+struct RunningHost<'a> {
+    store: &'a Arc<Store>,
+    state: &'a Path,
+    expected: &'a Snapshot,
+    stage: &'a TrustedStage,
+    runtime: Arc<HostRuntime<CurrentOwnerPolicySource>>,
+}
+
+impl RunningHost<'_> {
+    fn authorize(&self, record: &mut RunRecord) -> io::Result<()> {
+        let stage = authorize_run(
+            self.store,
+            self.state,
+            self.expected,
+            record,
+            &self.store.snapshot()?,
+        )?;
+        record.failure = Some(RunFailure::AuthenticatedBundleRequired);
+        if stage.sessiond_path()? != self.stage.sessiond_path()? {
+            return Err(refused("host.service_authenticated_bundle_changed"));
+        }
+        Ok(())
+    }
+
+    async fn attempt(&self, record: &mut RunRecord, cancel: &CancellationToken) -> io::Result<()> {
+        self.authorize(record)?;
+        record.failure = Some(RunFailure::RelayUnavailable);
+        let mut relay = CloudHostAdapter::new(self.store).open_relay(cancel).await?;
+        let served = async {
+            startup_admission(self.expected.settings.startup, cancel).await?;
+            self.authorize(record)?;
+            if cancel.is_cancelled() {
+                return Ok(Err(festerm_tunnel_client::host_control::Error::Cancelled));
+            }
+            record.state = RunState::Listening;
+            record.failure = None;
+            persist(self.store, record)?;
+            Ok::<_, io::Error>(self.runtime.clone().serve(&mut relay, cancel.clone()).await)
+        }
+        .await;
+        relay.close().await?;
+        match served? {
+            Err(festerm_tunnel_client::host_control::Error::Cancelled) if cancel.is_cancelled() => {
+                Ok(())
+            }
+            Err(festerm_tunnel_client::host_control::Error::Closed)
+                if relay.failure_disposition()
+                    == Some(festerm_tunnel_bridge::relay::HostFailureDisposition::Transient) =>
+            {
+                Err(crate::cloud::transient_relay("host.runtime_stream_closed"))
+            }
+            _ => Err(refused("host.runtime_stream_closed")),
+        }
+    }
+}
+
+async fn recover_relay(
+    store: &Store,
+    expected: &Snapshot,
+    record: &mut RunRecord,
+    cancel: &CancellationToken,
+    mut attempt: impl std::ops::AsyncFnMut(&mut RunRecord) -> io::Result<()>,
+) -> io::Result<()> {
+    loop {
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
+        if store.snapshot()? != *expected {
+            return Err(refused("host.runtime_consent_changed"));
+        }
+        record.state = RunState::Starting;
+        record.failure = None;
+        persist(store, record)?;
+        match attempt(record).await {
+            Err(error) if crate::cloud::is_transient_relay(&error) => {
+                record.state = RunState::Starting;
+                record.failure = None;
+                persist(store, record)?;
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => return Ok(()),
+                    _ = tokio::time::sleep(RELAY_RETRY_DELAY) => {}
+                }
+            }
+            result => return result,
+        }
+    }
+}
+
+async fn supervise(
     store: &Store,
     expected: &Snapshot,
     cancel: CancellationToken,
     shutdown: CancellationToken,
-    served: impl std::future::Future<Output = T>,
+    served: impl std::future::Future<Output = io::Result<()>>,
 ) -> io::Result<()> {
     tokio::pin!(served);
     let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -1004,9 +1092,9 @@ async fn supervise<T>(
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) => break Err(error),
             },
-            _ = &mut served => {
+            result = &mut served => {
                 terminated = true;
-                break Err(refused("host.runtime_stream_closed"));
+                break result;
             },
         }
     };
@@ -1021,6 +1109,166 @@ async fn supervise<T>(
 mod tests {
     use super::*;
     use crate::lifecycle::{Binding, Origin, Settings};
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_relay_recovery_keeps_run_identity_lease_and_fixed_delay() {
+        let (root, store) = fixture();
+        provision(&store);
+        let (_lease, expected, mut record) = reserve(&store).unwrap();
+        let original = record.clone();
+        let calls = std::cell::Cell::new(0);
+        let cancel = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        {
+            let recovering = recover_relay(
+                &store,
+                &expected,
+                &mut record,
+                &cancel,
+                async |record| {
+                    calls.set(calls.get() + 1);
+                    assert_eq!(record.run_id, original.run_id);
+                    assert_eq!(record.epoch, original.epoch);
+                    assert_eq!(record.installation, original.installation);
+                    assert_eq!(record.state, RunState::Starting);
+                    assert!(record.failure.is_none());
+                    assert!(
+                        matches!(reserve(&store), Err(error) if error.kind() == io::ErrorKind::WouldBlock)
+                    );
+                    if calls.get() == 1 {
+                        record.state = RunState::Listening;
+                        persist(&store, record).unwrap();
+                        Err(crate::cloud::transient_relay("host.runtime_stream_closed"))
+                    } else {
+                        Err(refused("host.fixture_terminal"))
+                    }
+                },
+            );
+            tokio::pin!(recovering);
+            assert!(
+                tokio::time::timeout(Duration::from_secs(14), &mut recovering)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(calls.get(), 1);
+            assert_eq!(last_run(&store).unwrap().unwrap(), original);
+            assert_eq!(
+                recovering.await.unwrap_err().to_string(),
+                "host.fixture_terminal"
+            );
+        }
+        assert_eq!(started.elapsed(), Duration::from_secs(15));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(record, original);
+        assert_eq!(store.snapshot().unwrap(), expected);
+        assert!(!root.path().join("host/daemon").exists());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_relay_recovery_unknown_authority_and_error_text_never_retry() {
+        for error in [
+            io::Error::other("host.relay_establishment_timeout"),
+            io::Error::other("host.cloud_rate_limited"),
+            io::Error::other("host.cloud_offline_or_unknown"),
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "host.current_owner_required",
+            ),
+            io::Error::new(io::ErrorKind::WouldBlock, "host.installation_busy"),
+        ] {
+            let (root, store) = fixture();
+            provision(&store);
+            let (_lease, expected, mut record) = reserve(&store).unwrap();
+            let original = record.clone();
+            let calls = std::cell::Cell::new(0);
+            let mut error = Some(error);
+            let started = tokio::time::Instant::now();
+            let result = recover_relay(
+                &store,
+                &expected,
+                &mut record,
+                &CancellationToken::new(),
+                async |_| {
+                    calls.set(calls.get() + 1);
+                    Err(error.take().unwrap())
+                },
+            )
+            .await;
+            assert!(result.is_err());
+            assert_eq!(calls.get(), 1);
+            assert_eq!(started.elapsed(), Duration::ZERO);
+            assert_eq!(store.snapshot().unwrap(), expected);
+            assert_eq!(record, original);
+            assert!(!root.path().join("host/daemon").exists());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_runtime_relay_recovery_cancel_and_epoch_watch_span_all_phases() {
+        for phase in ["acquisition", "serving", "backoff"] {
+            for revoke in [false, true] {
+                let (_root, store) = fixture();
+                provision(&store);
+                let (_lease, expected, mut record) = reserve(&store).unwrap();
+                let original = record.clone();
+                let cancel = CancellationToken::new();
+                let shutdown = cancel.child_token();
+                let calls = std::cell::Cell::new(0);
+                let drained = std::cell::Cell::new(false);
+                {
+                    let recovering =
+                        recover_relay(&store, &expected, &mut record, &shutdown, async |record| {
+                            calls.set(calls.get() + 1);
+                            if phase == "backoff" {
+                                return Err(crate::cloud::transient_relay(
+                                    "host.runtime_stream_closed",
+                                ));
+                            }
+                            if phase == "serving" {
+                                record.state = RunState::Listening;
+                                persist(&store, record).unwrap();
+                            }
+                            shutdown.cancelled().await;
+                            drained.set(true);
+                            Ok(())
+                        });
+                    let watched = supervise(
+                        &store,
+                        &expected,
+                        cancel.clone(),
+                        shutdown.clone(),
+                        recovering,
+                    );
+                    tokio::pin!(watched);
+                    assert!(
+                        tokio::time::timeout(Duration::from_secs(3), &mut watched)
+                            .await
+                            .is_err()
+                    );
+                    assert_eq!(calls.get(), 1);
+                    if revoke {
+                        store.revoke().unwrap();
+                    } else {
+                        cancel.cancel();
+                    }
+                    let result = watched.await;
+                    if revoke {
+                        assert_eq!(
+                            result.unwrap_err().to_string(),
+                            "host.runtime_consent_changed"
+                        );
+                    } else {
+                        result.unwrap();
+                    }
+                }
+                assert!(shutdown.is_cancelled());
+                assert_eq!(drained.get(), phase != "backoff");
+                assert_eq!(calls.get(), 1);
+                assert_eq!(record.run_id, original.run_id);
+                assert_eq!(record.epoch, original.epoch);
+            }
+        }
+    }
 
     fn fixture() -> (storage::PrivateTestDirectory, Arc<Store>) {
         fixture_startup(Startup::Manual)
@@ -1204,6 +1452,7 @@ mod tests {
             async move {
                 shutdown.cancelled().await;
                 let _ = finished.await;
+                Ok(())
             }
         };
         let watched = supervise(
@@ -1216,9 +1465,11 @@ mod tests {
         tokio::pin!(watched);
         store.revoke().unwrap();
         let current = store.snapshot().unwrap();
-        assert!(tokio::time::timeout(Duration::from_secs(2), &mut watched)
-            .await
-            .is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), &mut watched)
+                .await
+                .is_err()
+        );
         assert!(shutdown.is_cancelled());
         assert!(!revoked_runtime_released(&store, &current).unwrap());
         finish.send(()).unwrap();
@@ -1250,14 +1501,16 @@ mod tests {
         drop(policy_lease);
         let current = current.await.unwrap();
         assert_eq!(current, expected);
-        assert!(authorize_run(
-            &store,
-            &root.path().join("host"),
-            &expected,
-            &mut record,
-            &current
-        )
-        .is_err());
+        assert!(
+            authorize_run(
+                &store,
+                &root.path().join("host"),
+                &expected,
+                &mut record,
+                &current
+            )
+            .is_err()
+        );
         assert_eq!(
             record.failure,
             Some(RunFailure::AuthenticatedBundleRequired)
@@ -1353,7 +1606,10 @@ mod tests {
         let shutdown = CancellationToken::new();
         let serving = {
             let shutdown = shutdown.clone();
-            async move { shutdown.cancelled().await }
+            async move {
+                shutdown.cancelled().await;
+                Ok(())
+            }
         };
         struct Eligible;
         impl linux_login::Query for Eligible {
@@ -1372,9 +1628,11 @@ mod tests {
         );
         let watched = linux_login::guard(&Eligible, cancel, hosting_cancel, hosted);
         tokio::pin!(watched);
-        assert!(tokio::time::timeout(Duration::from_secs(4), &mut watched)
-            .await
-            .is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(4), &mut watched)
+                .await
+                .is_err()
+        );
         assert!(!shutdown.is_cancelled());
         drop(policy_lease);
         assert_eq!(
@@ -1496,12 +1754,14 @@ mod tests {
     fn host_runtime_disable_does_not_confirm_foreign_stop_or_cloud_uncertainty() {
         let (_root, store) = fixture();
         provision(&store);
-        assert!(disable_with(&store, Duration::ZERO, |epoch| {
-            let mut observed = observed_stop(&store, epoch);
-            observed.installation = uuid::Uuid::new_v4().to_string();
-            Ok(observed)
-        })
-        .is_err());
+        assert!(
+            disable_with(&store, Duration::ZERO, |epoch| {
+                let mut observed = observed_stop(&store, epoch);
+                observed.installation = uuid::Uuid::new_v4().to_string();
+                Ok(observed)
+            })
+            .is_err()
+        );
         assert_eq!(store.snapshot().unwrap().phase, Phase::StopRequested);
         assert!(store.request_cleanup().is_err());
 
@@ -1564,9 +1824,11 @@ mod tests {
         let before = store.snapshot().unwrap();
         let cancel = CancellationToken::new();
         cancel.cancel();
-        assert!(uninstall(&store, &root.path().join("host"), &cancel)
-            .await
-            .is_err());
+        assert!(
+            uninstall(&store, &root.path().join("host"), &cancel)
+                .await
+                .is_err()
+        );
         assert_eq!(store.snapshot().unwrap(), before);
         fixture_disable(&store, &root.path().join("host")).unwrap();
         store.request_cleanup().unwrap();
@@ -1580,11 +1842,13 @@ mod tests {
                 .unwrap(),
             UninstallResult::AlreadyRemovedNotReobserved,
         );
-        assert!(!root
-            .path()
-            .join("host")
-            .join("native-service.json")
-            .exists());
+        assert!(
+            !root
+                .path()
+                .join("host")
+                .join("native-service.json")
+                .exists()
+        );
         assert!(!root.path().join("host").join("host-cloud.json").exists());
     }
 
@@ -1625,11 +1889,13 @@ mod tests {
         );
         assert!(!root.path().join("host").join("daemon").exists());
         assert!(!root.path().join("host").join("host-cloud.json").exists());
-        assert!(!root
-            .path()
-            .join("host")
-            .join("owner-enrollment.json")
-            .exists());
+        assert!(
+            !root
+                .path()
+                .join("host")
+                .join("owner-enrollment.json")
+                .exists()
+        );
         assert_eq!(store.snapshot().unwrap().phase, Phase::Provisioned);
     }
 

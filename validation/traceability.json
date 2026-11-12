@@ -5889,6 +5889,33 @@
       ]
     },
     {
+      "id": "host-runtime-in-process-relay-recovery",
+      "edges": ["HOST-02", "HOST-03", "HOST-04", "HOST-05"],
+      "requirements": [
+        "docs/native-host-services.md#in-process-host-relay-recovery",
+        "docs/adr/0084-host-based-dev-tunnels.md#3-host-settings-and-state"
+      ],
+      "decisions": ["ADR-0084"],
+      "automated_tests": [
+        "host_runtime_relay_recovery_keeps_run_identity_lease_and_fixed_delay",
+        "host_runtime_relay_recovery_unknown_authority_and_error_text_never_retry",
+        "host_runtime_relay_recovery_cancel_and_epoch_watch_span_all_phases",
+        "host_cloud_relay_recovery_only_typed_rate_limit_is_retryable_account_failure",
+        "host_cloud_relay_uses_existing_identity_and_scoped_token_without_enrollment",
+        "host_relay_recovery_classifies_positive_transport_without_text_or_denial_retry",
+        "host_relay_recovery_close_awaits_owned_service_even_after_waiter_cancellation",
+        "host_relay_recovery_drain_failure_never_becomes_success_on_second_close",
+        "authenticated_runtime_relay_recovery_preserves_original_aggregate_budget"
+      ],
+      "manual_scenarios": ["HOSTSETUP-01"],
+      "status": "partial",
+      "prerequisites": [
+        "Source-only freeze: Rust compilation and deterministic execution remain UNRUN pending three independent source gates and separate validation GO",
+        "Native Windows/macOS/Linux signed-service/current-vault/cloud transport loss, cancellation/disable/epoch and persistent-daemon PID/generation/I/O qualification remain open",
+        "No #729 process-crash or manager restart/migration equivalence: native registration bytes/versions/restart flags and RunRecord v1 remain unchanged; Manual startup and older-helper compatibility require a separate design"
+      ]
+    },
+    {
       "id": "host-shared-lifecycle-headless-boundary",
       "edges": ["HOST-04", "HOST-05"],
       "requirements": [

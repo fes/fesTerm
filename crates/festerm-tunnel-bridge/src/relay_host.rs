@@ -1,20 +1,20 @@
 //! Host side of the Dev Tunnels relay handshake (desktop/remote host only).
 use std::{io, sync::Arc, time::Duration};
 
-use russh::{client, server, Channel, ChannelId, ChannelStream};
-use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
+use russh::{Channel, ChannelId, ChannelStream, client, server};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tunnels::{
     contracts::{TunnelConnectionMode, TunnelEndpoint},
-    management::{new_tunnel_management, Authorization, TunnelLocator, TunnelRequestOptions},
+    management::{Authorization, TunnelLocator, TunnelRequestOptions, new_tunnel_management},
 };
 
 use crate::{
     host_identity::HostIdentity,
     protocol::invalid,
     relay::{
-        management_error, outer_client_config, reject_unrelated_server_channels, stage_error,
-        websocket,
+        management_error, outer_client_config, reject_unrelated_server_channels, relay_stage_error,
+        stage_error, transient_io, websocket,
     },
 };
 
@@ -29,7 +29,21 @@ pub struct HostConnection {
     pub endpoint: TunnelEndpoint,
     pub connections: mpsc::Receiver<HostStream>,
     cancel: CancellationToken,
-    exit: tokio::sync::watch::Receiver<Option<&'static str>>,
+    exit: tokio::sync::watch::Receiver<Option<HostExit>>,
+    service: Option<tokio::task::JoinHandle<io::Result<()>>>,
+    drain_failed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostFailureDisposition {
+    Transient,
+    Permanent,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HostExit {
+    category: &'static str,
+    disposition: HostFailureDisposition,
 }
 
 /// Retain channel and client admission through serving, even after SSH disconnects.
@@ -88,7 +102,32 @@ impl tokio::io::AsyncWrite for HostStream {
 }
 impl HostConnection {
     pub fn failure_category(&self) -> Option<&'static str> {
-        *self.exit.borrow()
+        self.exit.borrow().map(|exit| exit.category)
+    }
+
+    pub fn failure_disposition(&self) -> Option<HostFailureDisposition> {
+        self.exit.borrow().map(|exit| exit.disposition)
+    }
+
+    /// Retire the receiver and await the relay supervisor and every client.
+    pub async fn close(&mut self) -> io::Result<()> {
+        if self.drain_failed {
+            return Err(stage_error("host.relay_drain_failed"));
+        }
+        self.connections.close();
+        self.cancel.cancel();
+        while self.connections.try_recv().is_ok() {}
+        let result = if let Some(service) = self.service.as_mut() {
+            service
+                .await
+                .map_err(|_| stage_error("host.relay_drain_failed"))
+                .and_then(|result| result)
+        } else {
+            Ok(())
+        };
+        self.service = None;
+        self.drain_failed = result.is_err();
+        result
     }
 }
 impl Drop for HostConnection {
@@ -139,11 +178,13 @@ pub async fn host_with_identity(
         id: Some(format!("{host_id}-relay")),
         host_id,
         connection_mode: TunnelConnectionMode::TunnelRelay,
-        host_public_keys: vec![public
-            .split_whitespace()
-            .nth(1)
-            .ok_or_else(|| stage_error("host.key_encoding"))?
-            .to_owned()],
+        host_public_keys: vec![
+            public
+                .split_whitespace()
+                .nth(1)
+                .ok_or_else(|| stage_error("host.key_encoding"))?
+                .to_owned(),
+        ],
         port_uri_format: None,
         tunnel_uri: None,
         port_ssh_command_format: None,
@@ -199,12 +240,12 @@ pub async fn host_with_identity(
         },
     )
     .await
-    .map_err(|_| stage_error("host.outer_ssh"))?;
+    .map_err(|error| relay_stage_error("host.outer_ssh".into(), transient_outer_error(&error)))?;
     let cancel = CancellationToken::new();
     let stopped = cancel.clone();
     let (tx, connections) = mpsc::channel(RELAY_CLIENTS * CHANNELS_PER_CLIENT);
     let (exit_sender, exit) = tokio::sync::watch::channel(None);
-    tokio::spawn(async move {
+    let service = tokio::spawn(async move {
         let server_config = Arc::new(server::Config {
             keys: vec![key],
             window_size: 256 * 1024,
@@ -216,6 +257,7 @@ pub async fn host_with_identity(
         });
         let service = async {
             let mut clients = tokio::task::JoinSet::new();
+            let mut drain_failed = false;
             loop {
                 let incoming = tokio::select! {
                     _ = stopped.cancelled() => break,
@@ -223,7 +265,15 @@ pub async fn host_with_identity(
                 };
                 let (channel, permit) = incoming;
                 let permit = Arc::new(permit);
-                while clients.try_join_next().is_some() {}
+                while let Some(result) = clients.try_join_next() {
+                    if !matches!(result, Ok(Ok(()))) {
+                        drain_failed = true;
+                    }
+                }
+                if drain_failed {
+                    stopped.cancel();
+                    break;
+                }
                 let (authed, adopted) = oneshot::channel();
                 let handler = Port {
                     port,
@@ -241,39 +291,86 @@ pub async fn host_with_identity(
                 // the relay, arbitrates the attachment. Each client holds its
                 // permit until it finishes, bounding the per-client tasks.
                 clients.spawn(async move {
-                    let result = async {
-                        let mut running = server::run_stream(server_config, channel, handler)
-                            .await
-                            .map_err(|_| invalid())?;
-                        tokio::select! {
-                            _ = tokio::time::sleep(Duration::from_secs(30)) => return Err(invalid()),
-                            _ = &mut running => return Ok(()),
-                            result = adopted => { result.map_err(|_| invalid())?; }
-                        }
-                        running
-                            .handle()
-                            .forward_tcpip("127.0.0.1".into(), port as u32)
-                            .await
-                            .map_err(|_| invalid())?;
-                        tokio::select! {
-                            _ = stopped.cancelled() => {}
-                            _ = &mut running => {}
-                        }
-                        Ok::<_, io::Error>(())
+                    let mut running = tokio::select! {
+                        biased;
+                        _ = stopped.cancelled() => return Ok(()),
+                        result = server::run_stream(server_config, channel, handler) =>
+                            match result { Ok(running) => running, Err(_) => return Ok(()) },
                     };
-                    tokio::select! { _ = stopped.cancelled() => {}, _ = result => {} }
+                    let mut finished = false;
+                    tokio::select! {
+                        _ = stopped.cancelled() => {}
+                        _ = async {
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_secs(30)) => return,
+                                _ = &mut running => { finished = true; return; }
+                                result = adopted => { if result.is_err() { return; } }
+                            }
+                            if running.handle().forward_tcpip("127.0.0.1".into(), port as u32).await.is_err() {
+                                return;
+                            }
+                            let _ = (&mut running).await;
+                            finished = true;
+                        } => {}
+                    }
+                    if !finished {
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(2),
+                            running.handle().disconnect(russh::Disconnect::ByApplication, "bridge closed".into(), "en".into()),
+                        ).await;
+                        let _ = tokio::time::timeout(Duration::from_secs(2), &mut running)
+                            .await
+                            .map_err(|_| stage_error("host.relay_drain_failed"))?;
+                    }
                     drop(permit);
+                    Ok::<_, io::Error>(())
                 });
             }
+            stopped.cancel();
+            while let Some(result) = clients.join_next().await {
+                if !matches!(result, Ok(Ok(()))) {
+                    drain_failed = true;
+                }
+            }
+            if drain_failed {
+                Err(stage_error("host.relay_drain_failed"))
+            } else {
+                Ok(())
+            }
         };
-        supervise_outer(session, service, stopped.clone(), exit_sender).await;
+        supervise_outer(session, service, stopped.clone(), exit_sender).await
     });
     Ok(HostConnection {
         endpoint,
         connections,
         cancel,
         exit,
+        service: Some(service),
+        drain_failed: false,
     })
+}
+
+fn transient_outer_error(error: &russh::Error) -> bool {
+    match error {
+        russh::Error::HUP
+        | russh::Error::ConnectionTimeout
+        | russh::Error::KeepaliveTimeout
+        | russh::Error::InactivityTimeout => true,
+        russh::Error::IO(error) => transient_io(error),
+        _ => false,
+    }
+}
+
+fn outer_exit(result: Result<(), russh::Error>) -> HostExit {
+    let disposition = if result.as_ref().is_err_and(transient_outer_error) {
+        HostFailureDisposition::Transient
+    } else {
+        HostFailureDisposition::Permanent
+    };
+    HostExit {
+        category: outer_exit_category(result),
+        disposition,
+    }
 }
 
 fn outer_exit_category(result: Result<(), russh::Error>) -> &'static str {
@@ -313,31 +410,42 @@ fn outer_exit_category(result: Result<(), russh::Error>) -> &'static str {
 
 async fn supervise_outer(
     mut session: client::Handle<Outer>,
-    service: impl std::future::Future<Output = ()>,
+    service: impl std::future::Future<Output = io::Result<()>>,
     stopped: CancellationToken,
-    exit: tokio::sync::watch::Sender<Option<&'static str>>,
-) {
+    exit: tokio::sync::watch::Sender<Option<HostExit>>,
+) -> io::Result<()> {
     tokio::pin!(service);
-    let finished = tokio::select! {
-        _ = stopped.cancelled() => false,
+    let mut service_result = None;
+    let (finished, service_finished) = tokio::select! {
+        _ = stopped.cancelled() => (false, false),
         result = &mut session => {
-            exit.send_replace(Some(outer_exit_category(result)));
-            true
+            exit.send_replace(Some(outer_exit(result)));
+            (true, false)
         },
-        _ = &mut service => {
+        result = &mut service => {
+            service_result = Some(result);
             match tokio::time::timeout(Duration::from_secs(2), &mut session).await {
                 Ok(result) => {
-                    exit.send_replace(Some(outer_exit_category(result)));
-                    true
+                    exit.send_replace(Some(outer_exit(result)));
+                    (true, true)
                 }
                 Err(_) => {
                     if !stopped.is_cancelled() {
-                        exit.send_replace(Some("host.outer_channel_closed"));
+                        exit.send_replace(Some(HostExit {
+                            category: "host.outer_channel_closed",
+                            disposition: HostFailureDisposition::Permanent,
+                        }));
                     }
-                    false
+                    (false, true)
                 }
             }
         }
+    };
+    stopped.cancel();
+    let service_result = if service_finished {
+        service_result.expect("completed relay service")
+    } else {
+        service.await
     };
     if !finished {
         let _ = tokio::time::timeout(
@@ -345,7 +453,11 @@ async fn supervise_outer(
             session.disconnect(russh::Disconnect::ByApplication, "bridge closed", "en"),
         )
         .await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), &mut session)
+            .await
+            .map_err(|_| stage_error("host.relay_drain_failed"))?;
     }
+    service_result
 }
 
 type OuterStream = (ChannelStream<client::Msg>, OwnedSemaphorePermit);
@@ -449,6 +561,105 @@ pub(crate) mod tests {
     use crate::relay::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    pub(crate) fn closed_test_listener() -> HostConnection {
+        let (tx, connections) = mpsc::channel(1);
+        drop(tx);
+        let (_exit, exit) = tokio::sync::watch::channel(None);
+        HostConnection {
+            endpoint: TunnelEndpoint::default(),
+            connections,
+            cancel: CancellationToken::new(),
+            exit,
+            service: None,
+            drain_failed: false,
+        }
+    }
+
+    #[test]
+    fn host_relay_recovery_classifies_positive_transport_without_text_or_denial_retry() {
+        use tunnels::management::{HttpError, ResponseError};
+        for status in [
+            400, 401, 403, 404, 408, 409, 412, 429, 500, 501, 502, 503, 504,
+        ] {
+            let error = management_error(HttpError::ResponseError(ResponseError {
+                url: reqwest::Url::parse("https://example.invalid/PRIVATE").unwrap(),
+                status_code: reqwest::StatusCode::from_u16(status).unwrap(),
+                data: Some("PRIVATE".into()),
+                request_id: Some("PRIVATE".into()),
+            }));
+            assert_eq!(
+                is_transient_failure(&error),
+                matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
+            );
+            assert!(!format!("{error:?}").contains("PRIVATE"));
+        }
+        for error in [
+            russh::Error::HUP,
+            russh::Error::KeepaliveTimeout,
+            russh::Error::IO(io::ErrorKind::ConnectionReset.into()),
+        ] {
+            assert_eq!(
+                outer_exit(Err(error)).disposition,
+                HostFailureDisposition::Transient
+            );
+        }
+        for result in [
+            Ok(()),
+            Err(russh::Error::Disconnect),
+            Err(russh::Error::RequestDenied),
+            Err(russh::Error::PacketAuth),
+            Err(russh::Error::WrongServerSig),
+            Err(russh::Error::IO(io::Error::other("host.outer_timeout"))),
+            Err(russh::Error::IO(io::ErrorKind::PermissionDenied.into())),
+        ] {
+            assert_eq!(
+                outer_exit(result).disposition,
+                HostFailureDisposition::Permanent
+            );
+        }
+        assert!(!is_transient_failure(&io::Error::other(
+            "host.endpoint_update.http_503"
+        )));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_relay_recovery_close_awaits_owned_service_even_after_waiter_cancellation() {
+        let mut listener = closed_test_listener();
+        let stopped = listener.cancel.clone();
+        let (finish, finished) = oneshot::channel::<()>();
+        listener.service = Some(tokio::spawn(async move {
+            stopped.cancelled().await;
+            finished.await.unwrap();
+            Ok(())
+        }));
+        {
+            let closing = listener.close();
+            tokio::pin!(closing);
+            assert!(
+                tokio::time::timeout(Duration::from_secs(3), &mut closing)
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(listener.cancel.is_cancelled());
+        assert!(!listener.service.as_ref().unwrap().is_finished());
+        finish.send(()).unwrap();
+        listener.close().await.unwrap();
+        assert!(listener.service.is_none());
+        listener.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn host_relay_recovery_drain_failure_never_becomes_success_on_second_close() {
+        let mut listener = closed_test_listener();
+        let service = tokio::spawn(std::future::pending::<io::Result<()>>());
+        service.abort();
+        listener.service = Some(service);
+        assert!(listener.close().await.is_err());
+        assert!(listener.close().await.is_err());
+        assert_eq!(listener.failure_disposition(), None);
+    }
+
     #[tokio::test]
     async fn anonymous_wire_peer_requires_none_mac_no_newkeys_and_reports_lifetime() {
         async fn read_packet(io: &mut tokio::io::DuplexStream) -> Vec<u8> {
@@ -501,9 +712,11 @@ pub(crate) mod tests {
             for index in 0..10 {
                 let value = take_string(&mut names);
                 if index == 4 || index == 5 {
-                    assert!(value
-                        .split(|byte| *byte == b',')
-                        .any(|name| name == b"none"));
+                    assert!(
+                        value
+                            .split(|byte| *byte == b',')
+                            .any(|name| name == b"none")
+                    );
                 }
             }
             let mut kex = vec![20];
@@ -555,12 +768,15 @@ pub(crate) mod tests {
         .unwrap()
         .unwrap();
         let (exit, mut status) = tokio::sync::watch::channel(None);
-        let supervisor = tokio::spawn(supervise_outer(
-            session,
-            std::future::pending(),
-            CancellationToken::new(),
-            exit,
-        ));
+        let stopped = CancellationToken::new();
+        let serving = {
+            let stopped = stopped.clone();
+            async move {
+                stopped.cancelled().await;
+                Ok(())
+            }
+        };
+        let supervisor = tokio::spawn(supervise_outer(session, serving, stopped, exit));
         tokio::time::timeout(Duration::from_secs(3), alive)
             .await
             .unwrap()
@@ -576,9 +792,12 @@ pub(crate) mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(*status.borrow(), Some("host.outer_closed"));
+        assert_eq!(
+            status.borrow().map(|exit| exit.category),
+            Some("host.outer_closed")
+        );
         assert!(!format!("{:?}", *status.borrow()).contains("PRIVATE_PEER"));
-        supervisor.await.unwrap();
+        supervisor.await.unwrap().unwrap();
         peer.await.unwrap();
     }
 
@@ -765,10 +984,12 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert!(client.authenticate_none("tunnel").await.unwrap().success());
-        assert!(client
-            .channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 0)
-            .await
-            .is_err());
+        assert!(
+            client
+                .channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 0)
+                .await
+                .is_err()
+        );
         let mut channel = client
             .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
             .await
@@ -842,9 +1063,11 @@ pub(crate) mod tests {
                         .unwrap();
                     assert!(sibling.verify_owner(pending, &proof, &verifier).is_err());
                     let pending = sibling.challenge_owner(&verifier).unwrap();
-                    assert!(connection
-                        .prove_owner_fixture(&vault, &key, &approved, pending.challenge())
-                        .is_err());
+                    assert!(
+                        connection
+                            .prove_owner_fixture(&vault, &key, &approved, pending.challenge())
+                            .is_err()
+                    );
                 }
             }
             stream.write_all(b"o").await.unwrap();
@@ -866,9 +1089,11 @@ pub(crate) mod tests {
         }
         drop(extra);
         connection.close().await.unwrap();
-        assert!(tokio::time::timeout(Duration::from_secs(3), server)
-            .await
-            .is_ok());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), server)
+                .await
+                .is_ok()
+        );
         assert_eq!(clients.available_permits(), 0);
         drop(accepted);
         assert_eq!(clients.available_permits(), 1);
@@ -907,13 +1132,15 @@ pub(crate) mod tests {
             )
             .await;
         });
-        assert!(client::connect_stream(
-            Arc::new(client_config()),
-            client_io,
-            VerifiedHost(pin(&key()))
-        )
-        .await
-        .is_err());
+        assert!(
+            client::connect_stream(
+                Arc::new(client_config()),
+                client_io,
+                VerifiedHost(pin(&key()))
+            )
+            .await
+            .is_err()
+        );
         server.abort();
     }
 
@@ -1124,9 +1351,11 @@ pub(crate) mod tests {
         };
         let pending = accepted.challenge_owner(&verifier).unwrap();
         let proof = proof_for(&pending);
-        assert!(other
-            .prove_owner_fixture(&vault, &owner_key, &approved, pending.challenge())
-            .is_err());
+        assert!(
+            other
+                .prove_owner_fixture(&vault, &owner_key, &approved, pending.challenge())
+                .is_err()
+        );
         assert!(other_host.verify_owner(pending, &proof, &verifier).is_err());
         let pending = accepted.challenge_owner(&verifier).unwrap();
         assert!(accepted.verify_owner(pending, &proof, &verifier).is_err());
@@ -1145,9 +1374,11 @@ pub(crate) mod tests {
                 3 => foreign.host.host_key_fingerprint = format!("SHA256:{}", "a".repeat(43)),
                 _ => foreign.principal = Default::default(),
             }
-            assert!(client
-                .prove_owner_fixture(&vault, &owner_key, &foreign, pending.challenge())
-                .is_err());
+            assert!(
+                client
+                    .prove_owner_fixture(&vault, &owner_key, &foreign, pending.challenge())
+                    .is_err()
+            );
         }
         let foreign_key = fixture_key(&vault, &approved);
         let pending = accepted.challenge_owner(&verifier).unwrap();
