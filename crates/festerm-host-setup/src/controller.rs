@@ -766,7 +766,7 @@ fn reserve(store: &Store) -> io::Result<(Lease, Snapshot, RunRecord)> {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 match storage::open_private_file(directory, Path::new(RECORD), false) {
                     Ok(_) => {
-                        return Err(refused("host.runtime_lock_missing_reconciliation_required"));
+                        return Err(refused("host.runtime_lock_missing_reconciliation_required"))
                     }
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error),

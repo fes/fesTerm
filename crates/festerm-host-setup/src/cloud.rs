@@ -811,7 +811,7 @@ impl<'a> CloudHostAdapter<'a> {
                         match observed.map_err(account_error)? {
                             Observation::Present(receipt) => receipt,
                             Observation::Absent => {
-                                return Err(refused("host.cloud_created_resource_not_observed"));
+                                return Err(refused("host.cloud_created_resource_not_observed"))
                             }
                         }
                     }
@@ -828,7 +828,7 @@ impl<'a> CloudHostAdapter<'a> {
                         match observed.map_err(account_error)? {
                             Observation::Present(receipt) => receipt,
                             Observation::Absent => {
-                                return Err(refused("host.cloud_conditional_conflict_unresolved"));
+                                return Err(refused("host.cloud_conditional_conflict_unresolved"))
                             }
                         }
                     }
