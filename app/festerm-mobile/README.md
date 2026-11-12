@@ -6,6 +6,48 @@ transient SSH session, pending native/live-service qualification. It combines th
 with the profile, Files/SFTP and Markdown workspaces of the mobile shell. See
 [ADR 0042](../../docs/adr/0042-ios-rendering-spike-host.md).
 
+## Opt-in ADR 0084 HOST client
+
+`host-clients` adds **Profiles → Dev Tunnel hosts…**; it is not enabled by
+the default offline fixture or by `live-ssh`. Android forwards this same feature.
+The foreground application owns explicit account-scoped Find/refresh, selected
+HOST resolution, protected owner preparation/reopening, authorized inventory,
+exact-generation attachment and explicitly confirmed Create/Ensure. It uses
+the shared bounded HOST worker, signed SSH and `HostSession`, not the legacy
+single-session bridge selector.
+
+Opening, saving and reviewed import are local metadata only. First execution
+requires an independently confirmed SSH fingerprint and the complete host-local
+installation/account/principal prerequisite. Native owner-key preparation
+displays its public key for **separate host-local approval**; it does not enroll
+or trust service/imported metadata. A missing, locked or unsupported vault fails
+closed. No background sign-in/refresh is added.
+
+The actual installed mobile terminal adopts recovery before input/Running.
+Native lock/suspension cancels HOST work and transports directly, without
+waiting for a UI frame. This is not intentional detach or shell termination:
+the daemon owns its generation/heartbeat-fenced grace. Resume requires explicit
+review and reconnection; no input is replayed. Legacy bridge retention/probes
+are unchanged.
+
+Sixteen unresolved original actions retain their exact recipe/account and issued
+ticket across review closure and native cancellation, **in this process only**.
+Restart is not a retry journal: reconcile uncertain host actions before approving
+another creation. Busy, unknown, denied, offline and uncertain results never mean
+absence or permission to replace a shell.
+
+Selected compile/test entry points (use the repository-supported toolchain):
+
+```sh
+cargo test --locked -p festerm-mobile --features host-clients --lib
+cargo check --locked -p festerm-mobile --features host-clients --target aarch64-apple-ios-sim --lib
+```
+
+Host-side framed frontend/lifecycle tests and signed-SSH/native-PTY fixtures are
+not physical iOS/Android, native-vault, app-lock, suspension, GUI or accessibility
+acceptance. Those require the owned native windows in
+[manual validation](../../docs/manual-validation.md#adr-0084-mobile-host-execution).
+
 ## Run on an iOS Simulator
 
 Requires macOS, full Xcode selected with `xcode-select`, an installed iOS

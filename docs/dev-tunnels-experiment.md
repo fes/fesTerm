@@ -1,5 +1,12 @@
 # Experimental direct Dev Tunnels sessions
 
+The separate [HOST v1 contract](host-protocol.md) is the stage-1 foundation for
+[ADR 0084](adr/0084-host-based-dev-tunnels.md)/[#681](https://github.com/fes/fesTerm/issues/681),
+not a change to this experiment's listener or migration policy. Its distinct
+marker is not accepted by legacy discovery. The existing bearer/`auth_none`
+connection does not establish a per-person principal; new remote management
+requires explicit enrolled-owner proof and independent security review.
+
 This is **experimental, development/testing-only**, not production qualification.
 It is included in default desktop builds at the owner's request; availability
 does not establish real-service or native qualification.

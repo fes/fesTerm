@@ -272,6 +272,7 @@ impl RemoteSessionTarget {
             PROTOCOL_VERSION,
             RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             None,
+            None,
         )
     }
 }

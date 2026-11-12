@@ -131,9 +131,7 @@ pub(crate) async fn websocket(
     if let Some(header) = request.headers_mut().get_mut("Authorization") {
         header.set_sensitive(true);
     }
-    let websocket = connect_directly(request)
-        .await
-        .map_err(|_| stage_error("relay.websocket_upgrade"))?;
+    let websocket = connect_directly(request).await.map_err(websocket_error)?;
     Ok(AsyncRWWebSocket::new(AsyncRWWebSocketOptions {
         websocket,
         ping_interval: Duration::from_secs(30),
@@ -141,20 +139,78 @@ pub(crate) async fn websocket(
     }))
 }
 
+fn websocket_error(error: tunnels::connections::TunnelError) -> io::Error {
+    use std::error::Error;
+    let transient = match &error {
+        tunnels::connections::TunnelError::WebSocketError(error) => error
+            .source()
+            .and_then(|source| source.downcast_ref::<io::Error>())
+            .is_some_and(transient_io),
+        _ => false,
+    };
+    relay_stage_error("relay.websocket_upgrade".into(), transient)
+}
+
 pub(crate) fn stage_error(stage: &'static str) -> io::Error {
     io::Error::other(stage)
+}
+
+#[derive(Debug)]
+struct TransientRelayFailure(String);
+
+impl std::fmt::Display for TransientRelayFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TransientRelayFailure {}
+
+/// Only a typed positive transport classification grants recovery, never text.
+pub fn is_transient_failure(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<TransientRelayFailure>())
+}
+
+pub(crate) fn transient_io(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::HostUnreachable
+    )
+}
+
+pub(crate) fn relay_stage_error(stage: String, transient: bool) -> io::Error {
+    if transient {
+        io::Error::other(TransientRelayFailure(stage))
+    } else {
+        io::Error::other(stage)
+    }
 }
 
 #[cfg(feature = "relay")]
 pub(crate) fn management_error(error: tunnels::management::HttpError) -> io::Error {
     use tunnels::management::HttpError;
     match error {
-        HttpError::ResponseError(response) => io::Error::other(format!(
-            "host.endpoint_update.http_{}",
-            response.status_code.as_u16()
-        )),
+        HttpError::ResponseError(response) => relay_stage_error(
+            format!(
+                "host.endpoint_update.http_{}",
+                response.status_code.as_u16()
+            ),
+            matches!(
+                response.status_code.as_u16(),
+                408 | 429 | 500 | 502 | 503 | 504
+            ),
+        ),
         HttpError::ConnectionError(error) if error.is_timeout() => {
-            stage_error("host.endpoint_update.timeout")
+            relay_stage_error("host.endpoint_update.timeout".into(), true)
         }
         HttpError::ConnectionError(error) if error.is_decode() => {
             stage_error("host.endpoint_update.decode")
@@ -190,6 +246,60 @@ pub struct ClientConnection {
     pub(crate) _session: Arc<client::Handle<VerifiedHost>>,
     pub(crate) port: u16,
     pub(crate) observation_expiry: Option<tokio::time::Instant>,
+    #[cfg(feature = "owner-auth")]
+    pub(crate) owner_transport: Option<VerifiedPinnedChannel>,
+}
+
+#[cfg(feature = "owner-auth")]
+pub(crate) struct VerifiedPinnedChannel {
+    binding: russh::ChannelBinding,
+    fingerprint: String,
+}
+
+#[cfg(feature = "owner-auth")]
+impl VerifiedPinnedChannel {
+    #[cfg(all(test, feature = "relay"))]
+    pub(crate) fn from_fixture_stream(
+        stream: &ChannelStream<client::Msg>,
+        pinned_key: &str,
+    ) -> io::Result<Option<Self>> {
+        let fingerprint = host_fingerprint(pinned_key)?;
+        Ok(stream.channel_binding().cloned().map(|binding| Self {
+            binding,
+            fingerprint,
+        }))
+    }
+}
+
+#[cfg(feature = "owner-auth")]
+impl ClientConnection {
+    pub fn require_owner_channel_binding(&self) -> Result<(), crate::owner_auth::OwnerKeyError> {
+        self.owner_channel_binding().map(|_| ())
+    }
+
+    pub(crate) fn owner_channel_binding(
+        &self,
+    ) -> Result<&russh::ChannelBinding, crate::owner_auth::OwnerKeyError> {
+        let captured = self
+            .owner_transport
+            .as_ref()
+            .ok_or(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable)?;
+        if self.stream.channel_binding() != Some(&captured.binding) {
+            return Err(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable);
+        }
+        Ok(&captured.binding)
+    }
+
+    pub(crate) fn owner_pinned_fingerprint(
+        &self,
+    ) -> Result<&str, crate::owner_auth::OwnerKeyError> {
+        self.owner_channel_binding()?;
+        Ok(&self
+            .owner_transport
+            .as_ref()
+            .ok_or(crate::owner_auth::OwnerKeyError::ChannelBindingUnavailable)?
+            .fingerprint)
+    }
 }
 
 impl tokio::io::AsyncRead for ClientConnection {
@@ -357,11 +467,24 @@ pub async fn connect_endpoint(
         .await
         .map_err(|_| invalid())?
         .into_stream();
+    #[cfg(feature = "owner-auth")]
+    let owner_transport = {
+        let fingerprint = host_fingerprint(&endpoint.host_public_keys[0])?;
+        stream
+            .channel_binding()
+            .cloned()
+            .map(|binding| VerifiedPinnedChannel {
+                binding,
+                fingerprint,
+            })
+    };
     Ok(ClientConnection {
         stream,
         _session: Arc::new(session),
         port,
         observation_expiry: crate::observation_client::ObservationDriver::token_expiry(token),
+        #[cfg(feature = "owner-auth")]
+        owner_transport,
     })
 }
 
@@ -406,6 +529,50 @@ mod liveness_tests {
         task::{Context, Poll},
     };
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+    #[test]
+    fn host_relay_recovery_websocket_wrapper_classifies_typed_io_without_private_diagnostics() {
+        use tunnels::connections::TunnelError;
+        let marker = "PRIVATE_AUTH_TOKEN_AND_URL";
+        for (error, transient) in [
+            (
+                TunnelError::WebSocketError(
+                    io::Error::new(io::ErrorKind::ConnectionReset, marker).into(),
+                ),
+                true,
+            ),
+            (
+                TunnelError::WebSocketError(io::Error::new(io::ErrorKind::TimedOut, marker).into()),
+                true,
+            ),
+            (
+                TunnelError::WebSocketError(
+                    io::Error::new(io::ErrorKind::PermissionDenied, marker).into(),
+                ),
+                false,
+            ),
+            (
+                TunnelError::WebSocketError(io::Error::other(marker).into()),
+                false,
+            ),
+            (
+                TunnelError::HttpError {
+                    error: tunnels::management::HttpError::AuthorizationError(marker.into()),
+                    reason: marker,
+                },
+                false,
+            ),
+            (TunnelError::InvalidHostEndpoint(marker.into()), false),
+        ] {
+            let error = websocket_error(error);
+            assert_eq!(is_transient_failure(&error), transient);
+            assert_eq!(error.to_string(), "relay.websocket_upgrade");
+            assert!(!format!("{error:?}").contains(marker));
+        }
+        assert!(!is_transient_failure(&io::Error::other(
+            "relay.websocket_upgrade"
+        )));
+    }
 
     // Models a relay that accepts writes while the authenticated host is unreachable.
     struct Gate {

@@ -12,6 +12,9 @@ keyring-core = "1.0"
 uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 
+[target.'cfg(unix)'.dependencies]
+festerm-unix-security = { path = "../festerm-unix-security" }
+
 [dev-dependencies]
 serde = "1"
 static_assertions = "1"

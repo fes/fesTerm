@@ -1402,6 +1402,10 @@ fn capture_serial_connect_form() -> image::RgbaImage {
 
 fn synthetic_settings_view_model() -> SettingsViewModel {
     SettingsViewModel {
+        #[cfg(feature = "local-host-settings")]
+        local_remote_access: Default::default(),
+        #[cfg(feature = "local-host-settings")]
+        local_share_targets: Vec::new(),
         keyboard_bindings: KeyboardBindings::default(),
         chip_layout: ChipLayout::Wrap,
         status_bar_visible: true,

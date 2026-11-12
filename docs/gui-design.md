@@ -1879,6 +1879,65 @@ For private-key and certificate authentication:
 
 ![Profile editor target](images/gui-mockups/profile-editor.png)
 
+For ADR 0084's new host flow, [public host recipes](configuration.md#public-host-recipes-adr-0084-foundation)
+have an experimental desktop **Profiles → Host/session recipes** surface over
+shared offline metadata commands/persistence
+([#681](https://github.com/fes/fesTerm/issues/681)). They are separate from
+legacy Dev Tunnel forms and the installed Local-profile exposure flow below.
+Metadata management does not imply an online indicator or sign-in-on-save.
+The desktop surface lists public host/account/logical identity and exact
+generation targets, with add/edit, duplicate, confirmed delete, reviewed JSON
+import and explicit JSON export/copy. Arguments use a JSON string vector so
+quoting and empty arguments survive edits. Host/logical IDs cannot be retargeted
+by editing. Failed writes retain the draft; results are bound to its tab/request.
+Delete initially focuses Cancel, Escape cancels without a command, and changed
+or removed records require reopening the confirmation rather than stale deletion.
+Import review is metadata inspection only, never persisted execution approval.
+All rows say execution review is required; metadata never claims a verified host
+or approval. A distinct **Review and connect…** action enters protected foreground
+binding/pin review and explicit native-key preparation. Host-local owner approval
+remains separate. After explicit selected-host resolution and authorized inventory,
+existing-session attachment and a separate exact-launch/lifetime confirmation
+are available. Advertised create/ensure, creation permission and independent
+temporary permission remain visible. Explicit Create freezes a fresh logical ID;
+ResumeOrCreate delegates atomic resume/creation to the host, never to an empty
+client inventory. Without creation permission, Ensure can only resume an
+authorized existing session. AttachOnly cannot create. The existing experimental
+Dev Tunnels feature gate controls this desktop-only surface.
+The eventual iOS/Android UI must also use those shared commands: Save,
+edit, duplicate, import/export and delete do not create or end a shell.
+Default duplication means a fresh logical session; saving another shortcut
+to an existing session is deliberate and generation-pinned.
+
+Recipe status retains content-free conflict, missing, invalid, unsupported,
+oversize and limit distinctions; export must never claim a save succeeded or
+failed. Mobile recovery retains valid entries and uses the existing skipped-entry
+count/quarantine notification convention instead of silently clearing recipes.
+
+Opening the new host card/launcher shows local metadata only. Find hosts and
+single-host selection/Refresh are explicit network intents; cancellation and
+account changes fence results. Never inherit legacy automatic discovery or
+display cached hosts as online. Selected-host execution has a bounded actual HOST
+worker; account-wide Find hosts, mobile installation and native GUI/vault/service
+qualification remain separate. The original action's logical ID, reserved
+attachment and issued operation are shown for explicit retry. The process-local
+bounded registry survives closing review, but is not durable restart
+reconciliation. Unknown, denied, offline, busy and incompatible replies retain
+the original action; none means absence or authorizes a replacement shell.
+
+Import never grants execution consent. Before first executing an imported
+recipe, the foreground execution UI must explicitly review/reconfirm its shell,
+argument vector, remote cwd, lifetime and connection behavior with the
+verified host/account/principal. No imported field may stand in for that
+approval; native UI and execution-gate tests remain deferred under #681.
+
+Migrating a legacy host must preserve protected state/account binding. Any
+stop/restart of its live shell requires a separate, default-No confirmation
+for that exact generation; setup or sharing approval cannot substitute for
+it. Cancellation or unsafe migration preserves the live session and permits
+manual deferral. No migration/restart control is supplied by the metadata
+foundation.
+
 Profile creation and editing is separate from the immediate launch path. The
 common case requires one selection or a small amount of connection information,
 not completion of a large settings form.

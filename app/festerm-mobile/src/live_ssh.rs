@@ -46,6 +46,9 @@ impl SessionEventNotifier for Repaint {
 }
 
 pub(super) struct LiveSsh {
+    host_error: Option<String>,
+    #[cfg(feature = "host-clients")]
+    host: Option<Arc<festerm_tunnel_bridge::host_client::HostSession>>,
     identity: Option<HostIdentity>,
     context: egui::Context,
     session: Option<Arc<dyn Session>>,
@@ -97,6 +100,9 @@ pub(super) fn prompt_fixture(changed_key: bool, authentication: bool) -> LiveSsh
 #[cfg(test)]
 pub(super) fn disconnected_fixture() -> LiveSsh {
     LiveSsh {
+        host_error: None,
+        #[cfg(feature = "host-clients")]
+        host: None,
         identity: Some(HostIdentity::new("example.test", 22).expect("reserved fixture host")),
         context: egui::Context::default(),
         session: None,
@@ -125,6 +131,50 @@ pub(super) fn taken_over_fixture() -> LiveSsh {
 }
 
 impl LiveSsh {
+    #[cfg(feature = "host-clients")]
+    pub(super) fn from_host(
+        host: Arc<festerm_tunnel_bridge::host_client::HostSession>,
+        context: &egui::Context,
+    ) -> Self {
+        Self {
+            host_error: None,
+            identity: None,
+            context: context.clone(),
+            session: Some(host.clone()),
+            recording_stream: None,
+            host_resolver: None,
+            password_resolver: None,
+            host_prompt: None,
+            password_prompt: None,
+            password: PasswordBuffer::default(),
+            pending_resize: None,
+            running: false,
+            resume_check: false,
+            probe: None,
+            status: "Connecting to approved HOST; snapshot adoption pending",
+            accepted_pin: None,
+            new_trust: None,
+            tunnel: None,
+            host: Some(host),
+        }
+    }
+
+    fn backend_recovery(&self) -> bool {
+        #[cfg(feature = "host-clients")]
+        if self.host.is_some() {
+            return true;
+        }
+        self.tunnel.is_some()
+    }
+
+    fn direct_end_status(&self) -> &'static str {
+        #[cfg(feature = "host-clients")]
+        if self.host.is_some() {
+            return "HOST transport closed; session state is not absence. Explicitly refresh the same host; no input replay.";
+        }
+        "Session ended or connection lost. Connect again for a fresh shell."
+    }
+
     pub(super) fn input_destination(&self) -> Option<std::sync::Weak<dyn Session>> {
         self.session.as_ref().map(Arc::downgrade)
     }
@@ -137,6 +187,9 @@ impl LiveSsh {
     ) -> Self {
         let session = attachment.session();
         Self {
+            host_error: None,
+            #[cfg(feature = "host-clients")]
+            host: None,
             identity: None,
             context: context.clone(),
             session: Some(session),
@@ -228,6 +281,9 @@ impl LiveSsh {
         let host_resolver = Some(session.host_key_decision_resolver());
         let password_resolver = Some(session.password_decision_resolver());
         Ok(Self {
+            host_error: None,
+            #[cfg(feature = "host-clients")]
+            host: None,
             identity: Some(identity),
             context: context.clone(),
             session: Some(Arc::new(session)),
@@ -249,6 +305,14 @@ impl LiveSsh {
     }
 
     pub(super) fn input_enabled(&self) -> bool {
+        #[cfg(feature = "host-clients")]
+        if self
+            .host
+            .as_ref()
+            .is_some_and(|host| host.lifecycle() != SessionLifecycle::Running)
+        {
+            return false;
+        }
         self.running
             && !self.resume_check
             && self.probe.is_none()
@@ -260,8 +324,30 @@ impl LiveSsh {
         self.session.is_none()
     }
 
+    #[cfg(feature = "host-clients")]
+    pub(super) fn take_host_for_retirement(
+        &mut self,
+    ) -> Option<(
+        Arc<festerm_tunnel_bridge::host_client::HostSession>,
+        egui::Context,
+    )> {
+        let host = self.host.take()?;
+        self.session = None;
+        self.running = false;
+        self.pending_resize = None;
+        self.status = "HOST attachment retiring; no End session was issued";
+        Some((host, self.context.clone()))
+    }
+
     /// Native callback: retain established tunnels, cancel any old check and gate input.
     pub(super) fn suspend(&mut self) {
+        #[cfg(feature = "host-clients")]
+        if let Some(host) = &self.host {
+            host.cancel();
+            self.running = false;
+            self.status = "HOST transport cancelled; daemon owns grace; reconnect explicitly, no input replay";
+            return;
+        }
         if self.tunnel.is_some() && self.session.is_some() {
             self.probe = None;
             self.resume_check = true;
@@ -283,6 +369,11 @@ impl LiveSsh {
         self.host_resolver = None;
         self.password_resolver = None;
         if let Some(session) = self.session.take() {
+            #[cfg(feature = "host-clients")]
+            if let Some(host) = &self.host {
+                host.cancel();
+                return;
+            }
             let _ = session.try_shutdown();
         }
     }
@@ -329,6 +420,18 @@ impl LiveSsh {
     /// Pumps worker events into `terminal`; returns whether output arrived.
     pub(super) fn poll(&mut self, terminal: &mut Terminal, context: &egui::Context) -> bool {
         let mut output = false;
+        #[cfg(feature = "host-clients")]
+        if let Some(host) = &self.host {
+            match host.adopt_into(terminal) {
+                Ok(adopted) => output |= adopted,
+                Err(_) => {
+                    self.stop_failed(
+                        "HOST snapshot rejected; no activation, replacement or replay",
+                    );
+                    return output;
+                }
+            }
+        }
         let Some(session) = self.session.clone() else {
             return output;
         };
@@ -371,10 +474,23 @@ impl LiveSsh {
                     self.status = "Connecting";
                 }
                 Ok(event @ (SessionEvent::Lifecycle(_) | SessionEvent::Error(_))) => {
+                    #[cfg(feature = "host-clients")]
+                    if self.host.is_some() {
+                        if let SessionEvent::Error(error)
+                        | SessionEvent::Lifecycle(
+                            SessionLifecycle::Failed(error) | SessionLifecycle::Disconnected(error),
+                        ) = &event
+                        {
+                            self.host_error = Some(format!(
+                                "{}; no absence, automatic creation or input replay inferred.",
+                                error.message()
+                            ));
+                        }
+                    }
                     let status = if self.tunnel.is_some() {
                         self.tunnel_end_status()
                     } else {
-                        "Session ended or connection lost. Connect again for a fresh shell."
+                        self.direct_end_status()
                     };
                     if matches!(
                         event,
@@ -389,7 +505,7 @@ impl LiveSsh {
                     }
                     return output;
                 }
-                Ok(SessionEvent::RecoverySync(bytes)) if self.tunnel.is_some() => {
+                Ok(SessionEvent::RecoverySync(bytes)) if self.backend_recovery() => {
                     let command = match festerm_mobile_tunnels::decode_recovery_sync(&bytes) {
                         Ok(command) => command,
                         Err(_) => {
@@ -421,7 +537,7 @@ impl LiveSsh {
                     let status = if self.tunnel.is_some() {
                         self.tunnel_end_status()
                     } else {
-                        "SSH worker closed"
+                        self.direct_end_status()
                     };
                     self.stop_failed(status);
                     return output;
@@ -586,8 +702,17 @@ impl LiveSsh {
         }
     }
 
+    #[cfg(feature = "host-clients")]
+    pub(super) fn host_error(&self) -> Option<&str> {
+        self.host_error.as_deref()
+    }
+
     pub(super) fn status(&self) -> &'static str {
-        self.status
+        if self.host_error.is_some() {
+            "HOST request failed; review the reported original operation"
+        } else {
+            self.status
+        }
     }
 
     pub(super) fn password_buffer(&mut self) -> &mut dyn egui::TextBuffer {
@@ -697,6 +822,9 @@ mod tests {
 
     pub(super) fn connection(session: Arc<FakeSession>) -> LiveSsh {
         LiveSsh {
+            host_error: None,
+            #[cfg(feature = "host-clients")]
+            host: None,
             identity: Some(HostIdentity::new("example.test", 22).unwrap()),
             context: egui::Context::default(),
             session: Some(session),

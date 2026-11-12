@@ -137,6 +137,9 @@ client reconnection still require separate qualification.
   TUNNEL-01, TUNNEL-03, TUNNEL-05, TUNNEL-11, TUNNEL-15 and TUNNEL-16.
 - **Automated tests required:** Detached ensure/fingerprint/launch-reservation
   fixtures; configuration, editor and composition save/disable/delete tests;
+  tagged management-request generation round trips through `u64::MAX`,
+  malformed/oversized generation rejection at the real helper boundary and
+  unchanged full-width persisted targets;
   structured helper ownership, update, no-resurrection and teardown fixtures;
   installer and package regressions specified in #618. Missing registration
   directories still require exact native-service absence; unsafe ancestors

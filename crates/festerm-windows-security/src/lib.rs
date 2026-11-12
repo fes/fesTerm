@@ -2,8 +2,20 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(all(feature = "host-service", any(windows, test)))]
+pub mod host_publisher;
+#[cfg(all(windows, feature = "host-service"))]
+pub mod host_service;
 #[cfg(windows)]
 pub mod named_pipe;
+
+/// Whether this process has an associated console window (including a hidden
+/// pseudoconsole window). This does not describe the validity of stdio handles.
+#[cfg(windows)]
+pub fn has_console_window() -> bool {
+    // SAFETY: this process-local query takes no arguments or ownership.
+    !unsafe { windows_sys::Win32::System::Console::GetConsoleWindow() }.is_null()
+}
 
 #[cfg(windows)]
 mod imp {
@@ -651,7 +663,12 @@ mod imp {
         let servicing = trusted_installer_sid()?;
         staging_parent_security(directory, Some(&servicing))?
             .map(|_| ())
-            .ok_or_else(|| io::Error::from(io::ErrorKind::PermissionDenied))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "private storage ancestor policy refused",
+                )
+            })
     }
 
     /// Validates that an inherited legacy lock cannot be deleted or have its

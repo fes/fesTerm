@@ -20,6 +20,42 @@ See [the implementation and prerequisite guide](docs/powershell-enterprise.md).
 
 ## Milestone Issue Review
 
+Issue #681 is staged owner-authorized ADR 0084 work, not whole-host acceptance.
+The contracts, local durable session control, protected enrollment and bounded
+framed/native-control adapters have focused evidence, including actual signed
+SSH owner proof and adopted terminal routing/detach. The default headless build
+now composes explicit signed setup, foreground account consent, separate
+owner-key/permission approval, run and authenticated stopped-version update.
+The update transaction has a coupled old-cache daemon regression preserving
+identity/grants, PID/generation/endpoint, adopted frontend/control and exact
+cached helper path/bytes, with helper-loss/replacement and daemon-end controls.
+The helper is current source in a synthetic old-version package, with test
+signatures/qualifier and a fake manager; real older-release compatibility,
+publisher qualification and native signed switching remain unqualified.
+The GUI-free official schema-2 acquisition seam returns verified owned bytes
+for the trusted current build/native target. Desktop primary Setup now composes
+it explicitly with existing native publisher/staging/controller admission on a
+bounded cancellation-fenced worker; manual paths are Advanced only. Controlled
+six-target synthetic and desktop mock fixtures do not qualify genuine published
+assets; 404 blocks without latest/older/legacy fallback. Native/first-verifier
+delivery, actual vault/cloud/manager readiness and usability remain gates; no
+new release pipeline exists.
+Configuration defaults disabled; no
+listener starts from compilation/import. Combined-source review, real release/
+cloud/vault/service/device qualification and native foreground client trust/session
+chooser evidence remain open. Experimental desktop and opt-in shared mobile
+HOST clients execute inventory/attach/Create/Ensure with focused host fixtures,
+not native GUI/vault acceptance. This source is not a native Ready/acceptance claim.
+Mobile also captures/reopens protected original actions before wire effects;
+synthetic process/framed evidence is not native cold-start acceptance.
+Owned migration now has protected explicit inventory/preview, identity/claim
+reservation, authenticated current-daemon bind/switch, retained-root routing,
+resume/deferral and exact release/rollback. The
+[binding boundary](docs/owned-installation-migration.md#authenticated-binding-and-retained-root-boundary)
+retains separate owner approval and disabled lifecycle gating. Installed/native,
+old-release, cloud/vault and GUI migration acceptance remain open; no migration
+command takes a frontend, restarts or stops a legacy shell.
+
 Issue #65 is owner-authorized desktop split-pane work (ADR 0078).
 The presentation slice adds live composition, bounded layouts, focused input,
 group chrome, transient handles/explicit rearrangement, atomic live-view swaps

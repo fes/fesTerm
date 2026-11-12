@@ -21,6 +21,16 @@ fn invalid() -> io::Error {
 }
 
 impl HostIdentity {
+    /// Loads the existing stable identity relative to an already verified
+    /// private installation handle. Never creates or replaces missing state.
+    pub fn load_from_private_directory(directory: &std::fs::File, name: &Path) -> io::Result<Self> {
+        Self::decode(&setup_storage::read_private(
+            directory,
+            name,
+            MAX_IDENTITY_BYTES,
+        )?)
+    }
+
     pub fn ephemeral() -> io::Result<Self> {
         Ok(Self {
             host_id: uuid::Uuid::new_v4(),
@@ -52,18 +62,27 @@ impl HostIdentity {
     /// A failed/malformed load is never repaired, rotated or overwritten.
     pub fn load_or_create(path: &Path) -> io::Result<Self> {
         let (directory, name) = Self::location(path)?;
-        match setup_storage::read_private(&directory, name, MAX_IDENTITY_BYTES) {
+        Self::load_or_create_from_private_directory(&directory, name)
+    }
+
+    /// Same identity format and no-replacement policy for a verified private
+    /// installation handle. Host setup must not substitute a profile identity.
+    pub fn load_or_create_from_private_directory(
+        directory: &std::fs::File,
+        name: &Path,
+    ) -> io::Result<Self> {
+        match setup_storage::read_private(directory, name, MAX_IDENTITY_BYTES) {
             Ok(bytes) => Self::decode(&bytes),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let identity = Self::ephemeral()?;
                 let bytes = identity.encode()?;
-                match setup_storage::write_new_private(&directory, name, &bytes) {
+                match setup_storage::publish_new_private(directory, name, &bytes) {
                     Ok(()) => Ok(identity),
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                         // Another creator may still be writing. Incomplete
                         // publication fails closed; no retry ever replaces it.
                         Self::decode(&setup_storage::read_private(
-                            &directory,
+                            directory,
                             name,
                             MAX_IDENTITY_BYTES,
                         )?)

@@ -7,16 +7,21 @@ authors.workspace = true
 repository.workspace = true
 description = "Minimal local persistence daemon for fesTerm sessions."
 
+[features]
+test-support = []
+
 [dependencies]
 festerm-core = { path = "../festerm-core" }
 festerm-pty = { path = "../festerm-pty" }
 festerm-session = { path = "../festerm-session" }
+festerm-host-protocol = { path = "../festerm-host-protocol" }
 festerm-ssh = { path = "../festerm-ssh" }
 # Not Windows-gated: the crate's `layout` module describes where the ConPTY
 # sidecar belongs, and the helper's staging tests run on every platform.
 festerm-windows-runtime = { path = "../festerm-windows-runtime" }
 bincode = "1.3"
 fs2 = "0.4.3"
+hmac = "0.12.1"
 portable-pty = "0.9.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -27,7 +32,7 @@ zeroize = "1"
 
 [target.'cfg(unix)'.dependencies]
 festerm-unix-security = { path = "../festerm-unix-security" }
-nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["process", "signal", "fs", "user"] }
 socket2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
@@ -36,6 +41,8 @@ festerm-windows-security = { path = "../festerm-windows-security" }
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
 
 [dev-dependencies]
+# Isolated daemon-bin tests reuse the library's policy-checked private fixture.
+festerm-sessiond = { path = ".", features = ["test-support"] }
 # The loopback test drives a real daemon through the bridge host and the mobile API.
 festerm-mobile-profiles = { path = "../festerm-mobile-profiles" }
 festerm-mobile-tunnels = { path = "../festerm-mobile-tunnels", features = ["testing"] }

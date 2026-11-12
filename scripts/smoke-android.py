@@ -16,16 +16,27 @@ spec.loader.exec_module(build)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--serial", required=True)
+    parser.add_argument("--serial")
+    parser.add_argument("--build-only", action="store_true",
+                        help="Compile/sign instrumentation without querying ADB or running any case")
     parser.add_argument("--sdk", default=os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk")))
     parser.add_argument("--recording-validation", action="store_true",
                         help="Exercise Rust-to-Java recording export in a validation APK")
+    parser.add_argument("--root-factory-validation", action="store_true",
+                        help="Only invoke the debug-validation Rust current-app root factory")
+    parser.add_argument("--native-index-validation", action="store_true",
+                        help="Only run synthetic native-index reopen and explicit fixture-only Forget")
     args = parser.parse_args()
+    if sum((args.recording_validation, args.root_factory_validation, args.native_index_validation)) > 1:
+        parser.error("Select one focused native validation case")
+    if not args.build_only and not args.serial:
+        parser.error("--serial is required unless --build-only is selected")
     sdk = Path(args.sdk)
     tools = sdk / "build-tools" / build.BUILD_TOOLS
     android_jar = sdk / "platforms" / f"android-{build.API}" / "android.jar"
     adb = ["adb", "-s", args.serial]
-    if build.run(*adb, "shell", "getprop", "ro.kernel.qemu", capture=True).strip() != "1":
+    if not args.build_only and build.run(
+            *adb, "shell", "getprop", "ro.kernel.qemu", capture=True).strip() != "1":
         parser.error("Native smoke mutates test app data; select an isolated emulator, not a personal device")
     output = build.ROOT / "target" / "android-smoke"
     output.mkdir(parents=True, exist_ok=True)
@@ -54,6 +65,9 @@ def main():
         build.run(tools / "apksigner", "sign", "--ks",
             build.ROOT / "target/android/development.keystore",
             "--ks-pass", "pass:android", "--out", apk, aligned)
+    if args.build_only:
+        print(apk)
+        return
     build.run(*adb, "install", "-r", apk)
     if args.recording_validation:
         build.run(*adb, "shell", "mkdir", "-p", "/sdcard/Documents/fes-recording-00dd")
@@ -61,12 +75,18 @@ def main():
     try:
         result = build.run(*adb, "shell", "am", "instrument", "-w",
             *(["-e", "recording-validation", "true"] if args.recording_validation else []),
-            "io.github.fes.festerm.tests/.PlatformSmoke", capture=True, timeout=90)
+            "io.github.fes.festerm.tests/."
+            + ("NativeIndexForgetSmoke" if args.native_index_validation
+               else "RootFactorySmoke" if args.root_factory_validation else "PlatformSmoke"),
+            capture=True, timeout=90)
     except subprocess.TimeoutExpired:
         result = "FAIL: Android native instrumentation exceeded 90 seconds\n"
     finally:
         build.run(*adb, "shell", "am", "force-stop", "io.github.fes.festerm", timeout=15)
-    (output / "native-results.txt").write_text(result)
+    result_name = ("native-index-results.txt" if args.native_index_validation
+                   else "native-root-results.txt" if args.root_factory_validation
+                   else "native-results.txt")
+    (output / result_name).write_text(result)
     print(result)
     if "PASS:" not in result or "FAIL:" in result:
         raise SystemExit("Android native integration checks failed")

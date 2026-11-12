@@ -6,8 +6,16 @@ pub mod file_protocol;
 pub mod files;
 #[cfg(feature = "relay")]
 pub mod filesystem;
+#[cfg(feature = "host-routing")]
+pub mod host_client;
+#[cfg(feature = "host-routing")]
+pub mod host_control;
 #[cfg(feature = "relay")]
 pub mod host_identity;
+#[cfg(feature = "host-routing")]
+pub mod host_runtime;
+#[cfg(feature = "host-routing")]
+pub mod host_terminal;
 #[cfg(feature = "client")]
 pub mod mobile;
 #[cfg(feature = "relay")]
@@ -15,6 +23,8 @@ pub mod observation;
 #[cfg(feature = "client")]
 pub mod observation_client;
 pub mod observation_protocol;
+#[cfg(feature = "owner-auth")]
+pub mod owner_auth;
 #[cfg(feature = "relay")]
 pub mod profile_hosting;
 pub mod protocol;

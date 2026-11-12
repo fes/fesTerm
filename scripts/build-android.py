@@ -32,6 +32,10 @@ FORBIDDEN = {
     "festerm-pty", "festerm-sessiond", "festerm-serial", "portable-pty",
     "cargo-packager-updater", "zbus", "zbus-secret-service-keyring-store",
 }
+NATIVE_VALIDATION_SYMBOLS = (
+    "Java_io_github_fes_festerm_RecordingNativeTest_applicationPrivateRoot",
+    "Java_io_github_fes_festerm_RecordingNativeTest_nativeIndexForget",
+)
 
 
 def run(*args, env=None, capture=False, timeout=None):
@@ -126,13 +130,26 @@ def target_environment(sdk_path, abi, offline=False, recording_validation=False)
     features = ["--no-default-features"] if offline else []
     if recording_validation:
         features += ["--features", "native-recording-validation"]
+        env["CARGO_PROFILE_DEV_DEBUG_ASSERTIONS"] = "true"
+        env["RUSTFLAGS"] += " -C debug-assertions=yes"
     tree = run("cargo", "tree", "--locked", "-p", "festerm-android", "--target", target,
                "--edges", "normal,build", "--prefix", "none", *features, env=env, capture=True)
     check_dependency_tree(tree)
     return tools, android_jar, target, env, features
 
 
-def build_library(target, env, features, release):
+def check_native_validation_exports(library, env):
+    host = {"Darwin": "darwin-x86_64", "Linux": "linux-x86_64"}[platform.system()]
+    nm = Path(env["ANDROID_NDK_HOME"]) / "toolchains/llvm/prebuilt" / host / "bin/llvm-nm"
+    symbols = run(nm, "--defined-only", "--extern-only", library, env=env, capture=True)
+    names = {line.split()[-1] for line in symbols.splitlines() if line.strip()}
+    if not set(NATIVE_VALIDATION_SYMBOLS).issubset(names):
+        raise ValueError("Missing linked debug-only native validation hooks")
+
+
+def build_library(target, env, features, release, recording_validation=False):
+    if release and recording_validation:
+        raise ValueError("Recording validation hooks are not allowed in release APKs")
     mode = "release" if release else "debug"
     cargo_target = Path(env.get("CARGO_TARGET_DIR", ROOT / "target")).resolve()
     run("cargo", "build", "--locked", "-p", "festerm-android", "--target", target,
@@ -140,6 +157,8 @@ def build_library(target, env, features, release):
     library = cargo_target / target / mode / "libfesterm_android.so"
     if not library.is_file() or not library.stat().st_size:
         raise ValueError(f"Missing Android native library: {library}")
+    if recording_validation:
+        check_native_validation_exports(library, env)
     return library
 
 
@@ -195,7 +214,7 @@ def build(args):
     mode = "release" if args.release else "debug"
     output = ROOT / "target" / "android" / args.abi / ("offline" if args.offline else "live")
     output.mkdir(parents=True, exist_ok=True)
-    library = build_library(target, env, features, args.release)
+    library = build_library(target, env, features, args.release, args.recording_validation)
     keystore = ROOT / "target" / "android" / "development.keystore"
     if not keystore.exists():
         run("keytool", "-genkeypair", "-keystore", keystore, "-storepass", "android",
@@ -230,6 +249,7 @@ def build(args):
         "abi": args.abi, "min_sdk": MIN_API, "target_sdk": API,
         "live_ssh": not args.offline, "signing": "development-only",
         "recording_validation": args.recording_validation,
+        "native_validation_exports_verified": args.recording_validation,
         "profile": mode, "ndk": NDK, "build_tools": BUILD_TOOLS,
         "sha256": digest,
     }

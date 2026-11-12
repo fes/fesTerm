@@ -33,6 +33,128 @@ per-controller, exact-tab/root approval. Native service qualification remains op
 
 ## Status
 
+[Host protocol contracts](docs/host-protocol.md) provide the first ADR 0084
+foundation ([#681](https://github.com/fes/fesTerm/issues/681)): bounded typed
+messages, protected owner-key authentication and a bounded
+dispatcher/paired framed-client core. Stage 2 adds a local
+durable session-control backend with real detached daemons and daemon-enforced
+temporary leases. Contract types alone confer no creation authority; independent
+combined review and native/cloud/vault/service/device gates remain open.
+Experimental desktop Profiles also manages public host/session recipe metadata
+offline (add/edit/copy/delete and reviewed JSON import/export). A separate
+**Review and connect…** action enters foreground protected owner approval;
+saving/importing metadata never grants execution approval.
+The portable `host_client` executor now composes selected-host inventory and
+existing-session attachment using protected native-vault context, actual
+role-specific SSH owner proof and frontend-confirmed snapshot adoption.
+The shared Session adapter and typed desktop installation preserve frontend
+ownership, activation and account-credential fencing. Desktop foreground review
+can prepare/load an exact private native-key receipt, show its public key for
+separate host-local approval, explicitly resolve one HOST endpoint and choose an
+authorized existing session. A separate exact-launch confirmation enables
+advertised, host-authorized Create or atomic resume-or-create; uncertain results
+retain the original issued action for explicit in-process retry. It never
+silently enrolls a key, falls back to a legacy bridge or infers creation
+authority from inventory. Foreground mobile execution and local Settings/Remote
+Access now have source implementations; their installation, actual-vault,
+provider/device and GUI acceptance remain open. Desktop durable client-action
+reconciliation also remains open; this is not stage-6 completion.
+The opt-in mobile client has a protected native-vault original-action checkpoint:
+explicit cold-start review keeps the same UUID/issuance/body, never auto-retries,
+and only exact Ended automatically retires settled originals. Separate default-No
+local Forget abandons only the selected retry history, never ends a session or
+infers absence/replacement consent. Native-vault/device cold-start
+acceptance (including Android reserved-reference storage) remains open.
+Isolated API35/enforcing/untrusted-app smoke now covers native publication,
+Keyguard and the actual Rust→JNI current-app root factory through a debug-only
+validation hook. Target36 packaging is not API36 runtime, TEE or full HOST
+recovery; fresh source reviews and evidence approval remain required.
+At exact `ad219ad7`, the fixed debug-validation case now passes actual API35
+native receipt-index/same-root reopen and retained-store local Forget with
+synthetic uncertain End originals: **1/0/0, 16.386s**, campaign exit0, enforcing
+before/after. The first collector campaign remains exit1/missing-post despite
+its native case PASS; the new private collector is not a production fix.
+This is not different-namespace proof, HOST/provider recovery, vault-auth/
+cold-start/app-lock composition, GUI/default-No/account/privacy/pending consent,
+API36 runtime, physical-device, TEE or ADR completion. See the
+[exact evidence and limits](docs/adr/0084-host-based-dev-tunnels.md#android-native-indexforget-runtime-evidence).
+The normal Desktop `e6e4b8a2` + Android `b05bc1c0` source composition retains
+typed local Forget reviews and the native pinned receipt index together.
+The earlier `406ca499` qualification/green CI remains attributed to that source;
+required CI for this docs-only successor of `ad219ad7` is **UNRUN**.
+Earlier isolated native campaigns are not whole-composition execution evidence.
+The default headless build now has explicit authenticated
+setup/owner approval/run; no listener or permission is enabled merely by
+compilation/configuration. Independent combined review and native/cloud/vault/
+service/device gates remain open. Desktop first-connect/choice qualification and
+mobile UI remain separate work, not supplied by host-local key approval.
+Legacy Dev Tunnels behavior is unchanged.
+Desktop Settings now has a separate **Remote access · this device** workflow:
+explicit current-version official-bundle/account consent, native-vault-only owner approval,
+start/observation, revoke-and-drain disable, interrupted-setup recovery and
+typed manual cloud-cleanup guidance. Enable authenticates owned bundle bytes on
+the bounded worker before protected setup; no manifest/signature/archive paths
+are required. Missing release assets block without an older/latest fallback.
+Manual signed files remain an explicit Advanced choice, never error recovery.
+No installer script runs from the widget.
+The default `local-host-settings` feature alone composes this local authority;
+`--no-default-features --features experimental-dev-tunnels` retains the
+client-safe metadata/fingerprint boundary. Signed-bundle usability and real
+native acceptance remain open. Settings explicitly binds an existing private
+local daemon session to the current provisioned native-vault host, then
+separately switches it; original-operation recovery and exact release preserve
+the frontend/PTY. Metadata, a PID or a cached phase never grants authority.
+Controlled source/daemon fixtures are not actual-vault or GUI acceptance.
+Protected local owner enrollment, compact native-vault anchors, validated forward
+recovery and explicit headless-only private-file credentials have fixture
+coverage (file mode has weaker whole-store rollback protection and is never a
+native failure fallback). Optional owner proof helpers now bind the actual pinned
+inner SSH connection/channel and transfer server authority with that exact
+stream; independent combined review and native/first-connect acceptance remain open.
+An opt-in `host_runtime` now supplies the actual SSH-stream owner handshake and
+control/terminal dispatcher composition. Four focused native TCP SSH tests pass
+for encrypted request routing, stream-bound proof rejection and bounds.
+The qualified session correction and protected lease-backed policy adapter are
+integrated. Owned native routes include actual two-daemon SSH input isolation
+and persistent detach. The paired runtime supports protected Ensure/Create/end
+with the original backend-issued operation; standalone control stays inventory-only.
+Independent consumer/native qualification remains pending.
+Explicit headless run consumes this source; no native Ready/acceptance is claimed.
+The normally composed Desktop/mobile/adoption slice now compiles and passes
+focused host tests plus three controlled native takeover/End cases; see the
+[attributed results](docs/milestone-progress.md#composing-the-adr-0084-desktop-vertical-slice).
+This is not installed-host, actual-vault/provider/device or GUI acceptance.
+
+ADR 0084's [headless lifecycle boundary](docs/headless-host.md) now provides
+GUI-free disabled configuration, journal status, bounded pinned-CLI acquisition
+and authenticated schema-2 headless/helper staging without execution.
+The optional library [same-user native service component](docs/native-host-services.md),
+included by the default headless binary, adds receipt-bound control APIs, not
+native qualification. Windows admission now implements the owner-approved
+Artifact Signing publisher/profile/Microsoft chain and strict native timestamp/
+revocation policy; full-controller stop reuses protected revocation and runtime
+leases, never destructive task termination. Real Windows acceptance remains open.
+Headless `service-status`, `disable`, `cleanup-local`, `recover-cleanup` and
+`qualify-package` now expose their supported management boundaries without
+claiming endpoint readiness or successful cloud deletion.
+Explicit headless setup/owner approval/run composition is implemented in source,
+not yet qualified as an installed native host ([#681](https://github.com/fes/fesTerm/issues/681)).
+It requires real authenticated release inputs and existing native credentials;
+uninstall removes only exact stopped native resources and retains unqualified
+cloud deletion as unsuccessful CleanupPending. Explicit authenticated stopped-
+version update now journals/reconciles exact old/new native registrations without
+reenabling access, regenerating identity/grants or touching persistent daemons.
+Signed native switching/compatibility acceptance remains unqualified.
+The legacy installer is unchanged.
+Explicit [owned-installation migration](docs/owned-installation-migration.md)
+adds protected reservation, authenticated current-daemon bind/switch, retained-root
+routing, same-operation resume and exact release/rollback without acquiring a
+frontend. Older helpers remain deferred and usable. A local switch is not cloud
+enable or installed cross-platform migration acceptance.
+An opt-in shared library adds foreground native-vault GitHub authentication and
+zero-shell in-process cloud provisioning/status. Cloud presence is not Ready;
+generation-atomic cloud deletion remains an explicit qualification blocker.
+
 Desktop split-pane composition is available as a staged feature
 ([#65](https://github.com/fes/fesTerm/issues/65),
 [ADR 0078](docs/adr/0078-desktop-split-pane-presentation.md)). The live
@@ -90,6 +212,16 @@ autosaved versioned TOML profiles/interface settings; metadata-only workspace
 restoration; and native secret-store references for saved SSH passwords and
 private keys. Persistent host-key trust is explicit and non-secret.
 
+ADR 0084 now has a shared desktop/mobile [public host recipe metadata
+foundation](docs/configuration.md#public-host-recipes-adr-0084-foundation)
+under [#681](https://github.com/fes/fesTerm/issues/681). Experimental desktop and
+opt-in shared mobile `host-clients` now execute protected foreground inventory,
+attachment and explicit Create/Ensure; public recipes never grant trust or
+creation permission. Native GUI/vault/cloud/device acceptance remains open;
+offline defaults and legacy launch behavior are unchanged.
+Mobile also exposes separate exact End confirmation and correlated Close/
+Disconnect retirement; uncertain stop intent is not confirmed End or absence.
+
 Explicit [smart selection](docs/gui-design.md#smart-terminal-selection)
 highlights sentences, paragraphs or indented blocks from terminal cells before
 a separate Copy. The local deterministic baseline conservatively isolates
@@ -125,8 +257,9 @@ remains [#27](https://github.com/fes/fesTerm/issues/27).
 [Authenticated helper manifests and an offline verifier](docs/host-release-artifacts.md)
 reuse the updater trust root for all six standalone helper targets
 ([#681](https://github.com/fes/fesTerm/issues/681), proposed ADR 0084).
-Headless CLI inclusion, installer integration, service switching/rollback and
-legacy migration remain separate gates; existing Linux scripts are not upgraded
+Schema 2 includes the headless CLI; native executable/installer integration,
+service switching/rollback and complete legacy migration remain separate gates.
+Existing Linux scripts are not upgraded
 to publisher authentication by merely publishing these additive manifests.
 
 An optional, fesTerm-owned local session-persistence daemon

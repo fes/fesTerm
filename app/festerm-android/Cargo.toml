@@ -11,10 +11,13 @@ crate-type = ["cdylib"]
 [features]
 default = ["live-ssh"]
 live-ssh = ["festerm-mobile/live-ssh"]
+host-clients = ["festerm-mobile/host-clients"]
 native-recording-validation = [
     "dep:festerm-core",
     "dep:festerm-recording",
     "dep:festerm-recording-export",
+    "dep:festerm-secret-store",
+    "dep:festerm-tunnel-bridge",
     "dep:festerm-ui-egui",
     "dep:jni-legacy",
 ]
@@ -25,6 +28,8 @@ festerm-android-platform = { path = "../../crates/festerm-android-platform" }
 festerm-core = { path = "../../crates/festerm-core", optional = true }
 festerm-recording = { path = "../../crates/festerm-recording", optional = true }
 festerm-recording-export = { path = "../../crates/festerm-recording-export", optional = true }
+festerm-secret-store = { path = "../../crates/festerm-secret-store", optional = true }
+festerm-tunnel-bridge = { path = "../../crates/festerm-tunnel-bridge", optional = true, default-features = false, features = ["testing"] }
 festerm-ui-egui = { path = "../../crates/festerm-ui-egui", optional = true }
 jni-legacy = { package = "jni", version = "0.21.1", optional = true }
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "android-native-activity"] }

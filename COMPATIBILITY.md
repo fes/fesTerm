@@ -56,13 +56,93 @@ hosting on Save (ADR 0072), with host-local consent, non-attaching one-shot
 launch, verified helper staging and shell-preserving revocation/cleanup.
 Signed native provisioning, servicing and physical-client acceptance remain
 open under DT-08; no file/observation grant is implied. This is separate from
-remote session inventory/create/terminate, which remain unavailable. Native GitHub device
+the experimental HOST client execution below; legacy hosting does not gain
+remote session creation/termination authority. Native GitHub device
 authorization, account-bound refresh and tunnel-name discovery have deterministic
 coverage, not live qualification: the project-owned public client is registered
 and included in default builds; actual service acceptance remains pending
 [#429](https://github.com/fes/fesTerm/issues/429). An explicitly empty/invalid
 build override reports sign-in unavailable. This is not a
 production, mobile or multi-account service-qualification claim.
+
+[HOST v1](docs/host-protocol.md)
+([#681](https://github.com/fes/fesTerm/issues/681), ADR 0084 Proposed) has portable
+contracts and owned actual signed-SSH lifecycle/terminal fixtures. The default
+headless build now composes explicit signed setup, foreground owner approval,
+run, revoke-first disable/removal and authenticated stopped-version update.
+Compilation/configuration/import does not enable a listener or grant; no legacy
+profile is converted. Independent combined-source review and real release/cloud/
+vault/service/migration/client-first-connect/device qualification remain open.
+The coupled update regression launches the authenticated old cached helper in
+the installation's daemon namespace and preserves PID/generation/endpoint,
+frontend/control identity and exact helper path/bytes; deletion/replacement and
+daemon-end controls fail the same oracle. Its current-source binary in a
+synthetic old-version package/test signatures and fake native manager are not
+genuine older-release, publisher, native switching or cross-version acceptance.
+The optional GUI-free official schema-2 host-bundle acquisition seam uses only
+the trusted current build/native target and unchanged updater root, returning
+authenticated owned bytes without host effects. Six-target signed synthetic
+fixtures are not real release/native evidence; missing assets/404 block, never
+latest/older/legacy fallback. Desktop Settings explicitly composes this seam
+with in-process native publisher/staging admission; current version/target and
+acquisition status are shown, and primary Enable needs no manual file paths.
+Advanced signed files are an explicit alternative, not a failure fallback.
+Mock acquisition/consent/cancellation fixtures are not genuine published-release,
+first-verifier/native installation, vault/cloud or usability acceptance.
+Desktop Profiles and the separately reviewed existing-session connection path
+remain distinct from local Settings authority; metadata/import alone never
+grants protected trust or stage-6/native acceptance.
+
+Desktop Settings also composes explicit private-session Bind, separate Switch,
+original-operation status Resume and exact Release/irreversible rollback with
+the current Provisioned NativeVault/Desktop host. Connected-local provenance is
+opaque; remote/old helpers refuse and metadata never grants. Controlled
+model/caller-refusal and shared-adapter NativeVault-fixture daemon evidence is
+not actual native-vault, installed endpoint, GUI or usability acceptance.
+
+The [owned-installation migration](docs/owned-installation-migration.md) implements
+protected inventory/reservation, authenticated current-daemon bind/switch, exact
+retained-root routing and release/rollback. Controlled current-source native
+fixtures are not old-release, installed Windows/macOS/Linux, vault/cloud or GUI
+migration acceptance. Older helpers without startup capability defer; no native
+permissions are repaired, frontend acquired or shell restarted. Remote enable
+remains separate from migration consent.
+Foreground clients and protected original operations remain separate from
+host-local Setup and ordinary-private sharing authority.
+Desktop Profiles includes experimental offline recipe metadata management,
+with deterministic interaction/transaction tests. The later selected-host client
+adds protected foreground review, authorized inventory, existing attachment and
+explicit host-authorized Create/Ensure through the same actual worker and HOST
+protocol. Owned signed-SSH/native-PTY frontend isolation and headless consent/
+original-request regressions are automated evidence, not stage-6 acceptance.
+The opt-in shared mobile `host-clients` route now implements account-scoped
+Find/refresh, protected foreground owner review, authorized inventory,
+Connect/Create/Ensure and actual installed-terminal snapshot adoption. Direct
+native-callback cancellation and process-local original-ticket retention have
+headless/framed evidence; the independent signed-SSH/native-PTY session-adapter
+fixture passes in combined `c5f2d024` qualification (all sixteen actual-helper
+routes pass individually once with fresh private1.98 helpers). The combined
+Simulator executable links; neither result is physical mobile acceptance.
+The prior a13a 2/14 native RED remains separately recorded.
+The lifecycle child adds exact mobile End review/original-operation retention
+and bounded correlated Close/Disconnect retirement. Focused framed and two
+actual SSH/native-PTY cases cover stale End/replacement immunity and persistent/
+owning-temporary detach; native StopRequested remains OutcomeUncertain. This
+is not physical mobile lifecycle/vault acceptance or a rerun of the sixteen cases.
+Offline/live-SSH defaults remain
+unchanged. Native mobile installation, actual local Settings/Remote Access qualification,
+desktop durable restart reconciliation and signed/native/vault/service/device
+qualification remain open; public recipes never confer authority.
+
+The mobile protected restart slice stores exact original mutations before wire
+effects in the native vault, anchored by the existing private owner receipt.
+Explicit current-context review reopens the original UUID/epoch/body (End has no
+creation epoch); there is no startup retry/sign-in/replay. Missing/corrupt,
+locked, pending or mismatched checkpoints fail closed. Only exact Ended prunes
+an End and its confirmed-created generation; unresolved originals retain the
+sixteen-per-purpose/64KiB bounds. Synthetic fresh-process and framed tests are
+not native-vault/physical cold-restart acceptance. Android reserved-reference
+creation is an explicit unsupported-adapter prerequisite, not a file fallback.
 
 The baseline is commonly relied-upon xterm behavior, augmented by pragmatic modern extensions. fesTerm is not attempting to reproduce every historical xterm feature or every private extension from another terminal.
 

@@ -16,8 +16,9 @@
 //!   the one-line Dev Tunnel installer.
 //!
 //! This crate deliberately does not depend on `festerm-config`, which pulls in
-//! desktop PTY code that the iOS graph forbids (ADR 0054); the Dev Tunnel
-//! shapes and validation are mirrored here instead.
+//! desktop PTY code that the iOS graph forbids (ADR 0054). Legacy Dev Tunnel
+//! shapes remain mirrored; new public host recipes use the shared,
+//! UI-/I/O-free `festerm-client-recipes` contract.
 
 mod clock;
 mod document;
@@ -30,6 +31,7 @@ mod tunnel_import;
 
 pub use clock::{Clock, SystemClock};
 pub use error::{ProfileError, StorageError, ValidationError};
+pub use festerm_client_recipes as host_recipes;
 pub use hosts::{
     HostKeyError, HostKeyStatus, KnownHost, KnownHosts, KNOWN_HOSTS_FILE, MAX_KNOWN_HOSTS,
 };

@@ -21,11 +21,58 @@ emoji_result_path=native-emoji-smoke-result.txt
 status=pass
 
 printf 'status=running\n' >"$result_path"
+if { [ "$(uname -s)" = Linux ] || [ "$(uname -s)" = Darwin ]; } &&
+    [ -n "${FESTERM_ADR84_UPDATE_HELPER:-}" ]; then
+    if cargo test --locked -p festerm-host-setup --features host-runtime,native-services,cloud \
+        --lib native_host_update_preserves_actual -- --ignored; then
+        printf 'suite=host-update-owned-daemon status=pass\n' >>"$result_path"
+    else
+        printf 'suite=host-update-owned-daemon status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=host-update-owned-daemon status=skipped reason=unix-and-explicit-owned-helper-required\n' >>"$result_path"
+fi
+if { [ "$(uname -s)" = Darwin ] || [ "$(uname -s)" = Linux ]; } &&
+    [ -n "${FESTERM_PRIVATE_SHARING_HELPER:-}" ]; then
+    if cargo test --locked -p festerm-host-setup --features owner-enrollment --lib \
+        private_session_sharing::tests::private_sharing_native_ordinary_local_bind_switch_resume_revoke_release_preserves_frontend \
+        -- --exact --ignored --test-threads=1; then
+        printf 'suite=private-session-sharing-native status=pass\n' >>"$result_path"
+    else
+        printf 'suite=private-session-sharing-native status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=private-session-sharing-native status=skipped reason=unix-and-explicit-current-source-helper-required\n' >>"$result_path"
+fi
 printf 'suite=six-session-aging status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-sampler-diagnostics status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=small-preview-navigation status=skipped reason=windows-x64-required\n' >>"$result_path"
 printf 'suite=windows-tunnel-task-xml status=skipped reason=windows-required\n' >>"$result_path"
-if [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ]; then
+if [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ] &&
+    [ "${FESTERM_ANDROID_NATIVE_INDEX_VALIDATION:-}" = "1" ]; then
+    if python3 scripts/build-android.py --offline --recording-validation --install \
+        --serial "$FESTERM_ANDROID_EMULATOR_SERIAL" &&
+        python3 scripts/smoke-android.py --native-index-validation \
+            --serial "$FESTERM_ANDROID_EMULATOR_SERIAL"; then
+        printf 'suite=android-native-index status=pass\n' >>"$result_path"
+    else
+        printf 'suite=android-native-index status=fail\n' >>"$result_path"
+        status=fail
+    fi
+elif [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ] &&
+    [ "${FESTERM_ANDROID_ROOT_FACTORY_VALIDATION:-}" = "1" ]; then
+    if python3 scripts/build-android.py --recording-validation --install \
+        --serial "$FESTERM_ANDROID_EMULATOR_SERIAL" &&
+        python3 scripts/smoke-android.py --root-factory-validation \
+            --serial "$FESTERM_ANDROID_EMULATOR_SERIAL"; then
+        printf 'suite=android-root-factory status=pass\n' >>"$result_path"
+    else
+        printf 'suite=android-root-factory status=fail\n' >>"$result_path"
+        status=fail
+    fi
+elif [ -n "${FESTERM_ANDROID_EMULATOR_SERIAL:-}" ]; then
     if python3 scripts/build-android.py --install --serial "$FESTERM_ANDROID_EMULATOR_SERIAL" &&
         python3 scripts/smoke-android.py --serial "$FESTERM_ANDROID_EMULATOR_SERIAL"; then
         printf 'suite=android-native status=pass\n' >>"$result_path"
@@ -64,6 +111,24 @@ if [ "$(uname -s)" = Linux ] && [ "${FESTERM_RUN_LINUX_RECORDING_VALIDATION:-}" 
     fi
 else
     printf 'suite=linux-recording-export status=skipped reason=linux-and-explicit-opt-in-required\n' >>"$result_path"
+fi
+if [ "${FESTERM_ADR84_LOGIND_READ_ONLY:-}" = 1 ]; then
+    logind_test=controller::linux_login::tests::linux_login_native_read_only_logind_proof
+    if [ "$(uname -s)" = Linux ] &&
+        logind_listing=$(cargo test --locked -p festerm-host-setup \
+        --features host-runtime,native-services,cloud --lib "$logind_test" \
+        -- --exact --ignored --list) &&
+        [ "$(printf '%s\n' "$logind_listing" | grep -Fxc "$logind_test: test")" = 1 ] &&
+        cargo test --locked -p festerm-host-setup \
+            --features host-runtime,native-services,cloud --lib "$logind_test" \
+            -- --exact --ignored --nocapture --test-threads=1; then
+        printf 'suite=linux-logind-read-only status=pass\n' >>"$result_path"
+    else
+        printf 'suite=linux-logind-read-only status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=linux-logind-read-only status=skipped reason=explicit-opt-in-required\n' >>"$result_path"
 fi
 # Exit status 3 from the UI-flow runner means Maestro is not installed.
 record_ui_flows() {
@@ -116,6 +181,21 @@ if cargo test -p festerm-sessiond --test native_daemon -- --ignored --nocapture;
 else
     printf 'suite=sessiond-native status=fail\n' >>"$result_path"
     status=fail
+fi
+
+if [ "${FESTERM_RUN_OWNED_MIGRATION_NATIVE:-}" = 1 ]; then
+    if [ -n "${FESTERM_ADR84_MIGRATION_HELPER:-}" ] &&
+        [ -n "${FESTERM_ADR84_MIGRATION_HOST:-}" ] &&
+        cargo test --locked -p festerm-host-setup --features owner-enrollment --lib \
+            owned_migration::tests::owned_migration_native_ \
+            -- --ignored --nocapture --test-threads=1; then
+        printf 'suite=owned-migration-native status=pass\n' >>"$result_path"
+    else
+        printf 'suite=owned-migration-native status=fail\n' >>"$result_path"
+        status=fail
+    fi
+else
+    printf 'suite=owned-migration-native status=skipped reason=explicit-current-source-binaries-required\n' >>"$result_path"
 fi
 
 if python3 scripts/check_running_sessions.py; then

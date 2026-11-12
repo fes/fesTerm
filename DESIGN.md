@@ -1,6 +1,26 @@
 # fesTerm Design
 
+ADR0084 HOST in-process transport recovery retains the same consent/run lease,
+identity and aggregate budgets, freshly reauthorizes each attempt and drains
+the old listener before the fixed cancellable 15-second delay. Typed transient
+evidence alone permits retry; unknown/refused authority stops. Native manager
+restart/receipt policy is unchanged. See
+`docs/native-host-services.md#in-process-host-relay-recovery`; source and native
+qualification remain separate.
+
 **Status:** Draft
+
+ADR0084 Windows stopped updates reuse verified-bundle publisher policy and
+protected old/new operation journals. Compact v3 task names do not confer
+ownership: exact canonical XML/ACL and origin/account/epoch evidence do.
+Submission intent precedes Create; unknown absence remains unknown. Pending
+stop observes protected revocation, runtime release and both resources under
+one deadline without launching/killing HOST or sessiond. See the design-before-
+implementation contract in `docs/native-host-services.md`.
+Pending local cleanup requires protected CleanupPending consent and exact-owned
+quiescent task removal with independent absence, not executable publisher trust.
+Unavailable, revoked or altered bundles cannot veto removal; update, commit and
+run retain their existing full-bundle authentication.
 
 This document captures the current product and architectural direction for fesTerm. Accepted decisions are recorded in `docs/adr/`; detailed subsystem boundaries are in `ARCHITECTURE.md`, and delivery milestones are in `ROADMAP.md`.
 
@@ -250,6 +270,23 @@ Early diagnostics should include:
 
 Raw protocol traces can expose passwords, tokens, commands, and private output. They must be explicit, redaction-aware, warned, and disabled by default.
 
+Controlled HOST assertion diagnostics should retain a fixed call-stage label
+and exact typed control-error category on failure, without formatting successful
+session, identity, inventory or recipe payloads. The renderer must be exhaustive
+over control errors and accept successful payloads without a `Debug` bound.
+Instrumentation preserves each original call, admission callback and exact
+predicate; it must not retry or reinterpret Busy/Unknown as denial or absence.
+A call-stage label does not claim an unobserved internal lock/admission phase.
+
+Controlled exact-generation local observation must account for the backend's
+nonblocking journal/generation locks while an independent daemon polls or a
+runtime stream closes. An observation-only wait may repeat exactly Busy within
+the existing fixture's eight-second/10ms polling bound. It must return the
+unchanged authoritative observation, propagate every other error immediately,
+and leave exhausted Busy as an error, never absence or success. This is not
+permission to retry creation, admission or End, release production guards, or
+serialize the whole runtime test.
+
 ## Current Priorities
 
 The terminal core, local-session boundary, renderer, multi-tab GUI vertical
@@ -271,6 +308,18 @@ finished. Current work proceeds from that foundation:
    focused later transport track, without coupling it to local shells.
 
 ## Deferred or Open Questions
+
+### ADR 0084 temporary cancellation diagnostic boundary
+
+An uncertain final takeover after pending cancellation must remain a failure,
+not absence or permission to replay. Test/test-support-only diagnostics must
+identify the existing reservation/native-connect/unwind/readmission boundary
+for temporary takeovers using fixed content-free labels. Production stderr and
+control behavior remain unchanged. Protected-file tests preserve exact pending
+tickets, temporary ownership/epoch/deadline and committed uncertainty.
+The `4898f407` macOS failure's producer remains unknown; sleeps are not proof
+of cancellation completion, but are not changed without causal evidence.
+New native execution requires separate review and authorization.
 
 - Future parser extensions and supporting crates, if they become necessary.
 - Async runtime, cancellation, and bounded-channel choices.

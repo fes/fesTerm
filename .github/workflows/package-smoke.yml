@@ -106,10 +106,8 @@ jobs:
           python - <<'PY'
           import hashlib
           import json
-          import stat
           import subprocess
           import tempfile
-          import zipfile
           from pathlib import Path
 
           limit = 128 * 1024 * 1024
@@ -122,49 +120,43 @@ jobs:
               for pin in pins:
                   architecture = pin["architecture"]
                   try:
-                      if pin["format"] != "zip" or not pin["download"].startswith("https://"):
-                          raise ValueError("Expected reviewed HTTPS ZIP download")
+                      asset_architecture = "arm64" if architecture == "aarch64" else "x64"
+                      expected_url = (
+                          "https://tunnelsassetsprod.blob.core.windows.net/cli/"
+                          f"1.0.2115+e16833f284/osx-{asset_architecture}-devtunnel"
+                      )
+                      if (pin["format"] != "executable" or pin["download"] != expected_url
+                              or pin["archive_sha256"] != pin["executable_sha256"]):
+                          raise ValueError("Expected reviewed versioned raw HTTPS executable")
                       cache = Path(directory) / architecture
                       cache.mkdir(mode=0o700)
-                      archive = cache / "devtunnel.zip"
+                      executable = cache / "devtunnel"
                       print(f"Checking reviewed macOS CLI: {architecture}", flush=True)
-                      subprocess.run([
-                          "curl", "--fail", "--location", "--silent", "--show-error",
-                          "--proto", "=https", "--proto-redir", "=https",
+                      response = subprocess.run([
+                          "curl", "--fail", "--silent", "--show-error",
+                          "--proto", "=https",
                           "--connect-timeout", "15", "--max-time", "90",
-                          "--max-filesize", str(limit), "--output", str(archive), pin["download"],
-                      ], check=True, timeout=100)
-                      if archive.stat().st_size > limit:
-                          raise ValueError("CLI archive exceeds runtime size limit")
-                      if hashlib.sha256(archive.read_bytes()).hexdigest() != pin["archive_sha256"]:
-                          raise ValueError("CLI archive SHA256 mismatch")
-                      with zipfile.ZipFile(archive) as source:
-                          entries = source.infolist()
-                          if len(entries) != 1:
-                              raise ValueError("Expected a single CLI ZIP entry")
-                          entry = entries[0]
-                          if (entry.filename != "devtunnel" or entry.is_dir()
-                                  or stat.S_ISLNK(entry.external_attr >> 16)
-                                  or entry.file_size > limit):
-                              raise ValueError("Unsafe CLI ZIP entry")
-                          with source.open(entry) as stream:
-                              executable_bytes = stream.read(limit + 1)
-                      if len(executable_bytes) > limit:
+                          "--max-filesize", str(limit), "--output", str(executable),
+                          "--write-out", "%{http_code}", pin["download"],
+                      ], check=True, timeout=100, capture_output=True, text=True)
+                      if response.stdout != "200":
+                          raise ValueError("Expected HTTP 200 without redirects")
+                      if not 0 < executable.stat().st_size <= limit:
+                          raise ValueError("CLI executable exceeds runtime size limit")
+                      with executable.open("rb") as source:
+                          executable_bytes = source.read(limit + 1)
+                      if not 0 < len(executable_bytes) <= limit:
                           raise ValueError("CLI executable exceeds runtime size limit")
                       if hashlib.sha256(executable_bytes).hexdigest() != pin["executable_sha256"]:
                           raise ValueError("CLI executable SHA256 mismatch")
-                      executable = cache / "devtunnel"
-                      with executable.open("xb") as destination:
-                          destination.write(executable_bytes)
-                      executable.chmod(0o700)
+                      executable.chmod(0o600)
                       subprocess.run(["/usr/bin/codesign", "-dv", str(executable)],
                                      check=False, timeout=20)
                       subprocess.run([
                           "/usr/bin/codesign", "--verify", "--strict",
                           "-R=anchor apple generic", str(executable),
                       ], check=True, timeout=20)
-                  except (OSError, ValueError, RuntimeError, subprocess.SubprocessError,
-                          zipfile.BadZipFile) as error:
+                  except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                       failures.append(f"{architecture}: {error}")
                       print(f"::error::Reviewed macOS CLI signature prerequisite failed: {architecture}: {error}",
                             flush=True)

@@ -40,6 +40,7 @@ pub struct BindExistingRequest {
     pub installation: String,
     pub consent: String,
     pub cli: PathBuf,
+    #[serde(deserialize_with = "BufferedTarget::deserialize")]
     pub target: Target,
     pub spawn_fingerprint: String,
     pub description: String,
@@ -175,6 +176,41 @@ pub struct Target {
     pub pid: u32,
     pub generation: u128,
     pub endpoint: String,
+}
+
+// Internally tagged operations buffer their fields and cannot deserialize u128 directly.
+#[derive(Deserialize)]
+#[serde(remote = "Target", deny_unknown_fields)]
+struct BufferedTarget {
+    runtime_root: PathBuf,
+    name: String,
+    pid: u32,
+    #[serde(deserialize_with = "buffered_generation")]
+    generation: u128,
+    endpoint: String,
+}
+
+fn buffered_generation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<u128, D::Error> {
+    struct Visitor;
+    impl serde::de::Visitor<'_> for Visitor {
+        type Value = u128;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an unsigned session generation")
+        }
+
+        fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<u128, E> {
+            Ok(value.into())
+        }
+
+        fn visit_u128<E: serde::de::Error>(self, value: u128) -> Result<u128, E> {
+            Ok(value)
+        }
+    }
+
+    deserializer.deserialize_any(Visitor)
 }
 
 impl Target {
@@ -392,6 +428,10 @@ impl Consent {
 pub struct Store {
     directory: File,
     installation: String,
+}
+
+pub struct HostingPermit {
+    _lock: File,
 }
 
 pub struct HostedPreparation<'a> {
@@ -846,7 +886,47 @@ impl Store {
         spawn_fingerprint: &str,
         action: impl FnOnce() -> io::Result<T>,
     ) -> io::Result<T> {
-        let _lock = self.lock()?;
+        let _permit = self.hosting_permit_until(
+            consent,
+            target,
+            qualified_id,
+            ownership_label,
+            spawn_fingerprint,
+            std::time::Instant::now() + std::time::Duration::from_secs(2),
+        )?;
+        action()
+    }
+
+    /// Owned short-lived guard for native publication callbacks. Drop it before
+    /// IPC or any startup/network wait; contention never queues migration.
+    pub fn try_hosting_permit(
+        &self,
+        consent: &str,
+        target: &Target,
+        qualified_id: &str,
+        ownership_label: &str,
+        spawn_fingerprint: &str,
+    ) -> io::Result<HostingPermit> {
+        self.hosting_permit_until(
+            consent,
+            target,
+            qualified_id,
+            ownership_label,
+            spawn_fingerprint,
+            std::time::Instant::now(),
+        )
+    }
+
+    fn hosting_permit_until(
+        &self,
+        consent: &str,
+        target: &Target,
+        qualified_id: &str,
+        ownership_label: &str,
+        spawn_fingerprint: &str,
+        deadline: std::time::Instant,
+    ) -> io::Result<HostingPermit> {
+        let lock = self.lock_until(deadline)?;
         let record = self.load()?;
         require_active(&record)?;
         if record.consent != consent
@@ -865,7 +945,7 @@ impl Store {
         {
             return Err(refused("profile_host.stale_binding"));
         }
-        action()
+        Ok(HostingPermit { _lock: lock })
     }
 
     /// This durable fence precedes disabling/removing configuration or stopping
@@ -1010,6 +1090,68 @@ mod tests {
             generation: 123,
             endpoint: "session-42-123".into(),
         }
+    }
+
+    fn bind_request(target: Target) -> ManagementRequest {
+        ManagementRequest {
+            version: 1,
+            operation: ManagementOperation::BindExisting(Box::new(BindExistingRequest {
+                installation: "11111111-1111-4111-8111-111111111111".into(),
+                consent: "22222222-2222-4222-8222-222222222222".into(),
+                cli: PathBuf::from("/fixture/devtunnel"),
+                target,
+                spawn_fingerprint: "v1:fixture".into(),
+                description: "Fixture profile".into(),
+                upgrade: true,
+            })),
+        }
+    }
+
+    #[test]
+    fn bind_existing_management_request_round_trips_generation() {
+        for generation in [1_700_000_000_000, u128::from(u64::MAX)] {
+            let mut target = target();
+            target.generation = generation;
+            let request = bind_request(target.clone());
+            let bytes = serde_json::to_vec(&request).unwrap();
+            let decoded: ManagementRequest = serde_json::from_slice(&bytes).unwrap();
+            match decoded.operation {
+                ManagementOperation::BindExisting(decoded) => assert_eq!(decoded.target, target),
+                _ => panic!("operation kind changed"),
+            }
+        }
+    }
+
+    #[test]
+    fn bind_existing_management_request_rejects_invalid_target_data() {
+        let request = serde_json::to_value(bind_request(target())).unwrap();
+        for generation in [
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!("123"),
+            serde_json::json!(null),
+        ] {
+            let mut invalid = request.clone();
+            invalid["operation"]["target"]["generation"] = generation;
+            assert!(serde_json::from_value::<ManagementRequest>(invalid).is_err());
+        }
+        let mut unknown = request;
+        unknown["operation"]["target"]["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<ManagementRequest>(unknown).is_err());
+
+        let mut oversized = target();
+        oversized.generation = u128::from(u64::MAX) + 1;
+        let bytes = serde_json::to_vec(&bind_request(oversized)).unwrap();
+        assert!(serde_json::from_slice::<ManagementRequest>(&bytes).is_err());
+    }
+
+    #[test]
+    fn stored_target_retains_full_width_generation() {
+        let mut target = target();
+        target.generation = u128::MAX;
+        let bytes = serde_json::to_vec(&target).unwrap();
+        let decoded: Target = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, target);
     }
 
     #[test]

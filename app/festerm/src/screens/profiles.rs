@@ -9,6 +9,15 @@ use super::*;
 use crate::secret_input::{clear_secret_widget, new_secret_widget_id, SecretText};
 use festerm_ui_egui::controls::{action_button, action_button_enabled, ActionButtonRole};
 
+#[cfg(feature = "experimental-dev-tunnels")]
+mod host_recipes;
+#[cfg(all(test, feature = "experimental-dev-tunnels"))]
+pub(crate) use host_recipes::install_host_recipe_request_for_test;
+#[cfg(feature = "experimental-dev-tunnels")]
+pub(crate) use host_recipes::{
+    host_recipe_request_is_current, report_host_connection_started, report_host_recipe_outcome,
+};
+
 /// Which staged view the Profiles surface is currently showing. Multi-field
 /// edits are staged behind Save; Cancel discards them
 /// (`docs/gui-design.md` "Profile editing").
@@ -16,6 +25,8 @@ use festerm_ui_egui::controls::{action_button, action_button_enabled, ActionButt
 enum ProfilesScreenMode {
     #[default]
     List,
+    #[cfg(feature = "experimental-dev-tunnels")]
+    HostRecipes(Box<host_recipes::HostRecipesState>),
     EditLocal(LocalProfileDraft),
     EditSsh(Box<SshProfileDraft>),
     EditSerial(SerialProfileDraft),
@@ -1332,6 +1343,12 @@ pub(crate) fn show_profiles(
             ui.set_max_width(content_width);
     match &mut state.mode {
         #[cfg(feature = "experimental-dev-tunnels")]
+        ProfilesScreenMode::HostRecipes(recipes) => {
+            if recipes.show(ui, tab_id, configuration, &mut command) {
+                next_mode = Some(ProfilesScreenMode::List);
+            }
+        }
+        #[cfg(feature = "experimental-dev-tunnels")]
         ProfilesScreenMode::ImportPublicDevTunnel(draft) => {
             show_bounded_content_scroll(ui, (tab_id, "import_public_tunnel"), |ui| {
                 dev_tunnel_card(ui, "Import Dev Tunnel Profile", None, |ui| {
@@ -1609,6 +1626,10 @@ pub(crate) fn show_profiles(
                 ui.add_space(24.0);
                 ui.heading("Profiles");
                 ui.label("Reusable local, SSH, SFTP, and serial launch definitions.");
+                #[cfg(feature = "experimental-dev-tunnels")]
+                if action_button(ui, ActionButtonRole::Secondary, "Host/session recipes · Experimental").clicked() {
+                    next_mode = Some(ProfilesScreenMode::HostRecipes(Box::default()));
+                }
                 #[cfg(feature = "experimental-dev-tunnels")]
                 if let Some(cleanup) = ui.ctx().data(|data| {
                     data.get_temp::<std::collections::BTreeMap<String, LocalHostView>>(

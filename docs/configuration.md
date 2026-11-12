@@ -1,5 +1,32 @@
 # Configuration Foundation
 
+ADR 0084's headless host settings are **host-local**, not portable profile TOML.
+See [headless lifecycle configuration](headless-host.md): `festerm-host configure`
+saves disabled intent with creation denied and manual startup by default. It
+does not enable access, register startup or create a shell. Existing desktop and
+headless origin journals cannot adopt each other.
+
+The off-default [native service component](native-host-services.md) keeps
+exact resource/executable/creation-epoch receipts in protected host-local state,
+not TOML. It accepts approved journal settings and a sealed authenticated
+executable receipt; a configured path is not launch authority. Manual/sign-in
+registration does not qualify pre-login availability or endpoint readiness.
+macOS executable promotion requires the pinned release Developer ID team and
+hardened runtime; Windows promotion refuses pending publisher policy.
+Windows registration/start and running-task stop also refuse
+pending authenticated graceful-stop support that preserves independent daemons.
+
+Owner enrollment is separately protected host-local policy
+([authentication API and blockers](host-protocol.md#enrollment-and-secret-boundary-transport-integration-still-gated)).
+Public-key import requires exact fingerprint confirmation; it never grants
+remote access or creation. Revocation revisions and the selected policy anchor
+cannot be reconstructed from TOML/startup metadata. Client owner seeds and
+approved bindings use native-vault opaque references by default. Deliberate
+headless-only protected-file storage records origin/installation/storage consent
+separately from portable configuration; it is not a GUI option or automatic
+native-vault-failure fallback. Whole private-store/home rollback is not resisted
+in that weaker mode. No seed belongs in profiles, recipes or connection JSON.
+
 `festerm-config` owns versioned, strict TOML parsing, explicit file I/O, and
 in-memory transactional load state. It also owns a metadata-only workspace
 persistence model. The `festerm` application discovers and loads one
@@ -67,6 +94,128 @@ Every document begins with `schema_version = 1`. Unknown fields are rejected.
 Profile and workspace tab identifiers are unique within their respective
 collections and use one to 64 lowercase ASCII letters, digits, and internal
 hyphens.
+
+### Public host recipes (ADR 0084 foundation)
+
+Issue [#681](https://github.com/fes/fesTerm/issues/681) adds an **offline
+metadata foundation**, not the stage 6 desktop/mobile connection UI.
+`festerm-client-recipes` owns the same validated public model and commands for
+desktop, iOS and Android without importing desktop PTY/configuration code.
+Desktop stores a separate `host_recipes` collection in schema version 1;
+mobile stores the same collection in its version 1 `profiles.json`.
+Documents without it remain unchanged and omit the empty collection on save.
+
+```toml
+[[host_recipes]]
+id = "550e8400-e29b-41d4-a716-446655440000"
+name = "Project shell"
+logical_session = "550e8400-e29b-41d4-a716-446655440001"
+
+[host_recipes.host]
+id = "550e8400-e29b-41d4-a716-446655440002"
+
+[host_recipes.host.account]
+provider = "github"
+account_id = 42
+
+[host_recipes.launch]
+shell = "/bin/zsh"
+args = ["-l"]
+cwd = "/remote/project"
+
+[host_recipes.lifetime]
+kind = "persistent"
+
+[host_recipes.behavior]
+kind = "resume_or_create"
+```
+
+The recipe ID is client-local. Host and logical-session IDs use the shared
+host protocol's canonical UUIDv4 identities; neither is an authorization
+credential. The numeric service-account reference is a public lookup hint,
+**not a verified principal or account binding**. Login, token, host grants,
+consent and trust decisions are not part of this model. Existing device-local
+account/key stores retain only opaque vault references in configuration;
+public recipes do not copy even those references.
+
+The four behaviors are `choose_session`, `resume_or_create`, `always_create`
+and `attach_only`. New persistent recipes and omitted new-recipe behavior
+default to `resume_or_create`. Attach-only also requires `generation = "123"`
+(a canonical nonzero decimal generation), never a PID or friendly name.
+Temporary lifetime is explicit (`kind = "temporary"`,
+`reconnect_grace_seconds = 60`) and inherits the shared protocol's current
+validation, not a native lifecycle guarantee. Shell/argv/cwd are bounded public
+metadata with no local shell expansion, filesystem lookup or path rewriting.
+Do not put secrets in argv; obvious secret-bearing options/private-key material
+are refused, but arbitrary user text cannot be automatically classified.
+
+`MetadataCommand::{Save, Edit, Duplicate, Import, Export, Delete}` returns a
+validated replacement and typed outcome. Desktop's `AppCommand::HostRecipe`
+persists through the existing save gate before publishing success; mobile's
+`ProfileStore::apply_host_recipe_command` uses its existing atomic writer.
+Export is read-only. Failed saves do not publish candidate state. These
+commands cannot sign in, discover, connect, create/end a shell or install a
+host. Deleting a recipe removes only metadata; editing launch/lifetime/behavior
+affects future actions and never mutates an attached session's snapshot.
+Host/logical identity edits require a new recipe rather than silently
+retargeting an existing one.
+
+Adapters preserve content-free `RecipeError` categories for invalid metadata,
+identifier conflicts, missing recipes, unsupported portable versions, oversize
+imports and the 200-recipe limit. Export success/failure is reported separately
+from saving; export never reports a configuration save. Mobile loading recovers
+entries individually with the shared validation, uniqueness and limit rules:
+valid entries survive an unrelated later save, rejected entries are counted in
+`LoadReport::dropped_entries`, and the existing quarantine/report mechanism
+preserves the rejected input rather than silently defaulting the whole book.
+
+Default duplication creates both a fresh recipe ID and logical-session ID.
+Duplicating an attach-only recipe as a separate shell drops its old generation
+pin and selects resume-or-create. Deliberate `ExistingSession { generation }`
+duplication keeps the logical target but makes the copy strict attach-only.
+Portable JSON uses `festerm_host_recipe_version = 1`, has a 64 KiB bound and
+rejects unknown/protected fields. Import preserves the advertised identities;
+an existing recipe ID is a conflict, not a silent edit or new shell. Account
+and host trust must be revalidated independently before any future connection.
+
+**Import is not execution consent.** An imported recipe can choose arbitrary
+shell/argv/cwd and resume/create behavior. Before its first execution, the
+future Connect UI must present that launch definition, lifetime and behavior
+for explicit review/reconfirmation, bound to verified host/account/principal
+identity. A portable document cannot supply that approval. This gate remains
+required for later stage 6 wiring; there is no reachable executor in this
+foundation.
+
+**Legacy is not migrated implicitly.** Existing `kind = "dev_tunnel"` profiles
+and public setup imports retain their exact-generation destination, settings
+and launch path. They do not acquire a host recipe, remote-create permission,
+or local hosting exposure. Legacy automatic discovery preferences remain
+legacy-only until an explicit, reviewed migration exists.
+
+That future migration must preserve protected state and account binding. It
+must not stop a live legacy shell without a **separate, default-No confirmation
+bound to that exact generation**. Host setup or sharing consent is not restart
+consent. If the operation cannot proceed safely, retain the live legacy
+session and defer migration manually. Recipe metadata commands are not a
+migration/restart command and never collect or consume such confirmation.
+The metadata-preservation tests do not qualify an actual migration dialog or
+live-shell stop; that evidence remains deferred under #681.
+
+`HostBrowser` is a request/state seam, not a worker: opening/rendering local
+rows and selecting an account produces no request or online status. Only
+explicit Find hosts, single-host inspection and Refresh produce scoped intent;
+there is no timer, fan-out or availability cache. Request identity and account/
+host epochs fence cancellation and stale completions.
+
+Wiring requires a reviewed encrypted/pinned endpoint, enrolled-key verified
+principal and account binding, bounded authorized inventory and authoritative
+absence/atomic ensure, exact-generation attach, idempotent reconciliation and
+cancellation. Always-create must allocate a fresh logical target per explicit
+Connect; resume-or-create must never interpret timeout/denial/revocation as
+absence. No Connect control or fallback to legacy is provided by this slice.
+See ADR 0084 and `HOST-01`/`HOST-02`; native/manual evidence remains required.
+
+### Existing profiles and workspace
 
 On `feat/powershell`, experimental native PSRP profiles use `kind =
 "power_shell"` (distinct from a local `pwsh` process). They store metadata
@@ -627,3 +776,49 @@ for a minute (the Running Sessions refresh button re-lists). Choosing one
 connects once with that account's stored sign-in; no profile is saved. The
 New Session **Dev Tunnel** card opens a compact form that connects the same way
 and saves a profile only when **Save as profile** is checked.
+
+### HOST session-control state (ADR 0084 stage 2)
+
+The local session-control API adds no portable TOML setting or network listener.
+Its `Recipe` is an argument vector plus optional shell/cwd, not an administrative
+command string. Original intent and the resolved executable/cwd fingerprint are
+journaled separately. A conflicting running recipe refuses; an explicit Connect
+after authoritative absence may use an edited future recipe and fresh generation.
+Reusing an operation ID with changed intent always refuses.
+
+`Persistent {}` survives bridge/client/UI/installer exit, not reboot.
+`Temporary { reconnect_grace_seconds: 60 }` requires an owning attachment/lease.
+The actual daemon enforces its protected deadline; the bridge must renew an
+adopted owning lease more frequently than 60 seconds. Intentional disconnect
+ends only that exact lease; unexpected loss starts grace once, and bridge crash
+expires the last renewal without requiring another bridge process. Restart does
+not reset grace. Takeover fences the previous lease epoch only when recovery
+adoption and daemon writer replacement commit. Ordinary persistent shared shells
+never inherit this policy, and legacy clients cannot bypass the temporary lease
+handshake. Native mobile grace qualification remains required.
+
+Private version-2 `host-sessions.json`, bounded launch journals and generation-scoped
+`host-daemon-*.json` files are host-local runtime authority, not synchronized
+profiles, credentials or import/export metadata. Never copy or delete them to
+retry an uncertain spawn. Ambiguous unbound reservations remain Unknown; local
+ownership investigation or protected exact-generation `retire_local` abandonment
+is required, not an automatic fresh shell. The entire operation ledger is capped
+at 128 compact entries: durable issuance rotation makes old captured requests
+Stale without historical archive files. Never refresh an uncertain request's
+captured scope automatically. The 64 logical records use fixed private native
+slots; dead generation artifacts are reclaimed only after sealed supervision
+and positive native absence proof. Ambiguous evidence remains Unknown; contention
+is Busy. Reclamation takes only one requesting-owner known-Absent record, never
+another owner's or a revoked fence. A new explicit operation may reuse the same
+logical ID with a fresh generation. At capacity, authorized inventory/inspection
+may first reconcile owned dead Running/Ending records before retrying Busy with
+the original unchanged request. Advertised issuance comes from the current
+protected journal reservation, reauthorized after rotation, not cached enrollment
+consent or a client-provided epoch.
+
+Revoked live shells retain resource accounting and exact local observation/end.
+Their fence requires known absence and explicit new local consent before removal.
+Missing/unsupported journal state fails closed; prerelease version-1 records are
+not automatically migrated or reset. Do not copy/delete authority files or treat
+setup/sharing consent as permission to stop a live generation. The separate
+default-No exact-generation migration stop confirmation remains mandatory.

@@ -56,6 +56,24 @@ pub async fn resolve(
     name: &str,
     cancel: &CancellationToken,
 ) -> Result<ResolvedTunnel, Error> {
+    resolve_labeled(identity, name, cancel, BRIDGE_PORT_LABEL).await
+}
+
+/// Explicit selected-host resolution. Never selects a legacy bridge port.
+pub async fn resolve_host(
+    identity: &Identity,
+    name: &str,
+    cancel: &CancellationToken,
+) -> Result<ResolvedTunnel, Error> {
+    resolve_labeled(identity, name, cancel, festerm_host_protocol::HOST_MARKER).await
+}
+
+async fn resolve_labeled(
+    identity: &Identity,
+    name: &str,
+    cancel: &CancellationToken,
+    label: &str,
+) -> Result<ResolvedTunnel, Error> {
     let locator = locator(name)?;
     let identity_http = Https::new()?;
     identity.confirm_account(&identity_http, cancel).await?;
@@ -72,7 +90,7 @@ pub async fn resolve(
         _ = cancel.cancelled() => return Err(Error::Cancelled),
         value = management.get_tunnel(&locator, &options) => value.map_err(management_error)?,
     };
-    let resolved = select(tunnel)?;
+    let resolved = select_labeled(tunnel, label)?;
     identity.confirm_account(&identity_http, cancel).await?;
     if cancel.is_cancelled() {
         return Err(Error::Cancelled);
@@ -187,7 +205,7 @@ pub async fn delete(
     }
 }
 
-/// A tunnel owned by the signed-in account that hosts a fesTerm bridge.
+/// Public service metadata for the selected fesTerm protocol marker.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TunnelSummary {
     /// `id.cluster` locator, accepted as a profile's tunnel name.
@@ -202,6 +220,22 @@ pub struct TunnelSummary {
 pub async fn list(
     identity: &Identity,
     cancel: &CancellationToken,
+) -> Result<Vec<TunnelSummary>, Error> {
+    list_labeled(identity, cancel, BRIDGE_PORT_LABEL).await
+}
+
+/// Explicit account-scoped HOST discovery; rows confer no trust or availability.
+pub async fn list_hosts(
+    identity: &Identity,
+    cancel: &CancellationToken,
+) -> Result<Vec<TunnelSummary>, Error> {
+    list_labeled(identity, cancel, festerm_host_protocol::HOST_MARKER).await
+}
+
+async fn list_labeled(
+    identity: &Identity,
+    cancel: &CancellationToken,
+    label: &str,
 ) -> Result<Vec<TunnelSummary>, Error> {
     let identity_http = Https::new()?;
     identity.confirm_account(&identity_http, cancel).await?;
@@ -230,7 +264,7 @@ pub async fn list(
         return Err(Error::Cancelled);
     }
     identity.confirm_account(&identity_http, cancel).await?;
-    Ok(summarize(tunnels))
+    Ok(summarize_labeled(tunnels, label))
 }
 
 /// Most tunnels a single listing looks up individually for their ports.
@@ -269,12 +303,16 @@ where
 }
 
 pub fn summarize(tunnels: Vec<Tunnel>) -> Vec<TunnelSummary> {
+    summarize_labeled(tunnels, BRIDGE_PORT_LABEL)
+}
+
+fn summarize_labeled(tunnels: Vec<Tunnel>, label: &str) -> Vec<TunnelSummary> {
     let mut summaries: Vec<TunnelSummary> = tunnels
         .into_iter()
         .filter(|tunnel| {
             tunnel.ports.iter().any(|port| {
-                port.labels.iter().any(|label| label == BRIDGE_PORT_LABEL)
-                    || port.description.as_deref() == Some(BRIDGE_PORT_LABEL)
+                port.labels.iter().any(|candidate| candidate == label)
+                    || port.description.as_deref() == Some(label)
             })
         })
         .filter_map(|tunnel| {
@@ -298,7 +336,11 @@ pub fn summarize(tunnels: Vec<Tunnel>) -> Vec<TunnelSummary> {
     summaries
 }
 
-pub fn select(mut tunnel: Tunnel) -> Result<ResolvedTunnel, Error> {
+pub fn select(tunnel: Tunnel) -> Result<ResolvedTunnel, Error> {
+    select_labeled(tunnel, BRIDGE_PORT_LABEL)
+}
+
+fn select_labeled(mut tunnel: Tunnel, label: &str) -> Result<ResolvedTunnel, Error> {
     let token = tunnel
         .access_tokens
         .as_mut()
@@ -312,7 +354,7 @@ pub fn select(mut tunnel: Tunnel) -> Result<ResolvedTunnel, Error> {
         );
         Error::Denied
     })?;
-    select_with_token(tunnel, token)
+    select_with_token_labeled(tunnel, token, label)
 }
 
 /// Qualification/advanced scoped-token path, independent of OAuth registration.
@@ -366,7 +408,7 @@ fn management_error(error: HttpError) -> Error {
     error
 }
 
-fn wipe_tokens(tunnel: &mut Tunnel) {
+pub(crate) fn wipe_tokens(tunnel: &mut Tunnel) {
     if let Some(tokens) = tunnel.access_tokens.as_mut() {
         for token in tokens.values_mut() {
             token.zeroize();
@@ -381,9 +423,14 @@ fn wipe_tokens(tunnel: &mut Tunnel) {
     }
 }
 
-fn select_with_token(
+fn select_with_token(tunnel: Tunnel, token: Zeroizing<String>) -> Result<ResolvedTunnel, Error> {
+    select_with_token_labeled(tunnel, token, BRIDGE_PORT_LABEL)
+}
+
+fn select_with_token_labeled(
     mut tunnel: Tunnel,
     token: Zeroizing<String>,
+    label: &str,
 ) -> Result<ResolvedTunnel, Error> {
     wipe_tokens(&mut tunnel);
     if !valid_token(&token) {
@@ -396,8 +443,8 @@ fn select_with_token(
         .ports
         .first()
         .filter(|port| {
-            port.labels.iter().any(|label| label == BRIDGE_PORT_LABEL)
-                || port.description.as_deref() == Some(BRIDGE_PORT_LABEL)
+            port.labels.iter().any(|candidate| candidate == label)
+                || port.description.as_deref() == Some(label)
         })
         .ok_or(Error::Tunnel)?
         .port_number;
@@ -616,6 +663,51 @@ mod tests {
             "endpoints":[{"connectionMode":"TunnelRelay","hostId":"owned-host",
                 "hostPublicKeys":["owned-pin"],"clientRelayUri":"wss://usw3.rel.tunnels.api.visualstudio.com/owned"}]
         })).unwrap()
+    }
+
+    #[test]
+    fn mobile_host_discovery_metadata_is_host_only_and_never_contains_connect_authority() {
+        let legacy = tunnel();
+        let mut host = tunnel();
+        host.tunnel_id = Some("selected-host".into());
+        host.ports[0].labels = vec![festerm_host_protocol::HOST_MARKER.into()];
+        let found = summarize_labeled(
+            vec![legacy.clone(), host.clone()],
+            festerm_host_protocol::HOST_MARKER,
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].locator, "selected-host.usw3");
+        let public = format!("{found:?}");
+        assert!(!public.contains("PRIVATE_CONNECT"));
+        assert!(!public.contains("owned-pin"));
+        assert_eq!(
+            summarize(vec![legacy, host]).len(),
+            1,
+            "HOST discovery does not alter legacy bridge filtering"
+        );
+    }
+
+    #[test]
+    fn selected_host_service_selector_is_host_only_without_legacy_fallback() {
+        let marker = festerm_host_protocol::HOST_MARKER;
+        assert!(matches!(
+            select_labeled(tunnel(), marker),
+            Err(Error::Tunnel)
+        ));
+        let mut host = tunnel();
+        host.ports[0].labels = vec![marker.into()];
+        assert!(matches!(select(host.clone()), Err(Error::Tunnel)));
+        let resolved = select_labeled(host.clone(), marker).unwrap();
+        assert_eq!(resolved.binding.host_id, "owned-host");
+        assert_eq!(resolved.binding.port, 47461);
+        host.ports[0].labels.clear();
+        host.ports[0].description = Some(marker.into());
+        assert!(select_labeled(host.clone(), marker).is_ok());
+        host.ports.push(host.ports[0].clone());
+        assert!(matches!(
+            select_labeled(host, marker),
+            Err(Error::Ambiguous)
+        ));
     }
     #[test]
     fn native_service_selection_refuses_ordinary_tunnels_ambiguity_and_missing_pins() {

@@ -5,8 +5,34 @@
 
 use sha2::{Digest, Sha256};
 
+pub mod run_exit;
+
+#[cfg(feature = "acquisition")]
+pub mod acquisition;
 #[cfg(feature = "artifacts")]
 pub mod artifacts;
+#[cfg(feature = "cloud")]
+pub mod cloud;
+#[cfg(all(
+    feature = "cloud",
+    feature = "host-runtime",
+    feature = "native-services"
+))]
+pub mod controller;
+#[cfg(feature = "owner-enrollment")]
+pub mod enrollment;
+#[cfg(feature = "lifecycle")]
+pub mod lifecycle;
+#[cfg(feature = "lifecycle")]
+pub mod owned_migration;
+#[cfg(feature = "owner-enrollment")]
+pub mod private_session_sharing;
+#[cfg(feature = "lifecycle")]
+mod protected_state;
+#[cfg(feature = "native-services")]
+pub mod services;
+#[cfg(feature = "lifecycle")]
+pub mod staging;
 
 /// A host platform the installer supports.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -275,7 +301,7 @@ mod tests {
     fn unix_download_verifies_before_execution_and_cleans_up() {
         use std::{os::unix::fs::PermissionsExt, process::Command};
 
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
         let curl = directory.path().join("curl");
         std::fs::write(
             &curl,
@@ -340,7 +366,7 @@ mod tests {
     fn powershell_download_verifies_exact_bytes_before_execution() {
         use std::process::Command;
 
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
         let fixture = directory.path().join("fixture");
         let marker = directory.path().join("executed");
         let script = "param($Version, [switch]$NoTakeover, $FriendlyName)\n[IO.File]::WriteAllText($env:MARKER, \"$Version|$NoTakeover|$FriendlyName\")\n";

@@ -2432,6 +2432,8 @@ dependencies = [
  "festerm-mobile",
  "festerm-recording",
  "festerm-recording-export",
+ "festerm-secret-store",
+ "festerm-tunnel-bridge",
  "festerm-ui-egui",
  "jni 0.21.1",
  "winit",
@@ -2517,9 +2519,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-client-recipes"
+version = "0.16.1"
+dependencies = [
+ "festerm-host-protocol",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "festerm-config"
 version = "0.16.1"
 dependencies = [
+ "festerm-client-recipes",
  "festerm-pty",
  "festerm-secret-store",
  "festerm-serial",
@@ -2575,19 +2588,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "festerm-host"
+version = "0.16.1"
+dependencies = [
+ "festerm-host-protocol",
+ "festerm-host-setup",
+ "festerm-sessiond",
+ "festerm-tunnel-bridge",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "festerm-host-protocol"
+version = "0.16.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "festerm-host-setup"
 version = "0.16.1"
 dependencies = [
  "base64 0.22.1",
  "blake2 0.10.6",
  "ed25519-dalek",
+ "festerm-host-protocol",
+ "festerm-secret-store",
+ "festerm-session",
+ "festerm-sessiond",
+ "festerm-tunnel-bridge",
+ "festerm-tunnel-client",
+ "festerm-unix-security",
+ "festerm-windows-security",
  "flate2",
+ "fs2",
  "minisign-verify",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tar",
  "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+ "zeroize",
  "zip",
 ]
 
@@ -2672,6 +2722,7 @@ dependencies = [
  "festerm-android-platform",
  "festerm-core",
  "festerm-document",
+ "festerm-host-protocol",
  "festerm-host-setup",
  "festerm-ios-lock",
  "festerm-ios-window",
@@ -2687,6 +2738,7 @@ dependencies = [
  "festerm-sftp",
  "festerm-ssh",
  "festerm-tunnel-bridge",
+ "festerm-tunnel-client",
  "festerm-ui-egui",
  "festerm-unix-security",
  "log",
@@ -2696,6 +2748,7 @@ dependencies = [
  "sha2 0.11.0",
  "tempfile",
  "tokio",
+ "tokio-util",
  "winit",
  "zeroize",
 ]
@@ -2712,6 +2765,7 @@ dependencies = [
 name = "festerm-mobile-profiles"
 version = "0.16.1"
 dependencies = [
+ "festerm-client-recipes",
  "festerm-secret-store",
  "festerm-ssh",
  "russh",
@@ -2853,6 +2907,7 @@ version = "0.16.1"
 dependencies = [
  "apple-native-keyring-store",
  "festerm-android-platform",
+ "festerm-unix-security",
  "keyring-core",
  "security-framework",
  "serde",
@@ -2884,11 +2939,13 @@ version = "0.16.1"
 dependencies = [
  "bincode",
  "festerm-core",
+ "festerm-host-protocol",
  "festerm-mobile-profiles",
  "festerm-mobile-tunnels",
  "festerm-pty",
  "festerm-secret-store",
  "festerm-session",
+ "festerm-sessiond",
  "festerm-ssh",
  "festerm-tunnel-bridge",
  "festerm-unix-security",
@@ -2896,6 +2953,7 @@ dependencies = [
  "festerm-windows-runtime",
  "festerm-windows-security",
  "fs2",
+ "hmac 0.12.1",
  "nix 0.31.3",
  "portable-pty",
  "rpassword",
@@ -2967,15 +3025,21 @@ dependencies = [
 name = "festerm-tunnel-bridge"
 version = "0.16.1"
 dependencies = [
+ "base64 0.22.1",
  "cap-fs-ext",
  "cap-std",
+ "ed25519-dalek",
  "festerm-core",
+ "festerm-host-protocol",
+ "festerm-secret-store",
  "festerm-session",
  "festerm-sessiond",
+ "festerm-tunnel-client",
  "festerm-unix-security",
  "festerm-windows-security",
  "flume",
  "fs2",
+ "getrandom 0.3.4",
  "notify",
  "reqwest 0.13.5",
  "rpassword",
@@ -2996,6 +3060,7 @@ dependencies = [
 name = "festerm-tunnel-client"
 version = "0.16.1"
 dependencies = [
+ "festerm-host-protocol",
  "http",
  "reqwest 0.13.5",
  "serde",
@@ -3076,6 +3141,7 @@ version = "0.16.1"
 dependencies = [
  "festerm-windows-job",
  "tracing",
+ "windows",
  "windows-sys 0.61.2",
 ]
 

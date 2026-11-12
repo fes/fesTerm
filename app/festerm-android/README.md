@@ -62,6 +62,31 @@ universal local speech availability. System keyboard and biometric UI naturally
 follow Android rather than copying Apple controls. Qualification is tracked
 separately in [manual validation](../../docs/manual-validation.md#android-shared-mobile-port-adr-0073).
 
+Protected HOST originals use the native-current-app pinned receipt capability,
+not profile-path authority. Native reserved creation serializes the namespace
+and never replaces base/backup/staging material. A durable reservation marker
+fences exclusive base creation until the full encrypted base and its directory
+are synced; marker removal/final sync precede acknowledgement. No hard link or
+replace-capable rename is used. Interrupted material refuses reads/updates/
+deletes and requires explicit reconciliation, not an empty-store reset.
+Host-only namespace regressions need an existing JDK (no Android SDK):
+
+```sh
+python3 -m unittest scripts.tests.test_android_native_secrets -v
+```
+
+The earlier `e462c59b` publisher is reliability-blocked by Android SELinux's
+hard-link denial and must not be consumed. Corrected source requires actual
+Android SELinux/JNI/Keystore/device smoke before consumption; host tests and
+compilation do not clear that gate. Corrected `d89fc146` passes five Python tests including 35 JVM cases, and
+production Java plus smoke compile against existing API35 with frozen inputs.
+No actual native execution is implied. Earlier frozen Rust qualification checks
+Android Rust with existing NDK27; canonical unchanged inputs carry it without
+a Cargo rerun. Configured API 36 APK packaging and actual
+native smoke remain required: API 36 `android.jar`/`aapt2` are absent, and no SDK
+was installed. Incomplete receipt anchors and retained-original exhaustion are
+not repaired by this increment.
+
 ## Accessibility
 
 TalkBack and UI automation see the shared egui tree through

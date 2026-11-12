@@ -2,7 +2,7 @@
 
 use std::{
     fs::{self, DirBuilder, Permissions},
-    os::unix::fs::{symlink, DirBuilderExt, PermissionsExt},
+    os::unix::fs::{symlink, DirBuilderExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
     thread,
@@ -22,6 +22,53 @@ use jni_legacy::{
     sys::{jint, jstring},
     JNIEnv,
 };
+
+#[unsafe(no_mangle)]
+extern "system" fn Java_io_github_fes_festerm_RecordingNativeTest_applicationPrivateRoot(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jint {
+    let result = std::panic::catch_unwind(|| {
+        let first = festerm_secret_store::NativeAppPrivateRoot::current().map_err(|_| ())?;
+        let second = festerm_secret_store::NativeAppPrivateRoot::current().map_err(|_| ())?;
+        if !first.same_root(&second) {
+            return Err(());
+        }
+        let created = first
+            .open_host_approval_directory(true)
+            .map_err(|_| ())?
+            .metadata()
+            .map_err(|_| ())?;
+        let reopened = second
+            .open_host_approval_directory(false)
+            .map_err(|_| ())?
+            .metadata()
+            .map_err(|_| ())?;
+        if (created.dev(), created.ino()) != (reopened.dev(), reopened.ino()) {
+            return Err(());
+        }
+        Ok(())
+    });
+    match result {
+        Ok(Ok(())) => 0,
+        Ok(Err(())) => 1,
+        Err(_) => 2,
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "system" fn Java_io_github_fes_festerm_RecordingNativeTest_nativeIndexForget(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jint {
+    match std::panic::catch_unwind(
+        festerm_tunnel_bridge::host_client::originals::testing::native_index_forget,
+    ) {
+        Ok(Ok(())) => 0,
+        Ok(Err(_)) => 1,
+        Err(_) => 2,
+    }
+}
 
 #[unsafe(no_mangle)]
 extern "system" fn Java_io_github_fes_festerm_RecordingNativeTest_encode(

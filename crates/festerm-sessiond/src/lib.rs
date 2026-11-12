@@ -1,7 +1,10 @@
 //! Client backend for fesTerm's native local session persistence daemon.
 
 mod detached;
+pub mod host_control;
+pub mod host_lease;
 pub mod lifecycle;
+pub mod native_binding;
 pub mod private_storage;
 mod remote;
 pub use detached::{
@@ -235,6 +238,63 @@ struct ConnectedSession {
     protocol_version: u16,
     snapshot_schema_version: u16,
     identity: Option<NativeSessionIdentity>,
+    local_root: Option<PathBuf>,
+}
+
+/// Connected local provenance only, not sharing consent or generation authority.
+/// Remote transports cannot construct this target.
+#[derive(Clone, Eq, PartialEq)]
+pub struct LocalSessionTarget {
+    root: PathBuf,
+    identity: NativeSessionIdentity,
+}
+
+impl std::fmt::Debug for LocalSessionTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LocalSessionTarget { .. }")
+    }
+}
+
+impl LocalSessionTarget {
+    pub fn identity(&self) -> &NativeSessionIdentity {
+        &self.identity
+    }
+    pub fn runtime_root(&self) -> &Path {
+        &self.root
+    }
+}
+
+struct ConnectionProvenance {
+    identity: Option<NativeSessionIdentity>,
+    local_root: Option<PathBuf>,
+}
+
+#[cfg(test)]
+#[test]
+fn private_local_provenance_never_promotes_validated_transport_or_identity_metadata() {
+    let remote = PersistentSession::from_validated_transport(
+        std::io::Cursor::new(Vec::<u8>::new()),
+        noop_session_event_notifier(),
+    )
+    .unwrap();
+    assert!(remote.local_session_target().is_none());
+    let asserted = PersistentSession::from_stream_with_protocol_and_identity(
+        Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+        noop_session_event_notifier(),
+        None,
+        3,
+        RECOVERY_SNAPSHOT_SCHEMA_VERSION,
+        Some(NativeSessionIdentity {
+            name: "metadata-only".into(),
+            pid: std::process::id(),
+            created_at_unix_ms: 123,
+            endpoint: "not-connected-local-provenance".into(),
+        }),
+        None,
+    )
+    .unwrap();
+    assert!(asserted.native_identity().is_some());
+    assert!(asserted.local_session_target().is_none());
 }
 
 type Reconnector =
@@ -391,7 +451,8 @@ pub struct UnattachedSession {
 /// Read-only identity of the registry generation actually connected.
 /// Display metadata may use these existing facts without changing attach
 /// policy or storing launch instructions in the daemon.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeSessionIdentity {
     pub name: String,
     pub pid: u32,
@@ -829,12 +890,62 @@ pub fn process_alive(pid: u32) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PersistentSessionError {
     message: String,
+    #[cfg(any(test, feature = "test-support"))]
+    native_failure: Option<NativeConnectionFailure>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeConnectionBoundary {
+    Registry,
+    Generation,
+    Protocol,
+    Connect,
+    #[cfg(unix)]
+    StreamOptions,
+    AdmissionWrite,
+    TicketWrite,
+    AdmissionRead,
+    AdmissionRefused,
+    StreamStart,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NativeConnectionFailure {
+    boundary: NativeConnectionBoundary,
+    io_kind: Option<io::ErrorKind>,
+    raw_os: Option<i32>,
 }
 
 impl PersistentSessionError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            #[cfg(any(test, feature = "test-support"))]
+            native_failure: None,
+        }
+    }
+
+    fn at_native_boundary(
+        self,
+        boundary: NativeConnectionBoundary,
+        error: Option<&io::Error>,
+    ) -> Self {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            Self {
+                native_failure: Some(NativeConnectionFailure {
+                    boundary,
+                    io_kind: error.map(io::Error::kind),
+                    raw_os: error.and_then(io::Error::raw_os_error),
+                }),
+                ..self
+            }
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            let _ = (boundary, error);
+            self
         }
     }
 }
@@ -963,7 +1074,7 @@ struct Shared {
     lifecycle: Mutex<SessionLifecycle>,
     metrics: Mutex<SessionMetrics>,
     protocol_version: Mutex<u16>,
-    identity: Mutex<Option<NativeSessionIdentity>>,
+    identity: Mutex<ConnectionProvenance>,
     recovered_terminal: Mutex<Option<Terminal>>,
     recovery_resize_blocked: AtomicBool,
     recovery_adoption_blocked: AtomicBool,
@@ -1107,6 +1218,7 @@ impl PersistentSession {
             3,
             RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             None,
+            None,
         )
     }
 
@@ -1158,6 +1270,41 @@ impl PersistentSession {
             maximum_recovery_bytes,
         )?;
         Self::from_stream_with_reconnector(connection, notifier, None)
+    }
+
+    pub(crate) fn resume_host_reserved_in(
+        selected: &NativeSessionIdentity,
+        root: &Path,
+        takeover: bool,
+        maximum_recovery_bytes: u32,
+        ticket: &festerm_host_protocol::OperationId,
+        notifier: Arc<dyn SessionEventNotifier>,
+    ) -> Result<Self, PersistentSessionError> {
+        let registry = load_registry_in(root)
+            .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::Registry, None))?;
+        let record = registry.sessions.get(&selected.name).ok_or_else(|| {
+            PersistentSessionError::new("host generation unavailable")
+                .at_native_boundary(NativeConnectionBoundary::Generation, None)
+        })?;
+        if NativeSessionIdentity::from_record(record) != *selected
+            || record.protocol_version != 3
+            || !record.attach_kinds
+        {
+            return Err(
+                PersistentSessionError::new("host lease admission unavailable")
+                    .at_native_boundary(NativeConnectionBoundary::Generation, None),
+            );
+        }
+        let connection = connect_record_admitted_ticket(
+            record,
+            &AtomicBool::new(false),
+            takeover,
+            AttachKind::Remote,
+            maximum_recovery_bytes,
+            Some(ticket),
+        )?;
+        Self::from_stream_with_reconnector(connection, notifier, None)
+            .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::StreamStart, None))
     }
 
     pub fn start(
@@ -1399,6 +1546,7 @@ impl PersistentSession {
             connection.protocol_version,
             connection.snapshot_schema_version,
             connection.identity,
+            connection.local_root,
         )
     }
 
@@ -1417,6 +1565,7 @@ impl PersistentSession {
             protocol_version,
             snapshot_schema_version,
             None,
+            None,
         )
     }
 
@@ -1427,6 +1576,7 @@ impl PersistentSession {
         protocol_version: u16,
         snapshot_schema_version: u16,
         identity: Option<NativeSessionIdentity>,
+        local_root: Option<PathBuf>,
     ) -> Result<Self, PersistentSessionError> {
         let (events_tx, events_rx) = mpsc::sync_channel(DEFAULT_EVENT_QUEUE_CAPACITY);
         let (commands_tx, commands_rx) = mpsc::sync_channel(DEFAULT_COMMAND_QUEUE_CAPACITY);
@@ -1441,7 +1591,10 @@ impl PersistentSession {
                 ..SessionMetrics::default()
             }),
             protocol_version: Mutex::new(protocol_version),
-            identity: Mutex::new(identity),
+            identity: Mutex::new(ConnectionProvenance {
+                identity,
+                local_root,
+            }),
             recovered_terminal: Mutex::new(None),
             recovery_resize_blocked: AtomicBool::new(recovery_snapshot_required(
                 protocol_version,
@@ -1495,7 +1648,26 @@ impl PersistentSession {
             .identity
             .lock()
             .expect("healthy native-identity lock")
+            .identity
             .clone()
+    }
+
+    /// No filesystem discovery, IPC, attachment or environment lookup.
+    pub fn local_session_target(&self) -> Option<LocalSessionTarget> {
+        if self.shared.cancelled.load(Ordering::Acquire)
+            || self.shared.reconnecting.load(Ordering::Acquire)
+        {
+            return None;
+        }
+        let provenance = self
+            .shared
+            .identity
+            .lock()
+            .expect("healthy native-identity lock");
+        Some(LocalSessionTarget {
+            root: provenance.local_root.clone()?,
+            identity: provenance.identity.clone()?,
+        })
     }
 
     /// Whether a manual, resume-only reconnect can currently be requested.
@@ -1643,7 +1815,10 @@ impl PersistentSession {
                         *shared
                             .identity
                             .lock()
-                            .expect("healthy native-identity lock") = connection.identity;
+                            .expect("healthy native-identity lock") = ConnectionProvenance {
+                            identity: connection.identity,
+                            local_root: connection.local_root,
+                        };
                         *shared
                             .protocol_version
                             .lock()
@@ -1836,13 +2011,15 @@ fn connect_discovered_with_cancel(
             "This older native daemon cannot verify the selected generation at admission. Use its compatible fesTerm version to access or end the session.",
         ));
     }
-    connect_record_admitted(
+    let mut connected = connect_record_admitted(
         record,
         cancelled,
         !require_unattached,
         AttachKind::Local,
         MAX_RECOVERY_SNAPSHOT_BYTES as u32,
-    )
+    )?;
+    connected.local_root = Some(root.into());
+    Ok(connected)
 }
 
 fn connect_existing_with_cancel(
@@ -1853,8 +2030,12 @@ fn connect_existing_with_cancel(
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
-    let registry = load_registry()?;
-    connect_existing_in_registry_with_cancel(&registry, name, cancelled, snapshot_protocol)
+    let root = runtime_root()?;
+    let registry = load_registry_in_with_cancel(&root, cancelled)?;
+    let mut connected =
+        connect_existing_in_registry_with_cancel(&registry, name, cancelled, snapshot_protocol)?;
+    connected.local_root = Some(root);
+    Ok(connected)
 }
 
 #[cfg(test)]
@@ -2679,7 +2860,8 @@ fn connect_or_start(
     scrollback_limit_bytes: usize,
     takeover: bool,
 ) -> Result<ConnectedSession, PersistentSessionError> {
-    let registry = load_registry()?;
+    let root = runtime_root()?;
+    let registry = load_registry_in(&root)?;
     if let Some(declared) = registry.unreadable.get(name) {
         // Starting a replacement would overwrite a record this build cannot
         // read, so an unreadable name is a refusal rather than a fresh shell.
@@ -2693,10 +2875,13 @@ fn connect_or_start(
             ));
         }
         if !takeover && process_alive(record.pid) {
-            return connect_unattached_record(record);
+            let mut connected = connect_unattached_record(record)?;
+            connected.local_root = Some(root);
+            return Ok(connected);
         }
         if takeover {
-            if let Ok(stream) = connect_record(record) {
+            if let Ok(mut stream) = connect_record(record) {
+                stream.local_root = Some(root);
                 return Ok(stream);
             }
         }
@@ -2705,6 +2890,7 @@ fn connect_or_start(
     let daemon = daemon_executable()?;
     let mut command = Command::new(&daemon);
     command
+        .env("FESTERM_SESSIOND_RUNTIME_ROOT", &root)
         .arg("start")
         .arg("--name")
         .arg(name)
@@ -2754,7 +2940,7 @@ fn connect_or_start(
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut last_refusal = None;
     loop {
-        if let Some(record) = load_registry()?.sessions.get(name) {
+        if let Some(record) = load_registry_in(&root)?.sessions.get(name) {
             if !takeover && record.name != name {
                 return Err(PersistentSessionError::new(
                     "The native session registry identity changed; no client was disconnected.",
@@ -2766,7 +2952,10 @@ fn connect_or_start(
                 connect_unattached_record(record)
             };
             match connection {
-                Ok(stream) => return Ok(stream),
+                Ok(mut stream) => {
+                    stream.local_root = Some(root);
+                    return Ok(stream);
+                }
                 Err(error) if !takeover => last_refusal = Some(error),
                 Err(_) => {}
             }
@@ -2824,10 +3013,29 @@ fn connect_record_admitted(
     kind: AttachKind,
     maximum_recovery_bytes: u32,
 ) -> Result<ConnectedSession, PersistentSessionError> {
+    connect_record_admitted_ticket(
+        record,
+        cancelled,
+        takeover,
+        kind,
+        maximum_recovery_bytes,
+        None,
+    )
+}
+
+fn connect_record_admitted_ticket(
+    record: &SessionRecord,
+    cancelled: &AtomicBool,
+    takeover: bool,
+    kind: AttachKind,
+    maximum_recovery_bytes: u32,
+    ticket: Option<&festerm_host_protocol::OperationId>,
+) -> Result<ConnectedSession, PersistentSessionError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(PersistentSessionError::new("session connection cancelled"));
     }
-    ensure_protocol_compatible(record)?;
+    ensure_protocol_compatible(record)
+        .map_err(|error| error.at_native_boundary(NativeConnectionBoundary::Protocol, None))?;
     let _pid = record.pid;
     #[cfg(unix)]
     {
@@ -2841,19 +3049,34 @@ fn connect_record_admitted(
         };
         let mut stream = connect().map_err(|error| {
             PersistentSessionError::new(format!("could not connect to session daemon: {error}"))
+                .at_native_boundary(NativeConnectionBoundary::Connect, Some(&error))
         })?;
         stream
             .set_read_timeout(Some(POLL_INTERVAL))
-            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
+            .map_err(|error| {
+                PersistentSessionError::new(error.to_string())
+                    .at_native_boundary(NativeConnectionBoundary::StreamOptions, Some(&error))
+            })?;
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT))
-            .map_err(|error| PersistentSessionError::new(error.to_string()))?;
-        admit_record(&mut stream, record, takeover, kind, maximum_recovery_bytes)?;
+            .map_err(|error| {
+                PersistentSessionError::new(error.to_string())
+                    .at_native_boundary(NativeConnectionBoundary::StreamOptions, Some(&error))
+            })?;
+        admit_record_ticket(
+            &mut stream,
+            record,
+            takeover,
+            kind,
+            maximum_recovery_bytes,
+            ticket,
+        )?;
         Ok(ConnectedSession {
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
             snapshot_schema_version: record.snapshot_schema_version,
             identity: Some(NativeSessionIdentity::from_record(record)),
+            local_root: None,
         })
     }
 
@@ -2866,15 +3089,24 @@ fn connect_record_admitted(
         )
         .map_err(|error| {
             PersistentSessionError::new(format!("could not connect to session daemon: {error}"))
+                .at_native_boundary(NativeConnectionBoundary::Connect, Some(&error))
         })?;
         stream.set_read_timeout(POLL_INTERVAL);
         stream.set_write_timeout(WRITE_TIMEOUT);
-        admit_record(&mut stream, record, takeover, kind, maximum_recovery_bytes)?;
+        admit_record_ticket(
+            &mut stream,
+            record,
+            takeover,
+            kind,
+            maximum_recovery_bytes,
+            ticket,
+        )?;
         Ok(ConnectedSession {
             stream: Box::new(stream),
             protocol_version: record.protocol_version,
             snapshot_schema_version: record.snapshot_schema_version,
             identity: Some(NativeSessionIdentity::from_record(record)),
+            local_root: None,
         })
     }
 }
@@ -2923,17 +3155,18 @@ pub fn decode_admission_header(request: &[u8; ADMISSION_BYTES]) -> Option<(bool,
     }
 }
 
-fn admit_record(
+fn admit_record_ticket(
     stream: &mut (impl Read + Write),
     record: &SessionRecord,
     takeover: bool,
     kind: AttachKind,
     maximum_recovery_bytes: u32,
+    ticket: Option<&festerm_host_protocol::OperationId>,
 ) -> Result<(), PersistentSessionError> {
     if record.protocol_version < 3 {
         return Ok(());
     }
-    let request = if record.attach_kinds {
+    let mut request = if record.attach_kinds {
         encode_admission_for(
             record.pid,
             record.created_at_unix_ms,
@@ -2949,20 +3182,36 @@ fn admit_record(
             maximum_recovery_bytes,
         )
     };
-    stream
-        .write_all(&request)
-        .map_err(|_| PersistentSessionError::new("daemon admission write failed"))?;
+    if ticket.is_some() {
+        request[3] = b'5';
+    }
+    stream.write_all(&request).map_err(|error| {
+        PersistentSessionError::new("daemon admission write failed")
+            .at_native_boundary(NativeConnectionBoundary::AdmissionWrite, Some(&error))
+    })?;
+    if let Some(ticket) = ticket {
+        stream
+            .write_all(ticket.as_str().as_bytes())
+            .map_err(|error| {
+                PersistentSessionError::new("host lease ticket write failed")
+                    .at_native_boundary(NativeConnectionBoundary::TicketWrite, Some(&error))
+            })?;
+    }
     let mut reply = [0];
     let deadline = Instant::now() + Duration::from_secs(3);
     read_protocol_bytes(stream, &mut reply, &mut || {
         (Instant::now() >= deadline)
             .then(|| io::Error::new(io::ErrorKind::TimedOut, "admission timed out"))
     })
-    .map_err(|_| PersistentSessionError::new("daemon admission unavailable"))?;
+    .map_err(|error| {
+        PersistentSessionError::new("daemon admission unavailable")
+            .at_native_boundary(NativeConnectionBoundary::AdmissionRead, Some(&error))
+    })?;
     if reply != [1] {
-        return Err(PersistentSessionError::new(
-            "daemon refused occupied or changed generation",
-        ));
+        return Err(
+            PersistentSessionError::new("daemon refused occupied or changed generation")
+                .at_native_boundary(NativeConnectionBoundary::AdmissionRefused, None),
+        );
     }
     Ok(())
 }
@@ -3473,11 +3722,6 @@ fn prune_packaged_windows_daemons(
         }
     }
     Ok(())
-}
-
-fn load_registry() -> Result<SessionRegistry, PersistentSessionError> {
-    let root = runtime_root()?;
-    load_registry_in(&root)
 }
 
 fn load_registry_in(root: &std::path::Path) -> Result<SessionRegistry, PersistentSessionError> {
@@ -4406,6 +4650,7 @@ mod client_worker_tests {
             protocol_version: 1,
             snapshot_schema_version: LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             identity: None,
+            local_root: None,
         }
     }
 
@@ -4541,6 +4786,7 @@ mod client_worker_tests {
                         protocol_version: next_protocol,
                         snapshot_schema_version: RECOVERY_SNAPSHOT_SCHEMA_VERSION,
                         identity: None,
+                        local_root: None,
                     })
                 })),
                 initial_protocol,
@@ -5356,6 +5602,7 @@ mod tests {
             protocol_version: 1,
             snapshot_schema_version: LEGACY_RECOVERY_SNAPSHOT_SCHEMA_VERSION,
             identity: None,
+            local_root: None,
         }
     }
 

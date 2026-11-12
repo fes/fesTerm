@@ -26,6 +26,10 @@ use super::{ssh_paragraph, ssh_section_heading, AppCommand, CONTENT_SCROLLBAR_LA
 /// configuration I/O and applies successful replacements to `AppState`.
 #[derive(Clone)]
 pub(crate) struct SettingsViewModel {
+    #[cfg(feature = "local-host-settings")]
+    pub local_remote_access: crate::app::desktop_remote_access::View,
+    #[cfg(feature = "local-host-settings")]
+    pub local_share_targets: Vec<crate::app::desktop_remote_access::ShareTarget>,
     pub keyboard_bindings: festerm_config::KeyboardBindings,
     pub chip_layout: ChipLayout,
     pub status_bar_visible: bool,
@@ -86,6 +90,10 @@ fn settings_sftp_directory_field_id(ui: &Ui) -> egui::Id {
 
 pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<AppCommand> {
     let SettingsViewModel {
+        #[cfg(feature = "local-host-settings")]
+        local_remote_access,
+        #[cfg(feature = "local-host-settings")]
+        local_share_targets,
         keyboard_bindings,
         chip_layout,
         status_bar_visible,
@@ -677,6 +685,17 @@ pub(crate) fn show_settings(ui: &mut Ui, settings: SettingsViewModel) -> Option<
                         });
 
                         ui.add_space(12.0);
+
+                        #[cfg(feature = "local-host-settings")]
+                        settings_card(ui, "Remote access · this device", |ui| {
+                            if let Some(action) = crate::app::desktop_remote_access::show(
+                                ui,
+                                &local_remote_access,
+                                &local_share_targets,
+                            ) {
+                                command = Some(AppCommand::LocalRemoteAccess(action));
+                            }
+                        });
 
                         #[cfg(feature = "experimental-dev-tunnels")]
                         {
@@ -2421,6 +2440,10 @@ mod tests {
                     if let Some(command) = show_settings(
                         ui,
                         SettingsViewModel {
+                            #[cfg(feature = "local-host-settings")]
+                            local_remote_access: Default::default(),
+                            #[cfg(feature = "local-host-settings")]
+                            local_share_targets: Vec::new(),
                             keyboard_bindings: state.keyboard_bindings.clone(),
                             chip_layout: ChipLayout::Wrap,
                             status_bar_visible: true,
@@ -4515,6 +4538,10 @@ mod tests {
                     if let Some(command) = show_settings(
                         ui,
                         SettingsViewModel {
+                            #[cfg(feature = "local-host-settings")]
+                            local_remote_access: Default::default(),
+                            #[cfg(feature = "local-host-settings")]
+                            local_share_targets: Vec::new(),
                             keyboard_bindings: Default::default(),
                             chip_layout: ChipLayout::Wrap,
                             status_bar_visible: true,

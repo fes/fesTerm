@@ -129,6 +129,12 @@ impl TextSize {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShellAction {
+    #[cfg(feature = "host-clients")]
+    OpenHosts,
+    #[cfg(feature = "host-clients")]
+    EndHostSurface(u64),
+    #[cfg(feature = "live-ssh")]
+    DisconnectSurface(u64),
     NewProfile,
     OpenProfile(String),
     EditProfile(String),
@@ -247,6 +253,10 @@ fn profiles_screen(
             }
         });
     });
+    #[cfg(feature = "host-clients")]
+    if button(ui, ButtonKind::Secondary, "Dev Tunnel hosts…", true).clicked() {
+        actions.push(ShellAction::OpenHosts);
+    }
     search_field(ui, &mut state.search, "Find a profile");
     if let Some(notice) = data.notice {
         ui.add(

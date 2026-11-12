@@ -5,12 +5,15 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+import build_tunnel_bundle as bundle
 UNIX_INSTALLER = ROOT / "scripts/install-dev-tunnel.sh"
 WINDOWS_INSTALLER = ROOT / "scripts/install-dev-tunnel.ps1"
 VERSION = "123.4.5"
@@ -87,14 +90,11 @@ class UnixInstallerTests(unittest.TestCase):
                 "printf '%s\\n' \"$@\"; exit 0; fi\n"
             )
         helper += "printf 'FIXTURE-SETUP-EXECUTED\\n'; printf '%s\\n' \"$@\"\nwhile [ $# -gt 0 ]; do [ \"$1\" = --state-dir ] && mkdir -p \"$2\" && printf '{\"fixture\":true}\\n' > \"$2/festerm-profile.json\"; shift; done\n"
-        files = {
-            "VERSION": version + "\n",
-            "LICENSE": "fixture",
-            "THIRD_PARTY_NOTICES.txt": "fixture",
-            "festerm-sessiond": "#!/bin/sh\nexit 0\n",
-            "festerm-tunnel-bridge": "#!/bin/sh\nexit 0\n",
-            "festerm-tunnel-setup": helper,
-        }
+        files = {name: "fixture" for name in bundle.entry_names("linux")}
+        files["VERSION"] = version + "\n"
+        for name in bundle.binary_names("linux"):
+            files[name] = "#!/bin/sh\nexit 0\n"
+        files["festerm-tunnel-setup"] = helper
         with tarfile.open(self.archive, "w:gz") as archive:
             for name, value in files.items():
                 entry = tarfile.TarInfo(name)
@@ -158,6 +158,24 @@ class UnixInstallerTests(unittest.TestCase):
         self.assertEqual(root.stat().st_mode & 0o777, 0o700)
         installation = root / "releases"
         self.assertEqual(installation.stat().st_mode & 0o777, 0o700)
+
+    def test_actual_producer_preserves_published_installer_archive_admission(self):
+        binaries = self.root / "producer-binaries"
+        binaries.mkdir()
+        with tarfile.open(self.archive) as source:
+            for name in bundle.binary_names("linux"):
+                (binaries / name).write_bytes(source.extractfile(name).read())
+        (self.root / "Cargo.toml").write_text(f'[workspace.package]\nversion="{VERSION}"\nlicense="MIT"\n')
+        # A new host binary must not leak into archives fetched by old installers.
+        (binaries / "festerm-host").write_bytes(b"synthetic host, never executed")
+        self.archive = bundle.build_bundle(
+            self.root, binaries, self.root / "dist", VERSION, "linux", "x86_64",
+            notices=b"synthetic dependency notices\n",
+        )
+        self.checksum = self.archive.with_name(self.archive.name + ".sha256")
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("FIXTURE-SETUP-EXECUTED", result.stdout)
 
     def management_cache(self):
         root = self.home / ".local/share/festerm-tunnels"
@@ -430,6 +448,29 @@ class UnixInstallerTests(unittest.TestCase):
 
 
 class InstallerSyntaxTests(unittest.TestCase):
+    @unittest.skipUnless(POWERSHELL, "Requires PowerShell for actual ZIP admission")
+    def test_actual_windows_producer_passes_published_installer_archive_admission(self):
+        source = WINDOWS_INSTALLER.read_text()
+        admission = source[source.index("    $allowed = @("):source.index("    $helpers = New-PrivateDirectory")]
+        with tempfile.TemporaryDirectory(prefix="festerm-archive-admission-", dir=ROOT) as directory:
+            root = Path(directory)
+            (root / "Cargo.toml").write_text(f'[workspace.package]\nversion="{VERSION}"\nlicense="MIT"\n')
+            binaries = root / "bin"
+            binaries.mkdir()
+            for name in bundle.binary_names("windows", host=True):
+                (binaries / name).write_bytes(b"synthetic inert executable")
+            for arch in bundle.ARCHITECTURES:
+                archive = bundle.build_bundle(root, binaries, root / "dist", VERSION,
+                                              "windows", arch, notices=b"synthetic notices\n")
+                result = subprocess.run(
+                    [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command",
+                     "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+                     "$archivePath=$env:FESTERM_FIXTURE_ARCHIVE;\n" + admission],
+                    env={**os.environ, "FESTERM_FIXTURE_ARCHIVE": str(archive)},
+                    capture_output=True, text=True, timeout=30,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     @unittest.skipUnless(POWERSHELL, "Installer completion requires a native PowerShell engine")
     def test_powershell_setup_and_upgrade_display_and_copy_connection_profile(self):
         source = WINDOWS_INSTALLER.read_text()

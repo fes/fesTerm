@@ -7,6 +7,7 @@ members = [
     "crates/festerm-automation-mcp-client",
     "crates/festerm-automation-workflow",
     "app/festerm",
+    "app/festerm-host",
     "app/festerm-android",
     "app/festerm-mobile",
     "crates/festerm-android-platform",
@@ -14,6 +15,7 @@ members = [
     "crates/festerm-ios-lock",
     "crates/festerm-ios-window",
     "crates/festerm-config",
+    "crates/festerm-client-recipes",
     "crates/festerm-enterprise",
     "crates/festerm-powershell",
     "crates/festerm-linux-power",
@@ -47,6 +49,7 @@ members = [
     "crates/festerm-markdown",
     "crates/festerm-document",
     "crates/festerm-host-setup",
+    "crates/festerm-host-protocol",
     "crates/festerm-syntax",
 ]
 resolver = "2"

@@ -8,6 +8,25 @@ existing window, lock and secret-store facades, selected only on Android.
 boundary, GLES/IME ownership and the explicit private-document-import policy.
 No platform FFI enters the terminal core or renderer.
 
+For ADR0084 protected HOST receipts, Android supplies a pinned current-app
+directory capability through `festerm-secret-store`, not caller-path authority.
+The bridge retains that capability/index and uses existing descriptor-relative
+private receipt operations; it never depends on JNI. Native reserved secret
+creation is serialized with read/update/delete and refuses backup/staging
+ambiguity without overwriting or resetting retained originals. Publication uses
+an exclusive no-follow base creation behind a durable reservation marker; the
+complete forced base and directory sync precede marker removal/final sync.
+It does not use SELinux-denied hard links or replace-capable renames. Native crypto
+and full protected owner/account binding remain unchanged; host contract tests
+are not Android Keystore/device acceptance.
+
+The composed protected-original store retains one `ReceiptIndex` through
+recovery, original-handle comparison and typed local Forget review/confirmation.
+Native storage equality revalidates the pinned root identity, never an empty
+placeholder path. Forget uses the retained store and exact reviewed checkpoint;
+it neither reacquires path authority nor clears interrupted native reservations.
+The portable cloned-index/Forget regression is not Android runtime evidence.
+
 The additive experimental iOS composition root in `app/festerm-mobile` reuses
 `festerm-core` and `festerm-ui-egui` through eframe/winit, without depending on
 the desktop application. [ADR 0042](docs/adr/0042-ios-rendering-spike-host.md)
@@ -338,6 +357,39 @@ See [the wire/staging/bootstrap contract](docs/host-release-artifacts.md).
 New headless CLI inclusion, service switching and migration remain separate
 implementation gates; this is not full stage-7 acceptance.
 
+Desktop composition is now explicit behind the default `local-host-settings`
+feature, separate from the client-only experimental feature. Settings emits
+`AppCommand::LocalRemoteAccess`; its application coordinator admits at most one
+ordinary worker and one independent cancellation/revocation worker across
+windows. Rendering/editing never performs storage, native, credential or cloud
+I/O. Cancellation keeps admission until actual work exits, suppresses stale UI
+results and fences only the installation/original issued epoch. Shared setup
+owns exact-snapshot/settings CAS; scoped owner approval commits the key and
+permissions under the existing protected policy lease. No cached verifier is
+introduced. Desktop always selects the native vault, never headless file storage.
+
+Explicit Enable composes the existing exact-current/native-target official
+schema-2 acquisition with `TrustedStage::publish` in process. Only immutable
+authenticated owned bytes cross that seam; no serialized capability, download
+path reread, CLI installer or caller-controlled URL/version/key is authority.
+Cancellation and fresh full-snapshot/account/observed-policy-revision checks
+fence acceptance after synchronous verification and before local initialization
+or publication. Native publisher qualification, retained signed provenance,
+installation leases and shared-controller CAS still gate effects. A 404 is
+NotPublished, not fallback or absence. The Advanced local-files path uses the
+same bounded private-input verifier and owned-byte publication. Two bundle
+progress events plus one explicit device prompt have three bounded slots, so
+status cannot displace the sign-in code. No network or vault fallback is added.
+
+Signed native definitions select `run-desktop` only from their protected
+Desktop origin; the native CLI entrypoint opens that exact origin and the
+ordinary headless `run` remains Headless-only. Current Windows publisher/stop
+and Linux sign-in restrictions remain authoritative. Native process/history
+is never endpoint readiness. Exact existing-shell binding and receipt-fenced
+unsharing remain a shared sessiond prerequisite: the application captures tab,
+profile, native identity and lifecycle generation for review but cannot turn
+these display facts into authority or restart a private daemon.
+
 ### `festerm-sessiond`
 
 Implements ADR-0025's opt-in persistent local-session backend. Its packaged
@@ -376,6 +428,25 @@ answers terminal queries exactly once for protocol-v2 sessions instead of
 dropping or replaying queued replies, clipboard actions, or stale user input
 across reattach.
 
+For a HOST-managed persistent generation, adoption records its connected
+ticket and writer epoch in the protected daemon lease. Fresh owner policy,
+record/grant revision and exact native identity checks precede a non-takeover
+Busy refusal for that connected writer; the refusal creates no pending ticket
+and performs no native connection. The daemon observes its exact current
+ticketed frontend retiring independently of bridge cleanup. Its existing
+bounded poll clears only that persistent connection bit under the same lease
+lock, preserving pending takeover, writer epoch and shell lifetime. A delayed
+old-writer notification cannot clear a newer committed writer. Imported binding
+watches, temporary deadlines and ordinary unticketed admission retain their
+separate existing policies. Native connection failures still require exact
+ticket unwind; contended or ambiguous unwind remains outcome-uncertain.
+
+The generation lease is distinct from the native global registry lock. Private
+registry mutation snapshots and applies its change under that lock, prepares
+the durable checkpoint outside it, then rechecks/rebases lineage before atomic
+publication. Directory synchronization occurs after releasing the registry
+lock; ordinary discovery releases its read lock before native connection.
+
 Platform-sensitive file authority remains isolated in the two ADR 0034
 security crates. `festerm-unix-security` owns no-follow opens, private staging,
 metadata snapshots and no-overwrite publication. `festerm-windows-security`
@@ -404,6 +475,16 @@ authentication, reconnect, and OpenSSH-import policy in
 insecure legacy algorithms or invoke a system `ssh` binary.
 
 ### `festerm-config`
+
+ADR 0084's public host/session recipe foundation is factored into the additive
+`festerm-client-recipes -> festerm-host-protocol` metadata contract. Both
+`festerm-config` and `festerm-mobile-profiles` depend on it; mobile does not
+depend on desktop configuration/PTY. A separate recipe collection preserves
+legacy profiles and launch paths. Shared typed metadata commands and explicit
+browser request state have no network/vault/process executor or principal
+authority. Desktop composes the command with its existing save gate; mobile
+uses its atomic profile document. Live host inventory/ensure/attach and native
+UI remain gated by the reviewed endpoint and identity contracts (#681).
 
 Owns versioned, human-readable configuration and persistence models:
 
@@ -702,8 +783,203 @@ Performance benchmarks should initially report trends rather than block every co
 
 ## Experimental remote session bridge
 
+ADR 0084 stage 4 adds the opt-in `festerm-host-setup::lifecycle` policy and
+standalone `app/festerm-host` composition root without GUI/graphics dependencies.
+Both desktop and headless callers can use its protected, origin-scoped
+configuration/consent journal, operation epochs and exact-owned cleanup receipts.
+Consent commits the exact foreground-approved settings under the journal lease;
+persisted operation tickets remain recoverable after interruption. Initial
+journals and staged CLI/helper files share atomic no-replace publication.
+It reuses sessiond private storage, the bridge's reviewed official-CLI pins and
+the shared authenticated-artifact verifier. Verified helper entries and their
+exact signed provenance are staged immutably without execution;
+default legacy/mobile installer-review dependencies remain unchanged.
+The optional setup-library `native-services` feature, selected by the default
+headless binary, adds a
+[same-user native control component](docs/native-host-services.md):
+sealed updater-authenticated executable receipts, protected exact-owned
+registration and epoch-fenced native observations/control.
+macOS admission pins the release Developer ID team and hardened runtime; Windows
+admission pins the owner-approved Artifact Signing subject/profile and Microsoft
+chain, with trusted RFC3161 and online-enabled fail-closed revocation.
+Windows registration/start require the compiled runtime watcher; stop observes
+protected lifecycle revocation, exclusive run-lease release and exact native task
+quiescence, never destructive task termination. Native execution is unqualified. The native
+component itself owns neither endpoint readiness nor shell launch. The headless
+controller now composes explicit setup, separate owner-key/permission approval,
+run, disable, authenticated stopped-version update and exact-owned removal with
+those APIs. Update retains signed old/new helper provenance and a protected
+reservation/unknown-outcome journal, never automatic rollback or access reenabling.
+The Windows stopped-update branch uses compact v3 installation/operation UUID
+task names and replacement-owned fresh canonical XML/ACL evidence. Its protected
+submission intent precedes Create; recovery can adopt only that exact submitted
+task, never infer absence from an unobserved completion or use the Windows file-
+definition stub as ownership. Old/new bundle reauthentication remains the existing
+updater/native-publisher path. Exact quiescent retirement and pending two-resource
+revocation reconciliation neither execute the host nor stop independent daemons.
+Local pending-replacement cleanup relies on protected CleanupPending epochs and
+exact journal/task ownership, not executable authentication or publisher availability.
+It preserves unknown outcomes and confirms independent absence before Aborted;
+update/commit/run authentication is unchanged.
+Portable scheduler models are not Windows COM/PKI or signed-release acceptance.
+Configure defaults disabled;
+compilation, native Running and last-run history confer no consent or Ready claim.
+Default legacy/mobile dependencies remain unchanged. See the
+[headless boundary and adapter contract](docs/headless-host.md).
+
 The [Dev Tunnels experiment](docs/adr/0053-separate-dev-tunnels-session-bridge.md), included in default desktop builds,
 adds a separate network bridge, never cloud dependencies to the daemon/core/UI.
+The opt-in bridge `host-routing` module and paired
+`festerm-tunnel-client::host_control` transport reuse the shared HOST contracts
+for bounded framed control RPC. The bridge consumes non-serializable verified
+owner proof and delegates reservation/grant checks to the session backend;
+the client owns immutable account/endpoint/host correlation, not authority.
+Creation RPCs retain an opaque issued operation bound to that destination and
+the original negotiated namespace across reconnects; lifecycle RPCs never
+inherit a creation scope. Correlation includes the exact echoed namespace.
+`host_control::native::NativeControl` uses actual sessiond reservations and owned
+policy guards; the headless binary's default-enabled `owner-routing` composition
+adapts protected enrollment, not portable configuration. The setup library's
+optional `host-runtime`
+feature implements the runtime policy traits directly: each admission reacquires
+the explicitly selected credential store and returns an owned enrollment lease,
+not cached authority. The app wrapper delegates; its default remains native vault
+with no file-store fallback. Owned native fixtures cover
+control routing/retry without frontend leases. Explicit headless `run` consumes
+these modules only after authenticated release provenance, current protected
+account/host identity and separate local owner approval. That source integration
+does not establish signed native-service or first-connect acceptance.
+The `host_terminal` module pairs bounded binary terminal framing with
+an immutable client handle and an opt-in actual native attachment actor. Recovery
+adoption and observed native writer admission precede Attached; exact temporary
+leases distinguish intentional detach from transport loss. FIFO output turns
+are released before network I/O; current authorization can cancel slow output.
+The native actor retains original opaque generation/attachment authority, and
+freshly checks an intentional-detach receipt before publishing stopped success;
+no client lease fields can mint replacement authority.
+`HostRuntime` consumes proof on each actual signed SSH stream and pairs these
+control/terminal adapters over the same protected backend. Only that paired
+constructor advertises current lifecycle capabilities and the backend-reserved
+issuer; standalone control stays inventory-only. No claimed issuer or cached
+permission can replace protected current admission. Every frame/action and output
+publication revalidates the opaque attachment against fresh protected state.
+Key/host/session revocation closes the remote and native attachment, not the
+persistent daemon. A 20-second heartbeat renews the daemon's 60-second connected
+temporary deadline; unexpected closure uses original-authority TransportLost,
+leaving grace/expiry daemon-owned. Persistent unticketed local attachment remains
+available; temporary attachment always requires its actual ticket.
+Independent exact-head consumer review, native-vault/first-connect/service
+qualification and fair control-under-load remain gates; legacy exact-generation
+relay and independent grants are unchanged.
+
+The [ADR 0084 stage-1 contract](docs/host-protocol.md) introduces the small
+`festerm-host-protocol` serde/UUID crate for shared HOST identities, bounded
+messages, authorized pagination and reservation/freshness helpers. This avoids
+a sessiond-to-bridge dependency cycle; it has no PTY, GUI, cloud or native-store
+dependency. The bridge's non-default `owner-auth` feature provides enrolled-owner
+Ed25519 challenge/admission primitives, not provider identity or a listener.
+Legacy bearer connectivity is not principal proof. Protected enrollment,
+pinned-channel integration and independent security review are mandatory before
+new remote capabilities; all new capabilities default denied. Stage 2 adds
+`festerm-sessiond -> festerm-host-protocol`, never a dependency on the bridge.
+Its local `host_control::SessionControl` journals owner/logical identity,
+immutable launch intent, reserved generations, operation results and revocation
+revisions through the existing private no-follow/atomic storage boundary. It
+uses the real detached native launcher and single-writer daemon admission.
+HOST reservations require their exact native launch journal, preserving
+ADR 0085's refusal to adopt an unrelated live generation from metadata alone.
+Read-only private native checkpoint snapshots do not hold the mutation lock
+during file/ACL I/O; serialized mutation CAS retains its validated directory
+handle across publication. Private global-registry mutations compute their
+change once under the lock, prepare and sync a private checkpoint after releasing
+it, then reacquire it to revalidate before atomic publication. Disjoint concurrent
+changes rebase without replaying effects, with at most four preparation attempts;
+a conflicting same-name lineage refuses rather than replacing another generation.
+The directory stays retained through preparation/publication; final directory sync
+runs outside the lock. Abandoned checkpoints remove only their owned staging file:
+Unix retains its directory-relative name, Windows its exact open file handle.
+Legacy nonprivate reads and mutations remain locked.
+Read-only reconciliation cannot create a fresh reservation. A durable issuance
+namespace bounds the entire 128-entry operation ledger without receipt archives;
+old captured scopes become Stale, never fresh creation. The 64 logical records
+use a fixed native slot pool, with generation artifacts reclaimed only after
+sealed supervision and positive native absence proof. Capacity reclamation takes
+only one requesting-owner known-Absent record, never another owner's or a revoked
+fence. Revoked live shells remain accounted and locally manageable; exact local
+end and new explicit consent are required before retiring their fence.
+Namespace publication reauthorizes the actual post-rotation epoch under the
+same reservation and retains that policy guard through the durable checkpoint.
+At capacity, authorized inventory/inspection may first reconcile owned dead
+Running/Ending records, followed by retry of Busy with the original operation.
+Opaque attachment authorities retain current policy and per-generation
+grant/writer/liveness guards across nonblocking local actions, without parsing or
+locking the global journal. Intentional detach yields a publication-only receipt,
+not renewed terminal access. Missing/unsupported authority journals fail closed;
+there is no automatic namespace reset or prerelease-state migration.
+The daemon's own loop enforces temporary heartbeat/grace deadlines from
+generation/lease-fenced private records, independently of bridge/client lifetime.
+Temporary ownership changes commit beside the writer replacement only after
+recovery adoption; a pending attachment is not an Attached success. Persistent
+shells never acquire temporary cleanup merely through attachment. Endpoint
+routing must not stall an existing writer while a candidate adopts: the native
+daemon queues one candidate, bounds its post-snapshot output/control delta to
+512 KiB including queue allocation headroom, independently of the live 64-frame
+queue, and cancels only that candidate on saturation. Committed delta drains
+before newer output. New-client admission/refusal errors cannot terminate the
+daemon or persistent PTY; listener errors still propagate. The candidate's input
+worker waits for the daemon's actual writer commit before accepting commands.
+The existing writer remains usable until that commit. Endpoint
+routing, protected enrollment/channel integration, migration and native
+reboot/device qualification remain gated; this is not remote exposure.
+Legacy bearer connectivity is not principal proof. The non-default
+`festerm-host-setup/owner-enrollment` feature persists exact-installation
+owner/key/account policy under the lifecycle lease, with compact native-vault
+revision/digest fencing, durable prepared-record forward recovery and monotonic
+revocation revisions. Bridge `ClientOwnerKey` uses opaque credential references;
+native storage remains default and GUI policy unchanged. An explicit headless-only
+protected-file credential/anchor backend binds origin/storage/installation;
+whole protected-store/home rollback is not resisted by that weaker mode.
+Enrollment does not enable access or creation; settings deny masks creation
+without blocking key revocation or permission removal.
+Persistent consent contains no runtime issuer. Its distinct protected-permission
+verifier masks creation until an immutable projection receives the current issuer
+inside protected backend admission; public runtime policy validation remains
+strict. A projection retains its receiver's in-memory issuer watermark without
+changing permission epochs or enrolled keys. Fresh enrollment reloads have no
+such watermark; rollback protection across reservations belongs to the protected
+durable backend, not cached owner policy.
+Vendored russh now derives immutable bindings from its signed original session
+identifier and role-ordered actual channel IDs, excluding no-KEX outer relays.
+Client signing requires its privately captured actual pin and matching current
+stream; server authentication transfers that stream and owner/guard together.
+The opt-in bridge `host_runtime` composes that exact stream with bounded owner
+challenge/proof framing, then a control or terminal role. Its host shares one
+aggregate budget and FIFO output scheduler; protected policy work retains client
+admission through cancellation. Paired `HostRuntime` advertises protected
+lifecycle support/current backend issuer; standalone `NativeControl` remains
+inventory-only. Separately proven terminal channels use the exact-generation
+adoption/receipt adapter. No raw socket, principal string or fabricated owner can enter the
+runtime. The portable client handshake creates no key and changes no trust.
+The default headless build now composes that runtime through explicit foreground
+setup/approval/run with the fixed protected adapter and corrected session source.
+There is no automatic listener or portable-import authority; current permissions
+remain default denied. Independent combined-source review, real release/native
+vault/service and client first-connect/device qualification remain mandatory.
+The enrollment/channel helpers alone grant no routing, creation, migration or
+lifetime authority; those effects require the separate current protected backend.
+The lifecycle library's `owned_migration` module adds explicit canonical
+desktop/script source inventory and exact account/key/receipt/generation preview,
+immutable operation intent, disabled destination host-identity reservation,
+cross-installation claims, recovery/deferral and local rollback. It imports no
+owner/session permissions and invokes no frontend, service or cloud API. Enable
+refuses until all selected bindings are switched. `SessionControl` authenticates
+capability-enabled current daemons in place, fences their exact protected retained
+root/namespace and routes existing authorization/adoption without recreate/end
+authority. Every source receipt/key/claim remains fenced. Release revokes only
+the imported grant/watch, preserving the ordinary persistent shell and frontend;
+older helpers remain deferred. Separate owner consent does not bypass the disabled
+lifecycle master gate or authorize provider setup. See the
+[bounded migration contract](docs/owned-installation-migration.md).
 The app's peer profile and `ApplicationSession::DevTunnel` retain normal
 Session/controller ownership. Its shared `remote_files` capability routes
 detected and explicit file targets to live SFTP or negotiated bridge reads;
