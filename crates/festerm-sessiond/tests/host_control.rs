@@ -1136,9 +1136,9 @@ fn concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon() {
         .attached_by
         .is_none());
     // Dropping/reopening the manager (lost reply/bridge restart) keeps the shell.
-    let replay = fixture
-        .control()
-        .ensure(
+    let control = fixture.control();
+    let replay = retry_busy(|| {
+        control.ensure(
             &fixture.owner,
             &operation,
             &creation,
@@ -1146,32 +1146,115 @@ fn concurrent_ensure_lost_reply_and_recipe_conflict_use_one_real_daemon() {
             &AtomicBool::new(false),
             allow,
         )
-        .unwrap();
+    });
+    assert!(
+        replay.is_ok(),
+        "HOST control stage=concurrent-ensure/lost-reply actual={}",
+        control_result_diagnostic(&replay),
+    );
+    let replay = replay.unwrap();
     assert_eq!(replay.identity, results[0].identity);
     let mut changed = (*creation).clone();
     changed.recipe.args.push("emit:not-run".into());
-    assert!(matches!(
-        fixture.control().ensure(
+    let changed_operation = fixture.issued();
+    let directory = storage::private_directory(&fixture.root, false).unwrap();
+    let stem = format!("host-daemon-{}", replay.target.generation.get());
+    let locked =
+        storage::open_private_file(&directory, Path::new(&format!("{stem}.lock")), false).unwrap();
+    eventually(|| match fs2::FileExt::try_lock_exclusive(&locked) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+        Err(_) => panic!("HOST control stage=concurrent-ensure/hold-generation-lease failed"),
+    });
+    let journal_before =
+        storage::read_private(&directory, Path::new("host-sessions.json"), 4 * 1024 * 1024)
+            .unwrap();
+    let lease_name = PathBuf::from(format!("{stem}.json"));
+    let lease_before = storage::read_private(&directory, &lease_name, 4096).unwrap();
+    let held = control.ensure(
+        &fixture.owner,
+        &changed_operation,
+        &changed,
+        false,
+        &AtomicBool::new(false),
+        allow,
+    );
+    assert!(
+        matches!(&held, Err(ControlError::Busy)),
+        "HOST control stage=concurrent-ensure/held-generation-lease actual={}",
+        control_result_diagnostic(&held),
+    );
+    assert!(
+        storage::read_private(&directory, Path::new("host-sessions.json"), 4 * 1024 * 1024)
+            .unwrap()
+            == journal_before,
+        "HOST control stage=concurrent-ensure/held-generation-lease journal-changed",
+    );
+    assert!(
+        storage::read_private(&directory, &lease_name, 4096).unwrap() == lease_before,
+        "HOST control stage=concurrent-ensure/held-generation-lease lease-changed",
+    );
+    let state_before: serde_json::Value = serde_json::from_slice(&journal_before).unwrap();
+    drop(locked);
+    let conflict = retry_busy(|| {
+        control.ensure(
             &fixture.owner,
-            &fixture.issued(),
+            &changed_operation,
             &changed,
             false,
             &AtomicBool::new(false),
-            allow
-        ),
-        Err(ControlError::RecipeConflict)
-    ));
-    assert!(matches!(
-        fixture.control().ensure(
+            allow,
+        )
+    });
+    assert!(
+        matches!(&conflict, Err(ControlError::RecipeConflict)),
+        "HOST control stage=concurrent-ensure/changed-recipe actual={}",
+        control_result_diagnostic(&conflict),
+    );
+    let conflict = retry_busy(|| {
+        control.ensure(
             &fixture.owner,
             &operation,
             &changed,
             false,
             &AtomicBool::new(false),
-            allow
-        ),
-        Err(ControlError::OperationConflict)
-    ));
+            allow,
+        )
+    });
+    assert!(
+        matches!(&conflict, Err(ControlError::OperationConflict)),
+        "HOST control stage=concurrent-ensure/changed-operation-intent actual={}",
+        control_result_diagnostic(&conflict),
+    );
+    let state_after = fixture.state();
+    assert!(
+        state_after["operations"] == state_before["operations"],
+        "HOST control stage=concurrent-ensure/conflicts operation-journal-changed",
+    );
+    let logical = creation.logical.as_str();
+    for field in [
+        "recipe",
+        "effective_recipe",
+        "generation",
+        "identity",
+        "launch",
+    ] {
+        assert!(
+            state_after["sessions"][logical][field] == state_before["sessions"][logical][field],
+            "HOST control stage=concurrent-ensure/conflicts original-record-changed",
+        );
+    }
+    let native = list_running_sessions_in(&fixture.root).unwrap();
+    assert!(
+        native.len() == 1,
+        "HOST control stage=concurrent-ensure/conflicts daemon-count-changed",
+    );
+    assert!(
+        native[0].session.name == replay.identity.name
+            && native[0].session.pid == replay.identity.pid
+            && native[0].session.created_at_unix_ms == replay.target.generation.get(),
+        "HOST control stage=concurrent-ensure/conflicts original-daemon-changed",
+    );
 }
 
 #[test]
