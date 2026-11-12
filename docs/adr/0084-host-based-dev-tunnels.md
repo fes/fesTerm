@@ -807,9 +807,10 @@ must match the requested nonzero TCP port and return no port payload. Port 0
 requires `want-reply` and a returned port in 1..=65535, included in success;
 port 0 without reply is refused without callback. Invalid returned ports
 refuse. Deterministic dispatch/default-deny/exact-peer and original encrypted
-live-isolation/retirement regressions remain **UNRUN** on this source child;
-the earlier da9967 bridge result was 5 passes/1 pre-injection fixture failure,
-not live-isolation proof.
+live-isolation/retirement regressions are required. Focused execution and its
+source-specific limits are recorded in the
+[progress narrative](../milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery);
+unit coverage does not establish native/provider acceptance or waive review.
 
 Native manager
 definitions/receipt versions and RunRecord v1 remain unchanged. This is not

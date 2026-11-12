@@ -36,14 +36,25 @@ slice retains its single runtime lease/run ID, original consent and shared
 runtime budgets, drains the old listener, waits the existing-style fixed
 15 seconds and freshly authenticates bundle/owner/account/receipt/token.
 Only positively typed transient evidence permits another attempt; coarse
-network/unknown/refused authority stops. Deterministic validation is pending.
+network/unknown/refused authority stops. Focused deterministic coverage is now
+executed; independent feature reviews and native qualification remain separate.
 The source correction isolates failed per-client cleanup while serving and
 retains sticky retirement refusal. Exact da9967 passed setup8/0/0 and bridge5/1;
 the first healthy-channel fixture failed before fault injection because its
 peer cannot acknowledge the host's port notification. The corrected test peer
 uses only an exact-port typed callback with unchanged pin verification and
-default production refusal. New dispatch/peer and corrected shared-path tests
-remain UNRUN; no completed live-isolation/retirement proof is claimed.
+default production refusal. At exact `e4273190`, setup selects **8/0/0, 3.67s**,
+bridge selects **7/0/0, 0.15s**, and the excluded vendor manifest explicitly
+selects **3/0/0, 0.00s**. The unchanged real shared service regression now passes
+healthy traffic/new admission, stalled unadopted-client cleanup, sticky
+retirement/second-close refusal and full permit return. Affected bridge/setup/
+CLI all-target strict, app fmt, vendor formatting delta preserving prior drift,
+actual-main trace and diff all exit0. The first offline vendor-cache miss was
+preserved; restoring existing locked dependencies changed no manifests or
+versions. A harness module-prefix mismatch was corrected against existing
+passing output without rerunning tests. No new native/helper campaign or
+reattribution of the separate 422 native evidence is implied. This is a tested
+candidate for security/reliability/scope review, not ADR acceptance.
 Native restart flags/receipt versions and run-history schema are unchanged;
 #729 crash recovery, older-helper manager migration and native/cloud/vault/
 daemon-survival qualification remain explicit gaps.

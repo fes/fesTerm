@@ -9,7 +9,8 @@ failed per-client cleanup stays isolated while serving, but its sticky drain
 uncertainty refuses listener replacement, including after repeated close.
 The encrypted test peer's exact-port typed notification opt-in retains pinned
 key verification; production defaults still deny. Its corrected isolation
-and dispatch/peer checks are UNRUN, not new HOST authority or acceptance.
+and dispatch/peer have focused unit coverage, not new HOST authority or native
+acceptance; logical feature reviews remain required.
 No terminal input replay or daemon operation is introduced. See
 `native-host-services.md#in-process-host-relay-recovery`. Manager crash policy
 and native/cloud/vault acceptance remain open.

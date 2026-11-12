@@ -19,8 +19,10 @@ The encrypted shared-path fixture's typed notification callback is test-only
 opt-in, exact `127.0.0.1:47461` with the unchanged host-key verifier. Require
 default/unknown/malformed/wrong-port refusal and strict reply/port-zero tests
 before accepting its live isolation/retirement proof. No listener or production
-handler opt-in is added. These changed-source checks remain UNRUN; da9967's
-first healthy-channel failure did not reach fault injection.
+handler opt-in is added. These deterministic checks have focused unit coverage;
+the platform/provider/vault/service scenarios above remain open. The
+[progress record](milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery)
+separates source-specific execution from acceptance.
 
 **Status:** Active registry
 

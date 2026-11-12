@@ -40,9 +40,10 @@ channel refusals. All existing production handlers still default to rejection;
 no network listener or forwarding permission is created. Complete bounded
 payload parsing and fixed-port/port-zero/reply behavior are specified in
 [ADR 0084](adr/0084-host-based-dev-tunnels.md#validation-impact).
-The new dispatch/peer and corrected encrypted regression are **UNRUN**;
-da9967's 5/1 bridge result failed before fault injection, not at isolation or
-retirement. Production registration refusal is not relaxed.
+Focused tests cover the dispatch/peer and corrected encrypted regression; see
+the [source-specific progress record](milestone-progress.md#designing-bounded-in-process-multi-session-host-recovery).
+This is not native/provider or production-client opt-in qualification.
+Production registration refusal is not relaxed.
 
 Keep native registration versions and rendered bytes/restart flags unchanged.
 RunRecord v1 uses existing `Starting` during retry; no new persisted enum value
