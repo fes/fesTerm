@@ -68,6 +68,11 @@ red at `9c3f6374` (**0/1/0, 0.10s**, OS101, `SendError`) before the compatibilit
 fix. Changed-source bridge/strict/static qualification and affected delta review
 remain separate from the unchanged, source-specific setup evidence and all
 native/provider acceptance.
+The first corrected-source selection at `c5c2282a` retains **6/1/0, 0.07s**:
+all availability/byte/permit assertions completed, then the new test incorrectly
+required successful completion after explicitly disconnecting its own SSH
+client. Its teardown now accepts only success or the SDK's typed `Disconnect`
+result, still awaiting completion; no live-traffic or isolation oracle changes.
 Native restart flags/receipt versions and run-history schema are unchanged;
 #729 crash recovery, older-helper manager migration and native/cloud/vault/
 daemon-survival qualification remain explicit gaps.

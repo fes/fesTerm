@@ -752,10 +752,10 @@ pub(crate) mod tests {
             .disconnect(russh::Disconnect::ByApplication, "done", "en")
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), client)
+        let completion = tokio::time::timeout(Duration::from_secs(2), client)
             .await
-            .unwrap()
             .unwrap();
+        assert!(matches!(completion, Ok(()) | Err(russh::Error::Disconnect)));
         listener.close().await.unwrap();
         assert_eq!(slots.available_permits(), RELAY_CLIENTS);
     }
