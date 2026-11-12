@@ -97,16 +97,30 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
                     script = fixture / (name + ".ps1")
                     quoted_application = str(application).replace("'", "''")
                     script.write_text(
-                        "$ErrorActionPreference = 'Stop'\n$global:LASTEXITCODE = 0\n"
+                        "$ErrorActionPreference = 'Stop'\n"
+                        "$global:LASTEXITCODE = 0\n"
                         f"Set-Alias -Name cargo -Value '{quoted_application}'\n"
-                        "$buildArguments = @()\ntry {\n" + scope +
+                        "$PSModuleAutoLoadingPreference = 'None'\n"
+                        "$buildArguments = @()\n"
+                        f"[Console]::WriteLine('CARGO-CONTRACT-INVOKE:{name}')\n"
+                        "try {\n" + scope +
                         "\nexit 0\n} catch {\n"
                         "if ($ErrorActionPreference -ne 'Stop') { exit 91 }\n"
                         "Write-Output 'CARGO-START-REFUSED'\nexit 19\n}\n",
                         encoding="utf-8-sig")
-                    result = subprocess.run(
-                        [shell, "-NoProfile", "-File", str(script)],
-                        capture_output=True, text=True, timeout=15)
+                    try:
+                        result = subprocess.run(
+                            [shell, "-NoProfile", "-NonInteractive", "-File", str(script)],
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True, timeout=15)
+                    except subprocess.TimeoutExpired as error:
+                        self.fail(
+                            f"{name}: PowerShell fixture timed out after 15s; "
+                            f"stdout={repr(error.stdout)[-2048:]} "
+                            f"stderr={repr(error.stderr)[-2048:]}")
+                    self.assertIn(
+                        f"CARGO-CONTRACT-INVOKE:{name}", result.stdout,
+                        result.stdout + result.stderr)
                     if expected is None:
                         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                         self.assertNotEqual(result.returncode, 91, result.stdout + result.stderr)
