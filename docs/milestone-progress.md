@@ -1,5 +1,17 @@
 # Milestone Progress Narrative
 
+## Designing bounded in-process multi-session HOST recovery
+
+The new HOST previously exited on relay stream loss. The source-first recovery
+slice retains its single runtime lease/run ID, original consent and shared
+runtime budgets, drains the old listener, waits the existing-style fixed
+15 seconds and freshly authenticates bundle/owner/account/receipt/token.
+Only positively typed transient evidence permits another attempt; coarse
+network/unknown/refused authority stops. Deterministic validation is pending.
+Native restart flags/receipt versions and run-history schema are unchanged;
+#729 crash recovery, older-helper manager migration and native/cloud/vault/
+daemon-survival qualification remain explicit gaps.
+
 ## Diagnosing uncertain takeover after temporary pending cancellation
 
 The published `4898f407` macOS native selection retains18 passes/1 failure,

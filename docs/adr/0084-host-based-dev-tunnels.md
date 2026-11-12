@@ -778,6 +778,16 @@ changes are introduced by the contract or client-local metadata foundations.
 
 ## Validation impact
 
+The bounded new-HOST in-process recovery contract is in
+[native services](../native-host-services.md#in-process-host-relay-recovery).
+HOST-02/03 require typed positive transient classification, the same exclusive
+run/consent/identity/budgets, awaited listener retirement, fixed cancellable
+15-second delay and fresh bundle/owner/receipt/account/scoped-token admission.
+Deterministic classification, paused-clock cancellation/epoch/no-effects and
+drain/budget/identity tests are required before qualification. Native manager
+definitions/receipt versions and RunRecord v1 remain unchanged. This is not
+#729 crash-restart equivalence or Windows/macOS/Linux/cloud/vault acceptance.
+
 ### Composed Desktop lifetime qualification
 
 The normal Desktop/mobile/NativeEnd/adoption/frame/fixture composition retains

@@ -1,5 +1,13 @@
 # fesTerm Design
 
+ADR0084 HOST in-process transport recovery retains the same consent/run lease,
+identity and aggregate budgets, freshly reauthorizes each attempt and drains
+the old listener before the fixed cancellable 15-second delay. Typed transient
+evidence alone permits retry; unknown/refused authority stops. Native manager
+restart/receipt policy is unchanged. See
+`docs/native-host-services.md#in-process-host-relay-recovery`; source and native
+qualification remain separate.
+
 **Status:** Draft
 
 ADR0084 Windows stopped updates reuse verified-bundle publisher policy and

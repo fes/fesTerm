@@ -1,5 +1,17 @@
 # Manual and Usability Validation Registry
 
+HOSTSETUP-01 / HOST-02/03: new-HOST in-process relay recovery is source-only,
+pending deterministic checks and separately authorized native qualification.
+On each native platform eventually prove old-listener/client retirement,
+15-second cancellable delay, fresh same-account scoped-token/current signed
+bundle/native-owner admission, identical run/host identity and daemon PID/
+generation, and no input replay. Revoke/disable, changed epoch, locked vault,
+denial and unknown failure must stop without sign-in/provisioning or daemon
+control. Existing manager definitions/receipt bytes stay unchanged; process
+crash restart, manager migration/older-helper compatibility and actual
+vault/cloud/service/daemon-survival evidence remain open. See
+`native-host-services.md#in-process-host-relay-recovery`.
+
 **Status:** Active registry
 
 The normal source child of169b corrects pending local cleanup's mistaken
