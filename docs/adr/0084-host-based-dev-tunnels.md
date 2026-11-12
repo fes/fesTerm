@@ -793,14 +793,19 @@ The encrypted shared-path fixture requires the peer to acknowledge the host's
 existing `tcpip-forward` notification. The pinned client's narrow typed
 `Handler::server_tcpip_forward(address, port) -> Result<Option<u32>, Error>`
 async callback defaults to refusal; **all existing production handlers keep
-that default**. Only the test peer opts into the exact `127.0.0.1:47461`
-notification, retaining the existing host-key verifier and channel refusals.
+that default for well-formed requests**. Only the test peer opts into the exact
+`127.0.0.1:47461` notification, retaining the existing host-key verifier and
+channel refusals.
 No listener is opened and host registration refusal remains fatal to that
 client. This is not a general global-request hook or new forwarding authority.
 
 Dispatch checks a UTF-8 address of at most 255 bytes before allocation, a full
-u32 port and complete payload before invoking the callback. Malformed payloads
-fail without callback or reply; out-of-range ports refuse without callback.
+u32 port and complete payload before invoking the callback. Malformed server
+`tcpip-forward` payloads now terminate the SSH session before any Handler
+callback or reply. This session-termination difference applies to all workspace
+clients using the patched `russh`, including `festerm-ssh`; it is not limited
+to the test peer. Well-formed default-deny behavior and reply bytes remain
+unchanged. Out-of-range ports refuse without callback.
 Unknown requests retain existing default rejection. Nonzero `want-reply`
 requests get success/failure; zero never gets a reply. Accepted fixed ports
 must match the requested nonzero TCP port and return no port payload. Port 0
