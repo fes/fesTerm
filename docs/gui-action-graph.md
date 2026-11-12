@@ -165,6 +165,12 @@ once when the composition root creates a window, not by scanning `PATH` on
 each Profiles repaint. Existing profiles and explicit provider choices are
 unaffected; a new window captures a new default.
 
+For `LAUNCH-01`, `SET-12` and `PROF-06`, Windows shell launches use ordinary
+drive-directory spelling where equivalent, rather than passing canonical
+`\\?\` spelling into ConPTY. Protected canonical profiles/fingerprints do not
+change; paths requiring verbatim semantics remain verbatim. Actual mapped-drive
+performance is separate from controlled child-cwd coverage (#733).
+
 The native CPU oracle for these edges and `TERM-01` must identify the real
 PID-owned application window, not winit's visible event-target tool window.
 Warmup or sample input invalidates a controlled measurement; loss of window

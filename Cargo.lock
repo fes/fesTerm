@@ -2817,6 +2817,7 @@ dependencies = [
 name = "festerm-pty"
 version = "0.17.0"
 dependencies = [
+ "dunce",
  "festerm-session",
  "festerm-windows-job",
  "festerm-windows-runtime",

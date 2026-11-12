@@ -22,6 +22,7 @@
 //! | `echo:PREFIX` | Write `PREFIX:{last-line}\n` to stdout. |
 //! | `report-size` | Write `{rows} {cols}\n` (PTY dimensions) to stdout. |
 //! | `report-pid` | Write `PID:{pid}:END\n` for process-continuity assertions. |
+//! | `report-cwd` | Write `CWD:{working-directory}:END\n` without canonicalizing it. |
 //! | `spin` | Sleep until the process is killed. |
 //! | `spawn` | Spawn self as a long-running descendant, write `CHILD:{pid}\n`, then wait for it. |
 //! | `exit:N` | Exit with decimal code N. |
@@ -195,6 +196,13 @@ fn main() {
             }
         } else if let Some(specification) = arg.strip_prefix("tui:") {
             emit_tui(specification, &mut stdout.lock());
+        } else if arg == "report-cwd" {
+            let directory =
+                std::env::current_dir().expect("report-cwd: current directory available");
+            let mut out = stdout.lock();
+            writeln!(out, "CWD:{}:END", directory.display())
+                .expect("report-cwd: stdout write succeeds");
+            out.flush().expect("report-cwd: stdout flush succeeds");
         } else if arg == "read-line" {
             last_line.clear();
             stdin

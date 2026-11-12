@@ -887,6 +887,12 @@ constrained job. These local probes create no cloud tunnels or tasks and do not
 qualify survival after a containing job closes; full native setup remains
 DT-01/#432 evidence.
 
+Windows PTY regressions also cover ordinary drive cwd spelling without changing
+canonical profiles, preservation of verbatim-only names, and a controlled
+ConPTY child reporting its actual cwd. This does not measure mapped-drive
+latency: signed-package performance on the reported `Q:\src` environment
+remains native qualification under [#733](https://github.com/fes/fesTerm/issues/733).
+
 Windows background hosting has deterministic task-action/legacy-upgrade
 coverage and native, task-free console probes:
 `windows_worker_is_windowless_and_preserves_owned_setup_arguments_and_exit_status`
