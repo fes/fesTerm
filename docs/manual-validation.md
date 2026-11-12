@@ -12,8 +12,11 @@ uncertainty must still refuse replacement and a repeated close. Revoke/disable,
 changed epoch, locked vault,
 denial and unknown failure must stop without sign-in/provisioning or daemon
 control. Existing manager definitions/receipt bytes stay unchanged; process
-crash restart, manager migration/older-helper compatibility and actual
-vault/cloud/service/daemon-survival evidence remain open. See
+crash restart and extended manager policy are explicitly deferred under
+[#681](https://github.com/fes/fesTerm/issues/681), following the November 11
+decision to reject legacy #729 unmerged, not as fully replaced. Native manager
+and older-helper compatibility, sign-in/status/recovery/uninstall and actual
+vault/cloud/service/DT-05 session/lease/daemon-survival evidence remain open. See
 `native-host-services.md#in-process-host-relay-recovery`.
 
 The real shared serving path must retain an authenticated production
@@ -39,7 +42,7 @@ Cargo/rustc 1.97.1, UID1001: **1 passed /0 failed /0 ignored /119 filtered,
 0.07s**. Both the SSH observer (`user/tty/active`) and baseline
 (`user/x11/active`) were eligible, so negative Cargo remained zero and the
 aggregate was **PARTIAL, exit2**. The preserved local
-`7f3db948-linux-logind-actual-evidence-sha256.json` index has digest
+`7f3db948-linux-positive-evidence-sha256.json` index has digest
 `c5a680f90ad55b46e7b856dbaf308baf07303bec7fa1c6f4637f46a1d5a1afe9`.
 Earlier a98 stopped at its harness-only `x11` lexer defect with zero Cargo;
 4ba retained registration101 for missing offline `tree-sitter`, zero native.

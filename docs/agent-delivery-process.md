@@ -93,21 +93,24 @@ evidence. Never change an owned VM's configuration or acceptance scope silently.
 ## ADR 0084 working plan after the strategy review
 
 1. Preserve the tested in-process HOST recovery and shared live-service
-   isolation/retirement behavior now merged through #712. All eight foundation
-   slices are included and indirectly merged; they are not a pending merge
+   isolation/retirement behavior merged by the single #712 merge (`261c1f25`).
+   All eight foundation slices are included and indirectly merged, not a pending
    queue. Native evidence still qualifies only the behavior and exact source
    actually tested, not every subsequent source composition.
-2. Resolve the remaining #692/#719 evidence pair and #729 against current main.
+2. Resolve the remaining #692/#719 evidence pair against current main.
    Prune closed-campaign scaffolding and duplicate code, consolidate useful
    unique fixes, and test the retained logical candidate before independent
    reviews and fresh required three-platform CI. Do not mechanically carry
    obsolete operators forward or equate source integration with native acceptance.
-3. Resolve the residual #729 behavior explicitly. Network retry and independent
-   session-daemon survival do not implement host-process crash restart.
-   Keep the gap visible; do not close #729 as fully replaced unless its
-   required behavior is delivered or the user explicitly approves a documented
-   deferral. Do not start a new supervisor architecture merely to preserve a
-   legacy implementation mechanism.
+3. Retain the November 11 explicit relevance disposition: legacy #729 is
+   rejected unmerged, not unreachable or fully replaced. Its Windows respawn
+   loop and new macOS restart/migration policy conflict with ADR0053.
+   Optional HOST-process crash restart/extended manager policy is deferred,
+   unimplemented and unqualified, under [#681](https://github.com/fes/fesTerm/issues/681).
+   In-process relay retry and independent daemon survival do not implement it.
+   Do not add a supervisor merely to preserve a legacy mechanism. Existing
+   native manager/older-helper and sign-in/status/recovery/uninstall,
+   cloud/vault and DT-05 session/lease/daemon-survival gates remain required.
 4. Unblock required cross-platform evidence with a bounded, supported lab
    plan or obtain an explicit acceptance decision. Portable models and CI
    compilation are useful evidence, not native Task Scheduler, PKI, or

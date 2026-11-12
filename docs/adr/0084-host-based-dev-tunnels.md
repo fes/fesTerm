@@ -821,8 +821,16 @@ source-specific limits are recorded in the
 unit coverage does not establish native/provider acceptance or waive review.
 
 Native manager
-definitions/receipt versions and RunRecord v1 remain unchanged. This is not
-#729 crash-restart equivalence or Windows/macOS/Linux/cloud/vault acceptance.
+definitions/receipt versions and RunRecord v1 remain unchanged. The November 11
+relevance decision rejects legacy #729 unmerged: its Windows respawn loop and
+new macOS restart/migration policy contradict ADR0053's existing boundary.
+Legacy callers remain reachable; #729 is neither unreachable nor fully replaced.
+Optional HOST-process crash restart/extended manager policy is explicitly
+deferred under [#681](https://github.com/fes/fesTerm/issues/681), unimplemented
+and unqualified, not delivered by in-process relay retry. Existing native
+manager, older-helper, sign-in/status/recovery/uninstall and DT-05
+session/lease/daemon-survival qualification remain required. See the
+[current platform policies](../native-host-services.md#in-process-host-relay-recovery).
 
 ### Composed Desktop lifetime qualification
 

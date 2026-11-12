@@ -15,8 +15,11 @@ peer/vendor extension is removed. Earlier accepting-peer passes did not cover
 production-client availability. No new HOST authority or native acceptance is
 implied; affected source still requires delta review.
 No terminal input replay or daemon operation is introduced. See
-`native-host-services.md#in-process-host-relay-recovery`. Manager crash policy
-and native/cloud/vault acceptance remain open.
+`native-host-services.md#in-process-host-relay-recovery`. Optional HOST-process
+crash restart/extended manager policy is explicitly deferred under #681 after
+the November 11 decision to reject legacy #729 unmerged, not as fully replaced.
+Existing native manager/older-helper, sign-in/status/recovery/uninstall,
+cloud/vault and DT-05 session/lease/daemon-survival acceptance remains open.
 
 ADR0084 Windows stopped-update design: GUI:HOST-02/GUI:HOST-03 keep Disabled
 epochs and exact old/new reservations through replacement/recovery. The shared

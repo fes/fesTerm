@@ -2,8 +2,12 @@
 
 ## Retaining useful evidence delivery without carrying a closed campaign
 
-After #712 merged the eight foundation slices, the remaining queue is #692,
-#719 and #729, not eight pending foundation merges. The rebased evidence pair
+The single #712 merge at `261c1f25` included all eight foundation slices.
+The remaining evidence pair is #692/#719, not eight pending foundation merges.
+Legacy #729 is rejected unmerged under the November 11 relevance decision;
+optional HOST-process crash restart/extended manager policy is deferred under
+[#681](https://github.com/fes/fesTerm/issues/681), not delivered or qualified.
+The rebased evidence pair
 consolidates #719's useful MSVC-driver selection, scoped Cargo stderr handling,
 OS-input Build Tools environment and private Running Sessions runtime into
 #692. The runtime rejects symlinks, foreign ownership and shared-writable
@@ -16,8 +20,7 @@ Python/vendor copies into today's adapter would add no current native
 qualification. Their original source and immutable first failures remain
 historical, while the [manual evidence record](manual-validation.md#historical-adr-0084-vm-evidence-and-retained-delivery-scope)
 retains the narrow actual Linux positives and their limits. No native service,
-vault, provider or full ADR 0084 acceptance advances, and #729's relevance is a
-separate decision.
+vault, provider or full ADR 0084 acceptance advances.
 
 ## Keeping framed creation replays exact across native contention
 
@@ -101,8 +104,10 @@ passing output; no passing tests were repeated. The unchanged setup crate's
 exact `e4273190` **8/0/0** evidence is retained as source-specific, not a fresh
 execution. Affected delta review and native qualification remain required.
 Native restart flags/receipt versions and run-history schema are unchanged;
-#729 crash recovery, older-helper manager migration and native/cloud/vault/
-daemon-survival qualification remain explicit gaps.
+optional HOST-process crash restart/extended manager policy is explicitly
+deferred under #681 after rejecting legacy #729 unmerged, not as fully replaced.
+Native manager/older-helper compatibility and native/cloud/vault/DT-05
+session/lease/daemon-survival qualification remain explicit gaps.
 
 ## Diagnosing uncertain takeover after temporary pending cancellation
 
