@@ -127,7 +127,7 @@ async fn authenticated_runtime_relay_recovery_preserves_original_aggregate_budge
         listener.close().await.unwrap();
         assert!(matches!(
             ConnectionPermit::reserve(&fixture.runtime.budgets),
-            Err(Error::Contract(ContractError::Busy))
+            Err(ContractError::Busy)
         ));
     }
     drop(held);

@@ -11,7 +11,6 @@ use tunnels::{
 
 use crate::{
     host_identity::HostIdentity,
-    protocol::invalid,
     relay::{
         management_error, outer_client_config, reject_unrelated_server_channels, relay_stage_error,
         stage_error, transient_io, websocket,
@@ -577,7 +576,24 @@ pub(crate) mod tests {
         drop(tx);
         let (_exit, exit) = tokio::sync::watch::channel(None);
         HostConnection {
-            endpoint: TunnelEndpoint::default(),
+            endpoint: TunnelEndpoint {
+                id: None,
+                connection_mode: TunnelConnectionMode::TunnelRelay,
+                host_id: "closed-test".into(),
+                host_public_keys: Vec::new(),
+                port_uri_format: None,
+                tunnel_uri: None,
+                port_ssh_command_format: None,
+                tunnel_ssh_command: None,
+                ssh_gateway_public_key: None,
+                local_network_tunnel_endpoint: tunnels::contracts::LocalNetworkTunnelEndpoint {
+                    host_endpoints: Vec::new(),
+                },
+                tunnel_relay_tunnel_endpoint: tunnels::contracts::TunnelRelayTunnelEndpoint {
+                    host_relay_uri: None,
+                    client_relay_uri: None,
+                },
+            },
             connections,
             cancel: CancellationToken::new(),
             exit,
