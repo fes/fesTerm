@@ -788,6 +788,29 @@ drain/budget/identity tests are required before qualification. Shared relay
 tests must preserve unrelated live clients after failed per-client cleanup,
 while retaining sticky retirement refusal after reaping and repeated close;
 the actual typed WebSocket wrapper must sanitize transient and refused errors.
+
+The encrypted shared-path fixture requires the peer to acknowledge the host's
+existing `tcpip-forward` notification. The pinned client's narrow typed
+`Handler::server_tcpip_forward(address, port) -> Result<Option<u32>, Error>`
+async callback defaults to refusal; **all existing production handlers keep
+that default**. Only the test peer opts into the exact `127.0.0.1:47461`
+notification, retaining the existing host-key verifier and channel refusals.
+No listener is opened and host registration refusal remains fatal to that
+client. This is not a general global-request hook or new forwarding authority.
+
+Dispatch checks a UTF-8 address of at most 255 bytes before allocation, a full
+u32 port and complete payload before invoking the callback. Malformed payloads
+fail without callback or reply; out-of-range ports refuse without callback.
+Unknown requests retain existing default rejection. Nonzero `want-reply`
+requests get success/failure; zero never gets a reply. Accepted fixed ports
+must match the requested nonzero TCP port and return no port payload. Port 0
+requires `want-reply` and a returned port in 1..=65535, included in success;
+port 0 without reply is refused without callback. Invalid returned ports
+refuse. Deterministic dispatch/default-deny/exact-peer and original encrypted
+live-isolation/retirement regressions remain **UNRUN** on this source child;
+the earlier da9967 bridge result was 5 passes/1 pre-injection fixture failure,
+not live-isolation proof.
+
 Native manager
 definitions/receipt versions and RunRecord v1 remain unchanged. This is not
 #729 crash-restart equivalence or Windows/macOS/Linux/cloud/vault acceptance.
