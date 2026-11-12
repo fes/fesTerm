@@ -13,6 +13,7 @@ powershell = ["dep:psrp-rs"]
 [dependencies]
 festerm-core = { path = "../festerm-core" }
 psrp-rs = { path = "../../vendor/psrp-rs", features = ["__internal"], optional = true }
+serde_json = "1.0"
 
 [lints]
 workspace = true

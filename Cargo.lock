@@ -2819,6 +2819,7 @@ version = "0.17.0"
 dependencies = [
  "dunce",
  "festerm-session",
+ "festerm-test-support",
  "festerm-windows-job",
  "festerm-windows-runtime",
  "filedescriptor",
@@ -3020,6 +3021,7 @@ version = "0.17.0"
 dependencies = [
  "festerm-core",
  "psrp-rs",
+ "serde_json",
 ]
 
 [[package]]
