@@ -1129,6 +1129,21 @@ pub(crate) mod native_routes {
                 reason: Refusal::Busy,
             };
             assert_eq!(busy, expected_busy);
+            let lookup = Request::Lookup {
+                logical: creation.logical,
+            };
+            let lookup_operation = client.issue_operation().unwrap();
+            let busy_lookup = client
+                .request_issued(&lookup_operation, lookup.clone(), &cancel)
+                .await
+                .unwrap();
+            assert_eq!(
+                busy_lookup.body,
+                Response::Refused {
+                    reason: Refusal::Busy
+                },
+                "{busy_lookup:?}"
+            );
             assert_eq!(
                 private_storage::read_private(
                     &directory,
@@ -1146,22 +1161,17 @@ pub(crate) mod native_routes {
             drop(held_lease);
             let retried = issued_request_after_busy(&mut client, &operation, body, &cancel).await;
             assert_eq!(retried, first);
-            let found = client
-                .request(
-                    OperationId::new(),
-                    Request::Lookup {
-                        logical: creation.logical,
-                    },
-                    &cancel,
-                )
-                .await
-                .unwrap();
-            assert!(matches!(
-                found.body,
-                Response::Lookup {
-                    result: LookupResult::Running { .. }
-                }
-            ));
+            let found =
+                issued_request_after_busy(&mut client, &lookup_operation, lookup, &cancel).await;
+            assert!(
+                matches!(
+                    &found.body,
+                    Response::Lookup {
+                        result: LookupResult::Running { session: found }
+                    } if found.target == session.target
+                ),
+                "{found:?}"
+            );
         }
         let inventory = client
             .request(OperationId::new(), Request::List { cursor: None }, &cancel)

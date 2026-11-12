@@ -2097,7 +2097,14 @@ but does not qualify native/first-connect acceptance. Real native-control/scoped
 `native_lost_reply_disconnect_retry_and_independent_control_never_duplicate_spawn`.
 These explicitly invoked owned Unix fixtures qualify local control routing,
 not actual encrypted owner-channel proof, terminal attachment or native service
-acceptance. At that historical core checkpoint no listener advertised HOST; the
+acceptance. The framed ensure/create fixture also holds the exact generation
+lease during Lookup, requires typed Busy without changing either checkpoint,
+then retries only Busy on the same issued lookup within the existing
+eight-second deadline and requires the original exact Running target. Other
+responses fail immediately and are printed. Required Ubuntu CI at `114015f9`
+failed its earlier one-shot Running assertion without printing the response;
+the controlled contention case does not retrospectively identify that cause.
+At that historical core checkpoint no listener advertised HOST; the
 standalone adapter still reports only
 inventory capability and enforces it for every operation: unadvertised
 ensure/create/attach/detach/end refuse before backend effects. Native control
