@@ -807,6 +807,7 @@ pub(crate) mod native_routes {
         host_control::{ControlError, SessionControl},
         private_storage,
     };
+    use festerm_tunnel_client::host_control::IssuedControlOperation;
     use std::{
         path::PathBuf,
         time::{Duration, Instant},
@@ -1026,6 +1027,34 @@ pub(crate) mod native_routes {
         }
     }
 
+    async fn issued_request_after_busy(
+        client: &mut ControlClient<tokio::io::DuplexStream>,
+        operation: &IssuedControlOperation,
+        body: Request,
+        cancel: &CancellationToken,
+    ) -> festerm_host_protocol::Envelope<Response> {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            let response = client
+                .request_issued(operation, body.clone(), cancel)
+                .await
+                .unwrap();
+            if !matches!(
+                response.body,
+                Response::Refused {
+                    reason: Refusal::Busy
+                }
+            ) {
+                return response;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "same-issued native request remained Busy at fixture deadline"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
     #[tokio::test]
     #[ignore = "requires explicitly built owned native helper and fixture child"]
     async fn native_framed_ensure_create_inventory_and_exact_end_use_real_daemons() {
@@ -1042,6 +1071,7 @@ pub(crate) mod native_routes {
             .connect(backend.clone(), source, &Budgets::default())
             .await;
         let cancel = CancellationToken::new();
+        let directory = private_storage::private_directory(&fixture.root, false).unwrap();
         let mut targets = Vec::new();
         for create_only in [false, true] {
             let creation = fixture.creation();
@@ -1057,10 +1087,8 @@ pub(crate) mod native_routes {
             let operation = client.issue_operation().unwrap();
             // Explicit cfg(test)-only backend advertisement exercises native
             // effects without weakening production capability enforcement.
-            let first = client
-                .request_issued(&operation, body.clone(), &cancel)
-                .await
-                .unwrap();
+            let first =
+                issued_request_after_busy(&mut client, &operation, body.clone(), &cancel).await;
             let Response::Ensured {
                 session,
                 disposition,
@@ -1072,10 +1100,51 @@ pub(crate) mod native_routes {
             assert_eq!(*disposition, EnsureDisposition::Created);
             assert!(!session.attached);
             targets.push(session.target.clone());
-            let retried = client
-                .request_issued(&operation, body, &cancel)
+            let lease_name = format!("host-daemon-{}.json", session.target.generation.get());
+            let held_lease = private_storage::open_private_file(
+                &directory,
+                std::path::Path::new(&format!(
+                    "host-daemon-{}.lock",
+                    session.target.generation.get()
+                )),
+                false,
+            )
+            .unwrap();
+            fs2::FileExt::lock_exclusive(&held_lease).unwrap();
+            let journal_before = private_storage::read_private(
+                &directory,
+                std::path::Path::new("host-sessions.json"),
+                4 * 1024 * 1024,
+            )
+            .unwrap();
+            let lease_before =
+                private_storage::read_private(&directory, std::path::Path::new(&lease_name), 4096)
+                    .unwrap();
+            let busy = client
+                .request_issued(&operation, body.clone(), &cancel)
                 .await
                 .unwrap();
+            let mut expected_busy = first.clone();
+            expected_busy.body = Response::Refused {
+                reason: Refusal::Busy,
+            };
+            assert_eq!(busy, expected_busy);
+            assert_eq!(
+                private_storage::read_private(
+                    &directory,
+                    std::path::Path::new("host-sessions.json"),
+                    4 * 1024 * 1024,
+                )
+                .unwrap(),
+                journal_before
+            );
+            assert_eq!(
+                private_storage::read_private(&directory, std::path::Path::new(&lease_name), 4096,)
+                    .unwrap(),
+                lease_before
+            );
+            drop(held_lease);
+            let retried = issued_request_after_busy(&mut client, &operation, body, &cancel).await;
             assert_eq!(retried, first);
             let found = client
                 .request(
@@ -1127,7 +1196,6 @@ pub(crate) mod native_routes {
                 reason: Refusal::Stale
             }
         );
-        let directory = private_storage::private_directory(&fixture.root, false).unwrap();
         for target in targets {
             let operation = OperationId::new();
             let body = Request::ExplicitEnd {

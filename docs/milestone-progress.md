@@ -1,5 +1,20 @@
 # Milestone Progress Narrative
 
+## Keeping framed creation replays exact across native contention
+
+The consolidated `fef6eb09` macOS job observed a correlated `Busy`, not a
+different creation result, while replaying an already committed operation.
+The framed native fixture now holds each created generation's lease to prove
+that a replay returns exact correlated `Busy` without changing the durable
+journal or lease bytes. After release, only `Busy` receives the existing
+eight-second, 25-millisecond fixture wait, always with the original issued
+operation and unchanged request. Both Ensure and Create still require the
+entire replayed envelope to equal the first creation reply; two original
+daemons, inventory, stale-End refusal and exact End remain strict.
+Production ordering and retry policy are unchanged. This source correction is
+not a native pass, does not diagnose earlier unrelated failures, and does not
+qualify HOST recovery or ADR 0084 acceptance.
+
 ## Consolidating the profile checkbox decoder fix into the HOST branch
 
 The retained legacy profile-host helper request buffers an internally tagged
