@@ -1129,6 +1129,21 @@ pub(crate) mod native_routes {
                 reason: Refusal::Busy,
             };
             assert_eq!(busy, expected_busy);
+            let lookup = Request::Lookup {
+                logical: creation.logical,
+            };
+            let lookup_operation = OperationId::new();
+            let busy_lookup = client
+                .request(lookup_operation.clone(), lookup.clone(), &cancel)
+                .await
+                .unwrap();
+            assert_eq!(
+                busy_lookup.body,
+                Response::Refused {
+                    reason: Refusal::Busy
+                },
+                "{busy_lookup:?}"
+            );
             assert_eq!(
                 private_storage::read_private(
                     &directory,
@@ -1146,22 +1161,35 @@ pub(crate) mod native_routes {
             drop(held_lease);
             let retried = issued_request_after_busy(&mut client, &operation, body, &cancel).await;
             assert_eq!(retried, first);
-            let found = client
-                .request(
-                    OperationId::new(),
-                    Request::Lookup {
-                        logical: creation.logical,
-                    },
-                    &cancel,
-                )
-                .await
-                .unwrap();
-            assert!(matches!(
-                found.body,
-                Response::Lookup {
-                    result: LookupResult::Running { .. }
+            let lookup_deadline = Instant::now() + Duration::from_secs(8);
+            let found = loop {
+                let response = client
+                    .request(lookup_operation.clone(), lookup.clone(), &cancel)
+                    .await
+                    .unwrap();
+                if !matches!(
+                    response.body,
+                    Response::Refused {
+                        reason: Refusal::Busy
+                    }
+                ) {
+                    break response;
                 }
-            ));
+                assert!(
+                    Instant::now() < lookup_deadline,
+                    "same-operation native Lookup remained Busy at fixture deadline"
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            };
+            assert!(
+                matches!(
+                    &found.body,
+                    Response::Lookup {
+                        result: LookupResult::Running { session: found }
+                    } if found.target == session.target
+                ),
+                "{found:?}"
+            );
         }
         let inventory = client
             .request(OperationId::new(), Request::List { cursor: None }, &cancel)

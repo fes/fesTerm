@@ -2,11 +2,22 @@
 
 ## Composing reviewed recovery with candidate evidence delivery
 
-The normal merge composes reviewed #730 `6605011e` with exact #692 evidence
+The initial normal merge `2c00fbc6` composes reviewed #730 `6605011e` with exact #692 evidence
 candidate `114015f9`, preserving feature source and evidence scripts unchanged.
 At composition, main remains `261c1f25` and #692's required CI is still running:
 the evidence candidate is not treated as merged or CI-green. Both source-specific
 histories and unrun native qualifications below remain distinct.
+
+The subsequent normal merge takes exact evidence successor `ffcc5a7d` while
+its fresh required CI is pending, still not merged main. Its cfg-test-only
+Lookup correction preserves both protected checkpoints under exact-generation
+contention, then uses the original operation and exact Running target with
+bounded Busy-only retry. The `114015f9` Ubuntu 18/1 response remains unprinted/
+unknown; the intervening `61551336` local Malformed failure remains historical, not
+erased or retrospectively explained by this regression. Exact `ffcc5a7d`'s
+separately executed native1/0/0 and strict/static results are retained as
+source-specific evidence, not fresh execution of this composition. #730 policy
+and Windows post-start UNQUALIFIED gates remain unchanged.
 
 ## Adding native single-HOST process recovery under #730
 
@@ -160,7 +171,7 @@ execution. Affected delta review and native qualification remain required.
 Native restart flags/receipt versions and run-history schema are unchanged;
 legacy #729 is rejected unmerged, not as fully replaced. New HOST-scoped
 process-crash recovery is separately approved under #730, not implemented
-or qualified by this evidence PR.
+or qualified by the #692 evidence candidate alone.
 Native manager/older-helper compatibility and native/cloud/vault/DT-05
 session/lease/daemon-survival qualification remain explicit gaps.
 
