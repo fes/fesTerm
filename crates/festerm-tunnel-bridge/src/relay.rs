@@ -131,22 +131,24 @@ pub(crate) async fn websocket(
     if let Some(header) = request.headers_mut().get_mut("Authorization") {
         header.set_sensitive(true);
     }
-    let websocket = connect_directly(request).await.map_err(|error| {
-        use std::error::Error;
-        let transient = match &error {
-            tunnels::connections::TunnelError::WebSocketError(error) => error
-                .source()
-                .and_then(|source| source.downcast_ref::<io::Error>())
-                .is_some_and(transient_io),
-            _ => false,
-        };
-        relay_stage_error("relay.websocket_upgrade".into(), transient)
-    })?;
+    let websocket = connect_directly(request).await.map_err(websocket_error)?;
     Ok(AsyncRWWebSocket::new(AsyncRWWebSocketOptions {
         websocket,
         ping_interval: Duration::from_secs(30),
         ping_timeout: Duration::from_secs(10),
     }))
+}
+
+fn websocket_error(error: tunnels::connections::TunnelError) -> io::Error {
+    use std::error::Error;
+    let transient = match &error {
+        tunnels::connections::TunnelError::WebSocketError(error) => error
+            .source()
+            .and_then(|source| source.downcast_ref::<io::Error>())
+            .is_some_and(transient_io),
+        _ => false,
+    };
+    relay_stage_error("relay.websocket_upgrade".into(), transient)
 }
 
 pub(crate) fn stage_error(stage: &'static str) -> io::Error {
@@ -527,6 +529,50 @@ mod liveness_tests {
         task::{Context, Poll},
     };
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+    #[test]
+    fn host_relay_recovery_websocket_wrapper_classifies_typed_io_without_private_diagnostics() {
+        use tunnels::connections::TunnelError;
+        let marker = "PRIVATE_AUTH_TOKEN_AND_URL";
+        for (error, transient) in [
+            (
+                TunnelError::WebSocketError(
+                    io::Error::new(io::ErrorKind::ConnectionReset, marker).into(),
+                ),
+                true,
+            ),
+            (
+                TunnelError::WebSocketError(io::Error::new(io::ErrorKind::TimedOut, marker).into()),
+                true,
+            ),
+            (
+                TunnelError::WebSocketError(
+                    io::Error::new(io::ErrorKind::PermissionDenied, marker).into(),
+                ),
+                false,
+            ),
+            (
+                TunnelError::WebSocketError(io::Error::other(marker).into()),
+                false,
+            ),
+            (
+                TunnelError::HttpError {
+                    error: tunnels::management::HttpError::AuthorizationError(marker.into()),
+                    reason: marker,
+                },
+                false,
+            ),
+            (TunnelError::InvalidHostEndpoint(marker.into()), false),
+        ] {
+            let error = websocket_error(error);
+            assert_eq!(is_transient_failure(&error), transient);
+            assert_eq!(error.to_string(), "relay.websocket_upgrade");
+            assert!(!format!("{error:?}").contains(marker));
+        }
+        assert!(!is_transient_failure(&io::Error::other(
+            "relay.websocket_upgrade"
+        )));
+    }
 
     // Models a relay that accepts writes while the authenticated host is unreachable.
     struct Gate {

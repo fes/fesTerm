@@ -5,7 +5,10 @@ pending deterministic checks and separately authorized native qualification.
 On each native platform eventually prove old-listener/client retirement,
 15-second cancellable delay, fresh same-account scoped-token/current signed
 bundle/native-owner admission, identical run/host identity and daemon PID/
-generation, and no input replay. Revoke/disable, changed epoch, locked vault,
+generation, and no input replay. A failed client's cleanup must not interrupt
+unrelated live clients or new admission; once retiring, its earlier drain
+uncertainty must still refuse replacement and a repeated close. Revoke/disable,
+changed epoch, locked vault,
 denial and unknown failure must stop without sign-in/provisioning or daemon
 control. Existing manager definitions/receipt bytes stay unchanged; process
 crash restart, manager migration/older-helper compatibility and actual

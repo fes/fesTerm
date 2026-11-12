@@ -8,6 +8,9 @@ runtime budgets, drains the old listener, waits the existing-style fixed
 15 seconds and freshly authenticates bundle/owner/account/receipt/token.
 Only positively typed transient evidence permits another attempt; coarse
 network/unknown/refused authority stops. Deterministic validation is pending.
+The source correction isolates failed per-client cleanup while serving and
+retains sticky retirement refusal; actual encrypted shared-path and direct
+typed WebSocket-wrapper regressions are added but remain unexecuted.
 Native restart flags/receipt versions and run-history schema are unchanged;
 #729 crash recovery, older-helper manager migration and native/cloud/vault/
 daemon-survival qualification remain explicit gaps.

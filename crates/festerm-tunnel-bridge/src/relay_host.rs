@@ -226,7 +226,7 @@ pub async fn host_with_identity(
         .as_deref()
         .ok_or_else(|| stage_error("host.endpoint_uri_missing"))?;
     let rw = websocket(url, token, "tunnel-relay-host").await?;
-    let (outer_tx, mut outer_rx) = mpsc::channel(RELAY_CLIENTS);
+    let (outer_tx, outer_rx) = mpsc::channel(RELAY_CLIENTS);
     let slots = Arc::new(Semaphore::new(RELAY_CLIENTS));
     let session = client::connect_stream(
         Arc::new(outer_client_config()),
@@ -253,89 +253,15 @@ pub async fn host_with_identity(
             inactivity_timeout: Some(Duration::from_secs(120)),
             ..Default::default()
         });
-        let service = async {
-            let mut clients = tokio::task::JoinSet::new();
-            let mut drain_failed = false;
-            loop {
-                let incoming = tokio::select! {
-                    _ = stopped.cancelled() => break,
-                    value = outer_rx.recv() => match value { Some(value) => value, None => break },
-                };
-                let (channel, permit) = incoming;
-                let permit = Arc::new(permit);
-                while let Some(result) = clients.try_join_next() {
-                    if !matches!(result, Ok(Ok(()))) {
-                        drain_failed = true;
-                    }
-                }
-                if drain_failed {
-                    stopped.cancel();
-                    break;
-                }
-                let (authed, adopted) = oneshot::channel();
-                let handler = Port {
-                    port,
-                    tx: tx.clone(),
-                    slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
-                    client: permit.clone(),
-                    authed: Some(authed),
-                    #[cfg(feature = "owner-auth")]
-                    owner_host: owner_host.clone(),
-                };
-                let server_config = server_config.clone();
-                let stopped = stopped.clone();
-                // Clients are serviced concurrently so a second device can reach
-                // the session daemon and take the session over; the daemon, not
-                // the relay, arbitrates the attachment. Each client holds its
-                // permit until it finishes, bounding the per-client tasks.
-                clients.spawn(async move {
-                    let mut running = tokio::select! {
-                        biased;
-                        _ = stopped.cancelled() => return Ok(()),
-                        result = server::run_stream(server_config, channel, handler) =>
-                            match result { Ok(running) => running, Err(_) => return Ok(()) },
-                    };
-                    let mut finished = false;
-                    tokio::select! {
-                        _ = stopped.cancelled() => {}
-                        _ = async {
-                            tokio::select! {
-                                _ = tokio::time::sleep(Duration::from_secs(30)) => return,
-                                _ = &mut running => { finished = true; return; }
-                                result = adopted => { if result.is_err() { return; } }
-                            }
-                            if running.handle().forward_tcpip("127.0.0.1".into(), port as u32).await.is_err() {
-                                return;
-                            }
-                            let _ = (&mut running).await;
-                            finished = true;
-                        } => {}
-                    }
-                    if !finished {
-                        let _ = tokio::time::timeout(
-                            Duration::from_secs(2),
-                            running.handle().disconnect(russh::Disconnect::ByApplication, "bridge closed".into(), "en".into()),
-                        ).await;
-                        let _ = tokio::time::timeout(Duration::from_secs(2), &mut running)
-                            .await
-                            .map_err(|_| stage_error("host.relay_drain_failed"))?;
-                    }
-                    drop(permit);
-                    Ok::<_, io::Error>(())
-                });
-            }
-            stopped.cancel();
-            while let Some(result) = clients.join_next().await {
-                if !matches!(result, Ok(Ok(()))) {
-                    drain_failed = true;
-                }
-            }
-            if drain_failed {
-                Err(stage_error("host.relay_drain_failed"))
-            } else {
-                Ok(())
-            }
-        };
+        let service = serve_clients(
+            outer_rx,
+            tx.clone(),
+            server_config,
+            stopped.clone(),
+            port,
+            #[cfg(feature = "owner-auth")]
+            owner_host,
+        );
         supervise_outer(session, service, stopped.clone(), exit_sender).await
     });
     Ok(HostConnection {
@@ -346,6 +272,93 @@ pub async fn host_with_identity(
         service: Some(service),
         drain_failed: false,
     })
+}
+
+async fn serve_clients<S>(
+    mut incoming: mpsc::Receiver<(S, OwnedSemaphorePermit)>,
+    tx: mpsc::Sender<HostStream>,
+    server_config: Arc<server::Config>,
+    stopped: CancellationToken,
+    port: u16,
+    #[cfg(feature = "owner-auth")] owner_host: crate::owner_auth::PinnedHost,
+) -> io::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let mut clients = tokio::task::JoinSet::new();
+    let mut drain_failed = false;
+    loop {
+        let incoming = tokio::select! {
+            _ = stopped.cancelled() => break,
+            value = incoming.recv() => match value { Some(value) => value, None => break },
+        };
+        let (channel, permit) = incoming;
+        let permit = Arc::new(permit);
+        while let Some(result) = clients.try_join_next() {
+            if !matches!(result, Ok(Ok(()))) {
+                // Live clients remain isolated; uncertainty refuses retirement only.
+                drain_failed = true;
+            }
+        }
+        let (authed, adopted) = oneshot::channel();
+        let handler = Port {
+            port,
+            tx: tx.clone(),
+            slots: Arc::new(Semaphore::new(CHANNELS_PER_CLIENT)),
+            client: permit.clone(),
+            authed: Some(authed),
+            #[cfg(feature = "owner-auth")]
+            owner_host: owner_host.clone(),
+        };
+        let server_config = server_config.clone();
+        let stopped = stopped.clone();
+        clients.spawn(async move {
+            let mut running = tokio::select! {
+                biased;
+                _ = stopped.cancelled() => return Ok(()),
+                result = server::run_stream(server_config, channel, handler) =>
+                    match result { Ok(running) => running, Err(_) => return Ok(()) },
+            };
+            let mut finished = false;
+            tokio::select! {
+                _ = stopped.cancelled() => {}
+                _ = async {
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(30)) => return,
+                        _ = &mut running => { finished = true; return; }
+                        result = adopted => { if result.is_err() { return; } }
+                    }
+                    if running.handle().forward_tcpip("127.0.0.1".into(), port as u32).await.is_err() {
+                        return;
+                    }
+                    let _ = (&mut running).await;
+                    finished = true;
+                } => {}
+            }
+            if !finished {
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    running.handle().disconnect(russh::Disconnect::ByApplication, "bridge closed".into(), "en".into()),
+                ).await;
+                let _ = tokio::time::timeout(Duration::from_secs(2), &mut running)
+                    .await
+                    .map_err(|_| stage_error("host.relay_drain_failed"))?;
+            }
+            drop(permit);
+            Ok::<_, io::Error>(())
+        });
+    }
+    stopped.cancel();
+    while let Some(result) = clients.join_next().await {
+        if !matches!(result, Ok(Ok(()))) {
+            drain_failed = true;
+        }
+    }
+    if drain_failed {
+        Err(stage_error("host.relay_drain_failed"))
+    } else {
+        Ok(())
+    }
 }
 
 fn transient_outer_error(error: &russh::Error) -> bool {
@@ -571,6 +584,217 @@ pub(crate) mod tests {
             service: None,
             drain_failed: false,
         }
+    }
+
+    #[derive(Default)]
+    struct CleanupGate {
+        stalled: std::sync::atomic::AtomicBool,
+        wakers: std::sync::Mutex<Vec<std::task::Waker>>,
+        blocked: tokio::sync::Notify,
+    }
+
+    impl CleanupGate {
+        fn pending(&self, cx: &std::task::Context<'_>) -> bool {
+            if !self.stalled.load(std::sync::atomic::Ordering::SeqCst) {
+                return false;
+            }
+            let mut wakers = self.wakers.lock().unwrap();
+            if !wakers.iter().any(|waker| waker.will_wake(cx.waker())) {
+                wakers.push(cx.waker().clone());
+            }
+            self.blocked.notify_one();
+            true
+        }
+
+        fn resume(&self) {
+            self.stalled
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            for waker in self.wakers.lock().unwrap().drain(..) {
+                waker.wake();
+            }
+        }
+    }
+
+    struct GatedStream {
+        inner: tokio::io::DuplexStream,
+        gate: Arc<CleanupGate>,
+    }
+
+    impl tokio::io::AsyncRead for GatedStream {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buffer: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            if self.gate.pending(cx) {
+                return std::task::Poll::Pending;
+            }
+            tokio::io::AsyncRead::poll_read(std::pin::Pin::new(&mut self.inner), cx, buffer)
+        }
+    }
+
+    impl tokio::io::AsyncWrite for GatedStream {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            bytes: &[u8],
+        ) -> std::task::Poll<io::Result<usize>> {
+            if self.gate.pending(cx) {
+                return std::task::Poll::Pending;
+            }
+            tokio::io::AsyncWrite::poll_write(std::pin::Pin::new(&mut self.inner), cx, bytes)
+        }
+
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            if self.gate.pending(cx) {
+                return std::task::Poll::Pending;
+            }
+            tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut self.inner), cx)
+        }
+
+        fn poll_shutdown(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            if self.gate.pending(cx) {
+                return std::task::Poll::Pending;
+            }
+            tokio::io::AsyncWrite::poll_shutdown(std::pin::Pin::new(&mut self.inner), cx)
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn host_relay_recovery_failed_client_is_isolated_live_but_retirement_stays_uncertain() {
+        async fn peer(
+            incoming: &mpsc::Sender<(GatedStream, OwnedSemaphorePermit)>,
+            slots: &Arc<Semaphore>,
+            pin: String,
+        ) -> (client::Handle<VerifiedHost>, Arc<CleanupGate>) {
+            let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+            let gate = Arc::new(CleanupGate::default());
+            incoming
+                .send((
+                    GatedStream {
+                        inner: server_io,
+                        gate: gate.clone(),
+                    },
+                    slots.clone().try_acquire_owned().unwrap(),
+                ))
+                .await
+                .unwrap();
+            let client = tokio::time::timeout(
+                Duration::from_secs(2),
+                client::connect_stream(Arc::new(client_config()), client_io, VerifiedHost(pin)),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            (client, gate)
+        }
+
+        let key = key();
+        let pinned = pin(&key);
+        #[cfg(feature = "owner-auth")]
+        let owner_host = crate::owner_auth::PinnedHost {
+            host: Default::default(),
+            host_key_fingerprint: key
+                .public_key()
+                .fingerprint(russh::keys::HashAlg::Sha256)
+                .to_string(),
+        };
+        let config = Arc::new(server::Config {
+            keys: vec![key],
+            inactivity_timeout: Some(Duration::from_secs(120)),
+            ..Default::default()
+        });
+        let (incoming, accepted) = mpsc::channel(RELAY_CLIENTS);
+        let (tx, mut streams) = mpsc::channel(RELAY_CLIENTS * CHANNELS_PER_CLIENT);
+        let mut listener = closed_test_listener();
+        listener.service = Some(tokio::spawn(serve_clients(
+            accepted,
+            tx,
+            config,
+            listener.cancel.clone(),
+            47461,
+            #[cfg(feature = "owner-auth")]
+            owner_host,
+        )));
+        let slots = Arc::new(Semaphore::new(RELAY_CLIENTS));
+        let (mut healthy, _) = peer(&incoming, &slots, pinned.clone()).await;
+        assert!(healthy.authenticate_none("tunnel").await.unwrap().success());
+        let mut channel = healthy
+            .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
+            .await
+            .unwrap()
+            .into_stream();
+        let mut first = streams.recv().await.unwrap();
+        channel.write_all(b"a").await.unwrap();
+        assert_eq!(first.read_u8().await.unwrap(), b'a');
+
+        let (bad, gate) = peer(&incoming, &slots, pinned.clone()).await;
+        gate.stalled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        tokio::time::advance(Duration::from_secs(30)).await;
+        tokio::time::timeout(Duration::from_secs(1), gate.blocked.notified())
+            .await
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+        channel.write_all(b"b").await.unwrap();
+        assert_eq!(first.read_u8().await.unwrap(), b'b');
+        first.write_all(b"c").await.unwrap();
+        assert_eq!(channel.read_u8().await.unwrap(), b'c');
+        // Cover both existing two-second cleanup budgets, then close the peer.
+        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+        gate.resume();
+        let _ = tokio::time::timeout(Duration::from_secs(2), bad)
+            .await
+            .unwrap();
+        // A new real SSH admission reaps the failed, unadopted client's result.
+        let (mut newcomer, _) = peer(&incoming, &slots, pinned).await;
+        assert!(newcomer
+            .authenticate_none("tunnel")
+            .await
+            .unwrap()
+            .success());
+        let mut extra = newcomer
+            .channel_open_direct_tcpip("127.0.0.1", 47461, "127.0.0.1", 0)
+            .await
+            .unwrap()
+            .into_stream();
+        let mut second = streams.recv().await.unwrap();
+        assert!(!listener.cancel.is_cancelled());
+        assert!(!listener.service.as_ref().unwrap().is_finished());
+        channel.write_all(b"e").await.unwrap();
+        assert_eq!(first.read_u8().await.unwrap(), b'e');
+        extra.write_all(b"d").await.unwrap();
+        assert_eq!(second.read_u8().await.unwrap(), b'd');
+
+        assert_eq!(
+            listener.close().await.unwrap_err().to_string(),
+            "host.relay_drain_failed"
+        );
+        assert!(listener.drain_failed);
+        assert!(listener.service.is_none());
+        assert_eq!(
+            listener.close().await.unwrap_err().to_string(),
+            "host.relay_drain_failed"
+        );
+        let _ = tokio::time::timeout(Duration::from_secs(2), healthy)
+            .await
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(2), newcomer)
+            .await
+            .unwrap();
+        drop(first);
+        drop(second);
+        drop(channel);
+        drop(extra);
+        assert_eq!(slots.available_permits(), RELAY_CLIENTS);
     }
 
     #[test]

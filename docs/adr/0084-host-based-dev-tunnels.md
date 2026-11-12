@@ -784,7 +784,11 @@ HOST-02/03 require typed positive transient classification, the same exclusive
 run/consent/identity/budgets, awaited listener retirement, fixed cancellable
 15-second delay and fresh bundle/owner/receipt/account/scoped-token admission.
 Deterministic classification, paused-clock cancellation/epoch/no-effects and
-drain/budget/identity tests are required before qualification. Native manager
+drain/budget/identity tests are required before qualification. Shared relay
+tests must preserve unrelated live clients after failed per-client cleanup,
+while retaining sticky retirement refusal after reaping and repeated close;
+the actual typed WebSocket wrapper must sanitize transient and refused errors.
+Native manager
 definitions/receipt versions and RunRecord v1 remain unchanged. This is not
 #729 crash-restart equivalence or Windows/macOS/Linux/cloud/vault acceptance.
 

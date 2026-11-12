@@ -5,7 +5,9 @@ lease/run ID and original snapshot, watching revocation during acquisition,
 serving and the fixed 15-second retry delay. Retire/drain the old listener
 before replacement and recheck signed bundle/current native owner/account/
 receipt with a fresh scoped token. Unknown or refused authority never retries;
-no terminal input replay or daemon operation is introduced. See
+failed per-client cleanup stays isolated while serving, but its sticky drain
+uncertainty refuses listener replacement, including after repeated close.
+No terminal input replay or daemon operation is introduced. See
 `native-host-services.md#in-process-host-relay-recovery`. Manager crash policy
 and native/cloud/vault acceptance remain open.
 

@@ -26,7 +26,11 @@ recognized connection loss, HTTP 408/429/500/502/503/504 at relay establishment,
 or typed account rate limiting. Denial, unknown/error-text-only failure,
 coarse `AccountError::Network`, credential/vault/bundle/owner failure, changed
 snapshot/epoch, disable and cancellation never authorize retry. Failure to
-drain refuses replacement. Cancel/epoch change during acquisition cancels and
+drain refuses replacement. A single client's failed cleanup does not cancel
+the live shared listener or unrelated clients, including the legacy shared
+relay path. Its drain uncertainty remains sticky after that client is reaped:
+retirement and repeated close must refuse replacement, even if its transport
+later closes. Cancel/epoch change during acquisition cancels and
 drains any listener already obtained before completing the run.
 
 Keep native registration versions and rendered bytes/restart flags unchanged.
