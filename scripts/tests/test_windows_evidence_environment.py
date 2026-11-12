@@ -11,6 +11,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def fixture_case_paths(fixture, name):
+    return fixture / "applications" / name, fixture / "harnesses" / f"invoke-{name}.ps1"
+
+
 class WindowsEvidenceEnvironmentTests(unittest.TestCase):
     def test_adapter_checks_and_uses_the_selected_msvc_driver(self):
         source = (ROOT / "scripts/vm-evidence-adapter/windows.ps1").read_text()
@@ -71,6 +75,16 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
         self.assertLess(nonzero, identity)
         self.assertLess(identity, executable)
 
+    def test_fixture_harness_cannot_be_discovered_as_an_application_suffix(self):
+        fixture = Path("owned-fixture")
+        for name in ("missing.exe", "unstartable.exe", "success.cmd", "failure.cmd"):
+            with self.subTest(application=name):
+                application, script = fixture_case_paths(fixture, name)
+                self.assertEqual(application.parent, fixture / "applications")
+                self.assertEqual(script.parent, fixture / "harnesses")
+                self.assertNotEqual(script, Path(str(application) + ".ps1"))
+                self.assertNotEqual(script.name, name + ".ps1")
+
     @unittest.skipUnless(
         os.name == "nt" and (shutil.which("powershell.exe") or shutil.which("pwsh")),
         "Windows PowerShell required for bounded synthetic process-start contract")
@@ -84,6 +98,8 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
         scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             fixture = Path(directory)
+            (fixture / "applications").mkdir()
+            (fixture / "harnesses").mkdir()
             for name, body, expected in (
                 ("missing.exe", None, None),
                 ("unstartable.exe", "not a Windows executable\n", None),
@@ -91,16 +107,16 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
                 ("failure.cmd", "@echo off\nexit /b 7\n", 7),
             ):
                 with self.subTest(application=name):
-                    application = fixture / name
+                    application, script = fixture_case_paths(fixture, name)
                     if body is not None:
                         application.write_text(body)
-                    script = fixture / (name + ".ps1")
+                    else:
+                        self.assertFalse(any(application.parent.glob(name + "*")))
                     quoted_application = str(application).replace("'", "''")
                     script.write_text(
                         "$ErrorActionPreference = 'Stop'\n"
                         "$global:LASTEXITCODE = 0\n"
                         f"Set-Alias -Name cargo -Value '{quoted_application}'\n"
-                        "$PSModuleAutoLoadingPreference = 'None'\n"
                         "$buildArguments = @()\n"
                         f"[Console]::WriteLine('CARGO-CONTRACT-INVOKE:{name}')\n"
                         "try {\n" + scope +
@@ -118,8 +134,8 @@ class WindowsEvidenceEnvironmentTests(unittest.TestCase):
                             f"{name}: PowerShell fixture timed out after 15s; "
                             f"stdout={repr(error.stdout)[-2048:]} "
                             f"stderr={repr(error.stderr)[-2048:]}")
-                    self.assertIn(
-                        f"CARGO-CONTRACT-INVOKE:{name}", result.stdout,
+                    self.assertEqual(
+                        result.stdout.count(f"CARGO-CONTRACT-INVOKE:{name}"), 1,
                         result.stdout + result.stderr)
                     if expected is None:
                         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
