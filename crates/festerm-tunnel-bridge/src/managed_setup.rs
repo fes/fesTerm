@@ -818,7 +818,11 @@ pub(super) async fn install(args: &[OsString]) -> io::Result<()> {
     // The record is final. Release the installer lock so the started worker's
     // recovery fence can replace an exited daemon during the readiness wait.
     drop(installer);
-    super::service_install::install_and_start(&specification)?;
+    if record.executable == executable {
+        super::service_install::install_and_start(&specification)?;
+    } else {
+        super::service_install::install_and_start_older_helpers(&specification)?;
+    }
     timeout(Duration::from_secs(50), async {
         loop {
             let record: Installation = read_json(&directory, CONFIG)?;
@@ -1673,15 +1677,9 @@ pub(super) async fn serve(args: &[OsString]) -> io::Result<()> {
         }));
     }
     log.event("worker.start", &[("version", env!("CARGO_PKG_VERSION"))]);
-    let supervise = cfg!(windows)
-        || setup_storage::private_directory(&state, false)
-            .and_then(|directory| read_json::<Installation>(&directory, CONFIG))
-            .is_ok_and(|record| record.recovery.is_some());
-    let result = if supervise {
-        retry_worker(&log, Duration::from_secs(15), || run_worker(&state, &log)).await
-    } else {
-        run_worker(&state, &log).await
-    };
+    // Every platform retries transient failures in-process; the service
+    // manager additionally restarts a worker that crashes or is killed.
+    let result = retry_worker(&log, Duration::from_secs(15), || run_worker(&state, &log)).await;
     match &result {
         Ok(()) => log.event("worker.exit", &[("reason", "bridge_stopped_cleanly")]),
         Err(error) => log.event(

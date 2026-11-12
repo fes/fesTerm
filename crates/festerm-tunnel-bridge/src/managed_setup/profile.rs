@@ -539,6 +539,9 @@ async fn bind_existing(request: BindExistingRequest) -> io::Result<ManagedHostSt
     require_request(&store, &request)?;
     record.phase = "configured".into();
     checkpoint(&directory, &record)?;
+    // The recorded helpers are this release's here, so a pre-restart
+    // definition can gain automatic restart.
+    super::super::service_install::migrate_legacy_definition(&service(&record, &state))?;
     super::super::service_install::install_and_start(&service(&record, &state))?;
     timeout(Duration::from_secs(50), async {
         loop {

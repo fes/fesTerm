@@ -925,3 +925,48 @@ These extend the existing `TUNNEL-01`/`TUNNEL-05` validation impact. Manual
 worker recovery passed on the existing Windows-to-iOS fixture; automatic
 recovery after a real relay drop on the new signed helpers remains DT-05
 native evidence, not an accepted gate.
+
+## Amendment: Worker restart on every platform
+
+A macOS profile host stayed offline after its bridge exited: its LaunchAgent
+used `KeepAlive=false`, and `--serve` retried in-process only on Windows or
+with daemon recovery enabled. Decision: every platform uses both layers.
+
+- **In-process.** `--serve` always retries transient failures after 15 seconds
+  with the existing checks (exact daemon generation, account, host identity,
+  fresh scoped host token). Permanent refusals and a clean bridge shutdown
+  still stop. A restart never creates a tunnel, shell or key and never needs
+  a new sign-in unless the CLI's own sign-in has expired; that failure
+  (`setup.verify_account`) retries until the user signs in again.
+- **Service manager.** It restarts a worker that crashes, panics or is killed.
+  Linux keeps its unit. macOS LaunchAgents use
+  `KeepAlive={SuccessfulExit=false}` with `ThrottleInterval=15`. launchd
+  cannot exempt a status, so on macOS `--serve` reports permanent refusals as
+  exit 0 (`serve_exit_code`); Linux and Windows keep exit 78. The Windows
+  launcher reruns setup `--serve` after 15 seconds unless it exits 0 or 78.
+  No Scheduler definition changes. The owned-task stop kills the launcher as
+  well as its worker and rescans until neither remains, and the 15-second wait
+  means a launcher cannot respawn a worker during that stop.
+- **macOS migration.** As on Linux, the exact earlier `KeepAlive=false` plist
+  is kept, or recreated if missing, while the recorded helpers are older (they
+  exit 78, which launchd would restart), and is rewritten once they are current: by an explicit
+  upgrade, or by a rerun or profile-hosting bind whose helper already is the
+  recorded one. launchd reads a plist only when it loads it, so a running
+  worker keeps running and gains restart at its next load. A loaded job whose
+  worker has exited is unloaded so the following start loads the new
+  definition. Any other content still refuses.
+- Legacy Windows console tasks (no launcher) get in-process retry only until
+  their explicit upgrade.
+
+Automated tests: `service_definitions_are_deterministic_scoped_and_have_no_secrets`,
+`service_mac_legacy_definition_is_byte_exact_for_migration`,
+`service_rerun_keeps_a_legacy_linux_definition_until_helpers_are_current`
+(now also covering macOS),
+`service_serve_exit_lets_every_manager_restart_only_abnormal_exits`,
+`windows_launcher_restarts_only_abnormal_worker_exits` and
+`windows_worker_is_windowless_and_preserves_owned_setup_arguments_and_exit_status`
+(now restarting an abnormal exit after the delay). The opt-in native
+LaunchAgent smoke passed with the new definition, and a dummy LaunchAgent with
+the same policy was restarted once after exiting 3 and not after exiting 0.
+Restart after a real relay drop on signed helpers remains DT-05 native
+evidence.

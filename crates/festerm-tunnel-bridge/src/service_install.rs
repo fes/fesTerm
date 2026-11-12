@@ -198,6 +198,20 @@ fn systemd_word(value: &str) -> String {
 /// Linux units exclude it from automatic restart.
 pub const PERMANENT_REFUSAL_EXIT: i32 = 78;
 
+/// Exit status of `--serve`. Service managers restart only a nonzero status;
+/// launchd cannot exempt [`PERMANENT_REFUSAL_EXIT`], so macOS reports it as 0.
+pub fn serve_exit_code(permanent: bool) -> i32 {
+    serve_exit_code_for(permanent, cfg!(target_os = "macos"))
+}
+
+fn serve_exit_code_for(permanent: bool, macos: bool) -> i32 {
+    match (permanent, macos) {
+        (true, true) => 0,
+        (true, false) => PERMANENT_REFUSAL_EXIT,
+        (false, _) => 1,
+    }
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn linux_unit(spec: &ServiceSpec, unit: &str, restart: &str) -> io::Result<String> {
     spec.validate_syntax()?;
@@ -237,13 +251,20 @@ fn legacy_linux_definition(spec: &ServiceSpec) -> io::Result<String> {
 /// The definition `install` requires: the current one, except that an existing
 /// legacy definition is kept for a rerun that keeps older helpers;
 /// [`migrate_legacy_definition`] switches it once the helpers are current.
-#[cfg(all(unix, any(target_os = "linux", test)))]
-fn kept_linux_definition(directory: &File, name: &Path, spec: &ServiceSpec) -> io::Result<String> {
-    let current = linux_definition(spec)?;
-    let legacy = legacy_linux_definition(spec)?;
+/// Older helpers exit with [`PERMANENT_REFUSAL_EXIT`] on every refusal, so a
+/// missing definition for them is recreated as the legacy one.
+#[cfg(unix)]
+fn kept_definition(
+    directory: &File,
+    name: &Path,
+    current: String,
+    legacy: String,
+    helpers_current: bool,
+) -> io::Result<String> {
     Ok(
         match owned_definition(directory, name, &[current.clone(), legacy.clone()]) {
             Ok(Some(existing)) if existing == legacy.as_bytes() => legacy,
+            Ok(None) if !helpers_current => legacy,
             _ => current,
         },
     )
@@ -283,7 +304,7 @@ fn xml(value: &str) -> String {
 }
 
 #[cfg(any(target_os = "macos", test))]
-fn mac_definition(spec: &ServiceSpec) -> io::Result<String> {
+fn mac_job(spec: &ServiceSpec, keep_alive: &str) -> io::Result<String> {
     spec.validate_syntax()?;
     Ok(format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -293,7 +314,7 @@ fn mac_definition(spec: &ServiceSpec) -> io::Result<String> {
          <key>Label</key><string>dev.fes.festerm.tunnel.{}</string>\n\
          <key>ProgramArguments</key><array><string>{}</string>\
          <string>--serve</string><string>--state-dir</string><string>{}</string></array>\n\
-         <key>RunAtLoad</key><true/>\n<key>KeepAlive</key><false/>\n\
+         <key>RunAtLoad</key><true/>\n{keep_alive}\
          <key>AbandonProcessGroup</key><false/>\n\
          <key>StandardOutPath</key><string>/dev/null</string>\n\
          <key>StandardErrorPath</key><string>/dev/null</string>\n\
@@ -302,6 +323,27 @@ fn mac_definition(spec: &ServiceSpec) -> io::Result<String> {
         xml(path_text(&spec.executable)?),
         xml(path_text(&spec.state)?),
     ))
+}
+
+/// launchd restarts a worker that crashes or exits unsuccessfully, at most
+/// every 15 seconds. launchd cannot exempt an exit status, so `--serve`
+/// reports permanent refusals and clean shutdowns as success on macOS
+/// ([`serve_exit_code`]).
+#[cfg(any(target_os = "macos", test))]
+fn mac_definition(spec: &ServiceSpec) -> io::Result<String> {
+    mac_job(
+        spec,
+        "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n\
+         <key>ThrottleInterval</key><integer>15</integer>\n",
+    )
+}
+
+/// The exact definition earlier releases installed (no restart). Older helpers
+/// exit with [`PERMANENT_REFUSAL_EXIT`], which launchd would restart, so it is
+/// kept until the helpers are current, as on Linux.
+#[cfg(any(target_os = "macos", test))]
+fn legacy_mac_definition(spec: &ServiceSpec) -> io::Result<String> {
+    mac_job(spec, "<key>KeepAlive</key><false/>\n")
 }
 
 #[cfg(any(windows, test))]
@@ -703,14 +745,20 @@ fn definition_file(directory: &File, name: &Path, expected: &[u8], create: bool)
 /// Installs only this UUID's service and starts it without stopping any process.
 /// A preexisting definition is accepted only when its complete content matches.
 pub fn install_and_start(spec: &ServiceSpec) -> io::Result<()> {
-    install(spec, true)
+    install(spec, true, true)
+}
+
+/// [`install_and_start`] for a rerun that keeps helpers from an earlier
+/// release, which must not gain service-manager restart.
+pub fn install_and_start_older_helpers(spec: &ServiceSpec) -> io::Result<()> {
+    install(spec, true, false)
 }
 
 /// Starts an exactly matching, already installed service. Does not repair or
 /// replace an unknown definition; the operator must explicitly resolve it.
 #[allow(dead_code)]
 pub fn start_existing(spec: &ServiceSpec) -> io::Result<()> {
-    install(spec, false)
+    install(spec, false, true)
 }
 
 /// Explicit upgrade: stops only this UUID's worker (and its bridge child) and
@@ -834,7 +882,68 @@ pub fn migrate_legacy_definition(spec: &ServiceSpec) -> io::Result<bool> {
     Ok(true)
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Rewrites this UUID's pre-restart LaunchAgent when `spec`'s helpers are
+/// this release's, which report permanent refusals as success. launchd reads
+/// a definition only when it loads it, so a running worker keeps running and
+/// gains restart at its next load (login or upgrade). A loaded job whose
+/// worker has exited is unloaded so the following `install` loads the new
+/// definition. Returns whether a definition changed.
+#[cfg(target_os = "macos")]
+pub fn migrate_legacy_definition(spec: &ServiceSpec) -> io::Result<bool> {
+    let _state = spec.validate()?;
+    let uid =
+        festerm_unix_security::current_user_id().map_err(|_| refused("service.user_context"))?;
+    let directory_path = registration_directory_path()?;
+    let Ok(directory) = trusted_directory(&directory_path, false) else {
+        return Ok(false);
+    };
+    let label = format!("dev.fes.festerm.tunnel.{}", spec.id);
+    let name = format!("{label}.plist");
+    let legacy = legacy_mac_definition(spec)?;
+    if !matches!(
+        owned_definition(&directory, Path::new(&name), std::slice::from_ref(&legacy)),
+        Ok(Some(_))
+    ) {
+        return Ok(false);
+    }
+    let target = format!("gui/{uid}/{label}");
+    let tool = Path::new("/bin/launchctl");
+    let loaded = native(tool, &args(&["print", &target]), "service.launchd_inspect")?;
+    if loaded.success {
+        mac_loaded_matches(&loaded.bytes, &directory_path.join(&name), spec)?;
+    }
+    publish_definition(
+        &directory,
+        Path::new(&name),
+        mac_definition(spec)?.as_bytes(),
+    )?;
+    if loaded.success && !mac_running(&loaded.bytes) {
+        run(tool, &args(&["bootout", &target]), "service.launchd_stop")?;
+        wait_unloaded(tool, &target)?;
+    }
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn mac_running(status: &[u8]) -> bool {
+    status
+        .split(|b| *b == b'\n')
+        .any(|line| std::str::from_utf8(line).is_ok_and(|s| s.trim() == "state = running"))
+}
+
+#[cfg(target_os = "macos")]
+fn wait_unloaded(tool: &Path, target: &str) -> io::Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while native(tool, &args(&["print", target]), "service.launchd_inspect")?.success {
+        if std::time::Instant::now() > deadline {
+            return Err(refused("service.launchd_stop"));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn migrate_legacy_definition(_spec: &ServiceSpec) -> io::Result<bool> {
     Ok(false)
 }
@@ -986,8 +1095,8 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
     let expected = mac_definition(spec)?;
     let accepted = previous
         .iter()
-        .map(mac_definition)
-        .chain([Ok(expected.clone())])
+        .chain([spec])
+        .flat_map(|owned| [mac_definition(owned), legacy_mac_definition(owned)])
         .collect::<io::Result<Vec<_>>>()?;
     let existing = directory
         .as_ref()
@@ -1007,13 +1116,7 @@ fn replace(previous: &[ServiceSpec], spec: &ServiceSpec) -> io::Result<()> {
         // bootout terminates the worker's process group (its bridge child);
         // the daemon was started outside the service and is not in it.
         run(tool, &args(&["bootout", &target]), "service.launchd_stop")?;
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while native(tool, &args(&["print", &target]), "service.launchd_inspect")?.success {
-            if std::time::Instant::now() > deadline {
-                return Err(refused("service.launchd_stop"));
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
+        wait_unloaded(tool, &target)?;
     }
     match existing {
         Some(existing) if existing != expected.as_bytes() => publish_definition(
@@ -1337,7 +1440,7 @@ fn replace(_previous: &[ServiceSpec], _spec: &ServiceSpec) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
+fn install(spec: &ServiceSpec, create: bool, helpers_current: bool) -> io::Result<()> {
     let _state = spec.validate()?;
     let directory_path = registration_directory_path()?;
     let directory = trusted_directory(&directory_path, create)?;
@@ -1361,7 +1464,13 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
         .map(|result| result.bytes)
     };
     linux_loaded_matches(&show()?, &path, create)?;
-    let definition = kept_linux_definition(&directory, Path::new(&name), spec)?;
+    let definition = kept_definition(
+        &directory,
+        Path::new(&name),
+        linux_definition(spec)?,
+        legacy_linux_definition(spec)?,
+        helpers_current,
+    )?;
     definition_file(&directory, Path::new(&name), definition.as_bytes(), create)?;
     if create {
         run(
@@ -1393,7 +1502,7 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
+fn install(spec: &ServiceSpec, create: bool, helpers_current: bool) -> io::Result<()> {
     let _state = spec.validate()?;
     let uid =
         festerm_unix_security::current_user_id().map_err(|_| refused("service.user_context"))?;
@@ -1413,21 +1522,18 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
     )?;
     let inspect = || native(tool, &args(&["print", &target]), "service.launchd_inspect");
     let loaded = inspect()?;
+    let definition = kept_definition(
+        &directory,
+        Path::new(&name),
+        mac_definition(spec)?,
+        legacy_mac_definition(spec)?,
+        helpers_current,
+    )?;
     if loaded.success {
         mac_loaded_matches(&loaded.bytes, &path, spec)?;
-        definition_file(
-            &directory,
-            Path::new(&name),
-            mac_definition(spec)?.as_bytes(),
-            false,
-        )?;
+        definition_file(&directory, Path::new(&name), definition.as_bytes(), false)?;
     } else {
-        definition_file(
-            &directory,
-            Path::new(&name),
-            mac_definition(spec)?.as_bytes(),
-            create,
-        )?;
+        definition_file(&directory, Path::new(&name), definition.as_bytes(), create)?;
         run(
             tool,
             &[
@@ -1449,10 +1555,7 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
     std::thread::sleep(Duration::from_millis(500));
     let status = run(tool, &args(&["print", &target]), "service.launchd_inspect")?;
     mac_loaded_matches(&status, &path, spec)?;
-    if !status
-        .split(|b| *b == b'\n')
-        .any(|line| std::str::from_utf8(line).is_ok_and(|s| s.trim() == "state = running"))
-    {
+    if !mac_running(&status) {
         return Err(refused("service.worker_not_running"));
     }
     Ok(())
@@ -1480,7 +1583,9 @@ fn mac_loaded_matches(bytes: &[u8], path: &Path, spec: &ServiceSpec) -> io::Resu
 }
 
 #[cfg(windows)]
-fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
+fn install(spec: &ServiceSpec, create: bool, helpers_current: bool) -> io::Result<()> {
+    // Task Scheduler never restarts; the launcher handles older helpers.
+    let _ = helpers_current;
     let state = spec.validate()?;
     let (sid, system) = festerm_windows_security::current_user_service_context()
         .map_err(|_| refused("service.user_context"))?;
@@ -1577,7 +1682,7 @@ fn install(spec: &ServiceSpec, create: bool) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn install(_spec: &ServiceSpec, _create: bool) -> io::Result<()> {
+fn install(_spec: &ServiceSpec, _create: bool, _helpers_current: bool) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "service.unsupported_platform",
@@ -1655,7 +1760,11 @@ mod tests {
         assert!(!linux.contains("Restart=no"));
         assert!(linux.contains("WantedBy=default.target"));
         assert!(mac.contains("<key>RunAtLoad</key><true/>"));
-        assert!(mac.contains("<key>KeepAlive</key><false/>"));
+        assert!(mac.contains(
+            "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n\
+             <key>ThrottleInterval</key><integer>15</integer>\n"
+        ));
+        assert!(!mac.contains("<key>KeepAlive</key><false/>"));
         assert!(windows.contains("<RunLevel>LeastPrivilege</RunLevel>"));
         assert!(windows.contains("<LogonType>InteractiveToken</LogonType>"));
         assert!(!windows.contains("RestartOnFailure"));
@@ -1961,31 +2070,80 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
 
+    #[test]
+    fn service_mac_legacy_definition_is_byte_exact_for_migration() {
+        let spec = spec();
+        let legacy = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
+             \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+             <plist version=\"1.0\"><dict>\n\
+             <key>Label</key><string>dev.fes.festerm.tunnel.{}</string>\n\
+             <key>ProgramArguments</key><array><string>{}</string>\
+             <string>--serve</string><string>--state-dir</string><string>{}</string></array>\n\
+             <key>RunAtLoad</key><true/>\n<key>KeepAlive</key><false/>\n\
+             <key>AbandonProcessGroup</key><false/>\n\
+             <key>StandardOutPath</key><string>/dev/null</string>\n\
+             <key>StandardErrorPath</key><string>/dev/null</string>\n\
+             </dict></plist>\n",
+            spec.id,
+            xml(spec.executable.to_str().unwrap()),
+            xml(spec.state.to_str().unwrap()),
+        );
+        assert_eq!(legacy_mac_definition(&spec).unwrap(), legacy);
+        assert_ne!(legacy, mac_definition(&spec).unwrap());
+    }
+
+    #[test]
+    fn service_serve_exit_lets_every_manager_restart_only_abnormal_exits() {
+        // launchd restarts every unsuccessful exit, so macOS reports a
+        // permanent refusal as success; systemd/the launcher exempt 78.
+        assert_eq!(serve_exit_code_for(true, true), 0);
+        assert_eq!(serve_exit_code_for(true, false), PERMANENT_REFUSAL_EXIT);
+        assert_eq!(serve_exit_code_for(false, true), 1);
+        assert_eq!(serve_exit_code_for(false, false), 1);
+    }
+
     #[cfg(unix)]
     #[test]
     fn service_rerun_keeps_a_legacy_linux_definition_until_helpers_are_current() {
-        let root = std::env::current_dir().unwrap().join(format!(
-            ".service-legacy-test-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        let directory = setup_storage::private_directory(&root, true).unwrap();
-        let name = Path::new("owned.service");
+        // The same rule keeps a legacy macOS LaunchAgent.
         let spec = spec();
-        let current = linux_definition(&spec).unwrap();
-        let legacy = legacy_linux_definition(&spec).unwrap();
-        let kept = || kept_linux_definition(&directory, name, &spec).unwrap();
-        assert_eq!(kept(), current);
-        definition_file(&directory, name, legacy.as_bytes(), true).unwrap();
-        assert_eq!(kept(), legacy);
-        definition_file(&directory, name, kept().as_bytes(), true).unwrap();
-        publish_definition(&directory, name, current.as_bytes()).unwrap();
-        assert_eq!(kept(), current);
-        std::fs::write(root.join(name), b"foreign definition").unwrap();
-        assert_eq!(kept(), current);
-        assert!(definition_file(&directory, name, kept().as_bytes(), true).is_err());
-        std::fs::remove_file(root.join(name)).unwrap();
-        std::fs::remove_dir(root).unwrap();
+        for (current, legacy) in [
+            (
+                linux_definition(&spec).unwrap(),
+                legacy_linux_definition(&spec).unwrap(),
+            ),
+            (
+                mac_definition(&spec).unwrap(),
+                legacy_mac_definition(&spec).unwrap(),
+            ),
+        ] {
+            let root = std::env::current_dir().unwrap().join(format!(
+                ".service-legacy-test-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4()
+            ));
+            let directory = setup_storage::private_directory(&root, true).unwrap();
+            let name = Path::new("owned.definition");
+            let kept = || {
+                kept_definition(&directory, name, current.clone(), legacy.clone(), true).unwrap()
+            };
+            assert_eq!(kept(), current);
+            let older =
+                kept_definition(&directory, name, current.clone(), legacy.clone(), false).unwrap();
+            assert_eq!(older, legacy, "absent definition for older helpers");
+            definition_file(&directory, name, legacy.as_bytes(), true).unwrap();
+            assert_eq!(kept(), legacy);
+            definition_file(&directory, name, kept().as_bytes(), true).unwrap();
+            publish_definition(&directory, name, current.as_bytes()).unwrap();
+            assert_eq!(kept(), current);
+            std::fs::write(root.join(name), b"foreign definition").unwrap();
+            assert_eq!(kept(), current);
+            assert!(definition_file(&directory, name, kept().as_bytes(), true).is_err());
+            std::fs::remove_file(root.join(name)).unwrap();
+            std::fs::remove_dir(root).unwrap();
+        }
     }
 
     #[test]

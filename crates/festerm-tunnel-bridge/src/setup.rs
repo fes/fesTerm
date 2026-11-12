@@ -515,11 +515,9 @@ fn main() {
             eprintln!("Experimental tunnel setup refused/stopped: {error}. Any explicitly reported new tunnel/session remains; existing resources were not removed.");
         }
         let serving = args.first().is_some_and(|arg| arg == "--serve");
-        std::process::exit(if serving && managed_setup::is_permanent_refusal(&error) {
-            service_install::PERMANENT_REFUSAL_EXIT
-        } else {
-            1
-        });
+        std::process::exit(service_install::serve_exit_code(
+            serving && managed_setup::is_permanent_refusal(&error),
+        ));
     }
 }
 

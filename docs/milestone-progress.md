@@ -1,5 +1,16 @@
 # Milestone Progress Narrative
 
+## Restarting Dev Tunnel hosts on every platform
+
+A Mac profile host stayed offline after its bridge exited because only Linux
+and Windows restarted workers. Every platform now retries transient failures
+inside the worker and also lets the service manager restart a worker that
+crashes or is killed: launchd restarts unsuccessful exits, and the Windows
+launcher reruns its worker. Refusals that need the user still stop. Restarts
+reuse the same tunnel, key and shell and mint a fresh host token, so they need
+no new sign-in. Existing Mac hosts gain restart once their helpers are current.
+See ADR 0053.
+
 ## Enabling desktop hosting without disturbing legacy sessions
 
 Older Windows installations could not enable profile hosting because shared

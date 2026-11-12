@@ -127,6 +127,11 @@ ownership fields. A staged update can fail without changing the live shell.
 Native sign-in, signed package servicing, user-service behavior and physical
 client reconnection still require separate qualification.
 
+Profile-hosted workers follow ADR 0053's worker restart on every platform: the
+worker retries transient failures and the user service manager restarts a
+crashed worker. Binding a profile host whose recorded helper is current
+rewrites an exact pre-restart LaunchAgent before starting it.
+
 ## Validation impact
 
 - **Invariants introduced or changed:** Explicit opted-in Local Save can start

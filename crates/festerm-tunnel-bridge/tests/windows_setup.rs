@@ -66,7 +66,10 @@ public class OwnedSetupProbe {
             return 99;
         File.WriteAllText(Path.Combine(args[2], "probe.txt"),
             GetConsoleWindow().ToInt64() + "\n" + args[2]);
-        return 37;
+        string attempts = Path.Combine(args[2], "attempts.txt");
+        File.AppendAllText(attempts, "attempt\n");
+        // A crash-like exit is restarted; a permanent refusal (78) stops.
+        return File.ReadAllLines(attempts).Length == 1 ? 37 : 78;
     }
 }
 "#;
@@ -87,7 +90,8 @@ public class OwnedSetupProbe {
         .arg(&state)
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let started = std::time::Instant::now();
+    let deadline = started + std::time::Duration::from_secs(45);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
@@ -99,7 +103,15 @@ public class OwnedSetupProbe {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     };
-    assert_eq!(status.code(), Some(37));
+    assert_eq!(status.code(), Some(78));
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(15),
+        "an abnormal exit is restarted only after the restart delay"
+    );
+    assert_eq!(
+        std::fs::read_to_string(state.join("attempts.txt")).unwrap(),
+        "attempt\nattempt\n"
+    );
     assert_eq!(
         std::fs::read_to_string(state.join("probe.txt")).unwrap(),
         format!("0\n{}", state.display())
