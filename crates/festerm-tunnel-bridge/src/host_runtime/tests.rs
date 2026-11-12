@@ -108,6 +108,35 @@ impl Drop for Fixture {
     }
 }
 
+#[tokio::test]
+async fn authenticated_runtime_relay_recovery_preserves_original_aggregate_budget() {
+    let fixture = Fixture::new();
+    let held: Vec<_> = (0..MAX_CLIENTS)
+        .map(|_| ConnectionPermit::reserve(&fixture.runtime.budgets).unwrap())
+        .collect();
+    for _ in 0..3 {
+        let mut listener = crate::relay_host::tests::closed_test_listener();
+        assert_eq!(
+            fixture
+                .runtime
+                .clone()
+                .serve(&mut listener, CancellationToken::new())
+                .await,
+            Err(Error::Closed)
+        );
+        listener.close().await.unwrap();
+        assert!(matches!(
+            ConnectionPermit::reserve(&fixture.runtime.budgets),
+            Err(Error::Contract(ContractError::Busy))
+        ));
+    }
+    drop(held);
+    let restored: Vec<_> = (0..MAX_CLIENTS)
+        .map(|_| ConnectionPermit::reserve(&fixture.runtime.budgets).unwrap())
+        .collect();
+    assert_eq!(restored.len(), MAX_CLIENTS);
+}
+
 struct BusyPolicy {
     inner: Arc<Policy>,
     remaining: std::sync::atomic::AtomicUsize,

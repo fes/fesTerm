@@ -1,5 +1,16 @@
 # GUI Exploration and Test Action Graph
 
+HOST-02/03 consented HOST transport recovery stays inside the same runtime
+lease/run ID and original snapshot, watching revocation during acquisition,
+serving and the fixed 15-second retry delay. Retire/drain the old listener
+before replacement and recheck signed bundle/current native owner/account/
+receipt with a fresh scoped token. Unknown or refused authority never retries;
+failed per-client cleanup stays isolated while serving, but its sticky drain
+uncertainty refuses listener replacement, including after repeated close.
+No terminal input replay or daemon operation is introduced. See
+`native-host-services.md#in-process-host-relay-recovery`. Manager crash policy
+and native/cloud/vault acceptance remain open.
+
 ADR0084 Windows stopped-update design: GUI:HOST-02/GUI:HOST-03 keep Disabled
 epochs and exact old/new reservations through replacement/recovery. The shared
 backend must retain publisher authentication, journal-before-Create and

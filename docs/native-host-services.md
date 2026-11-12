@@ -7,6 +7,40 @@ actual native control adapters consumed by explicit shared setup/run.
 Headless management can observe, revoke/stop and retire receipt-owned resources;
 registration or a running process is not native qualification or Ready.
 
+## In-process HOST relay recovery
+
+The consented multi-session HOST may recover positively identified transient
+relay transport failures in the **same process**, after an awaitable retirement
+of the old listener and its client tasks and a fixed cancellable 15-second
+delay. One runtime lease, run ID, original full consent snapshot, HostRuntime
+and aggregate budgets span acquisition, serving and delay. Current snapshot
+and cancellation supervision spans all three phases. Each attempt reopens the
+exact signed registered bundle and native owner policy, then obtains a fresh
+same-account, exact-receipt host-scoped token and the same protected host key.
+Reconnection never signs in, provisions, creates identities, controls daemons,
+reattaches a terminal or replays input. Persistent and temporary daemon lifetime
+and grace/epoch rules remain unchanged.
+
+Retry evidence is typed before sanitization: transport timeouts and explicitly
+recognized connection loss, HTTP 408/429/500/502/503/504 at relay establishment,
+or typed account rate limiting. Denial, unknown/error-text-only failure,
+coarse `AccountError::Network`, credential/vault/bundle/owner failure, changed
+snapshot/epoch, disable and cancellation never authorize retry. Failure to
+drain refuses replacement. A single client's failed cleanup does not cancel
+the live shared listener or unrelated clients, including the legacy shared
+relay path. Its drain uncertainty remains sticky after that client is reaped:
+retirement and repeated close must refuse replacement, even if its transport
+later closes. Cancel/epoch change during acquisition cancels and
+drains any listener already obtained before completing the run.
+
+Keep native registration versions and rendered bytes/restart flags unchanged.
+RunRecord v1 uses existing `Starting` during retry; no new persisted enum value
+or cached permission is introduced. Older receipt-only registrations remain
+removable, not executable authority. This source slice does **not** implement
+#729 process-crash recovery or manager-policy/older-helper migration, nor
+establish native Windows/macOS/Linux, vault/cloud or daemon-survival acceptance.
+The existing Linux login-only exit75 retry is a separate policy.
+
 ## Headless management and recovery
 
 `festerm-host service-status --state-dir PATH` reports a native process
@@ -330,7 +364,9 @@ Draining preserves non-login hosting errors; only an exact typed cloud
 cancellation induced by the login watcher is normalized within its owned run.
 This includes cancellation after final cloud account confirmation but before
 the locked relay-identity read; a changed snapshot remains a non-cancellation
-failure with the same diagnostic. No provisioning or cloud operation is retried.
+failure with the same diagnostic. This login-manager mechanism retries no
+provisioning or cloud operation; in-process relay recovery is separately bounded
+by the contract above.
 No listener is admitted without current proof and owner consent.
 This is automatic current-logon activation,
 not Manual startup or pre-login exposure. Manual retains `Restart=no` and no

@@ -29,6 +29,21 @@ settings. Neither toggle shares a session or approves a client key.
 These regression sources do not qualify native setup, service recovery or
 live-provider behavior; those remain the existing DT-08/HOST acceptance gates.
 
+## Designing bounded in-process multi-session HOST recovery
+
+The new HOST previously exited on relay stream loss. The source-first recovery
+slice retains its single runtime lease/run ID, original consent and shared
+runtime budgets, drains the old listener, waits the existing-style fixed
+15 seconds and freshly authenticates bundle/owner/account/receipt/token.
+Only positively typed transient evidence permits another attempt; coarse
+network/unknown/refused authority stops. Deterministic validation is pending.
+The source correction isolates failed per-client cleanup while serving and
+retains sticky retirement refusal; actual encrypted shared-path and direct
+typed WebSocket-wrapper regressions are added but remain unexecuted.
+Native restart flags/receipt versions and run-history schema are unchanged;
+#729 crash recovery, older-helper manager migration and native/cloud/vault/
+daemon-survival qualification remain explicit gaps.
+
 ## Diagnosing uncertain takeover after temporary pending cancellation
 
 The published `4898f407` macOS native selection retains18 passes/1 failure,

@@ -32,6 +32,32 @@ fn refused(stage: &'static str) -> io::Error {
     }
 }
 
+#[cfg(feature = "host-runtime")]
+#[derive(Debug)]
+struct TransientRelay(&'static str);
+
+#[cfg(feature = "host-runtime")]
+impl std::fmt::Display for TransientRelay {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+#[cfg(feature = "host-runtime")]
+impl std::error::Error for TransientRelay {}
+
+#[cfg(feature = "host-runtime")]
+pub(crate) fn transient_relay(stage: &'static str) -> io::Error {
+    io::Error::other(TransientRelay(stage))
+}
+
+#[cfg(all(feature = "host-runtime", feature = "native-services"))]
+pub(crate) fn is_transient_relay(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<TransientRelay>())
+}
+
 #[derive(Debug)]
 struct CloudCancelled(&'static str);
 
@@ -51,6 +77,10 @@ pub(crate) fn is_cancelled(error: &io::Error) -> bool {
 }
 
 fn account_error(error: AccountError) -> io::Error {
+    #[cfg(feature = "host-runtime")]
+    if error == AccountError::RateLimited {
+        return transient_relay("host.cloud_rate_limited");
+    }
     refused(match error {
         AccountError::Cancelled => "host.cloud_cancelled",
         AccountError::Expired | AccountError::Store => "host.sign_in_required",
@@ -317,7 +347,7 @@ impl<'a> CloudHostAdapter<'a> {
         let (snapshot, exact, token, identity) = self
             .relay_authorization_with(cancel, &network, &*secrets)
             .await?;
-        let connection = tokio::select! {
+        let mut connection = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(refused("host.cloud_cancelled")),
             result = tokio::time::timeout(
@@ -329,17 +359,25 @@ impl<'a> CloudHostAdapter<'a> {
                     &token,
                     identity,
                 )
-            ) => result.map_err(|_| refused("host.relay_establishment_timeout"))?
-                .map_err(|_| refused("host.relay_establishment_failed"))?,
+            ) => result.map_err(|_| transient_relay("host.relay_establishment_timeout"))?
+                .map_err(|error| {
+                    if festerm_tunnel_bridge::relay::is_transient_failure(&error) {
+                        transient_relay("host.relay_establishment_failed")
+                    } else {
+                        refused("host.relay_establishment_failed")
+                    }
+                })?,
         };
         if cancel.is_cancelled() {
-            drop(connection);
+            connection.close().await?;
             return Err(io::Error::other(CloudCancelled(
                 "host.service_stale_or_unapproved_operation",
             )));
         }
-        if self.store.snapshot()? != snapshot {
-            drop(connection);
+        let current = self.store.snapshot();
+        if current.as_ref().is_err() || current.as_ref().is_ok_and(|current| *current != snapshot) {
+            connection.close().await?;
+            current?;
             return Err(refused("host.service_stale_or_unapproved_operation"));
         }
         Ok(connection)
@@ -2276,18 +2314,50 @@ mod tests {
             .unwrap();
         let before = store.snapshot().unwrap();
         let pinned = adapter.load().unwrap();
-        let (snapshot, receipt, token, identity) = adapter
-            .relay_authorization_with(&cancel, &network, &secrets)
-            .await
-            .unwrap();
-        assert_eq!(snapshot, before);
-        assert_eq!(receipt, pinned.receipt.unwrap());
-        assert_eq!(&*token, "PRIVATE_FIXTURE_SCOPED_HOST");
-        assert_eq!(identity.host_id(), pinned.host_id);
-        assert_eq!(identity.fingerprint().unwrap(), pinned.fingerprint);
-        assert_eq!(network.state.borrow().creates, 1);
-        assert_eq!(network.state.borrow().sign_ins, 1);
-        assert_eq!(store.snapshot().unwrap(), before);
+        for attempt in 1..=2 {
+            let (snapshot, receipt, token, identity) = adapter
+                .relay_authorization_with(&cancel, &network, &secrets)
+                .await
+                .unwrap();
+            assert_eq!(snapshot, before);
+            assert_eq!(Some(&receipt), pinned.receipt.as_ref());
+            assert_eq!(&*token, "PRIVATE_FIXTURE_SCOPED_HOST");
+            assert_eq!(identity.host_id(), pinned.host_id);
+            assert_eq!(identity.fingerprint().unwrap(), pinned.fingerprint);
+            assert_eq!(network.state.borrow().host_tokens, attempt);
+            assert_eq!(network.state.borrow().creates, 1);
+            assert_eq!(network.state.borrow().sign_ins, 1);
+            assert_eq!(store.snapshot().unwrap(), before);
+        }
+    }
+
+    #[cfg(all(feature = "host-runtime", feature = "native-services"))]
+    #[test]
+    fn host_cloud_relay_recovery_only_typed_rate_limit_is_retryable_account_failure() {
+        for error in [
+            AccountError::Registration,
+            AccountError::Cancelled,
+            AccountError::Expired,
+            AccountError::Denied,
+            AccountError::Network,
+            AccountError::Response,
+            AccountError::AccountChanged,
+            AccountError::IdentityChanged,
+            AccountError::TunnelNotFound,
+            AccountError::Tunnel,
+            AccountError::Ambiguous,
+            AccountError::Store,
+            AccountError::Busy,
+            AccountError::RateLimited,
+        ] {
+            assert_eq!(
+                is_transient_relay(&account_error(error)),
+                error == AccountError::RateLimited
+            );
+        }
+        assert!(!is_transient_relay(&io::Error::other(
+            "host.cloud_rate_limited"
+        )));
     }
 
     #[cfg(feature = "host-runtime")]
