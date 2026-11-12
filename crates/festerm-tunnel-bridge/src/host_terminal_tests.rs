@@ -961,10 +961,9 @@ mod native_routes {
         let mut policy = fixture.policy.clone();
         policy.remote_access = false;
         policy.grant_epoch = policy.grant_epoch.next().unwrap();
-        source
-            .0
-            .try_lock()
-            .unwrap()
+        tokio::time::timeout(Duration::from_secs(3), source.0.lock())
+            .await
+            .expect("timed out acquiring fixture policy lock for revocation")
             .replace(
                 policy,
                 &[crate::owner_auth::OwnerSigningKey::from_seed(&[17; 32]).public_key()],
